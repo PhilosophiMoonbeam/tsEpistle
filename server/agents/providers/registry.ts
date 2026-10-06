@@ -4,6 +4,12 @@ import type { Knex } from 'knex'
 import { z } from 'zod'
 import { AGENT_REASONING_EFFORTS, agentProviderReasoningEfforts, type AgentExecutionMode } from '../../../shared/agents/contracts.ts'
 import type { RoutingCandidate, RoutingTurnDecision } from '../../../shared/agents/routing.ts'
+import {
+  AGENT_PROVIDER_MEDIA_INPUT_SUPPORT,
+  AgentMediaInputsSchema,
+  agentProviderMediaInputMimeTypes,
+  type AgentMediaInputs
+} from '../../../shared/agents/media-providers.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { sessionVersion } from '../../helpers/account-session.ts'
 import type { AgentAdmissionResolver, AgentResolvedAdmission } from '../runtime.ts'
@@ -103,6 +109,8 @@ export const AgentProviderAdapterConfigSchema = z.strictObject({
   temperature: z.number().min(0).max(2).optional(),
   agentReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional(),
   utilityReasoningEffort: z.enum(AGENT_REASONING_EFFORTS).optional(),
+  mediaInputs: AgentMediaInputsSchema.optional(),
+  // Read decoder only: immutable historical versions retain the legacy block.
   media: AgentProviderMediaConfigSchema.optional()
 })
 export const AgentProviderPoliciesSchema = z.strictObject({
@@ -119,6 +127,35 @@ export const AgentProviderPoliciesSchema = z.strictObject({
   maxAttempts: z.number().int().min(1).max(10).default(3)
 })
 
+const AgentProviderAdapterWriteSchema = AgentProviderAdapterConfigSchema.omit({ media: true })
+type MediaInputSettings = {
+  transportKind: z.infer<typeof TransportKindSchema>
+  adapterConfig: { mediaInputs?: z.infer<typeof AgentMediaInputsSchema> | undefined }
+}
+const unsupportedMediaInputs = (input: MediaInputSettings): Array<keyof z.infer<typeof AgentMediaInputsSchema>> => {
+  const media = input.adapterConfig.mediaInputs
+  if (!media) return []
+  const allowed = AGENT_PROVIDER_MEDIA_INPUT_SUPPORT[input.transportKind]
+  return (['images', 'documents', 'audio', 'video'] as const).filter(kind => media[kind] && !allowed[kind])
+}
+const validateMediaInputs = (input: MediaInputSettings, context: z.RefinementCtx): void => {
+  for (const kind of unsupportedMediaInputs(input))
+    context.addIssue({ code: 'custom', path: ['adapterConfig', 'mediaInputs', kind], message: 'Media input is not supported by this API protocol' })
+}
+export const agentProviderMediaInputs = (
+  transportKind: AgentProviderTransportKind,
+  config: z.infer<typeof AgentProviderAdapterConfigSchema>
+): AgentMediaInputs => {
+  const legacyAttachments = config.media?.attachments === true
+  const requested = config.mediaInputs ?? { images: legacyAttachments, documents: legacyAttachments, audio: false, video: false }
+  const support = AGENT_PROVIDER_MEDIA_INPUT_SUPPORT[transportKind]
+  return {
+    images: requested.images && support.images,
+    documents: requested.documents && support.documents,
+    audio: requested.audio && support.audio,
+    video: requested.video && support.video
+  }
+}
 export const AgentProviderSettingsInputSchema = z.strictObject({
   transportKind: TransportKindSchema,
   model: z.string(),
@@ -127,7 +164,7 @@ export const AgentProviderSettingsInputSchema = z.strictObject({
   authMode: AuthModeSchema,
   secretReference: z.string().nullable(),
   secretValue: z.string().optional(),
-  adapterConfig: AgentProviderAdapterConfigSchema,
+  adapterConfig: AgentProviderAdapterWriteSchema,
   capabilities: AgentProviderCapabilitiesSchema,
   capabilityRevision: z.string(),
   policies: AgentProviderPoliciesSchema,
@@ -138,11 +175,15 @@ export const CreateAgentProviderProfileSchema = AgentProviderSettingsInputSchema
   displayName: z.string(),
   exposureMode: z.enum(['all_agent_users', 'groups']),
   groupIds: z.array(z.number().int().positive()).max(1_000).optional()
-}).strict()
+})
+  .strict()
+  .superRefine(validateMediaInputs)
 
 export const UpdateAgentProviderProfileSchema = AgentProviderSettingsInputSchema.extend({
   displayName: z.string().optional()
-}).strict()
+})
+  .strict()
+  .superRefine(validateMediaInputs)
 
 export type AgentProviderCapabilities = z.infer<typeof AgentProviderCapabilitiesSchema>
 export type AgentProviderPolicies = z.infer<typeof AgentProviderPoliciesSchema>
@@ -154,13 +195,7 @@ export interface AgentRoutingCandidate extends RoutingCandidate {
   readonly model: string
   readonly transportKind: AgentProviderTransportKind
   readonly capabilities: AgentProviderCapabilities
-  readonly media: {
-    readonly attachments: boolean
-    readonly imageGeneration: boolean
-    readonly videoGeneration: boolean
-    readonly musicGeneration: boolean
-    readonly transcription: boolean
-  }
+  readonly mediaInputs: AgentMediaInputs
   readonly admission: AgentResolvedAdmission
 }
 
@@ -380,11 +415,14 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
   if (transportKind === 'legacy-completions' && (authMode === 'anthropic-api-key' || authMode === 'google-api-key'))
     throw new AgentRepositoryError('INVALID_PROVIDER_AUTH', 'Legacy completions require bearer or generic API key authentication', 400)
   const adapterConfig = AgentProviderAdapterConfigSchema.parse(input.adapterConfig)
-  if (
-    adapterConfig.media !== undefined &&
-    (transportKind !== 'gemini-api' || baseUrl.replace(/\/$/u, '') !== 'https://generativelanguage.googleapis.com/v1beta')
-  )
-    throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Media requires the official Google Gemini endpoint', 400)
+  if (adapterConfig.media !== undefined)
+    throw new AgentRepositoryError(
+      'INVALID_PROVIDER_CONFIG',
+      'Legacy media configuration is read-only; configure independent media providers and explicit mediaInputs',
+      400
+    )
+  if (unsupportedMediaInputs({ transportKind, adapterConfig }).length)
+    throw new AgentRepositoryError('INVALID_PROVIDER_CONFIG', 'Media input is not supported by the selected API protocol', 400)
   const supportedReasoningEfforts = agentProviderReasoningEfforts(transportKind)
   for (const [field, label] of [
     ['agentReasoningEffort', 'Agent reasoning effort'],
@@ -491,20 +529,11 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   }
 
   async #credentialIsReferenced(transaction: Knex.Transaction, reference: string): Promise<boolean> {
-    const version = await transaction('agentProviderProfileVersions as versions')
-      .where('versions.secretReference', reference)
-      .andWhere(query =>
-        query
-          .whereExists(
-            transaction('agentProviderProfiles as profiles')
-              .whereRaw('"profiles"."currentVersionId" = "versions"."id"')
-              .whereNull('profiles.deletedAt')
-              .select(transaction.raw('1'))
-          )
-          .orWhereExists(transaction('agentRuns as runs').whereRaw('"runs"."providerProfileVersionId" = "versions"."id"').select(transaction.raw('1')))
-      )
-      .first('versions.id')
-    return version !== undefined
+    // Every immutable version remains a credential reference, including removed
+    // profiles and independent media versions pinned in historical event data.
+    if (await transaction('agentProviderProfileVersions').where({ secretReference: reference }).first('id')) return true
+    if (!(await transaction.schema.hasTable('agentMediaProviderVersions'))) return false
+    return (await transaction('agentMediaProviderVersions').where({ secretReference: reference }).first('id')) !== undefined
   }
 
   async #revokeUnreferencedCredential(transaction: Knex.Transaction, reference: string | null): Promise<void> {
@@ -1275,6 +1304,14 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
       const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
       const config = parseJson(AgentProviderAdapterConfigSchema, version.adapterConfig, 'PROVIDER_PROFILE_CORRUPT')
       const transportKind = TransportKindSchema.parse(version.transportKind)
+      const mediaInputs = agentProviderMediaInputs(transportKind, config)
+      const modalities: AgentRoutingCandidate['modalities'] = [
+        'text',
+        ...(mediaInputs.images ? ['image' as const] : []),
+        ...(mediaInputs.documents ? ['file' as const] : []),
+        ...(mediaInputs.audio ? ['audio' as const] : []),
+        ...(mediaInputs.video ? ['video' as const] : [])
+      ]
       candidates.push({
         profileId,
         profileVersionId: version.id,
@@ -1282,9 +1319,7 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         authorized: true,
         credentialReady: true,
         conformed: true,
-        modalities: version.transportKind === 'gemini-api' && config.media?.attachments === true ? ['text', 'image', 'audio', 'video', 'file'] : ['text'],
-        generationTools: version.transportKind === 'gemini-api' && config.media?.imageGeneration !== undefined ? ['image'] : [],
-        transcription: version.transportKind === 'gemini-api' && config.media?.transcription !== undefined,
+        modalities,
         pricing: {
           inputPerMillion: Number(version.pricingRevision.split('|')[1]) / 1_000_000,
           outputPerMillion: Number(version.pricingRevision.split('|')[2]) / 1_000_000,
@@ -1293,13 +1328,8 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         model: version.model,
         transportKind,
         capabilities,
-        media: {
-          attachments: version.transportKind === 'gemini-api' && config.media?.attachments === true,
-          imageGeneration: version.transportKind === 'gemini-api' && config.media?.imageGeneration !== undefined,
-          videoGeneration: false,
-          musicGeneration: false,
-          transcription: version.transportKind === 'gemini-api' && config.media?.transcription !== undefined
-        },
+        mediaInputs,
+        inputMimeTypes: agentProviderMediaInputMimeTypes(transportKind, mediaInputs),
         admission: { ...admission, ownerAuthVersion }
       })
     }

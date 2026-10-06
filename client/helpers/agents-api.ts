@@ -31,6 +31,7 @@ import {
 import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { SpecialistInvocationViewSchema } from '../../shared/agents/specialists.ts'
+import { AgentMediaInputsSchema } from '../../shared/agents/media-providers.ts'
 import { translate } from '../modules/localization.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 
@@ -133,9 +134,32 @@ const Session = z.object({
     .strictObject({
       attachments: z.boolean(),
       imageGeneration: z.boolean(),
-      videoGeneration: z.boolean(),
-      musicGeneration: z.boolean(),
-      transcription: z.boolean()
+      videoGeneration: z.boolean().default(false),
+      musicGeneration: z.boolean().default(false),
+      transcription: z.boolean(),
+      inputModalities: AgentMediaInputsSchema.optional(),
+      inputMimeTypes: z.array(z.string()).optional(),
+      mediaToolInputs: z
+        .strictObject({
+          image: AgentMediaInputsSchema.optional(),
+          video: AgentMediaInputsSchema.optional(),
+          music: AgentMediaInputsSchema.optional(),
+          transcription: AgentMediaInputsSchema.optional()
+        })
+        .optional()
+    })
+    .transform(value => {
+      const historicalInputs = { images: value.attachments, documents: value.attachments, audio: false, video: false }
+      return {
+        ...value,
+        inputModalities: value.inputModalities ?? historicalInputs,
+        inputMimeTypes: value.inputMimeTypes ?? [
+          ...((value.inputModalities?.images ?? value.attachments) ? ['image/png', 'image/jpeg', 'image/webp'] : []),
+          ...((value.inputModalities?.documents ?? value.attachments) ? ['application/pdf'] : [])
+        ],
+        mediaToolInputs:
+          value.mediaToolInputs ?? (value.attachments && value.imageGeneration ? { image: { images: true, documents: false, audio: false, video: false } } : {})
+      }
     })
     .nullable(),
   skills: z.array(Skill),
@@ -776,17 +800,24 @@ export const uploadAgentMedia = async (
   csrfToken: string,
   sessionId: string,
   file: File,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  purpose: 'attachment' | 'transcription' = 'attachment'
 ): Promise<AgentMediaView> => {
   assertUuid(sessionId, 'Session ID')
   const body = new FormData()
   body.append('file', file)
   return (
-    await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media`, z.object({ media: Media }), {
-      method: 'POST',
-      body,
-      signal
-    })
+    await requestJson(
+      fetcher,
+      csrfToken,
+      `/_api/agents/sessions/${encodeURIComponent(sessionId)}/media${purpose === 'transcription' ? '?purpose=transcription' : ''}`,
+      z.object({ media: Media }),
+      {
+        method: 'POST',
+        body,
+        signal
+      }
+    )
   ).media
 }
 export const attachAgentAsset = async (

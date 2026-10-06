@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import cookieParser from 'cookie-parser'
@@ -7,18 +11,27 @@ import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { agentProviderMediaInputMimeTypes, type AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
+import { AgentMediaProviderRegistry } from '../../agents/media-providers.ts'
+import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
 import { selectAgentGoalTokenBudget } from '../../agents/goals.ts'
 import { storeAgentMedia } from '../../agents/media.ts'
 import { projectAgentThread } from '../../agents/projection.ts'
 import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError } from '../../agents/providers/factory.ts'
-import { AgentProviderAdapterConfigSchema, type AgentRoutingCandidate } from '../../agents/providers/registry.ts'
+import {
+  AgentProviderAdapterConfigSchema,
+  agentProviderMediaInputs,
+  type AgentProviderTransportKind,
+  type AgentRoutingCandidate
+} from '../../agents/providers/registry.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import {
   type AgentEngine,
   type AgentEngineRequest,
   type AgentEngineResult,
+  type AgentResolvedAdmission,
   AgentProductRuntime,
   type AgentProductRuntimeOptions
 } from '../../agents/runtime.ts'
@@ -29,8 +42,11 @@ import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import { up as addAgentSpecialists } from '../../db/migrations/tsepistle-000054-agent-specialists.ts'
+import { up as addAgentSecrets } from '../../db/migrations/2.5.141.ts'
+import { up as addAgentMediaProviders } from '../../db/migrations/tsepistle-000055-agent-media-providers.ts'
 import assetHelper from '../../helpers/asset.ts'
 import { createAgentMediaTestDatabase } from '../agents/media-database.ts'
+import { PdfFixtureDocument } from '../agents/pdf-fixture.ts'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
@@ -79,10 +95,20 @@ interface TestSessionState {
 }
 
 const createTables = async (db: Knex): Promise<void> => {
-  await db.schema.createTable('users', table => table.integer('id').primary())
+  await db.schema.createTable('users', table => {
+    table.integer('id').primary()
+    table.boolean('isActive').notNullable().defaultTo(true)
+    table.integer('authVersion').notNullable().defaultTo(1)
+  })
   await db('users').insert([{ id: 7 }, { id: 8 }])
-  await db.schema.createTable('groups', table => table.integer('id').primary())
-  await db('groups').insert([{ id: 1 }])
+  await db.schema.createTable('groups', table => {
+    table.integer('id').primary()
+    table.text('permissions').notNullable()
+  })
+  await db('groups').insert([
+    { id: 1, permissions: JSON.stringify(['use:agents', 'manage:system']) },
+    { id: 3, permissions: '[]' }
+  ])
   await db.schema.createTable('agentConversationFolders', table => {
     table.uuid('id').primary()
     table.integer('ownerId').notNullable()
@@ -370,15 +396,18 @@ describe('ordinary-origin agent session API', () => {
   let agentsEnabled = true
   let mediaAuthorized = true
   let mediaUploadEnabled = false
+  let mediaRegistry: AgentMediaProviderRegistry
+  let sessionConfigurationHook: ((transaction: Knex.Transaction) => Promise<void>) | undefined
+  let assetAuthorityHook: ((transaction: Knex.Transaction | undefined) => Promise<void>) | undefined
   let assetAccessAllowed = true
   const assetAccessPaths: string[] = []
-  let revokeMediaInEngine: 'permission' | 'profile' | 'grant' | null = null
+  let revokeMediaInEngine: (() => Promise<void>) | null = null
   let mediaAuthorizationChecks = 0
-  let currentMediaProfileChanged = false
-  let currentMediaGrantRevoked = false
+  const generateMedia = vi.fn(async () => {})
   const csrf = 'csrf-token'
   let engineCurrentPage: unknown
   let engineGenerationTools: AgentEngineRequest['generationTools']
+  let engineMediaBindings: AgentEngineRequest['mediaBindings']
   let engineMessages: AgentEngineRequest['messages'] = []
   let engineSkills: readonly { readonly id: string; readonly name: string }[] = []
   let engineMemory: AgentEngineRequest['memory'] | undefined
@@ -401,7 +430,7 @@ describe('ordinary-origin agent session API', () => {
       profileResolutionSha256: 'a'.repeat(64),
       googleSearchEnabled: false,
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
-      transportKind: 'test',
+      transportKind: 'openai-chat',
       model: 'deterministic',
       executionMode: 'agent' as const,
       profilePolicyVersion: 1,
@@ -602,14 +631,16 @@ describe('ordinary-origin agent session API', () => {
     agentsEnabled = true
     mediaAuthorized = true
     mediaUploadEnabled = false
+    sessionConfigurationHook = undefined
+    assetAuthorityHook = undefined
     assetAccessAllowed = true
     assetAccessPaths.length = 0
     revokeMediaInEngine = null
     mediaAuthorizationChecks = 0
-    currentMediaProfileChanged = false
-    currentMediaGrantRevoked = false
+    generateMedia.mockClear()
     engineCurrentPage = undefined
     engineGenerationTools = undefined
+    engineMediaBindings = undefined
     engineMessages = []
     engineSkills = []
     engineMemory = undefined
@@ -621,8 +652,17 @@ describe('ordinary-origin agent session API', () => {
     await createTables(db)
     await addAgentMedia(db)
     await addAgentMediaContextState(db)
+    await addAgentSecrets(db)
+    await addAgentMediaProviders(db)
+    mediaRegistry = new AgentMediaProviderRegistry(
+      db,
+      new DatabaseAgentSecretRegistry(db, { currentKeyId: 'fixture', keys: { fixture: new Uint8Array(32).fill(7) } })
+    )
     await db('agentProviderProfileVersions').insert({
       id: '00000000-0000-4000-8000-000000000070',
+      transportKind: 'openai-chat',
+      baseUrl: 'https://api.openai.com/v1',
+      adapterConfig: JSON.stringify({ timeoutMs: 30_000, maxRetries: 0, mediaInputs: { images: false, documents: false, audio: false, video: false } }),
       policies: JSON.stringify({
         allowedModes: ['agent'],
         dailyTokens: 1_000,
@@ -639,15 +679,15 @@ describe('ordinary-origin agent session API', () => {
       async execute(request, sink) {
         engineCurrentPage = request.currentPage
         engineGenerationTools = request.generationTools
+        engineMediaBindings = request.mediaBindings
         engineMessages = request.messages.map(message => ({ ...message }))
         engineSkills = request.skills.map(skill => ({ id: skill.id, name: skill.name }))
         engineMemory = request.memory
         engineRunId = request.run.id
         if (revokeMediaInEngine) {
-          if (revokeMediaInEngine === 'permission') mediaAuthorized = false
-          if (revokeMediaInEngine === 'profile') currentMediaProfileChanged = true
-          if (revokeMediaInEngine === 'grant') currentMediaGrantRevoked = true
+          await revokeMediaInEngine()
           await request.authorizeMedia!()
+          await generateMedia()
         }
         if (engineFailure !== null) throw engineFailure
         await sink.text('Hello ')
@@ -662,11 +702,12 @@ describe('ordinary-origin agent session API', () => {
         }
       }
     }
-    const resolvedAdmission = {
+    const resolvedAdmission: AgentResolvedAdmission = {
       profileResolutionSha256: 'a'.repeat(64),
+      ownerAuthVersion: 1,
       googleSearchEnabled: false,
       providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
-      transportKind: 'test',
+      transportKind: 'openai-chat',
       model: 'deterministic',
       executionMode: 'agent' as const,
       profilePolicyVersion: 1,
@@ -678,22 +719,28 @@ describe('ordinary-origin agent session API', () => {
       quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
       reservationMilliseconds: 60_000
     }
+    const resolveAdmission = async (transaction: Knex.Transaction): Promise<AgentResolvedAdmission> => {
+      const version = await transaction<{ transportKind: AgentProviderTransportKind }>('agentProviderProfileVersions')
+        .where({ id: resolvedAdmission.providerProfileVersionId })
+        .first('transportKind')
+      if (!version) throw new Error('HTTP provider resolution fixture is missing its immutable version')
+      return { ...resolvedAdmission, transportKind: version.transportKind }
+    }
     runtime = new AgentProductRuntime(
       db,
       {
-        async resolve() {
-          return resolvedAdmission
+        async resolve(transaction) {
+          return resolveAdmission(transaction)
         },
-        async resolveCurrent() {
-          if (currentMediaGrantRevoked) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider grant was revoked.', 403)
-          return currentMediaProfileChanged ? { ...resolvedAdmission, providerProfileVersionId: randomUUID() } : resolvedAdmission
+        async resolveCurrent(transaction) {
+          return resolveAdmission(transaction)
         }
       },
       fakeEngine,
       {
         authorizeMedia: async () => {
           mediaAuthorizationChecks += 1
-          if (!agentsEnabled || !mediaAuthorized) throw new AgentRepositoryError('AGENT_PERMISSION_REVOKED', 'Wiki Agent access was revoked.', 403)
+          if (!agentsEnabled || !mediaAuthorized) throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Wiki Agent access was revoked.', 403)
         },
         workerId: 'test-worker',
         globalConcurrency: 1,
@@ -717,7 +764,8 @@ describe('ordinary-origin agent session API', () => {
     app.use(
       createAgentsHostController({
         auth: {
-          async loadPageRuleAuthority(requester) {
+          async loadPageRuleAuthority(requester, transaction) {
+            await assetAuthorityHook?.(transaction)
             return { requester, permissions: ['read:assets'], groups: [], tagAliases: {} }
           },
           checkPageAccess(_requester, permissions, context) {
@@ -733,7 +781,7 @@ describe('ordinary-origin agent session API', () => {
               ownershipUserId: authenticatedOwnerId,
               principal: { id: authenticatedOwnerId }
             }
-            req.user = { id: ownerId, groups: [], permissions: administrator ? ['manage:system'] : ['use:agents'] } as Express.User
+            req.user = { id: ownerId, authVersion: 1, groups: [], permissions: administrator ? ['manage:system'] : ['use:agents'] } as Express.User
             next()
           }
         },
@@ -764,24 +812,22 @@ describe('ordinary-origin agent session API', () => {
           if (!mediaUploadEnabled) return undefined
           return {
             issueResolutionToken: async () => 'test-profile-resolution',
-            resolve: async () => resolvedAdmission,
+            resolve: async (transaction: Knex.Transaction) => {
+              await sessionConfigurationHook?.(transaction)
+              return resolveAdmission(transaction)
+            },
             listRoutingCandidates: async (transaction: Knex.Transaction, input: { ownerId: number; sessionId: string }): Promise<AgentRoutingCandidate[]> => {
               const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').first('id')
               if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found.', 404)
-              if (!agentsEnabled || !mediaAuthorized || currentMediaGrantRevoked || currentMediaProfileChanged) return []
-              const version = await transaction('agentProviderProfileVersions')
+              if (!agentsEnabled || !mediaAuthorized) return []
+              const version = await transaction<{ transportKind: AgentProviderTransportKind; baseUrl: string; adapterConfig: string }>(
+                'agentProviderProfileVersions'
+              )
                 .where({ id: resolvedAdmission.providerProfileVersionId })
                 .first('transportKind', 'baseUrl', 'adapterConfig')
               if (!version) return []
               const config = AgentProviderAdapterConfigSchema.parse(JSON.parse(version.adapterConfig))
-              const nativeMedia = version.transportKind === 'gemini-api' && new URL(version.baseUrl).origin === 'https://generativelanguage.googleapis.com'
-              const media = {
-                attachments: nativeMedia && config.media?.attachments === true,
-                imageGeneration: nativeMedia && config.media?.imageGeneration !== undefined,
-                videoGeneration: false,
-                musicGeneration: false,
-                transcription: nativeMedia && config.media?.transcription !== undefined
-              }
+              const mediaInputs = agentProviderMediaInputs(version.transportKind, config)
               return [
                 {
                   profileId: resolvedAdmission.providerProfileVersionId,
@@ -792,9 +838,9 @@ describe('ordinary-origin agent session API', () => {
                   authorized: true,
                   credentialReady: true,
                   conformed: true,
-                  modalities: media.attachments ? ['text', 'image', 'audio', 'video', 'file'] : ['text'],
-                  generationTools: media.imageGeneration ? ['image'] : [],
-                  transcription: media.transcription,
+                  modalities: ['text'],
+                  mediaInputs,
+                  inputMimeTypes: agentProviderMediaInputMimeTypes(version.transportKind, mediaInputs),
                   capabilities: {
                     streaming: true,
                     toolCalling: 'native',
@@ -806,12 +852,14 @@ describe('ordinary-origin agent session API', () => {
                     maxOutputTokens: 4_000
                   },
                   pricing: null,
-                  media,
-                  admission: resolvedAdmission
+                  admission: { ...resolvedAdmission, transportKind: version.transportKind }
                 }
               ]
             }
           } as unknown as NonNullable<Parameters<typeof createAgentsHostController>[0]['providerRegistry']>
+        },
+        get mediaProviders() {
+          return mediaRegistry
         },
         agentRuntime: runtime
       })
@@ -856,7 +904,24 @@ describe('ordinary-origin agent session API', () => {
     }
   })
 
-  it.each(['permission', 'profile', 'grant'] as const)('rechecks current %s authority for a text run that later invokes the image tool', async revocation => {
+  it.each([
+    ['permission', 'AGENT_ACCESS_REVOKED', 403],
+    ['profile', 'MEDIA_PROVIDER_CHANGED', 409],
+    ['grant', 'AGENT_MEDIA_DISABLED', 403]
+  ] as const)('rechecks current %s authority for a text run that later invokes the image tool', async (revocation, errorCode, status) => {
+    const profile = await createTestMediaProvider(
+      {
+        kind: 'image',
+        api: 'gemini-generate-content',
+        model: 'gemini-3.1-flash-image',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        timeoutMs: 30_000,
+        maxInputTokens: 16_000,
+        maxOutputTokens: 4_000,
+        pricing: { kind: 'tokens', pricingRevision: 'USD|1|1' }
+      },
+      [1]
+    )
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
     const admitted = await runtime.submit({
@@ -865,16 +930,36 @@ describe('ordinary-origin agent session API', () => {
       expectedSessionVersion: 1,
       profileResolutionToken: 'test',
       clientRequestId: randomUUID(),
-      content: 'Create an illustration.'
+      content: 'Create an illustration.',
+      generationTools: ['image']
     })
-    revokeMediaInEngine = revocation
+    revokeMediaInEngine = async () => {
+      if (revocation === 'permission') await db('groups').where({ id: 1 }).update({ permissions: '[]' })
+      else if (revocation === 'profile')
+        await mediaRegistry.update(
+          profile.id,
+          {
+            displayName: profile.displayName,
+            config: { ...profile.config, maxOutputTokens: 2_000 },
+            exposureMode: 'groups',
+            groupIds: [1]
+          },
+          profile.revision,
+          { id: 7, authVersion: 1 }
+        )
+      else await db('agentMediaProviderGrants').where({ providerId: profile.id }).delete()
+    }
     await runtime.runOnce()
-    expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode')).toEqual({
-      status: 'failed',
-      errorCode: 'AGENT_ENGINE_FAILED'
-    })
+    expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode')).toEqual({ status: 'failed', errorCode })
+    expect(engineMediaBindings?.image).toBe(profile.profileVersionId)
     expect(mediaAuthorizationChecks).toBe(1)
+    expect(generateMedia).not.toHaveBeenCalled()
     expect((await db('agentMessages').where({ id: admitted.run.assistantMessageId }).first('content')).content).toBe('')
+    expect(normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first('consumedTokens', 'consumedCostMicros'))).toEqual({
+      consumedTokens: 0,
+      consumedCostMicros: 0
+    })
+    expect(JSON.parse(String(runtimeLogs[0]))).toMatchObject({ errorCode, status, unsettledExposure: { tokens: 0, costMicros: 0 } })
   })
   it('rejects new media uploads when Wiki Agent is globally disabled', async () => {
     agentsEnabled = false
@@ -885,6 +970,31 @@ describe('ordinary-origin agent session API', () => {
     expect(response.status).toBe(404)
     expect(await response.json()).toMatchObject({ error: 'AGENT_ROUTE_DISABLED' })
   })
+  const attachmentPdf = (contentByteLength = 0): Buffer => {
+    const pdf = new PdfFixtureDocument()
+    const catalog = pdf.reserveObject()
+    const pages = pdf.reserveObject()
+    const page = pdf.reserveObject()
+    const content = pdf.addStream('', Buffer.alloc(contentByteLength, 32))
+    pdf.setObject(catalog, `<< /Type /Catalog /Pages ${pages} 0 R >>`)
+    pdf.setObject(pages, `<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`)
+    pdf.setObject(page, `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents ${content} 0 R >>`)
+    return pdf.toBuffer(catalog, contentByteLength + 4_096)
+  }
+  const createTestMediaProvider = async (config: AgentMediaProviderConfig, groupIds?: readonly number[]) => {
+    const actor = { id: 7, authVersion: 1 }
+    const profile = await mediaRegistry.create(
+      {
+        displayName: `Fixture ${config.kind}`,
+        exposureMode: groupIds ? 'groups' : 'all_agent_users',
+        ...(groupIds ? { groupIds: [...groupIds] } : {}),
+        config,
+        secretValue: `fixture-${config.kind}-key`
+      },
+      actor
+    )
+    return mediaRegistry.setEnabled(profile.id, true, profile.revision, actor)
+  }
   const enableTestMedia = async () => {
     mediaUploadEnabled = true
     await db('agentProviderProfileVersions')
@@ -895,19 +1005,26 @@ describe('ordinary-origin agent session API', () => {
         adapterConfig: JSON.stringify({
           timeoutMs: 30000,
           maxRetries: 0,
-          media: {
-            attachments: true,
-            imageGeneration: { model: 'gemini-3.1-flash-image', pricingRevision: 'USD|1|1' },
-            transcription: { model: 'gemini-3.5-transcribe', pricingRevision: 'USD|1|1' }
-          }
+          mediaInputs: { images: true, documents: true, audio: true, video: true }
         })
       })
+    const common = {
+      api: 'gemini-generate-content' as const,
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      timeoutMs: 30_000,
+      maxInputTokens: 16_000,
+      maxOutputTokens: 4_000,
+      pricing: { kind: 'tokens' as const, pricingRevision: 'USD|1|1' }
+    }
+    await createTestMediaProvider({ ...common, kind: 'image', model: 'gemini-3.1-flash-image' })
+    await createTestMediaProvider({ ...common, kind: 'transcription', model: 'gemini-3.5-transcribe' })
   }
-  const seedAttachmentAsset = async () => {
+  const seedAttachmentAsset = async (asset?: { payload: Buffer; filename: string; ext: string }) => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
-    const payload = Buffer.from('%PDF-1.7\nexisting Wiki document')
+    const payload = asset?.payload ?? attachmentPdf()
+    const filename = asset?.filename ?? 'brief.pdf'
     await db.schema.createTable('assets', table => {
       table.integer('id').primary()
       table.string('filename')
@@ -928,10 +1045,10 @@ describe('ordinary-origin agent session API', () => {
     await db('assetFolders').insert({ id: 12, parentId: null, slug: 'documents' })
     await db('assets').insert({
       id: 34,
-      filename: 'brief.pdf',
+      filename,
       folderId: 12,
-      hash: assetHelper.generateHash('documents/brief.pdf'),
-      ext: 'pdf',
+      hash: assetHelper.generateHash(`documents/${filename}`),
+      ext: asset?.ext ?? 'pdf',
       fileSize: payload.length
     })
     await db('assetData').insert({ id: 34, data: payload })
@@ -984,29 +1101,362 @@ describe('ordinary-origin agent session API', () => {
     expect(assetAccessPaths).toEqual([])
     expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
   })
-  const uploadForm = (sessionId: string, body: FormData) =>
-    fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/media`, {
+  const uploadForm = (sessionId: string, body: FormData, purpose: 'attachment' | 'transcription' = 'attachment') =>
+    fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/media${purpose === 'transcription' ? '?purpose=transcription' : ''}`, {
       method: 'POST',
       headers: { cookie, origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
       body
     })
   const recordingWav = (): Buffer => {
-    const bytes = Buffer.alloc(46)
+    const sampleRate = 16_000
+    const sampleCount = sampleRate / 2
+    const dataBytes = sampleCount * 2
+    const bytes = Buffer.alloc(44 + dataBytes)
     bytes.write('RIFF', 0)
-    bytes.writeUInt32LE(38, 4)
+    bytes.writeUInt32LE(bytes.length - 8, 4)
     bytes.write('WAVEfmt ', 8)
     bytes.writeUInt32LE(16, 16)
     bytes.writeUInt16LE(1, 20)
     bytes.writeUInt16LE(1, 22)
-    bytes.writeUInt32LE(16000, 24)
-    bytes.writeUInt32LE(32000, 28)
+    bytes.writeUInt32LE(sampleRate, 24)
+    bytes.writeUInt32LE(sampleRate * 2, 28)
     bytes.writeUInt16LE(2, 32)
     bytes.writeUInt16LE(16, 34)
     bytes.write('data', 36)
-    bytes.writeUInt32LE(2, 40)
+    bytes.writeUInt32LE(dataBytes, 40)
+    for (let sample = 0; sample < sampleCount; sample += 1) {
+      bytes.writeInt16LE(Math.round(8_000 * Math.sin((2 * Math.PI * 440 * sample) / sampleRate)), 44 + sample * 2)
+    }
     return bytes
   }
-  it.each(['audio/wav', 'audio/webm', 'image/png', 'application/pdf'] as const)(
+  const playableMedia = async (mimeType: 'video/mp4' | 'video/webm' | 'audio/mp4' | 'audio/mpeg' | 'audio/webm'): Promise<Buffer> => {
+    const directory = await mkdtemp(join(tmpdir(), 'wiki-agent-http-media-'))
+    try {
+      const video = mimeType.startsWith('video/')
+      const path = join(directory, mimeType.endsWith('/mp4') ? 'clip.mp4' : mimeType.endsWith('/webm') ? 'clip.webm' : 'song.mp3')
+      const child = spawnSync(
+        'ffmpeg',
+        [
+          '-nostdin',
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-f',
+          'lavfi',
+          '-i',
+          video ? 'color=c=blue:s=16x16:r=4:d=0.5' : 'sine=frequency=440:sample_rate=48000:duration=0.5',
+          '-threads',
+          '1',
+          ...(video
+            ? mimeType === 'video/webm'
+              ? ['-c:v', 'libvpx', '-pix_fmt', 'yuv420p']
+              : ['-c:v', 'mpeg4', '-pix_fmt', 'yuv420p', '-movflags', '+faststart']
+            : mimeType === 'audio/webm'
+              ? ['-c:a', 'libopus']
+              : mimeType === 'audio/mp4'
+                ? ['-c:a', 'aac']
+                : ['-c:a', 'libmp3lame', '-b:a', '32k']),
+          path
+        ],
+        { timeout: 10_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL' }
+      )
+      if (child.error || child.status !== 0) throw new Error(`Cannot create complete HTTP media fixture: ${child.error?.message ?? child.stderr.toString()}`)
+      return await readFile(path)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+  it.each(['audio/wav', 'audio/webm', 'audio/mp4', 'video/webm', 'video/mp4'] as const)(
+    'imports a genuine authorized Wiki %s asset only with the matching LLM input opt-in',
+    async mimeType => {
+      const payload = mimeType === 'audio/wav' ? recordingWav() : await playableMedia(mimeType)
+      const ext = mimeType.split('/')[1]!
+      const filename = `reference.${ext}`
+      const { sessionId } = await seedAttachmentAsset({ payload, filename, ext })
+      vi.stubGlobal('WIKI', { auth: { checkAccess: () => true } })
+      await db('agentProviderProfileVersions')
+        .where({ id: '00000000-0000-4000-8000-000000000070' })
+        .update({
+          adapterConfig: JSON.stringify({
+            timeoutMs: 30_000,
+            maxRetries: 0,
+            mediaInputs: { images: false, documents: false, audio: mimeType.startsWith('audio/'), video: mimeType.startsWith('video/') }
+          })
+        })
+      const response = await importWikiAsset(sessionId)
+      expect(response.status).toBe(201)
+      const { media } = (await response.json()) as { media: { id: string; mimeType: string; filename: string; byteLength: number } }
+      expect(media).toMatchObject({ mimeType, filename, byteLength: payload.length })
+      const stored = await db('agentMedia').where({ id: media.id }).first()
+      expect(stored).toMatchObject({ ownerId: 7, sessionId, kind: 'attachment', mimeType })
+      expect(Buffer.from(stored.payload)).toEqual(payload)
+      expect(assetAccessPaths).toEqual([`documents/${filename}`, `documents/${filename}`])
+    }
+  )
+  it.each([
+    ['audio/wav', 'disabled input'],
+    ['video/webm', 'disabled input'],
+    ['audio/webm', 'opposite input'],
+    ['audio/mp4', 'opposite input'],
+    ['video/webm', 'opposite input'],
+    ['video/mp4', 'opposite input'],
+    ['audio/wav', 'unauthorized asset'],
+    ['video/webm', 'unauthorized asset'],
+    ['audio/wav', 'corrupt bytes'],
+    ['video/webm', 'corrupt bytes']
+  ] as const)('denies Wiki %s asset import for %s before attachment persistence', async (mimeType, reason) => {
+    const genuine = mimeType === 'audio/wav' ? recordingWav() : await playableMedia(mimeType)
+    const payload = reason === 'corrupt bytes' ? genuine.subarray(0, mimeType === 'audio/wav' ? 44 : 16) : genuine
+    const ext = mimeType.split('/')[1]!
+    const { sessionId } = await seedAttachmentAsset({ payload, filename: `reference.${ext}`, ext })
+    vi.stubGlobal('WIKI', { auth: { checkAccess: () => true } })
+    if (reason === 'disabled input' || reason === 'opposite input') {
+      await db('agentProviderProfileVersions')
+        .where({ id: '00000000-0000-4000-8000-000000000070' })
+        .update({
+          adapterConfig: JSON.stringify({
+            timeoutMs: 30_000,
+            maxRetries: 0,
+            mediaInputs: {
+              images: true,
+              documents: true,
+              audio: reason === 'opposite input' && mimeType.startsWith('video/'),
+              video: reason === 'opposite input' && mimeType.startsWith('audio/')
+            }
+          })
+        })
+    }
+    if (reason === 'unauthorized asset') assetAccessAllowed = false
+    const response = await importWikiAsset(sessionId)
+    expect(response.status).toBe(reason === 'corrupt bytes' ? 400 : 404)
+    if (reason === 'corrupt bytes') expect(await response.json()).toMatchObject({ error: 'INVALID_AGENT_MEDIA' })
+    if (reason === 'unauthorized asset') expect(await response.json()).toMatchObject({ error: 'AGENT_ASSET_UNAVAILABLE' })
+    expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
+  })
+  it('projects video-only image references without vision authority and requires the requested video tool at admission', async () => {
+    await enableTestMedia()
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 30_000, maxRetries: 0, mediaInputs: { images: false, documents: false, audio: false, video: false } })
+      })
+    await db('agentMediaProviders').update({ enabled: false, isDefault: false })
+    await createTestMediaProvider({
+      kind: 'video',
+      api: 'gemini-interactions',
+      model: 'gemini-omni-1.1-flash',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      timeoutMs: 30_000,
+      maxInputTokens: 16_000,
+      maxOutputTokens: 4_000,
+      pricing: { kind: 'tokens', pricingRevision: 'video-http|1000000|2000000', textOutputMicrosPerMillionTokens: 1_000_000 }
+    })
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const thread = await (await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })).json()
+    expect(thread.session.mediaCapabilities).toMatchObject({
+      attachments: true,
+      imageGeneration: false,
+      videoGeneration: true,
+      musicGeneration: false,
+      transcription: false,
+      inputModalities: { images: false, documents: false, audio: false, video: false },
+      inputMimeTypes: [],
+      mediaToolInputs: { video: { images: true, documents: false, audio: false, video: false } }
+    })
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'blue' } })
+      .png()
+      .toBuffer()
+    const form = new FormData()
+    form.append('file', new Blob([png], { type: 'image/png' }), 'reference.png')
+    const uploaded = await uploadForm(sessionId, form)
+    expect(uploaded.status).toBe(201)
+    const { media } = await uploaded.json()
+    const input = {
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test-profile-resolution',
+      clientRequestId: randomUUID(),
+      content: 'Animate this reference.',
+      attachmentIds: [media.id],
+      generationTools: []
+    }
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const rejected = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, { method: 'POST', headers, body: JSON.stringify(input) })
+    expect(rejected.status).toBe(403)
+    expect(await rejected.json()).toMatchObject({ error: 'AGENT_MEDIA_DISABLED' })
+    expect(await db('agentRuns').where({ sessionId }).first()).toBeUndefined()
+    expect((await db('agentMedia').where({ id: media.id }).first('runId')).runId).toBeNull()
+    const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...input, generationTools: ['video'] })
+    })
+    expect(admitted.status).toBe(202)
+    const admission = await admitted.json()
+    expect((await db('agentMedia').where({ id: media.id }).first('runId')).runId).toBe(admission.run.id)
+  })
+  it('keeps Stability text generation available without advertising or admitting image editing', async () => {
+    await enableTestMedia()
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 30_000, maxRetries: 0, mediaInputs: { images: false, documents: false, audio: false, video: false } })
+      })
+    await db('agentMediaProviders').update({ enabled: false, isDefault: false })
+    await createTestMediaProvider({
+      kind: 'image',
+      api: 'stability-images',
+      model: 'stable-image-core',
+      baseUrl: 'https://api.stability.ai/v2beta',
+      timeoutMs: 30_000,
+      maxInputTokens: 16_000,
+      maxOutputTokens: 4_000,
+      pricing: { kind: 'fixed', pricingRevision: 'stability-http', costMicros: 30_000 }
+    })
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const state = await (await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })).json()
+    expect(state.session.mediaCapabilities).toMatchObject({
+      attachments: false,
+      imageGeneration: true,
+      inputMimeTypes: [],
+      mediaToolInputs: { image: { images: false, documents: false, audio: false, video: false } }
+    })
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'red' } })
+      .png()
+      .toBuffer()
+    const form = new FormData()
+    form.append('file', new Blob([png], { type: 'image/png' }), 'edit.png')
+    expect((await uploadForm(sessionId, form)).status).toBe(404)
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: png, mimeType: 'image/png', filename: 'owned-reference.png' })
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const input = {
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test-profile-resolution',
+      clientRequestId: randomUUID(),
+      content: 'Edit this image.',
+      responseMode: 'image',
+      attachmentIds: [media.id]
+    }
+    const edit = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, { method: 'POST', headers, body: JSON.stringify(input) })
+    expect(edit.status).toBe(400)
+    expect(await edit.json()).toMatchObject({ error: 'INVALID_AGENT_MEDIA' })
+    expect(await db('agentRuns').where({ sessionId }).first()).toBeUndefined()
+    const generate = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...input, content: 'Generate a landscape.', attachmentIds: [] })
+    })
+    expect(generate.status).toBe(202)
+  })
+  it('projects exact Chat audio codecs, admits Gemini WebM, and keeps bound dictation separate from general input authority', async () => {
+    await enableTestMedia()
+    await db('agentMediaProviders').update({ enabled: false, isDefault: false })
+    const versionId = '00000000-0000-4000-8000-000000000070'
+    const audioInputs = { images: false, documents: false, audio: true, video: false }
+    await db('agentProviderProfileVersions')
+      .where({ id: versionId })
+      .update({
+        transportKind: 'openai-chat',
+        baseUrl: 'https://api.openai.com/v1',
+        adapterConfig: JSON.stringify({ timeoutMs: 30_000, maxRetries: 0, mediaInputs: audioInputs })
+      })
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const state = await (await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })).json()
+    expect(state.session.mediaCapabilities.inputMimeTypes).toEqual(['audio/wav', 'audio/mpeg'])
+    const webm = await playableMedia('audio/webm')
+    const unsupported = new FormData()
+    unsupported.append('file', new Blob([webm], { type: 'audio/webm' }), 'recording.webm')
+    expect((await uploadForm(sessionId, unsupported)).status).toBe(404)
+    expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
+    const wav = new FormData()
+    wav.append('file', new Blob([recordingWav()], { type: 'audio/x-wav' }), 'recording.wav')
+    const acceptedWav = await uploadForm(sessionId, wav)
+    expect(acceptedWav.status).toBe(201)
+    expect(await acceptedWav.json()).toMatchObject({ media: { mimeType: 'audio/wav' } })
+    await db('agentProviderProfileVersions')
+      .where({ id: versionId })
+      .update({ transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' })
+    const supported = new FormData()
+    supported.append('file', new Blob([webm], { type: 'audio/webm' }), 'recording.webm')
+    expect((await uploadForm(sessionId, supported)).status).toBe(201)
+    await db('agentProviderProfileVersions')
+      .where({ id: versionId })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 30_000, maxRetries: 0, mediaInputs: { images: false, documents: false, audio: false, video: false } })
+      })
+    const speech = (await mediaRegistry.list({ id: 7, authVersion: 1 })).find(provider => provider.config.kind === 'transcription')!
+    await mediaRegistry.setEnabled(speech.id, true, speech.revision, { id: 7, authVersion: 1 })
+    const dictationState = await (await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })).json()
+    expect(dictationState.session.mediaCapabilities).toMatchObject({ attachments: false, transcription: true, inputMimeTypes: [] })
+    const general = new FormData()
+    general.append('file', new Blob([webm], { type: 'audio/webm' }), 'general.webm')
+    expect((await uploadForm(sessionId, general)).status).toBe(404)
+    const dictation = new FormData()
+    dictation.append('file', new Blob([webm], { type: 'audio/webm' }), 'dictation.webm')
+    expect((await uploadForm(sessionId, dictation, 'transcription')).status).toBe(201)
+  })
+  it.each(['upload', 'asset'] as const)('rechecks live media grants after %s bytes are read and before private storage', async source => {
+    const sessionId = source === 'asset' ? (await seedAttachmentAsset()).sessionId : randomUUID()
+    if (source === 'upload') {
+      await enableTestMedia()
+      await insertAccountingSession(sessionId)
+    }
+    await db('agentProviderProfileVersions')
+      .where({ id: '00000000-0000-4000-8000-000000000070' })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 30_000, maxRetries: 0, mediaInputs: { images: false, documents: false, audio: false, video: false } })
+      })
+    const profile = (await mediaRegistry.list({ id: 7, authVersion: 1 })).find(provider => provider.config.kind === 'image')!
+    await db('userGroups').insert({ userId: 7, groupId: 3 })
+    const restricted = await mediaRegistry.update(
+      profile.id,
+      {
+        displayName: profile.displayName,
+        config: profile.config,
+        exposureMode: 'groups',
+        groupIds: [3]
+      },
+      profile.revision,
+      { id: 7, authVersion: 1 }
+    )
+    if (source === 'asset') {
+      const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'green' } })
+        .png()
+        .toBuffer()
+      await db('assets')
+        .where({ id: 34 })
+        .update({
+          filename: 'reference.png',
+          hash: assetHelper.generateHash('documents/reference.png'),
+          ext: 'png',
+          fileSize: png.length
+        })
+      await db('assetData').where({ id: 34 }).update({ data: png })
+      vi.stubGlobal('WIKI', { auth: { checkAccess: () => true } })
+      let reads = 0
+      assetAuthorityHook = async transaction => {
+        if (++reads === 2) await (transaction ?? db)('agentMediaProviderGrants').where({ providerId: restricted.id }).delete()
+      }
+      expect((await importWikiAsset(sessionId)).status).toBe(404)
+      expect(assetAccessPaths).toEqual(['documents/reference.png', 'documents/reference.png'])
+    } else {
+      let checks = 0
+      sessionConfigurationHook = async transaction => {
+        if (++checks === 2) await transaction('agentMediaProviderGrants').where({ providerId: restricted.id }).delete()
+      }
+      const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'green' } })
+        .png()
+        .toBuffer()
+      const form = new FormData()
+      form.append('file', new Blob([png], { type: 'image/png' }), 'reference.png')
+      expect((await uploadForm(sessionId, form)).status).toBe(404)
+    }
+    expect(await db('agentMedia').where({ sessionId }).first()).toBeUndefined()
+    expect(await db('agentRuns').where({ sessionId }).first()).toBeUndefined()
+  })
+  it.each(['audio/wav', 'image/png', 'application/pdf'] as const)(
     'accepts a real multipart %s attachment and preserves its owner and bytes',
     async mimeType => {
       await enableTestMedia()
@@ -1018,10 +1468,8 @@ describe('ordinary-origin agent session API', () => {
               .png()
               .toBuffer()
           : mimeType === 'application/pdf'
-            ? Buffer.from('%PDF-1.7\n%%EOF\n')
-            : mimeType === 'audio/wav'
-              ? recordingWav()
-              : Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80])
+            ? attachmentPdf()
+            : recordingWav()
       const body = new FormData()
       body.append('file', new Blob([payload], { type: mimeType }), 'attachment')
       const response = await uploadForm(sessionId, body)
@@ -1070,9 +1518,10 @@ describe('ordinary-origin agent session API', () => {
   )
   it('binds supported image generation and attachments with distinct replay identity', async () => {
     await enableTestMedia()
+    const imageProvider = (await mediaRegistry.list({ id: 7, authVersion: 1 })).find(provider => provider.config.kind === 'image')!
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
-    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: attachmentPdf(), mimeType: 'application/pdf', filename: 'brief.pdf' })
     const input = {
       clientRequestId: randomUUID(),
       expectedSessionVersion: 1,
@@ -1088,6 +1537,7 @@ describe('ordinary-origin agent session API', () => {
     const admission = (await response.json()) as { run: { id: string } }
     const queued = await db('agentEvents').where({ runId: admission.run.id, type: 'run.queued' }).first('data', 'dataSha256')
     expect(JSON.parse(queued.data).generationTools).toEqual(['image'])
+    expect(JSON.parse(queued.data).mediaBindings.image).toBe(imageProvider.profileVersionId)
     expect(queued.dataSha256).toBe(createHash('sha256').update(queued.data).digest('hex'))
     expect((await db('agentMedia').where({ id: media.id }).first('runId')).runId).toBe(admission.run.id)
     expect((await (await post(input)).json()) as unknown).toMatchObject({
@@ -1098,6 +1548,7 @@ describe('ordinary-origin agent session API', () => {
     expect((await post({ ...input, generationTools: undefined })).status).toBe(409)
     await runtime.runOnce()
     expect(engineGenerationTools).toEqual(['image'])
+    expect(engineMediaBindings?.image).toBe(imageProvider.profileVersionId)
     expect(engineMessages.flatMap(message => message.attachments ?? []).map(file => file.id)).toContain(media.id)
   })
   it.each([{ generationTools: undefined }, { generationTools: [] }] as const)(
@@ -1189,13 +1640,13 @@ describe('ordinary-origin agent session API', () => {
     const versionId = '00000000-0000-4000-8000-000000000070'
     const row = await db('agentProviderProfileVersions').where({ id: versionId }).first('adapterConfig')
     const config = JSON.parse(row.adapterConfig)
-    config.media.attachments = false
+    config.mediaInputs = { images: false, documents: false, audio: false, video: false }
     await db('agentProviderProfileVersions')
       .where({ id: versionId })
       .update({ adapterConfig: JSON.stringify(config) })
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
-    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'brief.pdf' })
+    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: attachmentPdf(), mimeType: 'application/pdf', filename: 'brief.pdf' })
     await expect(
       runtime.submit({
         ownerId: 7,
@@ -1209,68 +1660,109 @@ describe('ordinary-origin agent session API', () => {
       })
     ).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
   })
-  it('binds attachments atomically and includes attachment IDs and image mode in replay identity', async () => {
-    await enableTestMedia()
-    const sessionId = randomUUID()
-    await insertAccountingSession(sessionId)
-    const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf', filename: 'notes.pdf' })
-    const input = {
-      ownerId: 7,
-      sessionId,
-      expectedSessionVersion: 1,
-      profileResolutionToken: 'test',
-      clientRequestId: randomUUID(),
-      content: 'Read this file.',
-      attachmentIds: [media.id]
+  it.each(['text', 'image'] as const)(
+    'binds %s attachments atomically and includes attachment IDs and response mode in replay identity',
+    async responseMode => {
+      await enableTestMedia()
+      const sessionId = randomUUID()
+      await insertAccountingSession(sessionId)
+      const payload =
+        responseMode === 'image'
+          ? await sharp({ create: { width: 2, height: 2, channels: 3, background: 'green' } })
+              .png()
+              .toBuffer()
+          : attachmentPdf()
+      const media = await storeAgentMedia(db, {
+        ownerId: 7,
+        sessionId,
+        payload,
+        mimeType: responseMode === 'image' ? 'image/png' : 'application/pdf',
+        filename: responseMode === 'image' ? 'reference.png' : 'notes.pdf'
+      })
+      const input = {
+        ownerId: 7,
+        sessionId,
+        expectedSessionVersion: 1,
+        profileResolutionToken: 'test',
+        clientRequestId: randomUUID(),
+        content: responseMode === 'image' ? 'Edit this image.' : 'Read this file.',
+        responseMode,
+        generationTools: [],
+        attachmentIds: [media.id]
+      }
+      const admitted = await runtime.submit(input)
+      const replayed = await runtime.submit(input)
+      expect(replayed).toMatchObject({ replayed: true, run: { id: admitted.run.id } })
+      await expect(runtime.submit({ ...input, attachmentIds: [] })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+      const otherMode = responseMode === 'image' ? 'text' : 'image'
+      await expect(runtime.submit({ ...input, attachmentIds: [], responseMode: otherMode })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+      await expect(runtime.submit({ ...input, responseMode: otherMode })).rejects.toMatchObject({
+        code: responseMode === 'image' ? 'RUN_IDEMPOTENCY_MISMATCH' : 'INVALID_AGENT_MEDIA'
+      })
+      expect(normalizeAccountingRow(await db('agentRuns').where({ sessionId }).count({ count: '*' }).first())).toMatchObject({ count: 1 })
+      expect((await db('agentMedia').where({ id: media.id }).first()).runId).toBe(admitted.run.id)
+      await runtime.runOnce()
+      expect(engineGenerationTools).toEqual([])
+      expect(engineMessages.flatMap(message => message.attachments ?? []).map(file => file.id)).toContain(media.id)
+      if (responseMode === 'image') {
+        const imageProvider = (await mediaRegistry.list({ id: 7, authVersion: 1 })).find(provider => provider.config.kind === 'image')!
+        expect(engineMediaBindings?.image).toBe(imageProvider.profileVersionId)
+      }
+      const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+      expect(await response.json()).toMatchObject({ messages: [{ media: [{ id: media.id }] }, {}] })
+      ownerId = 8
+      expect((await fetch(`${baseUrl}/_api/agents/media/${media.id}/content`, { headers: { cookie } })).status).toBe(404)
     }
-    const admitted = await runtime.submit(input)
-    expect((await runtime.submit(input)).replayed).toBe(true)
-    await expect(runtime.submit({ ...input, attachmentIds: [] })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
-    await expect(runtime.submit({ ...input, attachmentIds: [], responseMode: 'image' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
-    await expect(runtime.submit({ ...input, responseMode: 'image' })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
-    expect((await db('agentMedia').where({ id: media.id }).first()).runId).toBe(admitted.run.id)
-    await runtime.runOnce()
-    expect(engineMessages.some(message => 'attachments' in message)).toBe(true)
-    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
-    expect(await response.json()).toMatchObject({ messages: [{ media: [{ id: media.id }] }, {}] })
-    ownerId = 8
-    expect((await fetch(`${baseUrl}/_api/agents/media/${media.id}/content`, { headers: { cookie } })).status).toBe(404)
-  })
+  )
   it('includes a PDF above 40 MiB in the admitted runtime prompt as a lazy source without loading its payload', async () => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
-    const payload = Buffer.alloc(41 * 1024 * 1024, 32)
-    payload.write('%PDF-1.7')
+    const payload = attachmentPdf(41 * 1024 * 1024)
+    expect(payload.length).toBeGreaterThan(40 * 1024 * 1024)
     const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType: 'application/pdf', filename: 'large.pdf' })
-    await runtime.submit({
-      ownerId: 7,
-      sessionId,
-      expectedSessionVersion: 1,
-      profileResolutionToken: 'test',
-      clientRequestId: randomUUID(),
-      content: 'Read the complete PDF.',
-      attachmentIds: [media.id]
-    })
     const queries: string[] = []
     const record = (query: { sql: string }) => queries.push(query.sql)
     db.on('query', record)
-    await runtime.runOnce()
-    db.off('query', record)
+    try {
+      await runtime.submit({
+        ownerId: 7,
+        sessionId,
+        expectedSessionVersion: 1,
+        profileResolutionToken: 'test',
+        clientRequestId: randomUUID(),
+        content: 'Read the complete PDF.',
+        attachmentIds: [media.id]
+      })
+      await runtime.runOnce()
+    } finally {
+      db.off('query', record)
+    }
     const attachment = engineMessages.flatMap(message => message.attachments ?? []).find(file => file.id === media.id)
     expect(attachment?.byteLength).toBe(payload.length)
     expect(attachment?.payload).toBeUndefined()
     expect(attachment?.preparePdf).toBeTypeOf('function')
-    expect(queries.some(sql => /select \*/.test(sql) && sql.includes('agentMedia'))).toBe(false)
+    const mediaReads = queries.filter(sql => /^\s*select\b/i.test(sql) && /\bfrom\s+["`]agentMedia["`](?=\s|$)/.test(sql))
+    expect(mediaReads.length).toBeGreaterThan(0)
+    expect(mediaReads.some(sql => /\bselect\s+\*|["`]payload["`]/i.test(sql))).toBe(false)
     expect(engineMessages.some(message => message.content.includes('Attachment content is unavailable'))).toBe(false)
+    const signal = new AbortController().signal
+    await attachment!.authorizePayload!(signal)
+    await db('agentMedia')
+      .where({ id: media.id })
+      .update({ sha256: '0'.repeat(64) })
+    await expect(attachment!.authorizePayload!(signal)).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
   })
-  it.each(['video', 'music'] as const)('rejects unsupported %s generation before admission or attachment storage', async mode => {
+  it.each(['video', 'music'] as const)('rejects unavailable %s generation before admission or attachment storage', async mode => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
     await db('agentProviderProfileVersions')
       .where({ id: '00000000-0000-4000-8000-000000000070' })
-      .update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: false } }) })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, mediaInputs: { images: false, documents: false, audio: false, video: false } })
+      })
+    await db('agentMediaProviders').update({ enabled: false, isDefault: false })
     const input = {
       ownerId: 7,
       sessionId,
@@ -1293,10 +1785,13 @@ describe('ordinary-origin agent session API', () => {
       imageGeneration: false,
       videoGeneration: false,
       musicGeneration: false,
-      transcription: false
+      transcription: false,
+      inputModalities: { images: false, documents: false, audio: false, video: false },
+      inputMimeTypes: [],
+      mediaToolInputs: {}
     })
     const pdfForm = new FormData()
-    pdfForm.append('file', new Blob(['%PDF-1.7'], { type: 'application/pdf' }), 'brief.pdf')
+    pdfForm.append('file', new Blob([attachmentPdf()], { type: 'application/pdf' }), 'brief.pdf')
     expect((await uploadForm(sessionId, pdfForm)).status).toBe(404)
     expect(normalizeAccountingRow(await db('agentRuns').count({ count: '*' }).first())).toMatchObject({ count: 0 })
     expect(normalizeAccountingRow(await db('agentQuotaReservations').count({ count: '*' }).first())).toMatchObject({ count: 0 })
@@ -1318,7 +1813,7 @@ describe('ordinary-origin agent session API', () => {
     }
     const admitted = await runtime.submit(input)
     await runtime.runOnce()
-    const payload = Buffer.from(mode === 'video' ? '\0\0\0\x18ftypisom0000000000000000' : 'ID3generated music bytes')
+    const payload = await playableMedia(mode === 'video' ? 'video/mp4' : 'audio/mpeg')
     const kind = mode === 'video' ? 'generated-video' : 'generated-audio'
     const stored = { id: randomUUID(), byteLength: payload.length }
     // This is a persisted historical receipt, not a claim that today's native provider can generate these formats.
@@ -1367,7 +1862,7 @@ describe('ordinary-origin agent session API', () => {
       expect(response.status).toBe(206)
       expect(Buffer.from(await response.arrayBuffer())).toEqual(expected)
     }
-    for (const header of ['bytes=999-1000', 'bytes=9-2', 'bytes=0-1,4-5', 'bytes=-0']) {
+    for (const header of [`bytes=${payload.length}-${payload.length + 1}`, 'bytes=9-2', 'bytes=0-1,4-5', 'bytes=-0']) {
       const response = await fetch(mediaUrl, { headers: { cookie, range: header } })
       expect(response.status).toBe(416)
       expect(response.headers.get('content-range')).toBe(`bytes */${payload.length}`)
@@ -1398,7 +1893,7 @@ describe('ordinary-origin agent session API', () => {
     const media = await storeAgentMedia(db, {
       ownerId: 7,
       sessionId,
-      payload: Buffer.from('RIFF0000WAVE0000'),
+      payload: recordingWav(),
       mimeType: 'audio/wav',
       filename: 'recording.wav'
     })
@@ -1416,6 +1911,21 @@ describe('ordinary-origin agent session API', () => {
     const after = await fetch(`${baseUrl}/_api/agents/runs/${runId}/transcription`, { headers: { cookie } })
     expect(after.headers.get('cache-control')).toBe('private, no-store')
     expect(await after.json()).toEqual({ status: 'succeeded', text: 'Hello from the deterministic engine.' })
+    expect(normalizeAccountingRow(await db('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens'))).toMatchObject({
+      status: 'succeeded',
+      inputTokens: 3,
+      outputTokens: 5,
+      totalTokens: 8
+    })
+    expect(normalizeAccountingRow(await db('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros'))).toMatchObject({
+      status: 'consumed',
+      consumedTokens: 8,
+      consumedCostMicros: 8
+    })
+    expect(normalizeAccountingRow(await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'reservedCostMicros'))).toMatchObject({
+      reservedTokens: 0,
+      reservedCostMicros: 0
+    })
     expect(await db('agentMedia').where({ id: media.id }).first()).toBeUndefined()
     const thread = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
     expect(await thread.json()).toMatchObject({ messages: [] })
@@ -1499,42 +2009,52 @@ describe('ordinary-origin agent session API', () => {
     const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
     expect(response.status).toBe(200)
     const thread = await response.json()
-    expect(thread.session.mediaCapabilities).toEqual({
+    expect(thread.session.mediaCapabilities).toMatchObject({
       attachments: true,
       imageGeneration: true,
       videoGeneration: false,
       musicGeneration: false,
-      transcription: true
+      transcription: true,
+      inputModalities: { images: true, documents: true, audio: true, video: true },
+      mediaToolInputs: {
+        image: { images: true, documents: false, audio: false, video: false },
+        transcription: { images: false, documents: false, audio: true, video: false }
+      }
     })
+    expect(thread.session.mediaCapabilities.inputMimeTypes).toContain('video/webm')
     expect(thread).not.toHaveProperty('profiles')
     expect(thread).not.toHaveProperty('models')
     expect(thread.session).not.toHaveProperty('model')
     expect(thread.session).not.toHaveProperty('transportKind')
     await db('agentProviderProfileVersions')
       .where({ id: '00000000-0000-4000-8000-000000000070' })
-      .update({ adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, media: { attachments: false } }) })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 30000, maxRetries: 0, mediaInputs: { images: false, documents: false, audio: false, video: false } })
+      })
     const disabled = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
     expect(disabled.status).toBe(200)
-    expect((await disabled.json()).session.mediaCapabilities).toEqual({
-      attachments: false,
-      imageGeneration: false,
+    expect((await disabled.json()).session.mediaCapabilities).toMatchObject({
+      attachments: true,
+      imageGeneration: true,
       videoGeneration: false,
       musicGeneration: false,
-      transcription: false
+      transcription: true,
+      inputModalities: { images: false, documents: false, audio: false, video: false },
+      inputMimeTypes: []
     })
   })
 
   it.each([
     { transportKind: 'openai-responses', baseUrl: 'https://api.example.test/v1' },
     { transportKind: 'gemini-api', baseUrl: 'https://gemini-proxy.example.test/v1beta' }
-  ])('does not advertise Gemini media for $transportKind at $baseUrl', async configuration => {
+  ])('retains independent generation when the inference transport changes to $transportKind at $baseUrl', async configuration => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
     await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000070' }).update(configuration)
     const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
     expect(response.status).toBe(200)
-    expect((await response.json()).session.mediaCapabilities).toBeNull()
+    expect((await response.json()).session.mediaCapabilities).toMatchObject({ imageGeneration: true, transcription: true })
   })
 
   it('projects safe terminal assistant outcomes without treating terminal runs as current or crossing run ownership', async () => {

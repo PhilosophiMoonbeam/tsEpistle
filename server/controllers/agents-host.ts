@@ -7,6 +7,7 @@ import { readAgentWikiAsset } from '../agents/wiki-assets.ts'
 import { sweepAgentPdfCache } from '../agents/pdf-cache.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
+import { getAuthenticatedUserContext } from '../helpers/request-auth.ts'
 import {
   AGENT_MEDIA_MAX_BYTES,
   readOwnedAgentMediaRange,
@@ -22,8 +23,25 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Knex } from 'knex'
 import { z, ZodError } from 'zod'
 
-import { AGENT_GENERATION_TOOLS, isTerminalAgentRunStatus, type DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
+import {
+  AGENT_GENERATION_TOOLS,
+  isTerminalAgentRunStatus,
+  type AgentMediaCapabilities,
+  type DecideAgentApprovalRequest
+} from '../../shared/agents/contracts.ts'
 import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
+import {
+  AGENT_PROVIDER_MEDIA_INPUT_SUPPORT,
+  agentMediaToolInputs,
+  agentProviderMediaInputMimeTypes,
+  normalizeAgentMediaMimeType,
+  AgentMediaProviderConfigSchema,
+  AgentMediaProviderWriteSchema,
+  type AgentMediaInputs,
+  type AgentMediaKind,
+  type AgentMediaProviderActor
+} from '../../shared/agents/media-providers.ts'
+import { listAgentMediaBindings, type AgentMediaProviderRegistry } from '../agents/media-providers.ts'
 
 import { SkillValidationError } from '../agents/skills/parser.ts'
 import { agentCsrfMatches } from '../agents/csrf.ts'
@@ -45,9 +63,11 @@ import { DEFAULT_AGENT_GOAL_LIMITS, projectAgentGoal, type AgentGoalRecord } fro
 import { AgentMemoryRepository, encodeAgentMemorySnapshot } from '../agents/memory.ts'
 import {
   AgentProviderAdapterConfigSchema,
+  agentProviderMediaInputs,
   CreateAgentProviderProfileSchema,
   UpdateAgentProviderProfileSchema,
-  type AgentProviderRegistry
+  type AgentProviderRegistry,
+  type AgentProviderTransportKind
 } from '../agents/providers/registry.ts'
 import type { AgentProviderConformanceRunner } from '../agents/providers/conformance.ts'
 import type { AgentProductRuntime } from '../agents/runtime.ts'
@@ -128,6 +148,7 @@ interface AgentHostWiki extends AgentControlServices {
     | 'update'
   >
   readonly providerConformance?: Pick<AgentProviderConformanceRunner, 'latest' | 'list' | 'listLatest' | 'run'>
+  readonly mediaProviders?: Pick<AgentMediaProviderRegistry, 'list' | 'create' | 'update' | 'remove' | 'setEnabled' | 'setDefault'>
   readonly agentLimits?: AgentOperationalLimits
 }
 
@@ -153,6 +174,39 @@ const requestUser = (req: Request): Express.User => {
     throw new SkillValidationError('Authenticated user is required')
   }
   return req.user
+}
+
+const requestMediaProviderActor = (req: Request): AgentMediaProviderActor => {
+  const user = requestUser(req)
+  const version = z.number().int().nonnegative().safeParse(Reflect.get(user, 'authVersion'))
+  if (!version.success) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Current account session is required', 401)
+  return { id: getAuthenticatedUserContext(req).userId, authVersion: version.data }
+}
+
+const MediaProviderRevisionSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+const UpdateMediaProviderSchema = AgentMediaProviderWriteSchema.safeExtend({ expectedRevision: MediaProviderRevisionSchema })
+const MediaProviderRevisionBodySchema = z.strictObject({ expectedRevision: MediaProviderRevisionSchema })
+const MediaProviderEnabledSchema = MediaProviderRevisionBodySchema.extend({ enabled: z.boolean() })
+const parseMediaProviderBody = <T>(schema: z.ZodType<T>, body: unknown): T => {
+  const parsed = schema.safeParse(body)
+  if (!parsed.success) throw new AgentRepositoryError('INVALID_MEDIA_PROVIDER_CONFIG', 'Media provider settings are invalid', 400)
+  return parsed.data
+}
+
+const toolImageMimeTypes = agentProviderMediaInputMimeTypes('gemini-api', { images: true, documents: false, audio: false, video: false })
+const transcriptionAudioMimeTypes = agentProviderMediaInputMimeTypes('gemini-api', { images: false, documents: false, audio: true, video: false })
+const allowsMediaUpload = (
+  capabilities: Required<AgentMediaCapabilities>,
+  declaredType: string,
+  purpose: 'attachment' | 'transcription' = 'attachment'
+): boolean => {
+  const mimeType = normalizeAgentMediaMimeType(declaredType)
+  if (purpose === 'transcription') {
+    const inputs = capabilities.mediaToolInputs.transcription
+    return inputs?.audio === true && transcriptionAudioMimeTypes.includes(mimeType)
+  }
+  if (capabilities.inputMimeTypes.includes(mimeType)) return true
+  return (capabilities.mediaToolInputs.image?.images === true || capabilities.mediaToolInputs.video?.images === true) && toolImageMimeTypes.includes(mimeType)
 }
 
 const asyncRoute =
@@ -366,31 +420,52 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     const registry = wiki.providerRegistry
     if (!wiki.config.agents.provider.enabled || !registry) return { profileResolutionToken: null, mediaCapabilities: null }
     const profileResolutionToken = await registry.issueResolutionToken(ownerId, sessionId)
-    const mediaCapabilities = await wiki.models.knex.transaction(async transaction => {
+    const mediaConfiguration = await wiki.models.knex.transaction(async transaction => {
       const admission = await registry.resolve(transaction, { ownerId, sessionId, profileResolutionToken })
       const candidates = registry.listRoutingCandidates ? await registry.listRoutingCandidates(transaction, { ownerId, sessionId }) : []
       const versionIds = [...new Set([admission.providerProfileVersionId, ...candidates.map(candidate => candidate.profileVersionId)])]
-      const versions = await transaction('agentProviderProfileVersions').whereIn('id', versionIds).select('id', 'transportKind', 'baseUrl', 'adapterConfig')
+      const versions = await transaction<{ id: string; transportKind: AgentProviderTransportKind; adapterConfig: unknown }>('agentProviderProfileVersions')
+        .whereIn('id', versionIds)
+        .select('id', 'transportKind', 'adapterConfig')
       if (!versions.some(version => version.id === admission.providerProfileVersionId))
         throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Automatic provider configuration changed', 409)
-      let mediaEnabled = false
-      let attachments = false
-      let imageGeneration = false
-      let transcription = false
+      const inputModalities: AgentMediaInputs = { images: false, documents: false, audio: false, video: false }
+      const inputMimeTypes = new Set<string>()
       for (const version of versions) {
         const config = AgentProviderAdapterConfigSchema.parse(
           typeof version.adapterConfig === 'string' ? JSON.parse(version.adapterConfig) : version.adapterConfig
         )
-        if (version.transportKind !== 'gemini-api' || new URL(version.baseUrl).origin !== 'https://generativelanguage.googleapis.com' || !config.media) continue
-        mediaEnabled = true
-        attachments ||= Boolean(config.media.attachments)
-        imageGeneration ||= Boolean(config.media.imageGeneration)
-        transcription ||= Boolean(config.media.transcription)
+        if (!AGENT_PROVIDER_MEDIA_INPUT_SUPPORT[version.transportKind])
+          throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider transport is invalid', 500)
+        const declared = agentProviderMediaInputs(version.transportKind, config)
+        for (const modality of ['images', 'documents', 'audio', 'video'] as const) inputModalities[modality] ||= declared[modality]
+        for (const mimeType of agentProviderMediaInputMimeTypes(version.transportKind, declared)) inputMimeTypes.add(mimeType)
       }
-      return mediaEnabled ? { attachments, imageGeneration, transcription, videoGeneration: false, musicGeneration: false } : null
+      const bindings = await listAgentMediaBindings(transaction, ownerId)
+      const mediaToolInputs: Partial<Record<AgentMediaKind, Readonly<AgentMediaInputs>>> = {}
+      for (const kind of ['image', 'video', 'music', 'transcription'] as const) {
+        const versionId = bindings[kind]
+        if (!versionId) continue
+        const version = await transaction('agentMediaProviderVersions').where({ id: versionId }).first('config')
+        const config = AgentMediaProviderConfigSchema.parse(typeof version?.config === 'string' ? JSON.parse(version.config) : version?.config)
+        mediaToolInputs[kind] = agentMediaToolInputs(config)
+      }
+      const referenceImages = mediaToolInputs.image?.images === true || mediaToolInputs.video?.images === true
+      return {
+        mediaCapabilities: {
+          attachments: inputMimeTypes.size > 0 || referenceImages,
+          imageGeneration: Boolean(bindings.image),
+          videoGeneration: Boolean(bindings.video),
+          musicGeneration: Boolean(bindings.music),
+          transcription: Boolean(bindings.transcription),
+          inputModalities,
+          inputMimeTypes: [...inputMimeTypes],
+          mediaToolInputs
+        } satisfies Required<AgentMediaCapabilities>
+      }
     })
     signal?.throwIfAborted()
-    return { profileResolutionToken, mediaCapabilities }
+    return { profileResolutionToken, ...mediaConfiguration }
   }
   const projectSession = async (ownerId: number, sessionId: string, signal?: AbortSignal) => {
     const configuration = await resolveSessionConfiguration(ownerId, sessionId, signal)
@@ -544,8 +619,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const { assetId } = z.strictObject({ assetId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).parse(req.body)
       const ownerId = requestSkillPrincipal(req).userId
       const { mediaCapabilities } = await resolveSessionConfiguration(ownerId, sessionId, signal)
-      if (!mediaCapabilities?.attachments && !mediaCapabilities?.imageGeneration && !mediaCapabilities?.videoGeneration && !mediaCapabilities?.musicGeneration)
-        return disabledRoute(res)
+      if (!mediaCapabilities?.attachments) return disabledRoute(res)
       return mediaUploads.run(ownerId, async () => {
         const source = await readAgentWikiAsset(wiki.models.knex, {
           assetId,
@@ -561,7 +635,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
               throw new AgentRepositoryError('AGENT_ASSET_LOCKED', 'Unlock the page that protects this asset before attaching it.', 403)
           }
         })
-        if (source.mimeType === 'application/pdf' && !mediaCapabilities.attachments) return disabledRoute(res)
+        const current = await resolveSessionConfiguration(ownerId, sessionId, signal)
+        if (!current.mediaCapabilities || !allowsMediaUpload(current.mediaCapabilities, source.mimeType)) return disabledRoute(res)
         signal.throwIfAborted()
         const media = await storeAgentMedia(wiki.models.knex, { ownerId, sessionId, ...source })
         return res.status(201).json({ media: projectAgentMedia(media) })
@@ -573,31 +648,15 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     asyncRoute(async (req, res, signal) => {
       if (!wiki.config.agents.enabled || !wiki.config.agents.provider.enabled || !wiki.providerRegistry) return disabledRoute(res)
       const sessionId = UUIDSchema.parse(routeParameter(req, 'sessionId'))
+      const purpose = z.enum(['attachment', 'transcription']).default('attachment').parse(req.query.purpose)
       const ownerId = requestSkillPrincipal(req).userId
       const { mediaCapabilities } = await resolveSessionConfiguration(ownerId, sessionId, signal)
-      if (
-        !mediaCapabilities ||
-        (!mediaCapabilities.attachments &&
-          !mediaCapabilities.transcription &&
-          !mediaCapabilities.imageGeneration &&
-          !mediaCapabilities.videoGeneration &&
-          !mediaCapabilities.musicGeneration)
-      )
-        return disabledRoute(res)
+      if (!mediaCapabilities || (purpose === 'transcription' ? !mediaCapabilities.transcription : !mediaCapabilities.attachments)) return disabledRoute(res)
       return mediaUploads.run(ownerId, async () => {
         await parseAgentMediaUpload(parseMedia, req, res, signal)
         signal.throwIfAborted()
-        if (
-          !req.file ||
-          (req.file.mimetype.startsWith('audio/')
-            ? !mediaCapabilities.transcription
-            : !mediaCapabilities.attachments &&
-              !(
-                req.file.mimetype.startsWith('image/') &&
-                (mediaCapabilities.imageGeneration || mediaCapabilities.videoGeneration || mediaCapabilities.musicGeneration)
-              ))
-        )
-          return disabledRoute(res)
+        const current = await resolveSessionConfiguration(ownerId, sessionId, signal)
+        if (!req.file || !current.mediaCapabilities || !allowsMediaUpload(current.mediaCapabilities, req.file.mimetype, purpose)) return disabledRoute(res)
         const media = await storeAgentMedia(wiki.models.knex, {
           ownerId,
           sessionId,
@@ -1263,6 +1322,60 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const enabled = z.object({ enabled: z.boolean() }).strict().parse(req.body).enabled
       await skillRegistry.setEnabled(skillId, req.authContext?.kind === 'user' ? req.authContext.userId : 0, enabled)
       return res.sendStatus(204)
+    })
+  )
+  router.get(
+    `${apiPrefix}/admin/media-providers`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.mediaProviders) throw providerAdminUnavailable()
+      return res.json({ providers: await wiki.mediaProviders.list(requestMediaProviderActor(req)) })
+    })
+  )
+  router.post(
+    `${apiPrefix}/admin/media-providers`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.mediaProviders) throw providerAdminUnavailable()
+      const actor = requestMediaProviderActor(req)
+      const input = parseMediaProviderBody(AgentMediaProviderWriteSchema, req.body)
+      return res.status(201).json({ provider: await wiki.mediaProviders.create(input, actor) })
+    })
+  )
+  router.patch(
+    `${apiPrefix}/admin/media-providers/:providerId`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.mediaProviders) throw providerAdminUnavailable()
+      const actor = requestMediaProviderActor(req)
+      const { expectedRevision, ...input } = parseMediaProviderBody(UpdateMediaProviderSchema, req.body)
+      const providerId = UUIDSchema.parse(routeParameter(req, 'providerId'))
+      return res.json({ provider: await wiki.mediaProviders.update(providerId, input, expectedRevision, actor) })
+    })
+  )
+  router.delete(
+    `${apiPrefix}/admin/media-providers/:providerId`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.mediaProviders) throw providerAdminUnavailable()
+      const actor = requestMediaProviderActor(req)
+      const { expectedRevision } = parseMediaProviderBody(MediaProviderRevisionBodySchema, req.body)
+      await wiki.mediaProviders.remove(UUIDSchema.parse(routeParameter(req, 'providerId')), expectedRevision, actor)
+      return res.sendStatus(204)
+    })
+  )
+  router.post(
+    `${apiPrefix}/admin/media-providers/:providerId/enabled`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.mediaProviders) throw providerAdminUnavailable()
+      const actor = requestMediaProviderActor(req)
+      const { enabled, expectedRevision } = parseMediaProviderBody(MediaProviderEnabledSchema, req.body)
+      return res.json({ provider: await wiki.mediaProviders.setEnabled(UUIDSchema.parse(routeParameter(req, 'providerId')), enabled, expectedRevision, actor) })
+    })
+  )
+  router.post(
+    `${apiPrefix}/admin/media-providers/:providerId/default`,
+    asyncRoute(async (req, res) => {
+      if (!wiki.mediaProviders) throw providerAdminUnavailable()
+      const actor = requestMediaProviderActor(req)
+      const { expectedRevision } = parseMediaProviderBody(MediaProviderRevisionBodySchema, req.body)
+      return res.json({ provider: await wiki.mediaProviders.setDefault(UUIDSchema.parse(routeParameter(req, 'providerId')), expectedRevision, actor) })
     })
   )
   router.get(

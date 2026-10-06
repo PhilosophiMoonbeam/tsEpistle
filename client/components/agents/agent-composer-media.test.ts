@@ -15,7 +15,8 @@ import {
   startAgentTranscription,
   uploadAgentMedia
 } from '../../helpers/agents-api.ts'
-import { validateAgentAttachment } from '../../helpers/agent-media.ts'
+import { agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment } from '../../helpers/agent-media.ts'
+import type { AgentMediaCapabilities } from '../../../shared/agents/contracts.ts'
 import { translateEnglish } from '../../test/english-translate.mts'
 const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta.url), 'utf8')
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
@@ -23,7 +24,7 @@ if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 const evaluate = new Function(
   'dependencies',
-  `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, useTranslate, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, locked, removeAttachment, chooseFiles, chooseUpload, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`
+  `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, useTranslate, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, locked, removeAttachment, chooseFiles, chooseUpload, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, attachmentMimeTypes, attachmentsAvailable, imageReferencesOnly, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`
 )
 interface WakeLockSentinelStub {
   release: () => Promise<void>
@@ -142,7 +143,7 @@ const makeDocumentStub = () => {
 
 const mount = (
   options: {
-    media?: { attachments: boolean; imageGeneration: boolean; videoGeneration?: boolean; musicGeneration?: boolean; transcription: boolean }
+    media?: AgentMediaCapabilities
     fetch?: typeof fetch
     microphone?: (constraints: MediaStreamConstraints) => Promise<unknown>
     recorder?: typeof Recorder | false
@@ -188,6 +189,8 @@ const mount = (
       getAgentTranscription,
       startAgentTranscription,
       uploadAgentMedia,
+      agentAttachmentMimeTypes,
+      agentToolAcceptsImages,
       validateAgentAttachment,
       navigator: {
         mediaDevices: {
@@ -550,6 +553,130 @@ describe('Agent attachment upload batches', () => {
   })
 })
 describe('Agent media composer lifecycle', () => {
+  it('does not turn historical audio/video flags or disabled creation tools into input authority', async () => {
+    let requests = 0
+    const harness = mount({
+      media: {
+        attachments: false,
+        imageGeneration: false,
+        videoGeneration: true,
+        transcription: true,
+        inputModalities: { images: false, documents: false, audio: true, video: true },
+        mediaToolInputs: { video: { images: true, documents: false, audio: false, video: false } }
+      },
+      generationToolsEnabled: false,
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      expect(rendered.host.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
+      for (const type of ['image/png', 'audio/webm', 'video/mp4']) {
+        expect(await harness.api.addFiles([new File(['bytes'], 'reference', { type })])).toBe(false)
+      }
+      expect(requests).toBe(0)
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
+  it('vetoes Stability editing while retaining opted-in model image analysis', async () => {
+    let requests = 0
+    const harness = mount({
+      media: {
+        attachments: true,
+        imageGeneration: true,
+        transcription: false,
+        inputMimeTypes: ['image/png'],
+        mediaToolInputs: { image: { images: false, documents: false, audio: false, video: false } }
+      },
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      expect(await harness.api.editImage(media)).toBe(false)
+      expect(requests).toBe(0)
+      expect(rendered.host.textContent).toContain(translateEnglish('common:agentComposerMedia.modelAnalysisAttachments'))
+      expect(await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })])).toBe(true)
+      harness.api.clear()
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
+
+  it('admits video image references only while the user enables that tool', async () => {
+    let requests = 0
+    const harness = mount({
+      media: {
+        attachments: true,
+        imageGeneration: false,
+        videoGeneration: true,
+        transcription: false,
+        inputMimeTypes: [],
+        mediaToolInputs: { video: { images: true, documents: false, audio: false, video: false } }
+      },
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      expect(rendered.host.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
+      expect(await harness.api.addFiles([new File(['bytes'], 'reference.png', { type: 'image/png' })])).toBe(false)
+      expect(requests).toBe(0)
+      harness.api.toggleGenerationTool('video')
+      await nextTick()
+      const input = rendered.host.querySelector<HTMLInputElement>('input[type="file"]')
+      expect(input?.disabled).toBe(false)
+      expect(input?.accept).toContain('image/png')
+      expect(rendered.host.textContent).toContain(translateEnglish('common:agentComposerMedia.imageToolReferencesOnly'))
+      expect(rendered.host.textContent).not.toContain(translateEnglish('common:agentComposerMedia.modelAnalysisAttachments'))
+      expect(await harness.api.addFiles([new File(['bytes'], 'reference.png', { type: 'image/png' })])).toBe(true)
+      harness.api.toggleGenerationTool('video')
+      await nextTick()
+      expect(harness.api.attachments.value).toEqual([])
+      expect(input?.disabled).toBe(true)
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
+
+  it('rejects WebM audio for WAV/MP3-only context even when dictation is available', async () => {
+    let requests = 0
+    const harness = mount({
+      media: {
+        attachments: true,
+        imageGeneration: false,
+        transcription: true,
+        inputModalities: { images: false, documents: false, audio: true, video: false },
+        inputMimeTypes: ['audio/wav', 'audio/mpeg'],
+        mediaToolInputs: {}
+      },
+      fetch: async () => {
+        requests++
+        return response({ media })
+      }
+    })
+    const rendered = renderHarness(harness.api, harness.props)
+    try {
+      const input = rendered.host.querySelector<HTMLInputElement>('input[type="file"]')
+      expect(input?.accept).not.toContain('audio/webm')
+      expect(await harness.api.addFiles([new File(['bytes'], 'voice.webm', { type: 'audio/webm' })])).toBe(false)
+      expect(requests).toBe(0)
+      expect(harness.api.error.value).toBe(translateEnglish('common:agentComposerMedia.inputTypeDisabled'))
+    } finally {
+      rendered.unmount()
+      harness.unmount()
+    }
+  })
   it('does not upload or request microphone access without configured capabilities', async () => {
     let requests = 0
     const harness = mount({
@@ -684,7 +811,7 @@ describe('Agent media composer lifecycle', () => {
       fetch: async input => {
         const path = String(input)
         paths.push(path)
-        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media: { ...media, mimeType: 'audio/webm' } })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Still recording.' })
         throw new Error(`Unexpected request ${path}`)
@@ -700,7 +827,7 @@ describe('Agent media composer lifecycle', () => {
     harness.api.stopRecording()
     await settle()
     expect(harness.events).toContainEqual(['dictation', 'Still recording.'])
-    expect(paths.some(path => path.endsWith('/media'))).toBe(true)
+    expect(paths.some(path => path.endsWith('/media?purpose=transcription'))).toBe(true)
     harness.unmount()
   })
   it('does not start capture after Stop while microphone permission is pending', async () => {
@@ -740,7 +867,7 @@ describe('Agent media composer lifecycle', () => {
       recorder: AsyncRecorder,
       fetch: async (input, init) => {
         const path = String(input)
-        if (path.endsWith('/media')) {
+        if (path.endsWith('/media?purpose=transcription')) {
           const file = (init?.body as FormData | undefined)?.get('file')
           if (!(file instanceof File)) throw new Error('Missing dictation recording')
           recorded.push(await file.text())
@@ -769,7 +896,7 @@ describe('Agent media composer lifecycle', () => {
       fetch: async input => {
         const path = String(input)
         paths.push(path)
-        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media: { ...media, mimeType: 'audio/webm' } })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Please edit this draft.' })
         throw new Error(`Unexpected request ${path}`)
@@ -793,7 +920,7 @@ describe('Agent media composer lifecycle', () => {
       fetch: async input => {
         const path = String(input)
         paths.push(path)
-        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media: { ...media, mimeType: 'audio/webm' } })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Auto stopped.' })
         throw new Error(`Unexpected request ${path}`)
@@ -848,7 +975,7 @@ describe('Agent media composer lifecycle', () => {
       media: { attachments: false, imageGeneration: false, transcription: true },
       fetch: async input => {
         const path = String(input)
-        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media: { ...media, mimeType: 'audio/webm' } })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: 'Send this sentence.' })
         throw new Error(`Unexpected request ${path}`)
@@ -869,7 +996,7 @@ describe('Agent media composer lifecycle', () => {
       media: { attachments: false, imageGeneration: false, transcription: true },
       fetch: async input => {
         const path = String(input)
-        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media: { ...media, mimeType: 'audio/webm' } })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
         throw new Error(`Unexpected request ${path}`)
@@ -893,7 +1020,7 @@ describe('Agent media composer lifecycle', () => {
       media: { attachments: false, imageGeneration: false, transcription: true },
       fetch: async input => {
         const path = String(input)
-        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media: { ...media, mimeType: 'audio/webm' } })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription')) return response({ status: 'succeeded', text: '   ' })
         throw new Error(`Unexpected request ${path}`)
@@ -911,7 +1038,7 @@ describe('Agent media composer lifecycle', () => {
       media: { attachments: false, imageGeneration: false, transcription: true },
       fetch: async input => {
         const path = String(input)
-        if (path.endsWith('/media')) return response({ media: { ...media, mimeType: 'audio/webm' } })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media: { ...media, mimeType: 'audio/webm' } })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription')) return response({ status: 'failed' })
         throw new Error(`Unexpected request ${path}`)
@@ -944,7 +1071,7 @@ describe('Agent media composer lifecycle', () => {
       media: { attachments: false, imageGeneration: false, transcription: true },
       fetch: async input => {
         const path = String(input)
-        if (path.endsWith('/media')) return response({ media })
+        if (path.endsWith('/media?purpose=transcription')) return response({ media })
         if (path.endsWith('/transcriptions')) return response({ runId })
         if (path.endsWith('/transcription'))
           return new Promise(resolve => {
@@ -1213,15 +1340,6 @@ describe('re-attaching a detached attachment', () => {
     expect(paths).toEqual(['/_api/agents/media/00000000-0000-4000-8000-000000000084/content'])
     expect(harness.api.attachments.value).toEqual([])
     expect(harness.api.error.value).toContain('no longer available')
-    harness.unmount()
-  })
-
-  it('rejects re-attachment when the composer already holds four attachments', async () => {
-    const harness = mount({ media: { attachments: true, imageGeneration: false, transcription: false }, fetch: async () => response({ media }) })
-    harness.api.attachments.value = [media, media, media, media]
-    const added = await harness.api.reattachMedia(detachedMedia)
-    expect(added).toBe(false)
-    expect(harness.api.error.value).toContain('up to 4 files')
     harness.unmount()
   })
 })

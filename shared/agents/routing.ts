@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { AgentProviderCapabilities } from './contracts.ts'
 import type { DecisionProviderActor, DecisionResult } from './decision-providers.ts'
+import type { AgentMediaInputs } from './media-providers.ts'
 
 export const ROUTING_TASK_CLASSES = ['conversation', 'retrieval', 'writing', 'coding', 'analysis', 'planning'] as const
 export const ROUTING_COMPLEXITIES = ['simple', 'moderate', 'complex'] as const
@@ -82,20 +83,21 @@ export interface RoutingCandidate {
   /** False when the host's current-request framing/schema preflight rejects this otherwise conformed model. */
   readonly admissible?: boolean
   readonly modalities: readonly ('text' | 'image' | 'audio' | 'video' | 'file')[]
-  readonly generationTools?: readonly ('image' | 'video' | 'music')[]
-  readonly transcription?: boolean
+  readonly mediaInputs: Readonly<AgentMediaInputs>
+  /** Canonical implemented formats intersected with the profile's explicit input opt-ins. */
+  readonly inputMimeTypes: readonly string[]
   /** Candidate-specific canonical replay estimate including its provider framing/tools/schema, never observed usage or reused compaction. */
   readonly canonicalReplayInputTokens?: number
   readonly pricing: { readonly inputPerMillion: number; readonly outputPerMillion: number; readonly revision: string } | null
 }
 export interface RoutingRequirements {
   readonly modalities: readonly ('text' | 'image' | 'audio' | 'video' | 'file')[]
+  /** Canonical MIME types of current owned attachments sent to the LLM, never media-tool references. */
+  readonly inputMimeTypes?: readonly string[]
   readonly nativeTools: boolean
   readonly nativeExternalMcp: boolean
   readonly nativeSchema: boolean
   readonly minimumOutputTokens: number
-  readonly generationTools?: readonly ('image' | 'video' | 'music')[]
-  readonly transcription?: boolean
 }
 /** Host-preflighted owner/root/scope-bound contexts; descriptions are untrusted task data. */
 export interface RoutingSpecialistCandidate {

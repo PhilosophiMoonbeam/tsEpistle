@@ -14,7 +14,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { AgentMediaView } from '../../shared/agents/contracts.ts'
 import { AgentRepositoryError, getOwnedAgentSession } from './repository.ts'
-import { AgentProviderAdapterConfigSchema } from './providers/registry.ts'
+import { decodeAgentAudioVideo } from './media-decoding.ts'
+import { normalizeAgentMediaMimeType } from '../../shared/agents/media-providers.ts'
 
 export const AGENT_MEDIA_MAX_BYTES = AGENT_PDF_ATTACHMENT_MAX_BYTES
 export const AGENT_MEDIA_OWNER_MAX_BYTES = 1024 * 1024 * 1024
@@ -34,6 +35,8 @@ export interface AgentMediaSource extends Omit<AgentMediaPayload, 'payload'> {
   readonly loadPayload?: (signal: AbortSignal) => Promise<Buffer>
   readonly preparePdf?: (signal: AbortSignal) => Promise<PreparedAgentPdf>
   readonly promptTokens?: number | null | undefined
+  /** Revalidates ownership/session/expiry without loading a second copy of the payload. */
+  readonly authorizePayload?: (signal: AbortSignal) => Promise<void>
   /** Persists a provider-measured prompt token count so compaction planning can use real media exposure. Best-effort. */
   readonly recordPromptTokens?: (tokens: number) => Promise<void>
 }
@@ -73,7 +76,7 @@ const invalid = (): never => {
 }
 export const validateAgentMedia = (payload: Buffer, declaredType: string): string => {
   if (payload.length === 0 || payload.length > AGENT_MEDIA_MAX_BYTES) return invalid()
-  const type = declaredType.split(';')[0]!.toLowerCase().trim()
+  const type = normalizeAgentMediaMimeType(declaredType)
   if (type !== 'application/pdf' && payload.length > AGENT_ATTACHMENT_MAX_BYTES) return invalid()
   const ascii = (start: number, end: number) => payload.subarray(start, end).toString('ascii')
   const matches =
@@ -89,15 +92,23 @@ export const validateAgentMedia = (payload: Buffer, declaredType: string): strin
               ? payload.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]))
               : type === 'audio/ogg'
                 ? ascii(0, 4) === 'OggS'
-                : type === 'audio/wav' || type === 'audio/x-wav'
+                : type === 'audio/wav'
                   ? ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WAVE'
-                  : type === 'audio/mp4' || type === 'audio/m4a'
+                  : type === 'audio/mp4'
                     ? ascii(4, 8) === 'ftyp'
                     : type === 'audio/mpeg'
                       ? ascii(0, 3) === 'ID3' || (payload[0] === 255 && (payload[1]! & 224) === 224)
-                      : false
+                      : type === 'audio/aac'
+                        ? payload[0] === 255 && (payload[1]! & 246) === 240
+                        : type === 'audio/flac'
+                          ? ascii(0, 4) === 'fLaC'
+                          : type === 'video/mp4'
+                            ? ascii(4, 8) === 'ftyp'
+                            : type === 'video/webm'
+                              ? payload.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]))
+                              : false
   if (!matches) return invalid()
-  return type === 'audio/x-wav' ? 'audio/wav' : type === 'audio/m4a' ? 'audio/mp4' : type
+  return type
 }
 export const assertAgentMediaIntegrity = (row: AgentMediaRow): void => {
   if (row.payload.length !== Number(row.byteLength) || createHash('sha256').update(row.payload).digest('hex') !== row.sha256)
@@ -109,25 +120,6 @@ export const mediaFilename = (value: string): string =>
     .join('')
     .slice(0, 180)
     .trim() || 'attachment'
-export const assertAgentMediaCapability = async (
-  db: Knex | Knex.Transaction,
-  versionId: string,
-  kind: 'attachments' | 'imageGeneration' | 'videoGeneration' | 'musicGeneration' | 'transcription'
-): Promise<void> => {
-  const row = (await db('agentProviderProfileVersions').where({ id: versionId }).first('transportKind', 'baseUrl', 'adapterConfig')) as
-    | { transportKind: string; baseUrl: string; adapterConfig: string }
-    | undefined
-  let config
-  let official = false
-  try {
-    config = row && AgentProviderAdapterConfigSchema.parse(JSON.parse(row.adapterConfig))
-    official = Boolean(row && new URL(row.baseUrl).origin === 'https://generativelanguage.googleapis.com')
-  } catch {
-    /* fail closed */
-  }
-  if (!row || row.transportKind !== 'gemini-api' || !official || !config?.media?.[kind])
-    throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'This media feature is not enabled for your Agent.', 403)
-}
 export const storeAgentMedia = async (
   db: Knex,
   input: {
@@ -149,11 +141,13 @@ export const storeAgentMedia = async (
   let mimeType: string
   if (input.kind === 'generated-video' || input.kind === 'generated-audio') {
     const video = input.kind === 'generated-video'
-    mimeType = video ? 'video/mp4' : 'audio/mpeg'
-    const signature = video
-      ? input.payload.length >= 12 && input.payload.toString('ascii', 4, 8) === 'ftyp'
-      : input.payload.toString('ascii', 0, 3) === 'ID3' || (input.payload[0] === 255 && (input.payload[1]! & 224) === 224)
-    if (input.mimeType !== mimeType || !signature || input.payload.length > (video ? AGENT_GENERATED_VIDEO_MAX_BYTES : AGENT_GENERATED_AUDIO_MAX_BYTES))
+    mimeType = normalizeAgentMediaMimeType(input.mimeType)
+    const supported = video ? ['video/mp4', 'video/webm'] : ['audio/wav', 'audio/mpeg', 'audio/webm', 'audio/mp4', 'audio/ogg', 'audio/aac', 'audio/flac']
+    if (
+      !supported.includes(mimeType) ||
+      input.payload.length < 1 ||
+      input.payload.length > (video ? AGENT_GENERATED_VIDEO_MAX_BYTES : AGENT_GENERATED_AUDIO_MAX_BYTES)
+    )
       throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'The provider returned an unsupported or oversized media file.', 502)
   } else {
     mimeType = validateAgentMedia(input.payload, input.mimeType)
@@ -178,6 +172,7 @@ export const storeAgentMedia = async (
       invalid()
     }
   }
+  if (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) await decodeAgentAudioVideo(input.payload, mimeType)
   return db.transaction(async tx => {
     // A single transaction lock makes the global budget atomic across owners.
     // SQLite's serialized writers provide the equivalent fixture boundary.
@@ -259,7 +254,7 @@ export const bindAgentMedia = async (
       .forUpdate()
       .first('mimeType')) as { mimeType: string } | undefined
     if (!row) throw new AgentRepositoryError('AGENT_MEDIA_UNAVAILABLE', 'An attachment is no longer available. Attach it again.', 409)
-    if (Boolean(input.transcription) !== row.mimeType.startsWith('audio/')) invalid()
+    if (input.transcription && !row.mimeType.startsWith('audio/')) invalid()
     await tx('agentMedia').where({ id }).update({ messageId: input.messageId, runId: input.runId, expiresAt: null })
   }
 }
@@ -341,6 +336,19 @@ export const ownedAgentMediaSource = (db: Knex, ownerId: number, sessionId: stri
   mimeType: row.mimeType,
   byteLength: Number(row.byteLength),
   promptTokens: row.promptTokens === null ? undefined : Number(row.promptTokens),
+  authorizePayload: async signal => {
+    signal.throwIfAborted()
+    const fresh = await getOwnedAgentMediaMetadata(db, ownerId, row.id)
+    if (
+      fresh.sessionId !== sessionId ||
+      fresh.sha256 !== row.sha256 ||
+      Number(fresh.byteLength) !== Number(row.byteLength) ||
+      fresh.mimeType !== row.mimeType ||
+      fresh.detachedAt !== null
+    )
+      throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Saved attachment failed integrity validation.', 500)
+    signal.throwIfAborted()
+  },
   recordPromptTokens: async tokens => {
     if (!Number.isSafeInteger(tokens) || tokens < 1 || Number(row.byteLength) < 1) return
     await db('agentMedia')

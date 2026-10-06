@@ -1,8 +1,12 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { ai, AxAIGoogleGeminiModel } from '@ax-llm/ax'
 import { AxAgentEngine } from '../../agents/providers/engine.ts'
 import { type AgentProviderFactory, type AgentProviderFetch } from '../../agents/providers/factory.ts'
 import { createGeminiMediaTransport } from '../../agents/providers/gemini-media.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
+import type { AgentMediaGenerationInput } from '../../agents/providers/media-transport.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 const origin = 'https://generativelanguage.googleapis.com'
@@ -10,19 +14,9 @@ const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==',
   'base64'
 )
-const pricing = { revision: 'image-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
-const capabilities = {
-  streaming: false,
-  toolCalling: 'native' as const,
-  parallelToolCalls: false,
-  structuredOutput: 'native-json-schema' as const,
-  usage: 'terminal' as const,
-  cancellation: true,
-  maxContextTokens: 100_000,
-  maxOutputTokens: 4_000
-}
 const request = (kind: 'image' | 'video' | 'music' = 'image'): AgentEngineRequest => ({
   authorizeMedia: async () => {},
+  mediaBindings: { [kind]: '00000000-0000-4000-8000-000000000099' },
   mediaRequest: { kind },
   run: {
     id: '00000000-0000-4000-8000-000000000001',
@@ -86,19 +80,34 @@ const setup = (response: () => Response) => {
     timeoutMs: 5_000,
     maxInputTokens: 100_000,
     maxOutputTokens: 4_000,
+    imageModel: 'gemini-3.1-flash-image',
     fetch
   })
   const factory = {
-    createMedia: async () => ({
-      config: {},
-      capabilities,
-      pricing: {
-        imageGeneration: pricing,
-        videoGeneration: { ...pricing, textOutputMicrosPerMillionTokens: 1_000_000 },
-        musicGeneration: { costMicrosPerSong: 80_000 }
-      },
-      transport
-    })
+    createMediaBinding: async (_ownerId: number, kind: string) => {
+      if (kind !== 'image') throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'No provider is bound for this operation', 403)
+      return {
+        config: {
+          kind: 'image',
+          api: 'gemini-generate-content',
+          model: 'gemini-3.1-flash-image',
+          baseUrl: `${origin}/v1beta`,
+          timeoutMs: 5000,
+          maxInputTokens: 100000,
+          maxOutputTokens: 4000,
+          pricing: { kind: 'tokens', pricingRevision: 'image-v1|1000000|2000000' }
+        },
+        transport: {
+          generate: async (input: AgentMediaGenerationInput, signal?: AbortSignal) => {
+            const result = await transport.generateImage(
+              { ...input, prompt: input.prompt ?? '', ...(input.files === undefined ? {} : { images: input.files }) },
+              signal
+            )
+            return { ...result, files: result.images, usageSource: 'reported' as const }
+          }
+        }
+      }
+    }
   } as unknown as AgentProviderFactory
   return { urls, engine: new AxAgentEngine(factory) }
 }
@@ -124,7 +133,7 @@ describe('Ax media protocol and engine accounting boundary', () => {
     expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 4_100, costMicros: 8_100 })
     expect(dispatchBudget.reconcile).toHaveBeenCalledWith(expect.anything(), { inputTokens: 4, outputTokens: 9, totalTokens: 13, costMicros: 22 })
     expect(order).toEqual(['settle', 'publish'])
-    expect(media).toHaveBeenCalledWith([{ payload: png, mimeType: 'image/png', filename: 'generated-image-1.png' }])
+    expect(media).toHaveBeenCalledWith([{ payload: png, mimeType: 'image/png', kind: 'generated-image', filename: 'generated-image-1.png' }])
     expect(result.totalTokens).toBe(13)
     expect(dispatchBudget.release).not.toHaveBeenCalled()
   })
@@ -171,7 +180,7 @@ describe('Ax media protocol and engine accounting boundary', () => {
   })
 
   for (const kind of ['video', 'music'] as const)
-    it(`preserves the explicit ${kind} incompatibility without reservation, dispatch, or publication`, async () => {
+    it(`rejects unbound ${kind} without reservation, dispatch, or publication`, async () => {
       const { engine, urls } = setup(output)
       const dispatchBudget = budget()
       const media = vi.fn(async () => {})
@@ -184,11 +193,101 @@ describe('Ax media protocol and engine accounting boundary', () => {
             event: async () => {}
           }
         )
-      ).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNSUPPORTED' })
+      ).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
       expect(urls).toEqual([])
       expect(dispatchBudget.reserve).not.toHaveBeenCalled()
       expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
       expect(dispatchBudget.release).not.toHaveBeenCalled()
       expect(media).not.toHaveBeenCalled()
+    })
+
+  for (const scenario of ['audio/webm', 'video/webm', 'openai-chat-webm'] as const)
+    it(`enforces native format admission for decoded ${scenario}`, async () => {
+      const mimeType = scenario === 'video/webm' ? 'video/webm' : 'audio/webm'
+      const args =
+        mimeType === 'audio/webm'
+          ? ['-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '0.1', '-c:a', 'libopus']
+          : ['-f', 'lavfi', '-i', 'color=c=black:s=16x16:r=10', '-t', '0.1', '-c:v', 'libvpx-vp9', '-an']
+      const { stdout } = await promisify(execFile)('ffmpeg', ['-v', 'error', ...args, '-f', 'webm', 'pipe:1'], { encoding: 'buffer', maxBuffer: 1024 * 1024 })
+      const wire: unknown[] = []
+      const service = ai({
+        name: 'google-gemini',
+        apiKey: 'fixture',
+        config: { model: AxAIGoogleGeminiModel.Gemini25Flash, stream: false },
+        options: {
+          fetch: async (_url, init) => {
+            wire.push(JSON.parse(String(init?.body)))
+            return Response.json({
+              candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Media analyzed.' }] } }],
+              usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2, totalTokenCount: 12 }
+            })
+          }
+        }
+      })
+      const upload = vi.fn(async () => ({ name: 'files/context', uri: `${origin}/v1beta/files/context`, mimeType }))
+      const remove = vi.fn(async () => {})
+      const dispatchBudget = budget()
+      const factory = {
+        create: async () => ({
+          service,
+          model: AxAIGoogleGeminiModel.Gemini25Flash,
+          transportKind: scenario === 'openai-chat-webm' ? 'openai-chat' : 'gemini-api',
+          capabilityRevision: 'fixture',
+          pricingRevision: 'fixture',
+          pricing: { revision: 'fixture', inputMicrosPerMillionTokens: 1000000, outputMicrosPerMillionTokens: 2000000 },
+          mediaInputs: { images: false, documents: false, audio: true, video: true },
+          nativeMediaCapabilities: service.getFeatures().media,
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: false,
+            structuredOutput: 'native-json-schema',
+            usage: 'terminal',
+            cancellation: true,
+            maxContextTokens: 100000,
+            maxOutputTokens: 4000
+          }
+        }),
+        createMediaInput: async () => ({ config: { attachments: true }, transport: { upload, countTokens: async () => 20, delete: remove } })
+      } as unknown as AgentProviderFactory
+      const { mediaRequest: _mediaRequest, ...base } = request()
+      const pending = new AxAgentEngine(factory).execute(
+        {
+          ...base,
+          mediaBindings: {},
+          dispatchBudget,
+          run: { ...base.run, executionMode: 'generation-only' },
+          messages: [
+            {
+              role: 'user',
+              content: 'Analyze this media',
+              attachments: [
+                {
+                  id: '00000000-0000-4000-8000-000000000088',
+                  filename: 'context.webm',
+                  mimeType,
+                  byteLength: stdout.length,
+                  payload: stdout
+                }
+              ]
+            }
+          ]
+        },
+        { text: async () => {}, event: async () => {} }
+      )
+      if (scenario === 'openai-chat-webm') {
+        await expect(pending).rejects.toMatchObject({ code: 'AGENT_MEDIA_INPUT_UNSUPPORTED' })
+        expect(upload).not.toHaveBeenCalled()
+        expect(wire).toEqual([])
+        expect(dispatchBudget.reserve).not.toHaveBeenCalled()
+        return
+      }
+      const result = await pending
+      expect(result.totalTokens).toBe(12)
+      expect(upload).toHaveBeenCalledTimes(1)
+      expect(JSON.stringify(wire)).toContain(`${origin}/v1beta/files/context`)
+      expect(JSON.stringify(wire)).toContain(mimeType)
+      expect(JSON.stringify(wire)).not.toContain(stdout.toString('base64'))
+      expect(remove).toHaveBeenCalledTimes(1)
     })
 })

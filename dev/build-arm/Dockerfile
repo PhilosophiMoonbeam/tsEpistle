@@ -39,7 +39,8 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
-RUN apk add --no-cache bash curl git openssh gnupg && \
+RUN apk add --no-cache bash curl git openssh gnupg ffmpeg && \
+    ffmpeg -version && ffprobe -version && \
     mkdir -p /wiki /logs /wiki/data/content /wiki/data/repo && \
     chown -R bun:bun /wiki /logs
 WORKDIR /wiki
@@ -53,6 +54,7 @@ COPY --chown=bun:bun dev/build/config.yml ./config.yml
 COPY --chown=bun:bun build/package.json ./package.json
 COPY --chown=bun:bun LICENSE ./
 COPY --chown=bun:bun NOTICE ./
+COPY --chown=bun:bun COPYING.GPL-3.0 ./
 
 USER bun
 VOLUME ["/wiki/data/content"]

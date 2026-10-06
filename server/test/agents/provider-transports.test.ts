@@ -373,20 +373,21 @@ describe('additional provider transports', () => {
     expect(requestBody).not.toHaveProperty('prompt_cache_retention')
   })
 
-  it('rejects a stored non-chat Gemini model before provider egress', async () => {
-    const id = '00000000-0000-4000-8000-000000000016'
-    await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
-    await db('agentProviderProfileVersions').where({ id }).update({ model: 'gemini-3.8-live' })
-    let called = false
-    const fetchImplementation = async (): Promise<Response> => {
-      called = true
-      return Response.json({})
-    }
-    await expect(
-      Promise.resolve(new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id))
-    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
-    expect(called).toBe(false)
-  })
+  for (const model of ['gemini-3.8-live', 'gemini-omni-1.1-flash', 'lyria-3.5'])
+    it(`rejects the non-chat Gemini model ${model} on the LLM factory without media fallback or egress`, async () => {
+      const id = '00000000-0000-4000-8000-000000000016'
+      await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
+      await db('agentProviderProfileVersions').where({ id }).update({ model })
+      let called = false
+      const fetchImplementation = async (): Promise<Response> => {
+        called = true
+        return Response.json({})
+      }
+      await expect(
+        Promise.resolve(new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id))
+      ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+      expect(called).toBe(false)
+    })
 
   it('maps Chat Completions native tools, calls, and results', async () => {
     const id = '00000000-0000-4000-8000-000000000014'
@@ -684,6 +685,199 @@ describe('OpenResponses protocol validation', () => {
       await expect(
         Promise.resolve((await transport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text())
       ).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    }
+  })
+})
+
+describe('explicitly bound Google media egress', () => {
+  const baseUrl = 'https://generativelanguage.googleapis.com/v1beta'
+  const model = 'gemini-omni-flash-preview'
+  const request = (overrides: Record<string, unknown> = {}): RequestInit => ({
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': 'media-secret' },
+    body: JSON.stringify({ model, input: [{ type: 'text', text: 'Generate' }], store: false, stream: false, background: false, ...overrides })
+  })
+
+  it('allows only the configured stateless Interactions model and endpoint, retaining API key headers and manual redirect policy', async () => {
+    const requests: { url: string; init: RequestInit }[] = []
+    const wire = Object.assign(
+      async (input: URL | RequestInfo, init?: RequestInit) => {
+        requests.push({ url: String(input), init: init || {} })
+        return Response.json({ accepted: true })
+      },
+      { preconnect: () => {} }
+    ) as typeof fetch
+    const guard = createGuardedProviderFetch(baseUrl, 'google-interactions', {}, wire, publicResolver as never, undefined, undefined, model)
+    const accepted = await guard(`${baseUrl}/interactions`, request())
+    expect(await accepted.json()).toEqual({ accepted: true })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe(`${baseUrl}/interactions`)
+    expect(requests[0]?.init.redirect).toBe('manual')
+    expect(requests[0]?.init.credentials).toBe('omit')
+    expect(new Headers(requests[0]?.init.headers).get('x-goog-api-key')).toBe('media-secret')
+    for (const path of [
+      '/interactions/interaction_1',
+      '/interactions?key=secret',
+      '/interactions#fragment',
+      '/models/gemini-omni-flash-preview:generateContent',
+      '/models/gemini-omni-flash-preview:countTokens',
+      '/models/gemini-2.5-flash:generateContent',
+      '/files/file1'
+    ])
+      await expect(guard(`${baseUrl}${path}`, request())).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    for (const overrides of [
+      { model: 'gemini-omni-1.1-flash' },
+      { model: 'arbitrary-model' },
+      { model: 'lyria-3.5' },
+      { store: true },
+      { stream: true },
+      { background: true },
+      { previous_interaction_id: 'interaction_1' },
+      { continuation_token: 'token' },
+      { tools: [] }
+    ])
+      await expect(guard(`${baseUrl}/interactions`, request(overrides))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    for (const destination of [
+      'https://evil.example/v1beta/interactions',
+      'http://generativelanguage.googleapis.com/v1beta/interactions',
+      'https://user@generativelanguage.googleapis.com/v1beta/interactions'
+    ])
+      await expect(guard(destination, request())).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    for (const init of [
+      { ...request(), method: 'GET' },
+      { ...request(), body: '{}' },
+      { ...request(), body: new Uint8Array(8) },
+      { ...request(), body: new FormData() },
+      { ...request(), body: '{"model":' },
+      { ...request(), headers: { 'content-type': 'text/plain', 'x-goog-api-key': 'secret' } },
+      { ...request(), body: JSON.stringify({ model, input: 'x'.repeat(15 * 1_024 * 1_024), store: false, stream: false, background: false }) }
+    ])
+      await expect(guard(`${baseUrl}/interactions`, init)).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(guard(new Request(`${baseUrl}/interactions`, request()))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    expect(requests).toHaveLength(1)
+  })
+
+  it('requires explicit model binding and an exact official base before forwarding credentials', async () => {
+    let calls = 0
+    const wire = Object.assign(
+      async () => {
+        calls++
+        return Response.json({})
+      },
+      { preconnect: () => {} }
+    ) as typeof fetch
+    const unbound = createGuardedProviderFetch(baseUrl, 'google-interactions', {}, wire, publicResolver as never)
+    await expect(unbound(`${baseUrl}/interactions`, request())).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    for (const base of ['https://proxy.example/v1beta', `${baseUrl}/`, `${baseUrl}?key=secret`]) {
+      const guard = createGuardedProviderFetch(base, 'google-interactions', {}, wire, publicResolver as never, undefined, undefined, model)
+      await expect(guard(`${new URL(base).origin}/v1beta/interactions`, request())).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    }
+    expect(calls).toBe(0)
+  })
+
+  it('pins Gemini image generation and count to the selected alternate model while input-only guards cannot generate', async () => {
+    let calls = 0
+    const wire = Object.assign(
+      async () => {
+        calls++
+        return Response.json({})
+      },
+      { preconnect: () => {} }
+    ) as typeof fetch
+    const selected = 'gemini-2.5-flash-image'
+    const guard = createGuardedProviderFetch(baseUrl, 'gemini-media', {}, wire, publicResolver as never, undefined, undefined, selected, {
+      generateModels: [selected],
+      countModels: [selected],
+      files: false
+    })
+    for (const method of ['generateContent', 'countTokens']) await guard(`${baseUrl}/models/${selected}:${method}`, { method: 'POST', body: '{}' })
+    for (const other of ['gemini-3.1-flash-image', 'gemini-2.5-flash', 'arbitrary-model'])
+      for (const method of ['generateContent', 'countTokens'])
+        await expect(guard(`${baseUrl}/models/${other}:${method}`, { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    await expect(guard(`${baseUrl}/models/${selected}:streamGenerateContent?alt=sse`, { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      code: 'PROVIDER_EGRESS_DENIED'
+    })
+    await expect(guard(`${baseUrl}/models/${selected}:generateContent?key=secret`, { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      code: 'PROVIDER_EGRESS_DENIED'
+    })
+    await expect(guard('https://generativelanguage.googleapis.com/upload/v1beta/files', { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      code: 'PROVIDER_EGRESS_DENIED'
+    })
+    const input = createGuardedProviderFetch(baseUrl, 'gemini-media', {}, wire, publicResolver as never, undefined, undefined, undefined, {
+      generateModels: [],
+      countModels: ['gemini-2.5-flash'],
+      files: true
+    })
+    await input(`${baseUrl}/models/gemini-2.5-flash:countTokens`, { method: 'POST', body: '{}' })
+    await expect(input(`${baseUrl}/models/gemini-2.5-flash:generateContent`, { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      code: 'PROVIDER_EGRESS_DENIED'
+    })
+    await expect(input(`${baseUrl}/models/gemini-2.5-pro:countTokens`, { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      code: 'PROVIDER_EGRESS_DENIED'
+    })
+    const missingPolicy = createGuardedProviderFetch(baseUrl, 'gemini-media', {}, wire, publicResolver as never, undefined, undefined, selected)
+    for (const path of [
+      `${baseUrl}/models/${selected}:generateContent`,
+      `${baseUrl}/models/${selected}:countTokens`,
+      'https://generativelanguage.googleapis.com/upload/v1beta/files'
+    ])
+      await expect(missingPolicy(path, { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    expect(calls).toBe(3)
+  })
+
+  it('rejects private or mixed DNS answers and disables unpinned preconnect for bound media', async () => {
+    let calls = 0
+    const wire = Object.assign(
+      async () => {
+        calls++
+        return Response.json({})
+      },
+      {
+        preconnect: () => {
+          calls++
+        }
+      }
+    ) as typeof fetch
+    for (const addresses of [
+      [{ address: '127.0.0.1', family: 4 }],
+      [{ address: '10.0.0.1', family: 4 }],
+      [{ address: '169.254.169.254', family: 4 }],
+      [{ address: '::1', family: 6 }],
+      [
+        { address: '93.184.216.34', family: 4 },
+        { address: '10.0.0.1', family: 4 }
+      ],
+      []
+    ]) {
+      const guard = createGuardedProviderFetch(baseUrl, 'google-interactions', {}, wire, (async () => addresses) as never, undefined, undefined, model)
+      await expect(guard(`${baseUrl}/interactions`, request())).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+      expect(() => guard.preconnect(baseUrl)).toThrow()
+    }
+    expect(calls).toBe(0)
+  })
+
+  it('bounds bound-media response bytes even without a truthful Content-Length and cancels overflowing bodies', async () => {
+    for (const headers of [{ 'content-type': 'application/json' }, { 'content-type': 'application/json', 'content-length': '2' }] as Record<string, string>[]) {
+      let cancelled = 0
+      const wire = Object.assign(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new Uint8Array(9))
+              },
+              cancel() {
+                cancelled++
+              }
+            }),
+            { headers }
+          ),
+        { preconnect: () => {} }
+      ) as typeof fetch
+      const guard = createGuardedProviderFetch(baseUrl, 'google-interactions', {}, wire, publicResolver as never, tinyProviderLimits(), undefined, model)
+      const response = await guard(`${baseUrl}/interactions`, request())
+      await expect(response.text()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      expect(cancelled).toBe(1)
     }
   })
 })

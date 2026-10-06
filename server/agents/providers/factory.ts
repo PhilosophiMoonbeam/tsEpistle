@@ -16,12 +16,26 @@ import type { Knex } from 'knex'
 // The explicit entry point avoids Bun's built-in shim, which ignores dispatchers.
 import { Agent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from 'undici/index.js'
 import { type AgentReasoningEffort, agentProviderReasoningEfforts } from '../../../shared/agents/contracts.ts'
+import { type AgentMediaInputs, type AgentMediaKind, type AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
+import { assertAgentMediaBinding } from '../media-providers.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { createGeminiAxService, isGeminiChatModel, isGeminiContinuation, preserveGeminiContinuation } from './gemini.ts'
-import { createGeminiMediaTransport, GEMINI_MEDIA_INPUT_LIMIT, GEMINI_MEDIA_OUTPUT_LIMIT, GEMINI_PDF_INPUT_LIMIT } from './gemini-media.ts'
+import {
+  createGeminiMediaTransport,
+  type GeminiMediaInputTransport,
+  GEMINI_MEDIA_INPUT_LIMIT,
+  GEMINI_MEDIA_OUTPUT_LIMIT,
+  GEMINI_PDF_INPUT_LIMIT,
+  GEMINI_VIDEO_RESPONSE_LIMIT,
+  GEMINI_MUSIC_RESPONSE_LIMIT
+} from './gemini-media.ts'
+import { createGoogleInteractionsMediaTransport } from './google-interactions-media.ts'
+import { createIndependentImageMediaTransport } from './independent-image-media.ts'
+import type { AgentMediaTransport } from './media-transport.ts'
 import { createOpenResponsesFetch } from './openresponses.ts'
 import {
   AgentProviderAdapterConfigSchema,
+  agentProviderMediaInputs,
   type AgentProviderCapabilities,
   AgentProviderCapabilitiesSchema,
   AgentProviderPricingRevisionSchema,
@@ -427,7 +441,8 @@ export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputToke
 export interface AgentProviderService {
   readonly service: Pick<AxAIService, 'chat'>
   readonly capabilities: AgentProviderCapabilities
-  /** Actual configured Ax model facts, available after the first native chat; unknown services leave these undefined. */
+  readonly mediaInputs: AgentMediaInputs
+  /** Actual configured Ax model facts, resolved eagerly before attachment admission. */
   readonly nativeMediaCapabilities?: AxAIFeatures['media'] | undefined
   readonly transportKind: AgentProviderTransportKind
   readonly continuationDialect?: AgentProviderContinuationDialect | null
@@ -436,7 +451,6 @@ export interface AgentProviderService {
   readonly pricingRevision: string
   readonly pricing: AgentProviderPricing
   readonly preserveCachePrefix: boolean
-  readonly mediaConfig?: NonNullable<ReturnType<typeof AgentProviderAdapterConfigSchema.parse>['media']>
   readonly preserveThoughtBlock: (resultId: string, block: ProviderThoughtBlock) => ProviderThoughtBlock | null
 }
 
@@ -694,7 +708,21 @@ const pinnedProviderDispatcher = (resolve: typeof lookup): Agent => {
   providerDispatchers.set(resolve, dispatcher)
   return dispatcher
 }
-type ProviderEndpoint = '/responses' | '/chat/completions' | '/messages' | '/completions' | 'gemini-chat' | 'gemini-media'
+type ProviderEndpoint =
+  | '/responses'
+  | '/chat/completions'
+  | '/messages'
+  | '/completions'
+  | 'gemini-chat'
+  | 'gemini-media'
+  | 'google-interactions'
+  | 'openai-images'
+  | 'stability-images'
+interface MediaEgressPolicy {
+  readonly generateModels: readonly string[]
+  readonly countModels: readonly string[]
+  readonly files: boolean
+}
 const exactProviderBase = (base: URL, origin: string, path: string): boolean =>
   base.protocol === 'https:' && base.origin === origin && base.pathname === path && !base.search && !base.hash && !base.username && !base.password
 
@@ -720,8 +748,8 @@ const geminiGenerateEndpointAllowed = (base: URL, url: URL, init?: RequestInit, 
   return match[2] === 'generateContent' ? !url.search : url.search === '?alt=sse'
 }
 
-const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): boolean => {
-  if (base.origin !== 'https://generativelanguage.googleapis.com' || !['/v1beta', '/v1beta/'].includes(base.pathname)) return false
+const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit, policy?: MediaEgressPolicy): boolean => {
+  if (!policy || base.origin !== 'https://generativelanguage.googleapis.com' || !['/v1beta', '/v1beta/'].includes(base.pathname)) return false
   const method = init?.method?.toUpperCase() || 'GET'
   const body = init?.body
   if (body !== undefined && body !== null && typeof body !== 'string' && !(body instanceof Uint8Array)) return false
@@ -734,9 +762,14 @@ const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): bo
         ? GEMINI_PDF_INPUT_LIMIT
         : GEMINI_MEDIA_INPUT_LIMIT
   if (length > maximum) return false
-  if (geminiGenerateEndpointAllowed(base, url, init))
-    return /^\/v1beta\/models\/(?:gemini-3\.1-flash-image|gemini-3\.5-transcribe):generateContent$/u.test(url.pathname)
-  if (/^\/v1beta\/models\/gemini-[23](?:\.[0-9]+)?(?:-[a-z0-9][a-z0-9._-]*)?:countTokens$/u.test(url.pathname)) return method === 'POST' && !url.search
+  const allowed = policy
+  if (geminiGenerateEndpointAllowed(base, url, init)) {
+    const configuredModel = url.pathname.slice('/v1beta/models/'.length).split(':', 1)[0]!
+    return !url.search && allowed.generateModels.includes(configuredModel) && url.pathname.endsWith(':generateContent')
+  }
+  const countedModel = /^\/v1beta\/models\/([a-z0-9][a-z0-9._-]{0,127}):countTokens$/u.exec(url.pathname)?.[1]
+  if (countedModel) return allowed.countModels.includes(countedModel) && method === 'POST' && !url.search && typeof body === 'string'
+  if (!allowed.files) return false
   if (/^\/v1beta\/files\/[A-Za-z0-9_-]{1,128}$/u.test(url.pathname)) return ['GET', 'DELETE'].includes(method) && !url.search && length === 0
   if (url.pathname !== '/upload/v1beta/files' || method !== 'POST') return false
   if (!url.search) return true
@@ -749,9 +782,99 @@ const geminiMediaEndpointAllowed = (base: URL, url: URL, init?: RequestInit): bo
   )
 }
 
-const providerEndpointAllowed = (base: URL, url: URL, endpoint: ProviderEndpoint, init?: RequestInit, model?: string): boolean => {
-  if (endpoint === 'gemini-media') return geminiMediaEndpointAllowed(base, url, init)
+const multipartModelAllowed = (body: Uint8Array, headers: Headers, model: string): boolean => {
+  const match = /^multipart\/form-data;\s*boundary=([A-Za-z0-9_.-]{1,70})$/u.exec(headers.get('content-type') ?? '')
+  if (!match) return false
+  const bytes = Buffer.from(body.buffer, body.byteOffset, body.byteLength)
+  const boundary = Buffer.from(`--${match[1]}`)
+  let offset = 0
+  let modelParts = 0
+  while (offset < bytes.length) {
+    if (!bytes.subarray(offset, offset + boundary.length).equals(boundary)) return false
+    offset += boundary.length
+    if (bytes.subarray(offset, offset + 4).toString('ascii') === '--\r\n') return modelParts === 1 && offset + 4 === bytes.length
+    if (bytes.subarray(offset, offset + 2).toString('ascii') !== '\r\n') return false
+    offset += 2
+    const headerEnd = bytes.indexOf('\r\n\r\n', offset)
+    if (headerEnd < offset || headerEnd - offset > 4_096) return false
+    const header = bytes.toString('utf8', offset, headerEnd)
+    const next = bytes.indexOf(Buffer.concat([Buffer.from('\r\n'), boundary]), headerEnd + 4)
+    if (next === -1) return false
+    if (/(?:^|\r\n)Content-Disposition:\s*form-data;\s*name="model"(?:;[^\r\n]*)?(?:\r\n|$)/iu.test(header)) {
+      modelParts++
+      if (modelParts !== 1 || bytes.toString('utf8', headerEnd + 4, next) !== model) return false
+    }
+    offset = next + 2
+  }
+  return false
+}
+
+const independentMediaEndpointAllowed = (
+  base: URL,
+  url: URL,
+  endpoint: ProviderEndpoint,
+  init: RequestInit | undefined,
+  model: string | undefined
+): boolean => {
+  if (!model || init?.method?.toUpperCase() !== 'POST' || url.search) return false
+  const body = init.body
+  if (typeof body !== 'string' && !(body instanceof Uint8Array)) return false
+  const headers = new Headers(init.headers)
+  if (endpoint === 'stability-images') {
+    return (
+      exactProviderBase(base, 'https://api.stability.ai', '/v2beta') &&
+      url.pathname === '/v2beta/stable-image/generate/core' &&
+      body instanceof Uint8Array &&
+      body.byteLength <= 128 * 1_024 &&
+      /^multipart\/form-data;\s*boundary=[A-Za-z0-9_.-]{1,70}$/u.test(headers.get('content-type') ?? '')
+    )
+  }
+  if (endpoint === 'openai-images') {
+    if (!exactProviderBase(base, 'https://api.openai.com', '/v1')) return false
+    if (url.pathname === '/v1/images/edits')
+      return body instanceof Uint8Array && body.byteLength <= GEMINI_MEDIA_INPUT_LIMIT + 256 * 1_024 && multipartModelAllowed(body, headers, model)
+    if (url.pathname !== '/v1/images/generations') return false
+  } else if (endpoint === 'google-interactions') {
+    if (!exactProviderBase(base, 'https://generativelanguage.googleapis.com', '/v1beta') || url.pathname !== '/v1beta/interactions') return false
+  } else return false
+  if (
+    typeof body !== 'string' ||
+    Buffer.byteLength(body) > (endpoint === 'google-interactions' ? 4 * Math.ceil(GEMINI_MEDIA_INPUT_LIMIT / 3) + 80 * 1_024 : 256 * 1_024) ||
+    headers.get('content-type')?.split(';', 1)[0]?.trim() !== 'application/json'
+  )
+    return false
+  try {
+    const value: unknown = JSON.parse(body)
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Reflect.get(value, 'model') === model &&
+      (endpoint !== 'google-interactions' ||
+        (Reflect.get(value, 'store') === false &&
+          Reflect.get(value, 'stream') === false &&
+          Reflect.get(value, 'background') === false &&
+          !Object.hasOwn(value, 'previous_interaction_id') &&
+          !Object.hasOwn(value, 'tools') &&
+          !Object.hasOwn(value, 'continuation_token')))
+    )
+  } catch {
+    return false
+  }
+}
+
+const providerEndpointAllowed = (
+  base: URL,
+  url: URL,
+  endpoint: ProviderEndpoint,
+  init?: RequestInit,
+  model?: string,
+  mediaPolicy?: MediaEgressPolicy
+): boolean => {
+  if (endpoint === 'gemini-media') return geminiMediaEndpointAllowed(base, url, init, mediaPolicy)
   if (endpoint === 'gemini-chat') return geminiGenerateEndpointAllowed(base, url, init, model)
+  if (endpoint === 'google-interactions' || endpoint === 'openai-images' || endpoint === 'stability-images')
+    return independentMediaEndpointAllowed(base, url, endpoint, init, model)
   const basePath = base.pathname.replace(/\/$/, '')
   return url.pathname === `${basePath}${endpoint}` && url.search.length === 0
 }
@@ -764,7 +887,9 @@ export const createGuardedProviderFetch = (
   resolve: typeof lookup = lookup,
   limits: AgentProviderResourceLimits = deriveAgentProviderResourceLimits(4_096),
   onLimit?: (error: AgentRepositoryError) => void,
-  model?: string
+  model?: string,
+  mediaPolicy?: MediaEgressPolicy,
+  authorizeDispatch?: () => Promise<void>
 ): AgentProviderFetch => {
   const base = new URL(baseUrl)
   const dispatcher = pinnedProviderDispatcher(resolve)
@@ -774,11 +899,13 @@ export const createGuardedProviderFetch = (
       if (
         url.protocol !== 'https:' ||
         url.origin !== base.origin ||
-        !providerEndpointAllowed(base, url, endpoint, init, model) ||
+        !providerEndpointAllowed(base, url, endpoint, init, model, mediaPolicy) ||
         url.hash ||
         url.username ||
         url.password ||
-        ((endpoint === 'gemini-media' || endpoint === 'gemini-chat') && typeof input !== 'string' && !(input instanceof URL))
+        (['gemini-media', 'gemini-chat', 'google-interactions', 'openai-images', 'stability-images'].includes(endpoint) &&
+          typeof input !== 'string' &&
+          !(input instanceof URL))
       )
         throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Provider request destination is not allowlisted', 502)
       if (endpoint === 'gemini-chat' && (typeof init?.body !== 'string' || Buffer.byteLength(init.body) > limits.rawBodyBytes))
@@ -787,6 +914,11 @@ export const createGuardedProviderFetch = (
       const headers = new Headers(init?.headers)
       for (const [name, value] of Object.entries(additionalHeaders)) headers.set(name, value)
       const signal = init?.signal ?? (typeof input === 'string' || input instanceof URL ? undefined : input.signal)
+      signal?.throwIfAborted()
+      // Authorization is fresh at host dispatch, not atomic with a remote RPC.
+      // The dispatcher independently validates connection-time DNS addresses.
+      if (authorizeDispatch) await authorizeDispatch()
+      signal?.throwIfAborted()
       const response = (await (implementation as unknown as typeof undiciFetch)(url, {
         ...init,
         ...(signal ? { signal } : {}),
@@ -949,8 +1081,9 @@ const requestOutputTokens = (request: Readonly<AxChatRequest<unknown>>, ceiling:
 
 type ProviderChatService = Pick<AxAIService, 'chat'> & Partial<Pick<AxAIService, 'getFeatures'>> & Pick<AgentProviderService, 'nativeMediaCapabilities'>
 
-const createRequestScopedService = (ceiling: number, build: (scope: ProviderRequestScope) => ProviderChatService): ProviderChatService => {
-  let nativeMediaCapabilities: AxAIFeatures['media'] | undefined
+const createRequestScopedService = (ceiling: number, model: string, build: (scope: ProviderRequestScope) => ProviderChatService): ProviderChatService => {
+  const featureService = build({ limits: deriveAgentProviderResourceLimits(ceiling), onLimit: () => {}, onError: () => {} })
+  let nativeMediaCapabilities = featureService.getFeatures?.(model).media ?? featureService.nativeMediaCapabilities
   return {
     get nativeMediaCapabilities() {
       return nativeMediaCapabilities
@@ -978,9 +1111,8 @@ const createRequestScopedService = (ceiling: number, build: (scope: ProviderRequ
       try {
         const service = build({ limits, onLimit, onError })
         const response = await service.chat(boundedRequest, scopedOptions)
-        // Query the instance's configured default model, never the caller's model override.
-        // Gemini captures these facts inside chat because its native instance is request-local.
-        nativeMediaCapabilities = service.getFeatures?.().media ?? service.nativeMediaCapabilities
+        // Always resolve the exact configured model, never a caller override.
+        nativeMediaCapabilities = service.getFeatures?.(model).media ?? service.nativeMediaCapabilities
         return response
       } catch (error) {
         // Ax wraps custom-fetch failures; retain only errors recorded by our own boundary.
@@ -1006,22 +1138,120 @@ export class AgentProviderFactory {
     this.#fetch = fetchImplementation
     this.#resolve = resolve
   }
-  async createMedia(profileVersionId: string) {
+  async createMediaBinding(
+    ownerId: number,
+    kind: AgentMediaKind,
+    profileVersionId: string
+  ): Promise<{ transport: AgentMediaTransport; config: AgentMediaProviderConfig }> {
+    const binding = await assertAgentMediaBinding(this.#knex, ownerId, kind, profileVersionId)
+    const config = binding.config
+    const apiKey = await this.#secrets.get(binding.secretReference)
+    if (!apiKey) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Media provider secret is unavailable', 503)
+    const responseBytes =
+      config.api === 'gemini-interactions'
+        ? kind === 'video'
+          ? GEMINI_VIDEO_RESPONSE_LIMIT
+          : GEMINI_MUSIC_RESPONSE_LIMIT
+        : config.api === 'openai-images'
+          ? 4 * Math.ceil(GEMINI_MEDIA_INPUT_LIMIT / 3) + 64 * 1_024
+          : config.api === 'stability-images'
+            ? GEMINI_MEDIA_INPUT_LIMIT
+            : GEMINI_MEDIA_OUTPUT_LIMIT
+    const limits = {
+      ...deriveAgentProviderResourceLimits(config.maxOutputTokens),
+      rawBodyBytes: responseBytes,
+      rawChunkBytes: responseBytes
+    }
+    const endpoint: ProviderEndpoint =
+      config.api === 'gemini-generate-content'
+        ? 'gemini-media'
+        : config.api === 'gemini-interactions'
+          ? 'google-interactions'
+          : config.api === 'openai-images'
+            ? 'openai-images'
+            : 'stability-images'
+    const transport: AgentMediaTransport = {
+      generate: async (input, signal) => {
+        // A transport arms its paid call before entering the guarded fetch.
+        // Notify accounting only after DNS, live authorization and abort checks;
+        // a proven no-HTTP denial must release, not consume, its reservation.
+        let pendingDispatch: (() => void) | undefined
+        const guarded = createGuardedProviderFetch(
+          config.baseUrl,
+          endpoint,
+          {},
+          Object.assign(
+            (destination: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]) => {
+              const notify = pendingDispatch
+              pendingDispatch = undefined
+              notify?.()
+              return this.#fetch(destination, init)
+            },
+            { preconnect: this.#fetch.preconnect }
+          ),
+          this.#resolve,
+          limits,
+          undefined,
+          config.model,
+          config.api === 'gemini-generate-content' ? { generateModels: [config.model], countModels: [config.model], files: false } : undefined,
+          async () => {
+            const current = await assertAgentMediaBinding(this.#knex, ownerId, kind, profileVersionId)
+            if (current.secretReference !== binding.secretReference)
+              throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media binding is no longer current', 403)
+          }
+        )
+        const scopedInput = {
+          ...input,
+          onDispatch: () => {
+            pendingDispatch = input.onDispatch
+          }
+        }
+        if (config.api === 'gemini-interactions')
+          return createGoogleInteractionsMediaTransport({ config, apiKey, fetch: guarded }).generate(scopedInput, signal)
+        if (config.api === 'openai-images' || config.api === 'stability-images')
+          return createIndependentImageMediaTransport({ config, apiKey, fetch: guarded }).generate(scopedInput, signal)
+        const gemini = createGeminiMediaTransport({
+          apiKey,
+          baseUrl: config.baseUrl,
+          timeoutMs: config.timeoutMs,
+          maxInputTokens: config.maxInputTokens,
+          maxOutputTokens: config.maxOutputTokens,
+          ...(kind === 'image' ? { imageModel: config.model } : { transcriptionModel: config.model }),
+          countModels: [config.model],
+          fetch: guarded
+        })
+        if (kind === 'image') {
+          if (typeof scopedInput.prompt !== 'string') throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'Image generation requires a prompt', 400)
+          const result = await gemini.generateImage(
+            { ...scopedInput, prompt: scopedInput.prompt, ...(scopedInput.files === undefined ? {} : { images: scopedInput.files }) },
+            signal
+          )
+          return { text: result.text, files: result.images, usage: result.usage, usageSource: 'reported' }
+        }
+        if (kind !== 'transcription' || scopedInput.files?.length !== 1 || (scopedInput.prompt !== undefined && scopedInput.prompt !== ''))
+          throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'Transcription requires exactly one audio file', 400)
+        const result = await gemini.transcribe({ ...scopedInput, ...scopedInput.files[0]! }, signal)
+        return { text: result.text, files: [], usage: result.usage, usageSource: 'reported' }
+      }
+    }
+    return { config, transport }
+  }
+
+  async createMediaInput(profileVersionId: string): Promise<{
+    transport: GeminiMediaInputTransport
+    config: { attachments: boolean }
+    capabilities: AgentProviderCapabilities
+  }> {
     const row = (await this.#knex('agentProviderProfileVersions as versions')
       .join('agentProviderProfiles as profiles', function () {
         this.on('profiles.id', '=', 'versions.profileId').andOn('profiles.currentVersionId', '=', 'versions.id')
       })
-      .where({
-        'versions.id': profileVersionId,
-        'versions.conformed': true,
-        'profiles.conformed': true,
-        'profiles.status': 'enabled'
-      })
+      .where({ 'versions.id': profileVersionId, 'versions.conformed': true, 'profiles.conformed': true, 'profiles.status': 'enabled' })
       .whereNull('profiles.deletedAt')
       .select('versions.*')
       .first()) as ProviderVersionRow | undefined
     if (!row || row.transportKind !== 'gemini-api' || row.authMode !== 'google-api-key' || !row.secretReference)
-      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media is not enabled for this provider', 403)
+      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Native media context is not enabled for this provider', 403)
     let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
     let capabilities: AgentProviderCapabilities
     try {
@@ -1030,50 +1260,74 @@ export class AgentProviderFactory {
     } catch {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider profile data is invalid', 500)
     }
-    const config = adapterConfig.media
-    if (!config || (!config.attachments && !config.imageGeneration && !config.transcription && !config.videoGeneration && !config.musicGeneration))
-      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media is not enabled for this provider', 403)
-    const secret = await this.#secrets.get(row.secretReference)
-    if (!secret) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
+    const mediaInputs = agentProviderMediaInputs(row.transportKind, adapterConfig)
+    if (!Object.values(mediaInputs).some(Boolean)) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Native media context is disabled', 403)
+    const apiKey = await this.#secrets.get(row.secretReference)
+    if (!apiKey) throw new AgentRepositoryError('PROFILE_SECRET_UNAVAILABLE', 'Provider profile secret is unavailable', 503)
+    const countModels = [row.model, ...(row.utilityModel ? [row.utilityModel] : [])]
     const limits = {
       ...deriveAgentProviderResourceLimits(capabilities.maxOutputTokens),
       rawBodyBytes: GEMINI_MEDIA_OUTPUT_LIMIT,
       rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
     }
-    const maxOutputTokens = Math.min(capabilities.maxOutputTokens, 8_192)
-    const maxInputTokens = capabilities.maxContextTokens - maxOutputTokens
-    if (maxInputTokens < 1) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'The provider context limit must exceed its output limit', 500)
+    const gemini = createGeminiMediaTransport({
+      apiKey,
+      baseUrl: row.baseUrl,
+      timeoutMs: adapterConfig.timeoutMs,
+      countModels,
+      fetch: createGuardedProviderFetch(
+        row.baseUrl,
+        'gemini-media',
+        adapterConfig.additionalHeaders,
+        this.#fetch,
+        this.#resolve,
+        limits,
+        undefined,
+        undefined,
+        {
+          generateModels: [],
+          countModels,
+          files: true
+        }
+      )
+    })
+    const modalityByMime: Readonly<Record<string, keyof AgentMediaInputs>> = {
+      'image/png': 'images',
+      'image/jpeg': 'images',
+      'image/webp': 'images',
+      'image/gif': 'images',
+      'application/pdf': 'documents',
+      'audio/webm': 'audio',
+      'audio/ogg': 'audio',
+      'audio/wav': 'audio',
+      'audio/mpeg': 'audio',
+      'audio/mp3': 'audio',
+      'audio/mp4': 'audio',
+      'audio/aac': 'audio',
+      'audio/flac': 'audio',
+      'video/mp4': 'video',
+      'video/webm': 'video'
+    }
     return {
-      transport: createGeminiMediaTransport({
-        apiKey: secret,
-        baseUrl: row.baseUrl,
-        timeoutMs: adapterConfig.timeoutMs,
-        maxInputTokens,
-        maxOutputTokens,
-        fetch: createGuardedProviderFetch(row.baseUrl, 'gemini-media', adapterConfig.additionalHeaders, this.#fetch, this.#resolve, limits)
-      }),
-      config,
+      config: { attachments: true },
       capabilities,
-      pricing: {
-        ...(config.videoGeneration
-          ? {
-              videoGeneration: {
-                ...parseAgentProviderPricing(config.videoGeneration.pricingRevision),
-                textOutputMicrosPerMillionTokens: config.videoGeneration.textOutputMicrosPerMillionTokens
-              }
-            }
-          : {}),
-        ...(config.musicGeneration ? { musicGeneration: { costMicrosPerSong: config.musicGeneration.costMicrosPerSong } } : {}),
-        ...(config.imageGeneration
-          ? {
-              imageGeneration: parseAgentProviderPricing(config.imageGeneration.pricingRevision)
-            }
-          : {}),
-        ...(config.transcription
-          ? {
-              transcription: parseAgentProviderPricing(config.transcription.pricingRevision)
-            }
-          : {})
+      transport: {
+        async upload(input, signal) {
+          const modality = Object.hasOwn(modalityByMime, input.mimeType) ? modalityByMime[input.mimeType] : undefined
+          if (!modality || !mediaInputs[modality])
+            throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'This LLM profile does not opt into this media input', 400)
+          return gemini.upload(input, signal)
+        },
+        async countTokens(model, input, signal) {
+          for (const block of input) {
+            if (block.type === 'text') continue
+            const modality = Object.hasOwn(modalityByMime, block.mime_type) ? modalityByMime[block.mime_type] : undefined
+            if (!modality || !mediaInputs[modality])
+              throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'This LLM profile does not opt into this media input', 400)
+          }
+          return gemini.countTokens(model, input, signal)
+        },
+        delete: gemini.delete
       }
     }
   }
@@ -1159,7 +1413,7 @@ export class AgentProviderFactory {
     const legacyRow = { ...row, model }
     let service: ProviderChatService
     if (row.transportKind === 'openai-responses' || row.transportKind === 'openresponses' || row.transportKind === 'openai-chat') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, scope => {
+      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope => {
         const transport = createTransportFetch(scope)
         const configuredFetch = Object.assign(
           async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
@@ -1203,7 +1457,7 @@ export class AgentProviderFactory {
             })
       })
     } else if (row.transportKind === 'anthropic-messages') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, scope => {
+      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope => {
         const transportFetch = createTransportFetch(scope)
         const configuredFetch = Object.assign(
           async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
@@ -1222,7 +1476,7 @@ export class AgentProviderFactory {
         })
       })
     } else if (row.transportKind === 'gemini-api') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, scope =>
+      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope =>
         createGeminiAxService({
           apiKey: secret,
           baseUrl: row.baseUrl,
@@ -1236,7 +1490,7 @@ export class AgentProviderFactory {
         })
       )
     } else if (row.transportKind === 'legacy-completions') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, scope =>
+      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope =>
         createLegacyCompletionService(legacyRow, secret, adapterConfig, createTransportFetch(scope))
       )
     } else {
@@ -1245,6 +1499,7 @@ export class AgentProviderFactory {
     return {
       service,
       capabilities,
+      mediaInputs: agentProviderMediaInputs(row.transportKind, adapterConfig),
       get nativeMediaCapabilities() {
         return service.nativeMediaCapabilities
       },
@@ -1255,7 +1510,6 @@ export class AgentProviderFactory {
       pricingRevision: row.pricingRevision,
       pricing,
       preserveCachePrefix,
-      ...(row.transportKind === 'gemini-api' && adapterConfig.media ? { mediaConfig: adapterConfig.media } : {}),
       preserveThoughtBlock:
         row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
           ? (resultId, block) => (block.encrypted ? openAIReasoningState(resultId, block) : null)

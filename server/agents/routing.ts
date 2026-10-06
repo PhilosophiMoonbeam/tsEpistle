@@ -230,10 +230,13 @@ const eligible = (
     candidate.credentialReady &&
     candidate.conformed &&
     candidate.admissible !== false &&
-    r.modalities.every(modality => candidate.modalities.includes(modality)) &&
+    r.modalities.every(modality =>
+      modality === 'text'
+        ? candidate.modalities.includes('text')
+        : candidate.mediaInputs[modality === 'image' ? 'images' : modality === 'file' ? 'documents' : modality]
+    ) &&
+    (r.inputMimeTypes?.every(mimeType => candidate.inputMimeTypes.includes(mimeType)) ?? true) &&
     (!(r.nativeTools || r.nativeExternalMcp) || candidate.capabilities.toolCalling === 'native') &&
-    (r.generationTools ?? []).every(tool => candidate.generationTools?.includes(tool)) &&
-    (!r.transcription || candidate.transcription === true) &&
     (!r.nativeSchema || candidate.capabilities.structuredOutput === 'native-json-schema') &&
     candidate.capabilities.maxContextTokens >= context + Math.max(outputTokens, r.minimumOutputTokens) &&
     candidate.capabilities.maxOutputTokens >= Math.max(outputTokens, r.minimumOutputTokens)

@@ -165,7 +165,7 @@
         <ul v-if="attachments.length" class="agent-composer__media-attachments" :aria-label="$t('common:agentComposer.attachmentsNextMessage')">
           <li v-for="item in attachments" :key="item.id">
             <img v-if="item.mimeType.startsWith('image/')" :src="agentMediaContentUrl(item.id)" width="32" height="32" decoding="async" alt="" />
-            <v-icon v-else icon="mdi-file-pdf-box" size="24" aria-hidden="true" />
+            <v-icon v-else :icon="item.mimeType.startsWith('audio/') ? 'mdi-music-note-outline' : item.mimeType.startsWith('video/') ? 'mdi-movie-open-outline' : 'mdi-file-pdf-box'" size="24" aria-hidden="true" />
             <span :title="item.filename">{{ item.filename }}</span>
             <v-btn icon="mdi-close" size="x-small" variant="text" :aria-label="$t('common:agentComposer.remove', { filename: item.filename, interpolation: { escapeValue: false } })" :disabled="locked" @click="removeAttachment(item)" />
           </li>
@@ -441,7 +441,7 @@ import type { Ref } from 'vue'
 import AgentComposerMedia from './agent-composer-media.vue'
 import AgentComposerSkillMenu from './agent-composer-skill-menu.vue'
 import AgentDictationWaveform from './agent-dictation-waveform.vue'
-import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
+import { agentAttachmentMimeTypes, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
@@ -557,11 +557,8 @@ const dictationTimerLabel = computed(() => {
 })
 const dictationEnding = computed(() => mediaSeconds.value >= 50)
 const dictationAvailable = computed(() => Boolean(props.mediaCapabilities?.transcription))
-const attachmentsAvailable = computed(() => Boolean(props.mediaCapabilities?.attachments))
-const attachmentCount = computed(() => {
-  const count = (mediaComposer.value as unknown as { attachments?: unknown } | null)?.attachments
-  return Array.isArray(count) ? count.length : 0
-})
+const attachmentsAvailable = computed(() => agentAttachmentMimeTypes(props.mediaCapabilities, props.generationToolsEnabled === false ? [] : mediaSubmission.value.generationTools).length > 0)
+const attachmentCount = computed(() => mediaSubmission.value.attachmentIds.length)
 const attachmentAdmissionReason = computed(() => {
   if (!attachmentsAvailable.value) return t('common:agentComposer.attachmentsUnsupported')
   if (props.networkBlocked) return t('common:agentComposer.attachmentsOffline')

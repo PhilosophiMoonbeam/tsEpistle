@@ -1,6 +1,9 @@
 import sharp from 'sharp'
 import { AGENT_ATTACHMENT_MAX_BYTES, AGENT_GENERATED_VIDEO_MAX_BYTES, AGENT_GENERATED_AUDIO_MAX_BYTES } from '../../../shared/agents/media-limits.ts'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { createAgentMediaTestDatabase } from './media-database.ts'
@@ -15,7 +18,6 @@ import {
   getOwnedAgentMediaMetadata,
   ownedAgentMediaSource,
   stageOwnedAgentMedia,
-  assertAgentMediaCapability,
   bindAgentMedia,
   getOwnedAgentMedia,
   mediaFilename,
@@ -33,6 +35,34 @@ const sessionId = randomUUID()
 const secondSessionId = randomUUID()
 const messageId = randomUUID()
 const runId = randomUUID()
+const playableGeneratedMedia = async (video: boolean): Promise<Buffer> => {
+  const directory = await mkdtemp(join(tmpdir(), 'wiki-media-storage-test-'))
+  try {
+    const path = join(directory, video ? 'clip.mp4' : 'song.mp3')
+    const child = spawnSync(
+      'ffmpeg',
+      [
+        '-nostdin',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        video ? 'color=c=blue:s=16x16:r=4:d=0.5' : 'sine=frequency=440:sample_rate=16000:duration=0.5',
+        '-threads',
+        '1',
+        ...(video ? ['-c:v', 'mpeg4', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'] : ['-c:a', 'libmp3lame', '-b:a', '32k']),
+        path
+      ],
+      { timeout: 10_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL' }
+    )
+    if (child.error || child.status !== 0) throw new Error(`Cannot create playable storage fixture: ${child.error?.message ?? child.stderr.toString()}`)
+    return await readFile(path)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}
 describe('private Agent media', () => {
   let db: Knex
   let destroyDatabase: () => Promise<void>
@@ -87,12 +117,6 @@ describe('private Agent media', () => {
       leaseOwner: 'worker',
       leaseToken: runId
     })
-    await db.schema.createTable('agentProviderProfileVersions', table => {
-      table.uuid('id').primary()
-      table.string('transportKind')
-      table.string('baseUrl')
-      table.text('adapterConfig')
-    })
     await up(db)
     await upMediaContextState(db)
   })
@@ -125,7 +149,9 @@ describe('private Agent media', () => {
       const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType: 'application/pdf', filename: '250mb.pdf' })
       expect(Number((await getOwnedAgentMediaMetadata(db, 7, media.id)).byteLength)).toBe(250 * 1024 * 1024)
       expect(media.sha256).toBe(expectedSha256)
-      const stored = await db('agentMedia').where({ id: media.id }).first(db.raw('octet_length(??) as ??', ['payload', 'storedBytes']))
+      const stored = await db('agentMedia')
+        .where({ id: media.id })
+        .first(db.raw('octet_length(??) as ??', ['payload', 'storedBytes']))
       expect(Number(stored.storedBytes)).toBe(payload.length)
     },
     120_000
@@ -144,9 +170,13 @@ describe('private Agent media', () => {
       db.transaction(tx => bindAgentMedia(tx, { ownerId, sessionId: target, attachmentIds: [media.id], messageId, runId }))
     await expect(bind(8)).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
     await expect(bind(7, secondSessionId)).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
-    await db('agentMedia').where({ id: media.id }).update({ expiresAt: new Date(Date.now() - 60_000) })
+    await db('agentMedia')
+      .where({ id: media.id })
+      .update({ expiresAt: new Date(Date.now() - 60_000) })
     await expect(bind()).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
-    await db('agentMedia').where({ id: media.id }).update({ expiresAt: new Date(Date.now() + 3600_000) })
+    await db('agentMedia')
+      .where({ id: media.id })
+      .update({ expiresAt: new Date(Date.now() + 3600_000) })
     await bind()
     expect(await db('agentMedia').where({ id: media.id }).first('messageId', 'expiresAt')).toEqual({ messageId, expiresAt: null })
     await expect(bind()).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
@@ -257,51 +287,58 @@ describe('private Agent media', () => {
     const row = await upload()
     const source = ownedAgentMediaSource(db, 7, sessionId, await getOwnedAgentMediaMetadata(db, 7, row.id))
     expect(await source.loadPayload!(new AbortController().signal)).toEqual(png)
-    const replacement = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'blue' } }).png().toBuffer()
-    await db('agentMedia').where({ id: row.id }).update({
-      payload: replacement,
-      byteLength: replacement.length,
-      sha256: createHash('sha256').update(replacement).digest('hex')
-    })
+    const replacement = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'blue' } })
+      .png()
+      .toBuffer()
+    await db('agentMedia')
+      .where({ id: row.id })
+      .update({
+        payload: replacement,
+        byteLength: replacement.length,
+        sha256: createHash('sha256').update(replacement).digest('hex')
+      })
     await expect(source.loadPayload!(new AbortController().signal)).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
     await db('agentMedia').where({ id: row.id }).update({ payload: row.payload, byteLength: row.byteLength, sha256: row.sha256 })
     await db('agentSessions').where({ id: sessionId }).update({ deletedAt: new Date() })
     await expect(source.loadPayload!(new AbortController().signal)).rejects.toMatchObject({ status: 404 })
   })
-  it.each(['generated-video', 'generated-audio'] as const)(
-    'stores %s only with a live run lease, expected MIME, signature, and generated size limit',
-    async kind => {
-      const video = kind === 'generated-video'
-      const payload = Buffer.from(video ? '\0\0\0\x18ftypisom0000000000000000' : 'ID3generated music bytes')
-      const input = {
-        ownerId: 7,
-        sessionId,
-        payload,
-        mimeType: video ? 'video/mp4' : 'audio/mpeg',
-        filename: video ? 'clip.mp4' : 'song.mp3',
-        kind,
-        messageId,
-        runId,
-        leaseOwner: 'worker',
-        leaseToken: runId
-      }
-      await expect(storeAgentMedia(db, { ...input, leaseToken: randomUUID() })).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
-      await expect(storeAgentMedia(db, { ...input, mimeType: 'text/html' })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
-      await expect(storeAgentMedia(db, { ...input, payload: Buffer.from('not playable media') })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
-      const oversized = Buffer.alloc((video ? AGENT_GENERATED_VIDEO_MAX_BYTES : AGENT_GENERATED_AUDIO_MAX_BYTES) + 1)
-      payload.copy(oversized)
-      await expect(storeAgentMedia(db, { ...input, payload: oversized })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
-      const stored = await storeAgentMedia(db, input)
-      expect(stored.kind).toBe(kind)
-      expect(stored.expiresAt).toBeNull()
-      expect((await getOwnedAgentMedia(db, 7, stored.id)).payload).toEqual(payload)
-      await expect(getOwnedAgentMedia(db, 8, stored.id)).rejects.toMatchObject({ status: 404 })
-      expect((await db('agentRuns').where({ id: runId }).first('sideEffectsStarted')).sideEffectsStarted).toBeTruthy()
-      expect(() => validateAgentMedia(payload, 'video/mp4')).toThrow()
-      await db('agentSessions').where({ id: sessionId }).delete()
-      expect(await db('agentMedia').where({ id: stored.id }).first()).toBeUndefined()
+  it.each(['generated-video', 'generated-audio'] as const)('stores fully decoded %s only with owner permission and a live run lease', async kind => {
+    const video = kind === 'generated-video'
+    const payload = await playableGeneratedMedia(video)
+    const input = {
+      ownerId: 7,
+      sessionId,
+      payload,
+      mimeType: video ? 'video/mp4' : 'audio/mpeg',
+      filename: video ? 'clip.mp4' : 'song.mp3',
+      kind,
+      messageId,
+      runId,
+      leaseOwner: 'worker',
+      leaseToken: runId
     }
-  )
+    await expect(storeAgentMedia(db, { ...input, leaseToken: randomUUID() })).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
+    await expect(storeAgentMedia(db, { ...input, ownerId: 8 })).rejects.toMatchObject({ status: 404 })
+    await expect(storeAgentMedia(db, { ...input, mimeType: 'text/html' })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    await expect(storeAgentMedia(db, { ...input, payload: Buffer.from('not playable media') })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    await expect(storeAgentMedia(db, { ...input, payload: payload.subarray(0, 12) })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    const oversized = Buffer.alloc((video ? AGENT_GENERATED_VIDEO_MAX_BYTES : AGENT_GENERATED_AUDIO_MAX_BYTES) + 1)
+    payload.copy(oversized)
+    await expect(storeAgentMedia(db, { ...input, payload: oversized })).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
+    await db('agentRuns').where({ id: runId }).update({ cancelRequestedAt: new Date() })
+    await expect(storeAgentMedia(db, input)).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
+    expect(await db('agentMedia').first()).toBeUndefined()
+    expect((await db('agentRuns').where({ id: runId }).first('sideEffectsStarted')).sideEffectsStarted).toBeFalsy()
+    await db('agentRuns').where({ id: runId }).update({ cancelRequestedAt: null })
+    const stored = await storeAgentMedia(db, input)
+    expect(stored.kind).toBe(kind)
+    expect(stored.expiresAt).toBeNull()
+    expect((await getOwnedAgentMedia(db, 7, stored.id)).payload).toEqual(payload)
+    await expect(getOwnedAgentMedia(db, 8, stored.id)).rejects.toMatchObject({ status: 404 })
+    expect((await db('agentRuns').where({ id: runId }).first('sideEffectsStarted')).sideEffectsStarted).toBeTruthy()
+    await db('agentSessions').where({ id: sessionId }).delete()
+    expect(await db('agentMedia').where({ id: stored.id }).first()).toBeUndefined()
+  })
   it('rejects stale generated-output leases and cancellation', async () => {
     const input = {
       ownerId: 7,
@@ -326,19 +363,5 @@ describe('private Agent media', () => {
       .where({ id: media.id })
       .update({ payload: Buffer.from('changed') })
     await expect(getOwnedAgentMedia(db, 7, media.id)).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
-  })
-  it('requires explicit official Gemini capability configuration', async () => {
-    const id = randomUUID()
-    const adapterConfig = { timeoutMs: 30000, maxRetries: 0, media: { attachments: true } }
-    await db('agentProviderProfileVersions').insert({
-      id,
-      transportKind: 'gemini-api',
-      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-      adapterConfig: JSON.stringify(adapterConfig)
-    })
-    await assertAgentMediaCapability(db, id, 'attachments')
-    await expect(assertAgentMediaCapability(db, id, 'transcription')).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
-    await db('agentProviderProfileVersions').where({ id }).update({ baseUrl: 'https://example.test/v1beta' })
-    await expect(assertAgentMediaCapability(db, id, 'attachments')).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
   })
 })

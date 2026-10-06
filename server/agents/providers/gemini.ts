@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
   ai,
-  type AxAIFeatures,
   type AxAIGoogleGeminiChatRequest,
   type AxAIGoogleGeminiContentPart,
   type AxAIGoogleGeminiModel,
@@ -222,9 +221,18 @@ export interface GeminiAxServiceOptions {
   readonly thinkingLevel?: Extract<AgentReasoningEffort, 'minimal' | 'low' | 'medium' | 'high'>
 }
 
-export const createGeminiAxService = (config: GeminiAxServiceOptions): Pick<AxAIService, 'chat'> & Pick<AgentProviderService, 'nativeMediaCapabilities'> => {
-  let nativeMediaCapabilities: AxAIFeatures['media'] | undefined
+export const createGeminiAxService = (
+  config: GeminiAxServiceOptions
+): Pick<AxAIService, 'chat' | 'getFeatures'> & Pick<AgentProviderService, 'nativeMediaCapabilities'> => {
+  const featureService = ai({
+    name: 'google-gemini',
+    apiKey: config.apiKey,
+    config: { model: config.model as AxAIGoogleGeminiModel },
+    options: { fetch: config.fetch, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
+  })
+  let nativeMediaCapabilities = featureService.getFeatures(config.model).media
   return {
+    getFeatures: model => featureService.getFeatures(typeof model === 'string' ? model : config.model),
     get nativeMediaCapabilities() {
       return nativeMediaCapabilities
     },
@@ -337,7 +345,7 @@ export const createGeminiAxService = (config: GeminiAxServiceOptions): Pick<AxAI
         }
       })
       // Capture the actual bound model's facts without another service or transport request.
-      nativeMediaCapabilities = service.getFeatures().media
+      nativeMediaCapabilities = service.getFeatures(config.model).media
       const modelConfig = { ...request.modelConfig }
       delete modelConfig.maxTokens
       const chatPrompt = request.chatPrompt.map(message => {

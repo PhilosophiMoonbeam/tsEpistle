@@ -64,8 +64,8 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
-RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg 'qpdf>=11.9.1-r0' && \
-    qpdf --version && \
+RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg 'qpdf>=11.9.1-r0' ffmpeg && \
+    qpdf --version && ffmpeg -version && ffprobe -version && \
     mkdir -p /wiki /logs /wiki/data/content /wiki/data/repo && \
     chown -R bun:bun /wiki /logs
 WORKDIR /wiki
@@ -79,6 +79,7 @@ COPY --chown=bun:bun dev/build/config.yml ./config.yml
 COPY --chown=bun:bun package.json ./
 COPY --chown=bun:bun LICENSE ./
 COPY --chown=bun:bun NOTICE ./
+COPY --chown=bun:bun COPYING.GPL-3.0 ./
 
 USER 1000:1000
 VOLUME ["/wiki/data/content"]

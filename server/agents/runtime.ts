@@ -7,6 +7,7 @@ import {
   type AgentEventType,
   type AgentExecutionMode,
   type AgentGenerationTool,
+  type AgentMediaView,
   type AgentGoalBudgetLimitReason,
   type AgentGoalTokenTier,
   type AgentGoogleSearchGrounding,
@@ -16,6 +17,14 @@ import {
 } from '../../shared/agents/contracts.ts'
 import { type DecisionUsage, DecisionUsageSchema } from '../../shared/agents/decision-providers.ts'
 import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import {
+  AgentMediaKindSchema,
+  agentMediaToolInputs,
+  agentProviderMediaInputMimeTypes,
+  normalizeAgentMediaMimeType,
+  type AgentMediaBindings,
+  type AgentMediaInputs
+} from '../../shared/agents/media-providers.ts'
 import type { RoutingRequirements, RoutingTurnDecision } from '../../shared/agents/routing.ts'
 import type { SpecialistContext, SpecialistProviderBinding } from '../../shared/agents/specialists.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
@@ -49,6 +58,7 @@ import {
   getOwnedAgentRun,
   markAgentRunSideEffectsStarted,
   normalizeAgentGenerationTools,
+  normalizeAgentMediaBindings,
   persistAgentRunQuotaSettlementIntent,
   readAgentApprovalContinuation,
   terminalizeAgentRun
@@ -73,10 +83,11 @@ import {
   AGENT_MEDIA_PROMPT_MAX_FILES,
   type AgentMediaMetadata,
   type AgentMediaSource,
-  assertAgentMediaCapability,
   ownedAgentMediaSource,
+  projectAgentMedia,
   storeAgentMedia
 } from './media.ts'
+import { assertAgentMediaBinding, listAgentMediaBindings } from './media-providers.ts'
 import { type AgentMemorySnapshot, decodeAgentMemorySnapshot } from './memory.ts'
 import {
   type AgentChildBudgetReservation,
@@ -103,7 +114,12 @@ import {
   decodeAgentProviderContinuation
 } from './providers/factory.ts'
 import type { AgentRoutingCandidate } from './providers/registry.ts'
-import { AgentProviderPoliciesSchema, type AgentProviderTransportKind } from './providers/registry.ts'
+import {
+  AgentProviderAdapterConfigSchema,
+  AgentProviderPoliciesSchema,
+  agentProviderMediaInputs,
+  type AgentProviderTransportKind
+} from './providers/registry.ts'
 import { assertAgentTokenUsage, readAgentUsageEvent } from './providers/usage.ts'
 import type {
   AgentConversationTitleGenerator,
@@ -691,6 +707,7 @@ export interface AgentSpecialistHandoff {
 export interface AgentEngineRequest {
   readonly compaction?: AgentCompactionContext
   readonly generationTools?: readonly AgentGenerationTool[]
+  readonly mediaBindings?: AgentMediaBindings
   readonly authorizeMedia?: () => Promise<void>
   readonly authorizeDispatch?: () => Promise<void>
   readonly beforeExternalTool?: () => Promise<void>
@@ -730,7 +747,7 @@ export interface AgentEngineSink {
       readonly filename: string
       readonly kind?: 'generated-image' | 'generated-video' | 'generated-audio'
     }[]
-  ): Promise<void>
+  ): Promise<readonly AgentMediaView[] | void>
   text(delta: string): Promise<void>
   event(type: AgentEventType, data: AgentEventData): Promise<void>
 }
@@ -865,6 +882,7 @@ interface RuntimeSkillRow {
 }
 interface RuntimeContextRow {
   data: string
+  dataSha256: string
 }
 interface RuntimeSessionRow {
   memorySnapshot: string
@@ -1187,16 +1205,70 @@ const generationToolsHint = (value: string | undefined): readonly AgentGeneratio
     throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored generation tool preferences are invalid.', 500)
   }
 }
-const assertGenerationToolCapabilities = async (
+const mediaBindingsHint = (value: string | undefined): AgentMediaBindings => {
+  if (value === undefined) return Object.freeze({})
+  try {
+    if (Buffer.byteLength(value, 'utf8') > 32 * 1024) throw new Error('context too large')
+    const parsed: unknown = JSON.parse(value)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid context')
+    return normalizeAgentMediaBindings(Reflect.get(parsed, 'mediaBindings')) ?? Object.freeze({})
+  } catch {
+    throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored media provider bindings are invalid.', 500)
+  }
+}
+const assertRunMediaBindings = async (
   db: Knex | Knex.Transaction,
-  versionId: string,
-  tools: readonly AgentGenerationTool[] | undefined,
-  executionMode: AgentExecutionMode
+  ownerId: number,
+  bindings: AgentMediaBindings,
+  requiredKinds: readonly ('image' | 'video' | 'music' | 'transcription')[] = []
 ): Promise<void> => {
-  if (tools?.length && executionMode !== 'agent')
-    throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'This conversation mode cannot use generation tools.', 400)
-  for (const tool of tools ?? [])
-    await assertAgentMediaCapability(db, versionId, tool === 'image' ? 'imageGeneration' : tool === 'video' ? 'videoGeneration' : 'musicGeneration')
+  for (const kind of requiredKinds)
+    if (!bindings[kind]) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'The requested media operation was not admitted.', 403)
+  for (const kind of AgentMediaKindSchema.options) {
+    const versionId = bindings[kind]
+    if (versionId !== undefined) await assertAgentMediaBinding(db, ownerId, kind, versionId)
+  }
+}
+const mediaInputKind = (mimeType: string): keyof AgentMediaInputs | undefined => {
+  switch (normalizeAgentMediaMimeType(mimeType)) {
+    case 'image/png':
+    case 'image/jpeg':
+    case 'image/webp':
+      return 'images'
+    case 'application/pdf':
+      return 'documents'
+    case 'audio/webm':
+    case 'audio/ogg':
+    case 'audio/wav':
+    case 'audio/mp4':
+    case 'audio/mpeg':
+    case 'audio/aac':
+    case 'audio/flac':
+      return 'audio'
+    case 'video/mp4':
+    case 'video/webm':
+      return 'video'
+    default:
+      return undefined
+  }
+}
+const supportsMediaInput = (mimeTypes: readonly string[], mimeType: string): boolean => mimeTypes.includes(normalizeAgentMediaMimeType(mimeType))
+const acceptsToolImageReferences = async (
+  db: Knex | Knex.Transaction,
+  ownerId: number,
+  bindings: AgentMediaBindings,
+  executionMode: string,
+  tools: readonly AgentGenerationTool[] | undefined,
+  directKind?: 'image' | 'video' | 'music'
+): Promise<boolean> => {
+  for (const kind of ['image', 'video'] as const) {
+    if (directKind !== undefined ? directKind !== kind : executionMode !== 'agent' || (tools !== undefined && !tools.includes(kind))) continue
+    const versionId = bindings[kind]
+    if (versionId === undefined) continue
+    const binding = await assertAgentMediaBinding(db, ownerId, kind, versionId)
+    if (agentMediaToolInputs(binding.config).images) return true
+  }
+  return false
 }
 
 const knowledgeContextHint = (value: string | undefined): AgentKnowledgeContext | undefined => {
@@ -1491,6 +1563,23 @@ export class AgentProductRuntime {
     })
   }
 
+  async #revalidateQueuedMediaBindings(
+    transaction: Knex.Transaction,
+    ownerId: number,
+    runId: string,
+    mediaRequest?: AgentEngineRequest['mediaRequest']
+  ): Promise<AgentMediaBindings> {
+    const context = await transaction('agentEvents').where({ runId, type: 'run.queued' }).orderBy('sequence').first('data', 'dataSha256')
+    if (context && sha256(context.data) !== context.dataSha256)
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context hash is invalid', 500)
+    const bindings = mediaBindingsHint(context?.data)
+    await assertRunMediaBindings(transaction, ownerId, bindings, [
+      ...(generationToolsHint(context?.data) ?? []),
+      ...(mediaRequest === undefined ? [] : [mediaRequest.kind])
+    ])
+    return bindings
+  }
+
   async #authorizeClaim(claim: AgentRunClaim): Promise<void> {
     const record = await this.#routingRecord(claim)
     await this.#knex.transaction(async transaction => {
@@ -1511,6 +1600,10 @@ export class AgentProductRuntime {
         .first('id', 'leaseExpiresAt', 'profilePolicyVersion', 'defaultGeneration')
       if (!run || new Date(run.leaseExpiresAt).valueOf() <= Date.now())
         throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before dispatch', 409)
+      const mediaRequest = claim.mediaRequest ? { kind: AgentMediaKindSchema.parse(JSON.parse(claim.mediaRequest).kind) } : undefined
+      const mediaBindings = await this.#revalidateQueuedMediaBindings(transaction, claim.ownerId, claim.id, mediaRequest)
+      if (claim.mediaBindings !== undefined && canonicalJson(mediaBindings) !== canonicalJson(claim.mediaBindings))
+        throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Admitted media bindings changed before dispatch.', 500)
       if (claim.goalId !== null) {
         const goal = await getOwnedAgentGoal(transaction, claim.ownerId, claim.goalId, true)
         if (new Date(goal.deadlineAt).valueOf() <= Date.now()) throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal deadline was reached', 409)
@@ -1599,6 +1692,7 @@ export class AgentProductRuntime {
   ): AgentEngineRequest {
     return {
       run: { ...claim, ...candidate.admission },
+      mediaBindings: claim.mediaBindings ?? {},
       purpose: 'subagent',
       authorizeDispatch: async () => {
         await this.#authorizeClaim(claim)
@@ -1782,6 +1876,7 @@ export class AgentProductRuntime {
       readonly budget: AgentRunDispatchBudget
     }
   ): Promise<AgentRunClaim> {
+    if (claim.mediaRequest) return claim
     const router = this.#router
     const list = this.#resolver.listRoutingCandidates
     const resolve = this.#resolver.resolveRoutingCandidate
@@ -1795,19 +1890,16 @@ export class AgentProductRuntime {
         await acquireAgentCoordinatorAdvisoryLocks(transaction, [claim.ownerId])
         await this.#lockAdmissionContext(transaction, claim.ownerId, claim.sessionId, input.sessionVersion)
         const incumbent =
-          claim.goalId === null && claim.mediaRequest === null && input.media.length === 0 && !input.generationTools?.length
+          claim.goalId === null && input.media.length === 0
             ? await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
             : await this.#resolveAdmittedBinding(transaction, claim)
         if (incumbent.providerProfileVersionId !== claim.providerProfileVersionId)
           throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', 'Default profile changed before routing', 409)
+        await assertRunMediaBindings(transaction, claim.ownerId, claim.mediaBindings ?? {}, input.generationTools ?? [])
         const candidates = await list.call(this.#resolver, transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
         const liveIncumbent = candidates.find(candidate => candidate.profileVersionId === incumbent.providerProfileVersionId)
         const configuredDefault =
-          claim.goalId === null &&
-          claim.mediaRequest === null &&
-          input.media.length === 0 &&
-          !input.generationTools?.length &&
-          this.#resolver.resolveConfiguredDefault
+          claim.goalId === null && input.media.length === 0 && this.#resolver.resolveConfiguredDefault
             ? await this.#resolver.resolveConfiguredDefault(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
             : incumbent
         const safeDefault = candidates.find(candidate => candidate.profileVersionId === configuredDefault.providerProfileVersionId)
@@ -1824,8 +1916,7 @@ export class AgentProductRuntime {
       if (snapshot === null) return claim
       const current = snapshot.candidates.find(candidate => candidate.profileVersionId === claim.providerProfileVersionId)
       if (!current) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Current provider is no longer eligible', 409)
-      const external =
-        claim.executionMode === 'agent' && !claim.mediaRequest ? await this.#engine.routingRequirements?.(claim.ownerId, input.signal) : undefined
+      const external = claim.executionMode === 'agent' ? await this.#engine.routingRequirements?.(claim.ownerId, input.signal) : undefined
       const currentMessage = [...input.messageRows].reverse().find(message => message.role === 'user')?.content ?? ''
       const overhead = canonicalJson({ memory: input.memory, skills: input.skills }).length
       const fullHistoryInputTokens = safeUsageSum(
@@ -1862,39 +1953,28 @@ export class AgentProductRuntime {
                 .reduce((sum, message) => safeUsageSum(sum, Buffer.byteLength(message.content), 'Routing compacted estimate'), 0),
               'Routing compacted estimate'
             )
-      const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: string }) : null
       const requiredModalities = new Set<RoutingRequirements['modalities'][number]>(['text'])
-      if (mediaRequest?.kind !== 'transcription') {
-        for (const media of input.media) {
-          if (
-            media.detachedAt !== null ||
-            media.kind === 'generated-video' ||
-            media.kind === 'generated-audio' ||
-            (!current.media.attachments && media.messageId !== claim.userMessageId)
-          )
-            continue
-          requiredModalities.add(
-            media.mimeType.startsWith('image/')
-              ? 'image'
-              : media.mimeType.startsWith('audio/')
-                ? 'audio'
-                : media.mimeType.startsWith('video/')
-                  ? 'video'
-                  : 'file'
-          )
-        }
-      }
-      let candidates = snapshot.candidates.filter(
-        candidate =>
-          (input.generationTools ?? []).every(tool => tool === 'image' && candidate.media.imageGeneration) &&
-          (mediaRequest === null ||
-            (mediaRequest.kind === 'image' && candidate.media.imageGeneration) ||
-            (mediaRequest.kind === 'transcription' && candidate.media.transcription))
+      const requiredInputMimeTypes = new Set<string>()
+      const acceptsReferences = await acceptsToolImageReferences(
+        this.#knex,
+        claim.ownerId,
+        claim.mediaBindings ?? {},
+        claim.executionMode,
+        input.generationTools
       )
+      for (const media of input.media) {
+        if (media.messageId !== claim.userMessageId || media.detachedAt !== null || media.kind !== 'attachment') continue
+        const kind = mediaInputKind(media.mimeType)
+        if (kind === undefined) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'The requested input format is unsupported.', 400)
+        if (kind === 'images' && !supportsMediaInput(current.inputMimeTypes, media.mimeType) && acceptsReferences) continue
+        requiredModalities.add(kind === 'images' ? 'image' : kind === 'documents' ? 'file' : kind)
+        requiredInputMimeTypes.add(normalizeAgentMediaMimeType(media.mimeType))
+      }
+      let candidates = [...snapshot.candidates]
       const expectedOutputTokens = Math.min(current.capabilities.maxOutputTokens, current.admission.quota.tokens, input.maxTokens ?? Number.MAX_SAFE_INTEGER)
       let currentInputTokens = compactedCharacters
       const declared = await router.policies.getRuntime()
-      if (declared.policy.enabled && mediaRequest === null) {
+      if (declared.policy.enabled) {
         const checked: AgentRoutingCandidate[] = []
         for (const candidate of candidates) {
           const incumbent = candidate.profileVersionId === current.profileVersionId
@@ -1911,20 +1991,21 @@ export class AgentProductRuntime {
             role: message.role,
             content: message.content,
             canonicalSource: input.canonicalSources[index]!,
-            ...(candidate.media.attachments
-              ? {
-                  attachments: input.media
-                    .filter(
-                      media =>
-                        media.messageId === message.id && media.detachedAt === null && media.kind !== 'generated-video' && media.kind !== 'generated-audio'
-                    )
-                    .map(media => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, media))
-                }
-              : {})
+            attachments: input.media
+              .filter(
+                media =>
+                  media.messageId === message.id &&
+                  media.detachedAt === null &&
+                  media.kind === 'attachment' &&
+                  (supportsMediaInput(candidate.inputMimeTypes, media.mimeType) ||
+                    (media.messageId === claim.userMessageId && mediaInputKind(media.mimeType) === 'images' && acceptsReferences))
+              )
+              .map(media => ownedAgentMediaSource(this.#knex, claim.ownerId, claim.sessionId, media))
           }))
           try {
             const proof = await this.#engine.preflight({
               run: { ...claim, ...candidate.admission },
+              mediaBindings: claim.mediaBindings ?? {},
               purpose: 'root',
               messages: previewMessages,
               memory: input.memory,
@@ -2001,12 +2082,11 @@ export class AgentProductRuntime {
           estimatedRootWorkTurns: Math.max(1, Math.min(12, input.priorActivity.at(-1)?.modelTurns ?? 1)),
           requirements: {
             modalities: [...requiredModalities],
+            inputMimeTypes: [...requiredInputMimeTypes],
             nativeTools: external?.externalMcp ?? false,
             nativeExternalMcp: external?.externalMcp ?? false,
             nativeSchema: external?.externalMcp ?? false,
-            minimumOutputTokens: 1,
-            ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
-            transcription: mediaRequest?.kind === 'transcription'
+            minimumOutputTokens: 1
           },
           currentInputTokens,
           fullHistoryInputTokens,
@@ -2084,7 +2164,7 @@ export class AgentProductRuntime {
         throw new AgentRepositoryError('ROUTING_RUN_STARTED', 'Run has already started paid root or task operations', 409)
       await router.validateDecision(recorded.decision, transaction)
       const incumbent =
-        claim.goalId === null && claim.mediaRequest === null && input.media.length === 0 && !input.generationTools?.length
+        claim.goalId === null && input.media.length === 0
           ? await this.#resolver.resolveCurrent(transaction, { ownerId: claim.ownerId, sessionId: claim.sessionId })
           : await this.#resolveAdmittedBinding(transaction, {
               ownerId: claim.ownerId,
@@ -2355,49 +2435,90 @@ export class AgentProductRuntime {
     }
   }
 
-  async #assertSubmissionCapabilities(
-    transaction: Knex.Transaction,
-    resolved: AgentResolvedAdmission,
-    input: Pick<SubmitAgentMessageInput, 'responseMode' | 'attachmentIds' | 'transcription'>,
-    generationTools: readonly AgentGenerationTool[] | undefined
-  ): Promise<void> {
-    await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
-    if (input.transcription) {
-      if (input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
-      await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'transcription')
-    } else {
-      if (input.attachmentIds?.length && (!input.responseMode || input.responseMode === 'text'))
-        await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'attachments')
-      if (input.responseMode === 'image') await assertAgentMediaCapability(transaction, resolved.providerProfileVersionId, 'imageGeneration')
+  async #resolvedMediaInputMimeTypes(
+    database: Knex | Knex.Transaction,
+    resolved: Pick<AgentResolvedAdmission, 'providerProfileVersionId' | 'transportKind'>
+  ): Promise<readonly string[]> {
+    const version = await database('agentProviderProfileVersions').where({ id: resolved.providerProfileVersionId }).first('adapterConfig')
+    if (!version) throw new AgentRepositoryError('PROFILE_UNAVAILABLE', 'Provider settings are unavailable', 409)
+    let config: unknown
+    try {
+      config = typeof version.adapterConfig === 'string' ? JSON.parse(version.adapterConfig) : version.adapterConfig
+    } catch {
+      throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider input configuration is invalid.', 500)
     }
+    const parsed = AgentProviderAdapterConfigSchema.safeParse(config)
+    if (!parsed.success) throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider input configuration is invalid.', 500)
+    const transportKind = resolved.transportKind as AgentProviderTransportKind
+    return agentProviderMediaInputMimeTypes(transportKind, agentProviderMediaInputs(transportKind, parsed.data))
+  }
+
+  async #admissionMediaBindings(
+    transaction: Knex.Transaction,
+    input: Pick<SubmitAgentMessageInput, 'ownerId' | 'sessionId' | 'clientRequestId'>
+  ): Promise<AgentMediaBindings> {
+    const prior = await transaction('agentRuns')
+      .where({ ownerId: input.ownerId, sessionId: input.sessionId, clientRequestId: input.clientRequestId })
+      .first('id', 'mediaRequest')
+    if (!prior) return listAgentMediaBindings(transaction, input.ownerId)
+    const mediaRequest = prior.mediaRequest ? { kind: AgentMediaKindSchema.parse(JSON.parse(prior.mediaRequest).kind) } : undefined
+    return this.#revalidateQueuedMediaBindings(transaction, input.ownerId, prior.id, mediaRequest)
   }
 
   async #resolveSubmissionCapabilities(
     transaction: Knex.Transaction,
     resolved: AgentResolvedAdmission,
-    input: Pick<SubmitAgentMessageInput, 'ownerId' | 'sessionId' | 'responseMode' | 'attachmentIds' | 'transcription'>,
-    generationTools: readonly AgentGenerationTool[] | undefined
+    input: Pick<SubmitAgentMessageInput, 'ownerId' | 'sessionId' | 'clientRequestId' | 'responseMode' | 'attachmentIds' | 'transcription'>,
+    generationTools: readonly AgentGenerationTool[] | undefined,
+    mediaBindings: AgentMediaBindings
   ): Promise<AgentResolvedAdmission> {
-    if (input.responseMode === 'video' || input.responseMode === 'music' || generationTools?.some(tool => tool === 'video' || tool === 'music'))
-      throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Video and music generation are unavailable.', 403)
-    try {
-      await this.#assertSubmissionCapabilities(transaction, resolved, input, generationTools)
+    if (input.transcription && input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
+    if (!input.attachmentIds?.length) return resolved
+    const prior = await transaction('agentRuns')
+      .where({ ownerId: input.ownerId, sessionId: input.sessionId, clientRequestId: input.clientRequestId })
+      .first('userMessageId')
+    const files = (await transaction('agentMedia')
+      .where({ ownerId: input.ownerId, sessionId: input.sessionId, kind: 'attachment' })
+      .whereIn('id', input.attachmentIds)
+      .whereNull('detachedAt')
+      .andWhere(query => {
+        query.where(unbound => unbound.whereNull('messageId').andWhere('expiresAt', '>', new Date()))
+        if (prior) query.orWhere({ messageId: prior.userMessageId })
+      })
+      .select('mimeType')) as { mimeType: string }[]
+    if (files.length !== input.attachmentIds.length)
+      throw new AgentRepositoryError('AGENT_MEDIA_UNAVAILABLE', 'An attachment is no longer available. Attach it again.', 409)
+    const directKind = input.transcription ? 'transcription' : input.responseMode && input.responseMode !== 'text' ? input.responseMode : undefined
+    if (directKind !== undefined) {
+      const versionId = mediaBindings[directKind]
+      if (versionId === undefined) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'The requested media operation is unavailable.', 403)
+      const binding = await assertAgentMediaBinding(transaction, input.ownerId, directKind, versionId)
+      const toolInputs = agentMediaToolInputs(binding.config)
+      if (
+        files.some(file => {
+          const kind = mediaInputKind(file.mimeType)
+          return kind === undefined || !toolInputs[kind]
+        })
+      )
+        throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'The selected media operation does not accept these attachments.', 400)
       return resolved
-    } catch (error) {
-      if (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_MEDIA_DISABLED' || !this.#resolver.listRoutingCandidates) throw error
+    }
+    const currentMimeTypes = await this.#resolvedMediaInputMimeTypes(transaction, resolved)
+    const acceptsReferences = await acceptsToolImageReferences(transaction, input.ownerId, mediaBindings, resolved.executionMode, generationTools)
+    const requiredFiles = files.filter(
+      file => !(mediaInputKind(file.mimeType) === 'images' && !supportsMediaInput(currentMimeTypes, file.mimeType) && acceptsReferences)
+    )
+    if (requiredFiles.every(file => supportsMediaInput(currentMimeTypes, file.mimeType))) return resolved
+    if (this.#resolver.listRoutingCandidates) {
       const candidates = await this.#resolver.listRoutingCandidates(transaction, { ownerId: input.ownerId, sessionId: input.sessionId })
       for (const candidate of candidates) {
         if (candidate.profileVersionId === resolved.providerProfileVersionId) continue
-        try {
-          this.#assertResolvedAdmission(candidate.admission)
-          await this.#assertSubmissionCapabilities(transaction, candidate.admission, input, generationTools)
-          return candidate.admission
-        } catch (candidateError) {
-          if (!(candidateError instanceof AgentRepositoryError) || candidateError.code !== 'AGENT_MEDIA_DISABLED') throw candidateError
-        }
+        if (!requiredFiles.every(file => supportsMediaInput(candidate.inputMimeTypes, file.mimeType))) continue
+        this.#assertResolvedAdmission(candidate.admission)
+        return candidate.admission
       }
-      throw error
     }
+    throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'No authorized language model accepts the requested input formats.', 403)
   }
 
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
@@ -2420,15 +2541,8 @@ export class AgentProductRuntime {
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
-      resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools)
-      if (input.responseMode === 'image' && input.attachmentIds?.length) {
-        const files = (await transaction('agentMedia')
-          .where({ ownerId: input.ownerId, sessionId: input.sessionId })
-          .whereIn('id', input.attachmentIds)
-          .select('mimeType')) as { mimeType: string }[]
-        if (files.some(file => !file.mimeType.startsWith('image/')))
-          throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Media generation accepts image attachments only.', 400)
-      }
+      const mediaBindings = await this.#admissionMediaBindings(transaction, input)
+      resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools, mediaBindings)
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       return admitAgentRunInTransaction(transaction, {
         ownerId: input.ownerId,
@@ -2436,6 +2550,7 @@ export class AgentProductRuntime {
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content: input.content,
+        mediaBindings,
         ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.transcription
           ? { mediaRequest: { kind: 'transcription' as const }, userMessageVisible: false, assistantMessageVisible: false }
@@ -2466,7 +2581,8 @@ export class AgentProductRuntime {
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
-      resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools)
+      const mediaBindings = await this.#admissionMediaBindings(transaction, input)
+      resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools, mediaBindings)
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       const goal = await insertAgentGoal(transaction, {
         id: input.goalId,
@@ -2482,6 +2598,7 @@ export class AgentProductRuntime {
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content: goal.objective,
+        mediaBindings,
         ...(generationTools === undefined ? {} : { generationTools }),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
@@ -2620,6 +2737,7 @@ export class AgentProductRuntime {
       result = await this.#engine.execute(
         {
           run: claim,
+          mediaBindings: claim.mediaBindings ?? {},
           purpose: 'planner',
           authorizeDispatch: () => this.#authorizeClaim(claim),
           beforeExternalTool: () => this.#authorizeExternalTool(claim),
@@ -2915,6 +3033,7 @@ export class AgentProductRuntime {
   }): AgentEngineRequest {
     return {
       run: input.claim,
+      mediaBindings: input.claim.mediaBindings ?? {},
       authorizeDispatch: () => this.#authorizeClaim(input.claim),
       beforeExternalTool: () => this.#authorizeExternalTool(input.claim),
       purpose: 'subagent',
@@ -3259,7 +3378,7 @@ export class AgentProductRuntime {
           .where('agentRunSkills.runId', claim.id)
           .orderBy('agentRunSkills.ordinal')
           .select('agentSkillVersions.id', 'agentSkills.name', 'agentSkillVersions.skillMarkdown') as unknown as Promise<RuntimeSkillRow[]>,
-        this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data') as unknown as Promise<
+        this.#knex('agentEvents').where({ runId: claim.id, type: 'run.queued' }).orderBy('sequence').first('data', 'dataSha256') as unknown as Promise<
           RuntimeContextRow | undefined
         >,
         this.#knex('agentSessions')
@@ -3288,8 +3407,12 @@ export class AgentProductRuntime {
           }) as unknown as Promise<RuntimePriorEventRow[]>
       ])
       if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
+      if (contextRow && sha256(contextRow.data) !== contextRow.dataSha256)
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context hash is invalid', 500)
       const currentPage = currentPageHint(contextRow?.data)
       const generationTools = generationToolsHint(contextRow?.data)
+      const mediaBindings = mediaBindingsHint(contextRow?.data)
+      claim = { ...claim, mediaBindings }
       const knowledgeContext = knowledgeContextHint(contextRow?.data)
       const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
       const priorActivity = priorRunActivity([...priorEventRows].reverse())
@@ -3482,28 +3605,26 @@ export class AgentProductRuntime {
       const mediaRequest = claim.mediaRequest ? (JSON.parse(claim.mediaRequest) as { kind: 'image' | 'transcription' | 'video' | 'music' }) : undefined
       if (mediaRequest && !['image', 'transcription', 'video', 'music'].includes(mediaRequest.kind))
         throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Invalid media request.', 500)
-      if (mediaRequest)
-        await assertAgentMediaCapability(
-          this.#knex,
-          claim.providerProfileVersionId,
-          mediaRequest.kind === 'image'
-            ? 'imageGeneration'
-            : mediaRequest.kind === 'video'
-              ? 'videoGeneration'
-              : mediaRequest.kind === 'music'
-                ? 'musicGeneration'
-                : 'transcription'
-        )
-      let includeMediaBytes = true
-      if (!mediaRequest && mediaIndex.length) {
-        try {
-          await assertAgentMediaCapability(this.#knex, claim.providerProfileVersionId, 'attachments')
-        } catch (error) {
-          if (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_MEDIA_DISABLED') throw error
-          includeMediaBytes = false
-        }
-      }
-      const attachedRows = includeMediaBytes ? mediaIndex.filter(row => row.kind !== 'generated-video' && row.kind !== 'generated-audio') : []
+      await assertRunMediaBindings(this.#knex, claim.ownerId, mediaBindings, [
+        ...(generationTools ?? []),
+        ...(mediaRequest === undefined ? [] : [mediaRequest.kind])
+      ])
+      const inputMimeTypes =
+        !mediaRequest && mediaIndex.some(row => row.kind === 'attachment') ? await this.#resolvedMediaInputMimeTypes(this.#knex, claim) : []
+      const acceptsReferences = await acceptsToolImageReferences(
+        this.#knex,
+        claim.ownerId,
+        mediaBindings,
+        claim.executionMode,
+        generationTools,
+        mediaRequest?.kind === 'transcription' ? undefined : mediaRequest?.kind
+      )
+      const attachedRows = mediaIndex.filter(row => {
+        if (row.kind !== 'attachment') return false
+        if (mediaRequest) return row.messageId === claim.userMessageId
+        if (supportsMediaInput(inputMimeTypes, row.mimeType)) return true
+        return row.messageId === claim.userMessageId && mediaInputKind(row.mimeType) === 'images' && acceptsReferences
+      })
       if (
         attachedRows.length > AGENT_MEDIA_PROMPT_MAX_FILES ||
         attachedRows.reduce((total, row) => total + Number(row.byteLength), 0) > AGENT_MEDIA_PROMPT_MAX_BYTES
@@ -3513,7 +3634,7 @@ export class AgentProductRuntime {
           'This conversation exceeds the attachment window of 16 files or 1 GB. Start a new chat with the files needed for this request.',
           413
         )
-      if (!includeMediaBytes && mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment'))
+      if (mediaIndex.some(row => row.messageId === claim.userMessageId && row.kind === 'attachment' && !attachedRows.includes(row)))
         throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Attachments are unavailable for the current authorized Agent configuration.', 403)
       const retainedMediaIds = attachedRows.map(row => row.id)
       // Attachments dropped from context by history compaction are excluded from prompts; their
@@ -3662,6 +3783,7 @@ export class AgentProductRuntime {
       const engineRequest: AgentEngineRequest = {
         compaction: compactionContext,
         ...(generationTools === undefined ? {} : { generationTools }),
+        mediaBindings,
         authorizeMedia,
         ...(mediaRequest ? { mediaRequest } : {}),
         run: claim,
@@ -3809,6 +3931,7 @@ export class AgentProductRuntime {
         },
         media: async images => {
           if (images.length > 4) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Too many generated media files.', 502)
+          const stored: AgentMediaView[] = []
           for (const image of images) {
             executionSignal.throwIfAborted()
             const fenced = await this.#knex('agentRuns')
@@ -3816,17 +3939,22 @@ export class AgentProductRuntime {
               .whereNull('cancelRequestedAt')
               .first('id')
             if (!fenced) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost.', 409)
-            await storeAgentMedia(this.#knex, {
-              ...image,
-              ownerId: claim.ownerId,
-              sessionId: claim.sessionId,
-              messageId: claim.assistantMessageId,
-              runId: claim.id,
-              leaseOwner: claim.leaseOwner,
-              leaseToken: claim.leaseToken,
-              kind: image.kind ?? 'generated-image'
-            })
+            stored.push(
+              projectAgentMedia(
+                await storeAgentMedia(this.#knex, {
+                  ...image,
+                  ownerId: claim.ownerId,
+                  sessionId: claim.sessionId,
+                  messageId: claim.assistantMessageId,
+                  runId: claim.id,
+                  leaseOwner: claim.leaseOwner,
+                  leaseToken: claim.leaseToken,
+                  kind: image.kind ?? 'generated-image'
+                })
+              )
+            )
           }
+          return stored
         },
         text: async delta => {
           if (executionSignal.aborted) throw executionSignal.reason
@@ -4071,7 +4199,8 @@ export class AgentProductRuntime {
       return { status: partial ? 'partial' : 'succeeded' }
     } catch (error) {
       if (error instanceof AgentQuotaSettlementError) throw error
-      const normalizedFailure = error instanceof AgentExecutionFailure ? error : null
+      const normalizedFailure =
+        error instanceof AgentExecutionFailure ? error : error instanceof AgentRepositoryError ? classifyAgentExecutionFailure(error, 'setup') : null
       let legacyCode: string | null = null
       if (normalizedFailure === null && typeof error === 'object' && error !== null) {
         try {
@@ -4423,6 +4552,7 @@ export class AgentProductRuntime {
           const renewalReceipt = await this.#renewalReceipt(transaction, existing.id)
           if (renewalReceipt !== null)
             throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Renewal receipts cannot be replayed as ordinary continuations', 409)
+          await this.#revalidateQueuedMediaBindings(transaction, goal.ownerId, existing.id)
           return {
             goal: await getOwnedAgentGoal(transaction, goal.ownerId, goal.id),
             run: await getOwnedAgentRun(transaction, goal.ownerId, existing.id),
@@ -4597,9 +4727,12 @@ export class AgentProductRuntime {
         .join('agentRuns as runs', 'runs.id', 'events.runId')
         .where({ 'runs.goalId': locked.id, 'runs.goalContinuation': 0, 'events.type': 'run.queued' })
         .orderBy('events.createdAt', 'asc')
-        .first('events.data')) as { data: string } | undefined
+        .first('events.data', 'events.dataSha256')) as RuntimeContextRow | undefined
+      if (initialContext && sha256(initialContext.data) !== initialContext.dataSha256)
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context hash is invalid', 500)
       const generationTools = generationToolsHint(initialContext?.data)
-      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
+      const mediaBindings = mediaBindingsHint(initialContext?.data)
+      await assertRunMediaBindings(transaction, locked.ownerId, mediaBindings, generationTools ?? [])
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
       const currentPage = currentPageHint(initialContext?.data)
       const changed = await transaction('agentGoals')
@@ -4624,6 +4757,7 @@ export class AgentProductRuntime {
         clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content,
+        mediaBindings,
         ...(generationTools === undefined ? {} : { generationTools }),
         ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
         ...(currentPage === undefined ? {} : { currentPage: { ...currentPage } }),
@@ -4705,6 +4839,7 @@ export class AgentProductRuntime {
           throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Run ID was reused with different input', 409)
         const receipt = await this.#renewalReceipt(transaction, existing.id)
         this.#assertRenewalReceiptMatches(receipt, input)
+        await this.#revalidateQueuedMediaBindings(transaction, input.ownerId, existing.id)
         return {
           goal: await getOwnedAgentGoal(transaction, input.ownerId, input.goalId),
           run: await getOwnedAgentRun(transaction, input.ownerId, existing.id),
@@ -4881,9 +5016,12 @@ export class AgentProductRuntime {
         .join('agentRuns as runs', 'runs.id', 'events.runId')
         .where({ 'runs.goalId': locked.id, 'runs.goalContinuation': 0, 'events.type': 'run.queued' })
         .orderBy('events.createdAt', 'asc')
-        .first('events.data')) as { data: string } | undefined
+        .first('events.data', 'events.dataSha256')) as RuntimeContextRow | undefined
+      if (initialContext && sha256(initialContext.data) !== initialContext.dataSha256)
+        throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context hash is invalid', 500)
       const generationTools = generationToolsHint(initialContext?.data)
-      await assertGenerationToolCapabilities(transaction, resolved.providerProfileVersionId, generationTools, resolved.executionMode)
+      const mediaBindings = mediaBindingsHint(initialContext?.data)
+      await assertRunMediaBindings(transaction, locked.ownerId, mediaBindings, generationTools ?? [])
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
       const currentPage = currentPageHint(initialContext?.data)
       const newMaxTokens = safeUsageSum(usage.tokens, locked.tokenAllowance, 'Renewed goal token budget')
@@ -4910,6 +5048,7 @@ export class AgentProductRuntime {
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content,
+        mediaBindings,
         ...(generationTools === undefined ? {} : { generationTools }),
         ...(knowledgeContext === undefined ? {} : { knowledgeContext }),
         ...(currentPage === undefined ? {} : { currentPage: { ...currentPage } }),

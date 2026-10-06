@@ -356,7 +356,7 @@
                 v-else-if="thread"
                 :thread="thread"
                 :user-picture="userPicture"
-                :image-editing-enabled="providerEnabled && mediaCapabilities?.imageGeneration === true && mediaCapabilities?.attachments === true && thread?.session.executionMode === 'agent'"
+                :image-editing-enabled="providerEnabled && agentToolAcceptsImages(mediaCapabilities, 'image') && thread?.session.executionMode === 'agent'"
                 :connection="connection"
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
@@ -642,7 +642,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import type { AgentMediaSubmission } from '../../helpers/agent-media.ts'
+import { agentToolAcceptsImages, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
 import { useAgentsStore } from '../../store/agents.ts'

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Knex } from 'knex'
+import createKnex, { type Knex } from 'knex'
 import { type DecisionRequest, type DecisionResult, TYPESAFE_JEV_PRICING } from '../../../shared/agents/decision-providers.ts'
 import {
   DEFAULT_ROUTING_POLICY,
@@ -17,19 +17,20 @@ import {
 import { DecisionProviderFailure, type DecisionProviderRuntime } from '../../agents/decision-providers.ts'
 import { AgentTurnRouter } from '../../agents/routing.ts'
 import { describe, expect, it } from '../bun-test.mts'
+import { createRoutingTables, routingFixture as registryFixture } from './runtime-routing.fixture.ts'
 
 const fixture = () => {
   const candidate = (inputPrice: number): RoutingCandidate => ({
     profileId: randomUUID(),
     profileVersionId: randomUUID(),
-    model: 'generation-model',
+    model: 'inference-model',
     enabled: true,
     authorized: true,
     credentialReady: true,
     conformed: true,
     modalities: ['text'],
-    generationTools: [],
-    transcription: false,
+    mediaInputs: { images: false, documents: false, audio: false, video: false },
+    inputMimeTypes: [],
     capabilities: {
       streaming: true,
       toolCalling: 'native',
@@ -453,20 +454,145 @@ describe('eligible, confidence-gated per-turn routing', () => {
     }
   })
 
-  it('requires conformed generation tools, transcription and native external MCP capability', async () => {
-    for (const requirements of [{ generationTools: ['image'] as const }, { transcription: true }, { nativeExternalMcp: true }]) {
-      const f = fixture()
-      const current = { ...f.current, generationTools: ['image'] as const, transcription: true }
-      const alternate = {
-        ...f.alternate,
-        capabilities: { ...f.alternate.capabilities, toolCalling: ('nativeExternalMcp' in requirements ? 'prompt' : 'native') as 'prompt' | 'native' }
+  it('requires native external MCP capability independently of local tool requirements', async () => {
+    const f = fixture()
+    const alternate = { ...f.alternate, capabilities: { ...f.alternate.capabilities, toolCalling: 'prompt' as const } }
+    const result = await f.router.routeTurn(
+      {
+        ...f.input,
+        candidates: [f.current, alternate],
+        requirements: { ...f.input.requirements, nativeTools: false, nativeExternalMcp: true }
+      },
+      f.hooks
+    )
+    expect(result.reason).toBe('no-eligible-alternative')
+    expect(f.requests).toHaveLength(0)
+  })
+
+  it('routes opted-in audio by the actual registry MIME catalog, not a generic audio modality', async () => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    try {
+      await createRoutingTables(db)
+      const registered = await registryFixture(db)
+      const saved = await registered.registry.getAdmin(registered.alternate.profileId)
+      const settings = {
+        transportKind: saved.transportKind,
+        model: saved.model,
+        utilityModel: saved.utilityModel,
+        baseUrl: saved.baseUrl,
+        authMode: saved.authMode,
+        secretReference: 'env:TEST_PROVIDER_KEY',
+        adapterConfig: { ...saved.adapterConfig, mediaInputs: { images: false, documents: false, audio: true, video: false } },
+        capabilities: saved.capabilities,
+        capabilityRevision: saved.capabilityRevision,
+        policies: saved.policies,
+        pricingRevision: saved.pricingRevision,
+        actorId: 1
       }
-      const result = await f.router.routeTurn(
-        { ...f.input, current, candidates: [current, alternate], requirements: { ...f.input.requirements, nativeTools: false, ...requirements } },
-        f.hooks
-      )
-      expect(result.reason).toBe('no-eligible-alternative')
-      expect(f.requests).toHaveLength(0)
+      const chat = await registered.registry.update(saved.id, { ...settings, transportKind: 'openai-chat', model: 'configured-audio-model' })
+      await registered.registry.setConformed(chat.id, chat.profileVersionId, true, 1)
+      await registered.registry.setEnabled(chat.id, true, 1, chat.profileVersionId)
+      const geminiIds: string[] = []
+      for (const [displayName, pricingRevision] of [
+        ['Gemini incumbent', 'gemini-expensive|10000000|20000000'],
+        ['Gemini WebM alternate', 'gemini-cheap|2000000|4000000']
+      ] as const) {
+        const profile = await registered.registry.create({
+          ...settings,
+          transportKind: 'gemini-api',
+          model: 'gemini-2.5-flash',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          authMode: 'google-api-key',
+          pricingRevision,
+          displayName,
+          exposureMode: 'groups',
+          groupIds: [1]
+        })
+        const version = await registered.registry.getAdmin(profile.id)
+        await registered.registry.setConformed(profile.id, version.profileVersionId, true, 1)
+        await registered.registry.setEnabled(profile.id, true, 1, version.profileVersionId)
+        geminiIds.push(profile.id)
+      }
+      const sessionId = await registered.session()
+      const candidates = await db.transaction(tx => registered.registry.listRoutingCandidates(tx, { ownerId: 7, sessionId }))
+      const candidate = (id: string) => {
+        const found = candidates.find(item => item.profileId === id)
+        if (!found) throw new Error('Authorized configured routing candidate is missing')
+        return found
+      }
+      const current = candidate(geminiIds[0]!)
+      const chatCandidate = candidate(chat.id)
+      const geminiAlternate = candidate(geminiIds[1]!)
+      const makeRouter = () => {
+        const f = fixture()
+        f.view.models = [chatCandidate, geminiAlternate].map<RoutingAdminView['models'][number]>(item => ({
+          profileId: item.profileId,
+          profileVersionId: item.profileVersionId,
+          revision: 1,
+          acceptableTasks: [{ taskClass: 'writing', complexities: ['simple'] }],
+          estimatedLatencyMs: null,
+          updatedAt: new Date().toISOString()
+        }))
+        return f
+      }
+      for (const mimeType of ['audio/wav', 'audio/mpeg']) {
+        const f = makeRouter()
+        const decision = await f.router.routeTurn(
+          {
+            ...f.input,
+            current,
+            candidates: [current, chatCandidate],
+            requirements: { ...f.input.requirements, modalities: ['text', 'audio'], inputMimeTypes: [mimeType] }
+          },
+          f.hooks
+        )
+        expect(decision).toMatchObject({ strategy: 'swap', profileId: chat.id, profileVersionId: chat.profileVersionId })
+      }
+      const webm = makeRouter()
+      const input = {
+        ...webm.input,
+        current,
+        candidates: [current, chatCandidate],
+        requirements: { ...webm.input.requirements, modalities: ['text', 'audio'] as const, inputMimeTypes: ['audio/webm'] }
+      }
+      expect(await webm.router.routeTurn(input, webm.hooks)).toMatchObject({
+        strategy: 'stay',
+        profileId: current.profileId,
+        reason: 'no-eligible-alternative'
+      })
+      expect(webm.requests).toHaveLength(0)
+      await expect(webm.router.routeTurn({ ...input, current: chatCandidate }, webm.hooks)).rejects.toMatchObject({
+        code: 'ROUTING_NO_AUTHORIZED_MODEL'
+      })
+      expect(
+        await webm.router.routeTurn(
+          {
+            ...input,
+            runId: randomUUID(),
+            candidates: [current, chatCandidate, geminiAlternate],
+            requirements: { ...input.requirements, inputMimeTypes: ['audio/wav', 'audio/webm'] }
+          },
+          webm.hooks
+        )
+      ).toMatchObject({
+        strategy: 'swap',
+        profileId: geminiAlternate.profileId,
+        profileVersionId: geminiAlternate.profileVersionId
+      })
+      const text = makeRouter()
+      text.view.policy.enabled = false
+      const configured = await db.transaction(tx => registered.registry.resolveConfiguredDefault(tx, { ownerId: 7, sessionId }))
+      const textDefault = candidate(registered.current.profileId)
+      expect(configured.providerProfileVersionId).toBe(textDefault.profileVersionId)
+      expect(
+        await text.router.routeTurn(
+          { ...text.input, current: textDefault, candidates, classifierState: { currentMessage: 'Generate an image, video, and music.' } },
+          text.hooks
+        )
+      ).toMatchObject({ strategy: 'stay', profileId: textDefault.profileId, profileVersionId: textDefault.profileVersionId })
+      expect(text.requests).toHaveLength(0)
+    } finally {
+      await db.destroy()
     }
   })
 
