@@ -8063,7 +8063,7 @@
         "openai-chat": "Message-based POST /v1/chat/completions API with native or prompt-emulated tool calling verified during conformance.",
         "legacy-completions": "Prompt-in/text-out POST /v1/completions API with strict prompt-emulated, single-action tool turns.",
         "anthropic-messages": "Native Anthropic POST /v1/messages API with message content blocks and tools.",
-        "gemini-api": "Native POST /v1beta/interactions API with stateless streaming, structured outputs, parallel function calls, and exact thought-step continuation."
+        "gemini-api": "Native Google Gemini GenerateContent API through Ax: /models/{model}:generateContent and :streamGenerateContent?alt=sse, with tools and structured outputs. The Interactions API is used separately by independent video and music tools."
       },
       "providerDataUnavailable": "Provider profiles unavailable",
       "browserDataUnavailable": "Browser destinations unavailable",

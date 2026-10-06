@@ -82,6 +82,8 @@ Use **Administration → Agents → Media providers** to add/edit a profile, its
 
 The LLM editor now owns only inference configuration and its media-input opt-ins. A new immutable LLM version follows existing disable/recheck/enable conformance rules; do not assume changing input switches preserves an old conformance receipt. Conformance of a text LLM does not certify a separate media product.
 
+Gemini inference uses Ax's GenerateContent transport, not Interactions. The generative provider wizard states that distinction explicitly; video/music profiles use the separate media-only Interactions adapter.
+
 Migration `tsepistle-000055-agent-media-providers.ts` adds independent identities, immutable versions, group grants and a configuration lock. It copies each current legacy operation's exact model, price, credential reference and exposure/grants. Working image/transcription profiles are enabled only when their former LLM profile was enabled and conformed. Formerly unsupported Omni/Lyria profiles are seeded **disabled**. Historical LLM media settings, versions, credentials, runs, artifacts and ledgers remain stored. Legacy attachment opt-in retains image/PDF permission only where actually supported; it does not silently enable audio/video.
 
 Old queued admissions without media bindings do not acquire new generation authority. Do not restore a retired writer to reinterpret their hashes/configuration. Runtime authorization and ordinary retention/deletion still govern old artifacts and immutable credentials.
