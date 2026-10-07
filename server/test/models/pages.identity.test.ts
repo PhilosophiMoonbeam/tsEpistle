@@ -66,6 +66,7 @@ const pageRow = (overrides: Record<string, unknown> = {}) => ({
   ownerId: null,
   isPublished: true,
   publishStartDate: '',
+  isSearchable: true,
   publishEndDate: '',
   content: '# Identity',
   render: '<p>Identity</p>',
@@ -94,6 +95,7 @@ const installSchema = async () => {
     table.text('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.boolean('isPublished').notNullable()
+    table.boolean('isSearchable').notNullable().defaultTo(true)
     table.text('publishStartDate').notNullable()
     table.text('publishEndDate').notNullable()
     table.text('content').notNullable()
@@ -173,6 +175,11 @@ const installSchema = async () => {
     table.text('path').notNullable()
     table.text('localeCode').notNullable()
   })
+  for (const name of ['pagesVector', 'pagesWords']) {
+    await db.schema.createTable(name, table => {
+      table.integer('pageId').notNullable()
+    })
+  }
   await db.schema.createTable('pageTree', table => {
     table.integer('id').primary()
     table.text('localeCode').notNullable()
@@ -231,7 +238,7 @@ beforeEach(async () => {
     Error: errors,
     auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
     collaboration: { pageChanged: vi.fn(async () => undefined) },
-    config: { dataPath: 'data', db: { type: 'postgres' } },
+    config: { dataPath: 'data', db: { type: 'sqlite' } },
     data: {
       editors: [],
       searchEngine: { created: vi.fn(), deleted: vi.fn(), renamed: searchRenamed, updated: vi.fn() }
@@ -415,6 +422,9 @@ describe('models/pages identity aggregate', () => {
       sourceRevision: 1
     })
     await db('pageLinks').insert({ pageId: 84, path: 'guides/identity', localeCode: 'en' })
+    for (const table of ['pagesVector', 'pagesWords']) {
+      await db(table).insert({ pageId: 84 })
+    }
     await Page.savePageToCache({ ...source, extra: {}, tags: [], authorName: 'Author', creatorName: 'Author' } as never)
     await Page.savePageToCache({
       ...source,
@@ -440,8 +450,31 @@ describe('models/pages identity aggregate', () => {
       { localeCode: 'fr', hash: newHash, sourceRevision: 1 }
     ])
     expect(await db('pageTree').where({ pageId: 42 }).first('localeCode', 'path')).toMatchObject({ localeCode: 'fr', path: 'guides/identity' })
-    expect(await db('pageLinks').where({ pageId: 84 }).first('localeCode', 'path')).toMatchObject({ localeCode: 'fr', path: 'guides/identity' })
-    expect((await db('pages').where({ id: 84 }).first('render')).render).toContain('/fr/guides/identity')
+    expect(await db('pageLinks').where({ pageId: 84 })).toEqual([])
+    expect(await db('pagesVector').where({ pageId: 84 })).toEqual([])
+    expect(await db('pagesWords').where({ pageId: 84 })).toEqual([])
+    expect(await db('pages').where({ id: 84 }).first('render', 'toc', 'sourceRevision', 'renderedSourceRevision')).toMatchObject({
+      render: '',
+      toc: '[]',
+      sourceRevision: 1,
+      renderedSourceRevision: null
+    })
+    const backlinkEffects = await db('pageMutationOutbox').where({ pageId: 84, sourceRevision: 1 }).orderBy('effectKind')
+    expect(backlinkEffects.map(row => row.effectKind)).toEqual(['links', 'render', 'search'])
+    for (const effect of backlinkEffects) {
+      expect(effect).toMatchObject({ desiredState: 'present', status: 'pending', effectKey: `page:84:${effect.effectKind}` })
+      expect(JSON.parse(String(effect.payload))).toEqual({
+        version: 1,
+        effectKind: effect.effectKind,
+        desiredState: 'present',
+        action: 'update',
+        pageId: 84,
+        sourceRevision: '1',
+        sourceSha256: createHash('sha256').update('# Identity').digest('hex'),
+        location: { locale: 'de', path: 'references/backlink', visibility: 'public', ownerId: null },
+        previousLocation: null
+      })
+    }
     const projectionRows = await db('pageMutationOutbox').where({ pageId: 42 }).orderBy('effectKind')
     expect(projectionRows.map(row => row.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
     const searchEffect = projectionRows.find(row => row.effectKind === 'search')
@@ -469,9 +502,15 @@ describe('models/pages identity aggregate', () => {
     expect(movedEvent?.payload).toMatchObject({ actorId: 11, localeCode: 'fr' })
     expect(await Page.getPageFromCache({ path: 'guides/identity', locale: 'fr', visibility: 'public', ownerId: null })).toBe(false)
     await expect(Page.getPage({ path: 'guides/identity', locale: 'en', visibility: 'public', ownerId: null })).resolves.toBeUndefined()
-    await expect(Page.getPage({ path: 'guides/identity', locale: 'fr', visibility: 'public', ownerId: null })).resolves.toMatchObject({
+    await expect(Page.getPage({ path: 'guides/identity', locale: 'fr', visibility: 'public', ownerId: null })).rejects.toMatchObject({
+      name: 'PAGE_RENDER_PENDING',
+      status: 503
+    })
+    await expect(Page.getPageFromDb({ path: 'guides/identity', locale: 'fr', visibility: 'public', ownerId: null })).resolves.toMatchObject({
       hash: newHash,
-      localeCode: 'fr'
+      localeCode: 'fr',
+      sourceRevision: 2,
+      renderedSourceRevision: null
     })
     expect(searchRenamed).not.toHaveBeenCalled()
     expect(Page.prepareSearchDocument).not.toHaveBeenCalled()

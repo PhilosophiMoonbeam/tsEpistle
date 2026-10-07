@@ -23,6 +23,8 @@ When auditing existing tests, trace each candidate to its supported behavior, ca
 
 UI layout and paint claims need a native normal-application browser flow; compiled template/style spelling and copied DOM geometry are not runtime proof. Exercise admission and authorization through current repository/runtime or HTTP consumers. For the four-attachment boundary, prove that both Attach and the actual file input disable at four ready uploads, then re-enable after deleting exactly one selected attachment. Retire an unsupported private helper and its exclusive tests together, while preserving independently live callers, server endpoints, and their behavioral coverage.
 
+Complete runtime fixtures before importing modules that capture `WIKI`, and use the real operation error constructors and authority/source-snapshot schema. Exercise durable projection admission and revision-/lease-fenced publication instead of mocking an obsolete synchronous renderer. Isolate the guard under test: an open-goal submission case must not also depend on an active-run guard. Excluded client tests can declare their Bun type context locally without widening application typecheck scope.
+
 Generate TFA setup QR fixtures through the real `qr-image` dependency and check native dark modules against light quiet space; SVG presence alone does not prove usable contrast. A controlled login response proves QR paint, not OTP authentication or enrollment. Positive raster media fixtures must fully decode rather than merely match a PNG signature.
 
 Presentation preference resets restore only the active locale's original `L`, `LT`, and `LTS` formats, preserving unrelated locale customizations. Regressions must exercise consecutive overrides, switching locales, and explicit timezone clearing with real Moment instances in isolated processes; do not seed the built-in locale with a prior update that masks its reset failure.
@@ -32,6 +34,8 @@ The license inventory includes the lockfile's optional dependencies for every pl
 The Bun 1.4.2 lock keeps the direct Undici 8.x transport and Cheerio's scoped Undici 7.x copy on separately reviewed security versions. Preserve the `undici@7` scoped override and the exact Undici 8.x Bun compatibility patch when updating either line; regenerate the lockfile and license inventory, then run `bun audit --production` and provider-transport checks.
 
 For security patch upgrades, preserve unrelated lock resolutions and verify every affected nested copy. A valid lockfile or clean audit alone does not prove the installed consumer's resolution: Bun can leave an obsolete nested package in an existing installation. An overridden optional peer can also retain its old locked version after `bun install`; use targeted `bun update <name>` and verify that unrelated resolutions stay unchanged. Verify the actual consumer resolver and exercised application bundle, regenerate the license inventory, and retain exact direct pins and required transitive overrides.
+
+GraphQL Tools utility security upgrades must retain compatible execution-variable shapes in every consumer. Keep the executor aligned with the patched utilities and exercise variable-valued `@include`/`@skip`, resolver arguments, and GraphQL 16's flat resolver `info.variableValues`; a clean audit does not establish executor compatibility. Preserve Git's unsafe-command guards when preparing native interrupted-operation fixtures.
 
 ## Code review process
 

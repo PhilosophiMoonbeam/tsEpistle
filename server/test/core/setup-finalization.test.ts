@@ -15,6 +15,7 @@ interface SetupTestWiki extends Record<string, unknown> {
 }
 
 const selectionDatabases = new Set<Knex>()
+const setupRuns = new Set<{ controller: AbortController; completion: Promise<void> }>()
 
 const startSetupHarness = async (configSaved: boolean, searchFailure = false) => {
   vi.resetModules()
@@ -43,10 +44,13 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
   }
   const transactionKnex = vi.fn((table: string) => tableQuery(table))
   const transaction = vi.fn(async (operation: (trx: typeof transactionKnex) => Promise<unknown>) => operation(transactionKnex))
-  const knex = Object.assign(vi.fn((table: string) => tableQuery(table)), {
-    raw: vi.fn().mockResolvedValue(undefined),
-    transaction
-  })
+  const knex = Object.assign(
+    vi.fn((table: string) => tableQuery(table)),
+    {
+      raw: vi.fn().mockResolvedValue(undefined),
+      transaction
+    }
+  )
   const localesDelete = vi.fn().mockResolvedValue(1)
   const localesInsert = vi.fn().mockResolvedValue({})
   const localesQuery = {
@@ -86,14 +90,6 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
   })
   await selectionDb('editors').insert(['markdown', 'visual-markdown', 'code'].map(key => ({ key, isEnabled: false })))
   await selectionDb('searchEngines').insert(['postgres', 'legacy'].map(key => ({ key, isEnabled: false })))
-  const editors = (await vi.importFresh<typeof EditorModule>('../../models/editors.ts', import.meta.url)).default.bindKnex(selectionDb)
-  const searchProviders = (await vi.importFresh<typeof SearchEngineModule>('../../models/searchEngines.ts', import.meta.url)).default.bindKnex(selectionDb)
-  vi.spyOn(editors, 'refreshEditorsFromDisk').mockResolvedValue(undefined)
-  const controller = new AbortController()
-  const searchRefresh = vi.spyOn(searchProviders, 'refreshSearchEnginesFromDisk').mockImplementation(async () => {
-    if (searchFailure) throw new Error('injected reconciliation failure')
-  })
-  const searchInit = vi.spyOn(searchProviders, 'initEngine').mockResolvedValue(undefined)
   const saveToDb = vi.fn(async (keys: string[]) => {
     if (!configSaved) return false
     await selectionDb('settings')
@@ -102,6 +98,7 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
       .merge()
     return true
   })
+  const controller = new AbortController()
   const wiki: SetupTestWiki = {
     IS_DEBUG: false,
     ROOTPATH: process.cwd(),
@@ -122,24 +119,32 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
     product: { name: 'tsEpistle' },
     models: {
       authentication: { query: vi.fn(() => ({ insert: authenticationInsert })) },
-      editors,
       groups: { query: vi.fn(() => ({ insert: groupInsert })) },
       knex,
       locales: { query: vi.fn(() => localesQuery) },
       loggers: { refreshLoggersFromDisk: vi.fn().mockResolvedValue(undefined) },
       navigation: { query: vi.fn(() => navigationQuery) },
       renderers: { refreshRenderersFromDisk: vi.fn().mockResolvedValue(undefined) },
-      searchEngines: searchProviders,
       storage: { refreshTargetsFromDisk: vi.fn().mockResolvedValue(undefined) },
       users: { query: vi.fn(() => ({ insert: userInsert })) }
     },
     shutdownSignal: controller.signal,
     telemetry: { sendError: vi.fn(), sendInstanceEvent: vi.fn().mockResolvedValue(undefined) }
   }
-  globalThis.WIKI = wiki
+  vi.stubGlobal('WIKI', wiki)
+  const editors = (await vi.importFresh<typeof EditorModule>('../../models/editors.ts', import.meta.url)).default.bindKnex(selectionDb)
+  const searchProviders = (await vi.importFresh<typeof SearchEngineModule>('../../models/searchEngines.ts', import.meta.url)).default.bindKnex(selectionDb)
+  Object.assign(wiki.models as Record<string, unknown>, { editors, searchEngines: searchProviders })
+  vi.spyOn(editors, 'refreshEditorsFromDisk').mockResolvedValue(undefined)
+  const searchRefresh = vi.spyOn(searchProviders, 'refreshSearchEnginesFromDisk').mockImplementation(async () => {
+    if (searchFailure) throw new Error('injected reconciliation failure')
+  })
+  const searchInit = vi.spyOn(searchProviders, 'initEngine').mockResolvedValue(undefined)
 
   const { default: startSetup } = await vi.importFresh<typeof SetupModule>('../../setup.ts', import.meta.url)
   const completion = startSetup()
+  setupRuns.add({ controller, completion })
+  void completion.catch(() => undefined)
   const server = wiki.server
   if (!server) throw new Error('Setup server was not created')
   if (!server.listening) await once(server, 'listening')
@@ -178,14 +183,15 @@ const finalize = async (server: Server, adminPassword = 'correct horse battery s
 }
 
 describe('setup finalization', () => {
-  const previousWiki = globalThis.WIKI
-
   afterEach(async () => {
     try {
+      for (const { controller } of setupRuns) controller.abort(new DOMException('test shutdown', 'AbortError'))
+      await Promise.allSettled([...setupRuns].map(({ completion }) => completion))
       await Promise.all([...selectionDatabases].map(database => database.destroy()))
     } finally {
       selectionDatabases.clear()
-      globalThis.WIKI = previousWiki
+      setupRuns.clear()
+      vi.unstubAllGlobals()
       vi.restoreAllMocks()
     }
   })
@@ -222,7 +228,9 @@ describe('setup finalization', () => {
     await harness.settingsDb('settings').insert({ key: 'offlineDraftSecret', value: JSON.stringify(retainedRoot) })
     const address = harness.server.address() as AddressInfo
     const response = await fetch(`http://127.0.0.1:${address.port}/finalize`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
     })
     const result = await response.json()
     const persisted = await harness.settingsDb('settings').where('key', 'offlineDraftSecret').first()
@@ -242,6 +250,8 @@ describe('setup finalization', () => {
     globalThis.WIKI.shutdownSignal = retryController.signal
     const { default: startSetup } = await vi.importFresh<typeof SetupModule>('../../setup.ts', import.meta.url)
     const retryCompletion = startSetup()
+    setupRuns.add({ controller: retryController, completion: retryCompletion })
+    void retryCompletion.catch(() => undefined)
     const retryServer = globalThis.WIKI.server
     if (!retryServer.listening) await once(retryServer, 'listening')
     expect(await finalize(retryServer)).toMatchObject({ ok: true })
@@ -265,7 +275,9 @@ describe('setup finalization', () => {
     await entered.promise
     const address = harness.server.address() as AddressInfo
     const rejected = await fetch(`http://127.0.0.1:${address.port}/finalize`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
     })
     const rejection = await rejected.json()
     release.resolve()
@@ -351,7 +363,14 @@ describe('setup finalization', () => {
 
     const failed = await startSetupHarness(true, true)
     let settled = false
-    void failed.completion.then(() => { settled = true }, () => { settled = true })
+    void failed.completion.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
     expect(await finalize(failed.server)).toMatchObject({ ok: false })
     expect(failed.searchRefresh).toHaveBeenCalledWith({ strict: true })
     expect(await failed.searchProviders.query().where('isEnabled', true)).toEqual([])

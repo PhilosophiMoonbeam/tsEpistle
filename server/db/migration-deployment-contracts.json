@@ -214,6 +214,21 @@
       "runtimePostconditions": [
         "delegated-context-reuse-preserves-incumbent-root-and-accounting"
       ]
+    },
+    "tsepistle-000055-agent-media-providers.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials"
+      ],
+      "runtimePostconditions": [
+        "authorized-current-media-version-bindings-and-retained-credentials"
+      ]
     }
   }
 }

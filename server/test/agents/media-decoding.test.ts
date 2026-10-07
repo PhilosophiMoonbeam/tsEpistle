@@ -623,19 +623,30 @@ try {
       { mode: 0o600 }
     )
     const child = spawnSync(process.execPath, [driver], { timeout: 10_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL', detached: true })
+    let assertionFailed = false
+    let assertionError: unknown
+    let cleanupError: unknown
     try {
       expect(child.error).toBeUndefined()
       expect(child.stderr.toString()).toBe('')
       expect(child.status).toBe(0)
+    } catch (error) {
+      assertionFailed = true
+      assertionError = error
     } finally {
       // Also reap an orphan decoder if the outer helper deadline ever terminates its parent.
       if (child.pid) {
         try {
           process.kill(-child.pid, 'SIGKILL')
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') cleanupError = error
         }
       }
     }
+    if (assertionFailed) {
+      if (cleanupError !== undefined) throw new AggregateError([assertionError, cleanupError], 'Decoder assertion and orphan cleanup failed')
+      throw assertionError
+    }
+    expect(cleanupError).toBeUndefined()
   }, 15_000)
 })

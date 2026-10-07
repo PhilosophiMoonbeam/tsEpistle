@@ -1,4 +1,8 @@
 import fs from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { EventEmitter } from 'node:events'
 import createKnex from 'knex'
 import { load } from 'js-yaml'
 
@@ -17,6 +21,7 @@ const pageInput = (editor, path) => ({
 
 describe('page creation editor availability', () => {
   let db
+  let tempRoot
 
   beforeEach(() => {
     vi.resetModules()
@@ -25,12 +30,15 @@ describe('page creation editor availability', () => {
   afterEach(async () => {
     vi.restoreAllMocks()
     if (db) await db.destroy()
+    if (tempRoot) await rm(tempRoot, { recursive: true, force: true })
+    tempRoot = undefined
     db = undefined
     if (originalWiki === undefined) delete global.WIKI
     else global.WIKI = originalWiki
   })
 
   const arrange = async available => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), 'wiki-editor-availability-'))
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await db.schema.createTable('pages', table => {
       table.increments('id')
@@ -107,8 +115,9 @@ describe('page creation editor availability', () => {
     const checkAccess = vi.fn().mockReturnValue(true)
     const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: ['write:pages'], groups: [], tagAliases: {} }))
     global.WIKI = {
+      ROOTPATH: tempRoot,
       auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
-      config: { db: { type: 'sqlite' }, editors: { available }, lang: { code: 'en' } },
+      config: { dataPath: 'data', db: { type: 'sqlite' }, editors: { available }, lang: { code: 'en' } },
       data: {
         editors: ['markdown', 'ckeditor', 'asciidoc', 'code', 'api'].map(key =>
           load(fs.readFileSync(new URL(`../modules/editor/${key}/definition.yml`, import.meta.url), 'utf8'))
@@ -116,6 +125,7 @@ describe('page creation editor availability', () => {
         reservedPaths: []
       },
       Error: { PageDuplicateCreate: Error, PageEmptyContent: Error, PageIllegalPath: Error, PageNotFound: Error },
+      events: { inbound: new EventEmitter(), outbound: new EventEmitter() },
       logger: { warn: vi.fn() },
       models: { knex: db, pages: {}, tags: {}, pageHistory: {}, storage: { pageEvent: vi.fn(async () => undefined) } }
     }

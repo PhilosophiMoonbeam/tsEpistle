@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'fs-extra'
@@ -77,7 +78,7 @@ describe('Git storage repository recovery', () => {
     await commitFile(git, directory, 'page.md', 'base\n', 'base')
     await commitFile(git, directory, 'page.md', 'edited\n', 'edit')
 
-    await expect(Promise.resolve(git.raw(['rebase', 'HEAD~1', '--exec', 'false']))).rejects.toThrow()
+    expect(() => execFileSync('git', ['rebase', 'HEAD~1', '--exec', 'false'], { cwd: directory, stdio: 'pipe' })).toThrow()
     expect(await git.raw(['rev-parse', '--verify', '--quiet', 'REBASE_HEAD'])).toBe('')
     const gitDirectory = (await git.raw(['rev-parse', '--absolute-git-dir'])).trim()
     const rebaseDirectories = ['rebase-merge', 'rebase-apply'].map(name => path.join(gitDirectory, name))

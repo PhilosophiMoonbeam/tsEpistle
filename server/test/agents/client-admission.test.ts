@@ -98,6 +98,7 @@ const thread = (value = pins(), exp = 4_000_000_000): AgentThreadState => ({
     version: value.sessionVersion,
     providerProfileId: null,
     profileResolutionToken: token(value, exp),
+    mediaCapabilities: null,
     skills: [],
     currentRun: null,
     createdAt: DATE,
@@ -140,6 +141,7 @@ class AdmissionServer {
   accepted: { mode: 'message' | 'goal'; body: Submission }[] = []
   readStatus = 200
   postStatus = 200
+  threadReads = 0
   private nextRead: HeldRead | null = null
   private heldReads: HeldRead[] = []
 
@@ -166,9 +168,9 @@ class AdmissionServer {
     if (method === 'GET') {
       if (path === '/_api/agents/sessions') return json({ sessions: [], nextCursor: null })
       if (path === '/_api/agents/conversation-folders') return json({ folders: [] })
-      if (path === '/_api/agents/profiles') return json({ profiles: [] })
       if (path === '/_api/agents/skills') return json({ skills: [] })
       if (path.startsWith('/_api/agents/sessions/')) {
+        this.threadReads += 1
         if (this.nextRead) {
           const held = this.nextRead
           this.nextRead = null
@@ -315,6 +317,10 @@ describe('Wiki Agent fresh admission through the public store', () => {
     expect(await sending).toBe(true)
     expect(server.attempts).toHaveLength(1)
     expect(server.accepted).toHaveLength(1)
+    expect(server.accepted[0]!.body).toMatchObject({
+      expectedSessionVersion: server.current.session.version,
+      profileResolutionToken: server.current.session.profileResolutionToken
+    })
     expect(store.drafts[SESSION]!.text).toBe('New unsent question')
     expect(store.sending).toBe(false)
     expect(store.sessionMutationBusy).toBe(false)
@@ -328,27 +334,27 @@ describe('Wiki Agent fresh admission through the public store', () => {
     server.current = thread()
     expect(await store.send('Follow up')).toBe(true)
     expect(server.accepted).toHaveLength(1)
+    expect(server.accepted[0]!.body.profileResolutionToken).toBe(server.current.session.profileResolutionToken)
     expect(store.drafts[SESSION]!.text).toBe('')
   })
 
-  const changes: [string, Partial<Pins>, Partial<AgentThreadState['session']>][] = [
-    ['implicit default profile', { profileId: OTHER_PROFILE, defaultGeneration: 9 }, {}],
-    ['immutable revision identifier', { profileVersionId: OTHER_REVISION }, {}],
-    ['immutable revision number', { profileVersion: 3 }, {}],
-    ['profile policy', { profilePolicyVersion: 4 }, {}],
-    ['default generation with unchanged resolved profile', { defaultGeneration: 9 }, {}],
-    ['session revision', { sessionVersion: 5 }, {}],
-    ['selected public profile with unchanged resolution', {}, { providerProfileId: PROFILE }]
+  const changes: [string, Partial<Pins>][] = [
+    ['implicit default profile', { profileId: OTHER_PROFILE, defaultGeneration: 9 }],
+    ['immutable revision identifier', { profileVersionId: OTHER_REVISION }],
+    ['immutable revision number', { profileVersion: 3 }],
+    ['profile policy', { profilePolicyVersion: 4 }],
+    ['default generation with unchanged resolved profile', { defaultGeneration: 9 }],
+    ['session revision', { sessionVersion: 5 }]
   ]
-  it.each(changes)('retains fresh state and draft for explicit review after %s changes', async (_name, change, publicChange) => {
+  it.each(changes)('retains fresh state and draft for explicit review after %s changes', async (_name, change) => {
     const store = useAgentsStore(pinia)
     expect(await initialize()).toBe(true)
     store.updateDraft(SESSION, { text: 'Do not silently rebase this goal', mode: 'goal' })
     const draft = JSON.parse(JSON.stringify(store.drafts[SESSION])) as AgentDraft
     server.admissionPins = pins(change)
-    const fresh = thread(server.admissionPins)
-    server.current = { ...fresh, session: { ...fresh.session, ...publicChange } }
+    server.current = thread(server.admissionPins)
     expect(await store.send(draft!.text, draft!.skillVersionIds, 'goal')).toBe(false)
+    expect(store.error).toBe('Agent settings changed. Review the conversation before sending again. Nothing was sent.')
     expect(server.attempts).toEqual([])
     expect(store.drafts[SESSION]).toEqual(draft)
     // A second explicit click is review, not an automatic resubmission.
@@ -366,7 +372,10 @@ describe('Wiki Agent fresh admission through the public store', () => {
     server.current = { ...thread(), session: { ...thread().session, profileResolutionToken: invalidToken } }
     expect(await initialize()).toBe(true)
     store.setDraft(SESSION, 'Keep this question')
+    const readsBeforeSend = server.threadReads
     expect(await store.send('Keep this question')).toBe(false)
+    expect(server.threadReads).toBe(readsBeforeSend + 1)
+    expect(store.error).toBe('Agent settings changed. Review the conversation before sending again. Nothing was sent.')
     expect(server.attempts).toEqual([])
     expect(store.drafts[SESSION]!.text).toBe('Keep this question')
   })
@@ -380,7 +389,10 @@ describe('Wiki Agent fresh admission through the public store', () => {
     server.current = { ...thread(), session: { ...thread().session, profileResolutionToken: token(inconsistent) } }
     expect(await initialize()).toBe(true)
     store.setDraft(SESSION, 'Keep private intent')
+    const readsBeforeSend = server.threadReads
     expect(await store.send('Keep private intent')).toBe(false)
+    expect(server.threadReads).toBe(readsBeforeSend + 1)
+    expect(store.error).toBe('Agent settings changed. Review the conversation before sending again. Nothing was sent.')
     expect(server.attempts).toEqual([])
     expect(store.drafts[SESSION]!.text).toBe('Keep private intent')
   })

@@ -8,6 +8,7 @@ import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 import { createModalFocusScope } from '../common/modal-focus-scope'
 import { helpers } from '../../helpers/index.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
 import type { AgentMemoryEntry, AgentMemoryView, PersonalAgentSkill } from '../../helpers/agents-api.ts'
 import type { App, Ref, RenderFunction } from 'vue'
 
@@ -26,6 +27,7 @@ interface InventoryProps {
   ownerId: number
   embedded: boolean
   networkBlocked: boolean
+  connectionRetrying: boolean
   headingId: string
   descriptionId: string
 }
@@ -111,19 +113,20 @@ const mountInventory = (
     ownerId: 1,
     embedded: true,
     networkBlocked: false,
+    connectionRetrying: false,
     headingId: 'knowledge-memory-title',
     descriptionId: 'knowledge-memory-description',
     ...extraProps
   })
   const component = Vue.defineComponent({
-    props: ['csrfToken', 'ownerId', 'embedded', 'networkBlocked', 'headingId', 'descriptionId'],
+    props: ['csrfToken', 'ownerId', 'embedded', 'networkBlocked', 'connectionRetrying', 'headingId', 'descriptionId'],
     setup(componentProps) {
       return {
         ...componentProps,
         ...inventory.evaluate({
           ...Vue,
           useDisplay,
-          useTranslate: () => translateEnglish,
+          useTranslate,
           createModalFocusScope,
           helpers,
           z,

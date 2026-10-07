@@ -1,3 +1,5 @@
+/// <reference types="bun" />
+
 import fs from 'node:fs'
 import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
@@ -7,7 +9,7 @@ import { afterEach, describe, expect, test } from '../../../server/test/bun-test
 import { document, resetBody } from '../../test/browser-dom.mts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
+Reflect.set(globalThis, 'useTranslate', () => translateEnglish)
 resetBody()
 const Vue = await import('vue')
 const filename = path.join(process.cwd(), 'client/components/common/password-visibility-toggle.vue')
