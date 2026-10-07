@@ -173,21 +173,18 @@ jobs:
     - run: bun install --frozen-lockfile
     - name: Exercise Agent Migration and Rollback
       env:
-        WIKI_TEST_POSTGRES_DATABASE: wiki_agents_test
         WIKI_TEST_POSTGRES_HOST: 127.0.0.1
         WIKI_TEST_POSTGRES_PASSWORD: test
         WIKI_TEST_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
         WIKI_TEST_POSTGRES_USER: wiki
-      run: bun test server/test/db/agents-migration.postgres.integration.test.ts
+      run: bun run test:postgres server/test/db/agents-migration.postgres.integration.test.ts
     - name: Exercise Agent Repository PostgreSQL Race Suite
       env:
-        WIKI_TEST_POSTGRES_DATABASE: wiki_agents_test
         WIKI_TEST_POSTGRES_HOST: 127.0.0.1
         WIKI_TEST_POSTGRES_PASSWORD: test
         WIKI_TEST_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
         WIKI_TEST_POSTGRES_USER: wiki
-        WIKI_TEST_POSTGRES_REQUIRED: '1'
-      run: bun test server/test/agents/repository.postgres.test.ts
+      run: bun run test:postgres server/test/agents/repository.postgres.test.ts
 
   private-pages-postgres:
     name: Private Pages Migration (PostgreSQL 18)
@@ -217,13 +214,11 @@ jobs:
     - run: bun install --frozen-lockfile
     - name: Exercise Private Pages Migration
       env:
-        WIKI_TEST_POSTGRES_DATABASE: wiki_private_pages_test
         WIKI_TEST_POSTGRES_HOST: 127.0.0.1
         WIKI_TEST_POSTGRES_PASSWORD: test
         WIKI_TEST_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
         WIKI_TEST_POSTGRES_USER: wiki
-        WIKI_TEST_POSTGRES_REQUIRED: '1'
-      run: bun test server/test/db/private-pages.postgres.integration.test.ts
+      run: bun run test:postgres server/test/db/private-pages.postgres.integration.test.ts
 
   agent-browser-image:
     name: Agent Browser Multi-arch Image
