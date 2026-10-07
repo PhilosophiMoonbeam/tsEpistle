@@ -1,13 +1,14 @@
 import fs from 'node:fs'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import {
+  securityChangedFields,
+  securityEndsSessions,
   securityPolicyDefaults,
   securityPolicyLabels,
-  validateSecurityPolicy,
-  securityChangedFields,
-  securityEndsSessions
+  validateSecurityPolicy
 } from '../../../shared/security-policy.ts'
 import { translateEnglish } from '../../test/english-translate.mts'
+
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -70,6 +71,37 @@ describe('Security workspace review and recovery', () => {
     state.review()
     expect(state.reviewEndsSessions).toBe(true)
     expect(state.changes).toEqual([])
+  })
+  it('keeps an empty MiB edit invalid and unsaved until Reset, distinct from explicit zero', async () => {
+    const { state, transport, window } = arrange()
+    await state.load()
+    const savedCapacity = state.saved.policy.uploadMaxFileSize
+    for (const empty of ['', null]) {
+      state.updateUploadCapacity(empty)
+      expect(state.dirty).toBe(true)
+      expect(state.saved.policy.uploadMaxFileSize).toBe(savedCapacity)
+      state.review()
+      expect(state.reviewing).toBe(false)
+      expect(transport.saveSecurityWorkspace).not.toHaveBeenCalled()
+      window.confirm.mockReturnValue(false)
+      await expect(state.canLeave()).resolves.toBe(false)
+      const event = { preventDefault: vi.fn(), returnValue: undefined as unknown }
+      state.beforeUnload(event)
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      state.reset()
+      expect(state.dirty).toBe(false)
+      expect(state.draft.uploadMaxFileSize).toBe(savedCapacity)
+      await expect(state.canLeave()).resolves.toBe(true)
+    }
+    state.updateUploadCapacity('0')
+    expect(state.dirty).toBe(true)
+    state.review()
+    expect(state.reviewing).toBe(true)
+    expect(state.reviewed.uploadMaxFileSize).toBe(0)
+    expect(state.displayValue('uploadMaxFileSize', 0)).toBe(translateEnglish('admin:security.uploadsDisabled'))
+    state.reason = 'Disable new uploads'
+    await state.confirm()
+    expect(transport.saveSecurityWorkspace.mock.calls[0]?.[0].uploadMaxFileSize).toBe(0)
   })
   it('sends a fixed review and locks navigation throughout persistence', async () => {
     let release: (value: unknown) => void = () => {}

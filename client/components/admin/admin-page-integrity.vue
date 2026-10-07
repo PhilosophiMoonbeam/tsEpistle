@@ -100,6 +100,10 @@
       </div>
     </section>
 
+    <v-alert v-if="scanState === 'complete' && checks.length === 0 && omittedChecks === 0" class="mt-5" color="success" variant="tonal" icon="mdi-check-circle-outline">
+      {{ $t('admin:pageIntegrity.noFindingsStaleObservations') }}
+    </v-alert>
+
     <section v-if="checks.length || omittedChecks > 0" class="integrity-results mt-5" aria-labelledby="integrity-results-title">
       <header class="integrity-section-heading">
         <div>
@@ -109,10 +113,7 @@
         </div>
         <v-chip v-if="omittedChecks" color="warning" variant="tonal" size="small">{{ $t('admin:pageIntegrity.additionalObservationsNotDisplayed', { omittedChecks: omittedChecks.toLocaleString(), interpolation: { escapeValue: false } }) }}</v-chip>
       </header>
-      <v-alert v-if="checks.length === 0 && omittedChecks === 0" color="success" variant="tonal" icon="mdi-check-circle-outline">
-        {{ $t('admin:pageIntegrity.noFindingsStaleObservations') }}
-      </v-alert>
-      <div v-else class="integrity-check-list" role="list" :aria-label="$t('admin:pageIntegrity.pageIntegrityObservations')">
+      <div class="integrity-check-list" role="list" :aria-label="$t('admin:pageIntegrity.pageIntegrityObservations')">
         <article v-for="(item, index) in checks" :key="`${item.pageId}-${item.checkCode}-${index}`" class="integrity-check" role="listitem">
           <div class="integrity-check-identity">
             <span>{{ $t('admin:pageIntegrity.page', { pageId: item.pageId, interpolation: { escapeValue: false } }) }}</span>

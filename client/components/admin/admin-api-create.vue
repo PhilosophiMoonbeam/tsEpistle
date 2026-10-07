@@ -4,13 +4,15 @@
       <v-form ref="createForm" @submit.prevent="generate">
         <v-card class="api-key-dialog">
           <header class="key-dialog-heading"><span class="key-kicker">{{ seed ? $t('admin:apiCreate.credentialReplacement') : $t('admin:apiCreate.newIntegrationIdentity') }}</span><h2 id="api-key-create-title">{{ step === 1 ? $t('admin:apiCreate.nameConnection') : step === 2 ? $t('admin:apiCreate.defineAuthority') : $t('admin:apiCreate.reviewBeforeIssuing') }}</h2><p>{{ seed ? $t('admin:apiCreate.existingKeyStaysValid') : $t('admin:apiCreate.createDedicatedCredentialAccess') }}</p></header>
-          <ol class="key-progress" :aria-label="$t('admin:apiCreate.keyCreationSteps')"><li v-for="(label, index) in ['Identity', 'Access', 'Review']" :key="label" :aria-current="step === index + 1 ? 'step' : undefined" :class="{ current: step === index + 1 }"><span>{{ index + 1 }}</span>{{ label }}</li></ol>
+          <ol class="key-progress" :aria-label="$t('admin:apiCreate.keyCreationSteps')"><li v-for="(label, index) in [$t('admin:apiCreate.stepIdentity'), $t('admin:apiCreate.stepAccess'), $t('admin:apiCreate.stepReview')]" :key="index" :aria-current="step === index + 1 ? 'step' : undefined" :class="{ current: step === index + 1 }"><span>{{ index + 1 }}</span>{{ label }}</li></ol>
           <v-card-text class="key-dialog-body">
             <v-alert v-if="formError" type="error" variant="tonal" class="mb-4">{{ formError }}</v-alert>
+            <v-alert v-if="!hasDelegableAuthority" type="warning" variant="tonal" class="mb-3">{{ $t('admin:apiCreate.noDelegableAuthority') }}</v-alert>
             <section v-show="step === 1" :aria-label="$t('admin:apiCreate.credentialIdentity')"><v-text-field ref="keyNameInput" v-model="name" :label="$t('admin:apiCreate.integrationName')" :hint="$t('admin:apiCreate.useNameIdentifiesApplication')" persistent-hint variant="outlined" :rules="nameRules" :disabled="loading" maxlength="255" autocomplete="off" /><v-select ref="expirationInput" v-model="expiration" :items="expirations" :label="$t('admin:apiCreate.keyLifetime')" :hint="$t('admin:apiCreate.planReplaceKeyBefore')" persistent-hint variant="outlined" :rules="[requiredRule]" :disabled="loading" class="mt-4" /></section>
             <section v-show="step === 2" :aria-label="$t('admin:apiCreate.credentialAuthority')">
-              <v-radio-group ref="scopeInput" v-model="scope" :label="$t('admin:apiCreate.permissionSource')" :rules="[scopeRule]" :disabled="loading" color="primary"><v-radio value="group" :label="$t('admin:apiCreate.useGroupsPermissions')" :disabled="!selectableGroups.length" /><v-radio value="full" :label="$t('admin:apiCreate.systemAdministratorPermissions')" :disabled="!createFullAccess" /></v-radio-group>
-              <v-alert v-if="scope === 'full'" type="warning" variant="tonal" class="mb-4">{{ $t('admin:apiCreate.keyReceivesUnrestrictedSystem') }}</v-alert>
+              <v-alert v-if="hasDelegableAuthority && seed && !seedAuthorityAvailable" type="info" variant="tonal" class="mb-3">{{ $t('admin:apiCreate.replacementAuthorityUnavailable') }}</v-alert>
+              <v-radio-group ref="scopeInput" v-model="scope" :label="$t('admin:apiCreate.permissionSource')" :rules="[scopeRule]" :disabled="loading" color="primary"><v-radio value="group" :label="$t('admin:apiCreate.useGroupsPermissions')" :disabled="!selectableGroups.length" /><v-radio v-if="createFullAccess" value="full" :label="$t('admin:apiCreate.systemAdministratorPermissions')" /></v-radio-group>
+              <v-alert v-if="scope === 'full' && createFullAccess" type="warning" variant="tonal" class="mb-4">{{ $t('admin:apiCreate.keyReceivesUnrestrictedSystem') }}</v-alert>
               <template v-if="scope === 'group'"><v-alert v-if="!selectableGroups.length" type="info" variant="tonal" class="mb-3">{{ $t('admin:apiCreate.noPermissionGroupsCurrently') }}</v-alert><v-select ref="groupInput" v-model="group" :items="selectableGroups" item-title="name" item-value="id" variant="outlined" color="primary" :label="$t('admin:apiCreate.permissionGroup')" :rules="groupRules" :disabled="loading || !selectableGroups.length" />
                 <div v-if="selectedGrant" class="grant-preview"><strong>{{ selectedGrant.name }}</strong><p>{{ $t('admin:apiCreate.currentPermissionsPageRules', { permissionsCount: selectedGrant.permissions.length, pageRuleCount: selectedGrant.pageRuleCount, interpolation: { escapeValue: false } }) }}</p><div class="grant-permissions"><code v-for="permission in selectedGrant.permissions" :key="permission">{{ permission }}</code></div><details v-if="selectedGrant.pageRules.length" class="grant-rules"><summary>{{ $t('admin:apiCreate.reviewPageAccessRules') }}</summary><ul><li v-for="(rule, index) in selectedGrant.pageRules" :key="index"><strong>{{ rule.deny ? $t('admin:apiCreate.deny') : $t('admin:apiCreate.allow') }} · {{ rule.match }}</strong><code>{{ rule.path || '/' }}</code><small>{{ rule.roles.join(', ') || $t('admin:apiCreate.noActions') }} · {{ rule.locales.join(', ') || $t('admin:apiCreate.allLanguages') }}</small></li></ul></details><p class="key-note">{{ $t('admin:apiCreate.groupsCurrentGrantFuture') }}</p></div><v-alert v-else-if="group" type="info" variant="tonal">{{ $t('admin:apiCreate.permissionDetailsUnavailableReload') }}</v-alert>
               </template>
@@ -18,7 +20,7 @@
             </section>
             <section v-if="step === 3" :aria-label="$t('admin:apiCreate.credentialReview')"><dl class="key-review"><div><dt>{{ $t('admin:apiCreate.integration') }}</dt><dd>{{ name.trim() }}</dd></div><div><dt>{{ $t('admin:apiCreate.lifetime') }}</dt><dd>{{ expirations.find(item => item.value === expiration)?.title }}</dd></div><div><dt>{{ $t('admin:apiCreate.authority') }}</dt><dd>{{ scope === 'full' ? $t('admin:apiCreate.systemAdministrator') : selectableGroups.find(item => item.id === group)?.name || $t('admin:apiCreate.group', { group, interpolation: { escapeValue: false } }) }}</dd></div><div><dt>{{ $t('admin:apiCreate.protocols') }}</dt><dd>{{ mcpAccess ? $t('admin:apiCreate.restV1GraphqlMcp') : $t('admin:apiCreate.restV1Graphql') }}</dd></div><div v-if="mcpAccess"><dt>{{ $t('admin:apiCreate.mcpResource') }}</dt><dd>{{ connections?.mcpResource }}</dd></div></dl><p>{{ $t('admin:apiCreate.afterIssuingSaveKey') }}</p></section>
           </v-card-text>
-          <v-card-actions class="key-dialog-actions"><v-btn variant="text" :disabled="loading" @click="isShown = false">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn v-if="step > 1" variant="text" :disabled="loading" @click="step--">{{ $t('admin:apiCreate.back') }}</v-btn><v-btn v-if="step < 3" color="primary" variant="flat" :disabled="loading" @click="nextStep">{{ $t('admin:apiCreate.continue') }}</v-btn><v-btn v-else type="submit" color="primary" variant="flat" :loading="loading" :disabled="loading || (scope === 'group' && !selectableGroups.length)">{{ $t('admin:apiCreate.issueKey') }}</v-btn></v-card-actions>
+          <v-card-actions class="key-dialog-actions"><v-btn variant="text" :disabled="loading" @click="isShown = false">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn v-if="step > 1" variant="text" :disabled="loading" @click="step--">{{ $t('admin:apiCreate.back') }}</v-btn><v-btn v-if="step < 3" color="primary" variant="flat" :disabled="loading || !hasDelegableAuthority" @click="nextStep">{{ $t('admin:apiCreate.continue') }}</v-btn><v-btn v-else type="submit" color="primary" variant="flat" :loading="loading" :disabled="loading || !hasDelegableAuthority">{{ $t('admin:apiCreate.issueKey') }}</v-btn></v-card-actions>
         </v-card>
       </v-form>
     </v-dialog>
@@ -36,7 +38,7 @@ import { createAdminApiKey } from '../../helpers/auth-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 
 export default {
-  emits: ['update:modelValue', 'sensitive-state', 'retry-connections'],
+  emits: ['update:modelValue', 'sensitive-state'],
   props: {
     assignableGroups: { type: Array as PropType<ApiAssignableGroup[]>, default: () => [] },
     connections: { type: Object as PropType<ApiConnectionInfo | null>, default: null },
@@ -69,6 +71,10 @@ export default {
   computed: {
     selectableGroups (): ApiAssignableGroup[] { return this.assignableGroups },
     selectedGrant () { return this.assignableGroups.find(group => group.id === this.group) },
+    hasDelegableAuthority (): boolean { return this.createFullAccess || this.selectableGroups.length > 0 },
+    seedAuthorityAvailable (): boolean {
+      return !this.seed || (this.seed.grant.groupId === 1 ? this.createFullAccess : this.selectableGroups.some(group => group.id === this.seed?.grant.groupId))
+    },
     flowProtected (): boolean { return this.loading || this.isCopyKeyDialogShown },
     isShown: {
       get() { return this.modelValue },
@@ -116,8 +122,8 @@ export default {
           this.step = 1; this.formError = ''
           this.name = this.seed ? this.$t('admin:apiCreate.replacement', { name: this.seed.name, interpolation: { escapeValue: false } }).slice(0, 255) : ''
           this.expiration = '90d'
-          this.scope = this.seed?.grant.groupId === 1 ? 'full' : 'group'
-          this.group = this.seed?.grant.groupId && this.seed.grant.groupId > 2 ? this.seed.grant.groupId : null
+          this.scope = this.seed ? (this.seedAuthorityAvailable ? (this.seed.grant.groupId === 1 ? 'full' : 'group') : null) : 'group'
+          this.group = this.seedAuthorityAvailable && this.seed?.grant.groupId && this.seed.grant.groupId > 2 ? this.seed.grant.groupId : null
           this.mcpAccess = Boolean(this.seed?.grant.mcpResource)
           this.$nextTick(() => {
             if (this.modelValue) this.focusFormControl('keyNameInput')
@@ -136,6 +142,7 @@ export default {
     warnBeforeUnload (event: BeforeUnloadEvent) { if (this.modelValue || this.flowProtected) { event.preventDefault(); event.returnValue = '' } },
     nextStep () {
       this.formError = ''
+      if (!this.hasDelegableAuthority) { this.formError = this.$t('admin:apiCreate.noDelegableAuthority'); return }
       if (this.step === 1 && (this.name.trim().length < 2 || this.name.trim().length > 255 || !this.expiration)) { this.formError = this.$t('admin:apiCreate.enterName2255'); this.focusFormControl('keyNameInput'); return }
       if (this.step === 2 && (!this.scope || (this.scope === 'full' && !this.createFullAccess) || (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)))) { this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
       if (this.step === 2 && this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.formError = this.$t('admin:apiCreate.mcpConfigurationUnavailableReload'); return }
@@ -170,6 +177,7 @@ export default {
     async generate () {
       if (this.loading) return
       if (this.step < 3) { this.nextStep(); return }
+      if (!this.hasDelegableAuthority || !this.scope) { this.step = 2; this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
       if (this.scope === 'full' && !this.createFullAccess) { this.step = 2; this.formError = this.$t('admin:apiCreate.systemAdministratorDelegationUnavailable'); return }
       if (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)) { this.step = 2; this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
       if (this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.step = 2; this.formError = this.$t('admin:apiCreate.mcpConfigurationUnavailableReload'); return }

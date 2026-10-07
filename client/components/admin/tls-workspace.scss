@@ -1,3 +1,5 @@
+@use './admin-workspace.scss' as workspace;
+
 .tls-workspace {
   --tls-line: rgba(var(--v-theme-on-surface), 0.14);
   --tls-muted: var(--wiki-text-muted);
@@ -213,17 +215,7 @@
     margin: 20px 0;
   }
   .tls-savebar {
-    position: sticky;
-    bottom: 16px;
-    z-index: 2;
-    background: rgb(var(--v-theme-surface));
-    border: 1px solid rgb(var(--v-theme-primary));
-    border-radius: 5px;
-    padding: 16px 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
+    @include workspace.admin-draft-bar;
   }
   .tls-history {
     list-style: none;

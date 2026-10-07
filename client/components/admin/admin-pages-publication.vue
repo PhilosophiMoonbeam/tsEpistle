@@ -9,17 +9,17 @@
         <p class="publication-context">{{ enabled ? $t('admin:pagesPublication.enabledPageAvailableOnly') : $t('admin:pagesPublication.draftPagesHiddenOrdinary') }}</p>
         <div class="publication-progress" role="status">{{ busy ? `${$t('admin:pagesPublication.working')} ` : '' }}{{ summary }}<span v-if="stopRequested"> {{ $t('admin:pagesPublication.stoppingAfterCurrentRequest') }}</span></div>
         <div class="publication-review-list">
-          <article v-for="row in rows" :key="row.id"><div><strong>{{ row.title }}</strong><small v-if="row.page">{{ row.page.locale }}/{{ row.page.path }} · {{ row.page.visibility === 'private' ? $t('admin:pagesPublication.private') : $t('admin:pagesPublication.workspace') }} · {{ state(row.page) }}</small><small v-if="row.page && (row.page.publishStartDate || row.page.publishEndDate)">{{ $t('admin:pagesPublication.window', { publishStartDate: date(row.page.publishStartDate), publishEndDate: date(row.page.publishEndDate), interpolation: { escapeValue: false } }) }}</small><p v-if="row.error" class="text-error">{{ row.error }}</p></div><v-chip size="small" :color="row.status === 'error' ? 'error' : row.status === 'saved' ? 'success' : undefined">{{ row.status }}</v-chip></article>
+          <article v-for="row in rows" :key="row.id"><div><strong>{{ row.title }}</strong><small v-if="row.page">{{ row.page.locale }}/{{ row.page.path }} · {{ row.page.visibility === 'private' ? $t('admin:pagesPublication.private') : $t('admin:pagesPublication.workspace') }} · {{ state(row.page) }}</small><small v-if="row.page && (row.page.publishStartDate || row.page.publishEndDate)">{{ $t('admin:pagesPublication.window', { publishStartDate: date(row.page.publishStartDate), publishEndDate: date(row.page.publishEndDate), interpolation: { escapeValue: false } }) }}</small><p v-if="row.error" class="text-error">{{ row.error }}</p></div><v-chip size="small" :color="row.status === 'error' ? 'error' : row.status === 'saved' ? 'success' : undefined">{{ $t(`admin:pagesPublication.reviewStatus.${row.status}`) }}</v-chip></article>
         </div>
         <p class="publication-context">{{ $t('admin:pagesPublication.changesRunOnePage') }}</p>
       </v-card-text>
-      <v-card-actions class="publication-actions"><v-btn :disabled="busy" @click="close">{{ completed ? $t('admin:pagesPublication.done') : $t('common:actions.cancel') }}</v-btn><v-btn v-if="hasErrors" :disabled="busy" @click="reviewFailures">{{ $t('admin:pagesPublication.reviewFailedPages') }}</v-btn><v-spacer /><v-btn v-if="busy" :disabled="stopRequested || inspecting" @click="stopRequested = true">{{ $t('admin:pagesPublication.stopAfterPage') }}</v-btn><v-btn v-else color="primary" variant="flat" :disabled="!readyCount" @click="apply">{{ $t('admin:pagesPublication.apply', { tValue: $t('admin:pagesPublication.pagesCount', { count: readyCount }), interpolation: { escapeValue: false } }) }}</v-btn></v-card-actions>
+      <v-card-actions class="publication-actions"><v-btn :disabled="busy" @click="close">{{ completed && !busy ? $t('admin:pagesPublication.done') : $t('common:actions.cancel') }}</v-btn><v-btn v-if="hasErrors" :disabled="busy" @click="reviewFailures">{{ $t('admin:pagesPublication.reviewFailedPages') }}</v-btn><v-spacer /><v-btn v-if="busy" :disabled="stopRequested || inspecting" @click="stopRequested = true">{{ $t('admin:pagesPublication.stopAfterPage') }}</v-btn><v-btn v-else color="primary" variant="flat" :disabled="!readyCount" @click="apply">{{ $t('admin:pagesPublication.apply', { tValue: $t('admin:pagesPublication.pagesCount', { count: readyCount }), interpolation: { escapeValue: false } }) }}</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 </template>
 <script lang="ts">
 import { defineComponent, type PropType } from 'vue'
-import { applyPublication, inspectPublication, publicationState, type PublicationReview } from '../../helpers/admin-pages'
+import { applyPublication, inspectPublication, publicationState, PUBLICATION_STATE_KEYS, type PublicationReview } from '../../helpers/admin-pages'
 import type { PageListRow } from '../../helpers/pages-api'
 export default defineComponent({
   props: { modelValue: Boolean, selected: { type: Array as PropType<PageListRow[]>, required: true } },
@@ -31,7 +31,7 @@ export default defineComponent({
     summary(): string { return this.$t('admin:pagesPublication.changedUnchangedFailedReady', { rows: this.rows.filter(row => row.status === 'saved').length, rows2: this.rows.filter(row => row.status === 'unchanged').length, rows3: this.rows.filter(row => row.status === 'error').length, readyCount: this.readyCount, interpolation: { escapeValue: false } }) }
   },
   methods: {
-    state: publicationState,
+    state(page: Parameters<typeof publicationState>[0]): string { return this.$t(`admin:pages.publicationStates.${PUBLICATION_STATE_KEYS[publicationState(page)]}`) },
     date(value: string | null | undefined): string { return value === undefined || value === null || value === '' ? this.$t('admin:pagesPublication.noBoundary') : new Date(value).toLocaleString() },
     protect(event: BeforeUnloadEvent) { if (this.busy) { event.preventDefault(); event.returnValue = '' } },
     async inspect(rows: PublicationReview[]) {
@@ -56,5 +56,5 @@ export default defineComponent({
 })
 </script>
 <style scoped lang="scss">
-.publication-review header { padding:2rem 2rem 0; }h2 { font:500 2rem/1.15 var(--font-family-serif, Georgia,serif); margin:.5rem 0 1rem; }p { line-height:1.7; }.publication-context { font-size:.85rem; color:rgb(var(--v-theme-on-surface-variant)); }.publication-progress { padding:.8rem 0; border-bottom:1px solid rgba(var(--v-border-color),.2); }.publication-review-list { max-height:38vh; overflow:auto; }article { display:flex; justify-content:space-between; align-items:start; gap:1rem; padding:1rem 0; border-bottom:1px solid rgba(var(--v-border-color),.15); }article div { min-width:0; overflow-wrap:anywhere; }small { display:block; margin-top:.35rem; color:rgb(var(--v-theme-on-surface-variant)); }.publication-actions { flex-wrap:wrap; padding:1rem; }.pages-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }
+.publication-review header { padding:2rem 2rem 0; }h2 { font:500 2rem/1.15 var(--wiki-font-display); margin:.5rem 0 1rem; }p { line-height:1.7; }.publication-context { font-size:.85rem; color:rgb(var(--v-theme-on-surface-variant)); }.publication-progress { padding:.8rem 0; border-bottom:1px solid rgba(var(--v-border-color),.2); }.publication-review-list { max-height:38vh; overflow:auto; }article { display:flex; justify-content:space-between; align-items:start; gap:1rem; padding:1rem 0; border-bottom:1px solid rgba(var(--v-border-color),.15); }article div { min-width:0; overflow-wrap:anywhere; }small { display:block; margin-top:.35rem; color:rgb(var(--v-theme-on-surface-variant)); }.publication-actions { flex-wrap:wrap; padding:1rem; }.pages-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }
 </style>

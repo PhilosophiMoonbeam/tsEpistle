@@ -1,8 +1,17 @@
-import { fetchPage, type PageDetails, type PageListRow } from './pages-api'
-import { sameOriginJsonFetch } from './json-transport'
 import { publicationBoundaryTimestamp } from '../../shared/publication-window.ts'
+import { sameOriginJsonFetch } from './json-transport'
+import { fetchPage, type PageDetails, type PageListRow } from './pages-api'
 
 export type PublicationState = 'Unavailable' | 'Draft' | 'Scheduled' | 'Window ended' | 'Published' | 'Enabled' | 'Invalid schedule'
+export const PUBLICATION_STATE_KEYS: Readonly<Record<PublicationState, string>> = {
+  Draft: 'draft',
+  Published: 'published',
+  Scheduled: 'scheduled',
+  'Window ended': 'windowEnded',
+  'Invalid schedule': 'invalidSchedule',
+  Unavailable: 'unavailable',
+  Enabled: 'enabled'
+}
 export function publicationState(page: Pick<PageListRow, 'isPublished' | 'publishStartDate' | 'publishEndDate'>, now = Date.now()): PublicationState {
   if (page.isPublished === undefined) return 'Unavailable'
   if (page.isPublished === false) return 'Draft'

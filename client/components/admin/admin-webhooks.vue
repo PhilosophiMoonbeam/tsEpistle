@@ -495,7 +495,8 @@ export default {
 }
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use './admin-workspace.scss' as workspace;
 .webhook-admin { padding-bottom: calc(var(--wiki-footer-height) + 3rem) !important; }
 .webhook-admin :deep(button) { scroll-margin-block: 6rem; }
 .webhook-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: clamp(1.5rem, 3vw, 3rem); align-items: start; }
@@ -532,7 +533,7 @@ h4 { font-size: .85rem; margin-bottom: .75rem; }
 .event-option strong, .event-option small, .event-option code { display: block; }
 .event-option strong { font-size: .8rem; font-weight: 500; }.event-option small { font-size: .75rem; line-height: 1.6; margin-block: .2rem; }.event-option code { font-size: .68rem; overflow-wrap: anywhere; }
 .custom-events { padding-top: 1rem; border-top: 1px solid var(--wiki-surface-border); }.custom-events summary { font-size: .85rem; cursor: pointer; padding-bottom: 1rem; }
-.webhook-savebar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; background: var(--wiki-surface-raised); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); margin-top: 1rem; position: sticky; bottom: var(--wiki-footer-height); z-index: 2; }.webhook-savebar > span { font-size: .8rem; }
+.webhook-savebar { @include workspace.admin-draft-bar; }.webhook-savebar > span { font-size: .8rem; overflow-wrap: anywhere; }
 .webhook-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .endpoint-maintenance { margin-top: 2rem; border-top: 1px solid var(--wiki-surface-border); padding-top: 1rem; }.endpoint-maintenance h3 { font-size: 1.05rem; }.endpoint-maintenance p { font-size: .8rem; }
 .deliveries-heading { margin-bottom: 1rem; }.deliveries-heading > div:first-child { max-width: 55ch; }.deliveries-heading .webhook-actions { flex-shrink: 0; }

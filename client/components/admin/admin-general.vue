@@ -894,7 +894,7 @@ export default {
           banner.isEnabled ? this.$t('admin:general.publishedDuringWindow') : this.$t('admin:general.notPublished'),
           banner.title || this.$t('admin:general.noTitle'),
           banner.content || this.$t('admin:general.noMessage'),
-          this.$t('admin:general.tone', { tone: (banner.tone || "warning"), interpolation: { escapeValue: false } }),
+          this.$t('admin:general.tone', { tone: this.tones.find((tone) => tone.value === (banner.tone || "warning"))!.title, interpolation: { escapeValue: false } }),
           this.$t('admin:general.starts', { startsAt: (banner.startsAt || this.$t('admin:general.immediately')), interpolation: { escapeValue: false } }),
           this.$t('admin:general.ends', { endsAt: (banner.endsAt || this.$t('admin:general.untilDisabled')), interpolation: { escapeValue: false } }),
         ].join("\n");
@@ -968,7 +968,7 @@ export default {
         this.reason = "";
         this.notice =
           this.$t('admin:general.workspaceSettingsSaved', { activation: (result.activation === "needs-attention"
-            ? " Runtime activation needs attention."
+            ? ` ${this.$t('admin:general.runtimeActivationNeedsAttention')}`
             : ""), interpolation: { escapeValue: false } });
         this.attention = result.activation === "needs-attention";
         this.busy = false;

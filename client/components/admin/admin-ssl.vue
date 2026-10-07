@@ -612,12 +612,11 @@ const refresh = async () => {
   const token = ++generation
   loading.value = true
   error.value = ''
-  const preserve = dirty.value
   try {
     const value = await fetchTlsWorkspace()
     if (disposed || token !== generation) return
+    const preserve = dirty.value
     workspace.value = value
-    draftFingerprint.value = value.fingerprint
     if (!preserve || unconfirmedPolicy.value) resetDraft()
     unconfirmedPolicy.value = false
     if (unconfirmedId.value && value.operations.some((item) => item.id === unconfirmedId.value)) unconfirmedId.value = ''

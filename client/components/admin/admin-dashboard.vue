@@ -19,7 +19,8 @@
           template(v-if='summaryLoading || summaryError') —
           animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='formatInteger')
         span.admin-stat__hint {{ stat.hint }}
-    v-alert.mt-3(v-if='summaryError' type='warning' variant='tonal' density='compact')
+    p.mt-3(v-if='summaryLoading' role='status') {{ $t(`admin:dashboard.inventoryLoading`) }}
+    v-alert.mt-3(v-else-if='summaryError' type='warning' variant='tonal' density='compact' role='alert')
       span {{ $t(`admin:dashboard.inventoryUnavailable`) }}
       v-btn.ms-2(variant='text' size='small' @click='refreshSummary') {{ $t(`admin:dashboard.retry`) }}
 
@@ -120,7 +121,7 @@ import AnimatedNumber from '@/components/common/animated-number.vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
 import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
-import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { getErrorMessage, loadingStart, loadingStop } from '../../helpers/root-ui-store'
 
 const integerFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
 const formatInteger = (value: number): string => integerFormatter.format(Math.round(value))
@@ -222,7 +223,7 @@ export default {
         .filter((stat) => this.hasPermission(stat.permission))
         .map((stat) => ({
           ...stat,
-          ariaLabel: `${this.summaryLoading ? this.$t('admin:dashboard.loading') : this.summaryError ? this.$t('admin:dashboard.unavailable') : stat.value} ${stat.label}. ${stat.hint}.`
+          ariaLabel: this.$t(this.summaryLoading ? 'admin:dashboard.statAriaLoading' : this.summaryError ? 'admin:dashboard.statAriaUnavailable' : 'admin:dashboard.statAriaValue', { label: stat.label, value: stat.value, hint: stat.hint, interpolation: { escapeValue: false } })
         }))
     },
     connections() {
@@ -315,7 +316,6 @@ export default {
         }
         if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
         this.recentPagesError = getErrorMessage(err)
-        showNotification(wikiStore, { message: this.recentPagesError, style: 'error', icon: 'alert' })
         return false
       } finally {
         if (this.recentPagesAbortController === controller) {
@@ -346,7 +346,6 @@ export default {
         }
         if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false
         this.lastLoginsError = getErrorMessage(err)
-        showNotification(wikiStore, { message: this.lastLoginsError, style: 'error', icon: 'alert' })
         return false
       } finally {
         if (this.lastLoginsAbortController === controller) {

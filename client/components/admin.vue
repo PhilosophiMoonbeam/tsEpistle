@@ -118,14 +118,16 @@
             span.admin-route-bar__group(v-if='currentRouteGroup') {{ currentRouteGroup.label }}
             v-icon(v-if='currentRouteGroup' size='14' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
             strong(aria-current='page') {{ currentRouteLabel }}
-      router-view(v-slot='{ Component }')
-        transition(name='admin-router' mode='out-in' @after-enter='onRouteEntered')
-          component(:is='Component')
+      v-defaults-provider(:defaults='{ VDialog: { class: "admin-dialog", VDialog: { class: "admin-dialog" } } }')
+        router-view(v-slot='{ Component }')
+          transition(name='admin-router' mode='out-in' @after-enter='onRouteEntered')
+            component(:is='Component')
 
     nav-footer
     notify
     search-results
-    confirm-dialog-host
+    v-defaults-provider(:defaults='{ VDialog: { class: "admin-dialog", VDialog: { class: "admin-dialog" } } }')
+      confirm-dialog-host
 </template>
 
 <script lang='ts'>
@@ -135,7 +137,7 @@ import { wikiStore } from '@/store/index.ts'
 
 import { adminSummaryKey } from '../helpers/admin-summary'
 import { fetchSystemSummary } from '../helpers/system-api'
-import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../helpers/root-ui-store'
+import { getErrorMessage, loadingStart, loadingStop } from '../helpers/root-ui-store'
 import { useTranslate } from '../helpers/use-translate'
 
 import { buildAdminNavigation, filterAdminNavigation, type AdminNavGroup, type AdminNavItem } from '../helpers/admin-navigation'
@@ -158,11 +160,6 @@ export default defineComponent({
         wikiStore.admin.info = await fetchSystemSummary(window.fetch.bind(window), t('common:adminShell.systemSummaryInvalid'))
       } catch (err) {
         summaryError.value = getErrorMessage(err)
-        showNotification(wikiStore, {
-          style: 'error',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
       } finally {
         summaryLoading.value = false
         loadingStop(wikiStore, 'admin-stats-refresh')
@@ -822,7 +819,7 @@ export default defineComponent({
     }
   }
 
-  .v-dialog > .v-overlay__content {
+  .v-dialog.admin-dialog:not(.v-dialog--fullscreen) > .v-overlay__content {
     width: calc(100vw - var(--wiki-space-6));
     max-width: calc(100vw - var(--wiki-space-6)) !important;
     max-height: calc(100dvh - var(--wiki-space-6));

@@ -11,10 +11,10 @@ v-container.extensions-workspace(fluid)
       dl.extensions-heading-facts
         div
           dt {{ $t(`admin:extensions.bundled`) }}
-          dd.extensions-stat {{ workspace?.extensions.length ?? 0 }}
+          dd.extensions-stat {{ workspace?.extensions.length ?? '—' }}
         div
           dt {{ $t(`admin:extensions.usableNow`) }}
-          dd.extensions-stat {{ usableCount }}
+          dd.extensions-stat {{ usableCount ?? '—' }}
         div
           dt {{ $t(`admin:extensions.observed`) }}
           dd: time(:datetime='workspace?.observedAt') {{ workspace ? dateTime(workspace.observedAt) : '—' }}
@@ -195,7 +195,7 @@ const requestedExtensionIsUnavailable = computed(() =>
   )
 )
 
-const usableCount = computed(() => workspace.value?.extensions.filter((extension) => extension.observation.state === 'usable').length || 0)
+const usableCount = computed(() => workspace.value?.extensions.filter((extension) => extension.observation.state === 'usable').length ?? null)
 
 const observationPresentations = {
   usable: { label: t('admin:extensions.usableProcess'), color: 'success', icon: 'mdi-check-circle-outline' },

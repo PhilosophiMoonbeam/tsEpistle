@@ -23,7 +23,7 @@
           color="primary"
           variant="flat"
           prepend-icon="mdi-check"
-          :disabled="locked || (!dirty && !endSessions)"
+          :disabled="locked || uploadSizeEmpty || (!dirty && !endSessions)"
           @click="review"
           >{{ $t('admin:security.reviewChanges') }}</v-btn
         ></template
@@ -336,7 +336,7 @@
                 </p>
               </div>
               <v-text-field
-                :model-value="draft.uploadMaxFileSize / 1048576"
+                :model-value="uploadSizeEmpty ? '' : draft.uploadMaxFileSize / 1048576"
                 :label="$t('admin:security.fieldLabels.uploadMaxFileSize')"
                 type="number"
                 min="0"
@@ -346,12 +346,11 @@
                 variant="outlined"
                 :disabled="locked"
                 :hint="$t('admin:security.up1024Mib')"
+                :error-messages="uploadSizeEmpty ? [$t('admin:security.uploadCapacityRequired')] : []"
                 persistent-hint
-                @update:model-value="
-                  draft.uploadMaxFileSize = Number($event) * 1048576
-                "
+                @update:model-value="updateUploadCapacity"
               />
-              <div class="security-file-measure">
+              <div v-if="!uploadSizeEmpty" class="security-file-measure">
                 <v-icon
                   :icon="
                     draft.uploadMaxFileSize
@@ -471,6 +470,7 @@
               >
               <div v-if="backgroundPreview" class="security-background-preview">
                 <img
+                  v-if="!backgroundError"
                   :src="backgroundPreview"
                   :alt="$t('admin:security.signBackgroundPreview')"
                   @error="backgroundError = true"
@@ -627,7 +627,7 @@
         ></v-card
       ></v-dialog
     >
-    <editor-modal-media v-if="assetPickerOpen" />
+    <editor-modal-media v-if="assetPickerOpen" class="admin-security-asset-picker" />
   </v-container>
 </template>
 <script lang="ts">
@@ -669,6 +669,7 @@ export default {
     return {
       saved: null as SecurityInspection | null,
       draft: null as SecurityPolicy | null,
+      uploadSizeEmpty: false,
       reviewed: null as SecurityPolicy | null,
       changes: [] as Array<keyof SecurityPolicy>,
       labels: Object.fromEntries(Object.entries(securityPolicyLabels).map(([key, value]) => [key, this.$t(`admin:security.fieldLabels.${key}`, { defaultValue: value })])) as typeof securityPolicyLabels,
@@ -706,7 +707,7 @@ export default {
       return Boolean(
         this.saved &&
         this.draft &&
-        securityChangedFields(this.saved.policy, this.draft).length
+        (this.uploadSizeEmpty || securityChangedFields(this.saved.policy, this.draft).length)
       )
     },
     locked(): boolean {
@@ -762,7 +763,7 @@ export default {
   },
   methods: {
     async load() {
-      if (this.busy) return
+      if (this.disposed || this.busy) return
       const seq = ++this.sequence
       this.loading = true
       this.loadError = ''
@@ -771,6 +772,7 @@ export default {
         if (this.disposed || seq !== this.sequence) return
         this.saved = result
         this.draft = copy(result.policy)
+        this.uploadSizeEmpty = false
         this.endSessions = false
         this.stale = false
         this.loadedVersion++
@@ -795,9 +797,15 @@ export default {
     reset() {
       if (this.locked || !this.saved) return
       this.draft = copy(this.saved.policy)
+      this.uploadSizeEmpty = false
       this.endSessions = false
       this.backgroundPreview = ''
       this.loadedVersion++
+    },
+    updateUploadCapacity(value: string | number | null) {
+      if (!this.draft || this.locked) return
+      this.uploadSizeEmpty = value === null || String(value).trim() === ''
+      if (!this.uploadSizeEmpty) this.draft.uploadMaxFileSize = Number(value) * 1048576
     },
     selectSection(key: string) {
       if (!this.busy && !this.initializing)
@@ -850,6 +858,7 @@ export default {
         this.locked ||
         !this.saved ||
         !this.draft ||
+        this.uploadSizeEmpty ||
         (!this.dirty && !this.endSessions)
       )
         return
@@ -901,7 +910,7 @@ export default {
           this.$t('admin:security.securityPolicySaved', { value: (result.sessionsEnded
             ? ` ${this.$t('admin:security.sessionsEndedSentence', { count: result.sessionsEnded })}`
             : ''), activation: (result.activation === 'needs-attention'
-            ? ' Runtime activation needs attention.'
+            ? ` ${this.$t('admin:security.runtimeActivationNeedsAttention')}`
             : ''), interpolation: { escapeValue: false } })
         this.attention = result.activation === 'needs-attention'
         if (result.currentSessionEnded) {
@@ -945,10 +954,11 @@ export default {
       await this.load()
     },
     async initialize() {
-      if (this.locked || this.dirty || this.endSessions || !this.saved) return
+      if (this.disposed || this.locked || this.dirty || this.endSessions || !this.saved) return
       this.initializing = true
       try {
         const result = await retrySecurityRuntime(this.saved.fingerprint)
+        if (this.disposed) return
         this.notice =
           result.activation === 'applied'
             ? this.$t('admin:security.runtimeSecurityConfigurationApplied')
@@ -956,10 +966,12 @@ export default {
         this.attention = result.activation !== 'applied'
         await this.load()
       } catch (error) {
-        this.notice = getErrorMessage(error)
-        this.attention = true
+        if (!this.disposed) {
+          this.notice = getErrorMessage(error)
+          this.attention = true
+        }
       } finally {
-        this.initializing = false
+        if (!this.disposed) this.initializing = false
       }
     },
     browseBackground() { if (this.locked) return; this.selectingBackground = true; wikiStore.editor.editorKey = 'common'; wikiStore.editor.activeModal = 'editorModalMedia' },
@@ -1001,3 +1013,9 @@ export default {
 }
 </script>
 <style lang="scss" src="./security-workspace.scss"></style>
+<style scoped>
+.admin-security-asset-picker {
+  /* Above Admin layout chrome, below the picker's Vuetify dialog overlays. */
+  z-index: 1005;
+}
+</style>

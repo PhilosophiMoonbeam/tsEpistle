@@ -5,7 +5,12 @@
     <v-alert v-if="error" type="error" variant="tonal" role="alert" class="my-4">{{ error }}<v-btn :disabled="loading || busy" @click="load">{{ tr('retry') }}</v-btn></v-alert>
     <p role="status" aria-live="polite">{{ busy ? tr('mediaSaving') : notice }}</p>
     <v-progress-linear v-if="loading" indeterminate :aria-label="tr('loading')" />
-    <p v-if="loaded && !providers.length">{{ tr('mediaEmpty') }}</p>
+    <div v-if="loaded && !providers.length" class="media-admin__empty">
+      <span class="media-admin__empty-icon"><v-icon icon="mdi-image-multiple-outline" size="34" aria-hidden="true" /></span>
+      <h3>{{ tr('mediaEmptyTitle') }}</h3>
+      <p>{{ tr('mediaEmpty') }}</p>
+      <v-btn color="primary" prepend-icon="mdi-plus" :disabled="busy" @click="open()">{{ tr('addMediaProvider') }}</v-btn>
+    </div>
     <article v-for="provider in providers" :key="provider.id" class="media-admin__provider">
       <div><h3>{{ provider.displayName }}</h3><p>{{ tr(`mediaKind${provider.config.kind}`) }} · <code>{{ provider.config.api }}</code> · <code>{{ provider.config.model }}</code></p><p><code>{{ provider.config.baseUrl }}</code></p><p>{{ provider.enabled ? tr('enabled') : tr('disabled') }} · {{ provider.secretConfigured ? tr('mediaCredentialConfigured') : tr('mediaCredentialMissing') }}<span v-if="provider.isDefault"> · {{ tr('mediaOperationDefault') }}</span></p><p>{{ provider.exposureMode === 'all_agent_users' ? tr('everyone') : groupNames(provider.groupIds) }}</p></div>
       <div class="media-admin__actions"><v-btn :disabled="busy" :aria-label="tr('mediaEditNamed', { name: provider.displayName })" @click="open(provider)">{{ tr('mediaEdit') }}</v-btn><v-btn :disabled="busy || (!provider.enabled && !provider.secretConfigured)" @click="mutate(() => enableMediaProvider(fetcher, csrfToken, provider.id, provider.revision, !provider.enabled))">{{ provider.enabled ? tr('mediaDisable') : tr('mediaEnable') }}</v-btn><v-btn :disabled="busy || !provider.enabled || !provider.secretConfigured || provider.isDefault" @click="mutate(() => defaultMediaProvider(fetcher, csrfToken, provider.id, provider.revision))">{{ tr('mediaSetDefault') }}</v-btn><v-btn color="error" :disabled="busy" @click="removing = provider">{{ tr('mediaRemove') }}</v-btn></div>
@@ -17,7 +22,7 @@
             <v-text-field v-model="draft.displayName" :label="tr('displayName')" :error-messages="fieldError('displayName')" :disabled="busy" />
             <v-select v-model="draft.kind" :items="kindOptions" :label="tr('mediaOperation')" :disabled="busy" @update:model-value="selectKind" />
             <v-select v-model="draft.api" :items="apiOptions" :label="tr('mediaApi')" :disabled="busy" @update:model-value="selectApi" />
-            <v-text-field v-model="draft.model" :label="tr('mediaExactModel')" :hint="tr('mediaExactModelHelp')" persistent-hint :error-messages="fieldError('config.model')" :disabled="busy" />
+            <v-text-field v-model="draft.model" :label="tr('mediaExactModel')" :hint="tr(draft.model ? 'mediaExactModelHelp' : 'mediaModelInvalid')" persistent-hint :error-messages="fieldError('config.model')" :disabled="busy" />
             <v-text-field v-model="draft.baseUrl" :label="tr('mediaOfficialBaseUrl')" :error-messages="fieldError('config.baseUrl')" :disabled="busy" />
             <v-text-field v-model.number="draft.timeoutMs" type="number" min="1000" max="300000" :label="tr('mediaTimeout')" :error-messages="fieldError('config.timeoutMs')" :disabled="busy" />
             <v-text-field v-model.number="draft.maxInputTokens" type="number" min="1" max="10000000" :label="tr('mediaInputCeiling')" :error-messages="fieldError('config.maxInputTokens')" :disabled="busy" />
@@ -47,7 +52,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
-import { AgentMediaProviderWriteSchema, type AgentMediaApi, type AgentMediaKind, type AgentMediaProviderView, type AgentMediaProviderWrite } from '../../../shared/agents/media-providers.ts'
+import { AgentMediaProviderConfigSchema, AgentMediaProviderWriteSchema, type AgentMediaApi, type AgentMediaKind, type AgentMediaProviderView, type AgentMediaProviderWrite } from '../../../shared/agents/media-providers.ts'
 import { listMediaProviders, createMediaProvider, updateMediaProvider, enableMediaProvider, defaultMediaProvider, deleteMediaProvider } from '../../helpers/agent-control-api.ts'
 import { AgentApiError } from '../../helpers/agents-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -85,7 +90,19 @@ const load = async (): Promise<boolean> => {
   catch (value) { if (!current.signal.aborted && !disposed) error.value = message(value); return false }
   finally { if (controller === current) loading.value = false }
 }
-const selectApi = () => { draft.baseUrl = draft.api.startsWith('gemini-') ? 'https://generativelanguage.googleapis.com/v1beta' : draft.api === 'openai-images' ? 'https://api.openai.com/v1' : 'https://api.stability.ai/v2beta'; if (draft.kind === 'video') draft.pricingKind = 'tokens'; else if (draft.kind === 'music' || draft.api === 'stability-images') draft.pricingKind = 'fixed' }
+const selectApi = () => {
+  draft.baseUrl = draft.api.startsWith('gemini-') ? 'https://generativelanguage.googleapis.com/v1beta' : draft.api === 'openai-images' ? 'https://api.openai.com/v1' : 'https://api.stability.ai/v2beta'
+  if (draft.kind === 'video') draft.pricingKind = 'tokens'
+  else if (draft.kind === 'music' || draft.api === 'stability-images') draft.pricingKind = 'fixed'
+  if (!draft.model) return
+  // Validate model compatibility independently of incomplete pricing or numeric drafts.
+  const modelValidation = AgentMediaProviderConfigSchema.safeParse({
+    kind: draft.kind, api: draft.api, model: draft.model, baseUrl: draft.baseUrl,
+    timeoutMs: 120000, maxInputTokens: 32000, maxOutputTokens: 8192,
+    pricing: { kind: 'fixed', pricingRevision: 'media-v1', costMicros: 1 }
+  })
+  if (!modelValidation.success && modelValidation.error.issues.some(issue => issue.path[0] === 'model')) draft.model = ''
+}
 const selectKind = () => { if (!supportedApis[draft.kind].includes(draft.api)) draft.api = supportedApis[draft.kind][0]!; selectApi() }
 const open = (provider?: AgentMediaProviderView) => {
   editing.value = provider ?? null; Object.assign(draft, defaults())
@@ -120,6 +137,10 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); draft.secretValue 
 .media-admin { padding: var(--wiki-space-6, 1.5rem); }
 .media-admin__header, .media-admin__provider { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .media-admin__header { margin-bottom: 1.5rem; }
+.media-admin__empty { display: grid; min-height: calc(var(--wiki-space-12) * 7); place-items: center; align-content: center; padding: var(--wiki-space-12) var(--wiki-space-6); border: 1px dashed var(--wiki-surface-border-strong); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-sunken); text-align: center; }
+.media-admin__empty-icon { display: grid; place-items: center; width: calc(var(--wiki-space-12) + var(--wiki-space-6)); height: calc(var(--wiki-space-12) + var(--wiki-space-6)); margin-block-end: var(--wiki-space-4); border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent); border-radius: var(--wiki-panel-radius); background: color-mix(in srgb, var(--wiki-accent-warm) 9%, var(--wiki-surface-raised)); color: var(--wiki-accent-ink); box-shadow: var(--wiki-shadow-inset); }
+.media-admin__empty h3 { margin: 0; font-family: var(--wiki-font-display); }
+.media-admin__empty p { max-width: 34rem; margin: var(--wiki-space-2) auto var(--wiki-space-4); color: var(--wiki-text-muted); }
 .media-admin__provider { padding-block: 1.5rem; border-bottom: 1px solid var(--wiki-surface-border); }
 .media-admin__provider p { margin-block: .5rem; overflow-wrap: anywhere; }
 .media-admin__actions { display: flex; flex-wrap: wrap; align-content: start; gap: .5rem; }

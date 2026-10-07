@@ -238,8 +238,9 @@
             )
               v-icon mdi-cog
               v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:header.admin`) : onlineActionUnavailableReason')
-            v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)')
+            v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)', :aria-disabled='!onlineActionReady ? `true` : undefined')
               v-icon(start) mdi-exit-to-app
+              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:actions.exit`) : onlineActionUnavailableReason')
           v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(

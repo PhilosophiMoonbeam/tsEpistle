@@ -28,7 +28,13 @@ describe('administration settings discovery', () => {
     const scoped = catalog(['write:pages'])
     expect(scoped.flatMap(group => group.items.map(item => item.key))).toEqual(['pages'])
     expect(filterAdminNavigation(scoped, 'MCP')).toEqual([])
-    expect(catalog(['manage:api']).flatMap(group => group.items.map(item => item.key))).toEqual(['api', 'dev-flags', 'graphql'])
+    const apiScoped = catalog(['manage:api'])
+    const apiKeys = apiScoped.flatMap(group => group.items.map(item => item.key))
+    expect(apiKeys).toContain('api')
+    expect(apiKeys).toContain('graphql')
+    expect(apiKeys).not.toContain('dev-flags')
+    expect(filterAdminNavigation(apiScoped, 'feature flags')).toEqual([])
+    expect(filterAdminNavigation(catalog(['manage:system']), 'feature flags').flatMap(group => group.items.map(item => item.key))).toEqual(['dev-flags'])
   })
 
   test('finds settings by synonyms and combined terms without changing the catalog', () => {

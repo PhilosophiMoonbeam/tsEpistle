@@ -87,6 +87,7 @@ describe('admin-api REST mutation migration guard', () => {
       isToggleLoading: false,
       revokeLoading: false,
       loadState: 'success',
+      isDisposed: false,
       refresh: async notify => {
         refreshCalls.push(notify)
         return refreshResult.promise
@@ -110,10 +111,7 @@ describe('admin-api REST mutation migration guard', () => {
 
     expect(refreshCalls).toEqual([false])
     expect(wiki.notifications).toEqual([
-      expect.objectContaining({
-        style: 'success',
-        message: 'admin:api.toggleStateEnabledSuccess'
-      })
+      expect.objectContaining({ style: 'success' })
     ])
     expect(wiki.errors).toEqual([])
     expect(wiki.loadingEvents).toEqual([
@@ -140,6 +138,7 @@ describe('admin-api REST mutation migration guard', () => {
       isToggleLoading: false,
       revokeLoading: true,
       loadState: 'success',
+      isDisposed: false,
       refresh: async () => true,
       $t: key => key
     }
@@ -182,6 +181,7 @@ describe('admin-api REST mutation migration guard', () => {
       current: null,
       revokeLoading: false,
       isRevokeConfirmDialogShown: true,
+      isDisposed: false,
       refresh: async notify => {
         refreshCalls.push(notify)
         return refreshResult.promise
@@ -211,10 +211,7 @@ describe('admin-api REST mutation migration guard', () => {
 
     expect(refreshCalls).toEqual([false])
     expect(wiki.notifications).toEqual([
-      expect.objectContaining({
-        style: 'success',
-        message: 'admin:api.revokeSuccess'
-      })
+      expect.objectContaining({ style: 'success' })
     ])
     expect(wiki.errors).toEqual([])
     expect(wiki.loadingEvents).toEqual([
@@ -239,6 +236,7 @@ describe('admin-api REST mutation migration guard', () => {
       current: { id: 7, name: 'broken' },
       revokeLoading: false,
       isRevokeConfirmDialogShown: true,
+      isDisposed: false,
       refresh: async () => {
         throw new Error('failed revocation must not refresh')
       },

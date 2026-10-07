@@ -65,8 +65,8 @@
       :key="index"
       class="storage-item-result"
     >
-      <summary><span>{{ item.path || $t('admin:storageOperationReceipt.unnamedItem') }}</span><span>{{ item.outcome }}</span></summary>
-      <p>{{ item.kind }} · {{ item.format ? formatLabel(item.format) : $t('admin:storageOperationReceipt.noDocumentFormat') }}</p>
+      <summary><span>{{ item.path || $t('admin:storageOperationReceipt.unnamedItem') }}</span><span>{{ $t(itemOutcomeLabel(item.outcome)) }}</span></summary>
+      <p>{{ $t(itemKindLabel(item.kind)) }} · {{ item.format ? formatLabel(item.format) : $t('admin:storageOperationReceipt.noDocumentFormat') }}</p>
       <p v-if="item.message">{{ item.message }}</p>
       <ul v-if="item.diagnostics.length">
         <li
@@ -108,7 +108,7 @@
 
 <script setup lang="ts">
 import type { StorageOperationView } from '../../../shared/storage-workspace.ts'
-import { dateTime, actor, formatLabel, operationLabel } from '../../helpers/storage-presentation.ts'
+import { dateTime, actor, formatLabel, operationLabel, itemOutcomeLabel, itemKindLabel } from '../../helpers/storage-presentation.ts'
 const { operation, targetTitles, locked } = defineProps<{ operation: StorageOperationView; targetTitles: Record<string, string>; locked: boolean }>()
 const emit = defineEmits<{ download: []; decision: [value: { operation: StorageOperationView; kind: 'cancel' | 'resolve' }] }>()
 const targetTitle = (key: string) => targetTitles[key] || key

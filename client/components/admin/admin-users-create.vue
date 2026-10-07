@@ -38,10 +38,11 @@ import { accountProfileIssues, type AccountCreationOptions, type AccountProfileD
 import { fetchAccountCreationOptions, createAccount, accountRequestStatus } from '../../helpers/account-api.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
 const emptyProfile = (): AccountProfileDraft => ({ name: '', email: '', location: '', jobTitle: '', timezone: '', groups: [] })
+const emptyCreationBaseline = () => ({ name: '', email: '', timezone: '', groups: [] as number[], providerKey: 'local', isVerified: false, mustChangePassword: true })
 export default {
   mixins: [passwordPolicyMixin],
   components: { AsyncState, PasswordVisibilityToggle }, props: { modelValue: { type: Boolean, default: false } }, emits: ['update:modelValue', 'created'],
-  data() { return { options: null as AccountCreationOptions | null, profile: emptyProfile(), providerKey: 'local', password: '', showPassword: false, mustChangePassword: true, isVerified: false, reason: '', reviewing: false, attempted: false, loading: false, loadError: '', saving: false, saveError: '', conflict: false, sequence: 0, disposed: false } },
+  data() { return { options: null as AccountCreationOptions | null, profile: emptyProfile(), pristine: emptyCreationBaseline(), providerKey: 'local', password: '', showPassword: false, mustChangePassword: true, isVerified: false, reason: '', reviewing: false, attempted: false, loading: false, loadError: '', saving: false, saveError: '', conflict: false, sequence: 0, disposed: false } },
   computed: {
     providers() { return (this.options?.providers ?? []).filter(provider => provider.enabled && provider.available) },
     provider() { return this.providers.find(provider => provider.key === this.providerKey) },
@@ -50,14 +51,42 @@ export default {
     selectedGroups() { return (this.options?.groups ?? []).filter(group => this.profile.groups.includes(group.id)) },
     selectedPermissions() { return [...new Set(this.selectedGroups.flatMap(group => group.permissions))].sort() },
     issues(): string[] { const profile = this.profile.timezone ? this.profile : { ...this.profile, timezone: 'UTC' }; return [...accountProfileIssues(profile), ...(!this.provider ? [this.$t('admin:usersCreate.chooseEnabledSignProvider')] : []), ...(this.local && (newPasswordIssue(this.password, this.passwordMinimum)) ? [newPasswordIssue(this.password, this.passwordMinimum)!] : []), ...(this.profile.groups.some(id => !this.assignableGroups.some(group => group.id === id)) ? [this.$t('admin:usersCreate.removeUnavailableGroupsBefore')] : [])] },
-    modified(): boolean { return Boolean(this.profile.name || this.profile.email || this.password || this.profile.groups.length || this.reason) }
+    modified(): boolean {
+      return this.profile.name !== this.pristine.name ||
+        this.profile.email !== this.pristine.email ||
+        this.profile.timezone !== this.pristine.timezone ||
+        this.profile.groups.length !== this.pristine.groups.length ||
+        this.profile.groups.some(id => !this.pristine.groups.includes(id)) ||
+        this.providerKey !== this.pristine.providerKey ||
+        this.isVerified !== this.pristine.isVerified ||
+        this.mustChangePassword !== this.pristine.mustChangePassword ||
+        Boolean(this.password || this.reason)
+    }
   },
   watch: {
-    modelValue: { immediate: true, handler(value: boolean) { if (value) { this.profile = emptyProfile(); this.password = ''; this.reason = ''; this.reviewing = false; this.attempted = false; this.isVerified = false; this.mustChangePassword = true; this.saveError = ''; this.conflict = false; void this.loadOptions() } else { this.sequence++; this.password = '' } } },
+    modelValue: { immediate: true, handler(value: boolean) { if (value) { this.options = null; this.profile = emptyProfile(); this.pristine = emptyCreationBaseline(); this.providerKey = this.pristine.providerKey; this.password = ''; this.showPassword = false; this.reason = ''; this.reviewing = false; this.attempted = false; this.isVerified = this.pristine.isVerified; this.mustChangePassword = this.pristine.mustChangePassword; this.saveError = ''; this.conflict = false; void this.loadOptions() } else { this.sequence++; this.password = '' } } },
     providerKey() { this.password = ''; this.showPassword = false }
   },
   methods: {
-    async loadOptions() { const sequence = ++this.sequence; this.loading = true; this.loadError = ''; try { const options = await fetchAccountCreationOptions(); if (this.disposed || sequence !== this.sequence) return; this.options = options; if (!this.providers.some(provider => provider.key === this.providerKey)) this.providerKey = this.providers[0]?.key ?? '' } catch (error) { if (!this.disposed && sequence === this.sequence) this.loadError = getErrorMessage(error) } finally { if (!this.disposed && sequence === this.sequence) this.loading = false } },
+    async loadOptions() {
+      const sequence = ++this.sequence
+      this.loading = true
+      this.loadError = ''
+      try {
+        const options = await fetchAccountCreationOptions()
+        if (this.disposed || sequence !== this.sequence) return
+        this.options = options
+        if (!this.providers.some(provider => provider.key === this.providerKey)) {
+          const pristineProvider = this.providerKey === this.pristine.providerKey
+          this.providerKey = this.providers[0]?.key ?? ''
+          if (pristineProvider) this.pristine.providerKey = this.providerKey
+        }
+      } catch (error) {
+        if (!this.disposed && sequence === this.sequence) this.loadError = getErrorMessage(error)
+      } finally {
+        if (!this.disposed && sequence === this.sequence) this.loading = false
+      }
+    },
     async reloadOptions() { this.reviewing = false; this.conflict = false; this.saveError = ''; await this.loadOptions() },
     review() { this.attempted = true; if (!this.issues.length) { this.reviewing = true; this.saveError = '' } },
     async save() { if (!this.options || this.saving || this.issues.length || this.reason.trim().length < 3) return; this.saving = true; this.saveError = ''; try { const result = await createAccount({ fingerprint: this.options.fingerprint, profile: JSON.parse(JSON.stringify(this.profile)) as AccountProfileDraft, providerKey: this.providerKey, ...(this.local ? { password: this.password } : {}), isVerified: this.isVerified, mustChangePassword: this.local && this.mustChangePassword, reason: this.reason.trim() }); this.password = ''; this.profile = emptyProfile(); this.reason = ''; this.$emit('created', result.id); this.$emit('update:modelValue', false) } catch (error) { this.conflict = accountRequestStatus(error) === 409; this.saveError = getErrorMessage(error) + (accountRequestStatus(error) === 0 ? ` ${this.$t('admin:usersCreate.outcomeUnconfirmedCheckDirectory')}` : '') } finally { this.saving = false } },

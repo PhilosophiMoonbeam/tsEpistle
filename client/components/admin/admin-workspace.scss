@@ -1,0 +1,66 @@
+// Opt-in Admin workspace grammar; importing this module emits no global styles.
+@mixin admin-draft-bar {
+  position: sticky;
+  bottom: calc(var(--wiki-footer-height) + var(--wiki-space-3) + env(safe-area-inset-bottom, 0px));
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-3) var(--wiki-space-4);
+  margin-top: var(--wiki-space-6);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+
+  > * { min-width: 0; }
+}
+
+@mixin admin-agent-control {
+  min-width: 0;
+  padding: clamp(var(--wiki-space-4), 3vw, var(--wiki-space-6));
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-raised);
+  color: rgb(var(--v-theme-on-surface));
+
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-4);
+    margin-bottom: var(--wiki-space-5);
+
+    > * { min-width: 0; }
+  }
+
+  h2, h3 {
+    font-family: var(--wiki-font-display);
+    font-weight: 500;
+    line-height: 1.25;
+    color: rgb(var(--v-theme-on-surface));
+    overflow-wrap: anywhere;
+  }
+
+  h2 { font-size: clamp(1.6rem, 2.4vw, 2rem); }
+  h3 { font-size: 1.3rem; }
+  p { line-height: 1.65; overflow-wrap: anywhere; }
+
+  .entry {
+    min-width: 0;
+    padding-block: var(--wiki-space-5);
+    border-bottom: 1px solid var(--wiki-surface-border);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-2);
+  }
+
+  .v-alert { margin-bottom: var(--wiki-space-4); }
+}

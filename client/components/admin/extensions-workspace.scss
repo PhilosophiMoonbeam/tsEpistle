@@ -17,7 +17,7 @@
 
 .extensions-detail h2,
 .extensions-library-heading h2 {
-  font-family: var(--font-family-serif, Georgia, serif);
+  font-family: var(--wiki-font-display);
   font-weight: 500;
   letter-spacing: -0.035em;
 }
@@ -47,7 +47,7 @@
 }
 
 .extensions-heading-facts .extensions-stat {
-  font-family: var(--font-family-serif, Georgia, serif);
+  font-family: var(--wiki-font-display);
   font-size: 1.25rem;
   line-height: 1;
 }
@@ -270,7 +270,7 @@
 
 .extensions-section-number {
   color: var(--wiki-accent-ink);
-  font-family: var(--font-family-serif, Georgia, serif);
+  font-family: var(--wiki-font-display);
   font-size: 1.1rem;
   line-height: 1;
 }

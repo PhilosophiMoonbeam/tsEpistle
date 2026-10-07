@@ -1,3 +1,27 @@
+import type { StorageOperationResult } from '../../shared/storage-workspace.ts'
+
+type StorageReceiptItem = StorageOperationResult['items'][number]
+
+const ITEM_OUTCOME_KEYS = {
+  succeeded: 'admin:storageOperationReceipt.succeeded',
+  failed: 'admin:storageOperationReceipt.failed',
+  conflict: 'admin:storageOperationReceipt.conflict'
+} as const
+
+const ITEM_KIND_KEYS = {
+  page: 'admin:storageOperationReceipt.page',
+  asset: 'admin:storageOperationReceipt.asset'
+} as const
+
+/** Locale keys for the sanctioned receipt item values; translate at the render boundary. */
+export function itemOutcomeLabel(value: StorageReceiptItem['outcome']) {
+  return ITEM_OUTCOME_KEYS[value]
+}
+
+export function itemKindLabel(value: StorageReceiptItem['kind']) {
+  return ITEM_KIND_KEYS[value]
+}
+
 export function dateTime(value: string | null | undefined) {
   return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : 'Not recorded'
 }

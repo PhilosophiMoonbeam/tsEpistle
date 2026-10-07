@@ -1,5 +1,5 @@
+import { type SearchIndexStatus, SearchIndexStatusSchema } from '../../shared/search-admin.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
-import { SearchIndexStatusSchema, type SearchIndexStatus } from '../../shared/search-admin.ts'
 
 type JsonHeaders = {
   get: (name: string) => string | null
@@ -206,9 +206,12 @@ export async function rebuildSearchIndex(fetchImpl: FetchImpl, fallbackMessage =
   return parseJsonResponse(response, fallbackMessage)
 }
 
-export async function inspectSearchIndex(fetchImpl: FetchImpl): Promise<SearchIndexStatus> {
+export async function inspectSearchIndex(fetchImpl: FetchImpl, fallbackMessage = 'Search index inspection response is invalid'): Promise<SearchIndexStatus> {
   const response = await sameOriginJsonFetch(fetchImpl, '/_api/search/index-status', {
-    credentials: 'same-origin', headers: { Accept: 'application/json' }
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
   })
-  return SearchIndexStatusSchema.parse(await parseJsonResponse(response, 'Search index inspection failed'))
+  const result = SearchIndexStatusSchema.safeParse(await parseJsonResponse(response, fallbackMessage))
+  if (!result.success) throw new Error(fallbackMessage)
+  return result.data
 }
