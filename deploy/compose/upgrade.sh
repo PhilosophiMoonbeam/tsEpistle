@@ -239,6 +239,7 @@ make_plan() {
     while IFS= read -r probe; do
       case "$probe" in
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
+        agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -515,6 +516,132 @@ verify_postconditions() {
         verify_native_page_schema "$container" "$user" "$database"
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "deletedPageRecovery" r LEFT JOIN "pageHistory" h ON h.id=r."deletionVersionId" WHERE h.id IS NULL OR h."pageId"<>r."pageId" OR h.action<> '\''deleted'\'' OR jsonb_typeof(r."securityContext")<> '\''object'\'';')"
         [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid recovery records)"
+        ;;
+      # These read-only probes check persisted prerequisites and invariants.
+      # Native transport, cancellation and key-rotation behavior are exercised by the native suites.
+      agent-quota-daily-token-reset-credit-column)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentQuotaDaily' AND column_name='tokenResetCredit' AND data_type='bigint' AND is_nullable='NO' AND column_default IN ('0', '''0''::bigint');")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (credit column)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM pg_constraint WHERE conrelid='\"agentQuotaDaily\"'::regclass AND conname='agent_quota_daily_token_reset_credit_check' AND contype='c' AND convalidated;")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (credit bound constraint)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentQuotaDaily\" WHERE \"tokenResetCredit\" < 0 OR \"tokenResetCredit\" > 9007199254740991;")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid credits)"
+        ;;
+      agent-media-table)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentMedia' AND column_name IN ('id','ownerId','sessionId','messageId','runId','kind','mimeType','filename','byteLength','sha256','payload','createdAt','expiresAt','metadata');")"
+        [[ "$result" == 14 ]] || die "Postcondition failed: $probe ($result/14 columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentMedia" m LEFT JOIN "agentSessions" s ON s.id=m."sessionId" WHERE s.id IS NULL OR s."ownerId"<>m."ownerId" OR m."byteLength"<>octet_length(m.payload);')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid owned payloads)"
+        ;;
+      agent-runs-media-request-column)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentRuns' AND column_name='mediaRequest' AND data_type='text' AND is_nullable='YES';")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe"
+        ;;
+      native-gemini-profile-reconformance|native-gemini-generate-content)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentProviderProfiles\" p LEFT JOIN \"agentProviderProfileVersions\" v ON v.id=p.\"currentVersionId\" AND v.\"profileId\"=p.id WHERE p.\"currentVersionId\" IS NOT NULL AND (v.id IS NULL OR v.\"capabilityRevision\" IS DISTINCT FROM 'wiki-protocol-capabilities-v4:'||v.\"transportKind\" OR (p.status='enabled' AND (NOT p.conformed OR NOT v.conformed)));")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid current conformance bindings)"
+        ;;
+      historical-agent-content-retained)
+        # Runs retain resolved transport/model/capability/pricing snapshots. Legacy migrations 2.5.148
+        # and 2.5.153 rewrote version capabilities without rewriting admitted runs;
+        # declaration equality is not a historical preservation invariant.
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentRuns" r LEFT JOIN "agentProviderProfileVersions" v ON v.id=r."providerProfileVersionId" LEFT JOIN "agentSessions" s ON s.id=r."sessionId" WHERE v.id IS NULL OR s.id IS NULL OR s."ownerId"<>r."ownerId" OR length(btrim(r."transportKind"))=0 OR length(btrim(r.model))=0 OR length(btrim(r."capabilityRevision"))=0 OR length(btrim(r."pricingRevision"))=0;')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result broken historical bindings)"
+        ;;
+      retired-live-google-search-disabled)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentSessions" WHERE "googleSearchEnabled";')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result live opt-ins)"
+        ;;
+      external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('agentExternalMcpServers','agentExternalMcpGrants','agentExternalMcpGroupPolicies');")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 tables)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentExternalMcpServers\" WHERE ((scope='admin' AND \"ownerId\" IS NULL) OR (scope='personal' AND \"ownerId\" IS NOT NULL)) IS NOT TRUE OR status NOT IN ('enabled','disabled') OR revision<1 OR ((\"authMode\"='none' AND \"secretReference\" IS NULL) OR (\"authMode\"='bearer' AND \"secretReference\" LIKE 'managed:%')) IS NOT TRUE;")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid ownership/auth configurations)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT (SELECT count(*) FROM "agentExternalMcpGrants" g LEFT JOIN "agentExternalMcpServers" s ON s.id=g."serverId" LEFT JOIN groups p ON p.id=g."groupId" WHERE s.id IS NULL OR p.id IS NULL) + (SELECT count(*) FROM "agentExternalMcpGroupPolicies" p LEFT JOIN groups g ON g.id=p."groupId" WHERE g.id IS NULL OR p.revision<1);')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid grants/policies)"
+        ;;
+      independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentDecisionProviderConfiguration" WHERE id=1 AND revision>0;')"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (configuration singleton)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentDecisionProviders\" WHERE revision<1 OR (\"isDefault\" AND NOT enabled) OR jsonb_typeof(config::jsonb) IS DISTINCT FROM 'object' OR (config::jsonb->>'kind') IS NULL OR (config::jsonb->>'kind') NOT IN ('typesafe','openai-compatible') OR NULLIF(config::jsonb->>'model','') IS NULL;")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid independent providers)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentDecisionProviders" WHERE "isDefault";')"
+        (( result <= 1 )) || die "Postcondition failed: $probe (multiple defaults)"
+        ;;
+      immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentRoutingPolicy\" WHERE id=1 AND revision>0 AND jsonb_typeof(config::jsonb)='object' AND jsonb_typeof(config::jsonb->'enabled')='boolean';")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (routing singleton)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentRoutingModelPolicies\" p LEFT JOIN \"agentProviderProfileVersions\" v ON v.id=p.\"profileVersionId\" AND v.\"profileId\"=p.\"profileId\" WHERE v.id IS NULL OR p.revision<1 OR jsonb_typeof(p.config::jsonb) IS DISTINCT FROM 'object' OR jsonb_typeof(p.config::jsonb->'acceptableTasks') IS DISTINCT FROM 'array';")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid immutable task declarations)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentRuns" r JOIN "agentSessions" s ON s.id=r."sessionId" WHERE s."ownerId"<>r."ownerId" OR r."inputTokens"<0 OR r."outputTokens"<0 OR r."estimatedCostMicros"<0;')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid owner/accounting receipts)"
+        ;;
+      independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation)
+        # Roots may legitimately diverge after session-key rotation; never print secret values.
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM settings WHERE key='offlineDraftSecret' AND jsonb_typeof(value::jsonb->'v')='string' AND length(value::jsonb->>'v')>0;")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (independent encryption root)"
+        ;;
+      owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('agentSpecialistContexts','agentSpecialistInvocations');")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 tables)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT (SELECT count(*) FROM "agentSpecialistContexts" c LEFT JOIN "agentSessions" s ON s.id=c."rootSessionId" WHERE s.id IS NULL OR c."ownerId"<>s."ownerId" OR c.version<1 OR c."turnCount"<0) + (SELECT count(*) FROM "agentSpecialistInvocations" i LEFT JOIN "agentRuns" r ON r.id=i."rootRunId" WHERE r.id IS NULL OR i."ownerId"<>r."ownerId" OR i."rootSessionId"<>r."sessionId" OR i."contextVersion"<1 OR i."rootAttempt"<1 OR i."maximumContextBytes" NOT BETWEEN 4096 AND 262144) + (SELECT count(*) FROM (SELECT "rootRunId" FROM "agentSpecialistInvocations" GROUP BY "rootRunId" HAVING count(*)>1) duplicates);')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid root/idempotency receipts)"
+        # Expired contexts may be scrubbed/deleted while invocation receipts remain.
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentRoutingPolicy\" WHERE NOT (config::jsonb ?& ARRAY['specialistEnabled','specialistMaxContexts','specialistMaxContextBytes','specialistMaxReportTokens','specialistMaxTurns']) OR jsonb_typeof(config::jsonb->'specialistEnabled') IS DISTINCT FROM 'boolean' OR (config::jsonb->>'specialistMaxContexts')::integer NOT BETWEEN 1 AND 8 OR (config::jsonb->>'specialistMaxContextBytes')::integer NOT BETWEEN 4096 AND 262144 OR (config::jsonb->>'specialistMaxReportTokens')::integer NOT BETWEEN 128 AND 4096 OR (config::jsonb->>'specialistMaxTurns')::integer NOT BETWEEN 1 AND 8;")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid specialist policies)"
+        ;;
+      independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('agentMediaProviders','agentMediaProviderVersions','agentMediaProviderGrants','agentMediaProviderConfiguration');")"
+        [[ "$result" == 4 ]] || die "Postcondition failed: $probe ($result/4 independent tables)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentMediaProviderConfiguration" WHERE id=1 AND revision>0;')"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (configuration singleton)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid WHERE t.relnamespace=current_schema()::regnamespace AND c.conname IN ('agent_media_current_version_fk','agent_media_versions_sequence_unique','agent_media_versions_owner_unique','agent_media_grants_pk');")"
+        [[ "$result" == 4 ]] || die "Postcondition failed: $probe ($result/4 binding constraints)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentMediaProviders\" p LEFT JOIN \"agentMediaProviderVersions\" v ON v.id=p.\"currentVersionId\" AND v.\"providerId\"=p.id WHERE p.revision<1 OR p.\"exposureMode\" NOT IN ('all_agent_users','groups') OR (p.\"currentVersionId\" IS NOT NULL AND v.id IS NULL) OR (p.enabled AND p.\"deletedAt\" IS NULL AND (v.id IS NULL OR v.\"secretReference\" IS NULL)) OR (p.\"isDefault\" AND (NOT p.enabled OR p.\"deletedAt\" IS NOT NULL));")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid current bindings/defaults)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentMediaProviderVersions\" v LEFT JOIN \"agentMediaProviders\" p ON p.id=v.\"providerId\" WHERE p.id IS NULL OR v.version<1 OR jsonb_typeof(v.config::jsonb) IS DISTINCT FROM 'object' OR (v.config::jsonb->>'kind') IS NULL OR (v.config::jsonb->>'kind') NOT IN ('image','video','music','transcription') OR NULLIF(v.config::jsonb->>'model','') IS NULL OR jsonb_typeof(v.config::jsonb->'pricing') IS DISTINCT FROM 'object';")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid retained versions)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentMediaProviderGrants" g LEFT JOIN "agentMediaProviders" p ON p.id=g."providerId" LEFT JOIN groups a ON a.id=g."groupId" WHERE p.id IS NULL OR a.id IS NULL;')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid grants)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentMediaProviderVersions\" v LEFT JOIN \"agentProviderSecrets\" s ON 'managed:'||s.id::text=v.\"secretReference\" WHERE v.\"secretReference\" LIKE 'managed:%' AND s.id IS NULL;")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result missing retained managed credentials)"
+        if [[ "$probe" == independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials ]]; then
+          # Compare retained immutable copies, not operator-mutable current/default selections.
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            WITH legacy AS (
+              SELECT p.id AS profile_id, v.id AS version_id, v.\"secretReference\", v.\"baseUrl\", v.\"adapterConfig\"::jsonb AS adapter,
+                operation.kind, operation.config
+              FROM \"agentProviderProfiles\" p
+              JOIN \"agentProviderProfileVersions\" v ON v.id=p.\"currentVersionId\" AND v.\"profileId\"=p.id
+              CROSS JOIN LATERAL (VALUES
+                ('image',v.\"adapterConfig\"::jsonb->'media'->'imageGeneration'),
+                ('video',v.\"adapterConfig\"::jsonb->'media'->'videoGeneration'),
+                ('music',v.\"adapterConfig\"::jsonb->'media'->'musicGeneration'),
+                ('transcription',v.\"adapterConfig\"::jsonb->'media'->'transcription')
+              ) operation(kind,config)
+              WHERE p.\"deletedAt\" IS NULL AND operation.config IS NOT NULL AND operation.config<>'null'::jsonb
+            )
+            SELECT count(*) FROM legacy l WHERE NOT EXISTS (
+              SELECT 1 FROM \"agentMediaProviderVersions\" v WHERE v.config::jsonb->>'kind'=l.kind
+                AND v.\"secretReference\" IS NOT DISTINCT FROM l.\"secretReference\"
+                AND v.config::jsonb->>'model'=l.config->>'model'
+                AND v.config::jsonb->>'baseUrl'=regexp_replace(l.\"baseUrl\",'/$','')
+                AND v.config::jsonb->'timeoutMs'=l.adapter->'timeoutMs'
+                AND v.config::jsonb->>'maxInputTokens'='32768' AND v.config::jsonb->>'maxOutputTokens'='8192'
+                AND v.config::jsonb->>'api'=CASE WHEN l.kind IN ('video','music') THEN 'gemini-interactions' ELSE 'gemini-generate-content' END
+                AND CASE WHEN l.kind='music'
+                  THEN v.config::jsonb->'pricing'=jsonb_build_object('kind','fixed','pricingRevision','legacy-media-'||l.version_id::text,'costMicros',l.config->'costMicrosPerSong')
+                  ELSE v.config::jsonb->'pricing'=jsonb_build_object('kind','tokens','pricingRevision',l.config->'pricingRevision') ||
+                    CASE WHEN l.kind='video' THEN jsonb_build_object('textOutputMicrosPerMillionTokens',l.config->'textOutputMicrosPerMillionTokens') ELSE '{}'::jsonb END
+                END
+                AND NOT EXISTS (
+                  SELECT 1 FROM \"agentProviderGrants\" g WHERE g.\"profileId\"=l.profile_id AND NOT EXISTS (
+                    SELECT 1 FROM \"agentMediaProviderGrants\" copied WHERE copied.\"providerId\"=v.\"providerId\" AND copied.\"groupId\"=g.\"groupId\"
+                  )
+                )
+            );")"
+          [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result legacy operations without preserved copies)"
+        fi
         ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac

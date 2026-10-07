@@ -68,7 +68,7 @@ if (invalid.length > 0) {
 }
 
 const requiredDirectDependencies: ReadonlyArray<readonly [DependencySection, string, string]> = [
-  ['dependencies', 'sharp', '0.35.4'],
+  ['dependencies', 'sharp', '0.35.5'],
   ['devDependencies', '@tresjs/core', '5.9.2'],
   ['devDependencies', '@types/three', '0.186.0'],
   ['devDependencies', 'three', '0.186.1']
@@ -107,17 +107,17 @@ const lockedPackage = (name: string, version: string): LockPackageMetadata => {
 lockedPackage('@tresjs/core', '5.9.2')
 lockedPackage('@types/three', '0.186.0')
 lockedPackage('three', '0.186.1')
-const sharpMetadata = lockedPackage('sharp', '0.35.4')
+const sharpMetadata = lockedPackage('sharp', '0.35.5')
 
 const requiredSharpOptionals = [
-  ['@img/sharp-linuxmusl-x64', '0.35.4', 'linux', 'x64'],
-  ['@img/sharp-libvips-linuxmusl-x64', '1.3.3', 'linux', 'x64'],
-  ['@img/sharp-linuxmusl-arm64', '0.35.4', 'linux', 'arm64'],
-  ['@img/sharp-libvips-linuxmusl-arm64', '1.3.3', 'linux', 'arm64']
+  ['@img/sharp-linuxmusl-x64', '0.35.5', 'linux', 'x64'],
+  ['@img/sharp-libvips-linuxmusl-x64', '1.3.4', 'linux', 'x64'],
+  ['@img/sharp-linuxmusl-arm64', '0.35.5', 'linux', 'arm64'],
+  ['@img/sharp-libvips-linuxmusl-arm64', '1.3.4', 'linux', 'arm64']
 ] as const
 for (const [name, version, os, cpu] of requiredSharpOptionals) {
   if (sharpMetadata.optionalDependencies?.[name] !== version) {
-    throw new Error(`sharp@0.35.4 must retain optional dependency ${name}@${version}`)
+    throw new Error(`sharp@0.35.5 must retain optional dependency ${name}@${version}`)
   }
   const metadata = lockedPackage(name, version)
   if (metadata.os !== os || metadata.cpu !== cpu) {
@@ -125,10 +125,10 @@ for (const [name, version, os, cpu] of requiredSharpOptionals) {
   }
 }
 for (const cpu of ['x64', 'arm64'] as const) {
-  const binary = lockedPackage(`@img/sharp-linuxmusl-${cpu}`, '0.35.4')
+  const binary = lockedPackage(`@img/sharp-linuxmusl-${cpu}`, '0.35.5')
   const libvipsName = `@img/sharp-libvips-linuxmusl-${cpu}`
-  if (binary.optionalDependencies?.[libvipsName] !== '1.3.3') {
-    throw new Error(`@img/sharp-linuxmusl-${cpu}@0.35.4 must retain ${libvipsName}@1.3.3`)
+  if (binary.optionalDependencies?.[libvipsName] !== '1.3.4') {
+    throw new Error(`@img/sharp-linuxmusl-${cpu}@0.35.5 must retain ${libvipsName}@1.3.4`)
   }
 }
 
@@ -139,11 +139,11 @@ if (inventory.source?.lockfile !== 'bun.lock' || inventory.source.sha256 !== loc
 }
 const requiredLicenseRecords = [
   ['@graphql-yoga/graphiql', '4.4.4', 'MIT'],
-  ['sharp', '0.35.4', 'Apache-2.0'],
-  ['@img/sharp-linuxmusl-x64', '0.35.4', 'Apache-2.0'],
-  ['@img/sharp-linuxmusl-arm64', '0.35.4', 'Apache-2.0'],
-  ['@img/sharp-libvips-linuxmusl-x64', '1.3.3', 'LGPL-3.0-or-later'],
-  ['@img/sharp-libvips-linuxmusl-arm64', '1.3.3', 'LGPL-3.0-or-later'],
+  ['sharp', '0.35.5', 'Apache-2.0'],
+  ['@img/sharp-linuxmusl-x64', '0.35.5', 'Apache-2.0'],
+  ['@img/sharp-linuxmusl-arm64', '0.35.5', 'Apache-2.0'],
+  ['@img/sharp-libvips-linuxmusl-x64', '1.3.4', 'LGPL-3.0-or-later'],
+  ['@img/sharp-libvips-linuxmusl-arm64', '1.3.4', 'LGPL-3.0-or-later'],
   ['@tresjs/core', '5.9.2', 'MIT'],
   ['three', '0.186.1', 'MIT'],
   ['@types/three', '0.186.0', 'MIT']

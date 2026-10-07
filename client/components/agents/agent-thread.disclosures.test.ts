@@ -8,7 +8,7 @@ import { createSSRApp, defineComponent } from 'vue'
 import type { RenderFunction } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
-import type { AgentMessageView } from '../../../shared/agents/contracts.ts'
+import type { AgentMessageView, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
@@ -54,7 +54,36 @@ const makeMessage = (id: string, ordinal: number, runId: string | null = null): 
 
 const renderDuplicateSources = async (): Promise<string> => {
   const messages = [makeMessage('message one/α', 1), makeMessage('message two/β', 2)]
-  const thread = { messages, artifacts: [], suggestions: [] }
+  const thread: AgentThreadState = {
+    session: {
+      id: 'session-sources',
+      title: 'Repeated source references',
+      retention: 'saved',
+      folderId: null,
+      status: 'active',
+      executionMode: 'agent',
+      version: 1,
+      providerProfileId: null,
+      profileResolutionToken: 'sources-profile-resolution',
+      mediaCapabilities: null,
+      skills: [],
+      currentRun: null,
+      createdAt: messages[0].createdAt,
+      updatedAt: messages[1].updatedAt,
+      lastActivityAt: messages[1].updatedAt,
+      expiresAt: null
+    },
+    messages,
+    tools: [],
+    tasks: [],
+    specialistInvocations: [],
+    routingDecisions: [],
+    goal: null,
+    proposals: [],
+    artifacts: [],
+    suggestions: [],
+    historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
+  }
   const threadPresentation = buildAgentThreadPresentation(messages, [], [], [])
   const threadProjection = {
     orderedMessages: threadPresentation.orderedMessages.map(entry => ({
@@ -125,13 +154,17 @@ const renderDuplicateSources = async (): Promise<string> => {
 describe('Agent thread disclosures', () => {
   test('keeps repeated sources in independent collapsed disclosures with numbered section links, not misnumbered overview links', async () => {
     const dom = new JSDOM(await renderDuplicateSources())
-    const disclosures = [...dom.window.document.querySelectorAll<HTMLDetailsElement>('.agent-sources')]
-    expect(disclosures).toHaveLength(2)
-    expect(disclosures.every(disclosure => !disclosure.open)).toBe(true)
-    for (const disclosure of disclosures) {
-      expect(disclosure.querySelector('.agent-sources__page .agent-sources__number')).toBeNull()
-      expect(disclosure.querySelector('.agent-sources__sections .agent-sources__number')?.textContent).toBe('1')
-      expect(disclosure.querySelector('.agent-sources__label')?.textContent).toBe('Referenced section')
+    try {
+      const disclosures = [...dom.window.document.querySelectorAll<HTMLDetailsElement>('.agent-sources')]
+      expect(disclosures).toHaveLength(2)
+      expect(disclosures.every(disclosure => !disclosure.open)).toBe(true)
+      for (const disclosure of disclosures) {
+        expect(disclosure.querySelector('.agent-sources__page .agent-sources__number')).toBeNull()
+        expect(disclosure.querySelector('.agent-sources__sections .agent-sources__number')?.textContent).toBe('1')
+        expect(disclosure.querySelector('.agent-sources__label')?.textContent).toBe('Referenced section')
+      }
+    } finally {
+      dom.window.close()
     }
   })
 })

@@ -12,6 +12,7 @@ import { up as createKnowledgeSearchStore } from '../../db/migrations/tsepistle-
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { knowledgeSearchText, projectPageKnowledge } from '../../knowledge/projection.ts'
 import { createApiPrincipal } from '../../helpers/api-principal.ts'
+import errors from '../../helpers/error.ts'
 import { OKF_PRODUCER_CONTEXT } from '../../okf/mutation-context.ts'
 
 const key = Buffer.alloc(32, 7)
@@ -24,6 +25,21 @@ const validOkfMetadata = {
   'x-wiki': { namespace: 'docs' }
 }
 const validOkfExtra = { okf: validOkfMetadata }
+const publicPage = {
+  id: 42,
+  authorId: 7,
+  path: 'docs/start',
+  locale: 'en',
+  title: 'Start',
+  description: 'Projected knowledge summary',
+  content: '# Start\n',
+  contentType: 'markdown',
+  sourceRevision: '8',
+  updatedAt: '2026-08-25T00:00:00.000Z',
+  visibility: 'public' as const,
+  tags: [],
+  extra: validOkfExtra
+}
 
 const apiPrincipal = (apiKeyId = 9, groupId = 3): Express.User =>
   createApiPrincipal(apiKeyId, groupId, ['use:mcp', 'read:pages', 'read:history', 'write:pages', 'delete:pages'])
@@ -165,24 +181,52 @@ describe('Wiki MCP transport', () => {
     await db.schema.createTable('pages', table => {
       table.integer('id').primary()
       table.bigInteger('sourceRevision').notNullable()
+      table.string('localeCode').notNullable()
+      table.string('path').notNullable()
+      table.string('visibility').notNullable()
+      table.boolean('isSearchable').notNullable()
+      table.string('contentType').notNullable()
+      table.text('content').notNullable()
+      table.string('title').notNullable()
+      table.string('description').notNullable()
+      table.integer('authorId').notNullable()
+      table.text('extra').notNullable()
+      table.integer('ownerId').nullable()
+      table.dateTime('updatedAt').notNullable()
     })
-    await db('pages').insert({ id: 42, sourceRevision: '8' })
+    const { locale, tags, extra, ...storedPage } = publicPage
+    await db('pages').insert({
+      ...storedPage,
+      localeCode: locale,
+      isSearchable: true,
+      ownerId: null,
+      extra: canonicalJson(extra)
+    })
+    await db.schema.createTable('tags', table => {
+      table.integer('id').primary()
+      table.string('tag').notNullable()
+    })
+    await db.schema.createTable('pageTags', table => {
+      table.integer('pageId').notNullable()
+      table.integer('tagId').notNullable()
+      table.primary(['pageId', 'tagId'])
+    })
     await createKnowledgeProjectionStore(db)
     await createKnowledgeSearchStore(db)
     const projection = projectPageKnowledge({
-      pageId: 42,
-      sourceRevision: '8',
-      locale: 'en',
-      path: 'docs/start',
-      visibility: 'public',
-      contentType: 'markdown',
-      content: '# Start\n',
-      title: 'Start',
-      description: 'Projected knowledge summary',
-      tags: [],
-      updatedAt: '2026-08-25T00:00:00.000Z',
-      authorId: 7,
-      metadata: { type: 'Reference', status: 'stable' }
+      pageId: publicPage.id,
+      sourceRevision: publicPage.sourceRevision,
+      locale,
+      path: publicPage.path,
+      visibility: publicPage.visibility,
+      contentType: publicPage.contentType,
+      content: publicPage.content,
+      title: publicPage.title,
+      description: publicPage.description,
+      tags,
+      updatedAt: publicPage.updatedAt,
+      authorId: publicPage.authorId,
+      metadata: validOkfMetadata
     })
     await db('pageKnowledgeProjections').insert({
       pageId: 42,
@@ -281,33 +325,18 @@ describe('Wiki MCP transport', () => {
               ? { id: 43, path: 'docs/next', title: 'Next', content: '# Next\n', sourceRevision: '9', updatedAt: '2026-08-25T00:00:00.000Z' }
               : id === 44
                 ? { id: 44, path: 'docs/following', title: 'Following', content: '# Following\n', sourceRevision: '10', updatedAt: '2026-08-26T00:00:00.000Z' }
-                : { id: 42, path: 'docs/start', title: 'Start', content: '# Start\n', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z' }
+                : publicPage
           return {
-            ...page,
-            authorId: 7,
-            locale: 'en',
+            ...publicPage,
             description: '',
-            contentType: 'markdown',
-            visibility: 'public',
-            tags: [],
-            extra: validOkfExtra
+            ...page
           }
         }),
-        getByPath: vi.fn(async () => ({
-          id: 42,
-          authorId: 7,
-          path: 'docs/start',
-          locale: 'en',
-          title: 'Start',
-          description: '',
-          content: '# Start\n',
-          contentType: 'markdown',
-          sourceRevision: '8',
-          updatedAt: '2026-08-25T00:00:00.000Z',
-          visibility: 'public',
-          tags: [],
-          extra: validOkfExtra
-        })),
+        getByPath: vi.fn(async input => {
+          if (input.path !== publicPage.path || input.locale !== publicPage.locale || input.visibility !== publicPage.visibility)
+            throw new errors.PageNotFound()
+          return publicPage
+        }),
         getHistory: vi.fn(),
         getVersion: vi.fn(async input => ({
           id: 42,
@@ -471,6 +500,7 @@ describe('Wiki MCP transport', () => {
       ])
     })
     const pageResult = await client.callTool({ name: 'wiki_get_page', arguments: { path: 'docs/start', locale: 'en' } })
+    expect(pageResult.isError).not.toBe(true)
     expect(pageResult.structuredContent).toMatchObject({
       id: 42,
       sourceRevision: '8',
@@ -494,6 +524,7 @@ describe('Wiki MCP transport', () => {
       citationSections: []
     })
     const okfResult = await client.callTool({ name: 'wiki_get_page_okf', arguments: { id: 42 } })
+    expect(okfResult.isError).not.toBe(true)
     const okf = okfResult.structuredContent as {
       readonly document: string
       readonly resourceUri: string
@@ -649,36 +680,30 @@ describe('Wiki MCP transport', () => {
         [OKF_PRODUCER_CONTEXT]: expect.stringMatching(/^mcp:/u)
       })
     )
-    expect(await db('agentProposals').where({ id: proposalResult.proposalId }).first(
-      'sourceKind',
-      'requesterUserId',
-      'requesterApiKeyId',
-      'requesterRequestId',
-      'status'
-    )).toMatchObject({
+    expect(
+      await db('agentProposals')
+        .where({ id: proposalResult.proposalId })
+        .first('sourceKind', 'requesterUserId', 'requesterApiKeyId', 'requesterRequestId', 'status')
+    ).toMatchObject({
       sourceKind: 'mcp',
       requesterUserId: null,
       requesterApiKeyId: 9,
       requesterRequestId: '00000000-0000-4000-8000-000000000099',
       status: 'applied'
     })
-    expect(await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first(
-      'requesterUserId',
-      'requesterApiKeyId',
-      'status',
-      'approvedByUserId'
-    )).toMatchObject({
+    expect(
+      await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('requesterUserId', 'requesterApiKeyId', 'status', 'approvedByUserId')
+    ).toMatchObject({
       requesterUserId: null,
       requesterApiKeyId: 9,
       status: 'approved',
       approvedByUserId: 7
     })
-    expect(await db('agentActionExecutions').where({ proposalId: proposalResult.proposalId }).first(
-      'requesterUserId',
-      'requesterApiKeyId',
-      'approvedByUserId',
-      'status'
-    )).toMatchObject({
+    expect(
+      await db('agentActionExecutions')
+        .where({ proposalId: proposalResult.proposalId })
+        .first('requesterUserId', 'requesterApiKeyId', 'approvedByUserId', 'status')
+    ).toMatchObject({
       requesterUserId: null,
       requesterApiKeyId: 9,
       approvedByUserId: 7,
@@ -711,23 +736,12 @@ describe('Wiki MCP transport', () => {
     })
     const proposalResult = JSON.parse(String(Reflect.get(prepared.content[0] ?? {}, 'text'))) as { proposalId: string; approvalId: string }
     const before = {
-      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first(
-        'sourceKind',
-        'requesterUserId',
-        'requesterApiKeyId',
-        'requesterRequestId',
-        'status',
-        'inputHash',
-        'operationSha256'
-      ),
-      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first(
-        'requesterUserId',
-        'requesterApiKeyId',
-        'status',
-        'inputHash',
-        'operationSha256',
-        'approvedByUserId'
-      )
+      proposal: await db('agentProposals')
+        .where({ id: proposalResult.proposalId })
+        .first('sourceKind', 'requesterUserId', 'requesterApiKeyId', 'requesterRequestId', 'status', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals')
+        .where({ proposalId: proposalResult.proposalId })
+        .first('requesterUserId', 'requesterApiKeyId', 'status', 'inputHash', 'operationSha256', 'approvedByUserId')
     }
 
     await client.close()
@@ -752,23 +766,12 @@ describe('Wiki MCP transport', () => {
     })
     expect(denied).toMatchObject({ isError: true })
     expect({
-      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first(
-        'sourceKind',
-        'requesterUserId',
-        'requesterApiKeyId',
-        'requesterRequestId',
-        'status',
-        'inputHash',
-        'operationSha256'
-      ),
-      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first(
-        'requesterUserId',
-        'requesterApiKeyId',
-        'status',
-        'inputHash',
-        'operationSha256',
-        'approvedByUserId'
-      )
+      proposal: await db('agentProposals')
+        .where({ id: proposalResult.proposalId })
+        .first('sourceKind', 'requesterUserId', 'requesterApiKeyId', 'requesterRequestId', 'status', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals')
+        .where({ proposalId: proposalResult.proposalId })
+        .first('requesterUserId', 'requesterApiKeyId', 'status', 'inputHash', 'operationSha256', 'approvedByUserId')
     }).toEqual(before)
     expect(movePage).not.toHaveBeenCalled()
   })
@@ -798,23 +801,33 @@ describe('Wiki MCP transport', () => {
     })
     const proposalResult = JSON.parse(String(Reflect.get(prepared.content[0] ?? {}, 'text'))) as { proposalId: string; approvalId: string }
     const before = {
-      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
-      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+      proposal: await db('agentProposals')
+        .where({ id: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals')
+        .where({ proposalId: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
     }
 
     activeApiKey = null
-    const denied = await client.callTool({
-      name: 'wiki_apply_page_proposal',
-      arguments: {
-        proposalId: proposalResult.proposalId,
-        approvalId: proposalResult.approvalId
-      }
-    }).catch(error => error)
+    const denied = await client
+      .callTool({
+        name: 'wiki_apply_page_proposal',
+        arguments: {
+          proposalId: proposalResult.proposalId,
+          approvalId: proposalResult.approvalId
+        }
+      })
+      .catch(error => error)
     expect(denied).toBeInstanceOf(Error)
     activeApiKey = { apiKeyId: 9, groupId: 3, bearerToken: 'test-api-token' }
     expect({
-      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
-      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+      proposal: await db('agentProposals')
+        .where({ id: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals')
+        .where({ proposalId: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
     }).toEqual(before)
     expect(movePage).not.toHaveBeenCalled()
   })
@@ -851,8 +864,12 @@ describe('Wiki MCP transport', () => {
       authorize: async () => undefined
     })
     const before = {
-      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
-      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+      proposal: await db('agentProposals')
+        .where({ id: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals')
+        .where({ proposalId: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
     }
 
     approver = null
@@ -866,8 +883,12 @@ describe('Wiki MCP transport', () => {
     expect(denied).toMatchObject({ isError: true })
     expect(JSON.parse(String(Reflect.get(denied.content[0] ?? {}, 'text')))).toMatchObject({ code: 'APPROVER_UNAVAILABLE' })
     expect({
-      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
-      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+      proposal: await db('agentProposals')
+        .where({ id: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals')
+        .where({ proposalId: proposalResult.proposalId })
+        .first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
     }).toEqual(before)
     expect(movePage).not.toHaveBeenCalled()
   })

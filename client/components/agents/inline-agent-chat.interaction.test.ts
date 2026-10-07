@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-te
 import type { AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import { type AgentDraft, emptyAgentDraft } from '../../helpers/agent-draft.ts'
+import { agentAttachmentMimeTypes, agentToolAcceptsImages } from '../../helpers/agent-media.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { searchPages } from '../../helpers/pages-api.ts'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
@@ -308,6 +309,7 @@ const evaluateComposer = new Function(
   'calculateComposerSizing',
   'scrollTopForCaret',
   'agentMediaContentUrl',
+  'agentAttachmentMimeTypes',
   `${executableComposerScript}\nreturn { ${composerBindings.join(', ')} }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
@@ -336,6 +338,11 @@ const loadGoalLockState = (
     tools: [],
     artifacts: [],
     proposals: [],
+    tasks: [],
+    specialistInvocations: [],
+    routingDecisions: [],
+    suggestions: [],
+    historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
     goal: status ? { id: 'goal-1', status } : null
   })
   const storeRefs = {
@@ -775,7 +782,7 @@ const mountInlineAgent = (
   const memoryOpen = lockState.memoryOpen
   const composerFocused = lockState.composerFocused
   const transcriptFollowing = lockState.transcriptFollowing as ValueRef<boolean>
-  const context = { ...Vue.toRefs(lockState.componentProps), ...lockState }
+  const context = { agentToolAcceptsImages, ...Vue.toRefs(lockState.componentProps), ...lockState }
   if (options.approvalJumpVisible !== undefined) (lockState.approvalJumpVisible as ValueRef<boolean>).value = options.approvalJumpVisible
   if (options.followJumpVisible !== undefined) {
     context.followJumpVisible = Vue.computed(() => options.followJumpVisible && !(lockState.approvalJumpVisible as ValueRef<boolean>).value)
@@ -795,6 +802,7 @@ const mountInlineAgent = (
       initialSkillVersionIds: Array,
       disabled: Boolean,
       sending: Boolean,
+      draftEditable: Boolean,
       canStop: Boolean,
       skillsEnabled: Boolean,
       skillsLoading: Boolean,
@@ -834,7 +842,8 @@ const mountInlineAgent = (
         caretBoundsFromMirror,
         calculateComposerSizing,
         scrollTopForCaret,
-        agentMediaContentUrl
+        agentMediaContentUrl,
+        agentAttachmentMimeTypes
       )
       return bindings
     },
@@ -2471,7 +2480,7 @@ describe('Inline Agent goal submission lock', () => {
     ['paused', 'Resume or cancel the current goal before sending a message'],
     ['active', 'Finish or cancel the current goal before sending a message']
   ] as const)('renders the truthful %s goal reason on the disabled composer textarea', (status, expectedReason) => {
-    const lockState = loadGoalLockState(status)
+    const lockState = loadGoalLockState(status, false, null)
     expect(lockState.canSubmit.value).toBe(false)
     const mounted = mountInlineAgent(lockState)
     const reason = mounted.root.querySelector<HTMLElement>('.inline-agent__composer-lock')

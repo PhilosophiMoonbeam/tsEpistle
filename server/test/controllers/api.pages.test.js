@@ -1,3 +1,6 @@
+import createKnex from 'knex'
+import { knowledgeSourceSha256 } from '../../knowledge/projection.ts'
+
 const pageTreeAccess = vi.fn()
 vi.mockModule('../../repositories/page-tree-access.ts', import.meta.url, () => ({ pageTreeAccess, treeAncestorIds: () => [] }))
 const taxonomyLegacyChange = vi.fn()
@@ -43,12 +46,28 @@ vi.mockModule('express', import.meta.url, () => {
 })
 
 const express = await import('express')
-const storedKnowledgeProjection = (sourceRevision = '8') => ({
+const projectionDatabases = []
+const knowledgeSource = (metadata, sourceRevision = '8') => ({
+  pageId: 7,
+  sourceRevision,
+  locale: 'en',
+  path: 'docs/alpha',
+  visibility: 'public',
+  contentType: 'markdown',
+  content: '# Alpha',
+  title: 'Alpha',
+  description: 'Alpha description',
+  tags: [],
+  updatedAt: '2026-01-02T00:00:00.000Z',
+  authorId: 2,
+  metadata
+})
+const storedKnowledgeProjection = (sourceRevision = '8', metadata) => ({
   version: 2,
   source: {
     pageId: 7,
     sourceRevision,
-    sha256: 'a'.repeat(64),
+    sha256: knowledgeSourceSha256(knowledgeSource(metadata, sourceRevision)),
     locale: 'en',
     path: 'docs/alpha',
     visibility: 'public',
@@ -85,26 +104,74 @@ const storedKnowledgeProjection = (sourceRevision = '8') => ({
 
 const projectionSearchDictionary = 'english'
 
-const knexWithProjection = (projection = null) => {
-  const knex = vi.fn().mockImplementation(table => {
-    const chain = {
-      first: vi.fn().mockResolvedValue(table === 'pageKnowledgeProjections as projections' && projection !== null
-        ? {
-            pageId: 7,
-            sourceRevision: '8',
-            sourceSha256: 'a'.repeat(64),
-            deterministicVersion: 'wiki-knowledge-v2',
-            searchDictionary: projectionSearchDictionary,
-            projection
-          }
-        : undefined),
-      join: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      select: vi.fn().mockResolvedValue([])
-    }
-    return chain
+const knexWithProjection = async (projection = null, metadata) => {
+  const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  projectionDatabases.push(db)
+  await db.schema.createTable('pageAccessPasswords', table => {
+    table.integer('pageId').primary()
   })
-  knex.client = { config: { client: 'pg' } }
+  await db.schema.createTable('pages', table => {
+    table.integer('id').primary()
+    table.bigInteger('sourceRevision').notNullable()
+    table.string('localeCode').notNullable()
+    table.string('path').notNullable()
+    table.string('visibility').notNullable()
+    table.integer('ownerId').nullable()
+    table.boolean('isSearchable').notNullable()
+    table.string('contentType').notNullable()
+    table.text('content').notNullable()
+    table.string('title').notNullable()
+    table.text('description').nullable()
+    table.integer('authorId').notNullable()
+    table.text('extra').notNullable()
+    table.string('updatedAt').notNullable()
+  })
+  await db.schema.createTable('tags', table => {
+    table.integer('id').primary()
+    table.string('tag').notNullable()
+  })
+  await db.schema.createTable('pageTags', table => {
+    table.integer('pageId').notNullable()
+    table.integer('tagId').notNullable()
+  })
+  await db.schema.createTable('pageKnowledgeProjections', table => {
+    table.integer('pageId').primary()
+    table.bigInteger('sourceRevision').notNullable()
+    table.string('sourceSha256').notNullable()
+    table.string('deterministicVersion').notNullable()
+    table.string('searchDictionary').nullable()
+    table.text('projection').notNullable()
+  })
+  const source = knowledgeSource(metadata)
+  await db('pages').insert({
+    id: source.pageId,
+    sourceRevision: source.sourceRevision,
+    localeCode: source.locale,
+    path: source.path,
+    visibility: source.visibility,
+    ownerId: null,
+    isSearchable: true,
+    contentType: source.contentType,
+    content: source.content,
+    title: source.title,
+    description: source.description,
+    authorId: source.authorId,
+    extra: JSON.stringify(metadata === undefined ? {} : { okf: metadata }),
+    updatedAt: source.updatedAt
+  })
+  if (projection !== null) {
+    await db('pageKnowledgeProjections').insert({
+      pageId: 7,
+      sourceRevision: '8',
+      sourceSha256: knowledgeSourceSha256(source),
+      deterministicVersion: 'wiki-knowledge-v2',
+      searchDictionary: null,
+      projection: typeof projection === 'string' ? projection : JSON.stringify(projection)
+    })
+  }
+  const knex = vi.fn(table => db(table))
+  knex.client = db.client
+  knex.transaction = db.transaction.bind(db)
   return knex
 }
 
@@ -180,7 +247,7 @@ const linksKnex = ({ rows, protectedPageIds = [], receipts = [] }) =>
 
 
 describe('controllers/api pages endpoints', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules()
     for (const operation of [pageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage, listApprovalInbox, getPageApproval, submitPageApproval, transitionApproval]) {
       operation.mockReset()
@@ -234,7 +301,7 @@ describe('controllers/api pages endpoints', () => {
         discardDraft: vi.fn()
       },
       models: {
-        knex: knexWithProjection(),
+        knex: await knexWithProjection(),
         tags: {
           query: vi.fn().mockReturnValue({
             deleteById: vi.fn().mockResolvedValue(1),
@@ -355,6 +422,10 @@ describe('controllers/api pages endpoints', () => {
         }
       }
     }
+  })
+
+  afterEach(async () => {
+    await Promise.all(projectionDatabases.splice(0).map(db => db.destroy()))
   })
 
   const loadHandler = async () => {
@@ -1455,6 +1526,11 @@ describe('controllers/api pages endpoints', () => {
 
   it('returns only matching tag suggestions from accessible candidates', async () => {
     const rows = [{
+      id: 10,
+      isPublished: true,
+      isSearchable: true,
+      publishStartDate: '',
+      publishEndDate: '',
       path: 'docs/alpha',
       locale: 'en',
       visibility: 'public',
@@ -1462,12 +1538,22 @@ describe('controllers/api pages endpoints', () => {
       tags: [{ tag: 'alpha' }]
     }, {
       path: 'private/denied',
+      id: 11,
+      isPublished: true,
+      isSearchable: true,
+      publishStartDate: '',
+      publishEndDate: '',
       locale: 'en',
       visibility: 'private',
       ownerId: 8,
       tags: [{ tag: 'alpha-secret' }]
     }, {
       path: 'docs/unrelated',
+      id: 12,
+      isPublished: true,
+      isSearchable: true,
+      publishStartDate: '',
+      publishEndDate: '',
       locale: 'en',
       visibility: 'public',
       ownerId: null,
@@ -1574,6 +1660,11 @@ describe('controllers/api pages endpoints', () => {
   it('lists unique page tags with GraphQL-compatible access filtering and tag ordering', async () => {
     const withGraphJoined = vi.fn().mockResolvedValue([
       {
+        id: 10,
+        isPublished: true,
+        isSearchable: true,
+        publishStartDate: '',
+        publishEndDate: '',
         locale: 'en',
         path: 'docs/public',
         visibility: 'public',
@@ -1584,6 +1675,11 @@ describe('controllers/api pages endpoints', () => {
         ]
       },
       {
+        id: 11,
+        isPublished: true,
+        isSearchable: true,
+        publishStartDate: '',
+        publishEndDate: '',
         locale: 'fr',
         path: 'docs/private',
         visibility: 'private',
@@ -1593,12 +1689,17 @@ describe('controllers/api pages endpoints', () => {
         ]
       },
       {
+        id: 12,
+        isPublished: true,
+        isSearchable: true,
+        publishStartDate: '',
+        publishEndDate: '',
         locale: 'en',
         path: 'docs/duplicate',
         visibility: 'public',
         ownerId: null,
         tags: [
-          { id: 2, tag: 'zeta', title: 'Zeta Duplicate', createdAt: '2026-01-07T00:00:00.000Z', updatedAt: '2026-01-08T00:00:00.000Z' }
+          { id: 2, tag: 'zeta', title: 'Zeta', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z' }
         ]
       }
     ])
@@ -1949,7 +2050,7 @@ describe('controllers/api pages endpoints', () => {
       ...await global.WIKI.models.pages.getPageFromDb(),
       extra: { okf: metadata }
     })
-    global.WIKI.models.knex = knexWithProjection(storedKnowledgeProjection('8'))
+    global.WIKI.models.knex = await knexWithProjection(storedKnowledgeProjection('8', metadata), metadata)
     const { getPage } = await loadHandler()
     const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
 
@@ -2012,7 +2113,7 @@ describe('controllers/api pages endpoints', () => {
       ...await global.WIKI.models.pages.getPageFromDb(),
       extra: { okf: metadata }
     })
-    global.WIKI.models.knex = knexWithProjection(projection)
+    global.WIKI.models.knex = await knexWithProjection(projection, metadata)
     const { getPage } = await loadHandler()
     const next = vi.fn()
     const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
@@ -2034,14 +2135,18 @@ describe('controllers/api pages endpoints', () => {
 
   it('propagates projection database failures from page detail reads', async () => {
     const databaseError = new Error('projection db down')
-    global.WIKI.models.knex = vi.fn().mockImplementation(table => ({
-      first:
-        table === 'pageKnowledgeProjections as projections'
-          ? vi.fn().mockRejectedValue(databaseError)
-          : vi.fn().mockResolvedValue(undefined),
-      join: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis()
-    }))
+    const knex = await knexWithProjection(storedKnowledgeProjection())
+    const beginTransaction = knex.transaction
+    knex.transaction = callback => beginTransaction(transaction => {
+      const failingTransaction = table => {
+        if (table === 'pageKnowledgeProjections as projections') throw databaseError
+        return transaction(table)
+      }
+      failingTransaction.client = transaction.client
+      failingTransaction.isTransaction = true
+      return callback(failingTransaction)
+    })
+    global.WIKI.models.knex = knex
     const { getPage } = await loadHandler()
     const next = vi.fn()
     const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
@@ -2080,7 +2185,7 @@ describe('controllers/api pages endpoints', () => {
   })
 
   it('marks a mismatched repository projection pending and does not expose its value', async () => {
-    global.WIKI.models.knex = knexWithProjection(storedKnowledgeProjection('9'))
+    global.WIKI.models.knex = await knexWithProjection(storedKnowledgeProjection('9'))
     const { getPage } = await loadHandler()
     const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
 
