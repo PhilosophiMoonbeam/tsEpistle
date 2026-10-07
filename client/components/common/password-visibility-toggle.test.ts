@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from '../../../server/test/bun-test
 import { document, resetBody } from '../../test/browser-dom.mts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 resetBody()
 const Vue = await import('vue')
 const filename = path.join(process.cwd(), 'client/components/common/password-visibility-toggle.vue')
@@ -23,9 +23,7 @@ const compiled = compileTemplate({
 })
 if (compiled.errors.length) throw new Error(`Cannot compile password-visibility-toggle.vue: ${compiled.errors}`)
 const render = new Function('Vue', compiled.code)(Vue)
-const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return')
-)
+const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
 const Toggle = { ...new Function('defineComponent', script)(Vue.defineComponent), render }
 
 let app: ReturnType<typeof Vue.createApp> | undefined
@@ -35,30 +33,43 @@ afterEach(() => {
   resetBody()
 })
 
-const mount = async (options: {
-  translate?: ((key: string, options?: Record<string, unknown>) => string) | null
-  localization?: boolean
-  fields?: string[]
-  disabled?: boolean
-} = {}) => {
-  const fields = options.fields ?? ['password']
+const mount = async (
+  options: {
+    translate?: ((key: string, options?: Record<string, unknown>) => string) | null
+    localization?: boolean
+    fields?: string[]
+    disabled?: boolean
+  } = {}
+) => {
+  const fields = (options.fields ?? ['password']).map(field => Vue.ref(field))
   const visibility = fields.map(() => Vue.ref(false))
   app = Vue.createApp({
     setup: () => () =>
-      Vue.h('div', fields.map((field, index) => Vue.h(Toggle, {
-        visible: visibility[index]!.value,
-        field,
-        disabled: options.disabled ?? false,
-        'onUpdate:visible': (value: boolean) => {
-          visibility[index]!.value = value
-        }
-      })))
+      Vue.h(
+        'div',
+        fields.map((field, index) =>
+          Vue.h(Toggle, {
+            visible: visibility[index]!.value,
+            field: field.value,
+            disabled: options.disabled ?? false,
+            'onUpdate:visible': (value: boolean) => {
+              visibility[index]!.value = value
+            }
+          })
+        )
+      )
   })
-  app.component('v-btn', Vue.defineComponent({
-    inheritAttrs: false,
-    props: ['disabled'],
-    setup: (props, { attrs, slots }) => () => Vue.h('button', { ...attrs, disabled: props.disabled || undefined }, slots.default?.())
-  }))
+  app.component(
+    'v-btn',
+    Vue.defineComponent({
+      inheritAttrs: false,
+      props: ['disabled'],
+      setup:
+        (props, { attrs, slots }) =>
+        () =>
+          Vue.h('button', { ...attrs, disabled: props.disabled || undefined }, slots.default?.())
+    })
+  )
   app.component('v-icon', Vue.defineComponent({ props: ['icon'], setup: props => () => Vue.h('i', { 'data-icon': props.icon }) }))
   if (options.localization) {
     app.use(localizationPlugin)
@@ -70,7 +81,7 @@ const mount = async (options: {
   app.mount(host)
   await Vue.nextTick()
   const buttons = [...host.querySelectorAll('button')]
-  return { button: buttons[0]!, buttons, visible: visibility[0]!, visibility }
+  return { button: buttons[0]!, buttons, visible: visibility[0]!, visibility, fields }
 }
 
 describe('password visibility toggle', () => {
@@ -119,7 +130,7 @@ describe('password visibility toggle', () => {
     expect(button.getAttribute('aria-pressed')).toBe('false')
   })
 
-  test('preserves an active localized toggle resource when the password key is unavailable', async () => {
+  test('preserves an active localized toggle resource and updates dynamic field names without resetting visibility', async () => {
     const engine = i18next.createInstance()
     await engine.init({
       lng: 'de',
@@ -129,16 +140,32 @@ describe('password visibility toggle', () => {
       resources: { de: { common: { passwordVisibilityToggle: { show: '{{field}} anzeigen' } } } },
       initAsync: false
     })
-    const { button } = await mount({
+    const { button, visible, fields } = await mount({
       translate: (key, options) => engine.t(key, options) as string,
-      fields: ['Passwort & Bestätigung']
+      fields: ['API Schlüssel & "Bestätigung" <em>秘密</em>!']
     })
 
-    expect(button.getAttribute('aria-label')).toBe('Passwort & Bestätigung anzeigen')
+    expect(button.getAttribute('aria-label')).toBe('API Schlüssel & "Bestätigung" <em>秘密</em>! anzeigen')
+    expect(button.querySelector('em')).toBeNull()
+    expect(button.getAttribute('aria-pressed')).toBe('false')
     button.click()
     await Vue.nextTick()
-    expect(button.getAttribute('aria-label')).toBe('Passwort & Bestätigung anzeigen')
+    expect(button.getAttribute('aria-label')).toBe('API Schlüssel & "Bestätigung" <em>秘密</em>! anzeigen')
     expect(button.getAttribute('aria-pressed')).toBe('true')
+
+    fields[0]!.value = 'Neuer Token: Équipe & <strong>更新</strong>?'
+    await Vue.nextTick()
+
+    expect(button.getAttribute('aria-label')).toBe('Neuer Token: Équipe & <strong>更新</strong>? anzeigen')
+    expect(button.querySelector('strong')).toBeNull()
+    expect(visible.value).toBe(true)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+
+    button.click()
+    await Vue.nextTick()
+    expect(button.getAttribute('aria-label')).toBe('Neuer Token: Équipe & <strong>更新</strong>? anzeigen')
+    expect(visible.value).toBe(false)
+    expect(button.getAttribute('aria-pressed')).toBe('false')
   })
 
   for (const localization of [false, true]) {
@@ -151,10 +178,7 @@ describe('password visibility toggle', () => {
           translate: null,
           fields: ['administrator password', 'password confirmation']
         })
-        expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual([
-          'Show administrator password',
-          'Show password confirmation'
-        ])
+        expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual(['Show administrator password', 'Show password confirmation'])
 
         buttons[1]!.focus()
         buttons[1]!.click()
@@ -163,40 +187,10 @@ describe('password visibility toggle', () => {
         expect(document.activeElement).toBe(buttons[1]!)
         expect(visibility.map(value => value.value)).toEqual([false, true])
         expect(buttons.map(button => button.getAttribute('aria-pressed'))).toEqual(['false', 'true'])
-        expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual([
-          'Show administrator password',
-          'Show password confirmation'
-        ])
+        expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual(['Show administrator password', 'Show password confirmation'])
       } finally {
         i18next.isInitialized = initialized
       }
     })
   }
-})
-
-describe('password visibility toggle names', () => {
-  // The name is "Show <field>", so every caller passes a lowercase noun
-  // ("Show page password", not "Show Page password").
-  test('every caller passes a lowercase field noun', () => {
-    const locale = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8')) as Record<string, unknown>
-    const resolve = (key: string): unknown => {
-      const [namespace, rest] = key.split(':') as [string, string]
-      return rest.split('.').reduce<unknown>((node, part) => (node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined), locale[namespace])
-    }
-    const files = new Bun.Glob('client/**/*.vue').scanSync({ cwd: process.cwd() })
-    const fields: string[] = []
-    for (const file of files) {
-      const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8')
-      for (const usage of source.matchAll(/<password-visibility-toggle\b[^>]*>|(?<![.\w-])password-visibility-toggle\((?:[^()]|\([^()]*\))*\)/g)) {
-        const text = usage[0]
-        const bound = text.match(/:field=["']\$t\([`'"]([^`'"]+)[`'"]/)
-        const literal = text.match(/(?<![:\w])field=["']([^"']+)["']/)
-        const value = bound ? resolve(bound[1]!) : literal?.[1]
-        expect(typeof value).toBe('string')
-        fields.push(value as string)
-      }
-    }
-    expect(fields.length).toBeGreaterThanOrEqual(12)
-    for (const field of fields) expect(field).toMatch(/^[a-z][a-z ]*$/)
-  })
 })

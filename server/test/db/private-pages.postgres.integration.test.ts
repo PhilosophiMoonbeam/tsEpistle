@@ -131,7 +131,11 @@ suite('PostgreSQL private-page schema migration', () => {
       ownerId: null
     }))).rejects.toMatchObject({ code: '23514' })
 
-    await expect(Promise.resolve(db('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23503' })
+    // PostgreSQL 18 reports RESTRICT as 23001; earlier supported versions report 23503.
+    await expect(Promise.resolve(db('users').where({ id: 7 }).delete())).rejects.toMatchObject({
+      code: expect.stringMatching(/^(23503|23001)$/),
+      constraint: 'pages_ownerid_foreign'
+    })
     expect(await db('pages').where({ localeCode: 'en', path: 'same/path' }).count<{ count: string }[]>({ count: '*' }).first())
       .toEqual({ count: '3' })
   })
@@ -238,7 +242,10 @@ suite('PostgreSQL private-page schema migration', () => {
     try {
       expect(insertedId).toBe(101)
       expect(await secondConnection('pages').where({ id: insertedId, visibility: 'private', ownerId: 7 }).first()).toBeTruthy()
-      await expect(Promise.resolve(secondConnection('users').where({ id: 7 }).delete())).rejects.toMatchObject({ code: '23503' })
+      await expect(Promise.resolve(secondConnection('users').where({ id: 7 }).delete())).rejects.toMatchObject({
+        code: expect.stringMatching(/^(23503|23001)$/),
+        constraint: 'pages_ownerid_foreign'
+      })
     } finally {
       try {
         await secondConnection.destroy()
