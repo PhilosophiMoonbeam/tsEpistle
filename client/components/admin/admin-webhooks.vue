@@ -513,7 +513,7 @@ export default {
 .webhook-admin :deep(button) { scroll-margin-block: 6rem; }
 .webhook-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: clamp(1.5rem, 3vw, 3rem); align-items: start; }
 .endpoint-directory { border-right: 1px solid var(--wiki-surface-border); padding-right: 1.5rem; min-width: 0; }
-.directory-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.directory-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: 1rem; }
 .directory-heading h2 { font: 500 1.2rem var(--wiki-font-display); }
 .directory-heading h2 span { font: 400 .8rem var(--wiki-font-body); }.directory-toggle { display: none; }
 .endpoint-list { display: grid; gap: .5rem; margin-top: 1rem; }

@@ -340,6 +340,10 @@ export default defineComponent({
   line-height: inherit;
 }
 
+.admin-dialog .v-card-actions {
+  flex-wrap: wrap;
+}
+
 @media (max-width: 599px) {
   .admin .admin-main .v-card-info { flex-wrap: wrap; }
 }
