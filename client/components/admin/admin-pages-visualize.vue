@@ -523,7 +523,8 @@ export default defineComponent({
 
       function autoBox (this: SVGSVGElement): [number, number, number, number] {
         const { x, y, width, height } = this.getBBox()
-        return [x, y, width, height]
+        const side = Math.max(width, height, 1) + 24
+        return [x + width / 2 - side / 2, y + height / 2 - side / 2, side, side]
       }
 
       svg.attr('viewBox', autoBox)
