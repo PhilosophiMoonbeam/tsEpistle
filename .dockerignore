@@ -23,6 +23,7 @@ test-results
 .env
 .env.*
 !.env.example
+.agent-ready_login
 *.log
 dumps/
 *.dmp
