@@ -1,6 +1,6 @@
 <template>
   <section class="media-admin" aria-labelledby="media-admin-title">
-    <header class="media-admin__header"><div><h2 id="media-admin-title">{{ t('mediaProviders') }}</h2><p>{{ t('mediaIndependentHelp') }}</p></div><div><v-btn :loading="loading" :disabled="busy" @click="load">{{ t('refreshStatus') }}</v-btn><v-btn color="primary" :disabled="busy" @click="open()">{{ t('addMediaProvider') }}</v-btn></div></header>
+    <header class="media-admin__header"><div><h2 id="media-admin-title">{{ t('mediaProviders') }}</h2><p>{{ t('mediaIndependentHelp') }}</p></div><div><v-btn :loading="loading" :disabled="busy" @click="load">{{ t('refreshStatus') }}</v-btn><v-btn ref="headerAdd" color="primary" :disabled="busy" @click="open(undefined, $event)">{{ t('addMediaProvider') }}</v-btn></div></header>
     <v-alert type="info" variant="tonal">{{ t('mediaInteractionsMigration') }}</v-alert>
     <v-alert v-if="error" type="error" variant="tonal" role="alert" class="my-4">{{ error }}<v-btn :disabled="loading || busy" @click="load">{{ t('retry') }}</v-btn></v-alert>
     <p role="status" aria-live="polite">{{ busy ? t('mediaSaving') : notice }}</p>
@@ -9,13 +9,13 @@
       <span class="media-admin__empty-icon"><v-icon icon="mdi-image-multiple-outline" size="34" aria-hidden="true" /></span>
       <h3>{{ t('mediaEmptyTitle') }}</h3>
       <p>{{ t('mediaEmpty') }}</p>
-      <v-btn color="primary" prepend-icon="mdi-plus" :disabled="busy" @click="open()">{{ t('addMediaProvider') }}</v-btn>
+      <v-btn color="primary" prepend-icon="mdi-plus" :disabled="busy" @click="open(undefined, $event)">{{ t('addMediaProvider') }}</v-btn>
     </div>
     <article v-for="provider in providers" :key="provider.id" class="media-admin__provider">
       <div><h3>{{ provider.displayName }}</h3><p>{{ t(`mediaKind${provider.config.kind}`) }} · <code>{{ provider.config.api }}</code> · <code>{{ provider.config.model }}</code></p><p><code>{{ provider.config.baseUrl }}</code></p><p>{{ provider.enabled ? t('enabled') : t('disabled') }} · {{ provider.secretConfigured ? t('mediaCredentialConfigured') : t('mediaCredentialMissing') }}<span v-if="provider.isDefault"> · {{ t('mediaOperationDefault') }}</span></p><p>{{ provider.exposureMode === 'all_agent_users' ? t('everyone') : groupNames(provider.groupIds) }}</p></div>
-      <div class="media-admin__actions"><v-btn :disabled="busy" :aria-label="t('mediaEditNamed', { name: provider.displayName })" @click="open(provider)">{{ t('mediaEdit') }}</v-btn><v-btn :disabled="busy || (!provider.enabled && !provider.secretConfigured)" @click="mutate(() => enableMediaProvider(fetcher, csrfToken, provider.id, provider.revision, !provider.enabled))">{{ provider.enabled ? t('mediaDisable') : t('mediaEnable') }}</v-btn><v-btn :disabled="busy || !provider.enabled || !provider.secretConfigured || provider.isDefault" @click="mutate(() => defaultMediaProvider(fetcher, csrfToken, provider.id, provider.revision))">{{ t('mediaSetDefault') }}</v-btn><v-btn color="error" :disabled="busy" @click="removing = provider">{{ t('mediaRemove') }}</v-btn></div>
+      <div class="media-admin__actions"><v-btn :disabled="busy" :aria-label="t('mediaEditNamed', { name: provider.displayName })" @click="open(provider, $event)">{{ t('mediaEdit') }}</v-btn><v-btn :disabled="busy || (!provider.enabled && !provider.secretConfigured)" @click="mutate(() => enableMediaProvider(fetcher, csrfToken, provider.id, provider.revision, !provider.enabled))">{{ provider.enabled ? t('mediaDisable') : t('mediaEnable') }}</v-btn><v-btn :disabled="busy || !provider.enabled || !provider.secretConfigured || provider.isDefault" @click="mutate(() => defaultMediaProvider(fetcher, csrfToken, provider.id, provider.revision))">{{ t('mediaSetDefault') }}</v-btn><v-btn color="error" :disabled="busy" @click="removing = provider">{{ t('mediaRemove') }}</v-btn></div>
     </article>
-    <v-dialog v-model="dialog" max-width="850" scrollable persistent aria-labelledby="media-editor-title">
+    <v-dialog :model-value="dialog" max-width="850" scrollable :persistent="busy" aria-labelledby="media-editor-title" @update:model-value="value => { if (!value) closeEditor() }" @after-leave="editorAfterLeave">
       <v-card><v-card-title id="media-editor-title">{{ editing ? t('editMediaProvider') : t('addMediaProvider') }}</v-card-title>
         <v-card-text><v-form id="media-provider-form" @submit.prevent="save"><v-alert v-if="editorError" type="error" role="alert" variant="tonal" class="mb-4">{{ editorError }}<v-btn v-if="conflict" :disabled="busy || loading" @click="reloadEditing">{{ t('mediaReloadCurrent') }}</v-btn></v-alert>
           <div class="media-admin__grid">
@@ -25,7 +25,7 @@
             <v-text-field v-model="draft.model" :label="t('mediaExactModel')" :hint="t(draft.model ? 'mediaExactModelHelp' : 'mediaModelInvalid')" persistent-hint :error-messages="fieldError('config.model')" :disabled="busy" />
             <v-text-field v-model="draft.baseUrl" :label="t('mediaOfficialBaseUrl')" :error-messages="fieldError('config.baseUrl')" :disabled="busy" />
             <v-text-field v-model.number="draft.timeoutMs" type="number" min="1000" max="300000" :label="t('mediaTimeout')" :error-messages="fieldError('config.timeoutMs')" :disabled="busy" />
-            <v-text-field v-model.number="draft.maxInputTokens" type="number" min="1" max="10000000" :label="t('mediaInputCeiling')" :error-messages="fieldError('config.maxInputTokens')" :disabled="busy" />
+            <v-text-field v-model.number="draft.maxInputTokens" type="number" min="1" max="10000000" :label="t('mediaInputCeiling')" :hint="t('mediaInputCeilingHint')" persistent-hint :error-messages="fieldError('config.maxInputTokens')" :disabled="busy" />
             <v-text-field v-model.number="draft.maxOutputTokens" type="number" min="1" max="1000000" :label="t('mediaOutputCeiling')" :error-messages="fieldError('config.maxOutputTokens')" :disabled="busy" />
             <v-select v-model="draft.pricingKind" :items="pricingOptions" :label="t('mediaPricing')" :disabled="busy" />
             <v-text-field v-model="draft.pricingRevision" :label="t('mediaPricingRevision')" :error-messages="fieldError('config.pricing')" :disabled="busy" />
@@ -42,16 +42,16 @@
           <p>{{ t('mediaNoPaidVerification') }}</p><p v-if="editing">{{ t('mediaVersion', { version: editing.profileVersionId, revision: editing.revision }) }}</p>
           <v-alert v-if="submitted && !parsed.success" type="warning" role="alert">{{ t('mediaInvalidSettings') }}</v-alert>
         </v-form></v-card-text>
-        <v-card-actions><v-spacer /><v-btn :disabled="busy" @click="closeEditor">{{ $t('common:actions.cancel') }}</v-btn><v-btn type="submit" form="media-provider-form" color="primary" :loading="busy" :disabled="busy || conflict || (credentialOriginChanged && draft.secretMode === 'retain') || (draft.exposureMode === 'groups' && (groupsLoading || Boolean(groupsError)))">{{ $t('common:actions.save') }}</v-btn></v-card-actions>
+        <v-card-actions><v-spacer /><v-btn ref="editorCancel" :disabled="busy" @click="closeEditor">{{ $t('common:actions.cancel') }}</v-btn><v-btn type="submit" form="media-provider-form" color="primary" :loading="busy" :disabled="busy || conflict || (credentialOriginChanged && draft.secretMode === 'retain') || (draft.exposureMode === 'groups' && (groupsLoading || Boolean(groupsError)))">{{ $t('common:actions.save') }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
     <v-dialog :model-value="Boolean(removing)" max-width="480" persistent aria-labelledby="media-remove-title"><v-card><v-card-title id="media-remove-title">{{ t('mediaRemove') }}</v-card-title><v-card-text>{{ t('mediaRemoveHelp', { name: removing?.displayName }) }}<v-alert v-if="error" type="error" role="alert">{{ error }}</v-alert></v-card-text><v-card-actions><v-spacer /><v-btn :disabled="busy" @click="removing = null">{{ $t('common:actions.cancel') }}</v-btn><v-btn :loading="busy" color="error" @click="remove">{{ t('mediaRemove') }}</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog v-model="discardDialog" max-width="480" persistent aria-labelledby="media-discard-title"><v-card><v-card-title id="media-discard-title">{{ t('discardProviderChanges') }}</v-card-title><v-card-text>{{ t('mediaDiscardHelp') }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="discardDialog = false">{{ t('keepEditing') }}</v-btn><v-btn color="error" @click="discardDialog = false; dismissEditor()">{{ t('discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog :model-value="discardDialog" max-width="480" :persistent="busy" aria-labelledby="media-discard-title" @update:model-value="value => { if (!value && !busy) discardDialog = false }" @after-leave="discardAfterLeave"><v-card><v-card-title id="media-discard-title">{{ t('discardProviderChanges') }}</v-card-title><v-card-text>{{ t('mediaDiscardHelp') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="busy" @click="discardDialog = false">{{ t('keepEditing') }}</v-btn><v-btn color="error" :disabled="busy" @click="discardChanges">{{ t('discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
 import { AgentMediaProviderConfigSchema, AgentMediaProviderWriteSchema, type AgentMediaApi, type AgentMediaKind, type AgentMediaProviderView, type AgentMediaProviderWrite } from '../../../shared/agents/media-providers.ts'
 import { listMediaProviders, createMediaProvider, updateMediaProvider, enableMediaProvider, defaultMediaProvider, deleteMediaProvider } from '../../helpers/agent-control-api.ts'
 import { AgentApiError } from '../../helpers/agents-api.ts'
@@ -63,6 +63,9 @@ const fetcher: typeof fetch = (...args) => window.fetch(...args)
 const providers = shallowRef<AgentMediaProviderView[]>([]), editing = shallowRef<AgentMediaProviderView | null>(null), removing = shallowRef<AgentMediaProviderView | null>(null)
 const loading = ref(false), loaded = ref(false), busy = ref(false), dialog = ref(false), submitted = ref(false), conflict = ref(false), discardDialog = ref(false)
 const error = ref(''), editorError = ref(''), notice = ref(''), baseline = ref('')
+const headerAdd = ref<{ $el: HTMLElement } | null>(null), editorCancel = ref<{ $el: HTMLElement } | null>(null)
+let editorOpener: HTMLElement | null = null
+let editorFocusPending = false, editorHasLeft = false
 let controller: AbortController | undefined
 let disposed = false
 const defaults = () => ({ displayName: '', kind: 'image' as AgentMediaKind, api: 'gemini-generate-content' as AgentMediaApi, model: '', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', timeoutMs: 120000, maxInputTokens: 32000, maxOutputTokens: 8192, pricingKind: 'tokens' as 'tokens' | 'fixed', pricingRevision: 'media-v1', inputRate: 0, outputRate: 0, textRate: 0, costMicros: 0, secretMode: 'retain', secretValue: '', secretReference: '', exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups', groupIds: [] as number[] })
@@ -79,9 +82,10 @@ const credentialOriginChanged = computed(() => {
   const previous = editing.value
   return Boolean(previous?.secretConfigured && parsed.value.success && new URL(previous.config.baseUrl).origin !== new URL(parsed.value.data.config.baseUrl).origin)
 })
-const fieldError = (path: string): string[] => submitted.value && !parsed.value.success && parsed.value.error.issues.some(issue => issue.path.join('.').startsWith(path)) ? [t(path === 'config.model' ? 'mediaModelInvalid' : 'mediaFieldInvalid')] : []
+const fieldError = (path: string): string[] => submitted.value && !parsed.value.success && parsed.value.error.issues.some(issue => issue.path.join('.').startsWith(path)) ? [t(path === 'config.model' ? 'mediaModelInvalid' : path === 'config.maxInputTokens' ? 'mediaInputCeilingHint' : 'mediaFieldInvalid')] : []
 const groupNames = (ids: readonly number[]) => ids.map(id => groups.find(group => group.id === id)?.name ?? String(id)).join(', ')
-const message = (value: unknown) => value instanceof AgentApiError && value.status === 409 ? t('mediaStaleRevision') : value instanceof Error ? value.message : t('mediaRequestFailed')
+const isStaleRevision = (value: unknown): value is AgentApiError => value instanceof AgentApiError && value.status === 409 && value.code === 'MEDIA_PROVIDER_REVISION_CHANGED'
+const message = (value: unknown) => isStaleRevision(value) ? t('mediaStaleRevision') : value instanceof Error ? value.message : t('mediaRequestFailed')
 const load = async (): Promise<boolean> => {
   controller?.abort(); controller = new AbortController(); const current = controller
   loading.value = true; error.value = ''
@@ -103,13 +107,44 @@ const selectApi = () => {
   if (!modelValidation.success && modelValidation.error.issues.some(issue => issue.path[0] === 'model')) draft.model = ''
 }
 const selectKind = () => { if (!supportedApis[draft.kind].includes(draft.api)) draft.api = supportedApis[draft.kind][0]!; selectApi() }
-const open = (provider?: AgentMediaProviderView) => {
+const open = (provider?: AgentMediaProviderView, event?: Event) => {
+  if (busy.value || disposed) return
+  if (event) editorOpener = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  editorFocusPending = false; editorHasLeft = false; discardDialog.value = false
   editing.value = provider ?? null; Object.assign(draft, defaults())
   if (provider) { const { pricing, ...config } = provider.config; Object.assign(draft, config, { displayName: provider.displayName, exposureMode: provider.exposureMode, groupIds: [...provider.groupIds], pricingKind: pricing.kind, pricingRevision: pricing.pricingRevision.split('|')[0], ...(pricing.kind === 'fixed' ? { costMicros: pricing.costMicros } : { inputRate: Number(pricing.pricingRevision.split('|')[1]), outputRate: Number(pricing.pricingRevision.split('|')[2]), textRate: pricing.textOutputMicrosPerMillionTokens ?? 0 }) }) }
   submitted.value = false; conflict.value = false; editorError.value = ''; baseline.value = JSON.stringify(draft); dialog.value = true
 }
-const dismissEditor = () => { dialog.value = false; draft.secretValue = ''; draft.secretReference = '' }
-const closeEditor = () => { if (JSON.stringify(draft) !== baseline.value) discardDialog.value = true; else dismissEditor() }
+const restoreEditorFocus = async () => {
+  await nextTick()
+  if (disposed || dialog.value || busy.value || !editorFocusPending || !editorHasLeft) return
+  const target = editorOpener?.isConnected && !editorOpener.matches(':disabled, [aria-disabled="true"]') ? editorOpener : headerAdd.value?.$el
+  editorFocusPending = false; editorOpener = null
+  if (target?.isConnected && !target.matches(':disabled, [aria-disabled="true"]')) target.focus()
+}
+const editorAfterLeave = () => {
+  if (dialog.value || disposed) return
+  editorHasLeft = true
+  void restoreEditorFocus()
+}
+const discardAfterLeave = async () => {
+  await nextTick()
+  if (!disposed && dialog.value && !discardDialog.value && !busy.value) editorCancel.value?.$el.focus()
+}
+const dismissEditor = () => {
+  editorFocusPending = true; editorHasLeft = false; dialog.value = false
+  draft.secretValue = ''; draft.secretReference = ''
+}
+const closeEditor = () => {
+  if (busy.value) return
+  if (JSON.stringify(draft) !== baseline.value) discardDialog.value = true
+  else dismissEditor()
+}
+const discardChanges = () => {
+  if (busy.value) return
+  discardDialog.value = false
+  dismissEditor()
+}
 const reloadEditing = async () => { const id = editing.value?.id; if (!await load()) return; const current = providers.value.find(provider => provider.id === id); if (current) open(current); else editorError.value = t('mediaProviderRemoved') }
 const mutate = async (operation: () => Promise<unknown>): Promise<boolean> => {
   if (busy.value) return false
@@ -124,12 +159,12 @@ const save = async () => {
   if (credentialOriginChanged.value && draft.secretMode === 'retain') { editorError.value = t('mediaCredentialOriginChange'); return }
   busy.value = true; editorError.value = ''
   try { const write = parsed.value.data; if (editing.value) await updateMediaProvider(fetcher, csrfToken, editing.value.id, write, editing.value.revision); else await createMediaProvider(fetcher, csrfToken, write); dismissEditor(); notice.value = t('mediaSaved'); await load() }
-  catch (value) { conflict.value = value instanceof AgentApiError && value.status === 409; editorError.value = message(value) }
-  finally { busy.value = false }
+  catch (value) { conflict.value = isStaleRevision(value); editorError.value = message(value) }
+  finally { busy.value = false; void restoreEditorFocus() }
 }
 const remove = async () => { const provider = removing.value; if (provider && await mutate(() => deleteMediaProvider(fetcher, csrfToken, provider.id, provider.revision))) removing.value = null }
 onMounted(() => { void load() })
-onBeforeUnmount(() => { disposed = true; controller?.abort(); draft.secretValue = '' })
+onBeforeUnmount(() => { disposed = true; controller?.abort(); editorFocusPending = false; editorHasLeft = false; editorOpener = null; draft.secretValue = ''; draft.secretReference = '' })
 </script>
 
 <style scoped>

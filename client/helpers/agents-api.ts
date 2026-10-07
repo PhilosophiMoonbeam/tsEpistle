@@ -30,8 +30,8 @@ import {
 } from '../../shared/agents/contracts.ts'
 import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
-import { SpecialistInvocationViewSchema } from '../../shared/agents/specialists.ts'
 import { AgentMediaInputsSchema } from '../../shared/agents/media-providers.ts'
+import { SpecialistInvocationViewSchema } from '../../shared/agents/specialists.ts'
 import { translate } from '../modules/localization.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 
@@ -448,24 +448,25 @@ const assertPositiveVersion = (value: number): void => {
 export class AgentApiError extends Error {
   readonly status: number
   readonly retryable: boolean
+  readonly code?: string
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message.slice(0, MAX_ERROR_MESSAGE_LENGTH))
     this.name = 'AgentApiError'
     this.status = status
     this.retryable = retryableStatus(status)
+    this.code = code
   }
 }
 
-const errorMessage = async (response: Response): Promise<string> => {
+const responseError = async (response: Response): Promise<AgentApiError> => {
   const fallback = fallbackErrorMessage(response.status)
-  if (response.status === 401 || response.status === 403) return fallback
   try {
     const parsed = z.object({ message: z.string().optional(), error: z.string().optional() }).parse(await response.json())
     const supplied = parsed.message?.trim() || parsed.error?.trim()
-    return (supplied || fallback).slice(0, MAX_ERROR_MESSAGE_LENGTH)
+    return new AgentApiError(response.status, response.status === 401 || response.status === 403 ? fallback : supplied || fallback, parsed.error)
   } catch {
-    return fallback
+    return new AgentApiError(response.status, fallback)
   }
 }
 
@@ -480,7 +481,7 @@ export const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, p
       ...init.headers
     }
   })
-  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
+  if (!response.ok) throw await responseError(response)
   try {
     return schema.parse(await response.json())
   } catch (value) {
@@ -604,7 +605,7 @@ export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: strin
     credentials: 'same-origin',
     headers: { 'x-wiki-csrf': csrfToken }
   })
-  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
+  if (!response.ok) throw await responseError(response)
 }
 export const clearUnfiledAgentHistory = async (fetcher: typeof fetch, csrfToken: string): Promise<void> => {
   const response = await sameOriginJsonFetch(fetcher, '/_api/agents/sessions', {
@@ -612,7 +613,7 @@ export const clearUnfiledAgentHistory = async (fetcher: typeof fetch, csrfToken:
     credentials: 'same-origin',
     headers: { 'x-wiki-csrf': csrfToken }
   })
-  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
+  if (!response.ok) throw await responseError(response)
 }
 
 export const getAgentMemories = (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentMemoryView> =>
@@ -844,7 +845,7 @@ export const deleteAgentMedia = async (fetcher: typeof fetch, csrfToken: string,
     credentials: 'same-origin',
     headers: { 'x-wiki-csrf': csrfToken, accept: 'application/json' }
   })
-  if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
+  if (!response.ok) throw await responseError(response)
 }
 export const startAgentTranscription = async (
   fetcher: typeof fetch,

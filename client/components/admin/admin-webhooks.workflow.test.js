@@ -18,10 +18,12 @@ function harness({ fetchImpl = () => {}, transport = {} } = {}) {
   const update = vi.fn(async () => {})
   const sendTest = vi.fn(async () => 'test-one')
   const fetchHooks = vi.fn(async () => [hook])
+  const confirmation = vi.fn(async () => false)
   const dependencies = {
     './admin-webhook-guide.vue': { default: {} },
     '../../../shared/webhook-events.ts': { WEBHOOK_EVENTS, isWebhookEventName },
     '@/store/index.ts': { wikiStore: { showError() {}, showNotification() {} } },
+    '../common/confirm-dialog.ts': { requestConfirmation: confirmation },
     '../../helpers/webhooks-api': {
       ...webhooksApi,
       updateWebhook: update,
@@ -45,7 +47,7 @@ function harness({ fetchImpl = () => {}, transport = {} } = {}) {
   for (const [key, fn] of Object.entries(options.computed)) Object.defineProperty(instance, key, { get: fn.bind(instance) })
   instance.hooks = [hook]
   instance.selectHookNow(hook)
-  return { instance, options, update, sendTest, fetchHooks }
+  return { instance, options, update, sendTest, fetchHooks, confirmation }
 }
 describe('webhook administration workflow', () => {
   it('protects changes when switching endpoints or leaving the route', async () => {
@@ -53,16 +55,30 @@ describe('webhook administration workflow', () => {
     expect(instance.dirty).toBe(false)
     instance.draft.name = 'Changed'
     instance.newHook()
+    await Promise.resolve()
     expect(instance.draft.id).toBe('one')
-    instance.finishChange(false)
     expect(instance.draft.name).toBe('Changed')
-    const leaving = options.beforeRouteLeave.call(instance)
-    instance.finishChange(false)
-    expect(await leaving).toBe(false)
+    expect(await options.beforeRouteLeave.call(instance)).toBe(false)
     instance.resetDraft()
     expect(instance.dirty).toBe(false)
     expect(instance.draft.name).toBe(hook.name)
   })
+  for (const blocker of ['saving', 'isDisposed']) {
+    it(`does not discard an endpoint when ${blocker} changes while confirmation is pending`, async () => {
+      const { instance, confirmation } = harness()
+      let answer
+      confirmation.mockReturnValueOnce(new Promise(resolve => { answer = resolve }))
+      instance.draft.name = 'Changed'
+      const changing = instance.requestChange(() => instance.newHookNow())
+      instance[blocker] = true
+      answer(true)
+      await changing
+      expect(instance.draft.id).toBe('one')
+      expect(instance.draft.name).toBe('Changed')
+      expect(instance.dirty).toBe(true)
+    })
+  }
+
   it('preserves a failed save and the saved endpoint baseline', async () => {
     const { instance, update, fetchHooks } = harness()
     instance.draft.name = 'Changed'
@@ -117,9 +133,7 @@ describe('webhook administration workflow', () => {
   it('protects a revealed secret even after a clean save', async () => {
     const { instance, options } = harness()
     instance.revealedSecret = 'one-time-fixture'
-    const leaving = options.beforeRouteLeave.call(instance)
-    instance.finishChange(false)
-    expect(await leaving).toBe(false)
+    expect(await options.beforeRouteLeave.call(instance)).toBe(false)
     expect(instance.revealedSecret).toBe('one-time-fixture')
   })
   it('gates test sends on saved, enabled settings and then exposes queue identity', async () => {

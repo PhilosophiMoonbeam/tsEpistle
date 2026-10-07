@@ -332,6 +332,14 @@ export default defineComponent({
   .admin-main .v-btn[aria-disabled='true'] { opacity: .62; cursor: default; }
 }
 
+:is(.admin .admin-main, .admin-dialog) .v-text-field .v-field:not(.v-field--no-label, .v-field--active) input::placeholder {
+  opacity: 0;
+}
+
+:is(.admin .admin-main, .admin-dialog) .v-input .v-messages__message {
+  line-height: inherit;
+}
+
 @media (max-width: 599px) {
   .admin .admin-main .v-card-info { flex-wrap: wrap; }
 }
