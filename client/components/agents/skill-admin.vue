@@ -4,68 +4,68 @@
       <div class="skill-governance__heading">
         <span class="skill-governance__mark" aria-hidden="true"><v-icon size="22">mdi-book-lock-outline</v-icon></span>
         <div>
-          <div class="skill-eyebrow">{{ $t('admin:skillAdmin.organizationPolicy') }}</div>
-          <h2 id="skill-governance-title">{{ embedded ? $t('admin:skillAdmin.approvedSkillLibrary') : $t('admin:skillAdmin.organizationSkillGovernance') }}</h2>
-          <p>{{ $t('admin:skillAdmin.publishPageNativeExpertise') }}</p>
+          <div class="skill-eyebrow">{{ t('organizationPolicy') }}</div>
+          <h2 id="skill-governance-title">{{ embedded ? t('approvedSkillLibrary') : t('organizationSkillGovernance') }}</h2>
+          <p>{{ t('publishPageNativeExpertise') }}</p>
         </div>
       </div>
       <div class="skill-governance__header-actions">
-        <v-chip v-if="loaded" size="small" variant="outlined" prepend-icon="mdi-domain">{{ $t('admin:skillAdmin.enabled2', { enabledSkillCount, interpolation: { escapeValue: false } }) }}</v-chip>
-        <v-btn color="primary" prepend-icon="mdi-plus" :disabled="loading || Boolean(actionBusyId)" @click="openCreate">{{ $t('admin:skillAdmin.mapOrganizationSkill') }}</v-btn>
+        <v-chip v-if="loaded" size="small" variant="outlined" prepend-icon="mdi-domain">{{ t('enabled2', { enabledSkillCount, interpolation: { escapeValue: false } }) }}</v-chip>
+        <v-btn color="primary" prepend-icon="mdi-plus" :disabled="loading || Boolean(actionBusyId)" @click="openCreate">{{ t('mapOrganizationSkill') }}</v-btn>
       </div>
     </header>
 
     <div class="skill-governance__body">
       <v-alert class="skill-boundary" type="info" variant="tonal" density="compact" icon="mdi-shield-lock-outline">
-        {{ $t('admin:skillAdmin.organizationSkillsProvideApproved') }}
+        {{ t('organizationSkillsProvideApproved') }}
       </v-alert>
       <v-alert v-if="bundledSkill && bundledSkill.status !== 'enabled'" type="warning" variant="tonal" density="compact" icon="mdi-book-check-outline">
-        {{ bundledSkill.currentVersionId ? $t('admin:skillAdmin.builtWikiAuthoringSkillEnable') : $t('admin:skillAdmin.builtWikiAuthoringSkillApprove') }}
+        {{ bundledSkill.currentVersionId ? t('builtWikiAuthoringSkillEnable') : t('builtWikiAuthoringSkillApprove') }}
         <template #append>
-          <v-btn v-if="bundledSkill.currentVersionId" variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="setEnabled(bundledSkill.id, true)">{{ $t('admin:skillAdmin.enableSkill') }}</v-btn>
-          <v-btn v-else variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="openPreview(bundledSkill.id)">{{ $t('admin:skillAdmin.reviewSource') }}</v-btn>
+          <v-btn v-if="bundledSkill.currentVersionId" variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="setEnabled(bundledSkill.id, true)">{{ t('enableSkill') }}</v-btn>
+          <v-btn v-else variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="openPreview(bundledSkill.id)">{{ t('reviewSource') }}</v-btn>
         </template>
       </v-alert>
       <v-alert v-if="error" class="skill-error" type="error" variant="tonal" closable @click:close="error = ''">
         {{ error }}
-        <template #append><v-btn variant="text" size="small" @click="reload">{{ $t('admin:skillAdmin.retry') }}</v-btn></template>
+        <template #append><v-btn variant="text" size="small" @click="reload">{{ t('retry') }}</v-btn></template>
       </v-alert>
       <v-alert v-if="sourcesError && !createOpen" class="skill-error" type="warning" variant="tonal" density="compact" role="alert">
         {{ sourcesError }}
-        <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" @click="loadSources">{{ $t('admin:skillAdmin.retrySourceSearch') }}</v-btn></template>
+        <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" @click="loadSources">{{ t('retrySourceSearch') }}</v-btn></template>
       </v-alert>
 
-      <div class="skill-inventory-toolbar" role="search" :aria-label="$t('admin:skillAdmin.searchOrganizationSkills')">
+      <div class="skill-inventory-toolbar" role="search" :aria-label="t('searchOrganizationSkills')">
         <v-text-field
           v-model="search"
           class="skill-inventory-toolbar__search"
-          :label="$t('admin:skillAdmin.searchApprovedSkills')"
+          :label="t('searchApprovedSkills')"
           prepend-inner-icon="mdi-magnify"
           clearable
           hide-details
           density="comfortable"
         >
-          <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('admin:skillAdmin.clearSearch')" /></template>
+          <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="t('clearSearch')" /></template>
         </v-text-field>
         <v-select
           v-model="stateFilter"
           class="skill-inventory-toolbar__filter"
           :items="stateFilters"
-          :label="$t('admin:skillAdmin.policyState')"
+          :label="t('policyState')"
           hide-details
           density="comfortable"
         />
       </div>
 
       <div v-if="loaded" class="skill-inventory-summary" aria-live="polite">
-        <span><strong>{{ filteredSkills.length }}</strong> {{ $t('admin:skillAdmin.organizationSkills', { skillsCount: skills.length, interpolation: { escapeValue: false } }) }}</span>
-        <span class="skill-inventory-summary__legend"><v-icon size="16">mdi-check-decagram-outline</v-icon> {{ $t('admin:skillAdmin.exactApprovedRevisions') }}</span>
+        <span><strong>{{ filteredSkills.length }}</strong> {{ t('organizationSkills', { skillsCount: skills.length, interpolation: { escapeValue: false } }) }}</span>
+        <span class="skill-inventory-summary__legend"><v-icon size="16">mdi-check-decagram-outline</v-icon> {{ t('exactApprovedRevisions') }}</span>
       </div>
 
-      <div v-if="loading && !loaded" class="skill-loading" :aria-label="$t('admin:skillAdmin.loadingOrganizationSkills')" aria-busy="true">
+      <div v-if="loading && !loaded" class="skill-loading" :aria-label="t('loadingOrganizationSkills')" aria-busy="true">
         <v-skeleton-loader v-for="index in 3" :key="index" type="list-item-avatar-three-line" />
       </div>
-      <v-progress-linear v-else-if="loading" indeterminate :aria-label="$t('admin:skillAdmin.refreshingOrganizationSkills')" />
+      <v-progress-linear v-else-if="loading" indeterminate :aria-label="t('refreshingOrganizationSkills')" />
 
       <div v-if="loaded && filteredSkills.length" class="skill-inventory">
         <article v-for="skill in filteredSkills" :key="skill.id" class="skill-record" :aria-busy="actionBusyId.endsWith(skill.id)">
@@ -75,52 +75,52 @@
               <div class="skill-record__title-line">
                 <h3>{{ skill.name }}</h3>
                 <v-chip :color="skill.status === 'enabled' ? 'success' : undefined" size="x-small" variant="tonal" :prepend-icon="skill.status === 'enabled' ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline'">
-                  {{ skill.status === 'enabled' ? $t('admin:skillAdmin.enabledPolicy') : $t('admin:skillAdmin.disabledPolicy') }}
+                  {{ skill.status === 'enabled' ? t('enabledPolicy') : t('disabledPolicy') }}
                 </v-chip>
               </div>
               <code :title="skill.rootPath">{{ skill.rootPath }}</code>
             </div>
             <v-menu location="bottom end">
               <template #activator="{ props: menuProps }">
-                <v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" density="comfortable" :aria-label="$t('admin:skillAdmin.policyActions', { name: skill.name, interpolation: { escapeValue: false } })" />
+                <v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" density="comfortable" :aria-label="t('policyActions', { name: skill.name, interpolation: { escapeValue: false } })" />
               </template>
               <v-list density="comfortable">
-                <v-list-subheader>{{ $t('admin:skillAdmin.organizationPolicy') }}</v-list-subheader>
-                <v-list-item prepend-icon="mdi-file-eye-outline" :title="$t('admin:skillAdmin.reviewApprovedSource')" :disabled="Boolean(actionBusyId)" @click="openPreview(skill.id)" />
-                <v-list-item prepend-icon="mdi-account-multiple-outline" :title="$t('admin:skillAdmin.editAudience')" :disabled="Boolean(actionBusyId)" @click="openAccess(skill)" />
+                <v-list-subheader>{{ t('organizationPolicy') }}</v-list-subheader>
+                <v-list-item prepend-icon="mdi-file-eye-outline" :title="t('reviewApprovedSource')" :disabled="Boolean(actionBusyId)" @click="openPreview(skill.id)" />
+                <v-list-item prepend-icon="mdi-account-multiple-outline" :title="t('editAudience')" :disabled="Boolean(actionBusyId)" @click="openAccess(skill)" />
                 <v-divider />
-                <v-list-item v-if="skill.status === 'enabled'" prepend-icon="mdi-pause-circle-outline" :title="$t('admin:skillAdmin.disableOrganization')" base-color="warning" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, false)" />
-                <v-list-item v-else-if="skill.currentVersionId" prepend-icon="mdi-check-circle-outline" :title="$t('admin:skillAdmin.enableOrganization')" base-color="success" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, true)" />
+                <v-list-item v-if="skill.status === 'enabled'" prepend-icon="mdi-pause-circle-outline" :title="t('disableOrganization')" base-color="warning" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, false)" />
+                <v-list-item v-else-if="skill.currentVersionId" prepend-icon="mdi-check-circle-outline" :title="t('enableOrganization')" base-color="success" :disabled="Boolean(actionBusyId)" @click="setEnabled(skill.id, true)" />
               </v-list>
             </v-menu>
           </div>
-          <v-progress-linear v-if="actionBusyId.endsWith(skill.id)" indeterminate height="2" :aria-label="$t('admin:skillAdmin.updatingOrganizationSkill')" />
+          <v-progress-linear v-if="actionBusyId.endsWith(skill.id)" indeterminate height="2" :aria-label="t('updatingOrganizationSkill')" />
 
           <div class="skill-record__trust" :class="{ 'skill-record__trust--warning': skill.drifted || !skill.currentVersionId }">
             <v-icon size="17">{{ skill.drifted ? 'mdi-source-branch-sync' : skill.currentVersionId ? 'mdi-check-decagram-outline' : 'mdi-clock-outline' }}</v-icon>
             <span>
-              <strong>{{ skill.drifted ? $t('admin:skillAdmin.sourceDriftDetected') : skill.currentVersionId ? $t('admin:skillAdmin.approvedSource') : $t('admin:skillAdmin.approvalRequired') }}</strong>
-              <small>{{ skill.drifted ? $t('admin:skillAdmin.lastApprovedRevisionRemains') : skill.currentVersionId ? $t('admin:skillAdmin.onlyImmutableReviewedRevision') : $t('admin:skillAdmin.skillCannotEnabledBefore') }}</small>
+              <strong>{{ skill.drifted ? t('sourceDriftDetected') : skill.currentVersionId ? t('approvedSource') : t('approvalRequired') }}</strong>
+              <small>{{ skill.drifted ? t('lastApprovedRevisionRemains') : skill.currentVersionId ? t('onlyImmutableReviewedRevision') : t('skillCannotEnabledBefore') }}</small>
             </span>
           </div>
 
           <dl class="skill-record__metadata">
             <div>
-              <dt>{{ $t('admin:skillAdmin.provenance') }}</dt>
-              <dd><code :title="skill.approvedSourceRevision ?? $t('admin:skillAdmin.notApproved')">{{ skill.approvedSourceRevision ?? $t('admin:skillAdmin.notApproved') }}</code></dd>
+              <dt>{{ t('provenance') }}</dt>
+              <dd><code :title="skill.approvedSourceRevision ?? t('notApproved')">{{ skill.approvedSourceRevision ?? t('notApproved') }}</code></dd>
             </div>
             <div>
-              <dt>{{ $t('admin:skillAdmin.audienceScope') }}</dt>
-              <dd :title="skill.exposureMode === 'all_agent_users' ? $t('admin:skillAdmin.allAgentUsers') : groupNames(skill.groupIds)">{{ skill.exposureMode === 'all_agent_users' ? $t('admin:skillAdmin.allAgentUsers') : groupNames(skill.groupIds) }}</dd>
+              <dt>{{ t('audienceScope') }}</dt>
+              <dd :title="skill.exposureMode === 'all_agent_users' ? t('allAgentUsers') : groupNames(skill.groupIds)">{{ skill.exposureMode === 'all_agent_users' ? t('allAgentUsers') : groupNames(skill.groupIds) }}</dd>
             </div>
             <div>
-              <dt>{{ $t('admin:skillAdmin.effectiveState') }}</dt>
-              <dd>{{ skill.status === 'enabled' && skill.currentVersionId ? $t('admin:skillAdmin.available') : $t('admin:skillAdmin.unavailable') }}</dd>
+              <dt>{{ t('effectiveState') }}</dt>
+              <dd>{{ skill.status === 'enabled' && skill.currentVersionId ? t('available') : t('unavailable') }}</dd>
             </div>
           </dl>
 
           <button type="button" class="skill-record__review" :disabled="Boolean(actionBusyId)" @click="openPreview(skill.id)">
-            <span><v-icon size="17">mdi-code-tags</v-icon> {{ $t('admin:skillAdmin.detailsExactSource') }}</span>
+            <span><v-icon size="17">mdi-code-tags</v-icon> {{ t('detailsExactSource') }}</span>
             <v-icon size="17">mdi-arrow-right</v-icon>
           </button>
         </article>
@@ -128,17 +128,17 @@
 
       <div v-else-if="loaded && skills.length" class="skill-empty skill-empty--search">
         <span><v-icon size="30">mdi-text-search</v-icon></span>
-        <h3>{{ $t('admin:skillAdmin.noOrganizationSkillsMatch') }}</h3>
-        <p>{{ $t('admin:skillAdmin.tryAnotherNamePage') }}</p>
-        <v-btn variant="tonal" prepend-icon="mdi-filter-remove-outline" @click="clearFilters">{{ $t('admin:skillAdmin.clearFilters') }}</v-btn>
+        <h3>{{ t('noOrganizationSkillsMatch') }}</h3>
+        <p>{{ t('tryAnotherNamePage') }}</p>
+        <v-btn variant="tonal" prepend-icon="mdi-filter-remove-outline" @click="clearFilters">{{ t('clearFilters') }}</v-btn>
       </div>
 
       <div v-else-if="loaded" class="skill-empty">
         <span><v-icon size="34">mdi-book-plus-outline</v-icon></span>
-        <div class="skill-eyebrow">{{ $t('admin:skillAdmin.organizationLibrary') }}</div>
-        <h3>{{ $t('admin:skillAdmin.publishFirstTrustedSkill') }}</h3>
-        <p>{{ $t('admin:skillAdmin.mapPageTreeReview') }}</p>
-        <v-btn color="primary" prepend-icon="mdi-plus" :disabled="loading || Boolean(actionBusyId)" @click="openCreate">{{ $t('admin:skillAdmin.mapOrganizationSkill') }}</v-btn>
+        <div class="skill-eyebrow">{{ t('organizationLibrary') }}</div>
+        <h3>{{ t('publishFirstTrustedSkill') }}</h3>
+        <p>{{ t('mapPageTreeReview') }}</p>
+        <v-btn color="primary" prepend-icon="mdi-plus" :disabled="loading || Boolean(actionBusyId)" @click="openCreate">{{ t('mapOrganizationSkill') }}</v-btn>
       </div>
     </div>
   </section>
@@ -147,82 +147,82 @@
     <v-card class="skill-dialog">
       <div class="skill-dialog__header">
         <span><v-icon size="23">mdi-book-plus-outline</v-icon></span>
-        <div><div class="skill-eyebrow">{{ $t('admin:skillAdmin.organizationPolicy') }}</div><h2 id="skill-create-title">{{ $t('admin:skillAdmin.mapPageNativeSkill') }}</h2><p>{{ $t('admin:skillAdmin.chooseOneTrustedPage') }}</p></div>
+        <div><div class="skill-eyebrow">{{ t('organizationPolicy') }}</div><h2 id="skill-create-title">{{ t('mapPageNativeSkill') }}</h2><p>{{ t('chooseOneTrustedPage') }}</p></div>
         <v-spacer />
-        <v-btn icon="mdi-close" variant="text" :aria-label="$t('admin:skillAdmin.closeSkillEditor')" :disabled="actionBusyId === 'create'" @click="createOpen = false" />
+        <v-btn icon="mdi-close" variant="text" :aria-label="t('closeSkillEditor')" :disabled="actionBusyId === 'create'" @click="createOpen = false" />
       </div>
       <v-card-text class="skill-dialog__body">
         <v-form id="skill-create-form" @submit.prevent="createSkill">
           <section class="skill-form-section">
-            <div class="skill-form-section__heading"><span><v-icon size="19">mdi-file-search-outline</v-icon></span><div><h3>{{ $t('admin:skillAdmin.chooseSourcePage') }}</h3><p>{{ $t('admin:skillAdmin.searchUnmappedMarkdownPages') }}</p></div></div>
+            <div class="skill-form-section__heading"><span><v-icon size="19">mdi-file-search-outline</v-icon></span><div><h3>{{ t('chooseSourcePage') }}</h3><p>{{ t('searchUnmappedMarkdownPages') }}</p></div></div>
             <v-alert v-if="sourcesError" class="skill-error" type="warning" variant="tonal" density="compact" role="alert">
               {{ sourcesError }}
-              <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" :disabled="sourcesLoading" @click="loadSources">{{ $t('admin:skillAdmin.retrySourceSearch') }}</v-btn></template>
+              <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" :disabled="sourcesLoading" @click="loadSources">{{ t('retrySourceSearch') }}</v-btn></template>
             </v-alert>
-            <v-autocomplete v-model="selectedSource" v-model:search="sourceQuery" :items="sourcePages" item-title="title" item-value="id" return-object no-filter clearable :label="$t('admin:skillAdmin.rootPage')" :loading="sourcesLoading" :error-messages="sourcesError" :hint="sourceNamespace ? $t('admin:skillAdmin.createSourcePagesInside', { sourceNamespace, interpolation: { escapeValue: false } }) : $t('admin:skillAdmin.selectPageFillName')" persistent-hint @update:model-value="selectSource">
+            <v-autocomplete v-model="selectedSource" v-model:search="sourceQuery" :items="sourcePages" item-title="title" item-value="id" return-object no-filter clearable :label="t('rootPage')" :loading="sourcesLoading" :error-messages="sourcesError" :hint="sourceNamespace ? t('createSourcePagesInside', { sourceNamespace, interpolation: { escapeValue: false } }) : t('selectPageFillName')" persistent-hint @update:model-value="selectSource">
               <template #item="{ props: itemProps, internalItem }"><v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="`${internalItem.raw.locale}/${internalItem.raw.path}`" /></template>
-              <template #no-data><v-list-item :title="sourcesLoading ? $t('admin:skillAdmin.findingSourcePages') : sourcesError ? $t('admin:skillAdmin.sourcePagesCouldNot') : $t('admin:skillAdmin.noUnmappedSourcesFound')" :subtitle="sourcesError ? undefined : $t('admin:skillAdmin.createMarkdownPageSkill')" /></template>
-              <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('admin:skillAdmin.clearSourcePage')" /></template>
+              <template #no-data><v-list-item :title="sourcesLoading ? t('findingSourcePages') : sourcesError ? t('sourcePagesCouldNot') : t('noUnmappedSourcesFound')" :subtitle="sourcesError ? undefined : t('createMarkdownPageSkill')" /></template>
+              <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="t('clearSourcePage')" /></template>
             </v-autocomplete>
-            <p v-if="sourcesHaveMore" class="skill-source-note">{{ $t('admin:skillAdmin.showingFirst20Matches') }}</p>
-            <v-text-field v-model="create.name" class="mt-5" :rules="createNameRules" :label="$t('admin:skillAdmin.skillName')" :hint="$t('admin:skillAdmin.mustMatchFinalPart')" persistent-hint required />
+            <p v-if="sourcesHaveMore" class="skill-source-note">{{ t('showingFirst20Matches') }}</p>
+            <v-text-field v-model="create.name" class="mt-5" :rules="createNameRules" :label="t('skillName')" :hint="t('mustMatchFinalPart')" persistent-hint required />
           </section>
           <section class="skill-form-section">
-            <details class="skill-source-references"><summary>{{ $t('admin:skillAdmin.sourceReferencesOptionalAssets') }}</summary><p>{{ $t('admin:skillAdmin.sourceReferencesFilledSelection') }}</p><div class="skill-form-grid">
-              <v-text-field v-model.number="create.rootPageId" :label="$t('admin:skillAdmin.rootPageId')" type="number" min="1" :rules="createRootPageRules" :readonly="Boolean(selectedSource)" required />
-              <v-text-field v-model="create.assetFolderId" :label="$t('admin:skillAdmin.assetFolderIdOptional')" type="number" min="1" :rules="createAssetFolderRules" />
-              <v-text-field v-model="create.rootPath" class="skill-form-grid__wide" :label="$t('admin:skillAdmin.rootPagePath')" :placeholder="$t('admin:skillAdmin.handbookResearch')" :hint="$t('admin:skillAdmin.pathMustIdentifySelected')" persistent-hint :readonly="Boolean(selectedSource)" required />
+            <details class="skill-source-references"><summary>{{ t('sourceReferencesOptionalAssets') }}</summary><p>{{ t('sourceReferencesFilledSelection') }}</p><div class="skill-form-grid">
+              <v-text-field v-model.number="create.rootPageId" :label="t('rootPageId')" type="number" min="1" :rules="createRootPageRules" :readonly="Boolean(selectedSource)" required />
+              <v-text-field v-model="create.assetFolderId" :label="t('assetFolderIdOptional')" type="number" min="1" :rules="createAssetFolderRules" />
+              <v-text-field v-model="create.rootPath" class="skill-form-grid__wide" :label="t('rootPagePath')" :placeholder="t('handbookResearch')" :hint="t('pathMustIdentifySelected')" persistent-hint :readonly="Boolean(selectedSource)" required />
             </div></details>
           </section>
           <section class="skill-form-section">
-            <div class="skill-form-section__heading"><span><v-icon size="19">mdi-account-multiple-outline</v-icon></span><div><h3>{{ $t('admin:skillAdmin.audiencePolicy') }}</h3><p>{{ $t('admin:skillAdmin.skillsComplementNeverReplace') }}</p></div></div>
-            <v-select v-model="create.exposureMode" :items="exposureModes" :label="$t('admin:skillAdmin.available2')" />
-            <v-autocomplete v-if="create.exposureMode === 'groups'" v-model="create.groupIds" :items="groups" item-title="name" item-value="id" :label="$t('admin:skillAdmin.wikiGroups')" :hint="$t('admin:skillAdmin.selectLeastOneGroup')" persistent-hint multiple chips closable-chips />
+            <div class="skill-form-section__heading"><span><v-icon size="19">mdi-account-multiple-outline</v-icon></span><div><h3>{{ t('audiencePolicy') }}</h3><p>{{ t('skillsComplementNeverReplace') }}</p></div></div>
+            <v-select v-model="create.exposureMode" :items="exposureModes" :label="t('available2')" />
+            <v-autocomplete v-if="create.exposureMode === 'groups'" v-model="create.groupIds" :items="groups" item-title="name" item-value="id" :label="t('wikiGroups')" :hint="t('selectLeastOneGroup')" persistent-hint multiple chips closable-chips />
           </section>
         </v-form>
       </v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-alert v-if="createError" class="skill-dialog__error" type="error" variant="tonal" density="compact">{{ createError }}</v-alert><v-spacer /><v-btn :disabled="actionBusyId === 'create'" @click="createOpen = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check" form="skill-create-form" type="submit" :disabled="!createValid || Boolean(actionBusyId)" :loading="actionBusyId === 'create'">{{ $t('admin:skillAdmin.mapSkill') }}</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions"><v-alert v-if="createError" class="skill-dialog__error" type="error" variant="tonal" density="compact">{{ createError }}</v-alert><v-spacer /><v-btn :disabled="actionBusyId === 'create'" @click="createOpen = false">{{ t('common:actions.cancel') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check" form="skill-create-form" type="submit" :disabled="!createValid || Boolean(actionBusyId)" :loading="actionBusyId === 'create'">{{ t('mapSkill') }}</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
   <v-dialog v-model="accessOpen" max-width="40rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-access-title" :persistent="actionBusyId === 'access'">
     <v-card class="skill-dialog">
-      <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><div class="skill-eyebrow">{{ $t('admin:skillAdmin.audiencePolicy') }}</div><h2 id="skill-access-title">{{ policySkill ? $t('admin:skillAdmin.access', { name: policySkill.name, interpolation: { escapeValue: false } }) : $t('admin:skillAdmin.skillAccess') }}</h2><p>{{ $t('admin:skillAdmin.controlWhoReceivesOrganization') }}</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" :aria-label="$t('admin:skillAdmin.closeAudienceEditor')" :disabled="actionBusyId === 'access'" @click="accessOpen = false" /></div>
-      <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="skill-error" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" :label="$t('admin:skillAdmin.available2')" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" :label="$t('admin:skillAdmin.wikiGroups')" multiple chips closable-chips :hint="$t('admin:skillAdmin.usersReceiveSkillThrough')" persistent-hint /></v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn :disabled="actionBusyId === 'access'" @click="accessOpen = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || !policyDirty || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">{{ $t('admin:skillAdmin.saveAudiencePolicy') }}</v-btn></v-card-actions>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><div class="skill-eyebrow">{{ t('audiencePolicy') }}</div><h2 id="skill-access-title">{{ policySkill ? t('access', { name: policySkill.name, interpolation: { escapeValue: false } }) : t('skillAccess') }}</h2><p>{{ t('controlWhoReceivesOrganization') }}</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" :aria-label="t('closeAudienceEditor')" :disabled="actionBusyId === 'access'" @click="accessOpen = false" /></div>
+      <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="skill-error" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" :label="t('available2')" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" :label="t('wikiGroups')" multiple chips closable-chips :hint="t('usersReceiveSkillThrough')" persistent-hint /></v-card-text>
+      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn :disabled="actionBusyId === 'access'" @click="accessOpen = false">{{ t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || !policyDirty || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">{{ t('saveAudiencePolicy') }}</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
   <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-preview-title" :persistent="actionBusyId === 'approve' || actionBusyId === 'reject'" @after-enter="focusReviewHeading" @after-leave="onPreviewAfterLeave">
     <v-card v-if="preview" class="skill-dialog skill-review">
-      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">{{ $t('admin:skillAdmin.immutableOrganizationSource') }}</div><h2 id="skill-preview-title" ref="reviewHeading" class="skill-review__title" tabindex="-1" aria-describedby="skill-preview-description">{{ $t('admin:skillAdmin.review', { name: preview.name, interpolation: { escapeValue: false } }) }}</h2><p id="skill-preview-description">{{ $t('admin:skillAdmin.approveOnlyExactCandidate') }}</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" :aria-label="$t('admin:skillAdmin.closeSkillReview')" :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false" /></div>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">{{ t('immutableOrganizationSource') }}</div><h2 id="skill-preview-title" ref="reviewHeading" class="skill-review__title" tabindex="-1" aria-describedby="skill-preview-description">{{ t('review', { name: preview.name, interpolation: { escapeValue: false } }) }}</h2><p id="skill-preview-description">{{ t('approveOnlyExactCandidate') }}</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" :aria-label="t('closeSkillReview')" :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false" /></div>
       <v-card-text class="skill-dialog__body">
         <v-alert v-if="previewError" class="skill-error" type="error" variant="tonal" density="compact">{{ previewError }}</v-alert>
-        <v-alert v-if="preview.previousSkillMarkdown === null" class="skill-boundary" type="info" variant="tonal">{{ $t('admin:skillAdmin.firstCandidateRevisionNo') }}</v-alert>
+        <v-alert v-if="preview.previousSkillMarkdown === null" class="skill-boundary" type="info" variant="tonal">{{ t('firstCandidateRevisionNo') }}</v-alert>
         <dl class="review-metadata">
-          <div><dt>{{ $t('admin:skillAdmin.contentHash') }}</dt><dd><code :title="preview.contentHash">{{ preview.contentHash }}</code></dd></div>
-          <div><dt>{{ $t('admin:skillAdmin.sourceRevision') }}</dt><dd><code :title="preview.sourceRevision">{{ preview.sourceRevision }}</code></dd></div>
-          <div><dt>{{ $t('admin:skillAdmin.sourceUpdated') }}</dt><dd><time :datetime="preview.sourceUpdatedAt">{{ helpers.formatMoment(preview.sourceUpdatedAt, 'L LT') }}</time></dd></div>
-          <div><dt>{{ $t('admin:skillAdmin.bundleSize') }}</dt><dd>{{ $t('admin:skillAdmin.bytes', { totalBytes: preview.totalBytes, interpolation: { escapeValue: false } }) }}</dd></div>
+          <div><dt>{{ t('contentHash') }}</dt><dd><code :title="preview.contentHash">{{ preview.contentHash }}</code></dd></div>
+          <div><dt>{{ t('sourceRevision') }}</dt><dd><code :title="preview.sourceRevision">{{ preview.sourceRevision }}</code></dd></div>
+          <div><dt>{{ t('sourceUpdated') }}</dt><dd><time :datetime="preview.sourceUpdatedAt">{{ helpers.formatMoment(preview.sourceUpdatedAt, 'L LT') }}</time></dd></div>
+          <div><dt>{{ t('bundleSize') }}</dt><dd>{{ t('bytes', { totalBytes: preview.totalBytes, interpolation: { escapeValue: false } }) }}</dd></div>
         </dl>
-        <div v-if="preview.previousSkillMarkdown !== null" class="source-heading"><div><span>{{ $t('admin:skillAdmin.changeReview') }}</span><h3>{{ $t('admin:skillAdmin.candidateComparedApprovedRevision') }}</h3></div><v-chip size="x-small" variant="tonal" color="primary">{{ $t('admin:skillAdmin.sideBySide') }}</v-chip></div>
+        <div v-if="preview.previousSkillMarkdown !== null" class="source-heading"><div><span>{{ t('changeReview') }}</span><h3>{{ t('candidateComparedApprovedRevision') }}</h3></div><v-chip size="x-small" variant="tonal" color="primary">{{ t('sideBySide') }}</v-chip></div>
         <v-alert v-if="preview.previousSkillMarkdown !== null && reviewLinesTruncated" class="skill-boundary review-diff-notice" type="info" variant="tonal" density="compact">
-          {{ $t('admin:skillAdmin.showingFirstLinesRead', { MAX_REVIEW_LINES, reviewLineCount, interpolation: { escapeValue: false } }) }}
+          {{ t('showingFirstLinesRead', { MAX_REVIEW_LINES, reviewLineCount, interpolation: { escapeValue: false } }) }}
         </v-alert>
-        <div v-if="preview.previousSkillMarkdown !== null" class="review-diff" role="table" :aria-label="$t('admin:skillAdmin.skillRevisionChanges')">
-          <div class="review-diff__header" role="row"><span role="columnheader">{{ $t('admin:skillAdmin.candidateRevision') }}</span><span role="columnheader">{{ $t('admin:skillAdmin.previouslyApproved') }}</span></div>
+        <div v-if="preview.previousSkillMarkdown !== null" class="review-diff" role="table" :aria-label="t('skillRevisionChanges')">
+          <div class="review-diff__header" role="row"><span role="columnheader">{{ t('candidateRevision') }}</span><span role="columnheader">{{ t('previouslyApproved') }}</span></div>
           <div v-for="line in reviewLines" :key="line.key" class="review-diff__row" :class="`review-diff__row--${line.kind}`" role="row">
             <code role="cell">{{ line.candidate }}</code><code role="cell">{{ line.previous }}</code>
           </div>
         </div>
-        <div class="source-heading"><div><span>{{ $t('admin:skillAdmin.candidate') }}</span><h3>{{ $t('admin:skillAdmin.skillMd') }}</h3></div><v-chip size="x-small" variant="tonal" color="primary">{{ $t('admin:skillAdmin.exactSource') }}</v-chip></div>
+        <div class="source-heading"><div><span>{{ t('candidate') }}</span><h3>{{ t('skillMd') }}</h3></div><v-chip size="x-small" variant="tonal" color="primary">{{ t('exactSource') }}</v-chip></div>
         <pre class="source-view" tabindex="0">{{ preview.skillMarkdown }}</pre>
         <template v-if="preview.previousSkillMarkdown !== null">
-          <div class="source-heading"><div><span>{{ $t('admin:skillAdmin.previouslyApproved') }}</span><h3>{{ $t('admin:skillAdmin.skillMd') }}</h3></div></div>
+          <div class="source-heading"><div><span>{{ t('previouslyApproved') }}</span><h3>{{ t('skillMd') }}</h3></div></div>
           <pre class="source-view" tabindex="0">{{ preview.previousSkillMarkdown }}</pre>
         </template>
       </v-card-text>
-      <v-card-actions class="skill-dialog__actions skill-dialog__actions--review"><v-btn color="error" variant="text" prepend-icon="mdi-close-octagon-outline" :loading="actionBusyId === 'reject'" :disabled="Boolean(actionBusyId)" @click="review(false)">{{ $t('admin:skillAdmin.rejectCandidate') }}</v-btn><v-spacer /><v-btn :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="actionBusyId === 'approve'" :disabled="Boolean(actionBusyId)" @click="review(true)">{{ $t('admin:skillAdmin.approveExactRevision') }}</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions skill-dialog__actions--review"><v-btn color="error" variant="text" prepend-icon="mdi-close-octagon-outline" :loading="actionBusyId === 'reject'" :disabled="Boolean(actionBusyId)" @click="review(false)">{{ t('rejectCandidate') }}</v-btn><v-spacer /><v-btn :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false">{{ t('common:actions.cancel') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="actionBusyId === 'approve'" :disabled="Boolean(actionBusyId)" @click="review(true)">{{ t('approveExactRevision') }}</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 </template>
@@ -235,7 +235,7 @@ import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
 import { helpers } from '../../helpers/index.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
-const t = useTranslate()
+const t = useTranslate('admin:skillAdmin')
 const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown } = useDisplay()
 const SourceSchema = z.object({ id: z.number().int().positive(), title: z.string(), path: z.string(), locale: z.string() })
@@ -271,7 +271,7 @@ const loadSources = async () => {
     sourceNamespace.value = result.namespace
     sourcesHaveMore.value = result.hasMore
   } catch (value) {
-    if (!disposed && !controller.signal.aborted && sourceController === controller) sourcesError.value = t('admin:skillAdmin.sourcePagesCouldNot')
+    if (!disposed && !controller.signal.aborted && sourceController === controller) sourcesError.value = t('sourcePagesCouldNot')
   } finally {
     if (sourceController === controller) {
       sourcesLoading.value = false
@@ -371,21 +371,21 @@ const reviewLines = computed(() => {
   })
 })
 const exposureModes = [
-  { title: t('admin:skillAdmin.everyoneDefault'), value: 'all_agent_users' },
-  { title: t('admin:skillAdmin.selectedWikiGroups'), value: 'groups' }
+  { title: t('everyoneDefault'), value: 'all_agent_users' },
+  { title: t('selectedWikiGroups'), value: 'groups' }
 ]
 const stateFilters = [
-  { title: t('admin:skillAdmin.allPolicyStates'), value: 'all' },
-  { title: t('admin:skillAdmin.enabled'), value: 'enabled' },
-  { title: t('admin:skillAdmin.disabled'), value: 'disabled' },
-  { title: t('admin:skillAdmin.needsReview'), value: 'review' }
+  { title: t('allPolicyStates'), value: 'all' },
+  { title: t('enabled'), value: 'enabled' },
+  { title: t('disabled'), value: 'disabled' },
+  { title: t('needsReview'), value: 'review' }
 ]
 const createNameValid = computed(() => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(create.name.trim()))
 const createRootPageValid = computed(() => Number.isInteger(create.rootPageId) && create.rootPageId > 0)
 const createAssetFolderValid = computed(() => create.assetFolderId === '' || (Number.isInteger(Number(create.assetFolderId)) && Number(create.assetFolderId) > 0))
-const createNameRules = [(): true | string => createNameValid.value || t('admin:skillAdmin.useLowercaseLettersNumbers')]
-const createRootPageRules = [(): true | string => createRootPageValid.value || t('admin:skillAdmin.enterPositiveWholeNumber')]
-const createAssetFolderRules = [(): true | string => createAssetFolderValid.value || t('admin:skillAdmin.enterPositiveWholeNumber2')]
+const createNameRules = [(): true | string => createNameValid.value || t('useLowercaseLettersNumbers')]
+const createRootPageRules = [(): true | string => createRootPageValid.value || t('enterPositiveWholeNumber')]
+const createAssetFolderRules = [(): true | string => createAssetFolderValid.value || t('enterPositiveWholeNumber2')]
 const createValid = computed(() => createNameValid.value && createRootPageValid.value && createAssetFolderValid.value && create.rootPath.trim().split('/').at(-1) === create.name.trim() && (create.exposureMode !== 'groups' || create.groupIds.length > 0))
 
 const request = async (url: string, init: RequestInit = {}, signal?: AbortSignal): Promise<unknown> => {
@@ -402,7 +402,7 @@ const request = async (url: string, init: RequestInit = {}, signal?: AbortSignal
   })
   if (!response.ok) {
     const message: { message?: string; error?: string } = await response.json().then(value => z.object({ message: z.string().optional(), error: z.string().optional() }).passthrough().parse(value)).catch(() => ({}))
-    throw new Error(message.message ?? message.error ?? t('admin:skillAdmin.requestFailedStatus', { status: response.status, interpolation: { escapeValue: false } }))
+    throw new Error(message.message ?? message.error ?? t('requestFailedStatus', { status: response.status, interpolation: { escapeValue: false } }))
   }
   return response.status === 204 ? null : response.json()
 }
@@ -427,7 +427,7 @@ const reload = async (): Promise<void> => {
     loaded.value = true
   } catch (requestError: unknown) {
     if (generation !== reloadGeneration || controller.signal.aborted) return
-    error.value = requestError instanceof Error ? requestError.message : t('admin:skillAdmin.unableLoadSkills')
+    error.value = requestError instanceof Error ? requestError.message : t('unableLoadSkills')
   } finally {
     if (generation === reloadGeneration) {
       loading.value = false
@@ -449,11 +449,11 @@ const createSkill = async (): Promise<void> => {
   try {
     await request('/_api/agents/admin/skills', { method: 'POST', body: JSON.stringify({ name: create.name.trim(), rootPageId: create.rootPageId, rootPath: create.rootPath.trim(), assetFolderId: create.assetFolderId === '' ? null : Number(create.assetFolderId), exposureMode: create.exposureMode, groupIds: create.exposureMode === 'groups' ? create.groupIds : [] }) })
     createOpen.value = false; await reload()
-  } catch (requestError: unknown) { createError.value = requestError instanceof Error ? requestError.message : t('admin:skillAdmin.unableMapSkill') }
+  } catch (requestError: unknown) { createError.value = requestError instanceof Error ? requestError.message : t('unableMapSkill') }
   finally { actionBusyId.value = '' }
 }
 const groupsById = computed(() => new Map(groups.value.map(group => [group.id, group.name])))
-const groupNames = (groupIds: readonly number[]): string => groupIds.map(id => groupsById.value.get(id) ?? t('admin:skillAdmin.group', { id, interpolation: { escapeValue: false } })).join(', ')
+const groupNames = (groupIds: readonly number[]): string => groupIds.map(id => groupsById.value.get(id) ?? t('group', { id, interpolation: { escapeValue: false } })).join(', ')
 const enabledSkillCount = computed(() => skills.value.filter(skill => skill.status === 'enabled').length)
 const compareNames = (left: string, right: string): number => {
   const leftName = left.toLowerCase()
@@ -470,7 +470,7 @@ const filteredSkills = computed(() => {
       if (stateFilter.value === 'disabled' && skill.status !== 'disabled') return false
       if (stateFilter.value === 'review' && !skill.drifted && skill.currentVersionId) return false
       if (!query) return true
-      const audience = skill.exposureMode === 'all_agent_users' ? t('admin:skillAdmin.allAgentUsersEveryone') : groupNames(skill.groupIds)
+      const audience = skill.exposureMode === 'all_agent_users' ? t('allAgentUsersEveryone') : groupNames(skill.groupIds)
       return [skill.name, skill.rootPath, skill.approvedSourceRevision ?? '', skill.liveSourceRevision, audience]
         .some(value => value.toLowerCase().includes(query))
     })
@@ -494,7 +494,7 @@ const saveAccess = async (): Promise<void> => {
   try {
     await request(`/_api/agents/admin/skills/${skill.id}/policy`, { method: 'POST', body: JSON.stringify({ assetFolderId: skill.assetFolderId, exposureMode: policy.exposureMode, groupIds: policy.exposureMode === 'groups' ? policy.groupIds : [] }) })
     accessOpen.value = false; await reload()
-  } catch (requestError: unknown) { accessError.value = requestError instanceof Error ? requestError.message : t('admin:skillAdmin.unableChangeSkillAccess') }
+  } catch (requestError: unknown) { accessError.value = requestError instanceof Error ? requestError.message : t('unableChangeSkillAccess') }
   finally { actionBusyId.value = '' }
 }
 const openPreview = async (skillId: string): Promise<void> => {
@@ -510,7 +510,7 @@ const openPreview = async (skillId: string): Promise<void> => {
   }
   catch (requestError: unknown) {
     if (disposed || controller.signal.aborted) return
-    previewError.value = requestError instanceof Error ? requestError.message : t('admin:skillAdmin.unablePreviewSkill')
+    previewError.value = requestError instanceof Error ? requestError.message : t('unablePreviewSkill')
     error.value = previewError.value
   } finally {
     if (previewController === controller) previewController = null
@@ -526,14 +526,14 @@ const review = async (approved: boolean): Promise<void> => {
   try {
     await request(`/_api/agents/admin/skills/${preview.value.skillId}/${approved ? 'approve' : 'reject'}`, { method: 'POST', body: JSON.stringify({ expectedContentHash: preview.value.contentHash, expectedSourceRevision: preview.value.sourceRevision }) })
     previewOpen.value = false; await reload()
-  } catch (requestError: unknown) { previewError.value = requestError instanceof Error ? requestError.message : t('admin:skillAdmin.unableReviewSkill') }
+  } catch (requestError: unknown) { previewError.value = requestError instanceof Error ? requestError.message : t('unableReviewSkill') }
   finally { actionBusyId.value = '' }
 }
 const setEnabled = async (skillId: string, enabled: boolean): Promise<void> => {
   if (actionBusyId.value) return
   actionBusyId.value = `enabled:${skillId}`; error.value = ''
   try { await request(`/_api/agents/admin/skills/${skillId}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await reload() }
-  catch (requestError: unknown) { error.value = requestError instanceof Error ? requestError.message : t('admin:skillAdmin.unableChangeSkillState') }
+  catch (requestError: unknown) { error.value = requestError instanceof Error ? requestError.message : t('unableChangeSkillState') }
   finally { actionBusyId.value = '' }
 }
 
