@@ -4,8 +4,33 @@ This continues beyond the shared shell refresh. Each destination needs a review 
 
 The visual direction is an editorial workspace: quiet surfaces, concise context, prominent task controls, readable records and progressive disclosure of advanced settings. Configuration state must be distinguishable from observed operational health.
 
+## Admin-only Peccable refinement — 7 October 2026
 
-## Current handoff status — 7 September 2026
+Development Sprint: the existing editorial identity and backend contracts remain intact. The review covered 119 inventory units, including all 33 routed Admin destinations, their shared dependencies, the GraphQL explorer and inactive legacy surfaces. Non-Admin reader/profile and shared Personal Ask behavior was retained; inactive Stats was not promoted into a new feature.
+
+### Reusable implementation conventions
+
+- `admin-workspace.scss` supplies opt-in draft-bar and Agent-control mixins without emitting global styles. Draft actions remain available across configuration sub-tabs, with a static mobile treatment where a sticky footer would obstruct the task.
+- `admin-secret-field.vue` replaces the separate Mail and Logging wrappers. Keep, replace and clear remain explicit typed actions; only entered replacement text can be revealed. Multiline DKIM input, unavailable legacy destinations and review reasons retain their existing limits and locks.
+- Dialog defaults, inactive-field placeholder suppression, scalable helper line-height and wrapping action rows are scoped to Admin content or `admin-dialog`. Do not copy these defaults into reader/profile dialogs.
+- `useTranslate` accepts an optional namespace prefix while preserving the default translator identity, explicit namespaces and interpolation options. Localize presentation, not action IDs, publication-state values or canonical confirmation tokens. Vue-bound text and accessible names containing interpolated user data must use the existing literal-text interpolation pattern rather than double HTML escaping.
+- Saved baselines and reviewed fingerprints are independent of drafts. Cancel must not manufacture dirtiness; refreshing evidence must not silently rebase a dirty review. Search configuration reload cancels even a visited, hidden query evaluator, and late responses/finalizers cannot repopulate cancelled evidence or end a newer request.
+- Media editor closing preserves busy and dirty guards, nested Keep editing behavior and opener focus. Only `MEDIA_PROVIDER_REVISION_CHANGED` identifies a stale media revision; a different runtime 409 is not a stale-edit instruction.
+- Atlas Tree/Radial links use the actual Vuetify border-color variable. Radial bounds are measured, padded and centered in a square so a narrow single-branch hierarchy cannot produce an enormous SVG.
+- An API-key replacement may deliberately use different, explicitly selected authority. Explain an unavailable existing grant before opening; retain the child wizard's unselected scope/group and independent issuance checks. Do not disable this supported flow merely because the old grant cannot be delegated.
+
+### Checks and maintained runtime
+
+- Changed-path coverage passed in 27 isolated ordinary Bun test files, followed by the two affected API/page test files after the final geometry/grant correction. Native PostgreSQL test branches were not exercised by these ordinary runs. Client type checking passed after the last accessible-name correction; unchanged server source had already passed its type check.
+- The affected-service build and all bundle budgets passed. Final aggregate JavaScript is 13,671.0 KiB against the existing 13,678.0 KiB limit; no budget was raised.
+- All 33 route landings were captured and inspected at CSS 1440×1000 and 390×844 on revision `1e6345f26`, with no horizontal document overflow or stuck loading state. Targeted light/dark, normal/reduced-motion, keyboard, error/retry, draft-discard and 200%-text checks covered the changed flows. The final literal-name binding was additionally exercised on the deployed revision below.
+- `wiki-tailnet` runs `local/tsepistle:admin-peccable-20261007-accessible-names`, feature revision `830ba5d401a207eb4faf4b5b32c2bca0e9d8ec55`. The tailnet smoke used the real 16-page Atlas, mobile zoom/Reset view/connection directory, and the existing media editor's credential/grant draft and exact named-opener recovery. No content, provider, credential or configuration operation was applied by these maintained-runtime checks.
+- Only the application container was replaced. PostgreSQL identity/start time, environment entries, user, mounts, ports, restart policy and networks were preserved. Writable cache/uploads directories were copied and restored with matching hashes, ownership and modes before startup. The existing `server/core/system.ts` startup purge still clears transient content cache; the original transient files remain in the private rollback backup.
+- Verification limits: successful provider writes/live verification, externally delivered mail/webhooks, destructive maintenance, owner-dialog states requiring a private-page change and managed-TLS stale-policy transitions were not exercised natively. Global lint remains blocked by the pre-existing unsafe-finally error in `server/test/agents/media-decoding.test.ts:636` and six unrelated Node-import informational findings. An intentionally induced Search fetch failure can briefly place its dismissible global notification over the mobile Save control; settled Save/Reset controls remain available.
+
+
+
+## Historical handoff status — 7 September 2026
 
 **The release handoff recorded below is historical context for earlier milestones, not evidence for this working-tree source.** The unified tag experience remains a source/preview change pending coordinated browser validation; no production deployment is authorized or claimed by this ledger update. Existing authorization, migration, backup, and release controls remain binding.
 
