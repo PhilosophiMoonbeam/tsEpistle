@@ -25,6 +25,7 @@
               <p>{{ key.grant.groupId === 1 ? $t('admin:api.keyCarriesSystemAdministrator') : !key.grant.groupId ? $t('admin:api.issuedGrantCouldNot') : $t('admin:api.groupsCurrentPermissionsPage') }}</p>
               <p v-if="keyState(key) === 'active' && !enabled" class="api-note">{{ $t('admin:api.credentialHasNotExpired') }}</p>
               <p v-if="!canIssueKey" class="api-note">{{ $t('admin:apiCreate.noDelegableAuthority') }}</p>
+              <p v-else-if="!canRecreateGrant(key)" class="api-note">{{ $t('admin:apiCreate.replacementAuthorityUnavailable') }}</p>
               <div class="api-record-actions"><v-btn variant="outlined" :disabled="adminApiBusy || !canIssueKey" prepend-icon="mdi-key-plus" @click="newKey(key)">{{ $t('admin:api.createReplacement') }}</v-btn><v-btn v-if="!key.isRevoked && key.canRevoke" variant="text" color="error" :disabled="adminApiBusy" @click="revoke(key)">{{ $t('admin:api.revokeKey') }}</v-btn></div>
             </div>
           </details>
@@ -116,6 +117,9 @@ export default {
       return this.$t(`admin:api.${labels[this.keyState(key)]}`)
     },
     formatDate (date: string): string { return Number.isFinite(Date.parse(date)) ? new Date(date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : this.$t('admin:api.unknown') },
+    canRecreateGrant (key: AdminApiKey): boolean {
+      return key.grant.groupId === 1 ? this.createFullAccess : Boolean(key.grant.groupId && this.assignableGroups.some(group => group.id === key.grant.groupId))
+    },
     groupName (key: AdminApiKey): string {
       if (key.grant.groupId === 1) return this.$t('admin:api.systemAdministrator')
       if (!key.grant.groupId) return this.$t('admin:api.issuedPermissionsUnavailable')
