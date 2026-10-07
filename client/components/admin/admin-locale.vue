@@ -313,7 +313,7 @@
                 <span class="locale-code" aria-hidden="true">{{ locale.code }}</span>
                 <div class="locale-package-name">
                   <h3>{{ locale.nativeName }}</h3>
-                  <p>{{ locale.name }} · {{ locale.isRTL ? 'RTL' : 'LTR' }}</p>
+                  <p>{{ locale.name }} · {{ locale.isRTL ? $t('admin:locale.rightLeft') : $t('admin:locale.leftRight') }}</p>
                   <span v-if="locale.isInstalled" class="locale-badge">{{
                     updateAvailable(locale) ? $t('admin:locale.updateAvailable') : $t('admin:locale.installed')
                   }}</span>
@@ -326,7 +326,7 @@
                 <v-btn
                   :variant="locale.isInstalled ? 'text' : 'tonal'"
                   :disabled="!canOperate || !locale.availableRemotely"
-                  :aria-label="$t('admin:locale.package', { isInstalled: locale.isInstalled ? 'Refresh' : 'Install', name: locale.name, interpolation: { escapeValue: false } })"
+                  :aria-label="$t('admin:locale.package', { isInstalled: locale.isInstalled ? $t('admin:locale.refreshPackage') : $t('admin:locale.install'), name: locale.name, interpolation: { escapeValue: false } })"
                   @click="openOperation('install', locale)"
                   >{{ locale.isInstalled ? $t('admin:locale.refreshPackage') : $t('admin:locale.install') }}</v-btn
                 >
@@ -643,7 +643,7 @@ const uploadLocales = computed(() =>
     .filter((locale) => locale.code !== 'en')
     .map((locale) => ({
       code: locale.code,
-      displayName: `${locale.nativeName} (${locale.code}) · ${locale.isInstalled ? 'installed' : 'catalog'}`,
+      displayName: `${locale.nativeName} (${locale.code}) · ${locale.isInstalled ? t('admin:locale.installed') : t('admin:locale.languageCatalog')}`,
     })),
 )
 const canUploadLocalFile = computed(() =>

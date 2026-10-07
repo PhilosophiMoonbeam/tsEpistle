@@ -65,7 +65,7 @@
             <div class="agent-overview__intro">
               <div class="agent-panel__eyebrow">{{ $t('admin:agentAdmin.knowledgeConversation') }}</div>
               <h2>{{ $t('admin:agentAdmin.modelsExpertiseAccess') }}</h2>
-              <p>Users work with the Agent through Skills, MCP Tools and Memories—not a model picker. Administrators govern generative models, access grants, the default, decision classification and optional automatic routing.</p>
+              <p>{{ $t('admin:agentAdmin.usersWorkThroughSkills') }}</p>
             </div>
             <v-alert v-if="resourceState.runtime.error || resourceState.profiles.error" type="warning" variant="tonal" role="alert">
               {{ resourceState.runtime.error || resourceState.profiles.error }}
@@ -74,24 +74,24 @@
             <v-skeleton-loader v-if="!dataLoaded && loading" type="article, list-item-three-line" />
             <div v-else-if="dataLoaded" class="agent-overview__grid">
               <section class="agent-setup" aria-labelledby="agent-setup-title">
-                <h3 id="agent-setup-title">Administrator setup path</h3>
-                <p class="agent-overview__caption">Follow the core model setup first, then opt into classification, routing and external resources. Status is from the latest successful configuration read, not a live service guarantee.</p>
+                <h3 id="agent-setup-title">{{ $t('admin:agentAdmin.administratorSetupPath') }}</h3>
+                <p class="agent-overview__caption">{{ $t('admin:agentAdmin.setupConfigurationReadHelp') }}</p>
                 <button v-for="step in setupSteps" :key="step.title" class="agent-setup__step" type="button" @click="tab = step.section">
                   <v-icon :icon="step.complete ? 'mdi-check-circle-outline' : step.optional ? 'mdi-circle-outline' : 'mdi-alert-circle-outline'" :color="step.complete ? 'success' : step.optional ? undefined : 'warning'" aria-hidden="true" />
                   <span><strong>{{ step.title }}</strong><small>{{ step.description }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" />
                 </button>
-                <p class="agent-overview__caption"><router-link to="/a/groups">Manage Wiki groups and Agent permissions</router-link>. Model grants, MCP grants and personal endpoint creation permission are separate boundaries; granting one does not grant the others.</p>
+                <p class="agent-overview__caption"><router-link to="/a/groups">{{ $t('admin:agentAdmin.manageGroupsAgentPermissions') }}</router-link> {{ $t('admin:agentAdmin.separateAccessBoundaries') }}</p>
               </section>
               <aside class="agent-default">
-                <div class="agent-panel__eyebrow">Administrator generative default</div>
+                <div class="agent-panel__eyebrow">{{ $t('admin:agentAdmin.administratorGenerativeDefault') }}</div>
                 <h3>{{ defaultProvider?.displayName || $t('admin:agentAdmin.noDefaultSelected') }}</h3>
                 <code v-if="defaultProvider">{{ defaultProvider.model }}</code>
-                <p>{{ defaultProvider ? 'The authorized administrator default starts new conversations. Automatic routing may use other eligible, group-authorized models between turns. Every run still checks current access, quotas and deployment policy.' : 'Configure a verified, enabled model with credentials and all-Agent-user access as the administrator default before starting new conversations.' }}</p>
+                <p>{{ defaultProvider ? $t('admin:agentAdmin.administratorDefaultHelp') : $t('admin:agentAdmin.configureAdministratorDefaultHelp') }}</p>
                 <v-btn variant="tonal" color="primary" append-icon="mdi-arrow-right" @click="tab = 'profiles'">{{ $t('admin:agentAdmin.manageProviders') }}</v-btn>
               </aside>
               <section class="agent-pathways" :aria-label="$t('admin:agentAdmin.extendAgent')">
-                <button type="button" @click="tab = 'skills'"><v-icon icon="mdi-book-open-variant-outline" aria-hidden="true" /><span><strong>Curate Skills & knowledge resources</strong><small>{{ runtime?.skillsEnabled ? 'Skills enabled; review approved Wiki sources and releases.' : 'Skills paused by deployment policy; prepare approved expertise here.' }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
-                <button type="button" @click="tab = 'tools'"><v-icon icon="mdi-connection" aria-hidden="true" /><span><strong>Review Wiki tools & incoming MCP</strong><small>Inspect governed Wiki capabilities. Incoming Wiki MCP is separate from external endpoints and resources.</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
+                <button type="button" @click="tab = 'skills'"><v-icon icon="mdi-book-open-variant-outline" aria-hidden="true" /><span><strong>{{ $t('admin:agentAdmin.curateSkillsKnowledgeResources') }}</strong><small>{{ runtime?.skillsEnabled ? $t('admin:agentAdmin.skillsEnabledReviewSources') : $t('admin:agentAdmin.skillsPausedPrepareExpertise') }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
+                <button type="button" @click="tab = 'tools'"><v-icon icon="mdi-connection" aria-hidden="true" /><span><strong>{{ $t('admin:agentAdmin.reviewWikiToolsIncomingMcp') }}</strong><small>{{ $t('admin:agentAdmin.incomingMcpSeparateHelp') }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
                 <button type="button" @click="tab = 'memory'"><v-icon icon="mdi-brain" aria-hidden="true" /><span><strong>{{ $t('admin:agentAdmin.understandWhatPersists') }}</strong><small>{{ $t('admin:agentAdmin.knowledgeSourcesPersonalMemory') }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" /></button>
               </section>
             </div>
@@ -107,7 +107,7 @@
           <AgentDecisionProviders :csrf-token="csrfToken" :refresh-key="decisionRefreshKey" @state="decisionProviders = $event" />
         </v-window-item>
         <v-window-item id="agent-panel-external-mcp" value="external-mcp" role="tabpanel" aria-labelledby="agent-tab-external-mcp" eager>
-          <AgentExternalMcpAdmin :csrf-token="csrfToken" :groups="groups" :groups-error="resourceState.groups.error" :refresh-key="mcpRefreshKey" @state="externalMcpState = $event" @refresh-groups="refreshResources(['groups'])" />
+          <AgentExternalMcpAdmin :csrf-token="csrfToken" :groups="groups" :groups-loading="resourceState.groups.loading" :groups-error="resourceState.groups.error" :refresh-key="mcpRefreshKey" @state="externalMcpState = $event" @refresh-groups="refreshResources(['groups'])" />
         </v-window-item>
         <v-window-item id="agent-panel-routing" value="routing" role="tabpanel" aria-labelledby="agent-tab-routing" eager>
           <AgentRoutingPolicy :csrf-token="csrfToken" :profiles="profiles" :profiles-error="resourceState.profiles.error" :refresh-key="routingRefreshKey" @state="routingState = $event" @changed="decisionRefreshKey++" @navigate="tab = $event" @refresh-profiles="refreshResources(['profiles'])" />
@@ -151,10 +151,15 @@
               </div>
               <div class="agent-panel__state">
                 <span>{{ $t('admin:agentAdmin.deploymentControlled') }}</span>
-                <v-chip variant="tonal" :color="loading ? undefined : !runtime ? 'error' : runtime.enabled ? 'success' : 'warning'" size="small">{{ loading ? $t('admin:agentAdmin.loading') : !runtime ? $t('admin:agentAdmin.unavailable') : runtime.enabled ? $t('admin:agentAdmin.active') : $t('admin:agentAdmin.paused') }}</v-chip>
+                <v-chip variant="tonal" :color="resourceState.runtime.loading ? undefined : resourceState.runtime.error ? 'error' : !runtime ? 'error' : runtime.enabled ? 'success' : 'warning'" size="small">{{ resourceState.runtime.loading ? $t('admin:agentAdmin.loading') : resourceState.runtime.error ? runtime ? $t('admin:agentAdmin.stale') : $t('admin:agentAdmin.unavailable') : !runtime ? $t('admin:agentAdmin.unavailable') : runtime.enabled ? $t('admin:agentAdmin.active') : $t('admin:agentAdmin.paused') }}</v-chip>
               </div>
             </div>
-            <v-progress-linear v-if="loading" indeterminate :aria-label="$t('admin:agentAdmin.loadingRuntimePolicy')" />
+            <v-alert v-if="resourceState.runtime.error" type="warning" variant="tonal" role="alert" class="ma-4">
+              <p v-if="runtime">{{ $t('admin:agentAdmin.refreshFailedShowingLast') }}</p>
+              {{ resourceState.runtime.error }}
+              <template #append><v-btn variant="text" :disabled="loading || Boolean(actionBusyKey)" @click="load">{{ $t('admin:agentAdmin.refreshStatus') }}</v-btn></template>
+            </v-alert>
+            <v-progress-linear v-if="resourceState.runtime.loading" indeterminate :aria-label="$t('admin:agentAdmin.loadingRuntimePolicy')" />
             <div v-else-if="runtime" class="agent-panel__body">
               <v-alert type="info" variant="tonal" density="compact" class="mb-5">{{ $t('admin:agentAdmin.killSwitchesDeploymentConfiguration') }}</v-alert>
               <section class="runtime-section">
@@ -193,6 +198,11 @@
               </section>
               <aside class="metrics-note"><span><v-icon icon="mdi-chart-timeline-variant-shimmer" size="20" aria-hidden="true" /></span><div><strong>{{ $t('admin:agentAdmin.metricsHealthRemainIsolated') }}</strong><p>{{ $t('admin:agentAdmin.runProposalArtifactUsage') }} <code>/healthz</code>.</p></div></aside>
             </div>
+            <div v-else class="agent-empty">
+              <h3>{{ $t('admin:agentAdmin.deploymentStateUnavailable') }}</h3>
+              <p>{{ $t('admin:agentAdmin.runtimeUnavailableHelp') }}</p>
+              <v-btn variant="tonal" :disabled="loading || Boolean(actionBusyKey)" @click="load">{{ $t('admin:agentAdmin.refreshStatus') }}</v-btn>
+            </div>
           </section>
         </v-window-item>
 
@@ -203,8 +213,8 @@
                 <span class="agent-panel__icon"><v-icon icon="mdi-brain" size="22" aria-hidden="true" /></span>
                 <div>
                   <div class="agent-panel__eyebrow">{{ $t('admin:agentAdmin.inferenceFoundation') }}</div>
-                  <h2>Generative models & grants</h2>
-                  <p>Configure the models that answer through the Agent. Verify credentials and behavior, grant an audience, then set the administrator default. Structured routing classification belongs in Agent Decision Providers, not the utility model.</p>
+                  <h2>{{ $t('admin:agentAdmin.generativeModelsGrants') }}</h2>
+                  <p>{{ $t('admin:agentAdmin.configureGenerativeModelsHelp') }}</p>
                 </div>
               </div>
               <v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true || Boolean(actionBusyKey)" @click="openProfile()">{{ $t('admin:agentAdmin.addProvider') }}</v-btn>
@@ -239,10 +249,10 @@
                         <v-list-item prepend-icon="mdi-pencil-outline" :title="$t('admin:agentAdmin.editSettings')" :subtitle="$t('admin:agentAdmin.updatesProfile')" :disabled="Boolean(actionBusyKey)" @click="openProfile(profile)" />
                         <v-list-item prepend-icon="mdi-history" :title="$t('admin:agentAdmin.connectionHistory')" :subtitle="$t('admin:agentAdmin.reviewPreviousVerificationResults')" @click="openConnectionHistory(profile)" />
                         <v-list-item prepend-icon="mdi-connection" :title="profile.status === 'disabled' ? $t('admin:agentAdmin.testEnable') : $t('admin:agentAdmin.testConnection')" :subtitle="connectionActionSubtitle(profile)" :disabled="!profile.secretConfigured || Boolean(actionBusyKey)" @click="testConnection(profile)" />
-                        <v-list-item prepend-icon="mdi-account-multiple-outline" :title="$t('admin:agentAdmin.editAccessGrants')" subtitle="Changes model eligibility for authorized Agent users" :disabled="Boolean(actionBusyKey)" @click="openGrants(profile)" />
+                        <v-list-item prepend-icon="mdi-account-multiple-outline" :title="$t('admin:agentAdmin.editAccessGrants')" :subtitle="$t('admin:agentAdmin.changesAuthorizedModelEligibility')" :disabled="Boolean(actionBusyKey)" @click="openGrants(profile)" />
                         <v-list-item v-if="profile.status === 'disabled'" prepend-icon="mdi-play-circle-outline" :title="$t('admin:agentAdmin.enableProvider')" :subtitle="enableProfileSubtitle(profile)" :disabled="!profile.conformed || !profile.secretConfigured || Boolean(actionBusyKey)" @click="confirmEnableProfile(profile)" />
                         <v-list-item v-else prepend-icon="mdi-pause-circle-outline" :title="$t('admin:agentAdmin.disableProvider')" :subtitle="profile.isGlobalDefault ? $t('admin:agentAdmin.clearsWorkspaceDefaultStops') : $t('admin:agentAdmin.stopsNewRunsUsing')" :disabled="Boolean(actionBusyKey)" @click="setProfileEnabled(profile, false)" />
-                        <v-list-item prepend-icon="mdi-star-outline" :title="$t('admin:agentAdmin.setGlobalDefault')" subtitle="Sets the administrator default for new Agent conversations" :disabled="!profile.conformed || !profile.secretConfigured || profile.status !== 'enabled' || profile.exposureMode !== 'all_agent_users' || profile.isGlobalDefault || Boolean(actionBusyKey)" @click="setDefault(profile)" />
+                        <v-list-item prepend-icon="mdi-star-outline" :title="$t('admin:agentAdmin.setGlobalDefault')" :subtitle="$t('admin:agentAdmin.setsAdministratorDefault')" :disabled="!profile.conformed || !profile.secretConfigured || profile.status !== 'enabled' || profile.exposureMode !== 'all_agent_users' || profile.isGlobalDefault || Boolean(actionBusyKey)" @click="setDefault(profile)" />
                         <v-divider class="my-1" />
                         <v-list-item prepend-icon="mdi-delete-outline" :title="$t('admin:agentAdmin.removeProvider')" :subtitle="$t('admin:agentAdmin.permanentlyDeletesCredential')" base-color="error" :disabled="Boolean(actionBusyKey)" @click="confirmRemove(profile)" />
                       </v-list>
@@ -255,7 +265,7 @@
                       {{ profile.conformed ? $t('admin:agentAdmin.connectionVerified') : profile.connectionCheck?.status === 'failed' ? $t('admin:agentAdmin.connectionFailed') : $t('admin:agentAdmin.notVerified') }}
                     </span>
                     <span :class="['connection-state', profile.status === 'enabled' ? 'connection-state--success' : 'connection-state--neutral']"><span class="connection-state__dot" />{{ profile.status === 'enabled' ? $t('admin:agentAdmin.enabled') : $t('admin:agentAdmin.disabled') }}</span>
-                    <span :class="['connection-state', profile.secretConfigured ? 'connection-state--success' : 'connection-state--error']"><v-icon icon="mdi-key-outline" size="15" aria-hidden="true" />{{ profile.secretConfigured ? 'Credential configured' : 'Credential missing' }}</span>
+                    <span :class="['connection-state', profile.secretConfigured ? 'connection-state--success' : 'connection-state--error']"><v-icon icon="mdi-key-outline" size="15" aria-hidden="true" />{{ profile.secretConfigured ? $t('admin:agentAdmin.mediaCredentialConfigured') : $t('admin:agentAdmin.mediaCredentialMissing') }}</span>
                   </div>
                   <time v-if="profile.connectionCheck" class="provider-card__checked" :datetime="profile.connectionCheck.completedAt">{{ $t('admin:agentAdmin.lastChecked', { completedAt: formatConnectionCheckDate(profile.connectionCheck.completedAt), interpolation: { escapeValue: false } }) }}</time>
                   <div class="provider-card__models">
@@ -411,7 +421,7 @@
               <div class="profile-form-section__intro"><span><v-icon icon="mdi-brain" size="21" aria-hidden="true" /></span><div><h3>{{ $t('admin:agentAdmin.assignModelRoles') }}</h3><p>{{ $t('admin:agentAdmin.useOneCapableModel') }}</p></div></div>
               <div class="form-grid">
                 <v-text-field v-model="profileDraft.model" :rules="profileModelRules" :label="$t('admin:agentAdmin.agentModel')" :hint="agentModelHint" maxlength="255" persistent-hint required />
-                <v-text-field v-model="profileDraft.utilityModel" :label="$t('admin:agentAdmin.utilityModelOptional')" hint="Generative utility tasks such as titles and enrichment. Leave blank to share the Agent model. Routing classification uses a separate Agent Decision Provider." maxlength="255" persistent-hint />
+                <v-text-field v-model="profileDraft.utilityModel" :label="$t('admin:agentAdmin.utilityModelOptional')" :hint="$t('admin:agentAdmin.generativeUtilityHelp')" maxlength="255" persistent-hint />
               </div>
               <div v-if="reasoningEffortOptions.length > 1" class="subsection-card">
                 <div class="subsection-card__heading"><div><h4>{{ $t('admin:agentAdmin.reasoningEffort') }}</h4><p>{{ reasoningSupportHint }}</p></div><v-icon icon="mdi-head-cog-outline" size="20" aria-hidden="true" /></div>
@@ -448,16 +458,16 @@
             </section>
 
             <section v-else-if="profileStep === 'access'" class="profile-form-section">
-              <div class="profile-form-section__intro"><span><v-icon icon="mdi-account-multiple-outline" size="21" aria-hidden="true" /></span><div><h3>{{ $t('admin:agentAdmin.chooseAudience') }}</h3><p>Authorize this generative model for all Agent users or selected Wiki groups. Users do not choose models; grants constrain administrator defaults and automatic routing.</p></div></div>
+              <div class="profile-form-section__intro"><span><v-icon icon="mdi-account-multiple-outline" size="21" aria-hidden="true" /></span><div><h3>{{ $t('admin:agentAdmin.chooseAudience') }}</h3><p>{{ $t('admin:agentAdmin.authorizeGenerativeModelHelp') }}</p></div></div>
               <div class="access-choice" role="radiogroup" :aria-label="$t('admin:agentAdmin.chooseAudience')">
                 <label v-for="mode in exposureModes" :key="mode.value" class="access-choice__item" :class="{ 'access-choice__item--active': profileDraft.exposureMode === mode.value }">
                   <input v-model="profileDraft.exposureMode" type="radio" name="provider-exposure" :value="mode.value">
                   <span class="access-choice__icon"><v-icon :icon="mode.value === 'all_agent_users' ? 'mdi-account-group-outline' : 'mdi-account-lock-outline'" size="23" aria-hidden="true" /></span>
-                  <span><strong>{{ mode.title }}</strong><small>{{ mode.value === 'all_agent_users' ? 'Eligible for every user with Agent permission.' : 'Eligible only for members of the selected Wiki groups.' }}</small></span>
+                  <span><strong>{{ mode.title }}</strong><small>{{ mode.value === 'all_agent_users' ? $t('admin:agentAdmin.eligibleEveryAgentUser') : $t('admin:agentAdmin.eligibleSelectedGroups') }}</small></span>
                   <v-icon :icon="profileDraft.exposureMode === mode.value ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" class="access-choice__check" size="20" aria-hidden="true" />
                 </label>
               </div>
-              <v-autocomplete v-if="profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" class="mt-5" :items="groups" item-title="name" item-value="id" :label="$t('admin:agentAdmin.wikiGroups')" multiple chips closable-chips hint="Current membership in any granted group authorizes this model for Agent routing." persistent-hint :disabled="resourceState.groups.loading || Boolean(resourceState.groups.error)" />
+              <v-autocomplete v-if="profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" class="mt-5" :items="groups" item-title="name" item-value="id" :label="$t('admin:agentAdmin.wikiGroups')" multiple chips closable-chips :hint="$t('admin:agentAdmin.groupMembershipRoutingHelp')" persistent-hint :disabled="resourceState.groups.loading || Boolean(resourceState.groups.error)" />
               <div v-if="profileDraft.exposureMode === 'groups' && (resourceState.groups.error || !groups.length)" class="field-note" role="status">
                 <template v-if="resourceState.groups.error">{{ resourceState.groups.error }} <v-btn variant="text" :disabled="resourceState.groups.loading" @click="refreshResources(['groups'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></template>
                 <template v-else-if="resourceState.groups.loaded">{{ $t('admin:agentAdmin.noWikiGroupsYet') }} <router-link to="/a/groups">{{ $t('admin:agentAdmin.manageWikiGroups') }}</router-link></template>
@@ -541,8 +551,8 @@
 
     <v-dialog :model-value="grantsDialog" max-width="40rem" scrollable :persistent="actionBusyKey === 'grants'" aria-labelledby="provider-grants-title" @update:model-value="value => { if (!value) requestGrantsClose() }">
       <v-card class="compact-dialog">
-        <div class="compact-dialog__header"><span><v-icon icon="mdi-account-multiple-outline" size="23" aria-hidden="true" /></span><div><h2 id="provider-grants-title">{{ grantProfile ? $t('admin:agentAdmin.access2', { displayName: grantProfile.displayName, interpolation: { escapeValue: false } }) : $t('admin:agentAdmin.providerAccess') }}</h2><p>Control which Agent users are authorized for this generative model.</p></div></div>
-        <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" :label="$t('admin:agentAdmin.available2')" :disabled="Boolean(actionBusyKey)" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" :label="$t('admin:agentAdmin.wikiGroups')" multiple chips closable-chips hint="Current membership in any granted group authorizes this model for Agent routing." persistent-hint :disabled="Boolean(actionBusyKey) || resourceState.groups.loading || Boolean(resourceState.groups.error)" /><v-alert class="mt-4" type="info" variant="tonal" density="compact">The administrator default must be available to all Agent users. Group-granted models are eligible automatic alternatives only for authorized users; they never appear as user model choices.</v-alert></v-card-text>
+        <div class="compact-dialog__header"><span><v-icon icon="mdi-account-multiple-outline" size="23" aria-hidden="true" /></span><div><h2 id="provider-grants-title">{{ grantProfile ? $t('admin:agentAdmin.access2', { displayName: grantProfile.displayName, interpolation: { escapeValue: false } }) : $t('admin:agentAdmin.providerAccess') }}</h2><p>{{ $t('admin:agentAdmin.controlAuthorizedModelUsers') }}</p></div></div>
+        <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" :label="$t('admin:agentAdmin.available2')" :disabled="Boolean(actionBusyKey)" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" :label="$t('admin:agentAdmin.wikiGroups')" multiple chips closable-chips :hint="$t('admin:agentAdmin.groupMembershipRoutingHelp')" persistent-hint :disabled="Boolean(actionBusyKey) || resourceState.groups.loading || Boolean(resourceState.groups.error)" /><v-alert class="mt-4" type="info" variant="tonal" density="compact">{{ $t('admin:agentAdmin.defaultGroupAlternativesHelp') }}</v-alert></v-card-text>
         <div v-if="grantDraft.exposureMode === 'groups' && (resourceState.groups.error || !groups.length)" class="field-note mx-6" role="status">
           <template v-if="resourceState.groups.error">{{ resourceState.groups.error }} <v-btn variant="text" :disabled="resourceState.groups.loading" @click="refreshResources(['groups'])">{{ $t('admin:agentAdmin.retry') }}</v-btn></template>
           <template v-else-if="resourceState.groups.loaded">{{ $t('admin:agentAdmin.noWikiGroupsYet') }} <router-link to="/a/groups">{{ $t('admin:agentAdmin.manageWikiGroups') }}</router-link></template>
@@ -770,7 +780,7 @@ const reasoningSupportHint = computed(() => ({
   'openai-chat': t('admin:agentAdmin.sentChatCompletionsReasoning'),
   'legacy-completions': '',
   'anthropic-messages': t('admin:agentAdmin.sentMessagesApiOutput'),
-  'gemini-api': 'Sent through the Ax-native Gemini API using the configured model reasoning controls.'
+  'gemini-api': t('admin:agentAdmin.sentAxNativeGeminiReasoning')
 })[profileDraft.transportKind])
 const protocolBehaviorRows = computed(() => {
   const structuredOutput = {
@@ -843,12 +853,12 @@ const routingDecisionReady = computed(() => Boolean(routingDecision.value?.enabl
 watch(() => decisionProviders.value?.map(provider => `${provider.id}:${provider.revision}:${provider.enabled}:${provider.isDefault}:${provider.secretConfigured}:${provider.checkedAt}`).join('|'), () => { routingRefreshKey.value++ })
 const currentRoutingDeclarations = computed(() => routingState.value?.models.filter(declaration => profiles.value.some(profile => profile.id === declaration.profileId && profile.profileVersionId === declaration.profileVersionId)).length ?? 0)
 const setupSteps = computed(() => [
-  { section: 'runtime', title: '1. Review deployment safeguards', complete: Boolean(runtime.value?.enabled && runtime.value?.providerEnabled), optional: false, description: runtime.value?.enabled && runtime.value?.providerEnabled ? 'Agent and generative inference enabled; review quotas and governed capabilities.' : 'Agent or generative inference is paused. Enable through deployment configuration, not this panel.' },
-  { section: 'profiles', title: '2. Configure generative models & group grants', complete: readyProviders.value.length > 0, optional: false, description: resourceState.profiles.error ? 'Model status is stale or unavailable. Refresh before relying on readiness.' : readyProviders.value.length ? `${readyProviders.value.length} enabled, verified profiles with credentials and an authorized audience.` : 'Add a model, verify its connection and credentials, and grant an authorized audience.' },
-  { section: 'default', title: '3. Set the administrator generative default', complete: Boolean(defaultProvider.value), optional: false, description: defaultProvider.value ? `${defaultProvider.value.displayName} · ${defaultProvider.value.model} · authorized for all Agent users.` : 'Set a ready all-Agent-user model as default. Users never select or override it.' },
-  { section: 'decision', title: '4. Configure Agent Decision Providers (for routing)', complete: Boolean(decisionDefault.value), optional: true, description: decisionProviders.value === null ? 'Decision status not loaded or unavailable; open this panel to review.' : decisionDefault.value ? `${decisionDefault.value.displayName} · ${decisionDefault.value.config.model} · checked, credentialed, enabled decision default.` : 'No ready decision default. Configure native TypeSafe / Jev or an explicit custom completions dialect, check and enable it.' },
-  { section: 'routing', title: '5. Declare model tasks & opt into automatic routing', complete: Boolean(routingState.value?.policy.enabled && routingDecisionReady.value), optional: true, description: routingState.value ? `${routingState.value.policy.enabled ? 'Routing enabled' : 'Routing disabled (conservative default)'} · revision ${routingState.value.policy.revision} · ${currentRoutingDeclarations.value} current-version task declarations · ${routingDecisionReady.value ? 'decision provider ready' : 'decision provider needs review'}. Eligibility still depends on authorization and pricing.` : 'Routing status not loaded or unavailable. Review current-version declarations and the selected decision provider.' },
-  { section: 'external-mcp', title: '6. Connect external MCP tools & resources (optional)', complete: Boolean(externalMcpState.value?.servers.some(server => server.status === 'enabled' && (server.authMode === 'none' || server.secretConfigured) && server.groupIds.length)), optional: true, description: externalMcpState.value ? `${externalMcpState.value.servers.length} configured endpoints · ${externalMcpState.value.policies.filter(policy => policy.allowPersonalEndpoints).length} groups allow personal creation. Review destination, credentials, grants and discovered resources; deployment authorization still applies.` : 'External MCP status not loaded or unavailable. Endpoints and personal group permission remain opt-in.' }
+  { section: 'runtime', title: t('admin:agentAdmin.setupReviewSafeguards'), complete: Boolean(runtime.value?.enabled && runtime.value?.providerEnabled), optional: false, description: runtime.value?.enabled && runtime.value?.providerEnabled ? t('admin:agentAdmin.setupInferenceEnabled') : t('admin:agentAdmin.setupInferencePaused') },
+  { section: 'profiles', title: t('admin:agentAdmin.setupConfigureModelsGrants'), complete: readyProviders.value.length > 0, optional: false, description: resourceState.profiles.error ? t('admin:agentAdmin.setupModelStatusUnavailable') : readyProviders.value.length ? t('admin:agentAdmin.setupReadyProfiles', { count: readyProviders.value.length }) : t('admin:agentAdmin.setupAddAuthorizedModel') },
+  { section: 'default', title: t('admin:agentAdmin.setupSetAdministratorDefault'), complete: Boolean(defaultProvider.value), optional: false, description: defaultProvider.value ? t('admin:agentAdmin.setupAuthorizedDefault', { displayName: defaultProvider.value.displayName, model: defaultProvider.value.model, interpolation: { escapeValue: false } }) : t('admin:agentAdmin.setupSelectReadyDefault') },
+  { section: 'decision', title: t('admin:agentAdmin.setupConfigureDecisionProviders'), complete: Boolean(decisionDefault.value), optional: true, description: decisionProviders.value === null ? t('admin:agentAdmin.setupDecisionUnavailable') : decisionDefault.value ? t('admin:agentAdmin.setupDecisionReady', { displayName: decisionDefault.value.displayName, model: decisionDefault.value.config.model, interpolation: { escapeValue: false } }) : t('admin:agentAdmin.setupNoReadyDecision') },
+  { section: 'routing', title: t('admin:agentAdmin.setupDeclareTasksRouting'), complete: Boolean(routingState.value?.policy.enabled && routingDecisionReady.value), optional: true, description: routingState.value ? t(routingState.value.policy.enabled ? routingDecisionReady.value ? 'admin:agentAdmin.setupRoutingEnabledReady' : 'admin:agentAdmin.setupRoutingEnabledNeedsReview' : routingDecisionReady.value ? 'admin:agentAdmin.setupRoutingDisabledReady' : 'admin:agentAdmin.setupRoutingDisabledNeedsReview', { revision: routingState.value.policy.revision, count: currentRoutingDeclarations.value }) : t('admin:agentAdmin.setupRoutingUnavailable') },
+  { section: 'external-mcp', title: t('admin:agentAdmin.setupConnectExternalMcp'), complete: Boolean(externalMcpState.value?.servers.some(server => server.status === 'enabled' && (server.authMode === 'none' || server.secretConfigured) && server.groupIds.length)), optional: true, description: externalMcpState.value ? t('admin:agentAdmin.setupExternalMcpConfigured', { endpointCount: externalMcpState.value.servers.length, groupCount: externalMcpState.value.policies.filter(policy => policy.allowPersonalEndpoints).length }) : t('admin:agentAdmin.setupExternalMcpUnavailable') }
 ].map(step => ({ ...step, section: step.section === 'default' ? 'profiles' : step.section })))
 const actionBusyMessage = computed(() => {
   if (actionBusyKey.value.startsWith('test:')) return t('admin:agentAdmin.testingProviderConnectionRefreshing')
@@ -862,11 +872,11 @@ const actionBusyMessage = computed(() => {
 })
 const sectionItems = computed(() => [
   { value: 'overview', title: t('admin:agentAdmin.overview'), description: t('admin:agentAdmin.setupReadiness'), icon: 'mdi-view-dashboard-outline', badge: '' },
-  { value: 'profiles', title: 'Generative models', description: 'Connections, grants & admin default', icon: 'mdi-brain', badge: profiles.value.length ? String(profiles.value.length) : '' },
+  { value: 'profiles', title: t('admin:agentAdmin.generativeModels'), description: t('admin:agentAdmin.connectionsGrantsDefault'), icon: 'mdi-brain', badge: profiles.value.length ? String(profiles.value.length) : '' },
   { value: 'media', title: t('admin:agentAdmin.mediaProviders'), description: t('admin:agentAdmin.mediaProvidersDescription'), icon: 'mdi-image-multiple-outline', badge: '' },
-  { value: 'decision', title: 'Agent Decision Providers', description: 'Native Jev & custom classification', icon: 'mdi-source-branch', badge: '' },
-  { value: 'routing', title: 'Model tasks & routing', description: 'Current versions & eligible selection', icon: 'mdi-routes', badge: '' },
-  { value: 'external-mcp', title: 'External MCP', description: 'Tools, resources & group authorization', icon: 'mdi-connection', badge: '' },
+  { value: 'decision', title: t('admin:agentAdmin.decisionProviders'), description: t('admin:agentAdmin.nativeJevClassification'), icon: 'mdi-source-branch', badge: '' },
+  { value: 'routing', title: t('admin:agentAdmin.modelTasksRouting'), description: t('admin:agentAdmin.currentVersionsSelection'), icon: 'mdi-routes', badge: '' },
+  { value: 'external-mcp', title: t('admin:agentAdmin.externalMcp'), description: t('admin:agentAdmin.toolsResourcesAuthorization'), icon: 'mdi-connection', badge: '' },
   { value: 'skills', title: t('admin:agentAdmin.skills'), description: t('admin:agentAdmin.approvedExpertise'), icon: 'mdi-book-open-variant-outline', badge: '' },
   { value: 'browser', title: t('admin:agentAdmin.browserAccess'), description: t('admin:agentAdmin.networkBoundaries'), icon: 'mdi-web-check', badge: browserTargets.value.length ? String(browserTargets.value.length) : '' },
   { value: 'tools', title: t('admin:agentAdmin.toolsMcp'), description: t('admin:agentAdmin.capabilityDirectory'), icon: 'mdi-connection', badge: '' },

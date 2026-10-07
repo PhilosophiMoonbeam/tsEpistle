@@ -193,7 +193,7 @@ export default {
     setPlanFormat(value: string) { this.planFormat = value; this.$router.replace({ query: { ...this.$route.query, format: value }, hash: `#${this.section}` }) },
     configure(key: string) { this.setSection('modules'); this.select(key) },
     inspectFamily() { this.setPlanFormat(this.draft.find(module => module.key === (this.current?.dependsOn || this.current?.key))?.input || 'markdown'); this.setSection('pipeline') },
-    tabKey(event: KeyboardEvent, key: string) { if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const index = this.tabs.findIndex(tab => tab.key === key), next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (index + (event.key === 'ArrowRight' ? 1 : -1) + 3) % 3; this.setSection(this.tabs[next]!.key); this.$nextTick(() => document.getElementById(`rendering-tab-${this.section}`)?.focus()) },
+    tabKey(event: KeyboardEvent, key: string) { if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const index = this.tabs.findIndex(tab => tab.key === key), next = event.key === 'Home' ? 0 : event.key === 'End' ? this.tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + this.tabs.length) % this.tabs.length; this.setSection(this.tabs[next]!.key); this.$nextTick(() => document.getElementById(`rendering-tab-${this.section}`)?.focus()) },
     reset() { if (this.saved) this.draft = copy(this.saved.modules); this.saveError = '' },
     resetModule() { const prior = this.saved?.modules.find(module => module.key === this.selectedKey), index = this.draft.findIndex(module => module.key === this.selectedKey); if (prior && index >= 0) this.draft.splice(index, 1, copy(prior)); this.saveError = '' },
     async reload() {
@@ -369,7 +369,6 @@ export default {
 .rendering-section-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.2rem; h3,h4 { font-size:1.15rem; font-weight:600; letter-spacing:-.025em; margin:.45rem 0; } p { margin:0; font-size:.78rem; color:var(--render-muted); line-height:1.7; } }
 .rendering-properties { display:grid; gap:1.3rem; padding:.6rem 0 1rem; max-width:740px; }
 .rendering-property { min-width:0; :deep(.v-input__details) { padding-inline:0; padding-top:.5rem; } :deep(.v-messages) { line-height:1.6; font-size:.72rem; } :deep(.v-switch .v-input__control) { min-height:38px; } }
-.rendering-property-note { display:block; font-size:.63rem; color:var(--render-muted); margin-top:.45rem; }
 .rendering-render-receipt { margin-top:.45rem; font-size:.68rem; color:var(--render-muted); overflow-wrap:anywhere; }
 .rendering-empty,.rendering-footnote { color:var(--render-muted); font-size:.74rem; line-height:1.8; margin:.8rem 0; }
 .rendering-module-issues { border-top:1px solid var(--render-border); margin-top:1rem; padding-top:.5rem; p { display:flex; align-items:flex-start; gap:.6rem; font-size:.74rem; line-height:1.7; color:var(--render-muted); margin:.7rem 0; } .is-error { color:rgb(var(--v-theme-error)); } }

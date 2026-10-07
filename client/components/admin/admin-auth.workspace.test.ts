@@ -1,10 +1,17 @@
 import fs from 'node:fs'
-import { parse } from '@vue/compiler-sfc'
-import { NodeTypes, type ElementNode, type TemplateChildNode } from '@vue/compiler-core'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
 import * as ts from 'typescript'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { authenticationDraft, authenticationSignature } from '../../helpers/authentication-workspace-api.ts'
+import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+
+// Runtime imports follow browser-dom because Vuetify captures platform globals during module evaluation.
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
+const { vCredentialAutofill } = await import('../../helpers/credential-autofill.ts')
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -106,37 +113,75 @@ function arrange(overrides: Record<string, unknown> = {}) {
   return { state, component, transport, window }
 }
 describe('reviewed authentication workspace', () => {
-  it('keeps provider configuration out of browser credential autofill', () => {
-    const source = fs.readFileSync('client/components/admin/admin-auth-fields.vue', 'utf8')
-    const parsed = parse(source, { filename: 'client/components/admin/admin-auth-fields.vue' })
-    expect(parsed.errors).toEqual([])
-    const ast = parsed.descriptor.template?.ast
-    if (!ast) throw new Error('The provider fields template must have a parsed AST.')
-    const controls: ElementNode[] = []
-    const visit = (nodes: TemplateChildNode[]) => {
-      for (const node of nodes) {
-        if (node.type !== NodeTypes.ELEMENT) continue
-        if (node.tag === 'v-text-field' || node.tag === 'v-textarea') controls.push(node)
-        visit(node.children)
+  it('keeps provider inputs out of credential autofill and emits null when numeric input is cleared', async () => {
+    const filename = 'client/components/admin/admin-auth-fields.vue'
+    const parsed = parse(fs.readFileSync(filename, 'utf8'), { filename })
+    const template = compileTemplate({ source: parsed.descriptor.template!.content, filename, id: 'auth-field-inputs', compilerOptions: { mode: 'function' } })
+    if (template.errors.length) throw template.errors[0]
+    const child = new Function('vCredentialAutofill', compileComponentOptions(filename) + ';return component')(vCredentialAutofill)
+    const AuthFields = { ...child, render: new Function('Vue', template.code)(Vue) }
+    const fields = [
+      { key: 'credential', title: 'Credential', sensitive: true },
+      { key: 'certificate', title: 'Certificate', sensitive: true, multiline: true },
+      { key: 'notes', title: 'Notes', multiline: true },
+      { key: 'timeout', title: 'Timeout', type: 'number' },
+      { key: 'issuer', title: 'Issuer' }
+    ].map(field => ({ choices: [], ...field }))
+    const draft = Vue.ref({
+      ...authenticationDraft(provider),
+      config: { timeout: 30, notes: 'Before', issuer: 'https://identity.example.invalid' },
+      secrets: { credential: { action: 'replace', value: 'secret' }, certificate: { action: 'replace', value: 'certificate' } }
+    })
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({
+      render: () =>
+        Vue.h(AuthFields, {
+          modelValue: draft.value,
+          fields,
+          'onUpdate:modelValue': (value: typeof draft.value) => {
+            draft.value = value
+          }
+        })
+    })
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.config.globalProperties.$t = translateEnglish
+    try {
+      app.mount(host)
+      await Vue.nextTick()
+      const fieldControl = (labelText: string) => {
+        const labels = Array.from(host.querySelectorAll<HTMLLabelElement>('label')).filter(label => label.textContent?.trim() === labelText)
+        const control = Array.from(host.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')).find(
+          input => input.id && labels.some(label => label.htmlFor === input.id)
+        )
+        expect(control).toBeDefined()
+        return control!
       }
-    }
-    visit(ast.children)
-    const branches = [
-      { tag: 'v-textarea', directive: 'if', condition: "modelValue.secrets[field.key]?.action === 'replace' && field.multiline", autocomplete: 'off' },
-      { tag: 'v-text-field', directive: 'else-if', condition: "modelValue.secrets[field.key]?.action === 'replace'", autocomplete: 'new-password' },
-      { tag: 'v-textarea', directive: 'else-if', condition: 'field.multiline', autocomplete: 'off' },
-      { tag: 'v-text-field', directive: 'else-if', condition: "field.type === 'number'", autocomplete: 'off' },
-      { tag: 'v-text-field', directive: 'else', condition: '', autocomplete: 'off' }
-    ]
-    for (const branch of branches) {
-      const matches = controls.filter(node => node.tag === branch.tag && node.props.some(prop =>
-        prop.type === NodeTypes.DIRECTIVE && prop.name === branch.directive &&
-        (prop.exp?.loc.source.replace(/\s+/g, ' ').trim() ?? '') === branch.condition
-      ))
-      expect(matches).toHaveLength(1)
-      const control = matches[0]!
-      expect(control.props.some(prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'autocomplete' && prop.value?.content === branch.autocomplete)).toBe(true)
-      expect(control.props.some(prop => prop.type === NodeTypes.DIRECTIVE && prop.name === 'credential-autofill')).toBe(true)
+      for (const [label, type, autocomplete] of [
+        [translateEnglish('admin:authFields.replacement', { title: 'Credential' }), 'password', 'new-password'],
+        [translateEnglish('admin:authFields.replacement', { title: 'Certificate' }), 'textarea', 'off'],
+        ['Notes', 'textarea', 'off'],
+        ['Timeout', 'number', 'off'],
+        ['Issuer', 'text', 'off']
+      ]) {
+        const control = fieldControl(label)
+        expect(control.type).toBe(type)
+        expect(control.autocomplete).toBe(autocomplete)
+        expect(control.getAttribute('data-1p-ignore')).toBe('true')
+      }
+      const numeric = fieldControl('Timeout')
+      numeric.value = ''
+      numeric.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await Vue.nextTick()
+      expect(draft.value.config.timeout).toBeNull()
+      numeric.value = '0'
+      numeric.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await Vue.nextTick()
+      expect(draft.value.config.timeout).toBe(0)
+    } finally {
+      app.unmount()
+      host.remove()
+      resetBody()
     }
   })
   it('isolates drafts, normalizes insignificant whitespace and protects navigation', async () => {

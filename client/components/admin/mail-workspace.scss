@@ -1,3 +1,5 @@
+@use './admin-workspace' as workspace;
+
 .mail-workspace {
   --mail-line: rgba(var(--v-theme-on-surface), 0.13);
   --mail-muted: var(--wiki-text-muted);
@@ -148,34 +150,6 @@
       font-size: 13px;
       color: var(--mail-muted);
       line-height: 1.65;
-    }
-  }
-  .mail-secret {
-    padding: 18px;
-    background: var(--mail-soft);
-    border: 1px solid var(--mail-line);
-    border-radius: 8px;
-    margin-bottom: 14px;
-  }
-  .mail-secret-head {
-    display: flex;
-    justify-content: space-between;
-    gap: 18px;
-    align-items: start;
-    strong {
-      font-size: 13px;
-    }
-    p {
-      font-size: 12px;
-      color: var(--mail-muted);
-      line-height: 1.65;
-      margin: 5px 0 0;
-    }
-    > .v-select {
-      flex: 0 0 166px;
-    }
-    + .v-input {
-      margin-top: 20px;
     }
   }
   .mail-advanced,
@@ -558,16 +532,6 @@
     .mail-aside {
       grid-template-columns: minmax(0, 1fr);
     }
-    .mail-secret {
-      padding: 14px;
-    }
-    .mail-secret-head {
-      flex-direction: column;
-      > .v-select {
-        flex: auto;
-        width: 100%;
-      }
-    }
     .mail-steps {
       gap: 10px;
       > div {
@@ -607,19 +571,7 @@
 }
 
 .mail-workspace .mail-draft-bar {
-  position: sticky;
-  bottom: 44px;
-  z-index: 3;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 14px 24px;
-  margin-top: 24px;
-  padding: 16px 20px;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid var(--mail-line);
-  border-radius: 10px;
-  box-shadow: 0 4px 22px rgba(0, 0, 0, 0.1);
+  @include workspace.admin-draft-bar;
   strong {
     display: block;
     font-size: 13px;
@@ -629,12 +581,5 @@
     color: var(--mail-muted);
     font-size: 12px;
     margin-top: 5px;
-  }
-}
-@media (max-width: 599px) {
-  .mail-workspace .mail-draft-bar {
-    flex-wrap: wrap;
-    padding: 14px;
-    bottom: 40px;
   }
 }

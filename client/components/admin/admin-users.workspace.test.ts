@@ -1,11 +1,12 @@
-import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import fs from 'node:fs'
-import { accountActionTitle, accountProfileIssues } from '../../../shared/account-policy.ts'
-import type { AccountWorkspace } from '../../../shared/account-policy.ts'
-import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import type { AccountWorkspace } from '../../../shared/account-policy.ts'
+import { accountActionTitle, accountProfileIssues } from '../../../shared/account-policy.ts'
+import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import { document, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -37,8 +38,13 @@ const toggleTemplate = compileTemplate({
   preprocessOptions: { doctype: 'html' },
   compilerOptions: { mode: 'function' }
 })
-const toggleScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(toggleSource.script!.content.replace(/^import .+$/gm, '').replace('export default', 'return'))
-const PasswordVisibilityToggle = { ...new Function('defineComponent', toggleScript)(Vue.defineComponent), render: new Function('Vue', toggleTemplate.code)(Vue) }
+const toggleScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+  toggleSource.script!.content.replace(/^import .+$/gm, '').replace('export default', 'return')
+)
+const PasswordVisibilityToggle = {
+  ...new Function('defineComponent', toggleScript)(Vue.defineComponent),
+  render: new Function('Vue', toggleTemplate.code)(Vue)
+}
 const settle = async () => {
   for (let pass = 0; pass < 4; pass++) {
     await Promise.resolve()
@@ -98,11 +104,76 @@ function arrange(overrides: Record<string, unknown> = {}) {
   }
   Object.assign(dependencies, confirmStubs(window))
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
-  const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, passwordMinimum: 12, $route: { params: { id: '7' }, query: {}, hash: '' }, $router: { replace: vi.fn(), push: vi.fn() } }
+  const state = {
+    ...component.data.call({ $t: translateEnglish }),
+    $t: translateEnglish,
+    passwordMinimum: 12,
+    $route: { params: { id: '7' }, query: {}, hash: '' },
+    $router: { replace: vi.fn(), push: vi.fn() }
+  }
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
   return { state, component, transport, window }
 }
+
+const creationScript = fs.readFileSync('client/components/admin/admin-users-create.vue', 'utf8').match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
+const compiledCreation = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+  creationScript.replace(/^import .+$/gm, '').replace('export default', 'const component =')
+)
+function arrangeCreation() {
+  const window = { confirm: vi.fn().mockReturnValue(false) }
+  const bindings = {
+    passwordPolicyMixin: {},
+    AsyncState: {},
+    PasswordVisibilityToggle,
+    newPasswordIssue,
+    accountProfileIssues,
+    fetchAccountCreationOptions: vi.fn().mockResolvedValue({
+      fingerprint: 'creation-one',
+      providers: [snapshot.provider, { ...snapshot.provider, key: 'organization', localPassword: false }],
+      groups: []
+    }),
+    createAccount: vi.fn(),
+    accountRequestStatus: () => 0,
+    getErrorMessage: (error: Error) => error.message,
+    ...confirmStubs(window)
+  }
+  const component = new Function(...Object.keys(bindings), compiledCreation + ';return component')(...Object.values(bindings))
+  const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, modelValue: true, passwordMinimum: 12, $emit: vi.fn() }
+  for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
+  for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
+  return { state, window }
+}
+
+describe('account creation cancellation', () => {
+  it('closes an untouched account without requesting discard', async () => {
+    const { state, window } = arrangeCreation()
+    await state.loadOptions()
+    await state.close()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(state.$emit).toHaveBeenCalledWith('update:modelValue', false)
+  })
+  for (const field of ['timezone', 'verification', 'forced-password', 'provider'] as const) {
+    it(`protects a ${field}-only draft until discard is accepted`, async () => {
+      const { state, window } = arrangeCreation()
+      await state.loadOptions()
+      if (field === 'timezone') state.profile.timezone = 'America/New_York'
+      if (field === 'verification') state.isVerified = true
+      if (field === 'forced-password') state.mustChangePassword = false
+      if (field === 'provider') state.providerKey = 'organization'
+      await state.close()
+      expect(window.confirm).toHaveBeenCalledOnce()
+      expect(state.$emit).not.toHaveBeenCalled()
+      const event = { preventDefault: vi.fn(), returnValue: undefined as unknown }
+      state.beforeUnload(event)
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(event.returnValue).toBe('')
+      window.confirm.mockReturnValue(true)
+      await state.close()
+      expect(state.$emit).toHaveBeenCalledWith('update:modelValue', false)
+    })
+  }
+})
 describe('account workspace review and recovery', () => {
   it('isolates profile drafts, supports clearing fields, and locks security actions while dirty', async () => {
     const { state } = arrange()
@@ -129,8 +200,24 @@ describe('account workspace review and recovery', () => {
     app.config.globalProperties.$router = arranged.state.$router
     app.config.globalProperties.passwordMinimum = 12
     app.config.globalProperties.$t = translateEnglish
-    app.component('AdminHero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', [slots.default?.(), slots.actions?.()]) }))
-    app.component('RouterLink', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('a', slots.default?.()) }))
+    app.component(
+      'AdminHero',
+      Vue.defineComponent({
+        setup:
+          (_props, { slots }) =>
+          () =>
+            Vue.h('header', [slots.default?.(), slots.actions?.()])
+      })
+    )
+    app.component(
+      'RouterLink',
+      Vue.defineComponent({
+        setup:
+          (_props, { slots }) =>
+          () =>
+            Vue.h('a', slots.default?.())
+      })
+    )
     const state = app.mount(host) as unknown as typeof arranged.state
     const confirmButton = () => {
       const button = document.querySelector<HTMLButtonElement>('.account-review-dialog .v-card-actions button:last-child')
@@ -190,8 +277,24 @@ describe('account workspace review and recovery', () => {
     app.config.globalProperties.$router = arranged.state.$router
     app.config.globalProperties.passwordMinimum = 12
     app.config.globalProperties.$t = translateEnglish
-    app.component('AdminHero', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('header', [slots.default?.(), slots.actions?.()]) }))
-    app.component('RouterLink', Vue.defineComponent({ setup: (_props, { slots }) => () => Vue.h('a', slots.default?.()) }))
+    app.component(
+      'AdminHero',
+      Vue.defineComponent({
+        setup:
+          (_props, { slots }) =>
+          () =>
+            Vue.h('header', [slots.default?.(), slots.actions?.()])
+      })
+    )
+    app.component(
+      'RouterLink',
+      Vue.defineComponent({
+        setup:
+          (_props, { slots }) =>
+          () =>
+            Vue.h('a', slots.default?.())
+      })
+    )
     const state = app.mount(host) as unknown as typeof arranged.state
     try {
       await settle()

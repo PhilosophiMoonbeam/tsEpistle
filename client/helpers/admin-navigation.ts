@@ -315,7 +315,7 @@ export function buildAdminNavigation(translate: (key: string) => string, permiss
           label: translate('admin:dev.flags.title'),
           icon: 'mdi-toggle-switch-off-outline',
           to: '/dev-flags',
-          permission: ['manage:system', 'manage:api'],
+          permission: 'manage:system',
           description: 'Advanced deployment feature flags',
           keywords: ''
         },

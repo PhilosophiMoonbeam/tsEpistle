@@ -252,7 +252,11 @@ export default defineComponent({
     },
     accessDescription(item: DeletedPageRecoveryItem): string {
       if (item.restoreMode === 'quarantine') return this.$t('admin:pagesRecycleBin.unknownHistoricalProtectionQuarantine')
-      const visibility = item.visibility === 'private' ? this.$t('admin:pagesRecycleBin.privateOwner', { ownerId: item.ownerId ?? 'missing', interpolation: { escapeValue: false } }) : this.$t('admin:pagesRecycleBin.workspaceVisibility')
+      const visibility = item.visibility === 'private'
+        ? item.ownerId === null
+          ? this.$t('admin:pagesRecycleBin.formerOwnerUnavailable')
+          : this.$t('admin:pagesRecycleBin.privateOwner', { ownerId: item.ownerId, interpolation: { escapeValue: false } })
+        : this.$t('admin:pagesRecycleBin.workspaceVisibility')
       return item.protection.isProtected ? this.$t('admin:pagesRecycleBin.passwordProtectionRetainedV', { visibility, version: item.protection.version, interpolation: { escapeValue: false } }) : visibility
     },
     async loadFirstPage(): Promise<void> {
@@ -355,17 +359,12 @@ export default defineComponent({
         const parsed = DeletedPageRecoveryResultSchema.safeParse(payload)
         if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryOperationReturnedInvalid'))
         this.confirmOpen = false
-        this.notice = parsed.data.quarantined
-          ? this.$t('admin:pagesRecycleBin.pageWasRestoredInto', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
-          : this.$t('admin:pagesRecycleBin.pageWasRestoredRetained', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
-        this.restoredPageId = parsed.data.pageId
         await this.loadFirstPage()
         this.notice = parsed.data.quarantined
           ? this.$t('admin:pagesRecycleBin.pageWasRestoredInto', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
           : this.$t('admin:pagesRecycleBin.pageWasRestoredRetained', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
         this.restoredPageId = parsed.data.pageId
       } catch (error) {
-        this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
         this.confirmOpen = false
         await this.loadFirstPage()
         this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
@@ -384,7 +383,7 @@ export default defineComponent({
 .recovery-workspace { max-width: 1680px; padding-bottom: 4rem !important; }
 .recovery-intro { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(18rem, .75fr); align-items: end; gap: 2.5rem; padding: 2.5rem .5rem 2rem; }
 .recovery-kicker { display: block; color: rgb(var(--v-theme-on-surface-variant)); font-size: .68rem; font-weight: 700; letter-spacing: .16em; line-height: 1.4; text-transform: uppercase; }
-.recovery-intro h2 { margin: .65rem 0 .8rem; font: 500 clamp(1.8rem, 3vw, 2.8rem)/1.08 var(--font-family-serif, Georgia, serif); letter-spacing: -.035em; }
+.recovery-intro h2 { margin: .65rem 0 .8rem; font: 500 clamp(1.8rem, 3vw, 2.8rem)/1.08 var(--wiki-font-display); letter-spacing: -.035em; }
 .recovery-intro > div > p { max-width: 48rem; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.65; }
 .recovery-limit { display: grid; grid-template-columns: 2rem 1fr; gap: .75rem; align-items: start; padding: 1.05rem 1.2rem; border-inline-start: 3px solid rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .06); }
 .recovery-limit .v-icon { color: var(--wiki-primary-ink); }

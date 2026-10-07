@@ -140,11 +140,65 @@ describe('search administration drafts', () => {
   })
 
   it('does not call an unsupported inspection healthy', async () => {
-    const { instance } = harness()
+    const { instance, inspectIndex } = harness()
+    await instance.inspect()
+    expect(inspectIndex).not.toHaveBeenCalled()
+    await instance.loadEngines()
     await instance.inspect()
     expect(instance.inspectionUnsupported).toBe(true)
+    expect(inspectIndex).toHaveBeenCalledOnce()
     expect(instance.indexAligned).toBe(false)
+    await instance.loadEngines()
+    expect(instance.inspectionUnsupported).toBe(false)
+    expect(instance.inspection).toBeNull()
   })
+
+  for (const oldOutcome of ['resolve', 'reject']) {
+    it(`clears the inspection on reload and ignores its stale ${oldOutcome} without ending a fresh inspection`, async () => {
+      const { instance, fetchEngines, inspectIndex } = harness()
+      await instance.loadEngines()
+      inspectIndex.mockResolvedValueOnce(inspectionStatus('english'))
+      await instance.inspect()
+      expect(instance.indexAligned).toBe(true)
+
+      const old = deferred()
+      const reload = deferred()
+      const fresh = deferred()
+      inspectIndex.mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+      fetchEngines.mockReturnValueOnce(reload.promise)
+      const inspectingOld = instance.inspect()
+      const oldController = instance.inspectController
+      const reloading = instance.loadEngines()
+      expect(oldController.signal.aborted).toBe(true)
+      expect(instance.inspection).toBeNull()
+      expect(instance.inspectedEngine).toBe('')
+      expect(instance.inspectionUnsupported).toBe(false)
+      expect(instance.indexAligned).toBe(false)
+      expect(instance.inspecting).toBe(false)
+      await instance.inspect()
+      expect(inspectIndex).toHaveBeenCalledTimes(2)
+
+      reload.resolve([engine()])
+      await reloading
+      const inspectingFresh = instance.inspect()
+      const freshController = instance.inspectController
+      if (oldOutcome === 'resolve') old.resolve(inspectionStatus('obsolete'))
+      else old.reject(new Error('Obsolete inspection failed'))
+      await inspectingOld
+      expect(instance.inspection).toBeNull()
+      expect(instance.inspectionError).toBe('')
+      expect(instance.inspecting).toBe(true)
+      expect(instance.inspectController).toBe(freshController)
+
+      const status = inspectionStatus('english')
+      fresh.resolve(status)
+      await inspectingFresh
+      expect(instance.inspection).toBe(status.inspection)
+      expect(instance.indexAligned).toBe(true)
+      expect(instance.inspecting).toBe(false)
+      expect(instance.inspectController).toBeNull()
+    })
+  }
 
   for (const operation of ['save', 'rebuild']) {
     for (const oldOutcome of ['resolve', 'reject']) {

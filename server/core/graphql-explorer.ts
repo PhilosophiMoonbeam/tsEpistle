@@ -1,5 +1,5 @@
+import { type GraphiQLOptions, renderGraphiQL } from 'graphql-yoga'
 import { GRAPHQL_IDE_VERSION } from '../../shared/graphql-ide.ts'
-import { renderGraphiQL, type GraphiQLOptions } from 'graphql-yoga'
 
 export const GRAPHQL_STARTERS = Object.freeze({
   pages: {
@@ -36,7 +36,7 @@ export const renderWorkspaceGraphiQL = (options: GraphiQLOptions): string => {
   const starters = JSON.stringify(GRAPHQL_STARTERS).replaceAll('<', '\\u003c')
   const styles = `<meta name="viewport" content="width=device-width, initial-scale=1"><style>
     html,body { margin:0; height:100%; overflow:hidden; }
-    body { display:flex; flex-direction:column; }
+    body { display:flex; flex-direction:column; --workspace-surface:#f7f7f3; --workspace-text:#282920; --workspace-border:#d8d8cf; }
     .graphiql-logo { display:none; }
     body .graphiql-container { --color-primary:38,58%,34%; --font-family:system-ui,sans-serif; }
     .graphiql-doc-explorer-root-type { color:inherit !important; }
@@ -45,13 +45,14 @@ export const renderWorkspaceGraphiQL = (options: GraphiQLOptions): string => {
     .monaco-editor.vs-dark .mtk8 { color:#a2bd90 !important; }
     #root { flex:1; min-height:0; height:auto; }
     .workspace-guide select,.workspace-guide textarea,.workspace-guide button { color:inherit; background:transparent; border:1px solid #8a8c7e; border-radius:6px; }
-    .workspace-guide option { color:#282920; background:#f7f7f3; }
-    .workspace-bar { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:1rem 1.5rem; background:#f7f7f3; color:#282920; border-bottom:1px solid #d8d8cf; font:14px/1.5 system-ui,sans-serif; }
+    .workspace-guide option { color:var(--workspace-text); background:var(--workspace-surface); }
+    .workspace-bar { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:1rem 1.5rem; background:var(--workspace-surface); color:var(--workspace-text); border-bottom:1px solid var(--workspace-border); font:14px/1.5 system-ui,sans-serif; }
     .workspace-brand { display:flex; align-items:center; gap:1rem; }.workspace-brand strong { font:500 24px Georgia,serif; }.workspace-brand span { font-size:12px; }
     .workspace-actions { display:flex; gap:.6rem; align-items:center; }.workspace-actions a,.workspace-actions button { padding:.5rem .8rem; border:1px solid #8a8c7e; border-radius:7px; color:inherit; text-decoration:none; font:inherit; background:transparent; cursor:pointer; }
     .workspace-actions a:focus-visible,.workspace-actions button:focus-visible { outline:2px solid #89622a; outline-offset:3px; }
-    .workspace-guide { background:#f7f7f3; color:#282920; border-bottom:1px solid #d8d8cf; padding:1.25rem 1.5rem; font:14px/1.7 system-ui,sans-serif; max-height:45vh; overflow:auto; }.workspace-guide[hidden] { display:none; }.workspace-guide-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); gap:2rem; }.workspace-guide h2 { font:500 23px Georgia,serif; margin:0 0 .5rem; }.workspace-guide p { margin:.5rem 0 1rem; }.workspace-guide label { display:block; margin-bottom:.5rem; }.workspace-guide select { font:inherit; padding:.4rem; max-width:100%; }.workspace-guide textarea { box-sizing:border-box; width:100%; min-height:130px; padding:.8rem; margin-top:.75rem; font:12px/1.6 monospace; resize:vertical; border:1px solid #8a8c7e; border-radius:6px; }.workspace-guide button { font:inherit; padding:.4rem .75rem; margin-top:.5rem; cursor:pointer; }.workspace-guide code { overflow-wrap:anywhere; }
-    @media(prefers-color-scheme:dark) { .workspace-bar,.workspace-guide { background:#202321; color:#eeeee4; border-color:#43473e; }.workspace-actions a,.workspace-actions button { border-color:#8a8c7e; } }
+    .workspace-guide { background:var(--workspace-surface); color:var(--workspace-text); border-bottom:1px solid var(--workspace-border); padding:1.25rem 1.5rem; font:14px/1.7 system-ui,sans-serif; max-height:45vh; overflow:auto; }.workspace-guide[hidden] { display:none; }.workspace-guide-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); gap:2rem; }.workspace-guide h2 { font:500 23px Georgia,serif; margin:0 0 .5rem; }.workspace-guide p { margin:.5rem 0 1rem; }.workspace-guide label { display:block; margin-bottom:.5rem; }.workspace-guide select { font:inherit; padding:.4rem; max-width:100%; }.workspace-guide textarea { box-sizing:border-box; width:100%; min-height:130px; padding:.8rem; margin-top:.75rem; font:12px/1.6 monospace; resize:vertical; border:1px solid #8a8c7e; border-radius:6px; }.workspace-guide button { font:inherit; padding:.4rem .75rem; margin-top:.5rem; cursor:pointer; }.workspace-guide code { overflow-wrap:anywhere; }
+    body.graphiql-dark { --workspace-surface:#202321; --workspace-text:#eeeee4; --workspace-border:#43473e; }
+    @media(prefers-color-scheme:dark) { body:not(.graphiql-light):not(.graphiql-dark) { --workspace-surface:#202321; --workspace-text:#eeeee4; --workspace-border:#43473e; } }
     body.graphiql-dark .graphiql-container { --color-primary:38,65%,68%; }
     @media(prefers-color-scheme:dark) { body:not(.graphiql-light) .graphiql-container { --color-primary:38,65%,68%; } }
     @media(max-width:700px) { .workspace-bar { padding:.75rem; flex-wrap:wrap; gap:.5rem; }.workspace-brand strong { font-size:20px; }.workspace-brand span { display:none; }.workspace-guide { padding:1rem; }.workspace-guide-grid { grid-template-columns:1fr; gap:1rem; }.workspace-actions { flex-wrap:wrap; }.workspace-actions a,.workspace-actions button { font-size:12px; padding:.4rem .6rem; } }

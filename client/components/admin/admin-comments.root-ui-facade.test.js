@@ -7,7 +7,7 @@ const provider = { key: 'default', title: 'Default', isEnabled: true, isAvailabl
 const snapshot = { providers: [provider], enabled: true, pageRatingsEnabled: false, pageRatingsMode: 'thumbs', fingerprint: 'first', counts: { visible: 2, hidden: 1, closedPages: 0 }, runtime: { provider: 'default', antiSpam: { state: 'verified' } } }
 function arrange(overrides = {}) {
   const transport = { fetchDiscussionWorkspace: vi.fn().mockResolvedValue(structuredClone(snapshot)), saveDiscussionWorkspace: vi.fn(), fetchDiscussionInventory: vi.fn().mockResolvedValue({ items: [], total: 0 }), inspectDiscussion: vi.fn(), moderateDiscussion: vi.fn(), fetchClosedDiscussions: vi.fn().mockResolvedValue({ items: [], total: 0 }), fetchPageDiscussionPolicy: vi.fn(), savePageDiscussionPolicy: vi.fn(), fetchPageList: vi.fn().mockResolvedValue([]), ...overrides }
-  const dependencies = { AsyncState: {}, DISCUSSION_SECRET_MASK, discussionEnumOptions, discussionIssues, discussionProviderTitle, discussionSettings, getErrorMessage: error => error.message, ...transport }
+  const dependencies = { AsyncState: {}, DISCUSSION_SECRET_MASK, discussionEnumOptions, discussionIssues, discussionProviderTitle, discussionSettings, confirmDiscard: vi.fn().mockResolvedValue(true), getErrorMessage: error => error.message, ...transport }
   const component = new Function(...Object.keys(dependencies), compiled + ';return component')(...Object.values(dependencies))
   const state = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $route: { query: {}, hash: '' }, $router: { replace: vi.fn() } }
   for (const [key, method] of Object.entries(component.methods)) state[key] = method.bind(state)

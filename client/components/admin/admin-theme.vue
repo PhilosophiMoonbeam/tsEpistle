@@ -482,7 +482,7 @@
       </div>
       <div v-if="dirty" class="theme-savebar">
         <span
-          >{{ $t('admin:theme.themeDraftChanged', { changedFieldsCount: changedFields.length, changedFields: changedFields.length === 1 ? "area" : "areas", interpolation: { escapeValue: false } }) }}</span
+          >{{ $t('admin:theme.themeDraftImpact', { count: changedFields.length }) }}</span
         ><v-btn variant="text" :disabled="locked" @click="reset">{{ $t('admin:theme.reset') }}</v-btn
         ><v-btn
           color="primary"
@@ -678,7 +678,7 @@ const colorLabels: Record<ThemeColorKey, string> = {
   info: t('admin:theme.information'),
   success: t('admin:theme.success'),
   warning: t('admin:theme.warning'),
-  error: "Error",
+  error: t('admin:theme.error'),
 };
 const sections = [
   { key: "palettes", title: t('admin:theme.paletteLibrary') },

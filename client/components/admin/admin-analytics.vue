@@ -319,9 +319,10 @@
               <v-checkbox v-model="simulation.privacySignal" :label="$t('admin:analytics.requestSendsDntGpc')" hide-details />
               <div role="status" class="analytics-simulation-result">
                 <strong>
-                  {{ $t('admin:analytics.localExternal', { local: simulationResult.local ? 'eligible' : 'excluded', external: simulationResult.external ? 'eligible' : 'excluded', interpolation: { escapeValue: false } }) }}
+                  {{ $t(simulationResult.local ? 'admin:analytics.simulationLocalEligible' : 'admin:analytics.simulationLocalExcluded') }}
+                  · {{ $t(simulationResult.external ? 'admin:analytics.simulationExternalEligible' : 'admin:analytics.simulationExternalExcluded') }}
                 </strong>
-                <p>{{ $t('admin:analytics.enabledValidProvidersAlso', { reason: simulationResult.reason, interpolation: { escapeValue: false } }) }}</p>
+                <p>{{ simulationReason }} {{ $t('admin:analytics.simulationProvidersRequired') }}</p>
               </div>
             </div>
             <div class="analytics-erasure">
@@ -394,7 +395,7 @@
                     <v-text-field
                       v-else
                       v-model="providerDraft.config[field.key]"
-                      :label="field.title + (field.optional ? ' (optional)' : '')"
+                      :label="field.optional ? $t('admin:analytics.optionalFieldLabel', { field: field.title }) : field.title"
                       :hint="field.hint"
                       persistent-hint
                       variant="outlined"
@@ -730,6 +731,19 @@ const simulationResult = computed(() =>
     offline: saved.value?.offline || false
   })
 )
+const simulationReasonKeys: Record<string, string> = {
+  'Only completed reader GET responses are eligible; prefetch is excluded.': 'simulationCompletedReader',
+  'Only published, shared reader pages without a page password are eligible.': 'simulationPublicReader',
+  'The request sends a Do Not Track or Global Privacy Control signal.': 'simulationPrivacySignal',
+  'System administrators are excluded.': 'simulationAdministratorExcluded',
+  'The reader is outside the selected audience.': 'simulationAudienceExcluded',
+  'The page matches an excluded path or section.': 'simulationPathExcluded',
+  'Offline mode suspends external integrations.': 'simulationOffline',
+  'Collection is paused.': 'simulationPaused',
+  'Eligible for local counts; offline mode suspends external integrations.': 'simulationLocalOffline',
+  'Eligible under the saved collection policy.': 'simulationDraftEligible'
+}
+const simulationReason = computed(() => t(`admin:analytics.${simulationReasonKeys[simulationResult.value.reason]}`))
 const numberFormat = new Intl.NumberFormat(),
   number = (value: number) => numberFormat.format(value),
   dateTime = (value: string) => new Date(value).toLocaleString()

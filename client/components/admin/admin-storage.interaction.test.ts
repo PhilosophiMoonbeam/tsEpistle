@@ -3,9 +3,9 @@ import path from 'node:path'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import i18next from 'i18next'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
-import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
-import { translate as unavailableTranslation } from '../../modules/localization.ts'
 import type { StorageOperationView, StorageWorkspace } from '../../../shared/storage-workspace.ts'
+import { translate as unavailableTranslation } from '../../modules/localization.ts'
+import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 
 resetBody()
 // These imports intentionally follow browser DOM setup: Vue/Vuetify capture
@@ -15,6 +15,7 @@ const { createRouter, createMemoryHistory, RouterView } = await import('vue-rout
 const { createVuetify } = await import('vuetify')
 const components = await import('vuetify/components')
 const directives = await import('vuetify/directives')
+const { currentConfirmation, registerConfirmationHost, settleConfirmation } = await import('../common/confirm-dialog.ts')
 
 // Exercise the actual private setup, template, receipt child and HTTP helpers.
 // Only styles and the unrelated admin hero chrome are omitted in this DOM test.
@@ -60,7 +61,7 @@ await french.init({
           applyStorageSettings: 'APPLIQUER LES RÉGLAGES DE STOCKAGE',
           cancelOperation: 'ANNULER L’OPÉRATION',
           priorWorkerStopped: 'LE PROCESSUS PRÉCÉDENT EST ARRÊTÉ',
-          type: 'Saisissez {{confirmation}}',
+          confirmationLabel: 'Confirmation exacte',
           administrativeReason: 'Motif administratif',
           recordIntentSoAnother: 'Indiquez votre intention pour le prochain administrateur.',
           queueOperation: 'Planifier l’opération',
@@ -74,7 +75,11 @@ await french.init({
           cancelBeforeExecution: 'Annuler avant exécution',
           reviewRecoveryDecision: 'Examiner la décision de récupération',
           cancellation: 'Annulation',
-          recoveryDecision: 'Décision de récupération'
+          recoveryDecision: 'Décision de récupération',
+          page: 'Page de contenu',
+          asset: 'Fichier joint',
+          conflict: 'Conflit de contenu',
+          failed: 'Échec du fichier'
         }
       }
     }
@@ -109,7 +114,19 @@ const operation = (state: StorageOperationView['state']): StorageOperationView =
   createdAt: timestamp,
   startedAt: state === 'queued' ? null : timestamp,
   completedAt: null,
-  result: null,
+  result:
+    state === 'interrupted'
+      ? {
+          outcome: 'failed',
+          message: 'Review the reported conflicts',
+          counts: { total: 2, succeeded: 0, failed: 2, formats: { okf: 1, legacyV1: 0, legacyWiki: 0, plain: 0, invalid: 0 } },
+          items: [
+            { kind: 'page', path: '/guide', outcome: 'conflict', format: 'okf', message: 'Existing page differs', diagnostics: [] },
+            { kind: 'asset', path: '/diagram.svg', outcome: 'failed', format: null, message: 'Asset could not be read', diagnostics: [] }
+          ],
+          targets: []
+        }
+      : null,
   resolution: null,
   canCancel: state === 'queued',
   canResolve: state === 'interrupted'
@@ -121,12 +138,26 @@ const workspace = (operations: StorageOperationView[]): StorageWorkspace => ({
   offline: false,
   history: [],
   operations,
-  targets: [{
-    key: 'disk', title: 'Local export', description: 'Saved local destination', isAvailable: true,
-    isEnabled: true, mode: 'push', modes: ['push'], defaultMode: 'push', schedule: false,
-    internalSchedule: false, syncInterval: 'P0D', config: { path: '/fixture-only/export' },
-    secrets: {}, fields: [], actions: [], issues: []
-  }],
+  targets: [
+    {
+      key: 'disk',
+      title: 'Local export',
+      description: 'Saved local destination',
+      isAvailable: true,
+      isEnabled: true,
+      mode: 'push',
+      modes: ['push'],
+      defaultMode: 'push',
+      schedule: false,
+      internalSchedule: false,
+      syncInterval: 'P0D',
+      config: { path: '/fixture-only/export' },
+      secrets: {},
+      fields: [],
+      actions: [],
+      issues: []
+    }
+  ],
   runtime: [{ key: 'disk', state: 'pending', active: false, matchesSaved: false, lastAttempt: null, lastOutcome: 'pending' }]
 })
 
@@ -156,7 +187,9 @@ const input = async (control: HTMLInputElement | HTMLTextAreaElement, value: str
 
 const mountStorage = async (localization: Localization, action: Action, existingState?: StorageOperationView['state']) => {
   setLocation('/a/storage')
-  const snapshot = workspace(existingState ? [operation(existingState)] : action === 'activate' ? [] : [operation(action === 'cancel' ? 'queued' : 'interrupted')])
+  const snapshot = workspace(
+    existingState ? [operation(existingState)] : action === 'activate' ? [] : [operation(action === 'cancel' ? 'queued' : 'interrupted')]
+  )
   const originalConfiguration = structuredClone(snapshot.targets)
   const writes: Array<{ pathname: string; method: string; credentials?: RequestCredentials; body: Record<string, unknown> }> = []
   const previousFetch = Object.getOwnPropertyDescriptor(browserWindow, 'fetch')
@@ -179,22 +212,40 @@ const mountStorage = async (localization: Localization, action: Action, existing
       }
       const recorded = snapshot.operations[0]!
       if (action === 'cancel' ? !recorded.canCancel : !recorded.canResolve) return response({ error: 'The worker state does not permit this decision.' }, 409)
-      snapshot.operations = [{
-        ...recorded, state: action === 'cancel' ? 'cancelled' : 'resolved', completedAt: timestamp,
-        resolution: { actorId: 7, reason: String(body.reason), createdAt: timestamp }, canCancel: false, canResolve: false
-      }]
+      snapshot.operations = [
+        {
+          ...recorded,
+          state: action === 'cancel' ? 'cancelled' : 'resolved',
+          completedAt: timestamp,
+          resolution: { actorId: 7, reason: String(body.reason), createdAt: timestamp },
+          canCancel: false,
+          canResolve: false
+        }
+      ]
       return response({ id: operationId, state: snapshot.operations[0]!.state })
     }
   })
   const t = localization === 'French' ? frenchTranslation : unavailableTranslation
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/a/storage', component: StorageWorkspaceComponent }] })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/a/storage', component: StorageWorkspaceComponent },
+      { path: '/a/away', component: Vue.defineComponent({ setup: () => () => Vue.h('main', { class: 'storage-leave-destination' }, 'Another admin page') }) }
+    ]
+  })
   const app = Vue.createApp({ render: () => Vue.h(RouterView) })
   app.use(router)
   app.use(createVuetify({ components, directives }))
   app.config.globalProperties.$t = t
-  app.component('admin-hero', Vue.defineComponent({
-    setup: (_props, { slots }) => () => Vue.h('header', [slots.default?.(), slots.actions?.()])
-  }))
+  app.component(
+    'admin-hero',
+    Vue.defineComponent({
+      setup:
+        (_props, { slots }) =>
+        () =>
+          Vue.h('header', [slots.default?.(), slots.actions?.()])
+    })
+  )
   const host = document.createElement('div')
   document.body.append(host)
   let mounted = false
@@ -217,16 +268,19 @@ describe('canonical storage confirmations in the mounted localized workspace', (
     for (const action of ['activate', 'cancel', 'resolve'] as const) {
       it(`${localization} localization displays and authorizes ${action} with its server token and reaches the receipt`, async () => {
         const { host, router, t, writes, snapshot, originalConfiguration } = await mountStorage(localization, action)
-        const entryKey = action === 'activate' ? 'admin:storage.applySavedSettings' : action === 'cancel'
-          ? 'admin:storageOperationReceipt.cancelBeforeExecution' : 'admin:storageOperationReceipt.reviewRecoveryDecision'
+        const entryKey =
+          action === 'activate'
+            ? 'admin:storage.applySavedSettings'
+            : action === 'cancel'
+              ? 'admin:storageOperationReceipt.cancelBeforeExecution'
+              : 'admin:storageOperationReceipt.reviewRecoveryDecision'
         const entry = button(host, t(entryKey))
         expect(entry.disabled).toBe(false)
         entry.click()
         await settle(() => Boolean(document.querySelector('.v-overlay--active .storage-dialog')), 'review dialog')
         const dialog = document.querySelector<HTMLElement>('.v-overlay--active .storage-dialog')!
         const token = contracts[action].token
-        const instruction = localization === 'French' ? `Saisissez ${token}` : `Type ${token}`
-        expect(dialog.textContent).toContain(instruction)
+        expect(dialog.textContent).toContain(token)
         const reason = dialog.querySelector<HTMLTextAreaElement>('textarea')!
         const confirmation = dialog.querySelector<HTMLInputElement>('input')!
         expect(reason).not.toBeNull()
@@ -234,7 +288,8 @@ describe('canonical storage confirmations in the mounted localized workspace', (
         expect(dialog.textContent).toContain(t('admin:storage.administrativeReason'))
         if (action === 'activate') expect(dialog.textContent).toContain(t('admin:storage.stopPreviousTargetsInitialize'))
         if (action === 'resolve') expect(dialog.textContent).toContain(t('admin:storage.resolvingRecordDoesNot'))
-        const submitKey = action === 'cancel' ? 'admin:storage.cancelOperation2' : action === 'resolve' ? 'admin:storage.resolveOperation' : 'admin:storage.queueOperation'
+        const submitKey =
+          action === 'cancel' ? 'admin:storage.cancelOperation2' : action === 'resolve' ? 'admin:storage.resolveOperation' : 'admin:storage.queueOperation'
         const submit = button(dialog, t(submitKey))
         const administrativeReason = 'Verified destinations and prior worker state'
         await input(confirmation, token)
@@ -254,29 +309,94 @@ describe('canonical storage confirmations in the mounted localized workspace', (
         submit.click()
         await settle(() => {
           const receipt = host.querySelector('.storage-receipt')
-          return !document.querySelector('.v-overlay--active .storage-dialog') && Boolean(receipt?.textContent?.includes(action === 'activate' ? 'Queued' : action === 'cancel' ? 'Cancelled' : 'Recovery acknowledged'))
+          return (
+            !document.querySelector('.v-overlay--active .storage-dialog') &&
+            Boolean(receipt?.textContent?.includes(action === 'activate' ? 'Queued' : action === 'cancel' ? 'Cancelled' : 'Recovery acknowledged'))
+          )
         }, 'recorded operation or decision receipt')
-        expect(writes).toEqual([{
-          pathname: contracts[action].endpoint, method: 'POST', credentials: 'same-origin',
-          body: {
-            ...(action === 'activate' ? { targetKey: null, handler: 'activate' } : {}),
-            fingerprint, reason: administrativeReason, confirmation: token
+        expect(writes).toEqual([
+          {
+            pathname: contracts[action].endpoint,
+            method: 'POST',
+            credentials: 'same-origin',
+            body: {
+              ...(action === 'activate' ? { targetKey: null, handler: 'activate' } : {}),
+              fingerprint,
+              reason: administrativeReason,
+              confirmation: token
+            }
           }
-        }])
+        ])
         expect(router.currentRoute.value.query).toMatchObject({ section: 'operations', operation: operationId })
         const receipt = host.querySelector('.storage-receipt')!
         expect(receipt.textContent).toContain('Apply saved storage settings')
         if (action === 'activate') expect(receipt.textContent).toContain(administrativeReason)
         else {
           expect(receipt.querySelector('.storage-resolution')?.textContent).toContain(administrativeReason)
-          expect(receipt.querySelector('.storage-resolution h4')?.textContent).toBe(t(action === 'cancel' ? 'admin:storageOperationReceipt.cancellation' : 'admin:storageOperationReceipt.recoveryDecision'))
+          expect(receipt.querySelector('.storage-resolution h4')?.textContent).toBe(
+            t(action === 'cancel' ? 'admin:storageOperationReceipt.cancellation' : 'admin:storageOperationReceipt.recoveryDecision')
+          )
           expect(receipt.querySelector('.storage-receipt-actions button')).toBeNull()
+        }
+        if (action === 'resolve' && localization === 'French') {
+          const items = Array.from(receipt.querySelectorAll('.storage-item-result'))
+          expect(items).toHaveLength(2)
+          expect(items[0]!.querySelector('summary')?.textContent).toContain('Conflit de contenu')
+          expect(items[0]!.querySelector('p')?.textContent).toContain('Page de contenu')
+          expect(items[1]!.querySelector('summary')?.textContent).toContain('Échec du fichier')
+          expect(items[1]!.querySelector('p')?.textContent).toContain('Fichier joint')
         }
         expect(snapshot.targets).toEqual(originalConfiguration)
         expect(snapshot.revision).toBe('saved-revision')
         expect(snapshot.history).toEqual([])
       })
     }
+  }
+
+  for (const field of ['reason', 'confirmation'] as const) {
+    it(`protects an unsaved review ${field} when saved storage configuration is unchanged`, async () => {
+      const { host, router, t, writes, snapshot, originalConfiguration } = await mountStorage('French', 'activate')
+      cleanups.push(registerConfirmationHost())
+      button(host, t('admin:storage.applySavedSettings')).click()
+      await settle(() => Boolean(document.querySelector('.v-overlay--active .storage-dialog')), 'review dialog')
+      const dialog = document.querySelector<HTMLElement>('.v-overlay--active .storage-dialog')!
+      const control = field === 'reason' ? dialog.querySelector<HTMLTextAreaElement>('textarea')! : dialog.querySelector<HTMLInputElement>('input')!
+      const untouchedUnload = new browserWindow.Event('beforeunload', { cancelable: true })
+      browserWindow.dispatchEvent(untouchedUnload)
+      expect(untouchedUnload.defaultPrevented).toBe(false)
+
+      const draft = field === 'reason' ? 'Reviewing the saved destinations before activation' : 'APPLY STORAGE'
+      await input(control, draft)
+      const unload = new browserWindow.Event('beforeunload', { cancelable: true })
+      browserWindow.dispatchEvent(unload)
+      expect(unload.defaultPrevented).toBe(true)
+
+      const declinedLeave = router.push('/a/away')
+      await settle(() => currentConfirmation() !== null, 'discard-review decision')
+      settleConfirmation(currentConfirmation()!.id, false)
+      await declinedLeave
+      await Vue.nextTick()
+      expect(router.currentRoute.value.path).toBe('/a/storage')
+      expect(host.querySelector('.storage-leave-destination')).toBeNull()
+      expect(document.querySelector('.v-overlay--active .storage-dialog')).toBe(dialog)
+      expect(control.value).toBe(draft)
+      expect(control.isConnected).toBe(true)
+
+      const acceptedLeave = router.push('/a/away')
+      await settle(() => currentConfirmation() !== null, 'repeated discard-review decision')
+      settleConfirmation(currentConfirmation()!.id, true)
+      await acceptedLeave
+      await settle(() => Boolean(host.querySelector('.storage-leave-destination')), 'accepted navigation')
+      expect(router.currentRoute.value.path).toBe('/a/away')
+      expect(host.querySelector('.storage-tabs')).toBeNull()
+      expect(control.isConnected).toBe(false)
+      const departedUnload = new browserWindow.Event('beforeunload', { cancelable: true })
+      browserWindow.dispatchEvent(departedUnload)
+      expect(departedUnload.defaultPrevented).toBe(false)
+      expect(writes).toHaveLength(0)
+      expect(snapshot.targets).toEqual(originalConfiguration)
+      expect(snapshot.revision).toBe('saved-revision')
+    })
   }
 
   it('does not offer cancellation or stopped-worker recovery while the worker is running', async () => {

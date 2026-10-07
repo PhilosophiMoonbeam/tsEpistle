@@ -560,53 +560,18 @@ export default defineComponent({
 })
 </script>
 
-<style lang='scss'>
-.admin-pages-visualize-controls {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin: 1rem 0;
-}
-
-.admin-pages-visualize-controls .v-select {
-  flex: 0 1 14rem;
-  min-width: 10rem;
-}
-
+<style scoped lang="scss">
 .admin-pages-visualize-svg {
   display: flex;
   min-height: min(65dvh, 48rem);
   text-align: center;
   overflow: hidden;
 
-  > svg {
+  :deep(> svg) {
     height: 100%;
     min-height: inherit;
     width: 100%;
   }
 }
-
-@media (max-width: 599.98px) {
-  .admin-pages-visualize-controls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .admin-pages-visualize-controls .v-select,
-  .admin-pages-visualize-controls .v-btn-toggle {
-    width: 100%;
-  }
-
-  .admin-pages-visualize-controls .v-btn-toggle {
-    overflow-x: auto;
-    justify-content: flex-start;
-  }
-
-  .admin-pages-visualize-controls .v-btn {
-    flex: 1 0 auto;
-  }
-}
-</style>
-<style scoped lang="scss">
-.pages-atlas { max-width:1600px; padding-bottom:4rem !important; }.atlas-intro { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:2rem .5rem; }.atlas-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }h2 { font:500 clamp(1.7rem,2.5vw,2.5rem)/1.15 var(--font-family-serif,Georgia,serif); margin:.7rem 0 1rem; }.atlas-intro p { line-height:1.7; max-width:45rem; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-intro dl { display:flex; flex-shrink:0; gap:2rem; }.atlas-intro dt { font-size:.75rem; }.atlas-intro dd { font:500 2.2rem Georgia,serif; margin:.4rem 0 0; }.atlas-controls { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:1rem 0; }.atlas-controls .v-select { flex:1 1 12rem; max-width:20rem; }.atlas-diagram,.atlas-directory { border:1px solid rgba(var(--v-border-color),.18); border-radius:12px; background:rgb(var(--v-theme-surface)); padding:1.5rem; }.atlas-diagram>p,.atlas-footnote { font-size:.8rem; line-height:1.7; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-directory>p { padding:1rem 0; font-size:.8rem; }.atlas-directory article { display:grid; grid-template-columns:1fr 1fr; gap:2rem; border-top:1px solid rgba(var(--v-border-color),.18); padding:1.4rem 0; }.atlas-directory article>div { min-width:0; }.atlas-directory code { display:block; font-size:.8rem; overflow-wrap:anywhere; margin-top:.4rem; }.atlas-directory a { color:rgb(var(--v-theme-on-surface)); text-decoration:underline; overflow-wrap:anywhere; }.atlas-directory ul { padding-left:1.1rem; margin-top:.6rem; font-size:.8rem; line-height:1.8; }.atlas-directory small { display:block; margin-top:.5rem; }.atlas-footnote { margin:1.5rem 0; }.atlas-directory a:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:3px; }@media(max-width:900px) { .atlas-intro { align-items:start; flex-direction:column; gap:1.5rem; } }@media(max-width:600px) { .atlas-directory article { grid-template-columns:1fr; gap:1rem; }.atlas-controls .v-select { max-width:none; }.atlas-diagram,.atlas-directory { padding:1rem; } }
+.pages-atlas { max-width:1600px; padding-bottom:4rem !important; }.atlas-intro { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:2rem .5rem; }.atlas-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }h2 { font:500 clamp(1.7rem,2.5vw,2.5rem)/1.15 var(--wiki-font-display); margin:.7rem 0 1rem; }.atlas-intro p { line-height:1.7; max-width:45rem; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-intro dl { display:flex; flex-shrink:0; gap:2rem; }.atlas-intro dt { font-size:.75rem; }.atlas-intro dd { font:500 2.2rem var(--wiki-font-display); margin:.4rem 0 0; }.atlas-controls { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:1rem 0; }.atlas-controls .v-select { flex:1 1 12rem; max-width:20rem; }.atlas-diagram,.atlas-directory { border:1px solid rgba(var(--v-border-color),.18); border-radius:12px; background:rgb(var(--v-theme-surface)); padding:1.5rem; }.atlas-diagram>p,.atlas-footnote { font-size:.8rem; line-height:1.7; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-directory>p { padding:1rem 0; font-size:.8rem; }.atlas-directory article { display:grid; grid-template-columns:1fr 1fr; gap:2rem; border-top:1px solid rgba(var(--v-border-color),.18); padding:1.4rem 0; }.atlas-directory article>div { min-width:0; }.atlas-directory code { display:block; font-size:.8rem; overflow-wrap:anywhere; margin-top:.4rem; }.atlas-directory a { color:rgb(var(--v-theme-on-surface)); text-decoration:underline; overflow-wrap:anywhere; }.atlas-directory ul { padding-left:1.1rem; margin-top:.6rem; font-size:.8rem; line-height:1.8; }.atlas-directory small { display:block; margin-top:.5rem; }.atlas-footnote { margin:1.5rem 0; }.atlas-directory a:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:3px; }@media(max-width:900px) { .atlas-intro { align-items:start; flex-direction:column; gap:1.5rem; } }@media(max-width:600px) { .atlas-directory article { grid-template-columns:1fr; gap:1rem; }.atlas-controls .v-select { max-width:none; }.atlas-diagram,.atlas-directory { padding:1rem; } }
 </style>

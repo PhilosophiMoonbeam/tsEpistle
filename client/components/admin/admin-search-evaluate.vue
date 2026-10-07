@@ -46,7 +46,16 @@ const result = shallowRef<PageSearchResult | null>(null)
 const rows = shallowRef<PageSearchRow[]>([])
 const elapsedMs = ref(0)
 let controller: AbortController | null = null
-const matchFieldLabel = (field: PageSearchRow['matchedFields'][number]): string => field === 'knowledge' ? t('admin:searchEvaluate.knowledgeHints') : field
+const matchFieldKeys = {
+  title: 'admin:searchEvaluate.matchTitle',
+  tag: 'admin:searchEvaluate.matchTag',
+  path: 'admin:searchEvaluate.matchPath',
+  description: 'admin:searchEvaluate.matchDescription',
+  content: 'admin:searchEvaluate.matchContent',
+  graph: 'admin:searchEvaluate.matchGraph',
+  knowledge: 'admin:searchEvaluate.knowledgeHints'
+} satisfies Record<PageSearchRow['matchedFields'][number], string>
+const matchFieldLabel = (field: PageSearchRow['matchedFields'][number]): string => t(matchFieldKeys[field])
 async function evaluate(cursor?: string | null) {
   if (loading.value) return
   const input = cursor ? submitted.value : { query: query.value?.trim() || '', locale: locale.value.trim(), path: path.value.trim() }

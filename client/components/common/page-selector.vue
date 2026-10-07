@@ -136,7 +136,7 @@
                   :class="{ 'page-selector__page--selected': currentPage?.id === page.id, 'page-selector__page--current': page.path === path && currentLocale === locale }"
                   :aria-current='page.path === path && currentLocale === locale ? `page` : undefined'
                 )
-                  template(v-slot:prepend): v-icon {{ $t(`common:pageSelector.ariaHiddenTrueMdi`) }}
+                  template(v-slot:prepend): v-icon(aria-hidden='true') mdi-text-box-outline
                   v-list-item-title {{page.title}}
                   v-list-item-subtitle.page-selector__page-path /{{page.locale}}/{{page.path}}
             async-state.page-selector__state.page-selector__filter-empty(

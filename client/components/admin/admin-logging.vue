@@ -96,7 +96,7 @@
                       <span>
                         <strong>{{ destination.title }}</strong>
                         <small>
-                          {{ destination.availability === 'available' ? $t('admin:logging.saved', { isEnabled: destination.isEnabled ? 'Enabled' : 'Disabled', interpolation: { escapeValue: false } }) : $t('admin:logging.unavailable') }}
+                          {{ destination.availability === 'available' ? $t(destination.isEnabled ? 'admin:logging.savedEnabled' : 'admin:logging.savedDisabled') : $t('admin:logging.unavailable') }}
                         </small>
                       </span>
                       <v-icon size="16" aria-hidden="true">mdi-chevron-right</v-icon>
@@ -127,7 +127,7 @@
                   <v-alert :type="destinationRuntimeTone(selectedDestination.runtime.state)" variant="tonal" class="mt-5">
                     <strong class="mr-1">{{ $t('admin:logging.runtimeProcess', { state: destinationRuntimeLabel(selectedDestination.runtime.state), interpolation: { escapeValue: false } }) }}</strong>
                     <span v-if="selectedDestination.runtime.message">{{ selectedDestination.runtime.message }}</span>
-                    <span v-else>{{ $t('admin:logging.savedPolicy', { isEnabled: selectedDestination.isEnabled ? 'enabled' : 'disabled', interpolation: { escapeValue: false } }) }}</span>
+                    <span v-else>{{ $t(selectedDestination.isEnabled ? 'admin:logging.savedPolicyEnabled' : 'admin:logging.savedPolicyDisabled') }}</span>
                   </v-alert>
                   <v-alert v-if="selectedDestination.availability === 'unavailable'" type="warning" variant="tonal" class="mt-5">
                     {{ $t('admin:logging.historicConfigurationRemainsUntouched', { availabilityReason: selectedDestination.availabilityReason, interpolation: { escapeValue: false } }) }}
@@ -160,12 +160,13 @@
                       :hint="$t('admin:logging.onlyRecordsSeverityAbove')"
                     />
                     <template v-for="field in selectedDestination.fields" :key="field.key">
-                      <logging-secret-field
+                      <admin-secret-field
                         v-if="field.sensitive"
                         v-model="secretChanges[secretKey(selectedDestination.key, field.key)]"
                         :stored="selectedDestination.secrets[field.key] === true"
                         :label="field.title"
                         :hint="field.hint"
+                        :maxlength="65536"
                         :disabled="locked"
                       />
                       <v-select
@@ -378,7 +379,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
 import LoggingConsole from './admin-logging-console.vue'
-import LoggingSecretField from './logging-secret-field.vue'
+import AdminSecretField from './admin-secret-field.vue'
 import { applyLoggingWorkspace, fetchLoggingWorkspace, saveLoggingWorkspace } from '../../helpers/logging-workspace-api.ts'
 import type {
   LoggingDestination,
@@ -514,13 +515,15 @@ const changes = computed(() => {
   for (const destination of destinations.value) {
     const original = destinationFor(destination.key)
     if (!original) continue
-    if (destination.isEnabled !== original.isEnabled) result.push(`${original.title}: ${destination.isEnabled ? 'enabled' : 'disabled'}`)
+    if (destination.isEnabled !== original.isEnabled)
+      result.push(t(destination.isEnabled ? 'admin:logging.destinationEnabledReview' : 'admin:logging.destinationDisabledReview', { title: original.title, interpolation: { escapeValue: false } }))
     if (destination.level !== original.level) result.push(t('admin:logging.minimumLevel', { title: original.title, level: original.level, level2: destination.level, interpolation: { escapeValue: false } }))
     for (const [key, value] of Object.entries(destination.config))
       if (JSON.stringify(value) !== JSON.stringify(original.config[key])) result.push(t('admin:logging.changed', { title: original.title, key, interpolation: { escapeValue: false } }))
     for (const [key, action] of Object.entries(destination.secrets)) {
       const selected = secretChanges.value[secretKey(destination.key, key)] ?? action
-      if (selected.action !== 'keep') result.push(`${original.title}: ${key} ${selected.action === 'clear' ? 'cleared' : 'replaced'}`)
+      if (selected.action !== 'keep')
+        result.push(t(selected.action === 'clear' ? 'admin:logging.secretClearedReview' : 'admin:logging.secretReplacedReview', { title: original.title, key, interpolation: { escapeValue: false } }))
     }
   }
   return result

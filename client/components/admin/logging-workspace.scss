@@ -218,34 +218,6 @@
     font-size: 12px;
   }
 
-  .logging-secret {
-    margin-bottom: 18px;
-    padding: 18px;
-    border: 1px solid var(--logging-line);
-    border-radius: 8px;
-    background: var(--logging-soft);
-  }
-  .logging-secret-head {
-    display: flex;
-    align-items: start;
-    justify-content: space-between;
-    gap: 18px;
-  }
-  .logging-secret-head strong {
-    font-size: 13px;
-  }
-  .logging-secret-head p {
-    margin: 5px 0 0;
-    color: var(--logging-muted);
-    font-size: 12px;
-    line-height: 1.65;
-  }
-  .logging-secret-head > .v-select {
-    flex: 0 0 174px;
-  }
-  .logging-secret-head + .v-input {
-    margin-top: 20px;
-  }
 
   .logging-steps {
     display: grid;
@@ -441,12 +413,6 @@
     }
     .logging-provider-head {
       flex-direction: column;
-    }
-    .logging-secret-head {
-      flex-direction: column;
-    }
-    .logging-secret-head > .v-select {
-      width: 100%;
     }
   }
 }

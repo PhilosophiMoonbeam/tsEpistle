@@ -88,7 +88,7 @@
         v-credential-autofill
         v-else-if="field.type === 'number'"
         :model-value="modelValue.config[field.key]"
-        @update:model-value="updateConfig(field.key, Number($event))"
+        @update:model-value="updateConfig(field.key, $event === '' || $event == null ? null : Number($event))"
         :label="field.title"
         type="number"
         autocomplete="off"

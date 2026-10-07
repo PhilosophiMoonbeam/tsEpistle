@@ -1,3 +1,5 @@
+@use './admin-workspace.scss' as workspace;
+
 .developer-flags-workspace {
   --flags-line: rgba(var(--v-theme-on-surface), 0.14);
   --flags-muted: var(--wiki-text-muted);
@@ -46,7 +48,6 @@
   }
 
   .flags-section-head,
-  .flags-savebar,
   .flags-history-row,
   .flags-runtime-note {
     display: flex;
@@ -211,14 +212,7 @@
   }
 
   .flags-savebar {
-    position: sticky;
-    z-index: 2;
-    bottom: 16px;
-    margin-top: 24px;
-    border: 1px solid rgb(var(--v-theme-primary));
-    border-radius: 6px;
-    background: rgb(var(--v-theme-surface));
-    padding: 15px 18px;
+    @include workspace.admin-draft-bar;
   }
 
   .flags-savebar p {

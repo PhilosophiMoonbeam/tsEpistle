@@ -19,12 +19,13 @@
         <div class="api-filters"><v-text-field v-model="keySearch" :label="$t('admin:api.findKeyGroupKey')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable /><v-select v-model="keyFilter" :label="$t('admin:api.keyStatus')" :items="keyFilterOptions" variant="outlined" density="compact" hide-details /><span role="status">{{ $t('admin:api.of', { filteredKeysCount: filteredKeys.length, keysCount: keys.length, interpolation: { escapeValue: false } }) }}</span></div>
         <div v-if="filteredKeys.length" class="api-register">
           <details v-for="key in filteredKeys" :key="key.id" class="api-record">
-            <summary><span class="api-key-identity"><strong>{{ key.name }}</strong><small>{{ groupName(key) }}</small></span><span class="api-key-expiry"><small>{{ keyState(key) === 'expired' ? $t('admin:api.expired2') : $t('admin:api.expires') }}</small>{{ formatDate(key.expiration) }}</span><v-chip size="small" :color="keyState(key) === 'active' ? 'success' : keyState(key) === 'expired' ? 'warning' : undefined">{{ keyState(key) }}</v-chip><v-icon size="18">mdi-chevron-down</v-icon></summary>
+            <summary><span class="api-key-identity"><strong>{{ key.name }}</strong><small>{{ groupName(key) }}</small></span><span class="api-key-expiry"><small>{{ keyState(key) === 'expired' ? $t('admin:api.expired2') : $t('admin:api.expires') }}</small>{{ formatDate(key.expiration) }}</span><v-chip size="small" :color="keyState(key) === 'active' ? 'success' : keyState(key) === 'expired' ? 'warning' : undefined">{{ keyStateLabel(key) }}</v-chip><v-icon size="18">mdi-chevron-down</v-icon></summary>
             <div class="api-key-detail"><dl><div><dt>{{ $t('admin:api.keyEnding') }}</dt><dd><code>{{ key.keyShort }}</code></dd></div><div><dt>{{ $t('admin:api.headerCreated') }}</dt><dd>{{ formatDate(key.createdAt) }}</dd></div><div><dt>{{ $t('admin:api.issuedPermissionGroup') }}</dt><dd>{{ groupName(key) }}<span v-if="key.grant.groupId"> · #{{ key.grant.groupId }}</span></dd></div><div><dt>{{ $t('admin:api.mcpResourceBinding') }}</dt><dd>{{ key.grant.mcpResource || $t('admin:api.noMcpBindingWas') }}</dd></div></dl>
               <v-alert v-if="key.grant.mcpResource && (key.grant.mcpResourceVersion !== 1 || (connections && key.grant.mcpResource !== connections.mcpResource))" type="warning" variant="tonal" class="mb-3">{{ $t('admin:api.bindingDoesNotMatch') }}</v-alert>
               <p>{{ key.grant.groupId === 1 ? $t('admin:api.keyCarriesSystemAdministrator') : !key.grant.groupId ? $t('admin:api.issuedGrantCouldNot') : $t('admin:api.groupsCurrentPermissionsPage') }}</p>
               <p v-if="keyState(key) === 'active' && !enabled" class="api-note">{{ $t('admin:api.credentialHasNotExpired') }}</p>
-              <div class="api-record-actions"><v-btn variant="outlined" :disabled="adminApiBusy" prepend-icon="mdi-key-plus" @click="newKey(key)">{{ $t('admin:api.createReplacement') }}</v-btn><v-btn v-if="!key.isRevoked && key.canRevoke" variant="text" color="error" :disabled="adminApiBusy" @click="revoke(key)">{{ $t('admin:api.revokeKey') }}</v-btn></div>
+              <p v-if="!canIssueKey" class="api-note">{{ $t('admin:apiCreate.noDelegableAuthority') }}</p>
+              <div class="api-record-actions"><v-btn variant="outlined" :disabled="adminApiBusy || !canIssueKey" prepend-icon="mdi-key-plus" @click="newKey(key)">{{ $t('admin:api.createReplacement') }}</v-btn><v-btn v-if="!key.isRevoked && key.canRevoke" variant="text" color="error" :disabled="adminApiBusy" @click="revoke(key)">{{ $t('admin:api.revokeKey') }}</v-btn></div>
             </div>
           </details>
         </div>
@@ -38,7 +39,7 @@
       <div class="api-explorer-intro"><div><span class="api-kicker">{{ $t('admin:api.interactiveSchema') }}</span><h2>{{ $t('admin:api.exploreShapeWiki') }}</h2><p>{{ $t('admin:api.useGraphqlWorkspaceInspect') }}</p><v-btn color="primary" prepend-icon="mdi-code-braces" href="/graphql" target="_blank" rel="noopener">{{ $t('admin:api.openGraphqlWorkspace') }}<v-icon end size="16">mdi-open-in-new</v-icon></v-btn></div><aside><h3>{{ $t('admin:api.sessionStartingPoint') }}</h3><p>{{ $t('admin:api.explorerUsesSignedBrowser') }}</p><p>{{ $t('admin:api.evaluateKeyUseBearer') }}</p></aside></div>
       <div class="api-explorer-principles"><div><span>01</span><h3>{{ $t('admin:api.discover') }}</h3><p>{{ $t('admin:api.browseTypesFieldsArguments') }}</p></div><div><span>02</span><h3>{{ $t('admin:api.compose') }}</h3><p>{{ $t('admin:api.useVariablesAutocompleteBuild') }}</p></div><div><span>03</span><h3>{{ $t('admin:api.inspect') }}</h3><p>{{ $t('admin:api.reviewReturnedDataPermission') }}</p></div></div>
     </section>
-    <create-api-key v-model="isCreateDialogShown" :refresh-api-keys="refresh" :connections="connections" :assignable-groups="assignableGroups" :create-full-access="createFullAccess" :seed="replacementKey" @sensitive-state="credentialFlowProtected = $event" @retry-connections="loadConnections" />
+    <create-api-key v-model="isCreateDialogShown" :refresh-api-keys="refresh" :connections="connections" :assignable-groups="assignableGroups" :create-full-access="createFullAccess" :seed="replacementKey" @sensitive-state="credentialFlowProtected = $event" />
     <v-dialog v-model="isRevokeConfirmDialogShown" max-width="520" persistent aria-labelledby="revoke-api-key-dialog-title"><v-card><v-card-title id="revoke-api-key-dialog-title">{{ $t('admin:api.revokeKey2') }}</v-card-title><v-card-text><strong>{{ current?.name }}</strong> {{ $t('admin:api.willStopAuthenticatingNew') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="revokeLoading" @click="isRevokeConfirmDialogShown = false">{{ $t('admin:api.keepKey') }}</v-btn><v-btn color="error" :loading="revokeLoading" @click="revokeConfirm">{{ $t('admin:api.revokeKey') }}</v-btn></v-card-actions></v-card></v-dialog>
     <v-dialog v-model="disableDialog" max-width="520" persistent aria-labelledby="disable-api-title"><v-card><v-card-title id="disable-api-title">{{ $t('admin:api.disableApiKeyAccess2') }}</v-card-title><v-card-text>{{ $t('admin:api.allApiKeyIntegrations') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="isToggleLoading" @click="disableDialog = false">{{ $t('admin:api.keepEnabled') }}</v-btn><v-btn color="error" :loading="isToggleLoading" @click="disableApi">{{ $t('admin:api.disableAccess') }}</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
@@ -53,7 +54,6 @@ import AdminApiConnect from './admin-api-connect.vue'
 import { apiKeyState, type ApiAssignableGroup, type ApiConnectionInfo } from '../../../shared/api-admin.ts'
 import { fetchApiConnections, fetchAdminApiBootstrap, revokeAdminApiKey, setAdminApiState, type AdminApiKey } from '../../helpers/auth-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
-import { apiAccessContract } from '../../../shared/api-access.ts'
 
 export default {
   components: {
@@ -61,7 +61,7 @@ export default {
   },
   data() {
     return {
-      section: ['connect', 'explore'].includes(window.location.hash.slice(1)) ? window.location.hash.slice(1) : 'credentials',
+      section: ['connect', 'explore'].includes(this.$route.hash.slice(1)) ? this.$route.hash.slice(1) : 'credentials',
       connections: null as ApiConnectionInfo | null,
       connectionLoading: false,
       connectionError: false,
@@ -97,37 +97,24 @@ export default {
     activeKeyCount(): number { return this.keys.filter(key => this.keyState(key) === 'active').length },
     expiredKeyCount(): number { return this.keys.filter(key => this.keyState(key) === 'expired').length },
     revokedKeyCount(): number { return this.keys.filter(key => key.isRevoked).length },
-    apiAccessContract() {
-      return apiAccessContract
-    },
-    mcpEndpoint() { return `${window.location.origin}${apiAccessContract.mcpPath}` },
-    graphqlEndpoint() {
-      return `${window.location.origin}${apiAccessContract.graphqlPath}`
-    },
-    externalRestEndpoint() {
-      return `${window.location.origin}${apiAccessContract.externalRestPrefix}`
-    },
-    openApiEndpoint() {
-      return `${window.location.origin}${apiAccessContract.openApiPath}`
-    },
-    internalRestEndpoint() {
-      return `${window.location.origin}${apiAccessContract.internalRestPrefix}/*`
-    },
-    curlExample() {
-      return [
-        `curl --request POST '${this.graphqlEndpoint}' \\`,
-        `  --header 'Authorization: ${apiAccessContract.bearerScheme} <API_KEY>' \\`,
-        "  --header 'Content-Type: application/json' \\",
-        "  --data '{\"query\":\"query { system { info { currentVersion product { name version } } } }\"}'"
-      ].join('\n')
-    }
+    canIssueKey(): boolean { return this.createFullAccess || this.assignableGroups.length > 0 }
   },
   watch: {
-    section (value: string) { window.history.replaceState(window.history.state, '', `${window.location.pathname}${value === 'credentials' ? '' : `#${value}`}`) }
+    section (value: string) {
+      const hash = `#${value}`
+      if (this.$route.hash !== hash && !(value === 'credentials' && !this.$route.hash)) void this.$router.push({ hash, query: this.$route.query })
+    },
+    '$route.hash' (hash: string) {
+      this.section = ['connect', 'explore'].includes(hash.slice(1)) ? hash.slice(1) : 'credentials'
+    }
   },
   beforeRouteLeave (): boolean { return !this.isCreateDialogShown && !this.credentialFlowProtected && !this.isToggleLoading && !this.revokeLoading },
   methods: {
     keyState (key: AdminApiKey) { return apiKeyState(key, this.clock) },
+    keyStateLabel (key: AdminApiKey): string {
+      const labels = { active: 'active2', expired: 'expired2', revoked: 'revoked2', unknown: 'unknownExpiry' }
+      return this.$t(`admin:api.${labels[this.keyState(key)]}`)
+    },
     formatDate (date: string): string { return Number.isFinite(Date.parse(date)) ? new Date(date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : this.$t('admin:api.unknown') },
     groupName (key: AdminApiKey): string {
       if (key.grant.groupId === 1) return this.$t('admin:api.systemAdministrator')
@@ -209,7 +196,7 @@ export default {
       await this.globalSwitch()
     },
     newKey (key?: AdminApiKey) {
-      if (this.isDisposed || this.adminApiBusy || (!key && !this.createFullAccess && !this.assignableGroups.length)) return
+      if (this.isDisposed || this.adminApiBusy || !this.canIssueKey) return
       this.replacementKey = key || null
       this.isCreateDialogShown = true
     },

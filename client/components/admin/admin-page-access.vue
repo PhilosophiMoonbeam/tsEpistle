@@ -28,5 +28,5 @@ export default defineComponent({
 })
 </script>
 <style scoped lang="scss">
-.page-access-dialog header { padding:2rem 2rem 0; }.access-kicker { font-size:.7rem; letter-spacing:.13em; text-transform:uppercase; }h2 { font:500 2rem/1.2 var(--font-family-serif,Georgia,serif); margin:.7rem 0; }p { line-height:1.7; margin-bottom:1rem; overflow-wrap:anywhere; }.access-search { display:flex; align-items:center; gap:1rem; margin:1.5rem 0; }small { color:rgb(var(--v-theme-on-surface-variant)); }.v-card-actions { padding:1rem; flex-wrap:wrap; }@media(max-width:600px) { .access-search { flex-direction:column; align-items:stretch; } }
+.page-access-dialog header { padding:2rem 2rem 0; }.access-kicker { font-size:.7rem; letter-spacing:.13em; text-transform:uppercase; }h2 { font:500 2rem/1.2 var(--wiki-font-display); margin:.7rem 0; }p { line-height:1.7; margin-bottom:1rem; overflow-wrap:anywhere; }.access-search { display:flex; align-items:center; gap:1rem; margin:1.5rem 0; }small { color:rgb(var(--v-theme-on-surface-variant)); }.v-card-actions { padding:1rem; flex-wrap:wrap; }@media(max-width:600px) { .access-search { flex-direction:column; align-items:stretch; } }
 </style>

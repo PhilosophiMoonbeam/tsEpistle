@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
 
 const script = fs.readFileSync('client/components/admin/admin-api-create.vue', 'utf8').match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
@@ -11,7 +12,7 @@ const eligibleGroup = {
   pageRules: []
 }
 
-function harness({ assignableGroups = [eligibleGroup], createFullAccess = false, connections = { mcpEnabled: true, mcpConfigurationError: false, mcpResource: 'mcp://configured' } } = {}) {
+function harness({ assignableGroups = [eligibleGroup], createFullAccess = false, connections = { mcpEnabled: true, mcpConfigurationError: false, mcpResource: 'mcp://configured' }, seed = null } = {}) {
   const create = vi.fn(async () => ({ key: 'one-time-fixture-key' }))
   const refreshApiKeys = vi.fn(async () => true)
   const wikiStore = {
@@ -31,17 +32,20 @@ function harness({ assignableGroups = [eligibleGroup], createFullAccess = false,
     assignableGroups,
     createFullAccess,
     connections,
+    seed,
+    modelValue: true,
     refreshApiKeys,
     $refs: { createForm: { validate: vi.fn(async () => ({ valid: true })) } },
     $nextTick: vi.fn(),
     $emit: vi.fn(),
-    $t: key => key
+    $t: translateEnglish
   }
   for (const [key, fn] of Object.entries(options.methods)) instance[key] = fn.bind(instance)
   for (const [key, fn] of Object.entries(options.computed)) {
     if (typeof fn === 'function') Object.defineProperty(instance, key, { get: fn.bind(instance) })
+    else Object.defineProperty(instance, key, { get: fn.get.bind(instance), set: fn.set.bind(instance) })
   }
-  return { instance, create, refreshApiKeys, wikiStore }
+  return { instance, create, refreshApiKeys, wikiStore, options }
 }
 
 describe('guided API-key issuance', () => {
@@ -112,9 +116,16 @@ describe('guided API-key issuance', () => {
     expect(wikiStore.showError).toHaveBeenCalledWith(failure)
   })
 
-  it('requires a deliberate decision when a replacement needs unavailable MCP configuration', () => {
-    const { instance, create } = harness({ createFullAccess: true, assignableGroups: [], connections: null })
-    Object.assign(instance, { name: 'Agent replacement', step: 2, scope: 'full', mcpAccess: true })
+  it('requires explicit replacement authority and a deliberate decision when MCP configuration is unavailable', () => {
+    const { instance, create, options } = harness({
+      connections: null,
+      seed: { name: 'Agent', grant: { groupId: 99, mcpResource: 'mcp://configured' } }
+    })
+    options.watch.modelValue.handler.call(instance, true)
+    expect(instance.scope).toBeNull()
+    expect(instance.group).toBeNull()
+    expect(instance.mcpAccess).toBe(true)
+    Object.assign(instance, { step: 2, scope: 'group', group: eligibleGroup.id })
 
     instance.nextStep()
     expect(instance.step).toBe(2)

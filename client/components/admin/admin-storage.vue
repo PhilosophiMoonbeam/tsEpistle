@@ -661,7 +661,10 @@
           <v-text-field
             v-if="reviewState.confirmation"
             v-model="confirmation"
-            :label="$t('admin:storage.type', { confirmation: reviewState.confirmation, defaultValue: `Type ${reviewState.confirmation}`, interpolation: { escapeValue: false } })"
+            :label="$t('admin:storage.confirmationLabel')"
+            :hint="reviewState.confirmation"
+            persistent-hint
+            :hide-details="false"
             variant="outlined"
             autocomplete="off"
             :disabled="busy"
@@ -765,6 +768,7 @@ const fromSaved = (value: StorageWorkspace): StorageTargetDraft[] =>
 const section = computed(() => (sections.some(tab => tab.key === route.query.section) ? String(route.query.section) : 'overview'))
 const draftFor = (key: string) => drafts.value.find(target => target.key === key)
 const dirty = computed(() => Boolean(saved.value) && JSON.stringify(drafts.value) !== JSON.stringify(fromSaved(saved.value!)))
+const reviewInputDirty = computed(() => reviewOpen.value && (reason.value.length > 0 || confirmation.value.length > 0))
 const targetChanged = (key: string) =>
   Boolean(saved.value) && JSON.stringify(draftFor(key)) !== JSON.stringify(fromSaved(saved.value!).find(target => target.key === key))
 const changedTargets = computed(() => drafts.value.filter(target => targetChanged(target.key)))
@@ -1071,9 +1075,11 @@ async function load(replace = true) {
 const askDiscard = () =>
   confirmDiscard(
     t('admin:storage.discardUnsavedChanges'),
-    stale.value
-      ? t('admin:storage.serverOutcomeNeedsConfirmation')
-      : t('admin:storage.targetDraftHasNot'),
+    reviewInputDirty.value
+      ? t('admin:storage.reviewInputWillBeDiscarded')
+      : stale.value
+        ? t('admin:storage.serverOutcomeNeedsConfirmation')
+        : t('admin:storage.targetDraftHasNot'),
     t('admin:storage.discardDraft')
   )
 async function guarded(action: () => void) {
@@ -1218,14 +1224,14 @@ function downloadRecoveryPlan() {
   )
 }
 function beforeUnload(event: BeforeUnloadEvent) {
-  if ((dirty.value && !writeConfirmed) || busy.value) {
+  if ((dirty.value && !writeConfirmed) || reviewInputDirty.value || busy.value) {
     event.preventDefault()
     event.returnValue = ''
   }
 }
 onBeforeRouteLeave(async () => {
   if (busy.value) return false
-  if (dirty.value && !writeConfirmed) return !busy.value && (await askDiscard())
+  if ((dirty.value && !writeConfirmed) || reviewInputDirty.value) return !busy.value && (await askDiscard())
   return true
 })
 watch(reviewOpen, value => {

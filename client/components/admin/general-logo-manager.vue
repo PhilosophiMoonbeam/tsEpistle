@@ -79,7 +79,7 @@
             v-icon(start) mdi-refresh
             | {{ $t('admin:general.logoRetry') }}
           v-btn(
-            v-if='candidateHasFailed || uploadInterrupted'
+            v-if='candidateHasFailed || uploadInterrupted || pickerValidationFailed'
             variant='text'
             size='small'
             :disabled='disabled || logoUploading || logoRetrying'
@@ -131,7 +131,7 @@
         @click='retryUpload'
       ) {{ $t('admin:general.logoRetryUpload') }}
       v-btn.logo-error-action(
-        v-else-if='candidateHasFailed'
+        v-else-if='candidateHasFailed || pickerValidationFailed'
         variant='text'
         size='small'
         :disabled='disabled || logoUploading || logoRetrying'
@@ -307,6 +307,10 @@ export default {
     uploadInterrupted() {
       return this.logoErrorKey === 'admin:general.logoErrorUploadInterrupted'
     },
+    pickerValidationFailed() {
+      return this.logoErrorKey === 'admin:general.logoErrorOneFile' ||
+        this.logoErrorKey === 'admin:general.logoErrorTooLarge'
+    },
     statusUnavailable() {
       return this.logoStatusUnavailable
     },
@@ -435,7 +439,7 @@ export default {
         this.refreshLogoStatus(true)
       }, delay)
     },
-    applyLogoStatus(status: SiteLogoStatus) {
+    applyLogoStatus(status: SiteLogoStatus, recoverFocus = false) {
       const previousActiveRevisionId = this.logoStatus?.active?.revisionId || null
       const previousCandidateRevisionId = this.logoStatus?.candidate?.revisionId || null
       if (status.candidate?.revisionId) this.trackedCandidateRevisionId = status.candidate.revisionId
@@ -456,13 +460,15 @@ export default {
         this.publishedNoticeKey = status.active.enhancement.status === 'unavailable'
           ? 'admin:general.logoStatusPublishedWithoutAnimation'
           : 'admin:general.logoStatusPublished'
-        if (this.submittedSelectionVersion === null || this.submittedSelectionVersion === this.selectionVersion) {
+        if ((this.submittedSelectionVersion === null && !this.selectedFile) || this.submittedSelectionVersion === this.selectionVersion) {
           this.selectedFile = null
           this.selectedDimensions = null
           this.selectionVersion++
           this.clearCandidatePreview()
           this.confirming = false
-          this.$nextTick?.(() => this.focusPickerTarget())
+          if (recoverFocus) this.$nextTick?.(() => {
+            if (!this.logoDisposed) this.focusPickerTarget()
+          })
         }
         this.submittedSelectionVersion = null
         this.submittedRevisionId = null
@@ -616,7 +622,7 @@ export default {
       try {
         const status = await uploadSiteLogo(window.fetch.bind(window), file, controller.signal)
         if (requestId !== this.logoRequestId || this.logoDisposed) return
-        this.applyLogoStatus(status)
+        this.applyLogoStatus(status, true)
       } catch (error) {
         if (requestId === this.logoRequestId && !this.logoDisposed && !controller.signal.aborted) {
           this.logoErrorKey = error instanceof SiteLogoApiError && error.code
@@ -647,7 +653,7 @@ export default {
       try {
         const status = await retrySiteLogo(window.fetch.bind(window), controller.signal)
         if (requestId !== this.logoRequestId || this.logoDisposed) return
-        this.applyLogoStatus(status)
+        this.applyLogoStatus(status, true)
       } catch (error) {
         if (requestId === this.logoRequestId && !this.logoDisposed && !controller.signal.aborted) {
           this.logoErrorKey = this.logoRequestErrorKey(error)

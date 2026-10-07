@@ -18,3 +18,9 @@ export default {
   methods: { toggle(key: string, enabled: boolean) { if (this.disabled || (enabled && !this.allowed.includes(key))) return; const permissions = new Set(this.modelValue.permissions); if (enabled) { permissions.add(key); if (key === 'use:agent-browser') permissions.add('use:agents') } else { permissions.delete(key); if (key === 'use:agents') permissions.delete('use:agent-browser') } this.$emit('update:modelValue', { ...this.modelValue, permissions: [...permissions].sort() }) } }
 }
 </script>
+<style lang="scss" scoped>
+.group-permission.is-selected {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), .07);
+}
+</style>

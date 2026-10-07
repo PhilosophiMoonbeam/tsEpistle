@@ -136,7 +136,7 @@
                   <p>{{ $t('admin:mail.useCredentialsSuppliedProvider') }}</p>
                 </div>
                 <v-text-field v-model="policy.user" :label="$t('admin:mail.smtpUsername')" variant="outlined" maxlength="255" autocomplete="off" :disabled="locked" />
-                <mail-secret-field v-model="secrets.pass" :stored="saved.secrets.pass" :label="$t('admin:mail.smtpPassword')" :disabled="locked" />
+                <admin-secret-field v-model="secrets.pass" :stored="saved.secrets.pass" :label="$t('admin:mail.smtpPassword')" :maxlength="65536" :disabled="locked" />
                 <details class="mail-advanced">
                   <summary>{{ $t('admin:mail.advancedConnectionSettings') }}</summary>
                   <div class="mail-fields mt-5">
@@ -233,10 +233,12 @@
                     :hint="$t('admin:mail.useNewSelectorWhen')"
                   />
                 </div>
-                <mail-secret-field
+                <admin-secret-field
                   v-model="secrets.dkimPrivateKey"
                   :stored="saved.secrets.dkimPrivateKey"
                   :label="$t('admin:mail.dkimPrivateKey2')"
+                  :hint="$t('admin:mail.dkimReplacementHint')"
+                  :maxlength="65536"
                   multiline
                   :disabled="locked"
                 />
@@ -513,7 +515,7 @@
               <span v-else>{{ change.after }}</span>
             </div>
           </div>
-          <v-textarea v-model="reason" :label="$t('admin:mail.reasonChange')" variant="outlined" rows="2" maxlength="1000" :disabled="busy" hide-details />
+          <v-textarea v-model="reason" :label="$t('admin:mail.reasonChange')" variant="outlined" rows="2" maxlength="1000" counter="1000" :hint="$t('admin:mail.reviewReasonHint')" persistent-hint :disabled="busy" />
           <v-alert v-if="reviewError" type="error" variant="tonal" class="mt-4">{{ reviewError }}</v-alert>
         </v-card-text>
         <v-card-actions>
@@ -563,7 +565,7 @@ import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, toRaw, nextTick } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AsyncState from '@/components/common/async-state.vue'
-import MailSecretField from './mail-secret-field.vue'
+import AdminSecretField from './admin-secret-field.vue'
 import {
   MAIL_TEMPLATES,
   mailConfigurationIssues,

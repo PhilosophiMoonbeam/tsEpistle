@@ -510,7 +510,7 @@
       </div>
       <div v-if="dirty" class="navigation-savebar">
         <span
-          >{{ $t('admin:navigation.navigationDraftChanged', { changedFieldsCount: changedFields.length, changedFields: changedFields.length === 1 ? "area" : "areas", interpolation: { escapeValue: false } }) }}</span
+          >{{ $t('admin:navigation.navigationDraftImpact', { count: changedFields.length }) }}</span
         ><v-btn variant="text" :disabled="locked" @click="reset">{{ $t('admin:navigation.reset') }}</v-btn
         ><v-btn
           color="primary"
@@ -928,7 +928,7 @@ async function removeItem() {
   if (locked.value || !selected.value) return;
   const targetId = selectedId.value;
   const confirmed = await requestConfirmation({
-    title: t('admin:navigation.removeDraft', { label: selected.value.label || "this divider", interpolation: { escapeValue: false } }),
+    title: t('admin:navigation.removeDraft', { label: selected.value.label || t('admin:navigation.divider2'), interpolation: { escapeValue: false } }),
     confirmLabel: t('admin:navigation.remove'),
     tone: "destructive",
   });
@@ -1121,11 +1121,15 @@ const reviewValue = (policy: NavigationPolicy, field: string) =>
           null,
           2,
         );
-const date = (value: string) =>
-  new Date(value).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+const date = (value: string) => {
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime())
+    ? t('admin:locale.dateUnavailable')
+    : timestamp.toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+};
 const canLeave = async () =>
   !busy.value &&
   !initializing.value &&

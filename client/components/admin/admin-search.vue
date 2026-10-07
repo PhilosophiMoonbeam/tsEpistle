@@ -45,7 +45,7 @@
       <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:search.theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate /></v-window-item>
       <v-window-item id="search-panel-index" role="tabpanel" aria-labelledby="search-tab-index" value="index">
         <section class="search-panel search-index" aria-labelledby="search-index-title">
-          <header class="index-heading"><div><div class="search-kicker">{{ $t('admin:search.maintenanceEvidence') }}</div><h2 id="search-index-title">{{ $t('admin:search.indexCoverage') }}</h2><p>{{ $t('admin:search.inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting" @click="inspect">{{ $t('admin:search.inspectIndex') }}</v-btn></header>
+          <header class="index-heading"><div><div class="search-kicker">{{ $t('admin:search.maintenanceEvidence') }}</div><h2 id="search-index-title">{{ $t('admin:search.indexCoverage') }}</h2><p>{{ $t('admin:search.inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting || enginesLoading || !enginesLoaded" @click="inspect">{{ $t('admin:search.inspectIndex') }}</v-btn></header>
           <v-alert v-if="inspectionError" type="error" variant="tonal">{{ inspectionError }}</v-alert>
           <v-skeleton-loader v-if="inspecting && !inspection" type="list-item-three-line" />
           <template v-if="inspection">
@@ -60,7 +60,7 @@
         </section>
       </v-window-item>
     </v-window>
-        <div v-if="enginesLoaded && tab === 'configure'" class="search-savebar" role="status">
+        <div v-if="enginesLoaded && (tab === 'configure' || dirty || saving)" class="search-savebar" role="status">
           <span>{{ saving ? $t('admin:search.savingActivatingEngine') : dirty ? $t('admin:search.changesNotActiveYet') : $t('admin:search.configurationMatchesLastLoad') }}</span>
           <div><v-btn variant="text" prepend-icon="mdi-restore" :disabled="!dirty || saving || rebuilding" @click="resetDraft">{{ $t('admin:search.resetChanges') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check" :disabled="!canSave" :loading="saving" @click="save">{{ $t('admin:search.saveConfiguration') }}</v-btn></div>
         </div>
@@ -171,13 +171,13 @@ export default {
       this.inspectionError = ''
     },
     async inspect() {
-      if (this.inspecting || this.saving || this.rebuilding) return
+      if (this.inspecting || this.saving || this.rebuilding || this.enginesLoading || !this.enginesLoaded) return
       const controller = new AbortController()
       this.inspectController = controller
       this.inspecting = true
       this.inspectionError = ''
       try {
-        const status = await inspectSearchIndex(createAbortableFetch(controller.signal))
+        const status = await inspectSearchIndex(createAbortableFetch(controller.signal), this.$t('admin:search.indexInspectionResponseInvalid'))
         if (controller.signal.aborted || this.inspectController !== controller || this.isUnmounted) return
         this.inspection = status.inspection
         this.inspectedEngine = status.engine
@@ -193,6 +193,10 @@ export default {
     },
     async loadEngines({ notifyError = true }: { notifyError?: boolean } = {}) {
       if (this.enginesLoading) return false
+      this.cancelInspection()
+      this.inspection = null
+      this.inspectedEngine = ''
+      this.inspectionUnsupported = false
       const controller = new AbortController()
       this.loadController = controller
       this.enginesLoading = true
@@ -357,7 +361,8 @@ export default {
 }
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use './admin-workspace.scss' as workspace;
 .admin-search { padding-bottom: calc(var(--wiki-footer-height) + 2rem); }
 .search-tabs { margin-bottom: 1.75rem; border-bottom: 1px solid var(--wiki-surface-border); }
 .search-configuration { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
@@ -377,7 +382,7 @@ p { font-size: .85rem; line-height: 1.7; margin-bottom: 1rem; }
 .search-principles li { padding-inline-start: .5rem; margin-bottom: 1rem; }
 .search-principles strong { font-size: .9rem; }
 .search-principles p { margin-block: .4rem; }
-.search-savebar { position: sticky; bottom: var(--wiki-footer-height); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; margin-top: 1.5rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-raised); z-index: 2; }
+.search-savebar { @include workspace.admin-draft-bar; }
 .search-savebar > span { font-size: .85rem; }
 .search-savebar > div { display: flex; gap: .5rem; flex-wrap: wrap; }
 .index-heading, .index-rebuild { display: flex; gap: 1.5rem; align-items: start; justify-content: space-between; }
@@ -391,5 +396,5 @@ p { font-size: .85rem; line-height: 1.7; margin-bottom: 1rem; }
 .index-empty { padding-block: 1.5rem; }
 .index-rebuild { border-top: 1px solid var(--wiki-surface-border); padding-top: 1.5rem; margin-top: 1.5rem; }
 @media (max-width: 1100px) { .index-heading, .index-rebuild { flex-direction: column; } .index-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .search-configuration { grid-template-columns: 1fr; gap: 1rem; } .index-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .search-savebar { position: static; } }
+@media (max-width: 760px) { .search-configuration { grid-template-columns: 1fr; gap: 1rem; } .index-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

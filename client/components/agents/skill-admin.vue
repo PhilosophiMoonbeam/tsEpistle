@@ -30,7 +30,7 @@
         {{ error }}
         <template #append><v-btn variant="text" size="small" @click="reload">{{ $t('admin:skillAdmin.retry') }}</v-btn></template>
       </v-alert>
-      <v-alert v-if="sourcesError && !createOpen" class="skill-error" type="warning" variant="tonal" density="compact" role="status">
+      <v-alert v-if="sourcesError && !createOpen" class="skill-error" type="warning" variant="tonal" density="compact" role="alert">
         {{ sourcesError }}
         <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" @click="loadSources">{{ $t('admin:skillAdmin.retrySourceSearch') }}</v-btn></template>
       </v-alert>
@@ -155,13 +155,16 @@
         <v-form id="skill-create-form" @submit.prevent="createSkill">
           <section class="skill-form-section">
             <div class="skill-form-section__heading"><span><v-icon size="19">mdi-file-search-outline</v-icon></span><div><h3>{{ $t('admin:skillAdmin.chooseSourcePage') }}</h3><p>{{ $t('admin:skillAdmin.searchUnmappedMarkdownPages') }}</p></div></div>
+            <v-alert v-if="sourcesError" class="skill-error" type="warning" variant="tonal" density="compact" role="alert">
+              {{ sourcesError }}
+              <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" :disabled="sourcesLoading" @click="loadSources">{{ $t('admin:skillAdmin.retrySourceSearch') }}</v-btn></template>
+            </v-alert>
             <v-autocomplete v-model="selectedSource" v-model:search="sourceQuery" :items="sourcePages" item-title="title" item-value="id" return-object no-filter clearable :label="$t('admin:skillAdmin.rootPage')" :loading="sourcesLoading" :error-messages="sourcesError" :hint="sourceNamespace ? $t('admin:skillAdmin.createSourcePagesInside', { sourceNamespace, interpolation: { escapeValue: false } }) : $t('admin:skillAdmin.selectPageFillName')" persistent-hint @update:model-value="selectSource">
               <template #item="{ props: itemProps, internalItem }"><v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="`${internalItem.raw.locale}/${internalItem.raw.path}`" /></template>
-              <template #no-data><v-list-item :title="sourcesLoading ? $t('admin:skillAdmin.findingSourcePages') : $t('admin:skillAdmin.noUnmappedSourcesFound')" :subtitle="$t('admin:skillAdmin.createMarkdownPageSkill')" /></template>
+              <template #no-data><v-list-item :title="sourcesLoading ? $t('admin:skillAdmin.findingSourcePages') : sourcesError ? $t('admin:skillAdmin.sourcePagesCouldNot') : $t('admin:skillAdmin.noUnmappedSourcesFound')" :subtitle="sourcesError ? undefined : $t('admin:skillAdmin.createMarkdownPageSkill')" /></template>
               <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('admin:skillAdmin.clearSourcePage')" /></template>
             </v-autocomplete>
             <p v-if="sourcesHaveMore" class="skill-source-note">{{ $t('admin:skillAdmin.showingFirst20Matches') }}</p>
-            <v-btn v-if="sourcesError" variant="text" size="small" @click="loadSources">{{ $t('admin:skillAdmin.retrySourceSearch') }}</v-btn>
             <v-text-field v-model="create.name" class="mt-5" :rules="createNameRules" :label="$t('admin:skillAdmin.skillName')" :hint="$t('admin:skillAdmin.mustMatchFinalPart')" persistent-hint required />
           </section>
           <section class="skill-form-section">

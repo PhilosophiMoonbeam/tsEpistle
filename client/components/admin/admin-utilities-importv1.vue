@@ -21,7 +21,7 @@ v-card
         v-col(cols='12' md='8')
           v-text-field(v-model='git.repoUrl' :label='$t(`admin:utilitiesImportv1.repositoryUrl`)' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='gitError' @blur='touched.repo = true')
         v-col(cols='12' md='4')
-          v-text-field(v-model='git.branch' :label='$t(`admin:utilitiesImportv1.branch`)' variant='outlined' :disabled='busy || !importTargets.git.available')
+          v-text-field(v-model='git.branch' :label='$t(`admin:utilitiesImportv1.branch`)' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='branchError' @blur='touched.branch = true')
         v-col(cols='12' md='4')
           v-select(v-model='git.authType' :items='authTypes' item-title='title' item-value='value' :label='$t(`admin:utilitiesImportv1.authentication`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12' md='8')
@@ -30,7 +30,7 @@ v-card
           v-textarea(v-model='git.privateKey' :label='$t(`admin:utilitiesImportv1.sshPrivateKeyContents`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='privateKeyError' @blur='touched.key = true')
         template(v-else)
           v-col(cols='12' md='6')
-            v-text-field(v-model='git.username' :label='$t(`admin:utilitiesImportv1.username`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available')
+            v-text-field(v-model='git.username' :label='$t(`admin:utilitiesImportv1.username`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='passwordError' @blur='touched.password = true')
           v-col(cols='12' md='6')
             v-text-field(v-model='git.password' type='password' :label='$t(`admin:utilitiesImportv1.passwordAccessToken`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='passwordError' @blur='touched.password = true')
         v-col(cols='12' md='6')
@@ -38,7 +38,7 @@ v-card
         v-col(cols='12' md='6')
           v-text-field(v-model='git.defaultEmail' :label='$t(`admin:utilitiesImportv1.fallbackAuthorEmail`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12')
-          v-text-field(v-model='git.localRepoPath' :label='$t(`admin:utilitiesImportv1.localWorkingCopyPath`)' variant='outlined' :disabled='busy || !importTargets.git.available')
+          v-text-field(v-model='git.localRepoPath' :label='$t(`admin:utilitiesImportv1.localWorkingCopyPath`)' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='workingCopyError' @blur='touched.workingCopy = true')
     v-btn.mt-3(color='warning' variant='flat' :disabled='busy || !canImportContent' @click='openContentReview') {{ $t(`admin:utilitiesImportv1.reviewContentImport`) }}
   utility-review(
     v-model:open='review.open'
@@ -106,8 +106,9 @@ export default defineComponent({
   },
   emits: ['request', 'draft-state'],
   data: (vm) => ({
-    touched: { disk: false, repo: false, key: false, password: false },
-    contentMode: 'git' as 'git' | 'disk',
+    touched: { disk: false, repo: false, branch: false, workingCopy: false, key: false, password: false },
+    contentMode: (vm.workspace.importTargets.git.available || !vm.workspace.importTargets.disk.available ? 'git' : 'disk') as 'git' | 'disk',
+    initialContentMode: (vm.workspace.importTargets.git.available || !vm.workspace.importTargets.disk.available ? 'git' : 'disk') as 'git' | 'disk',
     diskPath: '',
     git: {
       repoUrl: '',
@@ -158,6 +159,14 @@ export default defineComponent({
       if (!this.touched.repo) return ''
       return this.contentMode !== 'git' || this.git.repoUrl.trim().length > 0 ? '' : this.$t('admin:utilitiesImportv1.enterRepositoryUrl')
     },
+    branchError(): string {
+      if (!this.touched.branch) return ''
+      return this.contentMode !== 'git' || this.git.branch.trim().length > 0 ? '' : this.$t('admin:utilitiesImportv1.enterBranch')
+    },
+    workingCopyError(): string {
+      if (!this.touched.workingCopy) return ''
+      return this.contentMode !== 'git' || this.git.localRepoPath.trim().length > 0 ? '' : this.$t('admin:utilitiesImportv1.enterLocalWorkingCopyPath')
+    },
     privateKeyError(): string {
       if (!this.touched.key) return ''
       return this.contentMode !== 'git' || this.git.authType !== 'ssh' || this.git.privateKey.trim().length > 0 ? '' : this.$t('admin:utilitiesImportv1.enterSshPrivateKey')
@@ -183,7 +192,7 @@ export default defineComponent({
     formDirty(): boolean {
       const git = this.git
       return Boolean(
-        this.contentMode !== 'git' ||
+        this.contentMode !== this.initialContentMode ||
         this.diskPath ||
         git.repoUrl ||
         git.branch !== 'master' ||
@@ -282,6 +291,11 @@ export default defineComponent({
     submit({ reason, acknowledgedUncertainId }: { reason: string; acknowledgedUncertainId?: string }) {
       const snapshot = this.review
       if (!snapshot.open || this.busy) return
+      const mode = snapshot.payload.mode
+      if ((mode !== 'git' && mode !== 'disk') || !this.importTargets[mode].available) {
+        this.reviewError = (mode === 'git' || mode === 'disk' ? this.importTargets[mode].reason : null) ?? this.$t('admin:utilitiesImportv1.importTargetUnavailableCurrent')
+        return
+      }
       this.$emit('request', {
         kind: snapshot.kind,
         reason,

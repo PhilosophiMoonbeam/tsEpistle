@@ -1,9 +1,43 @@
 import fs from 'node:fs'
 import { compileTemplate } from '@vue/compiler-sfc'
-import { document } from '../../test/browser-dom.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { groupPermissions, normalizeGroupRulePath } from '../../../shared/group-policy.ts'
-import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import type { wikiStore as AppWikiStore } from '../../store/index.ts'
+import { browserWindow, document } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+
+const originalSiteConfig = Object.getOwnPropertyDescriptor(browserWindow, 'siteConfig')
+Object.defineProperty(browserWindow, 'siteConfig', {
+  configurable: true,
+  value: {
+    company: '',
+    contentLicense: '',
+    footerOverride: '',
+    banner: {},
+    darkMode: false,
+    tocPosition: 'left',
+    title: 'Test',
+    logoUrl: '',
+    product: { name: 'Test', version: '1.0.0' }
+  }
+})
+let wikiStore: typeof AppWikiStore
+// The real store reads siteConfig during module initialization, so it must load after the browser fixture above.
+try {
+  ;({ wikiStore } = await import('../../store/index.ts'))
+} finally {
+  if (originalSiteConfig) Object.defineProperty(browserWindow, 'siteConfig', originalSiteConfig)
+  else Reflect.deleteProperty(browserWindow, 'siteConfig')
+}
+let originalPermissions: string[]
+beforeEach(() => {
+  originalPermissions = wikiStore.user.permissions
+  wikiStore.user.permissions = ['manage:groups']
+})
+afterEach(() => {
+  wikiStore.user.permissions = originalPermissions
+})
+
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -19,6 +53,7 @@ function arrange(name: string, dependencies: Record<string, unknown> = {}, props
     GroupCreate: {},
     groupPermissions,
     normalizeGroupRulePath,
+    wikiStore,
     window,
     getErrorMessage: (error: Error) => error.message,
     groupRequestStatus: (error: { status?: number }) => error.status ?? 0,
@@ -44,19 +79,47 @@ const Vue = await import('vue')
 function renderedSnapshot(name: string, state: Record<string, unknown>) {
   const filename = `client/components/admin/${name}.vue`
   const source = fs.readFileSync(filename, 'utf8').match(/<template>([\s\S]*?)<\/template>\s*<script/)![1]!
-  const compiled = compileTemplate({ filename, id: name, source, compilerOptions: { mode: 'function', prefixIdentifiers: true, expressionPlugins: ['typescript'] } })
+  const compiled = compileTemplate({
+    filename,
+    id: name,
+    source,
+    compilerOptions: { mode: 'function', prefixIdentifiers: true, expressionPlugins: ['typescript'] }
+  })
   if (compiled.errors.length) throw new Error(`Cannot compile ${name}: ${compiled.errors}`)
   const render = new Function('Vue', new Bun.Transpiler({ loader: 'ts' }).transformSync(compiled.code))(Vue)
   const app = Vue.createApp({ data: () => state, render })
-  const passthrough = (tag = 'div') => Vue.defineComponent({
-    setup(_props, { attrs, slots }) { return () => Vue.h(tag, attrs, slots.default?.()) }
-  })
-  for (const component of ['v-container', 'admin-hero', 'v-spacer', 'v-text-field', 'v-icon', 'group-create', 'router-link', 'v-alert', 'v-dialog', 'v-card', 'v-card-text', 'v-textarea', 'v-card-actions']) app.component(component, passthrough())
+  const passthrough = (tag = 'div') =>
+    Vue.defineComponent({
+      setup(_props, { attrs, slots }) {
+        return () => Vue.h(tag, attrs, slots.default?.())
+      }
+    })
+  for (const component of [
+    'v-container',
+    'admin-hero',
+    'v-spacer',
+    'v-text-field',
+    'v-icon',
+    'group-create',
+    'router-link',
+    'v-alert',
+    'v-dialog',
+    'v-card',
+    'v-card-text',
+    'v-textarea',
+    'v-card-actions'
+  ])
+    app.component(component, passthrough())
   app.component('v-btn', passthrough('button'))
-  app.component('async-state', Vue.defineComponent({
-    props: ['title', 'message'],
-    setup(props) { return () => Vue.h('div', { role: 'status' }, [props.title, props.message]) }
-  }))
+  app.component(
+    'async-state',
+    Vue.defineComponent({
+      props: ['title', 'message'],
+      setup(props) {
+        return () => Vue.h('div', { role: 'status' }, [props.title, props.message])
+      }
+    })
+  )
   app.config.globalProperties.$t = translateEnglish
   app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
   const host = document.createElement('div')
@@ -74,6 +137,17 @@ function renderedSnapshot(name: string, state: Record<string, unknown>) {
   }
 }
 describe('group directory and creation', () => {
+  it('offers people management only to administrators who can read accounts', () => {
+    const { state } = arrange('admin-groups')
+    for (const permissions of [['manage:groups'], ['write:groups'], ['manage:groups', 'write:users']]) {
+      wikiStore.user.permissions = permissions
+      expect(renderedSnapshot('admin-groups', state).text).not.toContain('Manage people')
+    }
+    for (const permissions of [['manage:users'], ['manage:system']]) {
+      wikiStore.user.permissions = permissions
+      expect(renderedSnapshot('admin-groups', state).text).toContain('Manage people')
+    }
+  })
   it('keeps the latest directory response and preserves filter context in detail links', async () => {
     let release: (value: unknown) => void = () => {}
     const fetchGroupDirectory = vi
@@ -194,8 +268,12 @@ describe('group directory and creation', () => {
 })
 
 describe('group directory and membership offset recovery', () => {
-  for (const [name, api] of [['admin-groups', 'fetchGroupDirectory'], ['admin-groups-edit-users', 'fetchGroupMembers']]) {
-    const arrangeDirectory = (transport: unknown) => arrange(name!, { [api!]: transport }, { groupId: 3, revision: 'current', disabled: false, canManage: false, canReadAccounts: false, lockReason: '' })
+  for (const [name, api] of [
+    ['admin-groups', 'fetchGroupDirectory'],
+    ['admin-groups-edit-users', 'fetchGroupMembers']
+  ]) {
+    const arrangeDirectory = (transport: unknown) =>
+      arrange(name!, { [api!]: transport }, { groupId: 3, revision: 'current', disabled: false, canManage: false, canReadAccounts: false, lockReason: '' })
     const requestParams = (args: unknown[]) => args[name === 'admin-groups' ? 0 : 1] as URLSearchParams
 
     it(`${name} recovers the last valid page after its final entry disappears`, async () => {
@@ -244,7 +322,10 @@ describe('group directory and membership offset recovery', () => {
     })
 
     it(`${name} keeps Previous available instead of reporting an empty positive-total directory`, async () => {
-      const transport = vi.fn().mockResolvedValueOnce({ items: [], total: 26, limit: 25 }).mockResolvedValue({ items: [], total: 25, limit: 25, counts: { groups: 25, administrative: 0, empty: 0, system: 0 } })
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce({ items: [], total: 26, limit: 25 })
+        .mockResolvedValue({ items: [], total: 25, limit: 25, counts: { groups: 25, administrative: 0, empty: 0, system: 0 } })
       const { state } = arrangeDirectory(transport)
       state.offset = 50
       await state.load(false)
@@ -276,17 +357,17 @@ describe('group directory and membership offset recovery', () => {
       for (const dispose of [false, true]) {
         const { promise, resolve: release } = Promise.withResolvers<unknown>()
         const current = { items: [{ id: 9 }], total: 1, limit: 25 }
-        const transport = vi.fn()
-          .mockResolvedValueOnce({ items: [], total: 25, limit: 25 })
-          .mockReturnValueOnce(promise)
-          .mockResolvedValue(current)
+        const transport = vi.fn().mockResolvedValueOnce({ items: [], total: 25, limit: 25 }).mockReturnValueOnce(promise).mockResolvedValue(current)
         const { state, component } = arrangeDirectory(transport)
         state.offset = 25
         const pending = state.load(false)
         await Promise.resolve()
         expect(transport).toHaveBeenCalledTimes(2)
         if (dispose) component.beforeUnmount.call(state)
-        else { state.search = 'current'; await state.load(false) }
+        else {
+          state.search = 'current'
+          await state.load(false)
+        }
         release({ items: [{ id: 8 }], total: 25, limit: 25 })
         await pending
         expect(state.directory).toEqual(dispose ? null : current)
@@ -295,7 +376,8 @@ describe('group directory and membership offset recovery', () => {
     })
 
     it(`${name} surfaces recovery errors and allows reloading the corrected offset`, async () => {
-      const transport = vi.fn()
+      const transport = vi
+        .fn()
         .mockResolvedValueOnce({ items: [], total: 25, limit: 25 })
         .mockRejectedValueOnce(new Error('Recovery unavailable'))
         .mockResolvedValueOnce({ items: [{ id: 8 }], total: 25, limit: 25 })

@@ -59,6 +59,8 @@
         }}<v-btn variant="text" @click="load">{{ $t('admin:auth.tryAgain') }}</v-btn></v-alert
       ><v-alert
         v-if="notice"
+        id="identity-notice"
+        tabindex="-1"
         :type="attention ? 'warning' : 'success'"
         variant="tonal"
         class="mt-5"
@@ -1035,7 +1037,7 @@ export default {
       })
     },
     selectProvider(key: string) {
-      if (this.busy) return
+      if (this.busy || (key && key === this.selectedKey)) return
       this.selectedKey = key
       this.advanced = false
       this.providerSection = 'connection'
@@ -1138,6 +1140,12 @@ export default {
           this.$t('admin:auth.completeProviderNameAny')
         this.attention = true
         this.selectProvider(invalid.key)
+        this.$nextTick(() => {
+          if (this.disposed) return
+          const feedback = document.getElementById('identity-notice')
+          feedback?.focus()
+          feedback?.scrollIntoView({ block: 'nearest' })
+        })
         return
       }
       this.reviewed = this.drafts.map(authenticationDraft)

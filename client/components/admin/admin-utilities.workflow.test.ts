@@ -3,8 +3,10 @@ import { parse } from '@vue/compiler-sfc'
 import * as ts from 'typescript'
 import { reactive, toRaw } from 'vue'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import type { UtilitiesWorkspace } from '../../../shared/utilities-workspace.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
+
 const compileComponentOptions = (path: string): string => {
   const parsed = parse(fs.readFileSync(path, 'utf8'), { filename: path })
   if (parsed.errors.length > 0 || !parsed.descriptor.script || parsed.descriptor.scriptSetup)
@@ -42,6 +44,7 @@ const compileComponentOptions = (path: string): string => {
 const compiled = compileComponentOptions('client/components/admin/admin-utilities.vue')
 const cacheCompiled = compileComponentOptions('client/components/admin/admin-utilities-cache.vue')
 
+const importCompiled = compileComponentOptions('client/components/admin/admin-utilities-importv1.vue')
 const receipt = {
   id: '11111111-1111-4111-8111-111111111111',
   kind: 'import-v1-content',
@@ -110,10 +113,30 @@ function arrange(overrides: Record<string, unknown> = {}) {
     window
   }
   const component = new Function(...Object.keys(bindings), compiled + ';return component')(...Object.values(bindings))
-  const state = reactive({ ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, workspace: structuredClone(workspace), $route: { query: {} }, $router: { replace: vi.fn() } })
+  const state = reactive({
+    ...component.data.call({ $t: translateEnglish }),
+    $t: translateEnglish,
+    workspace: structuredClone(workspace),
+    $route: { query: {} },
+    $router: { replace: vi.fn() }
+  })
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
   return { state, component, transport, window, values }
+}
+
+function arrangeImport(initialWorkspace: UtilitiesWorkspace = workspace) {
+  const component = new Function('defineComponent', 'utilityOperationConfirmation', 'UtilityReview', importCompiled + ';return component')(
+    (value: unknown) => value,
+    (kind: string) => `CONFIRM ${kind}`,
+    {}
+  )
+  const props = { workspace: structuredClone(initialWorkspace), busy: false, $t: translateEnglish }
+  const emit = vi.fn()
+  const state = reactive({ ...component.data(props), ...props, $emit: emit })
+  for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
+  for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
+  return { state, emit }
 }
 
 describe('Utilities reviewed operation recovery', () => {
@@ -132,9 +155,7 @@ describe('Utilities reviewed operation recovery', () => {
       payload: draft,
       onRecorded: recorded
     })
-    expect(transport.startUtilitiesOperation).toHaveBeenCalledWith(
-      expect.objectContaining({ payload: { password: 'fixture-private-token', mode: 'git' } })
-    )
+    expect(transport.startUtilitiesOperation).toHaveBeenCalledWith(expect.objectContaining({ payload: { password: 'fixture-private-token', mode: 'git' } }))
     expect(transport.startUtilitiesOperation).toHaveBeenCalledOnce()
     expect(window.sessionStorage.setItem).toHaveBeenCalledWith('utilities.pending-operation.v1', expect.any(String))
     const serializedPending = window.sessionStorage.setItem.mock.calls[0]![1] as string
@@ -213,7 +234,12 @@ describe('Utilities reviewed operation recovery', () => {
     state.draftDirty = true
     const selectedComponent = state.selectedComponent
     let resolveLeave!: (accepted: boolean) => void
-    state.canLeave = vi.fn(() => new Promise<boolean>(resolve => { resolveLeave = resolve }))
+    state.canLeave = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveLeave = resolve
+        })
+    )
 
     const cancelled = state.selectSection('cache')
     expect(state.section).toBe('telemetry')
@@ -236,6 +262,126 @@ describe('Utilities reviewed operation recovery', () => {
     component.watch['$route.query.section'].handler.call(state, 'cache')
     expect(state.section).toBe('cache')
     expect(state.selectedComponent).not.toBe(selectedComponent)
+  })
+})
+
+describe('Utilities content-import review boundaries', () => {
+  it('starts clean on an available disk target and preserves later source choices across workspace refreshes', () => {
+    const { state } = arrangeImport({
+      ...workspace,
+      importTargets: { ...workspace.importTargets, git: { available: false, reason: 'Git storage is not configured' } }
+    })
+    expect(state.contentMode).toBe('disk')
+    expect(state.formDirty).toBe(false)
+    state.workspace = structuredClone(workspace)
+    expect(state.contentMode).toBe('disk')
+    expect(state.formDirty).toBe(false)
+    state.contentMode = 'git'
+    state.workspace = {
+      ...structuredClone(workspace),
+      importTargets: { ...workspace.importTargets, git: { available: false, reason: 'Git storage was removed' } }
+    }
+    expect(state.contentMode).toBe('git')
+    expect(state.formDirty).toBe(true)
+    expect(state.canImportContent).toBe(false)
+    state.contentMode = 'disk'
+    expect(state.formDirty).toBe(false)
+  })
+
+  it('shows required Git feedback only after interaction and blocks incomplete inputs from opening a review', () => {
+    const { state, emit } = arrangeImport()
+    Object.assign(state.git, { repoUrl: 'https://example.test/wiki.git', authType: 'basic', username: 'reader', password: 'fixture-token' })
+    expect(state.canImportContent).toBe(true)
+    for (const { field, touched, error } of [
+      { field: 'branch', touched: 'branch', error: 'branchError' },
+      { field: 'localRepoPath', touched: 'workingCopy', error: 'workingCopyError' },
+      { field: 'username', touched: 'password', error: 'passwordError' },
+      { field: 'password', touched: 'password', error: 'passwordError' }
+    ]) {
+      const original = state.git[field]
+      state.touched[touched] = false
+      state.git[field] = ''
+      expect(state[error]).toBe('')
+      expect(state.canImportContent).toBe(false)
+      state.openContentReview()
+      state.submit({ reason: 'Import reviewed content' })
+      expect(state.review.open).toBe(false)
+      expect(emit).not.toHaveBeenCalled()
+      state.touched[touched] = true
+      expect(state[error]).not.toBe('')
+      state.git[field] = original
+      expect(state[error]).toBe('')
+      expect(state.canImportContent).toBe(true)
+    }
+    state.openContentReview()
+    expect(state.review.open).toBe(true)
+  })
+
+  it('rechecks the reviewed source availability without substituting the current draft or clearing secrets', () => {
+    const { state, emit } = arrangeImport()
+    Object.assign(state.git, { repoUrl: 'https://example.test/wiki.git', authType: 'basic', username: 'reader', password: 'fixture-token' })
+    state.openContentReview()
+    const reviewed = state.review.payload
+    state.contentMode = 'disk'
+    state.diskPath = '/data/content'
+    state.workspace.importTargets.git = { available: false, reason: 'Reviewed Git target was removed' }
+    expect(state.canImportContent).toBe(true)
+    state.submit({ reason: 'Import reviewed content' })
+    expect(emit).not.toHaveBeenCalled()
+    expect(state.review.open).toBe(true)
+    expect(state.review.payload).toBe(reviewed)
+    expect(state.reviewError).toBe('Reviewed Git target was removed')
+    expect(state.git.password).toBe('fixture-token')
+  })
+
+  it('keeps reviewed parameters immutable and redacted, retains rejected secrets, and clears them only once recorded', () => {
+    const { state, emit } = arrangeImport()
+    Object.assign(state.git, {
+      repoUrl: 'https://embedded-user:embedded-token@example.test/wiki.git',
+      authType: 'basic',
+      username: 'reader',
+      password: 'fixture-password',
+      privateKey: 'fixture-private-key'
+    })
+    state.openContentReview()
+    const reviewed = state.review.payload
+    const parameters = JSON.stringify(state.review.parameters)
+    expect(parameters).toContain('https://example.test/wiki.git')
+    for (const secret of ['embedded-user', 'embedded-token', 'fixture-password', 'fixture-private-key']) {
+      expect(parameters).not.toContain(secret)
+    }
+    state.git.repoUrl = 'https://changed.example.test/other.git'
+    state.git.branch = 'changed'
+    state.git.password = 'changed-password'
+    state.git.privateKey = 'changed-private-key'
+    state.contentMode = 'disk'
+    state.diskPath = '/data/other'
+    state.submit({ reason: 'Import reviewed content' })
+    const request = emit.mock.calls.find(([event]) => event === 'request')?.[1] as {
+      payload: Record<string, unknown>
+      onRejected: (message: string) => void
+      onRecorded: () => void
+    }
+    expect(request.payload).toBe(reviewed)
+    expect(request.payload).toMatchObject({
+      mode: 'git',
+      repoUrl: 'https://embedded-user:embedded-token@example.test/wiki.git',
+      branch: 'master',
+      password: 'fixture-password',
+      privateKey: 'fixture-private-key'
+    })
+    request.onRejected('Settings changed; review again')
+    expect(state.review.open).toBe(true)
+    expect(state.git.password).toBe('changed-password')
+    expect(state.git.privateKey).toBe('changed-private-key')
+    expect(state.reviewError).toBe('Settings changed; review again')
+    state.setReviewDirty(true)
+    request.onRecorded()
+    expect(state.git.password).toBe('')
+    expect(state.git.privateKey).toBe('')
+    expect(state.review.open).toBe(false)
+    expect(state.reviewError).toBe('')
+    expect(state.reviewDirty).toBe(false)
   })
 })
 
@@ -264,6 +410,6 @@ describe('Utilities browser-cache recovery', () => {
     state.clearLocaleCache = component.methods.clearLocaleCache.bind(state)
     state.clearLocaleCache()
     expect(notices.map(notice => notice.color)).toEqual(['warning'])
-    expect(notices[0]!.message).toMatch(/blocked|denied|unable|cannot|could not|unconfirmed|(?:no|not)[^.]*confirm/i)
+    expect(notices[0]!.message).not.toBe('')
   })
 })

@@ -7,7 +7,7 @@ v-card
       .text-body-medium {{ $t(`admin:utilitiesExport.createsPortableSafeProjections`) }}
       .text-body-small.mt-1 {{ $t(`admin:utilitiesExport.credentialsSigningSessionMaterial`) }}
     h2.text-title-medium.mt-6 {{ $t(`admin:utilitiesExport.selectPortableProjections`) }}
-    v-checkbox(v-for='choice in choices' :key='choice.key' v-model='entities' :value='choice.key' :label='$t(choice.title)' :hint='$t(choice.hint)' persistent-hint hide-details :disabled='busy')
+    v-checkbox(v-for='choice in choices' :key='choice.key' v-model='entities' :value='choice.key' :label='$t(choice.title)' :hint='$t(choice.hint)' persistent-hint :disabled='busy')
     v-text-field.utility-export-destination.mt-6(v-model='path' :label='$t(`admin:utilitiesExport.emptyDestinationWithinApplication`)' :hint='$t(`admin:utilitiesExport.relativePathsSupportedServer`)' persistent-hint variant='outlined' :error-messages='pathError' :disabled='busy')
     v-btn.mt-4(color='primary' variant='flat' :disabled='busy || !valid' @click='openReview') {{ $t(`admin:utilitiesExport.reviewExport`) }}
   utility-review(
