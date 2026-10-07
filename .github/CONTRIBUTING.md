@@ -37,12 +37,16 @@ For security patch upgrades, preserve unrelated lock resolutions and verify ever
 
 GraphQL Tools utility security upgrades must retain compatible execution-variable shapes in every consumer. Keep the executor aligned with the patched utilities and exercise variable-valued `@include`/`@skip`, resolver arguments, and GraphQL 16's flat resolver `info.variableValues`; a clean audit does not establish executor compatibility. Preserve Git's unsafe-command guards when preparing native interrupted-operation fixtures.
 
+Keep dedicated agent release dependency contracts aligned with an intentional SDK upgrade after exercising the engine consumers; preserve exact versions and runtime/test-only placement checks.
+
 ## Code review process
 
 The bigger the pull request, the longer it will take to review and merge. Try to break down large pull requests in smaller chunks that are easier to review and merge.
 It is also always helpful to have some context for your pull request. What was the purpose? Why does it matter to you?
 
 For the complete isolated Bun suite, build the application assets first (`bun run build`) and provide qpdf CLI 11.9.1 or newer on `PATH` for the PDF worker tests. The TypeScript worker launches qpdf with a minimal environment, so keep the executable's runtime libraries available without relying on inherited loader settings or Python. Both quality jobs fetch the official qpdf 11.9.1 Linux x86_64 bundle, verify its SHA-256, and make it available after the static check; they also build assets before tests. Targeted tests that do not load setup assets or PDFs can run without these prerequisites.
+
+On shared hosts, do not overlap the complete ordinary suite with image builds or application typechecks. Use the existing `BUN_TEST_JOBS` worker cap when needed; it changes isolated-process concurrency, not discovery, assertions, test deadlines, or native admission. Diagnose timeout cascades before changing tests or adding retries.
 
 `bun run ci` runs static checks, builds assets, then runs the ordinary isolated suite. For native PostgreSQL coverage, use `bun run test:postgres [exact-test-file ...]` with disposable service host, port, user and password credentials. Do not set the parent `WIKI_TEST_POSTGRES_DATABASE` or fabricate runner assignments: the allocator creates a separate database per file, rejects skips/todo through JUnit admission, and cleans up its owned databases. Ordinary-suite success is not native coverage. Foreign-key deletion checks should identify the owning constraint and accept the supported PostgreSQL restriction SQLSTATE variants (`23503` and `23001`), not localized error messages.
 
