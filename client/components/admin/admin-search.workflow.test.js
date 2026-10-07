@@ -40,7 +40,7 @@ function harness() {
   const options = new Function('AdminSearchEvaluate', 'fetchSearchEngines', 'saveSearchEngines', 'rebuildSearchIndex', 'inspectSearchIndex', 'wikiStore', 'getErrorMessage', 'loadingStart', 'loadingStop', 'showNotification', 'pushGraphError', executable)(
     {}, fetchEngines, saveEngines, rebuildIndex, inspectIndex, {}, (error) => error.message, vi.fn(), vi.fn(), vi.fn(), vi.fn()
   )
-  const instance = { ...options.data(), $t: (key) => key }
+  const instance = { ...options.data(), $t: (key) => key, $refs: {} }
   for (const [key, value] of Object.entries(options.methods)) { if (typeof value === 'function') instance[key] = value.bind(instance) }
   for (const [key, value] of Object.entries(options.computed)) { if (typeof value === 'function') Object.defineProperty(instance, key, { get: value.bind(instance) }) }
   return { instance, fetchEngines, saveEngines, rebuildIndex, inspectIndex, options }
@@ -58,8 +58,8 @@ const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)
 const evaluatorSource = fs.readFileSync('client/components/admin/admin-search-evaluate.vue', 'utf8')
 const evaluatorScript = evaluatorSource.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
 const evaluatorExecutable = new Bun.Transpiler({ loader: 'ts' }).transformSync(evaluatorScript.replace(/^import .*$/gm, '')) +
-  '\nreturn { query, locale, path, canEvaluate, submitted, loading, error, result, rows, elapsedMs, matchFieldLabel, evaluate, pageHref }'
-const setupEvaluator = new Function('computed', 'ref', 'shallowRef', 'onBeforeUnmount', 'searchPages', 'pageHref', 'useTranslate', 'window', evaluatorExecutable)
+  '\nreturn { query, locale, path, canEvaluate, submitted, loading, error, result, rows, elapsedMs, matchFieldLabel, evaluate, cancelEvaluation, pageHref }'
+const setupEvaluator = new Function('computed', 'ref', 'shallowRef', 'onBeforeUnmount', 'defineExpose', 'searchPages', 'pageHref', 'useTranslate', 'window', evaluatorExecutable)
 const evaluatorTemplate = compileTemplate({
   source: evaluatorSource.match(/<template>([\s\S]*?)<\/template>\s*<script/)[1],
   filename: 'admin-search-evaluate.vue',
@@ -86,8 +86,8 @@ function evaluatorHarness(fetchImpl = vi.fn(async () => jsonResponse(searchResul
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({
-    setup() {
-      state = setupEvaluator(Vue.computed, Vue.ref, Vue.shallowRef, Vue.onBeforeUnmount, searchPages, pageHref, () => translateEnglish, { fetch: fetchImpl })
+    setup(_, { expose }) {
+      state = setupEvaluator(Vue.computed, Vue.ref, Vue.shallowRef, Vue.onBeforeUnmount, expose, searchPages, pageHref, () => translateEnglish, { fetch: fetchImpl })
       return state
     },
     render: evaluatorRender
@@ -257,6 +257,62 @@ describe('search administration drafts', () => {
 })
 
 describe('search query evaluation', () => {
+  for (const oldOutcome of ['resolve', 'reject']) {
+    it(`drops an evaluator's late ${oldOutcome} after configuration reload without discarding query scope or ending a fresh query`, async () => {
+      const old = deferred()
+      const fresh = deferred()
+      const fetchImpl = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+      const { state, host } = evaluatorHarness(fetchImpl)
+      const { instance } = harness()
+      instance.$refs.searchEvaluate = { cancelEvaluation: state.cancelEvaluation }
+      await instance.loadEngines()
+      state.query.value = 'handbook'
+      state.locale.value = 'en'
+      state.path.value = 'guides'
+      const evaluatingOld = state.evaluate()
+      const oldSignal = fetchImpl.mock.calls[0][1].signal
+      await instance.refresh()
+      expect(oldSignal.aborted).toBe(true)
+      expect(state.loading.value).toBe(false)
+      expect(state.submitted.value).toEqual({ query: '', locale: '', path: '' })
+      expect([state.query.value, state.locale.value, state.path.value]).toEqual(['handbook', 'en', 'guides'])
+      const evaluatingFresh = state.evaluate()
+      if (oldOutcome === 'resolve') old.resolve(jsonResponse(searchResult([pageRow(99)])))
+      else old.reject(new Error('Obsolete query failed'))
+      await evaluatingOld
+      await settle()
+      expect(state.loading.value).toBe(true)
+      expect(state.error.value).toBe('')
+      expect(state.rows.value).toEqual([])
+      expect(host.textContent).not.toContain('Guide 99')
+      fresh.resolve(jsonResponse(searchResult([pageRow(2)])))
+      await evaluatingFresh
+      await settle()
+      expect(state.loading.value).toBe(false)
+      expect(state.rows.value.map(row => row.id)).toEqual([2])
+      expect(host.textContent).toContain('Guide 2')
+    })
+  }
+
+  it('retains a pending evaluation when dirty configuration rejects Reload', async () => {
+    const pending = deferred()
+    const fetchImpl = vi.fn().mockReturnValueOnce(pending.promise)
+    const { state } = evaluatorHarness(fetchImpl)
+    const { instance, fetchEngines } = harness()
+    instance.$refs.searchEvaluate = { cancelEvaluation: state.cancelEvaluation }
+    await instance.loadEngines()
+    state.query.value = 'handbook'
+    const evaluating = state.evaluate()
+    instance.engine.config[0].value.value = 'simple'
+    await instance.refresh()
+    expect(fetchEngines).toHaveBeenCalledTimes(1)
+    expect(fetchImpl.mock.calls[0][1].signal.aborted).toBe(false)
+    pending.resolve(jsonResponse(searchResult([pageRow(2)])))
+    await evaluating
+    expect(state.rows.value.map(row => row.id)).toEqual([2])
+    expect(instance.dirty).toBe(true)
+  })
+
   it('allows 256 characters but blocks 257 at both the form and method boundaries', async () => {
     const { state, host, fetchImpl } = evaluatorHarness()
     const input = host.querySelector('input')

@@ -1,49 +1,52 @@
 import { z } from 'zod'
-import { requestJson } from './agents-api.ts'
-import { AgentApiError } from './agents-api.ts'
-import { sameOriginJsonFetch } from './json-transport.ts'
-import { translate } from '../modules/localization.ts'
 import {
   AgentMediaProviderConfigSchema,
-  AgentMediaProviderWriteSchema,
   type AgentMediaProviderView,
-  type AgentMediaProviderWrite
+  type AgentMediaProviderWrite,
+  AgentMediaProviderWriteSchema
 } from '../../shared/agents/media-providers.ts'
+import { translate } from '../modules/localization.ts'
+import { AgentApiError, requestJson } from './agents-api.ts'
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 export type { AgentMediaProviderView, AgentMediaProviderWrite }
+
+import {
+  type DecisionProviderCheck,
+  DecisionProviderConfigSchema,
+  type DecisionProviderView,
+  type DecisionProviderWrite,
+  DecisionProviderWriteSchema,
+  DecisionUsageSchema
+} from '../../shared/agents/decision-providers.ts'
+import {
+  type CreateAdminExternalMcpServerInput,
+  CreateAdminExternalMcpServerSchema,
+  type ExternalMcpGroupPolicyView,
+  type ExternalMcpServerInput,
+  ExternalMcpServerInputSchema,
+  type ExternalMcpServerView
+} from '../../shared/agents/external-mcp.ts'
 import {
   RoutingAdminViewSchema,
-  RoutingPolicyInputSchema,
-  RoutingPolicyViewSchema,
+  type RoutingModelPolicyInput,
   RoutingModelPolicyInputSchema,
   RoutingModelPolicyViewSchema,
   type RoutingPolicyInput,
-  type RoutingModelPolicyInput
+  RoutingPolicyInputSchema,
+  RoutingPolicyViewSchema
 } from '../../shared/agents/routing.ts'
-import {
-  DecisionProviderConfigSchema,
-  DecisionProviderWriteSchema,
-  DecisionUsageSchema,
-  type DecisionProviderView,
-  type DecisionProviderWrite,
-  type DecisionProviderCheck
-} from '../../shared/agents/decision-providers.ts'
-import {
-  ExternalMcpServerInputSchema,
-  CreateAdminExternalMcpServerSchema,
-  type ExternalMcpServerView,
-  type ExternalMcpServerInput,
-  type CreateAdminExternalMcpServerInput,
-  type ExternalMcpGroupPolicyView
-} from '../../shared/agents/external-mcp.ts'
+
 export type {
+  CreateAdminExternalMcpServerInput,
+  DecisionProviderCheck,
   DecisionProviderView,
   DecisionProviderWrite,
-  DecisionProviderCheck,
-  ExternalMcpServerView,
+  ExternalMcpGroupPolicyView,
   ExternalMcpServerInput,
-  CreateAdminExternalMcpServerInput,
-  ExternalMcpGroupPolicyView
+  ExternalMcpServerView
 }
+
 const Provider: z.ZodType<DecisionProviderView> = z.object({
   id: z.string().uuid(),
   displayName: z.string(),
@@ -222,7 +225,7 @@ const Discovery = z.object({
 export type ExternalMcpDiscovery = z.infer<typeof Discovery>
 export const discoverExternalMcp = async (f: typeof fetch, c: string, id: string, signal?: AbortSignal): Promise<ExternalMcpDiscovery> =>
   (await requestJson(f, c, `${root}/external-mcp/${key(id)}/discover`, z.object({ discovery: Discovery }), { method: 'POST', signal })).discovery
-export type { RoutingPolicyInput, RoutingModelPolicyInput, RoutingPolicyView, RoutingModelPolicyView, RoutingAdminView } from '../../shared/agents/routing.ts'
+export type { RoutingAdminView, RoutingModelPolicyInput, RoutingModelPolicyView, RoutingPolicyInput, RoutingPolicyView } from '../../shared/agents/routing.ts'
 export const getAgentRouting = (f: typeof fetch, c: string, signal?: AbortSignal) =>
   requestJson(f, c, `${root}/admin/routing`, RoutingAdminViewSchema, { signal })
 export const updateAgentRouting = async (f: typeof fetch, c: string, input: RoutingPolicyInput & { expectedRevision: number }) => {
@@ -310,7 +313,7 @@ export const deleteMediaProvider = async (f: typeof fetch, c: string, id: string
   })
   if (!response.ok) {
     const value = (await response.json().catch(() => ({}))) as { message?: string; error?: string }
-    throw new AgentApiError(response.status, value.message || value.error || response.statusText)
+    throw new AgentApiError(response.status, value.message || value.error || response.statusText, typeof value.error === 'string' ? value.error : undefined)
   }
   if (response.status !== 204) throw new AgentApiError(502, translate('admin:agentAdmin.mediaInvalidResponse'))
 }

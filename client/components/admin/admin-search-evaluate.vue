@@ -46,6 +46,17 @@ const result = shallowRef<PageSearchResult | null>(null)
 const rows = shallowRef<PageSearchRow[]>([])
 const elapsedMs = ref(0)
 let controller: AbortController | null = null
+function cancelEvaluation() {
+  controller?.abort()
+  controller = null
+  loading.value = false
+  error.value = ''
+  result.value = null
+  rows.value = []
+  elapsedMs.value = 0
+  submitted.value = { query: '', locale: '', path: '' }
+}
+defineExpose({ cancelEvaluation })
 const matchFieldKeys = {
   title: 'admin:searchEvaluate.matchTitle',
   tag: 'admin:searchEvaluate.matchTag',
@@ -69,14 +80,14 @@ async function evaluate(cursor?: string | null) {
   const started = performance.now()
   try {
     const response = await searchPages((url, init) => window.fetch(url, { ...init, signal: request.signal }), input.query, { locale: input.locale, path: input.path, paginated: true, ...(cursor ? { cursor } : {}) })
-    if (request.signal.aborted) return
+    if (controller !== request || request.signal.aborted) return
     elapsedMs.value = Math.round(performance.now() - started)
     result.value = response
     rows.value = cursor ? [...rows.value, ...response.results.filter(row => !rows.value.some(existing => String(existing.id) === String(row.id)))] : response.results
-  } catch (value) { if (!request.signal.aborted) error.value = value instanceof Error ? value.message : t('admin:searchEvaluate.searchCouldNotEvaluated') }
-  finally { if (controller === request) loading.value = false }
+  } catch (value) { if (controller === request && !request.signal.aborted) error.value = value instanceof Error ? value.message : t('admin:searchEvaluate.searchCouldNotEvaluated') }
+  finally { if (controller === request && !request.signal.aborted) { controller = null; loading.value = false } }
 }
-onBeforeUnmount(() => controller?.abort())
+onBeforeUnmount(cancelEvaluation)
 </script>
 
 <style scoped>

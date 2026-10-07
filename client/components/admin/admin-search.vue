@@ -42,7 +42,7 @@
           </aside>
         </div>
       </v-window-item>
-      <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:search.theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate /></v-window-item>
+      <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:search.theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate ref="searchEvaluate" /></v-window-item>
       <v-window-item id="search-panel-index" role="tabpanel" aria-labelledby="search-tab-index" value="index">
         <section class="search-panel search-index" aria-labelledby="search-index-title">
           <header class="index-heading"><div><div class="search-kicker">{{ $t('admin:search.maintenanceEvidence') }}</div><h2 id="search-index-title">{{ $t('admin:search.indexCoverage') }}</h2><p>{{ $t('admin:search.inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting || enginesLoading || !enginesLoaded" @click="inspect">{{ $t('admin:search.inspectIndex') }}</v-btn></header>
@@ -193,6 +193,8 @@ export default {
     },
     async loadEngines({ notifyError = true }: { notifyError?: boolean } = {}) {
       if (this.enginesLoading) return false
+      const evaluator = this.$refs.searchEvaluate as { cancelEvaluation(): void } | undefined
+      evaluator?.cancelEvaluation()
       this.cancelInspection()
       this.inspection = null
       this.inspectedEngine = ''

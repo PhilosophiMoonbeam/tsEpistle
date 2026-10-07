@@ -95,7 +95,6 @@
     <v-dialog v-model="rotateDialog" max-width="500" persistent aria-labelledby="rotate-webhook-dialog-title"><v-card><v-card-title id="rotate-webhook-dialog-title">{{ $t('admin:webhooks.rotateSigningSecret') }}</v-card-title><v-card-text>{{ $t('admin:webhooks.oldSecretStopsWorking', { name: savedHook?.name, interpolation: { escapeValue: false } }) }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rotating" @click="rotateDialog = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="rotating" @click="rotateSecret">{{ $t('admin:webhooks.rotateSecret') }}</v-btn></v-card-actions></v-card></v-dialog>
     <v-dialog v-model="cancelDeliveryDialog" max-width="500" persistent aria-labelledby="cancel-webhook-delivery-dialog-title"><v-card><v-card-title id="cancel-webhook-delivery-dialog-title">{{ $t('admin:webhooks.cancelDelivery2') }}</v-card-title><v-card-text>{{ $t('admin:webhooks.stopFurtherAttemptsRequest', { eventType: cancelDelivery?.eventType, interpolation: { escapeValue: false } }) }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="Boolean(deliveryBusy)" @click="cancelDeliveryDialog = false">{{ $t('admin:webhooks.keepDelivery') }}</v-btn><v-btn color="error" :loading="Boolean(deliveryBusy)" @click="confirmDeliveryCancel">{{ $t('admin:webhooks.cancelDelivery') }}</v-btn></v-card-actions></v-card></v-dialog>
     <v-dialog v-model="testDialog" max-width="520" persistent aria-labelledby="test-webhook-title"><v-card><v-card-title id="test-webhook-title">{{ $t('admin:webhooks.sendTestDelivery') }}</v-card-title><v-card-text><p>{{ $t('admin:webhooks.signed') }} <code>webhook.test</code> {{ $t('admin:webhooks.eventWillSent') }} <strong>{{ savedHook?.url }}</strong>.</p><p>{{ $t('admin:webhooks.containsTestMarkerMessage') }}</p></v-card-text><v-card-actions><v-spacer /><v-btn :disabled="testing" @click="testDialog = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="testing" @click="sendTest">{{ $t('admin:webhooks.sendTestDelivery2') }}</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog :model-value="Boolean(pendingChange)" max-width="500" persistent aria-labelledby="webhook-discard-title"><v-card><v-card-title id="webhook-discard-title">{{ revealedSecret ? $t('admin:webhooks.leaveWithoutSavingSecret') : $t('admin:webhooks.discardEndpointChanges') }}</v-card-title><v-card-text>{{ revealedSecret ? $t('admin:webhooks.secretCannotDisplayedAgain') : $t('admin:webhooks.unsavedChangesWillLost') }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishChange(false)">{{ $t('admin:webhooks.keepEditing') }}</v-btn><v-btn color="error" @click="finishChange(true)">{{ revealedSecret ? $t('admin:webhooks.leaveEndpoint') : $t('admin:webhooks.discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
 </template>
 
@@ -103,6 +102,7 @@
 import AdminWebhookGuide from './admin-webhook-guide.vue'
 import { WEBHOOK_EVENTS, isWebhookEventName } from '../../../shared/webhook-events.ts'
 import { wikiStore } from '@/store/index.ts'
+import { requestConfirmation } from '../common/confirm-dialog.ts'
 import {
   sendWebhookTest,
   changeWebhookDelivery,
@@ -145,7 +145,7 @@ export default {
       deliveryQuery: '',
       deliveryFilter: 'All states',
       baseline: '',
-      pendingChange: null as ((allow: boolean) => void) | null,
+      isDisposed: false,
       operationError: '',
       testDialog: false,
       testing: false,
@@ -179,10 +179,11 @@ export default {
       this.updateLocation()
     }
   },
-  beforeRouteLeave (): boolean | Promise<boolean> {
-    if (this.webhookBusy) return false
+  async beforeRouteLeave (): Promise<boolean> {
+    if (this.webhookBusy || this.isDisposed) return false
     if (!this.dirty && !this.revealedSecret) return true
-    return new Promise(resolve => { this.pendingChange = resolve })
+    const confirmed = await this.confirmChange()
+    return confirmed && !this.webhookBusy && !this.isDisposed
   },
   computed: {
     fingerprint (): string { return JSON.stringify([this.draft, [...new Set(this.subscribedEvents)].sort()]) },
@@ -230,12 +231,23 @@ export default {
       window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
     },
     markClean () { this.baseline = this.fingerprint },
-    requestChange (action: () => void) {
-      if (this.webhookBusy) return
-      if (this.dirty || this.revealedSecret) this.pendingChange = allow => { if (allow) action() }
-      else action()
+    confirmChange (): Promise<boolean> {
+      return requestConfirmation({
+        title: this.revealedSecret ? this.$t('admin:webhooks.leaveWithoutSavingSecret') : this.$t('admin:webhooks.discardEndpointChanges'),
+        message: this.revealedSecret ? this.$t('admin:webhooks.secretCannotDisplayedAgain') : this.$t('admin:webhooks.unsavedChangesWillLost'),
+        confirmLabel: this.revealedSecret ? this.$t('admin:webhooks.leaveEndpoint') : this.$t('admin:webhooks.discardChanges'),
+        cancelLabel: this.$t('admin:webhooks.keepEditing'),
+        tone: 'destructive'
+      })
     },
-    finishChange (allow: boolean) { const pending = this.pendingChange; this.pendingChange = null; pending?.(allow) },
+    async requestChange (action: () => void) {
+      if (this.webhookBusy || this.isDisposed) return
+      if (this.dirty || this.revealedSecret) {
+        const confirmed = await this.confirmChange()
+        if (!confirmed || this.webhookBusy || this.isDisposed) return
+      }
+      action()
+    },
     warnBeforeUnload (event: BeforeUnloadEvent) {
       if (this.dirty || this.revealedSecret || this.webhookBusy) { event.preventDefault(); event.returnValue = '' }
     },
@@ -488,7 +500,7 @@ export default {
   },
   beforeUnmount () {
     window.removeEventListener('beforeunload', this.warnBeforeUnload)
-    this.finishChange(false)
+    this.isDisposed = true
     this.hooksLoadToken++
     this.deliveryLoadToken++
   }

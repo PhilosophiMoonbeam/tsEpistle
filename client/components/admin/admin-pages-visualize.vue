@@ -388,7 +388,7 @@ export default defineComponent({
 
       g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', 'rgb(var(--v-theme-border))')
+        .attr('stroke', 'rgb(var(--v-border-color))')
         .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
         .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')
@@ -464,7 +464,7 @@ export default defineComponent({
 
       g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', 'rgb(var(--v-theme-border))')
+        .attr('stroke', 'rgb(var(--v-border-color))')
         .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
         .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')

@@ -91,7 +91,7 @@ function createHarness(fetchImpl) {
     pushGraphError,
     { fetch: fetchImpl, location: browserWindow.location, history: browserWindow.history, addEventListener() {}, removeEventListener() {} }
   )
-  instance = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish }
+  instance = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $refs: {} }
   for (const [key, method] of Object.entries(component.methods)) {
     if (typeof method === 'function') instance[key] = method.bind(instance)
   }

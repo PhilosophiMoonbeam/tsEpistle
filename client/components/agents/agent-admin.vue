@@ -80,7 +80,7 @@
                   <v-icon :icon="step.complete ? 'mdi-check-circle-outline' : step.optional ? 'mdi-circle-outline' : 'mdi-alert-circle-outline'" :color="step.complete ? 'success' : step.optional ? undefined : 'warning'" aria-hidden="true" />
                   <span><strong>{{ step.title }}</strong><small>{{ step.description }}</small></span><v-icon icon="mdi-arrow-right" size="18" aria-hidden="true" />
                 </button>
-                <p class="agent-overview__caption"><router-link to="/a/groups">{{ t('manageGroupsAgentPermissions') }}</router-link> {{ t('separateAccessBoundaries') }}</p>
+                <p class="agent-overview__caption"><router-link to="/groups">{{ t('manageGroupsAgentPermissions') }}</router-link> {{ t('separateAccessBoundaries') }}</p>
               </section>
               <aside class="agent-default">
                 <div class="agent-panel__eyebrow">{{ t('administratorGenerativeDefault') }}</div>
@@ -470,7 +470,7 @@
               <v-autocomplete v-if="profileDraft.exposureMode === 'groups'" v-model="profileDraft.groupIds" class="mt-5" :items="groups" item-title="name" item-value="id" :label="t('wikiGroups')" multiple chips closable-chips :hint="t('groupMembershipRoutingHelp')" persistent-hint :disabled="resourceState.groups.loading || Boolean(resourceState.groups.error)" />
               <div v-if="profileDraft.exposureMode === 'groups' && (resourceState.groups.error || !groups.length)" class="field-note" role="status">
                 <template v-if="resourceState.groups.error">{{ resourceState.groups.error }} <v-btn variant="text" :disabled="resourceState.groups.loading" @click="refreshResources(['groups'])">{{ t('retry') }}</v-btn></template>
-                <template v-else-if="resourceState.groups.loaded">{{ t('noWikiGroupsYet') }} <router-link to="/a/groups">{{ t('manageWikiGroups') }}</router-link></template>
+                <template v-else-if="resourceState.groups.loaded">{{ t('noWikiGroupsYet') }} <router-link to="/groups">{{ t('manageWikiGroups') }}</router-link></template>
                 <template v-else>{{ t('loading') }}</template>
               </div>
             </section>
@@ -555,7 +555,7 @@
         <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" :label="t('available2')" :disabled="Boolean(actionBusyKey)" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" :label="t('wikiGroups')" multiple chips closable-chips :hint="t('groupMembershipRoutingHelp')" persistent-hint :disabled="Boolean(actionBusyKey) || resourceState.groups.loading || Boolean(resourceState.groups.error)" /><v-alert class="mt-4" type="info" variant="tonal" density="compact">{{ t('defaultGroupAlternativesHelp') }}</v-alert></v-card-text>
         <div v-if="grantDraft.exposureMode === 'groups' && (resourceState.groups.error || !groups.length)" class="field-note mx-6" role="status">
           <template v-if="resourceState.groups.error">{{ resourceState.groups.error }} <v-btn variant="text" :disabled="resourceState.groups.loading" @click="refreshResources(['groups'])">{{ t('retry') }}</v-btn></template>
-          <template v-else-if="resourceState.groups.loaded">{{ t('noWikiGroupsYet') }} <router-link to="/a/groups">{{ t('manageWikiGroups') }}</router-link></template>
+          <template v-else-if="resourceState.groups.loaded">{{ t('noWikiGroupsYet') }} <router-link to="/groups">{{ t('manageWikiGroups') }}</router-link></template>
           <template v-else>{{ t('loading') }}</template>
         </div>
         <v-alert v-if="grantProfile?.isGlobalDefault && grantsDirty" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">{{ t('savingAnyAccessChange') }}</v-alert>
