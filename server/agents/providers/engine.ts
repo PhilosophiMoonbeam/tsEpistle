@@ -1621,6 +1621,7 @@ interface ClaimBeforeMarker {
   readonly titleClaim: string | null
   readonly titleClaimTooLong: boolean
   readonly unboundPrefix: string
+  readonly boundStatementMatched: boolean
 }
 
 const currentClaimSlice = (prefix: string): { readonly claim: string; readonly start: number } => {
@@ -1697,9 +1698,11 @@ const citedSuffixIsOnlyRecommendations = (content: string, suffixStart: number):
   })
 }
 
-const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerEnd: number): ClaimBeforeMarker => {
+const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerEnd: number, boundStatement?: string): ClaimBeforeMarker => {
   const prefix = content.slice(previousMarkerEnd, markerIndex).trimEnd()
-  const current = currentClaimSlice(prefix)
+  const statement = boundStatement?.trim()
+  const boundStatementMatched = statement === undefined || prefix.trim() === statement
+  const current = statement !== undefined && boundStatementMatched ? { claim: statement, start: 0 } : currentClaimSlice(prefix)
   const assessmentClaim = current.claim
   const unboundPrefix = prefix.slice(0, current.start)
   const compactPrefix = prefix.replace(/\s+/gu, ' ').trim()
@@ -1713,7 +1716,8 @@ const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerE
       // Title assertions are deliberately parsed from the complete structural
       // claim because legitimate titles may themselves contain sentence
       // punctuation (for example, "Hello. World").
-      unboundPrefix: ''
+      unboundPrefix: '',
+      boundStatementMatched
     }
   }
   return {
@@ -1721,7 +1725,8 @@ const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerE
     assessmentClaim,
     titleClaim: null,
     titleClaimTooLong: false,
-    unboundPrefix
+    unboundPrefix,
+    boundStatementMatched
   }
 }
 interface TitleAssertion {
@@ -2203,14 +2208,16 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit): readonly S
 const assessUnitClause = (clause: string, unit: CitationSourceUnit): readonly SourceClauseAssessment[] => {
   const record = assessRecordClause(clause, unit)
   if (record !== null) return record
-  if (!unit.text.includes(';') && !clause.includes(';')) {
+  const sourceSegments = sourceLocalSegments(unit.text, true)
+  const clauseSegments = sourceLocalSegments(clause, true)
+  if (sourceSegments.length === 1 && sourceSegments[0] === unit.text && clauseSegments.length === 1 && clauseSegments[0] === clause) {
     const assessment = assessSourceClause(clause, unit)
     return [{ ...assessment, constraints: assessment.constraints && explicitRelationshipCompatible(clause, unit) }]
   }
-  // Semicolon-separated assertions share a retained packet, not each other's
+  // Independent assertions share a retained packet, not each other's
   // restrictions or values. These assessment-only views preserve packet identity
   // and its complete dependency closure.
-  const sources = sourceLocalSegments(unit.text).map(text => {
+  const sources = sourceSegments.map(text => {
     if (text === unit.text) return unit
     const textTerms = new Set(normalizedTerms(text, true))
     return {
@@ -2223,7 +2230,7 @@ const assessUnitClause = (clause: string, unit: CitationSourceUnit): readonly So
     }
   })
   if (sources.length === 0) return []
-  return sourceLocalSegments(clause).map(text => {
+  return clauseSegments.map(text => {
     let firstAssessment: SourceClauseAssessment | undefined
     for (const source of sources) {
       const assessment = assessSourceClause(text, source)
@@ -2426,9 +2433,11 @@ const splitTopLevelSemicolons = (text: string = ''): readonly string[] => {
   return segments.filter(s => s.length > 0)
 }
 
-const sourceLocalSegments = (text: string): readonly string[] => {
+const sourceLocalSegments = (text: string, sentenceLocal = false): readonly string[] => {
   const assertions: string[] = []
-  for (const segment of splitTopLevelSemicolons(text)) {
+  const semicolonSegments = splitTopLevelSemicolons(text)
+  const segments = sentenceLocal ? semicolonSegments.flatMap(sourceSentences) : semicolonSegments
+  for (const segment of segments) {
     // A governing continuation is part of its preceding assertion; splitting
     // it off would let that assertion lose its timing or safety restriction.
     if (
@@ -2450,7 +2459,7 @@ interface FactualSegment {
 }
 
 const factualSegments = (claim: string, evidence: CitationEvidence): readonly FactualSegment[] => {
-  const segments = sourceLocalSegments(claim).filter(value => normalizedTerms(value).length > 0)
+  const segments = sourceLocalSegments(claim, true).filter(value => normalizedTerms(value).length > 0)
   const members = structuralMembers(evidence)
   return segments.flatMap(segment => {
     const shared = segment.match(/^\s*(.+?)\s+and\s+(.+?)\s+((?:has|have|is|are|offers?|provides?|includes?|lists?|maps?|remains?|routes?)\b[\s\S]+)$/iu)
@@ -2568,7 +2577,7 @@ const incrementCounts = (counts: Map<string, number>, values: readonly string[])
 const UNCITED_FINAL_FACT_ISSUE =
   'Substantive prose after the final citation must be cited in the body or limited to original advice in a terminal top-level ## Recommendations section.'
 
-const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage): DraftAssessment => {
+const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage, nativeDraft?: NativeDraft): DraftAssessment => {
   const issues: string[] = []
   const groundingWarnings: string[] = []
   const claims: ClaimProvenance[] = []
@@ -2580,7 +2589,11 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   let previousMarkerEnd = 0
   for (const match of content.matchAll(citationMarker)) {
     const evidenceId = match[1] ?? ''
-    const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd)
+    const boundClaim = nativeDraft?.claims[claims.length]
+    const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement)
+    if (nativeDraft !== undefined && (boundClaim === undefined || boundClaim.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
+      issues.push('Typed source claims must retain their exact host-rendered statement and citation.')
+    }
     const claim = extractedClaim.claim
     const assessmentClaim = extractedClaim.assessmentClaim
     if (substantiveUnboundText(extractedClaim.unboundPrefix)) {
@@ -2590,7 +2603,14 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     const titleAssertion = extractedClaim.titleClaim === null ? null : parseTitleAssertion(extractedClaim.titleClaim)
     const titleAssertionRecognized = extractedClaim.titleClaim !== null || extractedClaim.titleClaimTooLong
     previousMarkerEnd = (match.index ?? 0) + match[0].length
-    const evidence = registry.get(evidenceId)
+    const registeredEvidence = registry.get(evidenceId)
+    // Exact-unit validation and full-scope structural validation are both
+    // required. A cached unit cannot revive a removed or superseded receipt.
+    const evidence = nativeDraft === undefined || (
+      boundClaim?.evidenceId === evidenceId &&
+      registeredEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
+      nativeDraft.evidence.has(canonicalJson([boundClaim.evidenceId, boundClaim.sourceRevision, boundClaim.unitId]))
+    ) ? registeredEvidence : undefined
     if (!evidence) {
       issues.push(`Citation ${evidenceId || '(empty)'} was not produced by a successful page read in this run.`)
       claims.push({
@@ -2659,6 +2679,9 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       seenCitationIds.add(evidenceId)
       citationIds.push(evidenceId)
     }
+  }
+  if (nativeDraft !== undefined && claims.length !== nativeDraft.claims.length) {
+    issues.push('Every typed source claim must retain its own host-rendered citation.')
   }
   if (registry.size > 0 && claims.length === 0 && content.trim().length > 0) {
     groundingWarnings.push('The answer used Wiki page context without an inline citation.')
@@ -3065,6 +3088,11 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
     .map(issue => `- ${issue}`)
     .join('\n')}`
 
+interface NativeDraft {
+  readonly claims: Readonly<WikiSynthesisAnswer['claims']>
+  readonly evidence: ReadonlyMap<string, CitationEvidence>
+}
+
 interface TurnResult extends AgentTokenUsage {
   readonly content: string
   readonly nativeContent?: string
@@ -3078,6 +3106,7 @@ interface TurnResult extends AgentTokenUsage {
   readonly rootHasVerifiedContent?: boolean
   readonly rootFramingIssue?: string
   readonly rootMetadataPresent?: true
+  readonly rootNativeDraft?: NativeDraft
   readonly performance?: {
     readonly serializedRequestBytes: number
     readonly serializationMs: number
@@ -5967,6 +5996,7 @@ export class AxAgentEngine implements AgentEngine {
     }
     let rejection: string | undefined
     let rendered: string | undefined
+    let nativeDraft: NativeDraft | undefined
     const features = provider.service.getFeatures(provider.model)
     const structured = features.structuredOutputModes === undefined
       ? features.structuredOutputs === true || features.functions
@@ -5980,7 +6010,10 @@ export class AxAgentEngine implements AgentEngine {
         const titleSource = titleEvidence.get(key)
         if (titleSource !== undefined) {
           const assertion = parseTitleAssertion(claim.statement)
-          if (assertion !== null && supportsTitleAssertion(assertion, titleSource, input.coverage?.currentPage)) return true
+          if (assertion !== null && supportsTitleAssertion(assertion, titleSource, input.coverage?.currentPage)) {
+            unitEvidence.set(key, titleSource)
+            return true
+          }
           rejection = titleAssertionIssue(source.evidenceId)
           return rejection
         }
@@ -6002,11 +6035,14 @@ export class AxAgentEngine implements AgentEngine {
       },
       validateAnswer: (answer, content) => {
         rendered = content
+        // The program calls this only after every exact binding and source-local
+        // claim passes. Boundaries belong to the host renderer, not prose parsing.
+        nativeDraft = { claims: answer.claims, evidence: unitEvidence }
         if (answer.claims.length === 0 && answer.observations.length === 0 && answer.unresolvedFacets.length !== input.requestFacets.length) {
           rejection = 'An inability must disclose every unresolved requested facet.'
           return rejection
         }
-        const assessment = assessDraft(input.assessableContent(content), evidence, input.coverage)
+        const assessment = assessDraft(input.assessableContent(content), evidence, input.coverage, nativeDraft)
         if (!assessment.valid) {
           rejection = evidenceCorrectionIssues(assessment.issues)
           return rejection
@@ -6117,16 +6153,19 @@ export class AxAgentEngine implements AgentEngine {
         calls: [],
         thoughtBlocks: [],
         rootMetadataPresent: true,
+        ...(nativeDraft === undefined ? {} : { rootNativeDraft: nativeDraft }),
         rootFramingIssue: dispatched.rootFramingIssue ?? rejection ?? 'Typed synthesis output failed its source-bound schema or assertion.'
       }
     }
     if (dispatched === undefined) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Synthesis did not perform an admitted dispatch', 500)
+    if (nativeDraft === undefined) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Synthesis did not validate its source-bound answer', 500)
     return {
       ...dispatched,
       content: renderWikiSynthesisAnswer(answer),
       calls: [],
       thoughtBlocks: [],
       rootMetadataPresent: true,
+      rootNativeDraft: nativeDraft,
       rootUnresolvedFacets: answer.unresolvedFacets,
       rootHasVerifiedContent: answer.claims.length > 0 || answer.observations.length > 0
     }
@@ -7386,7 +7425,7 @@ export class AxAgentEngine implements AgentEngine {
                       omittedCount: executedOmittedCount(),
                       notExecutedCount: notExecutedActionCallIds.size
                     }
-                  })
+                  }, result.rootNativeDraft)
           if (result.rootFramingIssue !== undefined) assessment = { ...assessment, valid: false, issues: [...assessment.issues, result.rootFramingIssue] }
           if (
             request.purpose !== 'planner' &&
@@ -7463,7 +7502,7 @@ export class AxAgentEngine implements AgentEngine {
                         omittedCount: executedOmittedCount(),
                         notExecutedCount: notExecutedActionCallIds.size
                       }
-                    })
+                    }, result.rootNativeDraft)
               assessment = {
                 ...reassessed,
                 valid: false,
