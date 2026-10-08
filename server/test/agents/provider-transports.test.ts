@@ -1,6 +1,7 @@
 import type { LookupAddress } from 'node:dns'
-import type { AxChatRequest } from '@ax-llm/ax'
+import { ax, f, type AxChatRequest } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
+import { z } from 'zod'
 import { AgentProviderFactory, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from '../../agents/providers/prompt-tools.ts'
@@ -32,6 +33,7 @@ describe('additional provider transports', () => {
       table.string('transportKind')
       table.string('model')
       table.string('baseUrl')
+      table.string('utilityModel').nullable()
       table.string('authMode')
       table.string('secretReference')
       table.text('adapterConfig')
@@ -55,6 +57,132 @@ describe('additional provider transports', () => {
       conformed: true
     })
   }
+
+  it.each([
+    ['openai-responses', 'https://api.openai.com/v1', 'gpt-4o'],
+    ['openresponses', 'https://openresponses.example.test/v1', 'model-test'],
+    ['openai-chat', 'https://chat.example.test/v1', 'model-test'],
+    ['anthropic-messages', 'https://api.anthropic.com/v1', 'claude-sonnet-4-6']
+  ] as const)('runs native structured Ax generation through spread-safe guarded %s metadata', async (transportKind, baseUrl, model) => {
+    const id = '00000000-0000-4000-8000-000000000040'
+    await insert({ id, transportKind, baseUrl, model, authMode: transportKind === 'anthropic-messages' ? 'anthropic-api-key' : 'bearer' })
+    await db('agentProviderProfileVersions').where({ id }).update({
+      capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', structuredOutput: 'native-json-schema' })
+    })
+    const requests: { url: string; body: Record<string, unknown> }[] = []
+    const output = '{"claims":[{"evidenceId":"source-42","statement":"The threshold is 42."}],"unresolvedFacets":[1]}'
+    const provider = await new AgentProviderFactory(db, { get: () => 'structured-key' }, (async (input, init) => {
+      requests.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+      if (transportKind === 'anthropic-messages')
+        return Response.json({
+          id: 'msg_structured', type: 'message', role: 'assistant', model,
+          content: [{ type: 'text', text: output }], stop_reason: 'end_turn', stop_sequence: null,
+          usage: { input_tokens: 9, output_tokens: 7 }
+        })
+      if (transportKind === 'openai-chat')
+        return Response.json({
+          id: 'chat_structured', object: 'chat.completion', created: 1, model,
+          choices: [{ index: 0, message: { role: 'assistant', content: output }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 9, completion_tokens: 7, total_tokens: 16 }
+        })
+      return Response.json({
+        id: 'resp_structured', object: 'response', created_at: 1, status: 'completed', error: null,
+        incomplete_details: null, instructions: null, max_output_tokens: null, model,
+        parallel_tool_calls: false, previous_response_id: null,
+        output: [{ type: 'message', id: 'msg_structured', status: 'completed', role: 'assistant',
+          content: [{ type: 'output_text', text: output, annotations: [] }] }],
+        usage: { input_tokens: 9, output_tokens: 7, total_tokens: 16 }
+      })
+    }) as typeof fetch, publicResolver as never).create(id, { reasoningEffort: 'low' })
+    const program = ax(f()
+      .input('userRequest', f.string())
+      .output('claims', f.object({ evidenceId: f.string(), statement: f.string() }).array())
+      .output('unresolvedFacets', f.number().array())
+      .useStructured().build(), { maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1 })
+    let admittedChats = 0
+    const hostedService = {
+      ...provider.service,
+      chat: async (...args: Parameters<typeof provider.service.chat>) => {
+        admittedChats++
+        return provider.service.chat(...args)
+      }
+    }
+    expect(await program.forward(hostedService, { userRequest: 'Report the threshold.' }, { stream: false, structuredOutputMode: 'native' })).toEqual({
+      claims: [{ evidenceId: 'source-42', statement: 'The threshold is 42.' }], unresolvedFacets: [1]
+    })
+    expect(admittedChats).toBe(1)
+    expect(requests).toHaveLength(1)
+    const body = requests[0]!.body
+    const format = z.object({ schema: z.unknown() })
+    const schema = transportKind === 'anthropic-messages'
+      ? z.object({ output_config: z.object({ format }) }).parse(body).output_config.format.schema
+      : transportKind === 'openai-chat'
+        ? z.object({ response_format: z.object({ json_schema: format }) }).parse(body).response_format.json_schema.schema
+        : z.object({ text: z.object({ format }) }).parse(body).text.format.schema
+    expect(schema).toMatchObject({
+      type: 'object', required: ['claims', 'unresolvedFacets'], additionalProperties: false,
+      properties: { claims: { type: 'array', items: {
+        type: 'object', required: ['evidenceId', 'statement'], additionalProperties: false,
+        properties: { evidenceId: { type: 'string' }, statement: { type: 'string' } }
+      } } }
+    })
+    expect(body).not.toHaveProperty('tools')
+    expect(provider.service.getLastUsedChatModel()).toBe(model)
+    expect(program.getUsage()).toMatchObject([{ tokens: { promptTokens: 9, completionTokens: 7, totalTokens: 16 } }])
+    if (transportKind === 'anthropic-messages') {
+      expect(body.cache_control).toEqual({ type: 'ephemeral' })
+      expect(body.output_config).toHaveProperty('effort', 'low')
+    }
+  })
+
+  it.each([
+    ['openai-responses', 'https://api.openai.com/v1'],
+    ['openresponses', 'https://openresponses.example.test/v1'],
+    ['openai-chat', 'https://chat.example.test/v1'],
+    ['anthropic-messages', 'https://api.anthropic.com/v1'],
+    ['gemini-api', 'https://generativelanguage.googleapis.com/v1beta'],
+    ['legacy-completions', 'https://legacy.example.test/v1']
+  ] as const)('rejects unadmitted non-chat operations and undeclared native schema on %s before egress', async (transportKind, baseUrl) => {
+    const id = '00000000-0000-4000-8000-000000000041'
+    await insert({ id, transportKind, baseUrl, authMode: 'bearer', model: transportKind === 'gemini-api' ? 'gemini-3.7-flash' : 'model-test' })
+    let calls = 0
+    const provider = await new AgentProviderFactory(db, { get: () => 'guard-key' }, (async () => {
+      calls++
+      throw new Error('Unadmitted operation reached the provider')
+    }) as typeof fetch, publicResolver as never).create(id)
+    await expect(provider.service.embed({ texts: ['private text'] })).rejects.toMatchObject({ code: 'UNSUPPORTED_PROVIDER_OPERATION' })
+    await expect(provider.service.transcribe({ audio: { data: 'AQID', format: 'wav' } })).rejects.toMatchObject({ code: 'UNSUPPORTED_PROVIDER_OPERATION' })
+    await expect(provider.service.speak({ text: 'private speech' })).rejects.toMatchObject({ code: 'UNSUPPORTED_PROVIDER_OPERATION' })
+    await expect(provider.service.openChatSession!({ chatPrompt: [{ role: 'user', content: 'private session' }] }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_PROVIDER_OPERATION' })
+    const nativeProgram = ax(f().input('userRequest', f.string()).output('answerText', f.string()).useStructured().build(),
+      { maxRetries: 0, maxSteps: 1, asyncMode: 'off' })
+    await expect(nativeProgram.forward(provider.service, { userRequest: 'Private answer.' }, { structuredOutputMode: 'native' }))
+      .rejects.toThrow()
+    expect(calls).toBe(0)
+  })
+
+  it.each([
+    ['openresponses', 'max'],
+    ['anthropic-messages', 'minimal'],
+    ['gemini-api', 'none'],
+    ['legacy-completions', 'low'],
+    ['openai-chat', 'invalid']
+  ] as const)('rejects invalid default effort %s/%s without egress even when explicit profile effort exists', async (transportKind, effort) => {
+    const id = '00000000-0000-4000-8000-000000000042'
+    await insert({ id, transportKind, baseUrl: 'https://provider.example.test/v1', authMode: 'bearer', model: transportKind === 'gemini-api' ? 'gemini-3.7-flash' : 'model-test' })
+    if (transportKind !== 'legacy-completions')
+      await db('agentProviderProfileVersions').where({ id }).update({
+        adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'low' })
+      })
+    let calls = 0
+    const factory = new AgentProviderFactory(db, { get: () => 'override-key' }, (async () => {
+      calls++
+      throw new Error('Invalid override reached the provider')
+    }) as typeof fetch, publicResolver as never)
+    await expect(factory.create(id, { reasoningEffort: effort as never })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_REQUEST', status: 400 })
+    expect(calls).toBe(0)
+  })
 
   it.each([
     ['openai-responses', '00000000-0000-4000-8000-000000000017', 'responses.example.test'],
@@ -430,12 +558,32 @@ describe('additional provider transports', () => {
           })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'chat-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
+    let bypassCalls = 0
+    const bypass = (async () => {
+      bypassCalls++
+      throw new Error('Caller-supplied fetch must not bypass guarded dispatch')
+    }) as typeof fetch
+    provider.service.setOptions({
+      fetch: bypass, corsProxy: 'https://unadmitted.example.test', retry: { maxRetries: 99 }, timeout: 99_999,
+      includeRequestBodyInErrors: true, excludeContentFromTrace: false, customLabels: { workflow: 'guarded-native' }
+    })
+    expect(provider.service.getOptions()).toMatchObject({
+      timeout: 10_000, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true,
+      customLabels: { workflow: 'guarded-native' }
+    })
     const definition = {
       name: 'wiki_get_page',
       description: 'Read a page',
       parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } }
     }
-    const first = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition] }, { stream: false })
+    const first = await provider.service.chat(
+      { model: 'unadmitted-model', chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition], modelConfig: { maxTokens: 99_999 } },
+      { stream: false, fetch: bypass, retry: { maxRetries: 99 }, corsProxy: 'https://unadmitted.example.test' }
+    )
+    expect(bypassCalls).toBe(0)
+    expect(payloads[0]).toMatchObject({ model: 'model-test' })
+    expect(payloads[0]?.max_completion_tokens ?? payloads[0]?.max_tokens).toBe(4_000)
+    expect(provider.service.getLastUsedChatModel()).toBe('model-test')
     if (first instanceof ReadableStream) throw new Error('Expected a buffered Chat Completions response')
     const [call] = first.results[0]?.functionCalls ?? []
     expect(call).toMatchObject({ id: 'call_1', function: { name: 'wiki_get_page', params: '{"id":42}' } })
@@ -458,9 +606,9 @@ describe('additional provider transports', () => {
     expect(payloads[1]).not.toHaveProperty('tools')
   })
 
-  it('keeps legacy completions buffered for single-call prompt tool rounds without native functions', async () => {
+  it.each(['model-test', 'gpt-5-mini'])('keeps %s legacy native prompts buffered and supports parsed-field Ax generation without native functions', async model => {
     const id = '00000000-0000-4000-8000-000000000013'
-    await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header' })
+    await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header', model })
     const payloads: Record<string, unknown>[] = []
     let headers = new Headers()
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
@@ -483,7 +631,7 @@ describe('additional provider transports', () => {
       { stream: true }
     )
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payloads[0]).toMatchObject({ model: 'model-test', prompt: 'system: system\n\nuser: hello', stream: false })
+    expect(payloads[0]).toMatchObject({ model, prompt: 'system: system\n\nuser: hello', stream: false })
     expect(headers.get('x-api-key')).toBe('legacy-key')
     if (!(response instanceof ReadableStream))
       expect(response).toMatchObject({ results: [{ content: 'legacy' }], modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } })
@@ -518,7 +666,7 @@ describe('additional provider transports', () => {
       { stream: true }
     )
     expect(final).not.toBeInstanceOf(ReadableStream)
-    expect(payloads[2]).toMatchObject({ model: 'model-test', stream: false })
+    expect(payloads[2]).toMatchObject({ model, stream: false })
     expect(payloads[2]?.prompt).toContain('<wiki-tool-result>')
     expect(payloads[2]?.prompt).not.toContain('Available action catalog')
     expect(final).toMatchObject({ results: [{ content: 'ACKNOWLEDGED receipt-42' }] })
@@ -526,6 +674,14 @@ describe('additional provider transports', () => {
       Promise.resolve(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] }))
     ).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
     expect(payloads).toHaveLength(3)
+    const program = ax('userRequest:string -> answerText:string', { maxRetries: 0, maxSteps: 1, asyncMode: 'off' })
+    expect(await program.forward({ ...provider.service }, { userRequest: 'Acknowledge the receipt.' }, { stream: false })).toEqual({
+      answerText: 'ACKNOWLEDGED receipt-42'
+    })
+    expect(payloads).toHaveLength(4)
+    expect(payloads[3]).not.toHaveProperty('tools')
+    expect(provider.service.getLastUsedChatModel()).toBe(model)
+    expect(program.getUsage()).toMatchObject([{ tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } }])
   })
   it('preserves legacy reported totals and does not fabricate usage for absent or malformed receipts', async () => {
     const id = '00000000-0000-4000-8000-000000000030'

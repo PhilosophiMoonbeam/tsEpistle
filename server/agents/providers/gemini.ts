@@ -223,23 +223,65 @@ export interface GeminiAxServiceOptions {
 
 export const createGeminiAxService = (
   config: GeminiAxServiceOptions
-): Pick<AxAIService, 'chat' | 'getFeatures'> & Pick<AgentProviderService, 'nativeMediaCapabilities'> => {
+): AxAIService & Pick<AgentProviderService, 'nativeMediaCapabilities'> => {
   const featureService = ai({
     name: 'google-gemini',
     apiKey: config.apiKey,
     config: { model: config.model as AxAIGoogleGeminiModel },
-    options: { fetch: config.fetch, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
+    options: { fetch: config.fetch, timeout: config.timeoutMs, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
   })
+  let lastService: AxAIService = featureService
+  const safeOptions = (options: Readonly<AxAIServiceOptions>): AxAIServiceOptions => {
+    const timeout = options.timeout ?? config.timeoutMs
+    if (!Number.isSafeInteger(timeout) || timeout < 1)
+      throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider timeout is invalid', 400)
+    const locked: AxAIServiceOptions = {
+      ...options,
+      fetch: config.fetch,
+      timeout: Math.min(timeout, config.timeoutMs),
+      retry: { maxRetries: 0 },
+      includeRequestBodyInErrors: false,
+      excludeContentFromTrace: true
+    }
+    delete locked.corsProxy
+    delete locked.webSocket
+    return locked
+  }
+  const unsupported = async (): Promise<never> => {
+    throw new AgentRepositoryError('UNSUPPORTED_PROVIDER_OPERATION', 'This provider service permits admitted chat requests only', 400)
+  }
   let nativeMediaCapabilities = featureService.getFeatures(config.model).media
   return {
-    getFeatures: model => featureService.getFeatures(typeof model === 'string' ? model : config.model),
+    getId: () => featureService.getId(),
+    getName: () => featureService.getName(),
+    getFeatures: () => featureService.getFeatures(config.model),
+    getModelList: () => featureService.getModelList(),
+    getMetrics: () => lastService.getMetrics(),
+    getLogger: () => featureService.getLogger(),
+    getLastUsedChatModel: () => lastService.getLastUsedChatModel(),
+    getLastUsedEmbedModel: () => lastService.getLastUsedEmbedModel(),
+    getLastUsedModelConfig: () => lastService.getLastUsedModelConfig(),
+    getEstimatedCost: usage => featureService.getEstimatedCost(usage),
+    getOptions: () => featureService.getOptions(),
+    setOptions: options => featureService.setOptions(safeOptions(options)),
+    validateChatRequest: (request, options) => featureService.validateChatRequest?.({ ...request, model: config.model }, options),
+    embed: unsupported,
+    transcribe: unsupported,
+    speak: unsupported,
+    openChatSession: unsupported,
     get nativeMediaCapabilities() {
       return nativeMediaCapabilities
     },
     async chat(request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>) {
-      options?.abortSignal?.throwIfAborted()
+      const defaults = featureService.getOptions()
+      options = safeOptions({ ...defaults, ...options })
       const cancellation = new AbortController()
-      const signal = options?.abortSignal ? AbortSignal.any([options.abortSignal, cancellation.signal]) : cancellation.signal
+      const signal = AbortSignal.any([
+        cancellation.signal,
+        ...(defaults.abortSignal ? [defaults.abortSignal] : []),
+        ...(options.abortSignal ? [options.abortSignal] : [])
+      ])
+      signal.throwIfAborted()
       const state: GeminiWireState = { parts: [], partsBytes: 2, terminal: false, usage: false, usageFrames: [], emittedState: false }
       const nativeAssistantParts = request.chatPrompt
         .filter(message => message.role === 'assistant')
@@ -361,6 +403,7 @@ export const createGeminiAxService = (
         { ...profileRequest, chatPrompt, modelConfig },
         { ...chatOptions, abortSignal: signal, showThoughts: false, fetch: transportFetch }
       )
+      lastService = service
       const normalize = (chunk: AxChatResponse): AxChatResponse => {
         for (const result of chunk.results) delete result.thoughtBlocks
         const frameUsage = state.usageFrames.shift()

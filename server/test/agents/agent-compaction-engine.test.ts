@@ -9,6 +9,7 @@ import {
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
+import { fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -120,7 +121,7 @@ const oversizedHistory = () =>
   ])
 
 const factoryFor = (chat: (input: Readonly<AxChatRequest<unknown>>, options?: { abortSignal?: AbortSignal }) => Promise<AxChatResponse>) => {
-  const create = vi.fn(async () => ({ ...profile, service: { chat } }))
+  const create = vi.fn(async () => ({ ...profile, service: fullAxFixtureService(chat) }))
   return { create, factory: { create } as unknown as AgentProviderFactory }
 }
 
@@ -276,7 +277,7 @@ describe('Ax agent engine context compaction', () => {
         ...profile,
         transportKind,
         preserveCachePrefix: true,
-        service: { chat }
+        service: fullAxFixtureService(chat)
       }))
     } as unknown as AgentProviderFactory
     const engine = new AxAgentEngine(factory)
@@ -309,7 +310,7 @@ describe('Ax agent engine context compaction', () => {
       return calls.length === 1 ? response('Earlier constraint and decision remain.', 100, 10) : response('Done.', 80, 5)
     })
     const factory = {
-      create: vi.fn(async () => ({ ...profile, preserveCachePrefix: true, continuationDialect: 'gemini-generate-content-v1' as const, service: { chat } }))
+      create: vi.fn(async () => ({ ...profile, preserveCachePrefix: true, continuationDialect: 'gemini-generate-content-v1' as const, service: fullAxFixtureService(chat) }))
     } as unknown as AgentProviderFactory
     const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
     const result = await new AxAgentEngine(factory).execute(
@@ -426,9 +427,13 @@ describe('Ax agent engine context compaction', () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
-      return calls.length === 1
-        ? response(`Alpha release does not require a verified staging receipt. [[cite:${alphaEvidenceId}]]`, 200, 20)
-        : response(`${sourceUnit} [[cite:${alphaEvidenceId}]]`, 300, 30)
+      if (calls.length === 1) {
+        const control = synthesisCollectionControl(input)
+        if (control !== undefined) return control
+      }
+      return response(synthesisFixtureAnswer(input, calls.length === 2
+        ? `Alpha release does not require a verified staging receipt. [[cite:${alphaEvidenceId}]]`
+        : `${sourceUnit} [[cite:${alphaEvidenceId}]]`, { bindings: { [alphaEvidenceId]: { text: sourceUnit } } }), calls.length === 2 ? 200 : 300, calls.length === 2 ? 20 : 30)
     })
     const { factory } = factoryFor(chat)
     const validateObservation = vi.fn(async () => true)
@@ -464,22 +469,12 @@ describe('Ax agent engine context compaction', () => {
       { text, event: async () => undefined }
     )
 
-    expect(calls).toHaveLength(2)
-    expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes(sourceUnit))).toBe(
-      true
-    )
-    const deliveredAlpha = calls[0]?.chatPrompt.find(
-      message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('"actionCallId":"child-alpha-read"')
-    )
-    expect(deliveredAlpha?.role === 'user' ? deliveredAlpha.content : '').toContain(sourceUnit)
-    expect(deliveredAlpha?.role === 'user' ? deliveredAlpha.content : '').toContain('<wiki-evidence-context>')
-    expect(deliveredAlpha?.role === 'user' ? deliveredAlpha.content : '').not.toContain(background)
-    expect(calls[1]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes(sourceUnit))).toBe(
-      true
-    )
-    expect(JSON.stringify(calls[0]?.chatPrompt)).not.toContain('Beta background remains unchanged.')
+    const sourceDeliveries = calls.slice(1).map(synthesisSourcesFromRequest)
+    expect(sourceDeliveries.every(units => units.some(unit => unit.evidenceId === alphaEvidenceId && unit.text === sourceUnit))).toBe(true)
+    expect(sourceDeliveries.flat().some(unit => unit.text.includes(background) || unit.text.includes('Beta background remains unchanged.'))).toBe(false)
     expect(text).toHaveBeenCalledWith(`${sourceUnit} [[cite:${alphaEvidenceId}]]`)
     expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
+    expect(result).toMatchObject({ inputTokens: 503, outputTokens: 52, totalTokens: 555, costMicros: 607 })
     expect(validateObservation).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
   })
 
@@ -519,8 +514,15 @@ describe('Ax agent engine context compaction', () => {
       const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
         calls.push(input)
         if (calls.length === 1) return response('Keep the contact lookup and exact source restrictions.', 100, 10)
-        if (calls.length === 2) return response(answer, 100, 10)
-        return response(independentAnswer, 100, 10)
+        if (calls.length === 2) {
+          const control = synthesisCollectionControl(input)
+          if (control !== undefined) return control
+        }
+        const units = synthesisSourcesFromRequest(input)
+        const draft = calls.length === 3
+          ? { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text.includes('Maya Quinn') || unit.packet.includes('"value":"Maya Quinn"'))?.unitId ?? 'fixture-omitted-contact-unit', statement: fact }
+          : { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text === independentFact)?.unitId ?? 'fixture-missing-office-unit', statement: independentFact }
+        return response(synthesisFixtureAnswer(input, { claims: [draft], unresolvedFacets: calls.length === 3 ? [] : [0] }), 100, 10)
       })
       const { factory } = factoryFor(chat)
       const actions: AgentActionSessionProvider = {
@@ -581,12 +583,12 @@ describe('Ax agent engine context compaction', () => {
       expect(commitCompaction).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'context_compacted' }))
       const published = text.mock.calls.map(([delta]) => delta).join('')
       if (complete) {
-        expect(published).toBe(answer)
+        expect(published).toContain(answer)
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
       } else {
-        expect(published).not.toContain(fact)
-        expect(published).toBe(independentAnswer)
+        expect(published).not.toContain(answer)
+        expect(published).toContain(independentAnswer)
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
@@ -618,15 +620,23 @@ ${sourceUnit}`,
       }
     }
     const calls: Readonly<AxChatRequest<unknown>>[] = []
+    let invalidDraftReturned = false
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
-      return calls.length === 1
-        ? response(`Alpha release does not require a staging receipt. [[cite:${evidenceId}]]`, 200, 20)
-        : response('I cannot verify Alpha’s release requirement now.', 300, 30)
+      if (calls.length === 1) {
+        const control = synthesisCollectionControl(input)
+        if (control !== undefined) return control
+      }
+      if (calls.length === 2) {
+        invalidDraftReturned = true
+        return response(synthesisFixtureAnswer(input, `Alpha release does not require a staging receipt. [[cite:${evidenceId}]]`, {
+          bindings: { [evidenceId]: { text: sourceUnit } }
+        }), 200, 20)
+      }
+      return response('I cannot verify Alpha’s release requirement now.', 300, 30)
     })
     const { factory } = factoryFor(chat)
-    let validationCount = 0
-    const validateObservation = vi.fn(async () => ++validationCount === 1)
+    const validateObservation = vi.fn(async () => !invalidDraftReturned)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [
@@ -658,13 +668,11 @@ ${sourceUnit}`,
       { text, event: async () => undefined }
     )
 
-    expect(calls).toHaveLength(2)
-    expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes(sourceUnit))).toBe(
-      true
-    )
-    expect(calls[1]?.chatPrompt.every(message => typeof message.content !== 'string' || !message.content.includes(sourceUnit))).toBe(true)
-    expect(text).toHaveBeenCalledWith('I cannot verify Alpha’s release requirement now.')
+    expect(synthesisSourcesFromRequest(calls[1]!)).toEqual(expect.arrayContaining([expect.objectContaining({ evidenceId, text: sourceUnit })]))
+    expect(calls.at(-1)?.chatPrompt.every(message => typeof message.content !== 'string' || !message.content.includes(sourceUnit))).toBe(true)
+    expect(text.mock.calls.flat().join('')).not.toContain('Alpha release does not require a staging receipt.')
     expect(result.citations).toBeUndefined()
+    expect(result).toMatchObject({ inputTokens: 503, outputTokens: 52, totalTokens: 555, costMicros: 607 })
     expect(validateObservation).toHaveBeenCalledWith('pages.get', seed.output, expect.any(AbortSignal))
   })
 
@@ -931,8 +939,9 @@ ${sourceUnit}`,
     expect(budget.consumed()).toBe(0)
   })
 
-  it('retains completed same-run tool call/result authority pairs through synthesis', async () => {
-    const calls: Readonly<AxChatRequest<unknown>>[] = []
+  it('preserves both read sources and action authority across tool-free synthesis', async () => {
+    const firstFact = 'Alpha release requires a staging receipt.'
+    const secondFact = 'Beta release requires an audit receipt.'
     const replies: AxChatResponse[] = [
       {
         results: [
@@ -956,12 +965,19 @@ ${sourceUnit}`,
         ],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 200, completionTokens: 10, totalTokens: 210 } }
       },
-      response('EVIDENCE_TWO [[cite:page:2:revision:2]]', 300, 20)
+      response(`${firstFact} [[cite:page:1:revision:1]]\n\n${secondFact} [[cite:page:2:revision:2]]`, 300, 20)
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
-      calls.push(input)
-
-      return replies.shift()!
+      if (replies.length === 1) {
+        const control = synthesisCollectionControl(input)
+        if (control !== undefined) return control
+      }
+      const next = replies.shift()
+      if (next === undefined) throw new Error('Unexpected provider request after the scripted synthesis answer')
+      return {
+        ...next,
+        results: next.results.map(result => result.content === undefined ? result : { ...result, content: synthesisFixtureAnswer(input, result.content) })
+      }
     })
     const { factory } = factoryFor(chat)
     const actions: AgentActionSessionProvider = {
@@ -977,7 +993,7 @@ ${sourceUnit}`,
             sourceRevision: String(id),
             title: `Evidence ${id}`,
             contentType: 'markdown',
-            content: `${id === 1 ? 'EVIDENCE_ONE' : 'EVIDENCE_TWO'} ${String(id).repeat(500)}`,
+            content: id === 1 ? firstFact : secondFact,
             citation: { evidenceId: `page:${id}:revision:${id}`, label: `Evidence ${id}`, href: `/en/evidence-${id}` },
             citationSections: []
           }
@@ -990,24 +1006,27 @@ ${sourceUnit}`,
     const base = engineRequest([{ role: 'user', content: 'Compare both sources.' }])
     const event = vi.fn(async () => undefined)
     const commitCompaction = vi.fn(async () => undefined)
+    const text = vi.fn(async (_delta: string) => undefined)
+    const budget = sequencedBudget(400_000)
     const result = await new AxAgentEngine(factory, actions).execute(
       {
         ...base,
         run: { ...base.run, executionMode: 'agent' },
-        limits: { maxTurns: 4, maxToolCalls: 4, maxOutputTokens: 8_192 },
-        dispatchBudget: sequencedBudget(400_000)
+        limits: { maxTurns: 6, maxToolCalls: 4, maxOutputTokens: 8_192 },
+        dispatchBudget: budget
       },
-      { commitCompaction, text: async () => undefined, event }
+      { commitCompaction, text, event }
     )
 
-    expect(calls).toHaveLength(3)
-    const synthesisRequest = JSON.stringify(calls[2])
-    expect(synthesisRequest).toContain('tool-1')
-    expect(synthesisRequest).toContain('EVIDENCE_ONE')
-    expect(synthesisRequest).toContain('tool-2')
-    expect(synthesisRequest).toContain('EVIDENCE_TWO')
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain(`${firstFact} [[cite:page:1:revision:1]]`)
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain(`${secondFact} [[cite:page:2:revision:2]]`)
     expect(event).not.toHaveBeenCalledWith('model.turn', expect.objectContaining({ outcome: 'context_compacted' }))
     expect(commitCompaction).not.toHaveBeenCalled()
-    expect(result).toMatchObject({ authoritySha256: 'f'.repeat(64), citations: [expect.objectContaining({ evidenceId: 'page:2:revision:2' })] })
+    expect(result).toMatchObject({
+      authoritySha256: 'f'.repeat(64),
+      citations: [expect.objectContaining({ evidenceId: 'page:1:revision:1' }), expect.objectContaining({ evidenceId: 'page:2:revision:2' })]
+    })
+    expect(result.totalTokens).toBe(645)
+    expect(budget.consumed()).toBe(645)
   })
 })

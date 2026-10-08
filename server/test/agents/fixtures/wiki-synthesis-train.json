@@ -1,0 +1,1232 @@
+[
+  {
+    "id": "train-retention",
+    "family": "train-retention",
+    "split": "train",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Summarize archive and scratch retention and deletion approval.",
+    "sourceUnits": [
+      {
+        "evidenceId": "train-retention-archive",
+        "sourceRevision": "train-retention-r1",
+        "unitId": "archive",
+        "context": "train-retention",
+        "text": "Archive logs are retained for 30 days. Deletion requires manager approval.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Archive logs are retained for 30 days. Deletion requires manager approval.\"}"
+      },
+      {
+        "evidenceId": "train-retention-scratch",
+        "sourceRevision": "train-retention-r1",
+        "unitId": "scratch",
+        "context": "train-retention",
+        "text": "Scratch logs are retained for 7 days without approval.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Scratch logs are retained for 7 days without approval.\"}"
+      }
+    ],
+    "requestFacets": [
+      "archive",
+      "scratch"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "archive",
+        "evidenceId": "train-retention-archive",
+        "sourceRevision": "train-retention-r1",
+        "unitId": "archive",
+        "facet": 0,
+        "allOf": [
+          "(?:archive)",
+          "(?:30 days)",
+          "(?:manager approval|approval from a manager|manager must approve)"
+        ],
+        "exact": [
+          "30"
+        ],
+        "allowedParaphrases": [
+          "Archive logs stay for 30 days; a manager must approve deletion."
+        ]
+      },
+      {
+        "id": "scratch",
+        "evidenceId": "train-retention-scratch",
+        "sourceRevision": "train-retention-r1",
+        "unitId": "scratch",
+        "facet": 1,
+        "allOf": [
+          "(?:scratch)",
+          "(?:7 days)",
+          "(?:without approval|no approval)"
+        ],
+        "exact": [
+          "7"
+        ],
+        "allowedParaphrases": [
+          "Scratch logs stay for 7 days and need no approval."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "standalone-original-advice",
+        "category": "sourced claims plus independently authored standalone advice",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."},
+            {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "unitId": "scratch", "statement": "Scratch logs are retained for 7 days without approval."}
+          ],
+          "unresolvedFacets": [], "observations": [],
+          "recommendations": "Consider keeping a personal checklist before requesting deletion."
+        }
+      },
+      {
+        "id": "uncited-declarative-premise",
+        "category": "sourced claims plus uncited factual recommendation premise",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."},
+            {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "unitId": "scratch", "statement": "Scratch logs are retained for 7 days without approval."}
+          ],
+          "unresolvedFacets": [], "observations": [],
+          "recommendations": "Deletion requests are automatically processed overnight. Consider keeping a personal checklist before requesting deletion."
+        }
+      },
+      {
+        "id": "uncited-explanatory-premise",
+        "category": "sourced claims plus uncited explanatory recommendation premise",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."},
+            {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "unitId": "scratch", "statement": "Scratch logs are retained for 7 days without approval."}
+          ],
+          "unresolvedFacets": [], "observations": [],
+          "recommendations": "Consider keeping a personal checklist because deletion requests are automatically processed overnight."
+        }
+      },
+      {
+        "id": "cross-unit-pooling",
+        "category": "cross-unit pooling",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 7 days without approval."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "archive",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "archive",
+              "statement": "Archive logs stay for 30 days; a manager must approve deletion."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Scratch logs stay for 7 days and need no approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "cross-unit pooling",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "unknown",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r0",
+              "unitId": "archive",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "archive",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval. [[source:fake]]"
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "archive",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "archive",
+              "statement": "Archive logs are retained for 309 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "train-threshold",
+    "family": "train-threshold",
+    "split": "train",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "State the latency alert threshold and export restriction.",
+    "sourceUnits": [
+      {
+        "evidenceId": "train-threshold-alert",
+        "sourceRevision": "train-threshold-r1",
+        "unitId": "alert",
+        "context": "train-threshold",
+        "text": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Latency alerts fire only when p95 > 250 ms for 3 consecutive windows.\"}"
+      },
+      {
+        "evidenceId": "train-threshold-export",
+        "sourceRevision": "train-threshold-r1",
+        "unitId": "export",
+        "context": "train-threshold",
+        "text": "Exports are permitted only for administrators.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Exports are permitted only for administrators.\"}"
+      }
+    ],
+    "requestFacets": [
+      "latency alert threshold",
+      "export restriction"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "alert",
+        "evidenceId": "train-threshold-alert",
+        "sourceRevision": "train-threshold-r1",
+        "unitId": "alert",
+        "facet": 0,
+        "allOf": [
+          "(?:latency|alert)",
+          "(?:p95)",
+          "(?:> 250 ms)",
+          "(?:3 consecutive windows)"
+        ],
+        "exact": [
+          "p95",
+          ">",
+          "250",
+          "3"
+        ],
+        "allowedParaphrases": [
+          "The latency alert fires only after p95 > 250 ms in 3 consecutive windows."
+        ]
+      },
+      {
+        "id": "export",
+        "evidenceId": "train-threshold-export",
+        "sourceRevision": "train-threshold-r1",
+        "unitId": "export",
+        "facet": 1,
+        "allOf": [
+          "(?:export)",
+          "(?:only)",
+          "(?:administrators|admins)"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Only administrators may export."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "dislocated-governing-restriction",
+        "category": "restriction moved into another claim",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "unitId": "alert", "statement": "Latency alerts fire when p95 > 250 ms."},
+            {"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "unitId": "alert", "statement": "The latency alert requires 3 consecutive windows."},
+            {"evidenceId": "train-threshold-export", "sourceRevision": "train-threshold-r1", "unitId": "export", "statement": "Exports are permitted only for administrators."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "changed-operator",
+        "category": "numeric/operator substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "unitId": "alert", "statement": "Latency alerts fire only when p95 >= 250 ms for 3 consecutive windows."},
+            {"evidenceId": "train-threshold-export", "sourceRevision": "train-threshold-r1", "unitId": "export", "statement": "Exports are permitted only for administrators."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "alert",
+              "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Exports are permitted only for administrators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "alert",
+              "statement": "The latency alert fires only after p95 > 250 ms in 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Only administrators may export."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "numeric/operator substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Exports are permitted only for administrators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "unknown",
+              "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Exports are permitted only for administrators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r0",
+              "unitId": "alert",
+              "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Exports are permitted only for administrators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "alert",
+              "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows. [[source:fake]]"
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Exports are permitted only for administrators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "alert",
+              "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "alert",
+              "statement": "Latency alerts fire only when p959 > 250 ms for 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "export",
+              "statement": "Exports are permitted only for administrators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "train-links",
+    "family": "train-links",
+    "split": "train",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Give the links for enrollment and cancellation.",
+    "sourceUnits": [
+      {
+        "evidenceId": "train-links-enroll",
+        "sourceRevision": "train-links-r1",
+        "unitId": "enroll",
+        "context": "train-links",
+        "text": "Enrollment uses https://example.org/enroll; cancellation is not handled here.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Enrollment uses https://example.org/enroll; cancellation is not handled here.\"}"
+      },
+      {
+        "evidenceId": "train-links-cancel",
+        "sourceRevision": "train-links-r1",
+        "unitId": "cancel",
+        "context": "train-links",
+        "text": "Cancellation uses https://example.org/cancel.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Cancellation uses https://example.org/cancel.\"}"
+      }
+    ],
+    "requestFacets": [
+      "enrollment",
+      "cancellation"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "enroll",
+        "evidenceId": "train-links-enroll",
+        "sourceRevision": "train-links-r1",
+        "unitId": "enroll",
+        "facet": 0,
+        "allOf": [
+          "(?:enrollment|enroll)",
+          "(?:https://example.org/enroll)"
+        ],
+        "exact": [
+          "https://example.org/enroll"
+        ],
+        "allowedParaphrases": [
+          "Use https://example.org/enroll for enrollment."
+        ]
+      },
+      {
+        "id": "cancel",
+        "evidenceId": "train-links-cancel",
+        "sourceRevision": "train-links-r1",
+        "unitId": "cancel",
+        "facet": 1,
+        "allOf": [
+          "(?:cancellation|cancel)",
+          "(?:https://example.org/cancel)"
+        ],
+        "exact": [
+          "https://example.org/cancel"
+        ],
+        "allowedParaphrases": [
+          "To cancel, use https://example.org/cancel."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "swapped-link",
+        "category": "wrong link association",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-links-enroll", "sourceRevision": "train-links-r1", "unitId": "enroll", "statement": "Enrollment uses https://example.org/cancel."},
+            {"evidenceId": "train-links-cancel", "sourceRevision": "train-links-r1", "unitId": "cancel", "statement": "Cancellation uses https://example.org/cancel."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r1",
+              "unitId": "enroll",
+              "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "Cancellation uses https://example.org/cancel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r1",
+              "unitId": "enroll",
+              "statement": "Use https://example.org/enroll for enrollment."
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "To cancel, use https://example.org/cancel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "wrong link association",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "Cancellation uses https://example.org/cancel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r1",
+              "unitId": "unknown",
+              "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "Cancellation uses https://example.org/cancel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r0",
+              "unitId": "enroll",
+              "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "Cancellation uses https://example.org/cancel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r1",
+              "unitId": "enroll",
+              "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here. [[source:fake]]"
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "Cancellation uses https://example.org/cancel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r1",
+              "unitId": "enroll",
+              "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r1",
+              "unitId": "enroll",
+              "statement": "Enrollment uses https://example.org/enroll9; cancellation is not handled here."
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "cancel",
+              "statement": "Cancellation uses https://example.org/cancel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "train-access",
+    "family": "train-access",
+    "split": "train",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Explain approval and guest restrictions for deployment.",
+    "sourceUnits": [
+      {
+        "evidenceId": "train-access-approval",
+        "sourceRevision": "train-access-r1",
+        "unitId": "approval",
+        "context": "train-access",
+        "text": "Deployment requires approval from 2 reviewers.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Deployment requires approval from 2 reviewers.\"}"
+      },
+      {
+        "evidenceId": "train-access-guest",
+        "sourceRevision": "train-access-r1",
+        "unitId": "guest",
+        "context": "train-access",
+        "text": "Guests may not deploy, even with reviewer approval.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Guests may not deploy, even with reviewer approval.\"}"
+      }
+    ],
+    "requestFacets": [
+      "approval",
+      "guest restrictions"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "approval",
+        "evidenceId": "train-access-approval",
+        "sourceRevision": "train-access-r1",
+        "unitId": "approval",
+        "facet": 0,
+        "allOf": [
+          "(?:deploy)",
+          "(?:approval|approve)",
+          "(?:2 reviewers)"
+        ],
+        "exact": [
+          "2"
+        ],
+        "allowedParaphrases": [
+          "Deployment needs approval from 2 reviewers."
+        ]
+      },
+      {
+        "id": "guest",
+        "evidenceId": "train-access-guest",
+        "sourceRevision": "train-access-r1",
+        "unitId": "guest",
+        "facet": 1,
+        "allOf": [
+          "(?:guests|guest)",
+          "(?:not|cannot|may not)",
+          "(?:deploy)",
+          "(?:even with|regardless of)",
+          "(?:approval)"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Guests cannot deploy, even with reviewer approval."
+        ],
+        "allowedAtomicAssertions": [
+          "Guests may not deploy."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "lost-governing-restriction",
+        "category": "missing governing restrictions",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {"evidenceId": "train-access-approval", "sourceRevision": "train-access-r1", "unitId": "approval", "statement": "Deployment requires approval from 2 reviewers."},
+            {"evidenceId": "train-access-guest", "sourceRevision": "train-access-r1", "unitId": "guest", "statement": "Guests may not deploy."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r1",
+              "unitId": "approval",
+              "statement": "Deployment requires approval from 2 reviewers."
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Guests may not deploy, even with reviewer approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r1",
+              "unitId": "approval",
+              "statement": "Deployment needs approval from 2 reviewers."
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Guests cannot deploy, even with reviewer approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "missing governing restrictions",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Deployment requires approval from 2 reviewers."
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Guests may not deploy, even with reviewer approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r1",
+              "unitId": "unknown",
+              "statement": "Deployment requires approval from 2 reviewers."
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Guests may not deploy, even with reviewer approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r0",
+              "unitId": "approval",
+              "statement": "Deployment requires approval from 2 reviewers."
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Guests may not deploy, even with reviewer approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r1",
+              "unitId": "approval",
+              "statement": "Deployment requires approval from 2 reviewers. [[source:fake]]"
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Guests may not deploy, even with reviewer approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r1",
+              "unitId": "approval",
+              "statement": "Deployment requires approval from 2 reviewers."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r1",
+              "unitId": "approval",
+              "statement": "Deployment requires approval from 29 reviewers."
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "guest",
+              "statement": "Guests may not deploy, even with reviewer approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "train-truncated", "family": "train-truncated", "split": "train",
+    "provenance": {"kind": "synthetic", "adjudication": "Manual: a truncated source cannot substantiate a complete requested retention policy; abstention is correct, not false rejection."},
+    "userRequest": "State the complete telemetry retention policy.",
+    "sourceUnits": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "unitId": "partial", "context": "Telemetry policy", "text": "Telemetry is retained for 21", "kind": "paragraph", "complete": false, "packet": "{\"kind\":\"paragraph\",\"text\":\"Telemetry is retained for 21\",\"truncated\":true}"}],
+    "requestFacets": ["complete telemetry retention policy"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
+    "variants": [
+      {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},
+      {"id": "invented-completion", "category": "incomplete source", "expected": "reject", "answer": {"claims": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "unitId": "partial", "statement": "Telemetry is retained for 21 days."}], "unresolvedFacets": [], "observations": [], "recommendations": ""}},
+      {"id": "silent-omission", "category": "unresolved coverage omission", "expected": "incomplete", "answer": {"claims": [], "unresolvedFacets": [], "observations": [], "recommendations": ""}}
+    ]
+  }
+]

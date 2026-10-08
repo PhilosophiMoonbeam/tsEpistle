@@ -1006,7 +1006,8 @@ describe('Ax provider factory', () => {
       implementation as typeof fetch,
       publicResolver as never
     )
-    const provider = await factory.create('00000000-0000-4000-8000-000000000001')
+    const provider = await factory.create('00000000-0000-4000-8000-000000000001', { reasoningEffort: 'minimal' })
+    expect(provider.reasoningEffort).toBe('high')
     expect(provider.pricing).toEqual({ revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 })
     const result = await provider.service.chat(
       {
@@ -1035,10 +1036,26 @@ describe('Ax provider factory', () => {
     expect(payload.include).toContain('reasoning.encrypted_content')
     expect(payload).not.toHaveProperty('temperature')
     expect(payload).not.toHaveProperty('top_p')
-    const utilityProvider = await factory.create('00000000-0000-4000-8000-000000000001', { purpose: 'utility' })
+    const utilityProvider = await factory.create('00000000-0000-4000-8000-000000000001', { purpose: 'utility', reasoningEffort: 'minimal' })
+    expect(utilityProvider.reasoningEffort).toBe('low')
     expect(utilityProvider.model).toBe('gpt-test-mini')
     await utilityProvider.service.chat({ chatPrompt: [{ role: 'user', content: 'title' }], model: utilityProvider.model }, { stream: false })
     expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test-mini', store: false, reasoning: { effort: 'low' } })
+    await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000001' }).update({
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} })
+    })
+    const defaultedAgent = await factory.create('00000000-0000-4000-8000-000000000001', { reasoningEffort: 'minimal' })
+    const defaultedUtility = await factory.create('00000000-0000-4000-8000-000000000001', { purpose: 'utility', reasoningEffort: 'medium' })
+    const unconfigured = await factory.create('00000000-0000-4000-8000-000000000001')
+    expect(defaultedAgent.reasoningEffort).toBe('minimal')
+    expect(defaultedUtility.reasoningEffort).toBe('medium')
+    expect(unconfigured.reasoningEffort).toBeUndefined()
+    await defaultedAgent.service.chat({ model: 'caller-must-not-switch-models', chatPrompt: [{ role: 'user', content: 'defaulted agent' }] }, { stream: false })
+    expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test', reasoning: { effort: 'minimal' } })
+    await defaultedUtility.service.chat({ chatPrompt: [{ role: 'user', content: 'defaulted utility' }] }, { stream: false })
+    expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test-mini', reasoning: { effort: 'medium' } })
+    await utilityProvider.service.chat({ chatPrompt: [{ role: 'user', content: 'original utility snapshot' }] }, { stream: false })
+    expect(JSON.parse(String(request?.init?.body))).toMatchObject({ model: 'gpt-test-mini', reasoning: { effort: 'low' } })
     const continuation = provider.preserveThoughtBlock('rs_1', { data: 'encrypted-reasoning', encrypted: true })
     const continuation2 = provider.preserveThoughtBlock('rs_2', { data: 'encrypted-reasoning-2', encrypted: true })
     await provider.service.chat(

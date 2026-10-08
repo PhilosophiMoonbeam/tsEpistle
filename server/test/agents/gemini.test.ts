@@ -1,5 +1,5 @@
 import type { LookupAddress } from 'node:dns'
-import type { AxChatRequest, AxChatResponse, AxFunctionJSONSchema } from '@ax-llm/ax'
+import { ax, f, type AxChatRequest, type AxChatResponse, type AxFunctionJSONSchema } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
 import { AgentProviderFactory, decodeAgentProviderContinuation, encodeAgentProviderContinuation } from '../../agents/providers/factory.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
@@ -203,7 +203,8 @@ describe('Ax native Gemini application transport', () => {
       }) as typeof fetch,
       publicResolver as never
     )
-    const service = await factory.create(id, { purpose: 'utility' })
+    const service = await factory.create(id, { purpose: 'utility', reasoningEffort: 'minimal' })
+    expect(service.reasoningEffort).toBe('high')
     await buffered(service.service.chat({ chatPrompt: [{ role: 'user', content: 'Summarize.' }], modelConfig: { maxTokens: 123 } }, { stream: false }))
     expect(sent).toMatchObject({
       url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
@@ -230,6 +231,119 @@ describe('Ax native Gemini application transport', () => {
     expect(sent?.body).toHaveProperty('generationConfig.maxOutputTokens', 123)
     expect(sent?.body).not.toHaveProperty('generationConfig.thinkingConfig')
     expect(sent?.body).not.toHaveProperty('cachedContent')
+  })
+
+  it('uses real native schema metadata for structured Ax generation without tools or schema narrowing', async () => {
+    const requests: Record<string, unknown>[] = []
+    const service = await provider((async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)))
+      return Response.json(reply([{ text: '{"claims":[{"evidenceId":"page-42","statement":"The maximum is 42."}],"unresolvedFacets":[1]}' }]))
+    }) as typeof fetch)
+    const program = ax(f()
+      .input('userRequest', f.string())
+      .output('claims', f.object({ evidenceId: f.string(), statement: f.string() }).array())
+      .output('unresolvedFacets', f.number().array())
+      .useStructured().build(), { maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1 })
+    let admittedChats = 0
+    const hostedService = { ...service.service, chat: async (...args: Parameters<typeof service.service.chat>) => {
+      admittedChats++
+      return service.service.chat(...args)
+    } }
+    expect(await program.forward(hostedService, { userRequest: 'Report the maximum.' }, { stream: false, structuredOutputMode: 'native' })).toEqual({
+      claims: [{ evidenceId: 'page-42', statement: 'The maximum is 42.' }], unresolvedFacets: [1]
+    })
+    expect(admittedChats).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: {
+          type: 'object', required: ['claims', 'unresolvedFacets'], additionalProperties: false,
+          properties: { claims: { type: 'array', items: {
+            type: 'object', required: ['evidenceId', 'statement'], additionalProperties: false,
+            properties: { evidenceId: { type: 'string' }, statement: { type: 'string' } }
+          } } }
+        }
+      }
+    })
+    expect(requests[0]).not.toHaveProperty('tools')
+    expect(service.service.getLastUsedChatModel()).toBe(model)
+    expect(program.getUsage()).toMatchObject([{ tokens: { promptTokens: 6, completionTokens: 2, totalTokens: 15, cacheReadTokens: 4 } }])
+  })
+
+  it('applies purpose-local default efforts with native family clamping and isolated created services', async () => {
+    const requests: { url: string; body: Record<string, unknown> }[] = []
+    const factory = new AgentProviderFactory(db, { get: () => 'credential-fixture' }, (async (input, init) => {
+      requests.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+      return Response.json(reply())
+    }) as typeof fetch, publicResolver as never)
+    const explicitAgent = await factory.create(id, { reasoningEffort: 'minimal' })
+    expect(explicitAgent.reasoningEffort).toBe('medium')
+    await db('agentProviderProfileVersions').where({ id }).update({ utilityModel: 'gemini-3-pro-preview' })
+    const utilityDefault = await factory.create(id, { purpose: 'utility', reasoningEffort: 'minimal' })
+    expect(utilityDefault.reasoningEffort).toBe('minimal')
+    await buffered(utilityDefault.service.chat({ chatPrompt: [{ role: 'user', content: 'utility' }] }, { stream: false }))
+    expect(requests[0]).toMatchObject({
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent',
+      body: { generationConfig: { thinkingConfig: { thinkingLevel: 'low' } } }
+    })
+    await db('agentProviderProfileVersions').where({ id }).update({
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} })
+    })
+    const defaultMinimal = await factory.create(id, { reasoningEffort: 'minimal' })
+    const defaultHigh = await factory.create(id, { reasoningEffort: 'high' })
+    await buffered(defaultMinimal.service.chat({ chatPrompt: [{ role: 'user', content: 'minimal' }] }, { stream: false }))
+    await buffered(defaultHigh.service.chat({ chatPrompt: [{ role: 'user', content: 'high' }] }, { stream: false }))
+    await buffered(explicitAgent.service.chat({ chatPrompt: [{ role: 'user', content: 'existing snapshot' }] }, { stream: false }))
+    expect(requests[1]).toMatchObject({ body: { generationConfig: { thinkingConfig: { thinkingLevel: 'low' } } } })
+    expect(requests[2]).toMatchObject({ body: { generationConfig: { thinkingConfig: { thinkingLevel: 'high' } } } })
+    expect(requests[3]).toMatchObject({ body: { generationConfig: { thinkingConfig: { thinkingLevel: 'medium' } } } })
+  })
+
+  it('isolates concurrent request caps, native response schemas, continuation state and token receipts', async () => {
+    const releaseFirst = Promise.withResolvers<void>()
+    const firstDispatched = Promise.withResolvers<void>()
+    const requests: Record<string, unknown>[] = []
+    const service = await provider((async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)))
+      const first = requests.length === 1
+      if (first) {
+        firstDispatched.resolve()
+        await releaseFirst.promise
+      }
+      return Response.json({
+        ...reply([{ text: first ? '{"value":42}' : 'second answer', thoughtSignature: first ? 'first-signature' : 'second-signature' }]),
+        usageMetadata: first ? usageMetadata : { promptTokenCount: 20, cachedContentTokenCount: 0, candidatesTokenCount: 3, totalTokenCount: 23 }
+      })
+    }) as typeof fetch)
+    const schema: AxFunctionJSONSchema = {
+      type: 'object', additionalProperties: false,
+      properties: { value: { type: ['number', 'string'], anyOf: [{ type: 'number' }, { type: 'string' }] } },
+      required: ['value']
+    }
+    const firstResponse = buffered(service.service.chat({
+      chatPrompt: [{ role: 'user', content: 'first' }], modelConfig: { maxTokens: 31 },
+      responseFormat: { type: 'json_schema', schema: { name: 'bounded_value', schema } }
+    }, { stream: false }))
+    await firstDispatched.promise
+    let second: AxChatResponse
+    try {
+      second = await buffered(service.service.chat({ chatPrompt: [{ role: 'user', content: 'second' }], modelConfig: { maxTokens: 47 } }, { stream: false }))
+    } finally {
+      releaseFirst.resolve()
+    }
+    const first = await firstResponse
+    expect(requests[0]).toHaveProperty('generationConfig.maxOutputTokens', 31)
+    expect(requests[1]).toHaveProperty('generationConfig.maxOutputTokens', 47)
+    expect(first.results[0]?.content).toBe('{"value":42}')
+    expect(requests[0]).toHaveProperty('generationConfig.responseJsonSchema', schema)
+    expect(requests[1]).not.toHaveProperty('generationConfig.responseJsonSchema')
+    expect(second.results[0]?.content).toBe('second answer')
+    expect(first.results[0]?.thoughtBlocks?.[0]?.data).toContain('first-signature')
+    expect(first.results[0]?.thoughtBlocks?.[0]?.data).not.toContain('second-signature')
+    expect(second.results[0]?.thoughtBlocks?.[0]?.data).toContain('second-signature')
+    expect(readAgentProviderUsage('gemini-api', first)).toEqual({ inputTokens: 10, outputTokens: 2, totalTokens: 15, cachedInputTokens: 4 })
+    expect(readAgentProviderUsage('gemini-api', second)).toEqual({ inputTokens: 20, outputTokens: 3, totalTokens: 23, cachedInputTokens: 0 })
   })
 
   it('does not dispatch an already aborted request', async () => {
