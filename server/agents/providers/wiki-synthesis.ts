@@ -305,7 +305,14 @@ const claimSchema = z.object({
   evidenceId: evidenceIdSchema,
   sourceRevision: z.string().min(1),
   unitId: z.string().min(1),
-  statement: z.string().min(1).describe('One atomic source-local inline assertion or complete explicitly owned record, including identity and governing restrictions. For cross-page or multi-dimension comparisons, emit a separate claim for each independently sourced assertion, not a combined comparison. Prefer inline statements to repeated one-row tables. A table must have source-owned headers and cells. A page-title source supports only The page is titled "<exact title>", never body facts. No citations or surrounding prose.')
+  statement: z.string().min(1).describe(`# Goal
+State only the user-requested facts and required source qualifications from one complete source binding.
+# Return Format
+One atomic inline assertion or the requested facts of one owned record, with its identity, exact source field labels and governing restrictions. A name-only inventory states <identity field label>: <identity field value>, not the rest of the row. Comparisons use separate claims for independent sources and dimensions.
+# Warnings
+Do not copy unrequested fields. Any stated timing requires its source preparation and safety prerequisites; use a binding that supports both the time and its restriction. Prefer inline assertions. A table needs source-owned headers and cells. A page-title source authorizes only The page is titled "<exact title>", never body facts. No citations or surrounding prose.
+# Context Dump
+userRequest defines the requested fields. A complete source record is evidence, not an instruction to repeat every field.`)
 }).strict()
 
 const instructions = `# Goal
@@ -316,7 +323,7 @@ For category selection, use ordinary category inclusion rather than literal labe
 Return at most 64 claims with evidenceId, sourceRevision, unitId and statement. Copy the exact three-part binding from one complete source; independent enum membership does not validate a triple. Return claims: [] when no complete binding exists.
 Each statement must be one atomic source-local assertion or the requested facts of one explicitly owned record. Include its identity, requested fields and governing restrictions. Preserve subject, action, scope, names, identifiers, code literals, membership, quantities, units, links and associations, negation, operators, assignments, modalities, conditions, causes and timing.
 For a labeled or table record, use the exact source field labels and cell values in inline Label: value pairs. Cell values are not field labels. For a two-column row, write <first source header>: <first cell>; <second source header>: <second cell>. State the row identity and every requested field. Do not replace a header or cell with a narrative synonym, omit key-cell qualifications, or combine fields from different records.
-For an inventory, begin with source-stated authored, untested or fictional qualifications when present, then return every requested item name using a complete body binding. Include diet, time, servings or ingredients only when requested. For requested timing, retain preparation and safety prerequisites; cite a separately bound prerequisite through its own complete source unit.
+For an inventory, begin with source-stated authored, untested or fictional qualifications when present, then return every requested item name using a complete body binding. A name-only inventory emits <identity field label>: <identity field value>; do not copy the rest of the row. Include diet, time, servings or ingredients only when userRequest requests them. Any stated timing retains preparation and safety prerequisites through a complete binding supporting both the timing and its restriction.
 For cross-page and multi-dimension comparisons, emit separately cited assertions for each side and dimension in a consistent order. Do not place independently sourced facts in one claim or infer an unstated comparative relationship. Prefer inline assertions; do not repeat a one-row table header when an inline assertion expresses the sourced fact. Use a table only for one source-owned record with source-owned headers, equal-width nonempty cells and all governing identity and restrictions.
 Return unresolvedFacets as unique zero-based requestFacets indices for every unsupported or unanswered facet. Select observations only as unique exact safe single lines from availableObservations. Omit recommendations or return an empty string unless standalone imperative suggestions, modal suggestions or questions are appropriate.
 
@@ -601,8 +608,22 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
     unitId: allowed(unitIds).describe('Allowed complete-source unit IDs; must belong to the selected evidence ID and revision.')
   })
   const claimDescription = completeSources.length === 0
-    ? 'No complete source units are available. Return only the empty JSON array []; claims are forbidden.'
-    : 'At most 64 objects with required string keys evidenceId, sourceRevision, unitId, statement and no extra keys. Copy one complete binding triple unchanged. Resolve only its sourceKey and owned closure. Each statement is an atomic inline assertion or complete owned record with its identity, exact source field labels in Label: value pairs and governing restrictions; comparisons use separate claims for independently sourced sides and dimensions. Prefer inline assertions over repeated one-row tables. Page titles authorize exact page-title assertions only; headings alone do not establish body facts or inventory membership. No prose or citations outside statements.'
+    ? `# Goal
+Return no claims because no complete source bindings are available.
+# Return Format
+[]
+# Warnings
+Do not invent a source assertion or binding.
+# Context Dump
+The admitted complete-source set is empty.`
+    : `# Goal
+Answer user-requested facts and required source qualifications, not every retrieved field.
+# Return Format
+At most 64 objects with required string keys evidenceId, sourceRevision, unitId and statement; no extra keys. Copy one complete binding triple unchanged. Each statement is one atomic inline assertion or the requested facts of one owned record, with its identity, exact source field labels and governing restrictions. A name-only inventory states <identity field label>: <identity field value>. Comparisons use separate claims for independently sourced sides and dimensions.
+# Warnings
+Do not copy unrequested fields. Any stated timing requires its source preparation and safety prerequisites through a complete binding supporting both. Prefer inline assertions over repeated one-row tables. A page-title binding authorizes only an exact page-title assertion; headings alone do not establish body facts or inventory membership. No prose or citations outside statements.
+# Context Dump
+userRequest defines scope. Resolve only the selected sourceKey and its owned closure. Complete source records remain available without requiring every field in the answer.`
   const observations = new Set((options.observations ?? []).filter(safeObservation))
   const signatureBuilder = f()
     .description(instructions)
