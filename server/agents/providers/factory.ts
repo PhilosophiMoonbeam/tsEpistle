@@ -439,7 +439,7 @@ export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputToke
 }
 
 export interface AgentProviderService {
-  readonly service: Pick<AxAIService, 'chat'>
+  readonly service: AxAIService
   readonly capabilities: AgentProviderCapabilities
   readonly mediaInputs: AgentMediaInputs
   /** Actual configured Ax model facts, resolved eagerly before attachment admission. */
@@ -447,6 +447,8 @@ export interface AgentProviderService {
   readonly transportKind: AgentProviderTransportKind
   readonly continuationDialect?: AgentProviderContinuationDialect | null
   readonly model: string
+  /** Applied default after explicit purpose-specific profile configuration wins. */
+  readonly reasoningEffort?: AgentReasoningEffort
   readonly capabilityRevision: string
   readonly pricingRevision: string
   readonly pricing: AgentProviderPricing
@@ -1012,10 +1014,18 @@ const createLegacyCompletionService = (
   row: ProviderVersionRow,
   secret: string,
   config: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>,
-  guardedFetch: AgentProviderFetch
-): Pick<AxAIService, 'chat'> => ({
-  chat: async (request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>): Promise<AxChatResponse> => {
-    if (request.functions?.length) throw new AgentRepositoryError('INVALID_LEGACY_PROMPT', 'Legacy completions do not support tools', 400)
+  guardedFetch: AgentProviderFetch,
+  onError: (error: AgentRepositoryError) => void
+): AxAIService => {
+  const nativeFetch = async (_input: Parameters<AgentProviderFetch>[0], init?: RequestInit, canonicalPrompt?: string): Promise<Response> => {
+    if (typeof init?.body !== 'string') throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider request body is invalid', 500)
+    // This wire request is emitted by the real Ax client after validating our canonical chat.
+    const request = JSON.parse(init.body) as {
+      messages: AxChatRequest['chatPrompt']
+      max_tokens?: number
+      max_completion_tokens?: number
+    }
+    const maxTokens = request.max_completion_tokens ?? request.max_tokens
     const headers = new Headers({ 'content-type': 'application/json' })
     headers.set(row.authMode === 'api-key-header' ? 'x-api-key' : 'authorization', row.authMode === 'api-key-header' ? secret : `Bearer ${secret}`)
     const response = await guardedFetch(`${row.baseUrl.replace(/\/$/, '')}/completions`, {
@@ -1023,12 +1033,12 @@ const createLegacyCompletionService = (
       headers,
       body: JSON.stringify({
         model: row.model,
-        prompt: legacyPrompt(request),
+        prompt: canonicalPrompt ?? legacyPrompt({ chatPrompt: request.messages }),
         stream: false,
         ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
-        ...(request.modelConfig?.maxTokens === undefined ? {} : { max_tokens: request.modelConfig.maxTokens })
+        ...(maxTokens === undefined ? {} : { max_tokens: maxTokens })
       }),
-      ...(options?.abortSignal === undefined ? {} : { signal: options.abortSignal })
+      ...(init.signal == null ? {} : { signal: init.signal })
     })
     const payload: unknown = await response.json()
     if (typeof payload !== 'object' || payload === null || !Array.isArray(Reflect.get(payload, 'choices')))
@@ -1037,7 +1047,7 @@ const createLegacyCompletionService = (
     const text = typeof first === 'object' && first !== null ? Reflect.get(first, 'text') : undefined
     if (typeof text !== 'string' || text.length > 128_000)
       throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid completion', 502)
-    let modelUsage: AxChatResponse['modelUsage']
+    let usage: Record<string, number> | undefined
     if (Object.hasOwn(payload, 'usage')) {
       const rawUsage: unknown = Reflect.get(payload, 'usage')
       if (typeof rawUsage !== 'object' || rawUsage === null || Array.isArray(rawUsage))
@@ -1048,22 +1058,64 @@ const createLegacyCompletionService = (
       if (!isNonnegativeSafeTokenCount(promptTokens) || !isNonnegativeSafeTokenCount(completionTokens) || !isNonnegativeSafeTokenCount(totalTokens))
         throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
       assertAgentTokenUsage(promptTokens, completionTokens, totalTokens)
-      modelUsage = {
-        ai: 'legacy-completions',
-        model: row.model,
-        tokens: {
-          promptTokens,
-          completionTokens,
-          totalTokens
-        }
-      }
+      usage = { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens }
     }
-    return {
-      results: [{ index: 0, content: text, finishReason: 'stop' }],
-      ...(modelUsage === undefined ? {} : { modelUsage })
-    }
+    return Response.json({
+      id: 'legacy-completion',
+      object: 'chat.completion',
+      created: 0,
+      model: row.model,
+      choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+      ...(usage === undefined ? {} : { usage })
+    })
   }
-})
+  const completionFetch = (canonicalPrompt?: string): AgentProviderFetch => Object.assign(
+    async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
+      try {
+        return await nativeFetch(input, init, canonicalPrompt)
+      } catch (error) {
+        if (error instanceof AgentRepositoryError) onError(error)
+        throw error
+      }
+    },
+    { preconnect: guardedFetch.preconnect }
+  ) as AgentProviderFetch
+  const service = ai({
+    name: 'openai-compatible',
+    apiKey: secret,
+    apiURL: row.baseUrl,
+    config: { model: row.model, stream: false },
+    options: { fetch: completionFetch(), timeout: config.timeoutMs, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
+  })
+  const nativeFeatures = service.getFeatures(row.model)
+  service.getFeatures = () => ({
+    ...nativeFeatures,
+    functions: false,
+    functionEmulation: true,
+    streaming: false,
+    structuredOutputs: false,
+    structuredOutputModes: [],
+    thinking: false,
+    hasThinkingBudget: false,
+    hasShowThoughts: false,
+    media: {
+      images: { supported: false, formats: [] },
+      audio: { supported: false, formats: [] },
+      files: { supported: false, formats: [], uploadMethod: 'none' },
+      urls: { supported: false, webSearch: false, contextFetching: false }
+    },
+    caching: { supported: false, types: [] }
+  })
+  const nativeChat = service.chat.bind(service)
+  service.chat = (request, options) => {
+    if (request.functions?.length || request.responseFormat)
+      throw new AgentRepositoryError('INVALID_LEGACY_PROMPT', 'Legacy completions require prompt-only text output without native tools or schemas', 400)
+    // Do not let OpenAI's model-specific message rewriting alter a legacy native prompt.
+    const prompt = legacyPrompt(request)
+    return nativeChat({ ...request, model: row.model }, { ...options, stream: false, fetch: completionFetch(prompt) })
+  }
+  return service
+}
 
 interface ProviderRequestScope {
   readonly limits: AgentProviderResourceLimits
@@ -1079,12 +1131,72 @@ const requestOutputTokens = (request: Readonly<AxChatRequest<unknown>>, ceiling:
   return Math.min(requested, ceiling)
 }
 
-type ProviderChatService = Pick<AxAIService, 'chat'> & Partial<Pick<AxAIService, 'getFeatures'>> & Pick<AgentProviderService, 'nativeMediaCapabilities'>
+type ProviderChatService = AxAIService & Pick<AgentProviderService, 'nativeMediaCapabilities'>
 
-const createRequestScopedService = (ceiling: number, model: string, build: (scope: ProviderRequestScope) => ProviderChatService): ProviderChatService => {
+const createRequestScopedService = (
+  capabilities: AgentProviderCapabilities,
+  model: string,
+  build: (scope: ProviderRequestScope) => ProviderChatService
+): ProviderChatService => {
+  const ceiling = capabilities.maxOutputTokens
   const featureService = build({ limits: deriveAgentProviderResourceLimits(ceiling), onLimit: () => {}, onError: () => {} })
-  let nativeMediaCapabilities = featureService.getFeatures?.(model).media ?? featureService.nativeMediaCapabilities
+  const defaults = featureService.getOptions()
+  let lastService = featureService
+  let nativeMediaCapabilities = featureService.getFeatures(model).media
+  const safeOptions = (options: Readonly<AxAIServiceOptions>, fetch: AxAIServiceOptions['fetch']): AxAIServiceOptions => {
+    const timeout = options.timeout ?? defaults.timeout ?? 300_000
+    if (!Number.isSafeInteger(timeout) || timeout < 1)
+      throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider timeout is invalid', 400)
+    const locked: AxAIServiceOptions = {
+      ...options,
+      timeout: Math.min(timeout, defaults.timeout ?? 300_000),
+      retry: { maxRetries: 0 },
+      includeRequestBodyInErrors: false,
+      excludeContentFromTrace: true
+    }
+    delete locked.corsProxy
+    delete locked.webSocket
+    if (fetch === undefined) delete locked.fetch
+    else locked.fetch = fetch
+    return locked
+  }
+  const unsupported = async (): Promise<never> => {
+    throw new AgentRepositoryError('UNSUPPORTED_PROVIDER_OPERATION', 'This provider service permits admitted chat requests only', 400)
+  }
   return {
+    getId: () => featureService.getId(),
+    getName: () => featureService.getName(),
+    getFeatures: () => {
+      const features = featureService.getFeatures(model)
+      const functions = capabilities.toolCalling === 'native' && features.functions
+      const nativeSchema = capabilities.structuredOutput === 'native-json-schema' && features.structuredOutputs === true
+      return {
+        ...features,
+        functions,
+        streaming: capabilities.streaming && features.streaming,
+        structuredOutputs: nativeSchema,
+        structuredOutputModes: features.structuredOutputModes?.filter(mode =>
+          mode === 'native' ? nativeSchema : mode === 'function' ? functions && capabilities.structuredOutput !== 'prompt-only' : nativeSchema
+        ) ?? [],
+        asyncTools: false,
+        nativeSteering: false,
+        reasoningUpdates: false
+      }
+    },
+    getModelList: () => featureService.getModelList(),
+    getMetrics: () => lastService.getMetrics(),
+    getLogger: () => featureService.getLogger(),
+    getLastUsedChatModel: () => lastService.getLastUsedChatModel(),
+    getLastUsedEmbedModel: () => lastService.getLastUsedEmbedModel(),
+    getLastUsedModelConfig: () => lastService.getLastUsedModelConfig(),
+    getEstimatedCost: usage => featureService.getEstimatedCost(usage),
+    getOptions: () => featureService.getOptions(),
+    setOptions: options => featureService.setOptions(safeOptions({ ...defaults, ...options }, defaults.fetch)),
+    validateChatRequest: (request, options) => featureService.validateChatRequest?.({ ...request, model }, options),
+    embed: unsupported,
+    transcribe: unsupported,
+    speak: unsupported,
+    openChatSession: unsupported,
     get nativeMediaCapabilities() {
       return nativeMediaCapabilities
     },
@@ -1102,17 +1214,24 @@ const createRequestScopedService = (ceiling: number, model: string, build: (scop
       const onLimit = (error: AgentRepositoryError): void => {
         if (!controller.signal.aborted) controller.abort(error)
       }
-      const signal = options?.abortSignal === undefined ? controller.signal : AbortSignal.any([options.abortSignal, controller.signal])
-      const scopedOptions = { ...(options ?? {}), abortSignal: signal }
+      const defaultsSnapshot = featureService.getOptions()
+      const signal = AbortSignal.any([
+        controller.signal,
+        ...(defaultsSnapshot.abortSignal ? [defaultsSnapshot.abortSignal] : []),
+        ...(options?.abortSignal ? [options.abortSignal] : [])
+      ])
       const boundedRequest = {
         ...request,
+        model,
         modelConfig: { ...request.modelConfig, maxTokens: Math.min(limits.maxOutputTokens, requestOutputTokens(request, ceiling)) }
       }
       try {
         const service = build({ limits, onLimit, onError })
+        const scopedOptions = safeOptions({ ...defaultsSnapshot, ...options, abortSignal: signal }, service.getOptions().fetch)
         const response = await service.chat(boundedRequest, scopedOptions)
+        lastService = service
         // Always resolve the exact configured model, never a caller override.
-        nativeMediaCapabilities = service.getFeatures?.(model).media ?? service.nativeMediaCapabilities
+        nativeMediaCapabilities = service.getFeatures(model).media
         return response
       } catch (error) {
         // Ax wraps custom-fetch failures; retain only errors recorded by our own boundary.
@@ -1336,6 +1455,8 @@ export class AgentProviderFactory {
     loadOptions: {
       readonly requireConformed?: boolean
       readonly purpose?: 'agent' | 'utility'
+      /** Default only; explicit effort for the selected purpose takes precedence. */
+      readonly reasoningEffort?: AgentReasoningEffort
     } = {}
   ): Promise<AgentProviderService> {
     const query = this.#knex<ProviderVersionRow>('agentProviderProfileVersions').where({ id: profileVersionId })
@@ -1365,10 +1486,13 @@ export class AgentProviderFactory {
     } catch {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider profile data is invalid', 500)
     }
-    const reasoningEffort = loadOptions.purpose === 'utility' ? adapterConfig.utilityReasoningEffort : adapterConfig.agentReasoningEffort
-    if (reasoningEffort !== undefined && !agentProviderReasoningEfforts(row.transportKind).includes(reasoningEffort)) {
+    if (loadOptions.reasoningEffort !== undefined && !agentProviderReasoningEfforts(row.transportKind).includes(loadOptions.reasoningEffort))
+      throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider reasoning effort override is not supported by this transport', 400)
+    const profileEffort = loadOptions.purpose === 'utility' ? adapterConfig.utilityReasoningEffort : adapterConfig.agentReasoningEffort
+    if (profileEffort !== undefined && !agentProviderReasoningEfforts(row.transportKind).includes(profileEffort)) {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider reasoning effort is invalid', 500)
     }
+    const reasoningEffort = profileEffort ?? loadOptions.reasoningEffort
     const endpoint: ProviderEndpoint =
       row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
         ? '/responses'
@@ -1413,7 +1537,7 @@ export class AgentProviderFactory {
     const legacyRow = { ...row, model }
     let service: ProviderChatService
     if (row.transportKind === 'openai-responses' || row.transportKind === 'openresponses' || row.transportKind === 'openai-chat') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope => {
+      service = createRequestScopedService(capabilities, model, scope => {
         const transport = createTransportFetch(scope)
         const configuredFetch = Object.assign(
           async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
@@ -1442,6 +1566,8 @@ export class AgentProviderFactory {
               apiKey: secret,
               apiURL: row.baseUrl,
               config: { model, ...(adapterConfig.temperature === undefined ? {} : { temperature: adapterConfig.temperature }) },
+              // A conformed custom deployment supplies the exact model's schema capability.
+              modelInfo: [{ name: model, supported: { structuredOutputs: capabilities.structuredOutput === 'native-json-schema' } }],
               options: createOptions(scope, configuredFetch)
             })
           : ai({
@@ -1457,7 +1583,7 @@ export class AgentProviderFactory {
             })
       })
     } else if (row.transportKind === 'anthropic-messages') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope => {
+      service = createRequestScopedService(capabilities, model, scope => {
         const transportFetch = createTransportFetch(scope)
         const configuredFetch = Object.assign(
           async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
@@ -1476,7 +1602,7 @@ export class AgentProviderFactory {
         })
       })
     } else if (row.transportKind === 'gemini-api') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope =>
+      service = createRequestScopedService(capabilities, model, scope =>
         createGeminiAxService({
           apiKey: secret,
           baseUrl: row.baseUrl,
@@ -1490,8 +1616,8 @@ export class AgentProviderFactory {
         })
       )
     } else if (row.transportKind === 'legacy-completions') {
-      service = createRequestScopedService(capabilities.maxOutputTokens, model, scope =>
-        createLegacyCompletionService(legacyRow, secret, adapterConfig, createTransportFetch(scope))
+      service = createRequestScopedService(capabilities, model, scope =>
+        createLegacyCompletionService(legacyRow, secret, adapterConfig, createTransportFetch(scope), scope.onError)
       )
     } else {
       throw new AgentRepositoryError('UNSUPPORTED_PROVIDER_TRANSPORT', 'Provider transport is not supported by this factory', 409)
@@ -1506,6 +1632,7 @@ export class AgentProviderFactory {
       transportKind: row.transportKind,
       continuationDialect: providerContinuationDialect(row.transportKind),
       model,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       capabilityRevision: row.capabilityRevision,
       pricingRevision: row.pricingRevision,
       pricing,

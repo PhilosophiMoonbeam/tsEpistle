@@ -1,0 +1,1154 @@
+[
+  {
+    "id": "selection-backups",
+    "family": "selection-backups",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Report backup retention and restore permission.",
+    "sourceUnits": [
+      {
+        "evidenceId": "selection-backups-backup",
+        "sourceRevision": "selection-backups-r1",
+        "unitId": "backup",
+        "context": "selection-backups",
+        "text": "Backups expire after 14 days. Only operators can restore backups.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Backups expire after 14 days. Only operators can restore backups.\"}"
+      },
+      {
+        "evidenceId": "selection-backups-restore",
+        "sourceRevision": "selection-backups-r1",
+        "unitId": "restore",
+        "context": "selection-backups",
+        "text": "Restore operations require an incident ticket.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Restore operations require an incident ticket.\"}"
+      }
+    ],
+    "requestFacets": [
+      "backup retention",
+      "restore permission"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "backup",
+        "evidenceId": "selection-backups-backup",
+        "sourceRevision": "selection-backups-r1",
+        "unitId": "backup",
+        "facet": 0,
+        "allOf": [
+          "(?:backup)",
+          "(?:14 days)",
+          "(?:only operators|operators only)"
+        ],
+        "exact": [
+          "14"
+        ],
+        "allowedParaphrases": [
+          "Backups last 14 days; only operators may restore them."
+        ]
+      },
+      {
+        "id": "restore",
+        "evidenceId": "selection-backups-restore",
+        "sourceRevision": "selection-backups-r1",
+        "unitId": "restore",
+        "facet": 1,
+        "allOf": [
+          "(?:restore|restoring)",
+          "(?:incident ticket)"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Restoring requires an incident ticket."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-backup",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "backup",
+              "statement": "Backups expire after 14 days. Only operators can restore backups."
+            },
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Restore operations require an incident ticket."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-backup",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "backup",
+              "statement": "Backups last 14 days; only operators may restore them."
+            },
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Restoring requires an incident ticket."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "coverage omission",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Backups expire after 14 days. Only operators can restore backups."
+            },
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Restore operations require an incident ticket."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-backup",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "unknown",
+              "statement": "Backups expire after 14 days. Only operators can restore backups."
+            },
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Restore operations require an incident ticket."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-backup",
+              "sourceRevision": "selection-backups-r0",
+              "unitId": "backup",
+              "statement": "Backups expire after 14 days. Only operators can restore backups."
+            },
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Restore operations require an incident ticket."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-backup",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "backup",
+              "statement": "Backups expire after 14 days. Only operators can restore backups. [[source:fake]]"
+            },
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Restore operations require an incident ticket."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-backup",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "backup",
+              "statement": "Backups expire after 14 days. Only operators can restore backups."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-backups-backup",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "backup",
+              "statement": "Backups expire after 149 days. Only operators can restore backups."
+            },
+            {
+              "evidenceId": "selection-backups-restore",
+              "sourceRevision": "selection-backups-r1",
+              "unitId": "restore",
+              "statement": "Restore operations require an incident ticket."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "selection-rollout",
+    "family": "selection-rollout",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "State rollout conditions for canary and stable channels.",
+    "sourceUnits": [
+      {
+        "evidenceId": "selection-rollout-canary",
+        "sourceRevision": "selection-rollout-r1",
+        "unitId": "canary",
+        "context": "selection-rollout",
+        "text": "Canary rollout requires errorRate < 0.5% for 4 hours.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Canary rollout requires errorRate < 0.5% for 4 hours.\"}"
+      },
+      {
+        "evidenceId": "selection-rollout-stable",
+        "sourceRevision": "selection-rollout-r1",
+        "unitId": "stable",
+        "context": "selection-rollout",
+        "text": "Stable rollout requires operator approval and cannot run on weekends.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Stable rollout requires operator approval and cannot run on weekends.\"}"
+      }
+    ],
+    "requestFacets": [
+      "canary",
+      "stable"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "canary",
+        "evidenceId": "selection-rollout-canary",
+        "sourceRevision": "selection-rollout-r1",
+        "unitId": "canary",
+        "facet": 0,
+        "allOf": [
+          "(?:canary)",
+          "(?:errorRate)",
+          "(?:< 0.5%)",
+          "(?:4 hours)"
+        ],
+        "exact": [
+          "errorRate",
+          "<",
+          "0.5%",
+          "4"
+        ],
+        "allowedParaphrases": [
+          "Canary rollout needs errorRate < 0.5% over 4 hours."
+        ]
+      },
+      {
+        "id": "stable",
+        "evidenceId": "selection-rollout-stable",
+        "sourceRevision": "selection-rollout-r1",
+        "unitId": "stable",
+        "facet": 1,
+        "allOf": [
+          "(?:stable)",
+          "(?:operator approval|approval from an operator)",
+          "(?:cannot|not)",
+          "(?:weekends)"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Stable rollout needs operator approval and cannot run on weekends."
+        ],
+        "allowedAtomicAssertions": [
+          "Stable rollout requires operator approval."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reversed-approval-and-weekend-relations",
+        "category": "independently adjudicated reversed assertion relationships",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "selection-rollout-canary", "sourceRevision": "selection-rollout-r1", "unitId": "canary", "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."},
+            {"evidenceId": "selection-rollout-stable", "sourceRevision": "selection-rollout-r1", "unitId": "stable", "statement": "Stable rollout cannot run with operator approval and can run on weekends."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "dropped-weekend-restriction",
+        "category": "missing governing restrictions",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {"evidenceId": "selection-rollout-canary", "sourceRevision": "selection-rollout-r1", "unitId": "canary", "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."},
+            {"evidenceId": "selection-rollout-stable", "sourceRevision": "selection-rollout-r1", "unitId": "stable", "statement": "Stable rollout requires operator approval."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "canary",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Stable rollout requires operator approval and cannot run on weekends."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "canary",
+              "statement": "Canary rollout needs errorRate < 0.5% over 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Stable rollout needs operator approval and cannot run on weekends."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "numeric/operator substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Stable rollout requires operator approval and cannot run on weekends."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "unknown",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Stable rollout requires operator approval and cannot run on weekends."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r0",
+              "unitId": "canary",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Stable rollout requires operator approval and cannot run on weekends."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "canary",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours. [[source:fake]]"
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Stable rollout requires operator approval and cannot run on weekends."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "canary",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "canary",
+              "statement": "Canary rollout requires errorRate9 < 0.5% for 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "stable",
+              "statement": "Stable rollout requires operator approval and cannot run on weekends."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "selection-guide",
+    "family": "selection-guide",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Identify the audit and policy links.",
+    "sourceUnits": [
+      {
+        "evidenceId": "selection-guide-audit",
+        "sourceRevision": "selection-guide-r1",
+        "unitId": "audit",
+        "context": "selection-guide",
+        "text": "Audit guide: https://example.net/audit.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Audit guide: https://example.net/audit.\"}"
+      },
+      {
+        "evidenceId": "selection-guide-policy",
+        "sourceRevision": "selection-guide-r1",
+        "unitId": "policy",
+        "context": "selection-guide",
+        "text": "Policy guide: https://example.net/policy.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Policy guide: https://example.net/policy.\"}"
+      }
+    ],
+    "requestFacets": [
+      "audit",
+      "policy"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "audit",
+        "evidenceId": "selection-guide-audit",
+        "sourceRevision": "selection-guide-r1",
+        "unitId": "audit",
+        "facet": 0,
+        "allOf": [
+          "(?:audit)",
+          "(?:https://example.net/audit)"
+        ],
+        "exact": [
+          "https://example.net/audit"
+        ],
+        "allowedParaphrases": [
+          "The audit guide is at https://example.net/audit."
+        ]
+      },
+      {
+        "id": "policy",
+        "evidenceId": "selection-guide-policy",
+        "sourceRevision": "selection-guide-r1",
+        "unitId": "policy",
+        "facet": 1,
+        "allOf": [
+          "(?:policy)",
+          "(?:https://example.net/policy)"
+        ],
+        "exact": [
+          "https://example.net/policy"
+        ],
+        "allowedParaphrases": [
+          "Read the policy guide at https://example.net/policy."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-audit",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "audit",
+              "statement": "Audit guide: https://example.net/audit."
+            },
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Policy guide: https://example.net/policy."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-audit",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "audit",
+              "statement": "The audit guide is at https://example.net/audit."
+            },
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Read the policy guide at https://example.net/policy."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "marker/unknown unit/revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Audit guide: https://example.net/audit."
+            },
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Policy guide: https://example.net/policy."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-audit",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "unknown",
+              "statement": "Audit guide: https://example.net/audit."
+            },
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Policy guide: https://example.net/policy."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-audit",
+              "sourceRevision": "selection-guide-r0",
+              "unitId": "audit",
+              "statement": "Audit guide: https://example.net/audit."
+            },
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Policy guide: https://example.net/policy."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-audit",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "audit",
+              "statement": "Audit guide: https://example.net/audit. [[source:fake]]"
+            },
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Policy guide: https://example.net/policy."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-audit",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "audit",
+              "statement": "Audit guide: https://example.net/audit."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-guide-audit",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "audit",
+              "statement": "Audit guide: https://example.net/audit9."
+            },
+            {
+              "evidenceId": "selection-guide-policy",
+              "sourceRevision": "selection-guide-r1",
+              "unitId": "policy",
+              "statement": "Policy guide: https://example.net/policy."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "selection-limits",
+    "family": "selection-limits",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Summarize upload limits and restricted content.",
+    "sourceUnits": [
+      {
+        "evidenceId": "selection-limits-size",
+        "sourceRevision": "selection-limits-r1",
+        "unitId": "size",
+        "context": "selection-limits",
+        "text": "Uploads must be <= 8 MB per file.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Uploads must be <= 8 MB per file.\"}"
+      },
+      {
+        "evidenceId": "selection-limits-private",
+        "sourceRevision": "selection-limits-r1",
+        "unitId": "private",
+        "context": "selection-limits",
+        "text": "Private keys must never be uploaded.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Private keys must never be uploaded.\"}"
+      }
+    ],
+    "requestFacets": [
+      "upload limits",
+      "restricted content"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "size",
+        "evidenceId": "selection-limits-size",
+        "sourceRevision": "selection-limits-r1",
+        "unitId": "size",
+        "facet": 0,
+        "allOf": [
+          "(?:upload)",
+          "(?:<= 8 MB)",
+          "(?:per file|each (?:uploaded )?file)"
+        ],
+        "exact": [
+          "<=",
+          "8",
+          "MB"
+        ],
+        "allowedParaphrases": [
+          "Each uploaded file must be <= 8 MB."
+        ]
+      },
+      {
+        "id": "private",
+        "evidenceId": "selection-limits-private",
+        "sourceRevision": "selection-limits-r1",
+        "unitId": "private",
+        "facet": 1,
+        "allOf": [
+          "(?:private keys)",
+          "(?:never|must not|cannot)",
+          "(?:upload)"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Never upload private keys."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-size",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "size",
+              "statement": "Uploads must be <= 8 MB per file."
+            },
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Private keys must never be uploaded."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-size",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "size",
+              "statement": "Each uploaded file must be <= 8 MB."
+            },
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Never upload private keys."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "legitimate paraphrase",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Uploads must be <= 8 MB per file."
+            },
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Private keys must never be uploaded."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-size",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "unknown",
+              "statement": "Uploads must be <= 8 MB per file."
+            },
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Private keys must never be uploaded."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-size",
+              "sourceRevision": "selection-limits-r0",
+              "unitId": "size",
+              "statement": "Uploads must be <= 8 MB per file."
+            },
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Private keys must never be uploaded."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-size",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "size",
+              "statement": "Uploads must be <= 8 MB per file. [[source:fake]]"
+            },
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Private keys must never be uploaded."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-size",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "size",
+              "statement": "Uploads must be <= 8 MB per file."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-limits-size",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "size",
+              "statement": "Uploads must be < 8 MB per file."
+            },
+            {
+              "evidenceId": "selection-limits-private",
+              "sourceRevision": "selection-limits-r1",
+              "unitId": "private",
+              "statement": "Private keys must never be uploaded."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "selection-missing", "family": "selection-missing", "split": "selection",
+    "provenance": {"kind": "synthetic", "adjudication": "Manual: no source units were admitted for the requested rotation interval; disclose the unresolved facet without inventing an interval."},
+    "userRequest": "Give the certificate rotation interval.",
+    "sourceUnits": [], "requestFacets": ["certificate rotation interval"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
+    "variants": [
+      {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},
+      {"id": "unknown-evidence", "category": "unknown source", "expected": "reject", "answer": {"claims": [{"evidenceId": "not-admitted", "sourceRevision": "selection-missing-r1", "unitId": "rotation", "statement": "Certificates rotate every 60 days."}], "unresolvedFacets": [], "observations": [], "recommendations": ""}},
+      {"id": "silent-omission", "category": "unresolved coverage omission", "expected": "incomplete", "answer": {"claims": [], "unresolvedFacets": [], "observations": [], "recommendations": ""}}
+    ]
+  }
+]

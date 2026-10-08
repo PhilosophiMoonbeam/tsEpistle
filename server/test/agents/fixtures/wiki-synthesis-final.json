@@ -1,0 +1,1141 @@
+[
+  {
+    "id": "final-lab",
+    "family": "final-lab",
+    "split": "final",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Describe lab checkout duration and training requirements.",
+    "sourceUnits": [
+      {
+        "evidenceId": "final-lab-checkout",
+        "sourceRevision": "final-lab-r1",
+        "unitId": "checkout",
+        "context": "final-lab",
+        "text": "Lab equipment checkout lasts 48 hours and requires supervisor consent.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Lab equipment checkout lasts 48 hours and requires supervisor consent.\"}"
+      },
+      {
+        "evidenceId": "final-lab-training",
+        "sourceRevision": "final-lab-r1",
+        "unitId": "training",
+        "context": "final-lab",
+        "text": "Laser equipment requires certified training before checkout.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Laser equipment requires certified training before checkout.\"}"
+      }
+    ],
+    "requestFacets": [
+      "checkout duration",
+      "training requirements"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "checkout",
+        "evidenceId": "final-lab-checkout",
+        "sourceRevision": "final-lab-r1",
+        "unitId": "checkout",
+        "facet": 0,
+        "allOf": [
+          "(?:lab|equipment)",
+          "(?:48 hours)",
+          "(?:supervisor consent|consent from a supervisor)"
+        ],
+        "exact": [
+          "48"
+        ],
+        "allowedParaphrases": [
+          "Lab equipment may be checked out for 48 hours with supervisor consent."
+        ]
+      },
+      {
+        "id": "training",
+        "evidenceId": "final-lab-training",
+        "sourceRevision": "final-lab-r1",
+        "unitId": "training",
+        "facet": 1,
+        "allOf": [
+          "(?:laser)",
+          "(?:certified training)",
+          "(?:before checkout|before checking out)"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Before checking out laser equipment, certified training is required."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-checkout",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "checkout",
+              "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
+            },
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Laser equipment requires certified training before checkout."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-checkout",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "checkout",
+              "statement": "Lab equipment may be checked out for 48 hours with supervisor consent."
+            },
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Before checking out laser equipment, certified training is required."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "cross-unit pooling",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
+            },
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Laser equipment requires certified training before checkout."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-checkout",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "unknown",
+              "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
+            },
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Laser equipment requires certified training before checkout."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-checkout",
+              "sourceRevision": "final-lab-r0",
+              "unitId": "checkout",
+              "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
+            },
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Laser equipment requires certified training before checkout."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-checkout",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "checkout",
+              "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent. [[source:fake]]"
+            },
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Laser equipment requires certified training before checkout."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-checkout",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "checkout",
+              "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-lab-checkout",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "checkout",
+              "statement": "Lab equipment checkout lasts 489 hours and requires supervisor consent."
+            },
+            {
+              "evidenceId": "final-lab-training",
+              "sourceRevision": "final-lab-r1",
+              "unitId": "training",
+              "statement": "Laser equipment requires certified training before checkout."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "final-temperature",
+    "family": "final-temperature",
+    "split": "final",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "State cold-room thresholds and access policy.",
+    "sourceUnits": [
+      {
+        "evidenceId": "final-temperature-temperature",
+        "sourceRevision": "final-temperature-r1",
+        "unitId": "temperature",
+        "context": "final-temperature",
+        "text": "Cold-room alarms activate when temperature >= 6 C for 12 minutes.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Cold-room alarms activate when temperature >= 6 C for 12 minutes.\"}"
+      },
+      {
+        "evidenceId": "final-temperature-access",
+        "sourceRevision": "final-temperature-r1",
+        "unitId": "access",
+        "context": "final-temperature",
+        "text": "Cold-room entry is limited to trained staff; visitors cannot enter.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Cold-room entry is limited to trained staff; visitors cannot enter.\"}"
+      }
+    ],
+    "requestFacets": [
+      "thresholds",
+      "access policy"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "temperature",
+        "evidenceId": "final-temperature-temperature",
+        "sourceRevision": "final-temperature-r1",
+        "unitId": "temperature",
+        "facet": 0,
+        "allOf": [
+          "(?:cold.room|alarm)",
+          "(?:temperature)",
+          "(?:>= 6 C)",
+          "(?:12 minutes)"
+        ],
+        "exact": [
+          ">=",
+          "6",
+          "C",
+          "12"
+        ],
+        "allowedParaphrases": [
+          "Cold-room alarms fire after temperature >= 6 C for 12 minutes."
+        ]
+      },
+      {
+        "id": "access",
+        "evidenceId": "final-temperature-access",
+        "sourceRevision": "final-temperature-r1",
+        "unitId": "access",
+        "facet": 1,
+        "allOf": [
+          "(?:cold.room|entry)",
+          "(?:trained staff)",
+          "(?:visitors)",
+          "(?:cannot|not)"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Only trained staff may enter the cold-room; visitors cannot enter."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "changed-temperature-operator",
+        "category": "numeric/operator substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {"evidenceId": "final-temperature-temperature", "sourceRevision": "final-temperature-r1", "unitId": "temperature", "statement": "Cold-room alarms activate when temperature > 6 C for 12 minutes."},
+            {"evidenceId": "final-temperature-access", "sourceRevision": "final-temperature-r1", "unitId": "access", "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."}
+          ],
+          "unresolvedFacets": [], "observations": [], "recommendations": ""
+        }
+      },
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "temperature",
+              "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "temperature",
+              "statement": "Cold-room alarms fire after temperature >= 6 C for 12 minutes."
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Only trained staff may enter the cold-room; visitors cannot enter."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "missing governing restrictions",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "unknown",
+              "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r0",
+              "unitId": "temperature",
+              "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "temperature",
+              "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes. [[source:fake]]"
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "temperature",
+              "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "temperature",
+              "statement": "Cold-room alarms activate when temperature > 6 C for 12 minutes."
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "access",
+              "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "final-forms",
+    "family": "final-forms",
+    "split": "final",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Provide travel request and reimbursement form locations.",
+    "sourceUnits": [
+      {
+        "evidenceId": "final-forms-travel",
+        "sourceRevision": "final-forms-r1",
+        "unitId": "travel",
+        "context": "final-forms",
+        "text": "Travel requests use https://example.edu/travel.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Travel requests use https://example.edu/travel.\"}"
+      },
+      {
+        "evidenceId": "final-forms-expense",
+        "sourceRevision": "final-forms-r1",
+        "unitId": "expense",
+        "context": "final-forms",
+        "text": "Reimbursement uses https://example.edu/expense.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Reimbursement uses https://example.edu/expense.\"}"
+      }
+    ],
+    "requestFacets": [
+      "travel request",
+      "reimbursement"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "travel",
+        "evidenceId": "final-forms-travel",
+        "sourceRevision": "final-forms-r1",
+        "unitId": "travel",
+        "facet": 0,
+        "allOf": [
+          "(?:travel)",
+          "(?:https://example.edu/travel)"
+        ],
+        "exact": [
+          "https://example.edu/travel"
+        ],
+        "allowedParaphrases": [
+          "Submit travel requests at https://example.edu/travel."
+        ]
+      },
+      {
+        "id": "expense",
+        "evidenceId": "final-forms-expense",
+        "sourceRevision": "final-forms-r1",
+        "unitId": "expense",
+        "facet": 1,
+        "allOf": [
+          "(?:reimbursement|reimburse)",
+          "(?:https://example.edu/expense)"
+        ],
+        "exact": [
+          "https://example.edu/expense"
+        ],
+        "allowedParaphrases": [
+          "Use https://example.edu/expense for reimbursement."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-travel",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "travel",
+              "statement": "Travel requests use https://example.edu/travel."
+            },
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Reimbursement uses https://example.edu/expense."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-travel",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "travel",
+              "statement": "Submit travel requests at https://example.edu/travel."
+            },
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Use https://example.edu/expense for reimbursement."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "wrong link association",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Travel requests use https://example.edu/travel."
+            },
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Reimbursement uses https://example.edu/expense."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-travel",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "unknown",
+              "statement": "Travel requests use https://example.edu/travel."
+            },
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Reimbursement uses https://example.edu/expense."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-travel",
+              "sourceRevision": "final-forms-r0",
+              "unitId": "travel",
+              "statement": "Travel requests use https://example.edu/travel."
+            },
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Reimbursement uses https://example.edu/expense."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-travel",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "travel",
+              "statement": "Travel requests use https://example.edu/travel. [[source:fake]]"
+            },
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Reimbursement uses https://example.edu/expense."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-travel",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "travel",
+              "statement": "Travel requests use https://example.edu/travel."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-forms-travel",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "travel",
+              "statement": "Travel requests use https://example.edu/travel9."
+            },
+            {
+              "evidenceId": "final-forms-expense",
+              "sourceRevision": "final-forms-r1",
+              "unitId": "expense",
+              "statement": "Reimbursement uses https://example.edu/expense."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "final-support",
+    "family": "final-support",
+    "split": "final",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
+    },
+    "userRequest": "Report support response promises for urgent and routine requests.",
+    "sourceUnits": [
+      {
+        "evidenceId": "final-support-urgent",
+        "sourceRevision": "final-support-r1",
+        "unitId": "urgent",
+        "context": "final-support",
+        "text": "Urgent support responds within 2 hours during business hours only.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Urgent support responds within 2 hours during business hours only.\"}"
+      },
+      {
+        "evidenceId": "final-support-routine",
+        "sourceRevision": "final-support-r1",
+        "unitId": "routine",
+        "context": "final-support",
+        "text": "Routine support responds within 3 business days.",
+        "kind": "paragraph",
+        "complete": true,
+        "packet": "{\"kind\":\"paragraph\",\"text\":\"Routine support responds within 3 business days.\"}"
+      }
+    ],
+    "requestFacets": [
+      "urgent",
+      "routine"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "urgent",
+        "evidenceId": "final-support-urgent",
+        "sourceRevision": "final-support-r1",
+        "unitId": "urgent",
+        "facet": 0,
+        "allOf": [
+          "(?:urgent)",
+          "(?:2 hours)",
+          "(?:business hours)",
+          "(?:only)"
+        ],
+        "exact": [
+          "2"
+        ],
+        "allowedParaphrases": [
+          "Urgent support replies within 2 hours, but only during business hours."
+        ]
+      },
+      {
+        "id": "routine",
+        "evidenceId": "final-support-routine",
+        "sourceRevision": "final-support-r1",
+        "unitId": "routine",
+        "facet": 1,
+        "allOf": [
+          "(?:routine)",
+          "(?:3 business days)"
+        ],
+        "exact": [
+          "3"
+        ],
+        "allowedParaphrases": [
+          "Routine support replies within 3 business days."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "success",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-urgent",
+              "sourceRevision": "final-support-r1",
+              "unitId": "urgent",
+              "statement": "Urgent support responds within 2 hours during business hours only."
+            },
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Routine support responds within 3 business days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "paraphrase",
+        "category": "legitimate paraphrase",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-urgent",
+              "sourceRevision": "final-support-r1",
+              "unitId": "urgent",
+              "statement": "Urgent support replies within 2 hours, but only during business hours."
+            },
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Routine support replies within 3 business days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "wrong-locality",
+        "category": "false rejection",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Urgent support responds within 2 hours during business hours only."
+            },
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Routine support responds within 3 business days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-unit",
+        "category": "unknown unit",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-urgent",
+              "sourceRevision": "final-support-r1",
+              "unitId": "unknown",
+              "statement": "Urgent support responds within 2 hours during business hours only."
+            },
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Routine support responds within 3 business days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "stale-revision",
+        "category": "wrong revision",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-urgent",
+              "sourceRevision": "final-support-r0",
+              "unitId": "urgent",
+              "statement": "Urgent support responds within 2 hours during business hours only."
+            },
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Routine support responds within 3 business days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "marker",
+        "category": "marker",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-urgent",
+              "sourceRevision": "final-support-r1",
+              "unitId": "urgent",
+              "statement": "Urgent support responds within 2 hours during business hours only. [[source:fake]]"
+            },
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Routine support responds within 3 business days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omission",
+        "category": "coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-urgent",
+              "sourceRevision": "final-support-r1",
+              "unitId": "urgent",
+              "statement": "Urgent support responds within 2 hours during business hours only."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "false-inability",
+        "category": "false rejection",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0,
+            1
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "literal-substitution",
+        "category": "numeric/operator/link substitution",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-support-urgent",
+              "sourceRevision": "final-support-r1",
+              "unitId": "urgent",
+              "statement": "Urgent support responds within 29 hours during business hours only."
+            },
+            {
+              "evidenceId": "final-support-routine",
+              "sourceRevision": "final-support-r1",
+              "unitId": "routine",
+              "statement": "Routine support responds within 3 business days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "final-incomplete", "family": "final-incomplete", "split": "final",
+    "provenance": {"kind": "synthetic", "adjudication": "Manual: a partial chemical-storage clause has no complete answerable statement; preserve unresolved scope and do not complete it."},
+    "userRequest": "Describe the chemical storage restriction.",
+    "sourceUnits": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "unitId": "clause", "context": "Chemical storage", "text": "Chemical storage is forbidden unless", "kind": "paragraph", "complete": false, "packet": "{\"kind\":\"paragraph\",\"text\":\"Chemical storage is forbidden unless\",\"truncated\":true}"}],
+    "requestFacets": ["chemical storage restriction"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
+    "variants": [
+      {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},
+      {"id": "invented-exception", "category": "incomplete source", "expected": "reject", "answer": {"claims": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "unitId": "clause", "statement": "Chemical storage is forbidden unless approved."}], "unresolvedFacets": [], "observations": [], "recommendations": ""}},
+      {"id": "silent-omission", "category": "unresolved coverage omission", "expected": "incomplete", "answer": {"claims": [], "unresolvedFacets": [], "observations": [], "recommendations": ""}}
+    ]
+  }
+]
