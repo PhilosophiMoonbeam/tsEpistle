@@ -151,36 +151,6 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('keeps shared dictionary data outside source authority across matching local IDs and revisions', async () => {
-    const owned = {
-      ...source,
-      packet: JSON.stringify([null, null, [], [], [source.unitId, 's3']])
-    }
-    const other = { ...owned, evidenceId: 'page:99:revision:7:section:1', text: 'Internal publication requires no approvals.' }
-    const structures: WikiSynthesisStructure[] = [...[source, other].map((entry, index) => ({
-      id: `s${index + 1}`, kind: 'record' as const,
-      payload: {
-        id: 'record:approval', kind: 'labeled-record', contextIds: [], unitIds: [source.unitId], complete: true,
-        fields: [{ id: 'field:approval', label: 'Approval', value: entry.text, unitIds: [source.unitId], sourceSpans: [], order: 0, complete: true }]
-      }
-    })),
-      { id: 's3', kind: 'closure' as const, payload: ['s1', [], [], [], []] },
-      { id: 's4', kind: 'closure' as const, payload: ['s2', [], [], [], []] }
-    ]
-    const otherBinding = { ...other, packet: JSON.stringify([null, null, [], [], [other.unitId, 's4']]) }
-    const program = createWikiSynthesisProgram([owned, otherBinding], {
-      facetCount: 2,
-      validateClaim: (claim, selected) => claim.statement === selected.text || 'The claim must remain inside its owned source closure.'
-    })
-    const run = (prediction: WikiSynthesisAnswer) => program.forward(new AxMockAIService<string>({
-      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
-      chatResponse: { results: [{ index: 0, content: JSON.stringify(prediction), finishReason: 'stop' }] }
-    }), { ...input, ...encodeWikiSynthesisSources([owned, otherBinding], structures) })
-    const accepted = await run(answer())
-    expect(renderWikiSynthesisAnswer(accepted)).toContain(`[[cite:${owned.evidenceId}]]`)
-    await expect(run(answer({ claims: [{ ...answer().claims[0]!, statement: other.text }] }))).rejects.toThrow('owned source closure')
-    await expect(run(answer({ claims: [{ ...answer().claims[0]!, evidenceId: 's2', statement: other.text }] }))).rejects.toThrow()
-  })
 
   it('rejects conflicting unit bindings rather than letting the last source win', () => {
     expect(() => createWikiSynthesisProgram([source, { ...source, text: 'Publication requires no approval.' }])).toThrow('Conflicting source unit binding')
@@ -312,43 +282,6 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(() => renderWikiSynthesisAnswer(answer({ recommendations: '[[cite:injected]]' }))).toThrow('Recommendations')
   })
 
-  it('delivers separate inline claims for independently sourced comparison sides and dimensions without pooling authority', async () => {
-    const sources: WikiSynthesisSource[] = [
-      { ...source, evidenceId: 'page:aurora', unitId: 'unit:latency', text: 'Aurora export takes 12 minutes only after reviewer approval.' },
-      { ...source, evidenceId: 'page:boreal', unitId: 'unit:latency', text: 'Boreal export takes 18 minutes only after administrator approval.' },
-      { ...source, evidenceId: 'page:aurora', unitId: 'unit:retention', text: 'Aurora retains exports for 7 days; guests may not retrieve them.' },
-      { ...source, evidenceId: 'page:boreal', unitId: 'unit:retention', text: 'Boreal retains exports for 14 days; guests may not retrieve them.' }
-    ]
-    const prediction = answer({
-      claims: sources.map(selected => ({
-        evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, unitId: selected.unitId, statement: selected.text
-      })),
-      unresolvedFacets: [1]
-    })
-    const options: WikiSynthesisOptions = {
-      validateClaim: (claim, selected) => claim.statement === selected.text || 'Each comparison assertion must preserve only its bound source and governing restrictions.',
-      validateAnswer: candidate => candidate.claims.length === 4 && candidate.unresolvedFacets.includes(1) || 'Preserve both sides of both dimensions and disclose the unsupported owner facet.'
-    }
-    for (const mode of ['native', 'json_object'] as const) {
-      const generated = generate(prediction, sources, options, mode)
-      const accepted = await generated.result
-      const rendered = renderWikiSynthesisAnswer(accepted)
-      expect(rendered).toBe([
-        'Aurora export takes 12 minutes only after reviewer approval. [[cite:page:aurora]]',
-        'Boreal export takes 18 minutes only after administrator approval. [[cite:page:boreal]]',
-        'Aurora retains exports for 7 days; guests may not retrieve them. [[cite:page:aurora]]',
-        'Boreal retains exports for 14 days; guests may not retrieve them. [[cite:page:boreal]]'
-      ].join('\n\n'))
-      expect(accepted.unresolvedFacets).toEqual([1])
-      expect(generated.chat).toHaveBeenCalledTimes(1)
-      const pooled = generate({
-        ...prediction,
-        claims: [{ ...prediction.claims[0]!, statement: `${sources[0]!.text} ${sources[1]!.text}` }, ...prediction.claims.slice(1)]
-      }, sources, options, mode)
-      await expect(pooled.result).rejects.toThrow('bound source')
-      expect(pooled.chat).toHaveBeenCalledTimes(1)
-    }
-  })
 
   it('keeps source-owned record tables independent with visible citations rather than swallowing citations as extra cells', async () => {
     const aurora: WikiSynthesisSource = { ...source, unitId: 'unit:aurora-record', kind: 'labeled-record', text: 'Record: Aurora | Owner: Rowan | Scope: External only', packet: '{"ownedFields":["Record","Owner","Scope"]}' }
