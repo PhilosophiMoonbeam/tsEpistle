@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { optimize, runControl, axSerializeOptimizedProgram, axDeserializeOptimizedProgram, AxAssertionError, AxGenerateError, type AxAIService, type AxGEPAAdapter, type AxMetricFn, type AxProgramForwardOptions, type AxSerializedOptimizedProgram, type AxTypedExample } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
-import { createWikiSynthesisProgram, encodeWikiSynthesisSources, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisBinding, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
+import { createWikiSynthesisProgram, encodeWikiSynthesisSources, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisBindingGroup, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
 
 const sourceSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), context: z.string(), text: z.string(), kind: z.string(), complete: z.boolean(), packet: z.string() })
 const claimSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), statement: z.string() })
@@ -261,7 +261,7 @@ export const optimizeWikiSynthesis = async (input: {
   }))
   const metric: AxMetricFn = ({ prediction, example }) => {
     metricCalls++
-    const bindings = JSON.parse(example.sourceBindings as string) as WikiSynthesisBinding[]
+    const bindings = JSON.parse(example.sourceBindings as string) as WikiSynthesisBindingGroup[]
     const fixture = tuning.find(entry => entry.userRequest === example.userRequest && entry.sourceUnits[0]?.evidenceId === bindings[0]?.[0])
     return fixture ? scoreWikiSynthesisAnswer(fixture, prediction).score : 0
   }
@@ -276,7 +276,7 @@ export const optimizeWikiSynthesis = async (input: {
       const trajectories: Trace[] = []
       for (const example of batch) {
         if (metricCalls >= input.maximumMetricCalls) throw new Error('Offline optimizer metric allowance exhausted')
-        const bindings = JSON.parse(example.sourceBindings) as WikiSynthesisBinding[]
+        const bindings = JSON.parse(example.sourceBindings) as WikiSynthesisBindingGroup[]
         const fixture = tuning.find(entry => entry.userRequest === example.userRequest && entry.sourceUnits[0]?.evidenceId === bindings[0]?.[0])
         if (!fixture) throw new Error('Optimizer attempted an example outside train/selection')
         let rejected = false
@@ -308,7 +308,7 @@ export const optimizeWikiSynthesis = async (input: {
         if (captureTraces) trajectories.push({ fixtureId: fixture.id, rubric, failed, ...(prediction ? { prediction } : {}) })
       }
       if (appliedMutation) evaluatedMutations.add(createHash('sha256').update(JSON.stringify(Object.entries(candidate).sort(([left], [right]) => left.localeCompare(right)))).digest('hex'))
-      if (!candidateChanged && batch.length === input.selection.length && input.selection.every(fixture => batch.some(example => example.userRequest === fixture.userRequest && (JSON.parse(example.sourceBindings) as WikiSynthesisBinding[])[0]?.[0] === fixture.sourceUnits[0]?.evidenceId)))
+      if (!candidateChanged && batch.length === input.selection.length && input.selection.every(fixture => batch.some(example => example.userRequest === fixture.userRequest && (JSON.parse(example.sourceBindings) as WikiSynthesisBindingGroup[])[0]?.[0] === fixture.sourceUnits[0]?.evidenceId)))
         baselineSelectionScore = scores.reduce((sum, score) => sum + score, 0) / scores.length
       return { outputs, scores, ...(captureTraces ? { trajectories } : {}) }
     },

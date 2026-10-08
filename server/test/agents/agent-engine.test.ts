@@ -1217,7 +1217,7 @@ describe('Ax agent engine', () => {
       input => ({
         results: [{ index: 0, content: synthesisFixtureAnswer(input, {
           claims: [{ evidenceId: 'page:42:revision:1:section:1', statement: 'Budget evidence remains available.' }]
-        }, { bindings: { 'page:42:revision:1:section:1': { text: 'Budget evidence remains available.' } } }) }],
+        }, { bindings: { 'page:42:revision:1:section:1': 0 } }) }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7_000, completionTokens: 30, totalTokens: 7_030 } }
       })
     ]

@@ -17,16 +17,14 @@ export const fullAxFixtureService = (
 })
 
 export const synthesisInputFromRequest = (request: Readonly<AxChatRequest>): string | undefined => {
-  const properties = request.responseFormat?.schema?.properties
-  const typedStage = properties?.claims !== undefined && properties?.unresolvedFacets !== undefined && properties?.observations !== undefined ||
-    request.chatPrompt.some(message => message.role === 'system' && message.content.includes('final tool-free typed synthesis step'))
-  if (!typedStage) return undefined
+  if ((request.functions?.length ?? 0) > 0) return undefined
   for (const message of [...request.chatPrompt].reverse()) {
     if (message.role !== 'user') continue
+    if (typeof message.content !== 'string' && !Array.isArray(message.content)) continue
     const content = typeof message.content === 'string'
       ? message.content
       : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-    if (/^User Request: /u.test(content)) return content
+    if (/^User Request: /u.test(content) && content.includes('\n\nSource Structures: ') && content.includes('\n\nSource Bindings: ')) return content
   }
   return undefined
 }
@@ -39,6 +37,26 @@ const synthesisField = (input: string, title: string): unknown => {
   return JSON.parse(end < 0 ? value : value.slice(0, end))
 }
 
+const textReferenceKeys: Readonly<Record<string, true>> = { textKey: true, prefix: true, suffix: true }
+
+const synthesisText = (value: unknown, structures: readonly unknown[]): string => {
+  if (typeof value === 'string') return value
+  if (typeof value !== 'object' || value === null || !('textKey' in value) || typeof value.textKey !== 'string' ||
+    Object.keys(value).some(key => textReferenceKeys[key] !== true) ||
+    ('prefix' in value && typeof value.prefix !== 'string') || ('suffix' in value && typeof value.suffix !== 'string'))
+    throw new Error('Invalid supplied synthesis text reference')
+  const entry = structures.find(row => Array.isArray(row) && row[0] === value.textKey && row[1] === 'text')
+  if (!Array.isArray(entry)) throw new Error('Missing supplied synthesis text data')
+  const encoded: unknown = entry[2]
+  let text: string
+  if (typeof encoded === 'string') text = encoded
+  else if (Array.isArray(encoded) && encoded.length === 3 && typeof encoded[0] === 'string' &&
+    typeof encoded[1] === 'number' && Number.isSafeInteger(encoded[1]) && encoded[1] > 0 && typeof encoded[2] === 'string')
+    text = encoded[0].repeat(encoded[1]) + encoded[2]
+  else throw new Error('Invalid supplied synthesis text data')
+  return `${'prefix' in value ? value.prefix : ''}${text}${'suffix' in value ? value.suffix : ''}`
+}
+
 export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): WikiSynthesisSource[] => {
   const input = synthesisInputFromRequest(request)
   if (input === undefined || !input.includes('\n\nSource Bindings: ')) return []
@@ -49,17 +67,31 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): W
   for (const entry of structures)
     if (Array.isArray(entry) && typeof entry[0] === 'string' && entry[1] === 'source')
       sourceData.set(entry[0], entry[2])
-  return bindings.map((binding: unknown): WikiSynthesisSource => {
-    if (!Array.isArray(binding) || binding.length !== 4 || binding.some(value => typeof value !== 'string'))
-      throw new Error('Invalid supplied synthesis binding')
-    const data = sourceData.get(binding[3])
-    if (!Array.isArray(data) || data.length !== 5 ||
-      typeof data[0] !== 'string' || typeof data[1] !== 'string' || typeof data[2] !== 'string' || typeof data[3] !== 'boolean' || data[4] === undefined)
-      throw new Error('Missing supplied synthesis source data')
-    return {
-      evidenceId: binding[0], sourceRevision: binding[1], unitId: binding[2],
-      context: data[0], text: data[1], kind: data[2], complete: data[3], packet: JSON.stringify(data[4])
-    }
+  return bindings.flatMap((binding: unknown): WikiSynthesisSource[] => {
+    if (!Array.isArray(binding) || binding.length !== 3 || typeof binding[0] !== 'string' || typeof binding[1] !== 'string' || !Array.isArray(binding[2]))
+      throw new Error('Invalid supplied synthesis binding group')
+    return binding[2].flatMap((entry: unknown): WikiSynthesisSource[] => {
+      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || !Array.isArray(entry[1]))
+        throw new Error('Invalid supplied synthesis binding entry')
+      const data = sourceData.get(entry[0])
+      if (!Array.isArray(data) || data.length !== 5 ||
+        typeof data[2] !== 'string' || typeof data[3] !== 'boolean' || data[4] === undefined)
+        throw new Error('Missing supplied synthesis source data')
+      const source = {
+        evidenceId: binding[0], sourceRevision: binding[1],
+        context: synthesisText(data[0], structures), text: synthesisText(data[1], structures),
+        kind: data[2], complete: data[3], packet: JSON.stringify(data[4])
+      }
+      return entry[1].flatMap((reference: unknown): WikiSynthesisSource | WikiSynthesisSource[] => {
+        if (typeof reference === 'string') return { ...source, unitId: reference }
+        if (!Array.isArray(reference) || reference.length !== 3 || typeof reference[0] !== 'string' ||
+          typeof reference[1] !== 'number' || !Number.isSafeInteger(reference[1]) ||
+          typeof reference[2] !== 'number' || !Number.isSafeInteger(reference[2]) || reference[2] < 1 ||
+          !Number.isSafeInteger(reference[1] + reference[2] - 1))
+          throw new Error('Invalid supplied synthesis unit range')
+        return Array.from({ length: reference[2] }, (_, index) => ({ ...source, unitId: `${reference[0]}${reference[1] + index}` }))
+      })
+    })
   })
 }
 
@@ -72,17 +104,25 @@ export const synthesisOwnedPacketIncludes = (
   if (input === undefined || !input.includes('\n\nSource Structures: ')) return false
   const packet: unknown = JSON.parse(source.packet)
   if (!Array.isArray(packet) || !Array.isArray(packet[4])) return false
-  const closure = packet[4]
-  const keys = new Set<string>()
-  if (typeof closure[1] === 'string') keys.add(closure[1])
-  for (const dependencies of closure.slice(2))
-    if (Array.isArray(dependencies))
-      for (const key of dependencies) if (typeof key === 'string') keys.add(key)
   const structures = synthesisField(input, 'Source Structures')
   if (!Array.isArray(structures)) throw new Error('Supplied Source Structures field is not an array')
+  const closureKey = packet[4][1]
+  const closure = structures.find(entry => Array.isArray(entry) && entry[0] === closureKey && entry[1] === 'closure')?.[2]
+  if (!Array.isArray(closure)) return false
+  const keys = new Set<string>()
+  if (typeof closure[0] === 'string') keys.add(closure[0])
+  for (const dependencies of closure.slice(1))
+    if (Array.isArray(dependencies))
+      for (const key of dependencies) if (typeof key === 'string') keys.add(key)
+  const expandText = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(expandText)
+    if (typeof value === 'object' && value !== null && 'textKey' in value && Object.keys(value).every(key => textReferenceKeys[key] === true))
+      return synthesisText(value, structures)
+    return value
+  }
   return structures.some((entry: unknown) =>
     Array.isArray(entry) && typeof entry[0] === 'string' && keys.has(entry[0]) &&
-    JSON.stringify(entry[2])?.includes(literal) === true
+    JSON.stringify(expandText(entry[2]))?.includes(literal) === true
   )
 }
 
