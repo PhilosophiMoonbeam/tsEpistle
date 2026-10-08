@@ -58,7 +58,13 @@ const request = (): AgentEngineRequest => ({
 
 // Exercise the real collection, exact typed binding, validation and publication
 // boundary. The fixture supplies drafts, not their grounding verdicts.
-const groundingFixture = (content: string, anchor: string, statement: string, rejected?: string): GroundingFixture => {
+const groundingFixture = (
+  content: string,
+  anchor: string,
+  statement: string,
+  rejected?: string,
+  mode: 'native' | 'legacy-packet' = 'native'
+): GroundingFixture => {
   let sourceReadRequested = false
   let attempts = 0
   const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
@@ -70,6 +76,25 @@ const groundingFixture = (content: string, anchor: string, statement: string, re
       return {
         results: [{ index: 0, content: synthesisFixtureAnswer(input, {
           claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: attempts === 1 && rejected !== undefined ? rejected : statement }]
+        }) }],
+        modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
+      }
+    }
+    if (sourceReadRequested && mode === 'legacy-packet') {
+      attempts++
+      return {
+        results: [{ index: 0, content: JSON.stringify({
+          taskId: '00000000-0000-4000-8000-000000000081',
+          outcome: 'completed',
+          claims: [{
+            text: `${attempts === 1 && rejected !== undefined ? rejected : statement} [[cite:${evidenceId}]]`,
+            evidenceIds: [evidenceId],
+            sourceRevisionIds: ['1'],
+            confidence: 'high'
+          }],
+          conflicts: [],
+          unanswered: [],
+          recommendedFollowups: []
         }) }],
         modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
       }
@@ -109,7 +134,23 @@ const groundingFixture = (content: string, anchor: string, statement: string, re
   }
   const text = vi.fn(async (_delta: string) => {})
   const event = vi.fn(async (_type: string, _data: unknown) => {})
-  const execute = () => new AxAgentEngine(factory, actions).execute({ ...request(), messages: [{ role: 'user', content: `Read page 42 and report this fact: ${statement}` }] }, { text, event })
+  const execute = () => new AxAgentEngine(factory, actions).execute({
+    ...request(),
+    messages: [{ role: 'user', content: `Read page 42 and report this fact: ${statement}` }],
+    ...(mode === 'legacy-packet' ? {
+      purpose: 'subagent' as const,
+      task: {
+        id: '00000000-0000-4000-8000-000000000081',
+        kind: 'source_scout' as const,
+        title: 'Review recipe source',
+        question: `Report this fact: ${statement}`,
+        sourceScope: ['guide'],
+        requiredEvidenceCount: 1
+      },
+      subagentRunId: '00000000-0000-4000-8000-000000000082',
+      actionAllowlist: ['pages.get'] as const
+    } : {})
+  }, { text, event })
   return { execute, text, get attempts() { return attempts } }
 }
 
@@ -126,6 +167,9 @@ const quantitySource = `# Source Guide\n\n## Notes\n\n${quantityFact}\n\nThe chi
 const chilledFact = 'The soup may be served; only after it is safely chilled.'
 const chilledSource = `# Source Guide\n\n## Safety\n\n${chilledFact}`
 const elapsedSource = '# Source Guide\n\n## Recipe details\n\n| Detail | Value |\n| --- | --- |\n| Servings | 4 |\n| Cooking | 20 minutes |\n| Total elapsed time | 30 minutes |'
+
+const recipeRecordSource = '# Source Guide\n\n## Recipes\n\n| Recipe | Servings | Method |\n| --- | --- | --- |\n| Orzo salad | 4 | Drain the chickpeas. Toss the orzo with lemon. |\n| Bean stew | 6 | Simmer beans until tender. |'
+const recipeRecordStatement = 'Recipe: Orzo salad; Servings: 4; Method: Drain the chickpeas. Toss the orzo with lemon.'
 
 // Existing broad engine cases do not cover independent semicolon assertions
 // inside one retained unit or a key-cell label containing a qualifier token.
@@ -192,6 +236,43 @@ describe('source-local grounding', () => {
     const source = '# Source Guide\n\n## Rates — only for orders exceeding 20 chairs\n\n| Detail | Value |\n| --- | --- |\n| Discount | 12% |\n| Surcharge | 8% |'
     const statement = 'Discount: 12%, only for orders exceeding 20 chairs.'
     await expectPublication(groundingFixture(source, 'Discount', statement, rejected), statement, rejected === undefined ? 1 : 2)
+  })
+})
+
+describe('native source-owned claim boundaries', () => {
+  it('publishes a native owned record with a complete multi-sentence method', async () => {
+    await expectPublication(groundingFixture(recipeRecordSource, 'Orzo salad', recipeRecordStatement), recipeRecordStatement, 1)
+  })
+
+  it('publishes punctuation inside a native owned recipe identity without treating it as uncited prose', async () => {
+    const source = '# Source Guide\n\n## Recipes\n\n| Recipe | Servings |\n| --- | --- |\n| Orzo. Chickpea salad | 4 |\n| Bean stew | 6 |'
+    const statement = 'Recipe: Orzo. Chickpea salad; Servings: 4.'
+    await expectPublication(groundingFixture(source, 'Orzo. Chickpea salad', statement), statement, 1)
+  })
+
+  it.each([
+    ['an unsupported extra sentence', `${recipeRecordStatement} Dragons guarantee free delivery.`],
+    ['a method from a sibling source record', 'Recipe: Orzo salad; Servings: 4; Method: Simmer beans until tender.']
+  ])('rejects %s inside a native declared claim before publishing the faithful repair', async (_case, rejected) => {
+    const fixture = groundingFixture(recipeRecordSource, 'Orzo salad', recipeRecordStatement, rejected)
+    await expectPublication(fixture, recipeRecordStatement, 2)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(rejected)
+  })
+
+  it('rejects an unsupported sentence appended to a supported non-record statement', async () => {
+    const statement = 'The orzo recipe uses chickpeas, spinach, garlic, broth, and lemon.'
+    const rejected = `${statement} It cures cancer.`
+    const source = `# Source Guide\n\n## Recipes\n\n${statement}`
+    const fixture = groundingFixture(source, 'orzo recipe', statement, rejected)
+    await expectPublication(fixture, statement, 2)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(rejected)
+  })
+
+  it('still rejects substantive raw packet prose before a citation without native claim authority', async () => {
+    const statement = 'Recipe: Orzo salad; Servings: 4.'
+    const fixture = groundingFixture(recipeRecordSource, 'Orzo salad', statement, recipeRecordStatement, 'legacy-packet')
+    await expectPublication(fixture, statement, 2)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(recipeRecordStatement)
   })
 })
 
