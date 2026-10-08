@@ -14,7 +14,7 @@ import type {
 } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
-import { fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
+import { fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const run = {
@@ -1066,7 +1066,7 @@ describe('Ax orchestration stages', () => {
         if (offersCollectionFinish(input)) return finishCollectionResponse
         const statement = ++turn === 1 ? fact : independentFact
         const sources = synthesisSourcesFromRequest(input)
-        const source = sources.find(unit => unit.evidenceId === citation && (turn === 1 ? unit.packet.includes('Maya Quinn') : unit.text.includes(independentFact)))
+        const source = sources.find(unit => unit.evidenceId === citation && (turn === 1 ? synthesisOwnedPacketIncludes(input, unit, 'Maya Quinn') : unit.text.includes(independentFact)))
         return {
           results: [{ index: 0, content: synthesisFixtureAnswer(input, {
             claims: [{ evidenceId: citation, sourceRevision: 'rev-1', unitId: source?.unitId ?? 'undelivered-contact-record', statement }],

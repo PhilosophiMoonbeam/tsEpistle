@@ -35,7 +35,7 @@ const synthesisField = (input: string, title: string): unknown => {
   const start = input.lastIndexOf(`\n\n${title}: `)
   if (start < 0) throw new Error(`Missing supplied synthesis ${title} field`)
   const value = input.slice(start + title.length + 4)
-  const end = value.search(/\n\n(?:Request Facets|Available Observations|Repair Feedback): /u)
+  const end = value.search(/\n\n(?:Source Units|Request Facets|Available Observations|Repair Feedback): /u)
   return JSON.parse(end < 0 ? value : value.slice(0, end))
 }
 
@@ -45,6 +45,32 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): W
   const sources: unknown = synthesisField(input, 'Source Units')
   if (!Array.isArray(sources)) throw new Error('Supplied Source Units field is not an array')
   return sources as WikiSynthesisSource[]
+}
+
+export const synthesisOwnedPacketIncludes = (
+  request: Readonly<AxChatRequest>,
+  source: WikiSynthesisSource,
+  literal: string
+): boolean => {
+  const input = synthesisInputFromRequest(request)
+  if (input === undefined || !input.includes('\n\nSource Structures: ')) return false
+  const packet: unknown = JSON.parse(source.packet)
+  if (typeof packet !== 'object' || packet === null || !('closure' in packet)) return false
+  const closure = packet.closure
+  if (typeof closure !== 'object' || closure === null) return false
+  const keys = new Set<string>()
+  for (const [name, value] of Object.entries(closure)) {
+    if (name === 'recordKey' && typeof value === 'string') keys.add(value)
+    if (['contextKeys', 'relatedUnitKeys', 'linkKeys'].includes(name) && Array.isArray(value))
+      for (const key of value) if (typeof key === 'string') keys.add(key)
+  }
+  const structures = synthesisField(input, 'Source Structures')
+  if (!Array.isArray(structures)) throw new Error('Supplied Source Structures field is not an array')
+  return structures.some((entry: unknown) =>
+    typeof entry === 'object' && entry !== null &&
+    'id' in entry && typeof entry.id === 'string' && keys.has(entry.id) &&
+    'payload' in entry && typeof entry.payload === 'string' && entry.payload.includes(literal)
+  )
 }
 
 export const synthesisObservationsFromRequest = (request: Readonly<AxChatRequest>): readonly string[] => {
