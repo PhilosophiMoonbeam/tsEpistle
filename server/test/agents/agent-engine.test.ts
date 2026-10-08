@@ -418,7 +418,13 @@ describe('Ax agent engine', () => {
     generate: (input: Readonly<AxChatRequest>, attempt: number) => AxChatResponse | ReadableStream<AxChatResponse>,
     revokeAfterSnapshot = false,
     collectorDraft?: string,
-    source?: { readonly content: string; readonly request: string }
+    source?: {
+      readonly content: string
+      readonly request: string
+      readonly title?: string
+      readonly citationSections?: readonly { readonly evidenceId: string; readonly label: string; readonly href: string }[]
+      readonly maxContextTokens?: number
+    }
   ) => {
     const production = 'The production service supports automated deployments of application releases.'
     const staging = 'The staging service supports previews.'
@@ -452,7 +458,7 @@ describe('Ax agent engine', () => {
     const factory = {
       create: async () => ({
         service: fullAxFixtureService(chat, { streaming: true }),
-        capabilities: { streaming: true, toolCalling: 'native', parallelToolCalls: false, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+        capabilities: { streaming: true, toolCalling: 'native', parallelToolCalls: false, structuredOutput: 'native-json-schema', usage: 'terminal', cancellation: true, maxContextTokens: source?.maxContextTokens ?? 100_000, maxOutputTokens: 4_000 },
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
@@ -461,15 +467,17 @@ describe('Ax agent engine', () => {
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
-      id: 42, locale: 'en', path: 'guide', sourceRevision: '1', title: 'Deployment', contentType: 'markdown',
+      id: 42, locale: 'en', path: 'guide', sourceRevision: '1', title: source?.title ?? 'Deployment', contentType: 'markdown',
       content: source?.content ?? `# Deployment\n\n${production}\n\n${staging}`,
-      citation: { evidenceId: 'page:42:revision:1', label: 'Deployment', href: '/en/guide' }
+      citation: { evidenceId: 'page:42:revision:1', label: source?.title ?? 'Deployment', href: '/en/guide' },
+      ...(source?.citationSections === undefined ? {} : { citationSections: source.citationSections })
     }))
+    const validateObservation = vi.fn(async () => !revoked)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [questionFunctions.find(definition => definition.name === 'pages.get')!],
         invoke,
-        validateObservation: async () => !revoked,
+        validateObservation,
         snapshot: async () => ({}),
         close: vi.fn()
       }),
@@ -498,9 +506,9 @@ describe('Ax agent engine', () => {
       currentPage: null,
       messages: [{ role: 'user', content: source?.request ?? 'What does the production service support?' }],
       dispatchBudget,
-      limits: { maxTurns: 8, maxTokens: 100_000 }
+      limits: { maxTurns: 8, maxTokens: source?.maxContextTokens ?? 100_000 }
     }, { text, event })
-    return { production, staging, execute, invoke, text, event, outstanding, settled, dispatchBudget, dispatchSignals, get attempts() { return attempts } }
+    return { production, staging, execute, invoke, validateObservation, text, event, outstanding, settled, dispatchBudget, dispatchSignals, get attempts() { return attempts } }
   }
 
   const typedFixtureReceipt = (content: string): AxChatResponse => ({
@@ -649,6 +657,54 @@ describe('Ax agent engine', () => {
     await expect(fixture.execute()).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
     expect(fixture.text).not.toHaveBeenCalled()
     expect(fixture.outstanding.size).toBe(0)
+  })
+
+  it('publishes the exact authorized page title on the initial synthesis attempt for a section-heavy ordinary read at the unchanged context cap', async () => {
+    const title = 'Operations Readiness Handbook'
+    const evidenceId = 'page:42:revision:1'
+    const statement = `The page is titled "${title}".`
+    const sections = Array.from({ length: 54 }, (_, index) => ({
+      heading: `Operational check ${String(index + 1).padStart(2, '0')}`,
+      slug: `operational-check-${String(index + 1).padStart(2, '0')}`
+    }))
+    // Two assertions per paragraph, repeated under independent citation scopes:
+    // this is a normal readable handbook, not an oversized single source unit.
+    const paragraphs = [
+      'The operator checks the service dashboard using the [operations handbook](https://example.test/operations). The shift supervisor records the inspection result in the daily handover log.',
+      'The operator reviews pending maintenance with the [maintenance guide](https://example.test/maintenance). The shift supervisor confirms that the scheduled work has an assigned owner.',
+      'The operator checks the recovery contacts in the [recovery guide](https://example.test/recovery). The shift supervisor records any unresolved issue before the next shift begins.'
+    ]
+    const content = [`# ${title}`, ...sections.map(section => `## ${section.heading}\n\n${paragraphs.join('\n\n')}`)].join('\n\n')
+    const fixture = typedRootFixture(input => {
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === evidenceId && unit.kind === 'page-title')!
+      return typedFixtureReceipt(synthesisFixtureAnswer(input, {
+        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement }]
+      }))
+    }, false, undefined, {
+      content,
+      title,
+      request: 'Read page 42 and tell me its exact title.',
+      citationSections: sections.map((section, index) => ({
+        evidenceId: `${evidenceId}:section:${index + 1}`,
+        label: `${title} › ${section.heading}`,
+        href: `/en/guide#${section.slug}`
+      })),
+      maxContextTokens: 400_000
+    })
+
+    const result = await fixture.execute()
+    expect(result.executionLimit).toBeUndefined()
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(`${statement} [[cite:${evidenceId}]]`)
+    expect(result.citations).toEqual([expect.objectContaining({ evidenceId, label: title, href: '/en/guide' })])
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(fixture.event).toHaveBeenCalledWith('evidence.provenance', expect.objectContaining({
+      accepted: true,
+      claims: [expect.objectContaining({ claim: statement, evidenceId, pageEvidenceId: evidenceId, supported: true })],
+      finalCitationIds: [evidenceId]
+    }))
+    expect(fixture.outstanding.size).toBe(0)
+    expect(result.totalTokens).toBe(fixture.settled.reduce((total, receipt) => total + receipt.totalTokens, 0))
   })
 
 
