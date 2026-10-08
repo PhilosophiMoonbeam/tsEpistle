@@ -9,7 +9,13 @@ import {
   validateDecisionProviderConfig,
   type DecisionProviderRuntime
 } from '../../agents/decision-providers.ts'
-import { DecisionProviderWriteSchema, DecisionUsageSchema, TYPESAFE_JEV_PRICING, type DecisionRequest } from '../../../shared/agents/decision-providers.ts'
+import {
+  DecisionProviderWriteSchema,
+  DecisionUsageSchema,
+  TYPESAFE_JEV_PRICING,
+  type DecisionBatchRequest,
+  type DecisionRequest
+} from '../../../shared/agents/decision-providers.ts'
 
 const publicDns = (async () => [{ address: '93.184.216.34', family: 4 }]) as unknown as typeof lookup
 const request: DecisionRequest = {
@@ -17,12 +23,23 @@ const request: DecisionRequest = {
   instructions: 'Choose the required effort.',
   criteria: { simple: { description: 'Short factual answer' }, complex: ['Multi-step analysis', 'Cross-document synthesis'] }
 }
+const batchRequest: DecisionBatchRequest = {
+  state: request.state,
+  questions: {
+    effort: { instructions: request.instructions, criteria: request.criteria },
+    evidence: { instructions: 'Does the supplied evidence support the answer?', criteria: { supported: 'Supported', unsupported: 'Unsupported' } }
+  }
+}
 const native: DecisionProviderRuntime = {
   id: 'native-test',
   revision: 3,
   config: { kind: 'typesafe', model: 'jev-latest', timeoutMs: 1_000, pricing: TYPESAFE_JEV_PRICING }
 }
 const answer = { choice: 'simple', probabilities: { simple: 0.8, complex: 0.2 }, confidence: 0.6 }
+const batchAnswers = {
+  effort: { type: 'choice', ...answer },
+  evidence: { type: 'choice', choice: 'unsupported', probabilities: { supported: 0, unsupported: 1 }, confidence: 0.1 }
+}
 const nativePayload = (value: unknown = answer) => ({
   model: 'jev-1.13.0',
   answers: { decision: { type: 'choice', ...(value as object) } },
@@ -271,6 +288,11 @@ describe('decision provider protocols', () => {
         })
       })
       await expect(client.execute(native, credential, request)).rejects.toMatchObject({ code: 'DECISION_CREDENTIAL_UNAVAILABLE', status: 503, usage: null })
+      await expect(client.executeBatch(native, credential, batchRequest)).rejects.toMatchObject({
+        code: 'DECISION_CREDENTIAL_UNAVAILABLE',
+        status: 503,
+        usage: null
+      })
       expect(calls).toBe(0)
     })
   }
@@ -446,6 +468,7 @@ describe('decision provider protocols', () => {
       })
     })
     await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({ code: 'DECISION_EGRESS_DENIED' })
+    await expect(client.executeBatch(native, 'fixture', batchRequest)).rejects.toMatchObject({ code: 'DECISION_EGRESS_DENIED' })
     expect(calls).toBe(0)
   })
 
@@ -462,11 +485,16 @@ describe('decision provider protocols', () => {
     expect(error).toMatchObject({ code: 'DECISION_PROVIDER_UNAVAILABLE', usage: null })
     expect(error.message).not.toContain('fixture-private')
     expect(calls).toBe(1)
+    const batchError = await client.executeBatch(native, 'fixture-private', batchRequest).catch((value: unknown) => value)
+    expect(batchError).toMatchObject({ code: 'DECISION_PROVIDER_UNAVAILABLE', usage: null })
+    expect(JSON.stringify(batchError)).not.toContain('fixture-private')
+    expect(calls).toBe(2)
   })
 
   it('bounds response bodies even without Content-Length', async () => {
     const client = new DecisionProviderClient({ resolve: publicDns, fetch: fakeFetch(() => new Response('x'.repeat(256 * 1_024 + 1))) })
     await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({ code: 'INVALID_DECISION_RESPONSE' })
+    await expect(client.executeBatch(native, 'fixture', batchRequest)).rejects.toMatchObject({ code: 'INVALID_DECISION_RESPONSE' })
   })
 
   it('propagates abort and bounds stalled DNS resolution by the configured timeout', async () => {
@@ -480,10 +508,158 @@ describe('decision provider protocols', () => {
     await expect(client.execute({ ...native, config: { ...native.config, timeoutMs: 100 } }, 'fixture', request)).rejects.toMatchObject({
       code: 'DECISION_TIMEOUT'
     })
+    await expect(client.executeBatch({ ...native, config: { ...native.config, timeoutMs: 100 } }, 'fixture', batchRequest)).rejects.toMatchObject({
+      code: 'DECISION_TIMEOUT'
+    })
     const controller = new AbortController()
     const pending = client.execute(native, 'fixture', request, { signal: controller.signal })
     controller.abort()
     await expect(pending).rejects.toMatchObject({ code: 'DECISION_ABORTED' })
+    const batchController = new AbortController()
+    const batchPending = client.executeBatch(native, 'fixture', batchRequest, { signal: batchController.signal })
+    batchController.abort()
+    await expect(batchPending).rejects.toMatchObject({ code: 'DECISION_ABORTED', usage: null })
+  })
+})
+
+describe('native decision batches', () => {
+  it('preserves each question distribution at inclusive rounding boundaries without conflating confidence or duplicating request usage', async () => {
+    for (const probabilities of [{ simple: 0.79, complex: 0.2 }, { simple: 0.81, complex: 0.2 }]) {
+      let calls = 0
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => {
+          calls++
+          return Response.json({
+            model: 'jev-1.13.0',
+            answers: { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities } },
+            usage: { input_tokens: 100, output_tokens: 5, total_tokens: 120 }
+          })
+        })
+      })
+      const result = await client.executeBatch({ ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture', batchRequest)
+      expect(result).toMatchObject({
+        providerId: native.id,
+        providerRevision: native.revision,
+        model: 'jev-1.13.0',
+        answers: {
+          effort: { choice: 'simple', probabilities, confidence: 0.6 },
+          evidence: { choice: 'unsupported', probabilities: { supported: 0, unsupported: 1 }, confidence: 0.1 }
+        },
+        usage: { inputTokens: 100, outputTokens: 5, totalTokens: 120, totalTokensSource: 'reported' },
+        estimatedCostMicros: 5
+      })
+      expect(calls).toBe(1)
+    }
+  })
+
+  for (const [name, answers] of [
+    ['missing answer', { effort: batchAnswers.effort }],
+    ['extra answer', { ...batchAnswers, extra: batchAnswers.effort }],
+    ['wrong question identity', { effort: batchAnswers.effort, Evidence: batchAnswers.evidence }],
+    ['malformed answer map', [batchAnswers.effort, batchAnswers.evidence]],
+    ['missing answer type', { ...batchAnswers, effort: answer }],
+    ['wrong answer type', { ...batchAnswers, evidence: { ...batchAnswers.evidence, type: 'noul' } }],
+    ['unknown choice', { ...batchAnswers, evidence: { ...batchAnswers.evidence, choice: 'fixture-secret-reflected' } }],
+    ['missing probability', { ...batchAnswers, evidence: { ...batchAnswers.evidence, probabilities: { unsupported: 1 } } }],
+    ['extra probability', { ...batchAnswers, evidence: { ...batchAnswers.evidence, probabilities: { supported: 0, unsupported: 1, extra: 0 } } }],
+    ['out of range probability', { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities: { simple: 1.1, complex: -0.1 } } }],
+    ['nonfinite probability', { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities: { simple: Infinity, complex: 0 } } }],
+    ['probabilities outside rounding tolerance', { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities: { simple: 0.789, complex: 0.2 } } }],
+    ['nonmaximal choice', { ...batchAnswers, effort: { ...batchAnswers.effort, choice: 'complex' } }],
+    ['missing confidence', { ...batchAnswers, evidence: { type: 'choice', choice: 'unsupported', probabilities: { supported: 0, unsupported: 1 } } }],
+    ['out of range confidence', { ...batchAnswers, evidence: { ...batchAnswers.evidence, confidence: 1.1 } }],
+    ['unexpected answer field', { ...batchAnswers, evidence: { ...batchAnswers.evidence, explanation: 'fixture-secret-reflected' } }]
+  ] as const) {
+    it(`fails closed on ${name} while retaining known billed batch usage and redacting provider content`, async () => {
+      let calls = 0
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => {
+          calls++
+          return Response.json({ model: 'jev-1.13.0', answers, usage: { input_tokens: 100, output_tokens: 5, total_tokens: 120 } })
+        })
+      })
+      const failure = await client.executeBatch(native, 'fixture-secret', batchRequest).catch((value: unknown) => value)
+      expect(failure).toBeInstanceOf(DecisionProviderFailure)
+      expect(failure).toMatchObject({
+        code: 'INVALID_DECISION_RESPONSE',
+        providerRevision: native.revision,
+        usage: { inputTokens: 100, outputTokens: 5, totalTokens: 120, totalTokensSource: 'reported' },
+        estimatedCostMicros: 5
+      })
+      expect(JSON.stringify(failure)).not.toContain('fixture-secret')
+      expect(calls).toBe(1)
+    })
+  }
+
+  for (const usage of [
+    { input_tokens: 100 },
+    { output_tokens: 5 },
+    { input_tokens: 100, output_tokens: 5, total_tokens: 104 },
+    { input_tokens: Number.MAX_SAFE_INTEGER, output_tokens: 1 }
+  ]) {
+    it(`rejects incomplete or inconsistent batch accounting ${JSON.stringify(usage)}`, async () => {
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage }))
+      })
+      await expect(client.executeBatch(native, 'fixture', batchRequest)).rejects.toMatchObject({
+        usage: null,
+        estimatedCost: null,
+        estimatedCostMicros: null
+      })
+    })
+  }
+
+  it('retains batch usage when the paid response does not honor the selected model pin', async () => {
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch(() => Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } }))
+    })
+    await expect(client.executeBatch({ ...native, config: { ...native.config, model: 'jev-9.99.0' } }, 'fixture', batchRequest)).rejects.toMatchObject({
+      code: 'DECISION_MODEL_MISMATCH',
+      usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, totalTokensSource: 'derived' },
+      estimatedCostMicros: 5
+    })
+  })
+
+  it('cancels an in-flight batch without retrying or fabricating usage when its transport stalls', async () => {
+    const started = Promise.withResolvers<void>()
+    let calls = 0
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch(() => {
+        calls++
+        started.resolve()
+        return Promise.withResolvers<Response>().promise
+      })
+    })
+    const controller = new AbortController()
+    const pending = client.executeBatch(native, 'fixture', batchRequest, { signal: controller.signal })
+    await started.promise
+    controller.abort('sensitive-cancellation-reason')
+    const failure = await pending.catch((value: unknown) => value)
+    expect(failure).toMatchObject({ code: 'DECISION_ABORTED', status: 499, usage: null, estimatedCost: null })
+    expect(JSON.stringify(failure)).not.toContain('sensitive-cancellation-reason')
+    expect(calls).toBe(1)
+  })
+
+  it('denies invalid question identities and unsupported provider kinds before credential-bearing dispatch', async () => {
+    let calls = 0
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch(() => {
+        calls++
+        throw new Error('No request may be dispatched')
+      })
+    })
+    for (const ids of [[], ['', 'evidence'], [' effort'], ['effort\n'], ['__proto__'], ['constructor'], ['prototype'], ['x'.repeat(256)], Array.from({ length: 256 }, (_, index) => `q${index}`)]) {
+      const questions = Object.fromEntries(ids.map(id => [id, batchRequest.questions.effort!]))
+      await expect(client.executeBatch(native, 'fixture', { state: batchRequest.state, questions })).rejects.toMatchObject({ code: 'INVALID_DECISION_REQUEST' })
+    }
+    await expect(client.executeBatch(custom('chat-completions'), 'fixture', batchRequest)).rejects.toMatchObject({ code: 'DECISION_BATCH_UNSUPPORTED' })
+    expect(calls).toBe(0)
   })
 })
 

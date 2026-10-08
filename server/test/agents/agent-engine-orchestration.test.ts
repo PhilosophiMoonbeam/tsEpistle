@@ -14,7 +14,7 @@ import type {
 } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
-import { fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const run = {
@@ -176,7 +176,7 @@ describe('Ax orchestration stages', () => {
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => ({
       results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }]
     }) satisfies AxChatResponse)
-    const engine = new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 32_768 }))
+    const engine = new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 32_768 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
     const request = baseRequest(new AbortController().signal)
     const preflight = await engine.preflight(request)
     const event = vi.fn(async () => {})
@@ -197,13 +197,11 @@ describe('Ax orchestration stages', () => {
       body: 'request body secret',
       headers: 'authorization secret'
     })
-    const requestError = await new AxAgentEngine(
-      factoryFor(
-        vi.fn(async () => {
-          throw wrappedRequest
-        })
-      )
-    )
+    const requestError = await new AxAgentEngine(factoryFor(
+      vi.fn(async () => {
+        throw wrappedRequest
+      })
+    ), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
       .catch(error => error)
     expect(requestError).toBeInstanceOf(AgentExecutionFailure)
@@ -226,7 +224,7 @@ describe('Ax orchestration stages', () => {
         controller.error(streamFailure)
       }
     })
-    const streamError = await new AxAgentEngine(factoryFor(async () => stream))
+    const streamError = await new AxAgentEngine(factoryFor(async () => stream), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
       .catch(error => error)
     expect(streamError).toMatchObject({ code: 'PROVIDER_UNAVAILABLE', stage: 'provider_stream', providerStatus: 503 })
@@ -236,7 +234,7 @@ describe('Ax orchestration stages', () => {
     const malformedResponse = {
       results: [{ index: 0, functionCalls: [{ id: '', type: 'function', function: { name: 'wiki_get_page', params: '{}' } }] }]
     } satisfies AxChatResponse
-    const responseError = await new AxAgentEngine(factoryFor(async () => malformedResponse))
+    const responseError = await new AxAgentEngine(factoryFor(async () => malformedResponse), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
       .catch(error => error)
     expect(responseError).toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response', message: 'Agent inference failed' })
@@ -270,7 +268,7 @@ describe('Ax orchestration stages', () => {
       }
     })
     const chat = vi.fn(async () => stream)
-    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' })).execute(
+    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         purpose: 'planner',
@@ -323,7 +321,7 @@ describe('Ax orchestration stages', () => {
       }
     })
     const chat = vi.fn(async () => stream)
-    const error = await new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }))
+    const error = await new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       .execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
       .catch(failure => failure)
 
@@ -370,7 +368,7 @@ describe('Ax orchestration stages', () => {
       })
     }
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 1_000 }), actions).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 1_000 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTurns: 4, maxToolCalls: 11, maxOutputTokens: 100 }
@@ -398,7 +396,7 @@ describe('Ax orchestration stages', () => {
     )
     const open = vi.fn()
     const text = vi.fn(async () => {})
-    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider)
+    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider, undefined, { decisionProviders: fixtureDecisionProviders })
 
     expect(
       await engine.execute(
@@ -484,7 +482,7 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
 
-    const result = await new AxAgentEngine(factoryFor(chat), actions).execute(request, { text, event: async () => {} })
+    const result = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event: async () => {} })
 
     expect(invoke).toHaveBeenCalledWith(
       'pages.get',
@@ -524,7 +522,7 @@ describe('Ax orchestration stages', () => {
 
     await expect(
       Promise.resolve(
-        new AxAgentEngine(factoryFor(chat), actions).execute(
+        new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...baseRequest(new AbortController().signal),
             purpose: 'subagent',
@@ -583,7 +581,7 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
     await expect(
-      new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute(
+      new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...baseRequest(new AbortController().signal),
           purpose: 'subagent',
@@ -643,7 +641,7 @@ describe('Ax orchestration stages', () => {
     }
 
     const text = vi.fn(async () => {})
-    const response = await new AxAgentEngine(factoryFor(chat), actions).execute(
+    const response = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTokens: 60_000, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
@@ -690,7 +688,7 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTokens: budget.maximumTokens, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 },
@@ -752,7 +750,7 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat), actions).execute(
+    const result = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 512 }
@@ -791,7 +789,7 @@ describe('Ax orchestration stages', () => {
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
       } satisfies AxChatResponse
     })
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTurns: 3, maxToolCalls: 2, maxOutputTokens: 128 },
@@ -847,7 +845,7 @@ describe('Ax orchestration stages', () => {
 
     await expect(
       Promise.resolve(
-        new AxAgentEngine(factoryFor(chat), actions).execute(
+        new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...baseRequest(new AbortController().signal),
             limits: { maxTokens: 60_000, maxTurns: 1, maxToolCalls: 1, maxOutputTokens: 10 },
@@ -964,7 +962,7 @@ describe('Ax orchestration stages', () => {
     const text = vi.fn(async () => {})
     const validateObservation = vi.fn(async () => true)
 
-    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(validateObservation)).execute(request, { text, event })
+    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(validateObservation), undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event })
 
     expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })])
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
@@ -983,7 +981,7 @@ describe('Ax orchestration stages', () => {
       }) }]
     }) satisfies AxChatResponse)
     const text = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true)).execute(
+    const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         messages: [{ role: 'user', content: 'Compare the publication requirements of Alpha and Beta.' }],
@@ -1074,10 +1072,7 @@ describe('Ax orchestration stages', () => {
           }) }]
         } satisfies AxChatResponse
       })
-      const result = await new AxAgentEngine(
-        factoryFor(chat),
-        pageEvidenceActions(async () => true)
-      ).execute(
+      const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...baseRequest(new AbortController().signal),
           messages: [{ role: 'user', content: `Contact office lookup: what does the contact record establish about ${fact}?` }],
@@ -1133,10 +1128,7 @@ describe('Ax orchestration stages', () => {
         }) }]
       } satisfies AxChatResponse
     })
-    const result = await new AxAgentEngine(
-      factoryFor(chat),
-      pageEvidenceActions(async () => true)
-    ).execute(
+    const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         currentPage: { id: 42, locale: 'en', path: 'contacts' },
@@ -1210,7 +1202,7 @@ describe('Ax orchestration stages', () => {
       }
     }
 
-    const response = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions()).execute(request, { text, event: async () => {} })
+    const response = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(), undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event: async () => {} })
     expect(response).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && message.content === 'Alpha requires review.')).toBe(false)
     expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Alpha requires review.')
@@ -1274,7 +1266,7 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
 
-    await new AxAgentEngine(factoryFor(chat), actions).execute(
+    await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         purpose: 'subagent',
@@ -1382,10 +1374,7 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
 
-    await new AxAgentEngine(
-      factoryFor(chat),
-      pageEvidenceActions(async () => true)
-    ).execute(request, { text, event })
+    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event })
 
     expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })])
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
@@ -1447,7 +1436,7 @@ describe('Ax orchestration stages', () => {
 
     await expect(
       Promise.resolve(
-        new AxAgentEngine(factory, actions).execute(
+        new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...baseRequest(new AbortController().signal),
             dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
@@ -1503,7 +1492,7 @@ describe('Ax orchestration stages', () => {
       })
     }
 
-    const error = await new AxAgentEngine(factory, actions)
+    const error = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
       .execute(
         {
           ...baseRequest(new AbortController().signal),
@@ -1533,7 +1522,7 @@ describe('Ax orchestration stages', () => {
 
     await expect(
       Promise.resolve(
-        new AxAgentEngine(factoryFor(vi.fn(async () => response))).execute(
+        new AxAgentEngine(factoryFor(vi.fn(async () => response)), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...baseRequest(new AbortController().signal),
             dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
@@ -1552,7 +1541,7 @@ describe('Ax orchestration stages', () => {
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
     const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'estimated' })).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'estimated' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
       { text: async () => {}, event: async () => {} }
     )
@@ -1584,7 +1573,7 @@ describe('Ax orchestration stages', () => {
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
     const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' })).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
       { text: async () => {}, event: async () => {} }
     )
@@ -1614,12 +1603,10 @@ describe('Ax orchestration stages', () => {
       const release = vi.fn(async () => {})
       const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
       await expect(
-        new AxAgentEngine(
-          factoryFor(
-            vi.fn(async () => response),
-            options
-          )
-        ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event: async () => {} })
+        new AxAgentEngine(factoryFor(
+          vi.fn(async () => response),
+          options
+        ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event: async () => {} })
       ).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
       return { release, reconcile }
     }
@@ -1672,7 +1659,7 @@ describe('Ax orchestration stages', () => {
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
     const chat = vi.fn(async () => response)
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' })).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         purpose: 'planner',
@@ -1721,7 +1708,7 @@ describe('Ax orchestration stages', () => {
     })
     const chat = vi.fn(async () => stream)
     const text = vi.fn(async () => {})
-    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' })).execute(
+    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         purpose: 'planner',
@@ -1770,7 +1757,7 @@ describe('Ax orchestration stages', () => {
       const event = vi.fn(async (_type: string, _data: unknown) => {})
       let failure: unknown
       await expect(
-        new AxAgentEngine(factory)
+        new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders })
           .execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text, event })
           .catch(error => {
             failure = error
@@ -1839,7 +1826,7 @@ describe('Ax orchestration stages', () => {
       unsettledExposure: { tokens: 0, costMicros: 0 }
     }
     await expect(
-      new AxAgentEngine(factoryFor(chat)).execute(
+      new AxAgentEngine(factoryFor(chat), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
         { text: async () => {}, event: async () => {} }
       )
@@ -1857,9 +1844,7 @@ describe('Ax orchestration stages', () => {
     const usage = { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
     const exactResponses = chunks.map(chunk => ({ results: [{ index: 0, content: chunk }], modelUsage: usage }) satisfies AxChatResponse)
     const exactText = vi.fn(async () => {})
-    const exact = await new AxAgentEngine(
-      factoryFor(async () => responseStream(exactResponses), { streaming: true, usage: 'stream', maxOutputTokens: 4_096 })
-    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: exactText, event: async () => {} })
+    const exact = await new AxAgentEngine(factoryFor(async () => responseStream(exactResponses), { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: exactText, event: async () => {} })
     expect(exact).toMatchObject({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })
     expect(exactText.mock.calls.map(([value]) => value).join('')).toBe(content)
 
@@ -1879,7 +1864,7 @@ describe('Ax orchestration stages', () => {
     const event = vi.fn(async () => {})
     const text = vi.fn(async () => {})
     await expect(
-      new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 })).execute(
+      new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...baseRequest(new AbortController().signal),
           purpose: 'planner',
@@ -1930,10 +1915,7 @@ describe('Ax orchestration stages', () => {
       })
     }
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(
-      factoryFor(chat, { usage: 'terminal' }),
-      actions
-    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
     expect(result).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5, executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(invoke).toHaveBeenCalledOnce()
     expect(invoke).toHaveBeenCalledWith('pages.get', argumentSmall, expect.any(AbortSignal), 'replace')
@@ -1971,14 +1953,11 @@ describe('Ax orchestration stages', () => {
           } satisfies AxChatResponse
     )
     const exactEvent = vi.fn(async () => {})
-    const exact = await new AxAgentEngine(
-      factoryFor(exactChat, {
-        streaming: true,
-        usage: 'stream',
-        maxOutputTokens: 4_096
-      }),
-      actions
-    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event: exactEvent })
+    const exact = await new AxAgentEngine(factoryFor(exactChat, {
+      streaming: true,
+      usage: 'stream',
+      maxOutputTokens: 4_096
+    }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event: exactEvent })
     expect(exact).toMatchObject({ totalTokens: 5, executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(invoke).toHaveBeenCalledOnce()
     expect(invoke).toHaveBeenCalledWith('pages.get', { x: argumentValue }, expect.any(AbortSignal), 'exact-argument')
@@ -2007,10 +1986,7 @@ describe('Ax orchestration stages', () => {
     const overflowText = vi.fn(async () => {})
     const overflowEvent = vi.fn(async () => {})
     await expect(
-      new AxAgentEngine(
-        factoryFor(async () => overflowStream, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }),
-        overflowActions
-      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: overflowText, event: overflowEvent })
+      new AxAgentEngine(factoryFor(async () => overflowStream, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }), overflowActions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: overflowText, event: overflowEvent })
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(cancelCalls).toBe(1)
     expect(overflowInvoke).not.toHaveBeenCalled()
@@ -2024,7 +2000,7 @@ describe('Ax orchestration stages', () => {
     type FunctionCalls = NonNullable<AxChatResponse['results'][number]['functionCalls']>
     const run = async (functionCalls: FunctionCalls) => {
       const response = { results: [{ index: 0, functionCalls }], modelUsage: usage } as unknown as AxChatResponse
-      return new AxAgentEngine(factoryFor(async () => response, { maxOutputTokens: 4_096 })).execute(
+      return new AxAgentEngine(factoryFor(async () => response, { maxOutputTokens: 4_096 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         { ...baseRequest(new AbortController().signal), purpose: 'planner' },
         { text: vi.fn(async () => {}), event: vi.fn(async () => {}) }
       )
@@ -2070,10 +2046,7 @@ describe('Ax orchestration stages', () => {
       const reconcile = vi.fn(async () => {})
       const release = vi.fn(async () => {})
       await expect(
-        new AxAgentEngine(
-          factoryFor(async () => response, { maxOutputTokens: 4_096 }),
-          actions
-        ).execute(
+        new AxAgentEngine(factoryFor(async () => response, { maxOutputTokens: 4_096 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...baseRequest(new AbortController().signal),
             dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
@@ -2130,10 +2103,7 @@ describe('Ax orchestration stages', () => {
         })
       }
       const event = vi.fn(async () => {})
-      const result = await new AxAgentEngine(
-        factoryFor(chat, { usage: 'terminal' }),
-        actions
-      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
+      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
       expect(result).toMatchObject({ totalTokens: 5, executionLimit: { reason: 'evidence', publication: 'inability' } })
       expect(invoke).toHaveBeenCalledOnce()
       expect(invoke).toHaveBeenCalledWith('pages.get', params, expect.any(AbortSignal), 'exact')
@@ -2168,9 +2138,7 @@ describe('provider fragment boundaries', () => {
       stream: ReadableStream<AxChatResponse>,
       options: { readonly preserveThoughtBlock?: AgentProviderService['preserveThoughtBlock']; readonly maxOutputTokens?: number } = {}
     ) =>
-      new AxAgentEngine(
-        factoryFor(async () => stream, { streaming: true, usage: 'stream', maxOutputTokens: options.maxOutputTokens ?? 4_096, ...options })
-      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: vi.fn(async () => {}), event: vi.fn(async () => {}) })
+      new AxAgentEngine(factoryFor(async () => stream, { streaming: true, usage: 'stream', maxOutputTokens: options.maxOutputTokens ?? 4_096, ...options }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: vi.fn(async () => {}), event: vi.fn(async () => {}) })
 
     const exactResponses = lazyStream(65_536, () => ({ results: [], modelUsage: usage }) satisfies AxChatResponse)
     await executeStream(exactResponses)
@@ -2268,23 +2236,21 @@ describe('provider fragment boundaries', () => {
       index: 0,
       thoughtBlocks: [{ data, encrypted: true, signature }]
     }))
-    await new AxAgentEngine(
-      factoryFor(
-        async () =>
-          responseStream([
-            { results: fullBlocks, modelUsage: usage },
-            {
-              results: [{ id: 'shrink_3', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 'small' }] }],
-              modelUsage: usage
-            },
-            {
-              results: [{ id: 'shrink_new', index: 0, thoughtBlocks: [{ data: 'x'.repeat(32_662), encrypted: true, signature }] }],
-              modelUsage: usage
-            }
-          ]),
-        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-      )
-    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+    await new AxAgentEngine(factoryFor(
+      async () =>
+        responseStream([
+          { results: fullBlocks, modelUsage: usage },
+          {
+            results: [{ id: 'shrink_3', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 'small' }] }],
+            modelUsage: usage
+          },
+          {
+            results: [{ id: 'shrink_new', index: 0, thoughtBlocks: [{ data: 'x'.repeat(32_662), encrypted: true, signature }] }],
+            modelUsage: usage
+          }
+        ]),
+      { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+    ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
 
     const growthBlocks = Array.from({ length: 4 }, (_, index) => ({
       id: `growth_${index}`,
@@ -2293,55 +2259,49 @@ describe('provider fragment boundaries', () => {
     }))
     let growthCancelCalls = 0
     await expect(
-      new AxAgentEngine(
-        factoryFor(
-          async () =>
-            responseStream(
-              [
-                { results: growthBlocks, modelUsage: usage },
-                {
-                  results: [{ id: 'growth_3', index: 0, thoughtBlocks: [{ data, encrypted: true, signature: `${signature}s` }] }],
-                  modelUsage: usage
-                }
-              ],
-              () => (growthCancelCalls += 1)
-            ),
-          { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-        )
-      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+      new AxAgentEngine(factoryFor(
+        async () =>
+          responseStream(
+            [
+              { results: growthBlocks, modelUsage: usage },
+              {
+                results: [{ id: 'growth_3', index: 0, thoughtBlocks: [{ data, encrypted: true, signature: `${signature}s` }] }],
+                modelUsage: usage
+              }
+            ],
+            () => (growthCancelCalls += 1)
+          ),
+        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+      ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(growthCancelCalls).toBe(1)
 
-    await new AxAgentEngine(
-      factoryFor(
-        async () =>
-          responseStream([
-            {
-              results: [{ id: 'signature-exact', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_039) }] }],
-              modelUsage: usage
-            }
-          ]),
-        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-      )
-    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+    await new AxAgentEngine(factoryFor(
+      async () =>
+        responseStream([
+          {
+            results: [{ id: 'signature-exact', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_039) }] }],
+            modelUsage: usage
+          }
+        ]),
+      { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+    ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
 
     let signatureCancelCalls = 0
     await expect(
-      new AxAgentEngine(
-        factoryFor(
-          async () =>
-            responseStream(
-              [
-                {
-                  results: [{ id: 'signature-next', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_040) }] }],
-                  modelUsage: usage
-                }
-              ],
-              () => (signatureCancelCalls += 1)
-            ),
-          { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-        )
-      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+      new AxAgentEngine(factoryFor(
+        async () =>
+          responseStream(
+            [
+              {
+                results: [{ id: 'signature-next', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_040) }] }],
+                modelUsage: usage
+              }
+            ],
+            () => (signatureCancelCalls += 1)
+          ),
+        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+      ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(signatureCancelCalls).toBe(1)
   })
@@ -2379,7 +2339,7 @@ describe('engine preflight', () => {
       messages: [{ role: 'user', content: 'x'.repeat(8_000) }],
       limits: { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
     }
-    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider)
+    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider, undefined, { decisionProviders: fixtureDecisionProviders })
 
     const result = await engine.preflight(request)
 
@@ -2683,7 +2643,7 @@ describe('bounded root publication accounting', () => {
       limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 }
     }
     const admittedBudget = new PublicationBudgetLedger(120_000)
-    const admitted = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute(
+    const admitted = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...request, limits: { ...request.limits, maxTokens: admittedBudget.maximumTokens }, dispatchBudget: admittedBudget },
       { text: async () => {}, event: async () => {} }
     )
@@ -2705,10 +2665,7 @@ describe('bounded root publication accounting', () => {
     // below the observed encoded request. No duplicated-source overhead is assumed.
     const budget = new PublicationBudgetLedger(120_000)
     const text = vi.fn(async () => {})
-    await expect(new AxAgentEngine(
-      factoryFor(chat, { usage: 'terminal', maxContextTokens: nativeRequestBytes - 1 }),
-      actions
-    ).execute(
+    await expect(new AxAgentEngine(factoryFor(chat, { usage: 'terminal', maxContextTokens: nativeRequestBytes - 1 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...request, limits: { ...request.limits, maxTokens: budget.maximumTokens }, dispatchBudget: budget },
       { text, event: async () => {} }
     )).rejects.toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE' })
@@ -2774,7 +2731,7 @@ describe('bounded root publication accounting', () => {
         })
       }
       const text = vi.fn(async () => {})
-      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions).execute(
+      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...baseRequest(new AbortController().signal),
           messages: [{ role: 'user', content: 'What does Alpha require?' }],
@@ -2788,7 +2745,6 @@ describe('bounded root publication accounting', () => {
       expect(invoke).toHaveBeenCalledOnce()
       expect(budget.tools).toBe(1)
       expect(budget.dispatched).toHaveLength(expectedTurns - 1)
-      expect(budget.reconciled).toHaveLength(expectedTurns)
       expect(budget.consumedTokens).toBe(expectedTurns * 5)
       expect(budget.consumedCostMicros).toBe(expectedTurns * 7)
       expect(result.totalTokens).toBe(budget.consumedTokens)
@@ -2827,7 +2783,7 @@ describe('bounded root publication accounting', () => {
           modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
         } satisfies AxChatResponse
       })
-      const engine = new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }))
+      const engine = new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       const request = { ...baseRequest(new AbortController().signal), limits: { maxTurns, maxToolCalls: 0, maxOutputTokens: 128 } }
       const preflight = await engine.preflight(request)
       expect(preflight).toMatchObject({ admissible: true, outputExposureTokens: 128 })

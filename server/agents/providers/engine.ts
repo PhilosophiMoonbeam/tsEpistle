@@ -14,6 +14,7 @@ import {
 } from '../../../shared/agents/contracts.ts'
 import { agentMediaToolInputs, type AgentMediaKind } from '../../../shared/agents/media-providers.ts'
 import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
+import { DecisionUsageSchema, type DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { ACTION_CATALOG } from '../actions/catalog.ts'
 import {
@@ -27,6 +28,7 @@ import {
   readAgentCompactionCheckpoint
 } from '../compaction.ts'
 import { type AgentApprovalContinuationCheckpoint, withInvokingAgentRunLease } from '../coordinator.ts'
+import { DecisionProviderFailure, type DecisionProviderRegistry, type DecisionProviderRuntime } from '../decision-providers.ts'
 import { decodeAgentAudioVideo } from '../media-decoding.ts'
 import type { ExternalMcpService } from '../external-mcp.ts'
 import { loadAgentMediaPayload } from '../media.ts'
@@ -111,6 +113,8 @@ import {
   type WikiSynthesisStructure
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
+import { assessWikiVerificationResult, buildWikiVerificationPlan, type WikiVerificationSource } from './wiki-verification.ts'
+import type { WikiVerificationPlan } from './wiki-verification.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -2590,7 +2594,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   let previousMarkerEnd = 0
   for (const match of content.matchAll(citationMarker)) {
     const evidenceId = match[1] ?? ''
-    const boundClaim = nativeDraft?.claims[claims.length]
+    const boundClaim = nativeDraft?.answer.claims[claims.length]
     const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement)
     if (nativeDraft !== undefined && (boundClaim === undefined || boundClaim.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
       issues.push('Typed source claims must retain their exact host-rendered statement and citation.')
@@ -2681,7 +2685,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       citationIds.push(evidenceId)
     }
   }
-  if (nativeDraft !== undefined && claims.length !== nativeDraft.claims.length) {
+  if (nativeDraft !== undefined && claims.length !== nativeDraft.answer.claims.length) {
     issues.push('Every typed source claim must retain its own host-rendered citation.')
   }
   if (registry.size > 0 && claims.length === 0 && content.trim().length > 0) {
@@ -3090,7 +3094,7 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
     .join('\n')}`
 
 interface NativeDraft {
-  readonly claims: Readonly<WikiSynthesisAnswer['claims']>
+  readonly answer: WikiSynthesisAnswer
   readonly evidence: ReadonlyMap<string, CitationEvidence>
 }
 
@@ -3108,6 +3112,7 @@ interface TurnResult extends AgentTokenUsage {
   readonly rootFramingIssue?: string
   readonly rootMetadataPresent?: true
   readonly rootNativeDraft?: NativeDraft
+  readonly rootRejectedDraft?: string
   readonly performance?: {
     readonly serializedRequestBytes: number
     readonly serializationMs: number
@@ -4711,6 +4716,7 @@ export class AxAgentEngine implements AgentEngine {
   readonly #actions: AgentActionSessionProvider | undefined
   readonly #preparePdf: typeof prepareAgentPdf
   readonly #externalMcp: ExternalMcpService | undefined
+  readonly #decisionProviders: Pick<DecisionProviderRegistry, 'selectRuntime' | 'decideBatch'> | undefined
   /** Provider-measured prompt tokens per attachment id, kept across runs for compaction planning. */
   readonly #measuredMediaPromptTokens = new Map<string, number>()
 
@@ -4718,12 +4724,13 @@ export class AxAgentEngine implements AgentEngine {
     factory: AgentProviderFactory,
     actions?: AgentActionSessionProvider,
     preparePdf: typeof prepareAgentPdf = prepareAgentPdf,
-    options: { readonly externalMcp?: ExternalMcpService } = {}
+    options: { readonly externalMcp?: ExternalMcpService; readonly decisionProviders?: Pick<DecisionProviderRegistry, 'selectRuntime' | 'decideBatch'> } = {}
   ) {
     this.#factory = factory
     this.#actions = actions
     this.#preparePdf = preparePdf
     this.#externalMcp = options.externalMcp
+    this.#decisionProviders = options.decisionProviders
   }
 
   async routingRequirements(ownerId: number, signal: AbortSignal): Promise<{ externalMcp: boolean }> {
@@ -6038,7 +6045,7 @@ export class AxAgentEngine implements AgentEngine {
         rendered = content
         // The program calls this only after every exact binding and source-local
         // claim passes. Boundaries belong to the host renderer, not prose parsing.
-        nativeDraft = { claims: answer.claims, evidence: unitEvidence }
+        nativeDraft = { answer, evidence: unitEvidence }
         if (answer.claims.length === 0 && answer.observations.length === 0 && answer.unresolvedFacets.length !== input.requestFacets.length) {
           rejection = 'An inability must disclose every unresolved requested facet.'
           return rejection
@@ -6155,6 +6162,7 @@ export class AxAgentEngine implements AgentEngine {
         thoughtBlocks: [],
         rootMetadataPresent: true,
         ...(nativeDraft === undefined ? {} : { rootNativeDraft: nativeDraft }),
+        rootRejectedDraft: dispatched.content,
         rootFramingIssue: dispatched.rootFramingIssue ?? rejection ?? 'Typed synthesis output failed its source-bound schema or assertion.'
       }
     }
@@ -6174,6 +6182,20 @@ export class AxAgentEngine implements AgentEngine {
 
   async execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult> {
     if (request.specialist && request.mediaRequest) readSpecialistContinuation(request)
+    // Production requires a configured complement even when this operation does
+    // not need a semantic verdict. Library-only nonfactual work remains usable.
+    let verificationProvider: DecisionProviderRuntime | undefined
+    if (this.#decisionProviders) {
+      try {
+        verificationProvider = await this.#decisionProviders.selectRuntime()
+        if (verificationProvider.config.kind !== 'typesafe' ||
+          !['jev-1.13.0', 'jev-latest', 'jev-preview'].includes(verificationProvider.config.model) ||
+          !verificationProvider.config.pricing)
+          throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'Wiki verification requires an enabled, priced Jev decision provider', 503)
+      } catch {
+        throw classifyAgentExecutionFailure(new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'An enabled, priced Jev decision provider with credentials is required', 503), 'setup')
+      }
+    }
     if (request.mediaRequest) return this.#media(request, sink, request.mediaRequest.kind)
     let limits: EngineLimits
     try {
@@ -7516,6 +7538,125 @@ export class AxAgentEngine implements AgentEngine {
               }
             }
           }
+          if (assessment.valid && result.rootNativeDraft !== undefined && result.rootNativeDraft.answer.claims.length > 0) {
+            try {
+              if (!this.#decisionProviders || !verificationProvider)
+                throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'A Jev decision provider is required before publishing Wiki facts', 503)
+              // Coverage sends every registered read, including uncited pages.
+              // Reauthorize all of them immediately before external egress.
+              const verificationEvidence = new Map([...citationRegistry].filter(([evidenceId]) => !excludedEvidenceIds.has(evidenceId)))
+              const invalid = await invalidLiveEvidenceIds({ ...assessment, citationIds: [...verificationEvidence.keys()] }, verificationEvidence)
+              if (invalid.length > 0)
+                throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki verification evidence changed or is no longer authorized', 409)
+              const selected = new Map<string, WikiVerificationSource>()
+              for (const claim of result.rootNativeDraft.answer.claims) {
+                const key = canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId])
+                if (selected.has(key)) continue
+                const bound = result.rootNativeDraft.evidence.get(key)
+                if (!bound || bound.binding.sourceRevision !== claim.sourceRevision)
+                  throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the original validated claim binding', 409)
+                if (claim.unitId === 'metadata:page-title' && hasAuthoritativePageTitle(bound)) {
+                  selected.set(key, { evidenceId: claim.evidenceId, sourceRevision: claim.sourceRevision, unitId: claim.unitId,
+                    context: 'Authoritative read page title; literal metadata only', text: bound.authoritativeTitle,
+                    kind: 'page-title', complete: true, closure: null })
+                } else {
+                  const unit = bound.sourceUnits.find(entry => entry.identity === claim.unitId)
+                  if (!unit) throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the exact owned source unit', 409)
+                  selected.set(key, { evidenceId: claim.evidenceId, sourceRevision: claim.sourceRevision, unitId: claim.unitId,
+                    context: unit.context, text: unit.text, kind: unit.kind, complete: unit.complete, closure: unit.closure })
+                }
+              }
+              let plan: WikiVerificationPlan | null
+              try {
+                plan = buildWikiVerificationPlan({
+                  userRequest: contextPlan.intent,
+                  requestFacets: contextPlan.requestFacets?.length ? contextPlan.requestFacets.map(facet => facet.quote) : [contextPlan.intent],
+                  claims: result.rootNativeDraft.answer.claims, sources: [...selected.values()],
+                  unresolvedFacets: result.rootNativeDraft.answer.unresolvedFacets,
+                  evidence: [...verificationEvidence].map(([evidenceId, source]) => ({
+                    evidenceId, sourceRevision: source.binding.sourceRevision, source: source.source
+                  }))
+                })
+              } catch {
+                throw new AgentRepositoryError('WIKI_VERIFICATION_PLAN_INVALID', 'Wiki verification cannot retain its complete evidence within the safe request bounds', 500)
+              }
+              if (!plan) throw new AgentRepositoryError('WIKI_VERIFICATION_PLAN_INVALID', 'Wiki facts require a semantic verification plan', 500)
+              const pricing = verificationProvider.config.pricing!
+              const maximum = { tokens: 64_000, costMicros: Math.ceil(pricing.perRequest * 1_000_000 + 64_000 * Math.max(pricing.inputPerMillion, pricing.outputPerMillion)) }
+              if (!Number.isSafeInteger(maximum.costMicros))
+                throw new AgentRepositoryError('WIKI_VERIFICATION_PRICING_INVALID', 'Wiki verification pricing cannot establish bounded exposure', 503)
+              await request.authorizeDispatch?.()
+              const reservation = await request.dispatchBudget?.reserve(maximum)
+              if (reservation && (reservation.tokens < maximum.tokens || reservation.costMicros < maximum.costMicros)) {
+                await request.dispatchBudget?.release(reservation)
+                throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Wiki verification exposure was not reserved', 503)
+              }
+              let verified: DecisionBatchResult | undefined
+              let failure: unknown
+              try {
+                verified = await this.#decisionProviders.decideBatch(plan.request, {
+                  providerId: verificationProvider.id, providerRevision: verificationProvider.revision, signal: request.signal
+                })
+              } catch (error) {
+                failure = error
+              }
+              const failed = failure instanceof DecisionProviderFailure ? failure : undefined
+              const parsedUsage = DecisionUsageSchema.safeParse(verified?.usage ?? failed?.usage)
+              const usage = parsedUsage.success ? parsedUsage.data : null
+              const estimated = verified?.estimatedCostMicros ?? failed?.estimatedCostMicros
+              const knownCost = estimated !== undefined && estimated !== null && Number.isSafeInteger(estimated) && estimated >= 0 ? estimated : null
+              const predispatchFailure = failure instanceof AgentRepositoryError && !(failure instanceof DecisionProviderFailure) &&
+                ['DECISION_PROVIDER_UNAVAILABLE', 'DECISION_PROVIDER_NOT_FOUND', 'DECISION_PROVIDER_CORRUPT', 'DECISION_CREDENTIAL_UNAVAILABLE', 'DECISION_PROVIDER_REVISION_CHANGED', 'DECISION_BATCH_UNSUPPORTED'].includes(failure.code)
+              const unknownExposure = predispatchFailure ? null : usage ? (knownCost === null ? { tokens: 0, costMicros: maximum.costMicros } : null) : maximum
+              if (usage) {
+                inputTokens = safeUsageAddition(inputTokens, usage.inputTokens, 'Aggregate verification input token usage')
+                outputTokens = safeUsageAddition(outputTokens, usage.outputTokens, 'Aggregate verification output token usage')
+                totalTokens = safeUsageAddition(totalTokens, usage.totalTokens, 'Aggregate verification total token usage')
+                costMicros = safeUsageAddition(costMicros, knownCost ?? maximum.costMicros, 'Aggregate verification cost')
+                if (reservation) {
+                  try {
+                    await request.dispatchBudget?.reconcile(reservation, { ...usage, costMicros: knownCost ?? maximum.costMicros })
+                  } catch (error) {
+                    failure = error
+                  }
+                }
+              } else if (predispatchFailure && reservation) await request.dispatchBudget?.release(reservation)
+              await sink.event('model.turn', {
+                purpose: 'verification', providerId: verificationProvider.id, providerRevision: verificationProvider.revision,
+                model: verificationProvider.config.model, content: '', actionCallIds: [],
+                usageVersion: 2,
+                inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0, totalTokens: usage?.totalTokens ?? 0,
+                usageSource: usage ? 'provider' : predispatchFailure ? 'not-dispatched' : 'unmeasured-exposure',
+                totalTokensSource: usage?.totalTokensSource ?? null, costMicros: usage ? knownCost ?? maximum.costMicros : 0,
+                estimatedCostMicros: knownCost,
+                latencyMs: verified?.latencyMs ?? failed?.latencyMs ?? null, unknownExposure,
+                outcome: failure ? 'verification_failed' : 'verification_completed',
+                verification: { checks: Object.keys(plan.checks).length, requestBytes: Buffer.byteLength(JSON.stringify(plan.request)), confidenceFloor: 0.8 }
+              })
+              if (failure) {
+                if (failure instanceof DecisionProviderFailure || failure instanceof AgentRepositoryError && failure.code.startsWith('DECISION_'))
+                  throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Jev verification could not be completed; Wiki facts were not published', 503)
+                throw failure
+              }
+              if (!verified || !usage || knownCost === null || verified.providerId !== verificationProvider.id || verified.providerRevision !== verificationProvider.revision)
+                throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Wiki verification did not return a valid pinned usage receipt', 503)
+              const semantic = assessWikiVerificationResult(plan, verified)
+              if (!semantic.valid) {
+                assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
+                result = { ...result, rootRejectedDraft: canonicalJson(result.rootNativeDraft.answer) }
+              }
+              if (maxTokens !== undefined && totalTokens > maxTokens)
+                throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Wiki verification exceeded the admitted run token limit', 429)
+            } catch (error) {
+              // Preserve the already billed generating response when the
+              // complementary service fails; never publish its factual text.
+              await sink.event('model.turn', {
+                ...modelTurnData(turn + 1, { ...result, content: '' }, 'answer_rejected'),
+                verificationFailure: { code: error instanceof AgentRepositoryError ? error.code : 'WIKI_VERIFICATION_FAILED' }
+              })
+              throw classifyAgentExecutionFailure(error, 'provider_response')
+            }
+          }
           const sourceLocalFailures = assessment.issues.filter(issue =>
             issue.includes('does not support every factual clause from a single source unit')
           ).length
@@ -7598,7 +7739,14 @@ export class AxAgentEngine implements AgentEngine {
             }
           }
           if (!assessment.valid) {
-            repairFeedback = evidenceCorrectionIssues(assessment.issues)
+            const correctionIssues = evidenceCorrectionIssues(assessment.issues)
+            repairFeedback = correctionIssues
+            if (result.rootRejectedDraft !== undefined) {
+              let rejectedDraft: unknown = result.rootRejectedDraft
+              try { rejectedDraft = JSON.parse(result.rootRejectedDraft) } catch { /* Preserve malformed output as quoted data. */ }
+              const correctionContext = canonicalJson({ issues: correctionIssues, rejectedDraft })
+              if (Buffer.byteLength(correctionContext, 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) repairFeedback = correctionContext
+            }
             if (turn + 1 >= maxTurns || ((request.purpose ?? 'root') === 'root' && rejectedDraftCount > MAX_ANSWER_REPAIRS)) {
               if ((request.purpose ?? 'root') === 'root') return await publishExecutionLimit('evidence')
               throw classifyAgentExecutionFailure(

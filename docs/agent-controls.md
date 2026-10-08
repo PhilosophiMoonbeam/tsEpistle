@@ -5,7 +5,7 @@ These controls configure the existing Ax-first Wiki Agent; they do not replace W
 ## Recommended setup order
 
 1. Configure and check generative model profiles, their current versions, credentials, enabled state, group grants, native capabilities, context/output limits, and deliberate prices. Set an authorized all-user default; the server admits only models currently eligible for the conversation owner.
-2. Configure a separate decision provider, run **Check connection**, then **Enable** and optionally **Set default**. A connection check performs a real classification request and may incur a charge. A classifier is not required for ordinary conversation.
+2. Configure a native **TypeSafe Jev** decision provider with an available credential and known pricing, run **Check connection**, then **Enable** and **Set default**. An accepted Jev model (`jev-1.13.0`, `jev-latest` or `jev-preview`) is a mandatory configured complement before production Agent inference. Prefer a checked version pin. A connection check performs a real classification request and may incur a charge.
 3. Configure skills and resource access, then any trusted external MCP destinations. Review their data-sharing and mutation behavior, and grant the intended groups. Enable personal endpoint creation only for groups that should have it.
 4. Declare the task sufficiency of each eligible generative model's current immutable version. Review routing thresholds and prices before opting in to per-turn optimization.
 5. Users start or continue an Agent conversation without selecting a model. New user turns are routing boundaries; approval continuation is not a new model-selection or classification opportunity.
@@ -17,6 +17,8 @@ The deployment must have Agent and provider functionality enabled and the existi
 ### Native TypeSafe / Jev versus custom endpoints
 
 A decision provider returns a structured choice, probabilities, confidence, and usage; it is not the model that writes the conversation answer.
+
+The configured companion is invoked where applicable, not on every operation: host-valid factual Wiki publication requires independent support and request-coverage decisions; eligible model routing retains its existing classifier. The Wiki verifier uses one bounded native `systemOne()` batch, preserves complete original selected closures and every authorized registered read, and freshly authorizes those reads before egress. Every required positive decision must have confidence strictly greater than 0.8. Uncertainty, missing credentials, unknown pricing or service failure withhold factual publication; no LLM-only or lexical fallback is available. Confidence is provisional evidence, not a truth guarantee. Custom compatible decision providers remain available to configured routing, but do not satisfy the mandatory native Wiki-verification complement. See [verification bounds and accounting](agents-deployment.md#ax-cutover-media-and-control-configuration).
 
 | Configuration field | Native `typesafe` | Custom `openai-compatible` |
 | --- | --- | --- |

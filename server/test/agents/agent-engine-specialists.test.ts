@@ -11,7 +11,7 @@ import type { WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.
 import type { AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../../agents/runtime.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 
 const rootRunId = '00000000-0000-4000-8000-000000000001'
 const followupRunId = '00000000-0000-4000-8000-000000000011'
@@ -259,7 +259,7 @@ describe('native specialist engine contexts', () => {
             saveSnapshot: (request, snapshot) => actions.saveSnapshot(request, snapshot)
           }
     return {
-      engine: new AxAgentEngine(factory, sessions),
+      engine: new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders }),
       nativeRequests,
       synthesisRequests,
       read,

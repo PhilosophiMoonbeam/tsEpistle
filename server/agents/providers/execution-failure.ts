@@ -43,6 +43,14 @@ export type AgentExecutionFailureCode =
   | 'PROVIDER_EGRESS_DENIED'
   | 'AGENT_TURN_LIMIT'
   | 'AGENT_EVIDENCE_INVALID'
+  | 'WIKI_VERIFICATION_UNAVAILABLE'
+  | 'WIKI_VERIFICATION_BINDING_INVALID'
+  | 'WIKI_VERIFICATION_PLAN_INVALID'
+  | 'WIKI_VERIFICATION_PRICING_INVALID'
+  | 'WIKI_VERIFICATION_FAILED'
+  | 'DECISION_PROVIDER_UNAVAILABLE'
+  | 'DECISION_PROVIDER_FAILED'
+  | 'DECISION_PROVIDER_REVISION_CHANGED'
   | 'AGENT_BUDGET_LIMITED'
   | 'AGENT_TOKEN_BUDGET_LIMITED'
   | 'AGENT_QUOTA_EXHAUSTED'
@@ -149,6 +157,14 @@ const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
   PROVIDER_REQUEST_REJECTED: true,
   PROVIDER_UNAVAILABLE: true,
   AGENT_TURN_LIMIT: true,
+  WIKI_VERIFICATION_UNAVAILABLE: true,
+  WIKI_VERIFICATION_BINDING_INVALID: true,
+  WIKI_VERIFICATION_PLAN_INVALID: true,
+  WIKI_VERIFICATION_PRICING_INVALID: true,
+  WIKI_VERIFICATION_FAILED: true,
+  DECISION_PROVIDER_UNAVAILABLE: true,
+  DECISION_PROVIDER_FAILED: true,
+  DECISION_PROVIDER_REVISION_CHANGED: true,
   AGENT_EVIDENCE_INVALID: true,
   AGENT_BUDGET_LIMITED: true,
   AGENT_TOKEN_BUDGET_LIMITED: true,
@@ -199,6 +215,14 @@ const SAFE_STAGES: Readonly<Record<string, true>> = {
 
 const SAFE_MESSAGE = 'Agent inference failed'
 const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
+  WIKI_VERIFICATION_UNAVAILABLE: 'Wiki factual publication requires an enabled, priced Jev decision provider. Ask an administrator to check the default decision provider and its credential.',
+  WIKI_VERIFICATION_BINDING_INVALID: 'Wiki facts could not be verified against their original source bindings. No factual answer was published.',
+  WIKI_VERIFICATION_PLAN_INVALID: 'Wiki factual verification could not be prepared. No factual answer was published. Contact an administrator.',
+  WIKI_VERIFICATION_PRICING_INVALID: 'Wiki verification requires valid configured pricing to bound billing exposure. Ask an administrator to check decision-provider pricing.',
+  WIKI_VERIFICATION_FAILED: 'The Wiki verification service could not complete verification. No factual answer was published. Check decision-provider availability before starting another run.',
+  DECISION_PROVIDER_UNAVAILABLE: 'The required decision provider is unavailable. Ask an administrator to check the enabled default provider and its credential.',
+  DECISION_PROVIDER_FAILED: 'The decision service could not complete the request. Check decision-provider availability before starting another run.',
+  DECISION_PROVIDER_REVISION_CHANGED: 'The decision-provider configuration changed during the run. Start another run after an administrator checks the current configuration.',
   EXTERNAL_MCP_ACCESS_DENIED: 'External MCP access is no longer available. Check endpoint access before starting another run.',
   EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED: 'External MCP requires a model with native tool calling.',
   EXTERNAL_MCP_TOOL_COLLISION: 'The external MCP tool catalog conflicts with the available tools.',
@@ -228,6 +252,14 @@ const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
   AGENT_MEDIA_CONTEXT_LIMIT: 'The attached files exceed this model’s context limit. Start a new conversation with fewer pages or smaller files.'
 }
 const SAFE_STATUS_BY_CODE: Readonly<Record<string, number>> = {
+  WIKI_VERIFICATION_UNAVAILABLE: 503,
+  WIKI_VERIFICATION_BINDING_INVALID: 409,
+  WIKI_VERIFICATION_PLAN_INVALID: 500,
+  WIKI_VERIFICATION_PRICING_INVALID: 503,
+  WIKI_VERIFICATION_FAILED: 503,
+  DECISION_PROVIDER_UNAVAILABLE: 503,
+  DECISION_PROVIDER_FAILED: 502,
+  DECISION_PROVIDER_REVISION_CHANGED: 409,
   AGENT_MEDIA_WINDOW_LIMIT: 413,
   AGENT_MEDIA_INPUT_UNSUPPORTED: 409,
   AGENT_MEDIA_INPUT_LIMIT: 413,

@@ -11,6 +11,7 @@ import { type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity, i
 import type { AgentMemoryRepository } from '../../agents/memory.ts'
 import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
+import { AgentRepositoryError } from '../../agents/repository.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
@@ -20,7 +21,7 @@ import { PdfFixtureDocument } from './pdf-fixture.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
-import { fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest, synthesisObservationsFromRequest, type SynthesisFixtureBindings } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest, synthesisObservationsFromRequest, type SynthesisFixtureBindings } from './synthesis-fixture.ts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
@@ -292,7 +293,7 @@ const questionFixture = (
   }
   const text = vi.fn(async (_message: string) => {})
   const event = vi.fn(async (_type: string, _data: unknown) => {})
-  const engine = new AxAgentEngine(factory, actions)
+  const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
   const execute = (userMessage: string, limits?: AgentEngineRequest['limits']) =>
     engine.execute(
       {
@@ -501,7 +502,7 @@ describe('Ax agent engine', () => {
     }
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (_type: string, _data: unknown) => {})
-    const execute = () => new AxAgentEngine(factory, actions).execute({
+    const execute = () => new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
       ...request(new AbortController().signal),
       currentPage: null,
       messages: [{ role: 'user', content: source?.request ?? 'What does the production service support?' }],
@@ -795,7 +796,7 @@ describe('Ax agent engine', () => {
         })
       } as unknown as AgentProviderFactory
       const event = vi.fn(async () => {})
-      const result = await new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event })
+      const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event })
       expect(result).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 7 })
       expect(event).toHaveBeenCalledWith(
         'model.turn',
@@ -843,7 +844,7 @@ describe('Ax agent engine', () => {
         pricing: { ...pricing, cacheWritePremium: true } })
       } as unknown as AgentProviderFactory
       const event = vi.fn(async () => {})
-      const result = await new AxAgentEngine(factory).execute(
+      const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         { ...request(new AbortController().signal), purpose: 'planner', dispatchBudget },
         { text: async () => {}, event }
       )
@@ -915,7 +916,7 @@ describe('Ax agent engine', () => {
         pricing })
       } as unknown as AgentProviderFactory
       const event = vi.fn(async () => {})
-      const execution = new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event })
+      const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event })
       if (expected === 'invalid') {
         await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
         expect(event).not.toHaveBeenCalledWith('model.turn', expect.anything())
@@ -957,7 +958,7 @@ describe('Ax agent engine', () => {
       void args
     })
 
-    const result = await new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text, event })
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text, event })
 
     expect(result).toMatchObject({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9_157 })
     expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 }))
@@ -986,7 +987,7 @@ describe('Ax agent engine', () => {
     } as unknown as AgentProviderFactory
     const reserve = vi.fn(async () => ({ id: 1, tokens: 1, costMicros: 1 }))
     const text = vi.fn(async (_delta: string) => {})
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         purpose: 'root',
@@ -1091,7 +1092,7 @@ describe('Ax agent engine', () => {
         close
       })
     }
-    const engine = new AxAgentEngine(factory, actions)
+    const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
     const text = vi.fn(async (_delta: string) => {
       publicationOrder.push('text')
     })
@@ -1177,7 +1178,7 @@ describe('Ax agent engine', () => {
       })
     }
     const text = vi.fn(async () => {})
-    const engine = new AxAgentEngine(factory, actions)
+    const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
 
     await expect(engine.execute({ ...request(new AbortController().signal) }, { text, event: async () => {} })).rejects.toMatchObject({
       code: 'ACTION_SESSION_CLOSE_FAILED',
@@ -1198,7 +1199,7 @@ describe('Ax agent engine', () => {
     })
     expect(close).toHaveBeenCalledOnce()
   })
-  it('compacts retrieval projections so tool results continue within a goal token budget', async () => {
+  it('compacts retrieval without publishing when complete-read verification exceeds safe request bounds', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: Parameters<typeof rootFixtureResponse>[1] = [
       {
@@ -1304,13 +1305,9 @@ describe('Ax agent engine', () => {
     }
     let consumedTokens = 0
     let reservationId = 0
-    const reservedMaximums: number[] = []
-    const admittedTotals: number[] = []
     const dispatchBudget = {
       reserve: async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
-        admittedTotals.push(consumedTokens + maximum.tokens)
-        if (consumedTokens + maximum.tokens > 64_000) throw new Error('goal reservation exceeds remaining tokens')
-        reservedMaximums.push(maximum.tokens)
+        if (consumedTokens + maximum.tokens > 64_000) throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Goal reservation exceeds remaining tokens', 429)
         return { id: ++reservationId, ...maximum }
       },
       reconcile: async (
@@ -1323,27 +1320,22 @@ describe('Ax agent engine', () => {
       consumeTool: async () => undefined,
       unsettledExposure: { tokens: 0, costMicros: 0 }
     } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
-    const engine = new AxAgentEngine(factory, actions)
-    const result = await engine.execute(
+    const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
+    const text = vi.fn(async () => undefined)
+    await expect(engine.execute(
       {
         ...request(new AbortController().signal),
         dispatchBudget,
         limits: { maxTokens: 64_000, maxTurns: 12, maxToolCalls: 32, maxOutputTokens: 4_000 }
       },
-      { text: async () => undefined, event: async () => undefined }
-    )
-    expect(admittedTotals.every(total => total <= 64_000)).toBe(true)
+      { text, event: async () => undefined }
+    )).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_PLAN_INVALID' })
     const projected = JSON.stringify(calls.slice(1).map(call => call.chatPrompt))
     expect(projected).not.toContain('review metadata')
     expect(projected).not.toContain('Internal review detail')
     expect(projected).not.toContain('internal-review-detail')
     expect(consumedTokens).toBe(13_057)
-    expect(result).toMatchObject({
-      inputTokens: 13_003,
-      outputTokens: 54,
-      totalTokens: 13_057,
-      citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
-    })
+    expect(text).not.toHaveBeenCalled()
   })
   it('accepts standalone uncited advice after reading evidence without inventing sourced claims', async () => {
     const responses: Parameters<typeof rootFixtureResponse>[1] = [
@@ -1395,7 +1387,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text, event })
 
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Consider adding an incident owner.')
     expect(result.citations ?? []).toEqual([])
@@ -1501,7 +1493,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         dispatchBudget,
@@ -2657,7 +2649,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         messages: [{ role: 'user', content: 'Summarize planning terms and manufacturer routing.' }]
@@ -2744,7 +2736,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
@@ -2831,7 +2823,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         currentPage: { id: 43, locale: 'en', path: 'operations', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
@@ -3107,7 +3099,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const execution = new AxAgentEngine(factory, actions).execute(
+    const execution = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         limits: { maxTurns: 2, maxToolCalls: 1 },
@@ -3200,7 +3192,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, Record<string, unknown>]) => {
       void args
     })
-    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event })
+    await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text: async () => {}, event })
 
     expect(invoke).toHaveBeenCalledOnce()
     const reusedResult = requests[2]?.chatPrompt.find(message => message.role === 'function' && message.functionId === 'get-2')
@@ -3217,12 +3209,6 @@ describe('Ax agent engine', () => {
     const reusedProjection = toolCompletions[1]?.projection as { canonicalBytes: number; providerBytes: number; savedBytes: number }
     expect(reusedProjection.canonicalBytes).toBeGreaterThan(reusedProjection.providerBytes)
     expect(reusedProjection.savedBytes).toBe(reusedProjection.canonicalBytes - reusedProjection.providerBytes)
-    expect(event.mock.calls.filter(([type]) => type === 'model.turn').map(([, data]) => data)).toEqual([
-      expect.objectContaining({ turn: 1, outcome: 'tool_calls', actionCallIds: ['get-1'] }),
-      expect.objectContaining({ turn: 2, outcome: 'tool_calls', actionCallIds: ['get-2'] }),
-      expect.objectContaining({ turn: 3, outcome: 'tool_calls', actionCallIds: ['fixture-finish-collection'], inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 7 }),
-      expect.objectContaining({ turn: 4, outcome: 'answer_accepted', actionCallIds: [] })
-    ])
     const finalTurn = event.mock.calls.filter(([type]) => type === 'model.turn').at(-1)?.[1]
     expect(finalTurn?.performance).toMatchObject({ cacheHitCount: 1, rejectedDraftCount: 0, invalidatedEvidenceCount: 0 })
   })
@@ -3779,7 +3765,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text, event })
 
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Amber Falcon')
     expect(invoke.mock.calls.map(([name]) => name)).toEqual(['pages.search', 'pages.get'])
@@ -4348,7 +4334,7 @@ describe('Ax agent engine', () => {
     } as unknown as AgentProviderFactory
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (_type: string, _data: unknown) => {})
-    const result = await new AxAgentEngine(factory).execute({
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
       ...request(new AbortController().signal),
       messages: [{ role: 'user', content: 'Find calibration documents.' }]
     }, { text, event })
@@ -4669,7 +4655,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text, event })
 
     expect(invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get', 'pages.getVersion', 'pages.getOkf'])
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
@@ -4793,7 +4779,7 @@ describe('Ax agent engine', () => {
       let result: unknown
       let error: unknown
       try {
-        result = await new AxAgentEngine(factory, actions).execute(
+        result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...request(new AbortController().signal),
             currentPage,
@@ -4912,7 +4898,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text, event })
 
     const published = text.mock.calls.map(([delta]) => delta).join('')
     expect(published).not.toContain('Amber Falcon is a synthetic incident and its response sequence confirms alerts')
@@ -4977,7 +4963,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    await new AxAgentEngine(factory).execute(request(new AbortController().signal), { text, event })
+    await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text, event })
 
     expect(text).not.toHaveBeenCalledWith(expect.stringContaining('I verified it'))
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('cannot establish a sourced answer')
@@ -5038,7 +5024,7 @@ describe('Ax agent engine', () => {
       })
     }
 
-    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event: async () => {} })
+    await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text: async () => {}, event: async () => {} })
 
     expect(invoke).toHaveBeenCalledWith('skills.list', {}, expect.objectContaining({ aborted: false }), 'skill-catalog-bootstrap')
     expect(calls[0]?.functions).toContainEqual(expect.objectContaining({ name: 'wiki_read_skill' }))
@@ -5088,7 +5074,7 @@ describe('Ax agent engine', () => {
         close: vi.fn()
       })
     }
-    await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text: async () => {}, event: async () => {} })
+    await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text: async () => {}, event: async () => {} })
 
     expect(providerCalls[0]).not.toHaveProperty('functions')
     expect(invoke).toHaveBeenCalledWith('pages.get', { id: 42 }, expect.objectContaining({ aborted: false }), expect.any(String))
@@ -5201,7 +5187,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async () => {})
     const text = vi.fn(async () => {})
     const sink = { text, event }
-    const engine = new AxAgentEngine(factory, actions)
+    const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
 
     await expect(
       engine.resumeAction(
@@ -5317,7 +5303,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    await expect(new AxAgentEngine(factory, actions).execute(generationOnly, { text, event })).rejects.toMatchObject({
+    await expect(new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(generationOnly, { text, event })).rejects.toMatchObject({
       code: 'UNEXPECTED_PROVIDER_TOOL_CALL'
     })
     expect(open).not.toHaveBeenCalled()
@@ -5355,7 +5341,7 @@ describe('Ax agent engine', () => {
       pricingRevision: 'price-1',
       pricing })
     } as unknown as AgentProviderFactory
-    const execution = new AxAgentEngine(factory).execute(request(deadline.signal), { text: async () => {}, event: async () => {} })
+    const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(deadline.signal), { text: async () => {}, event: async () => {} })
     await started
     deadline.abort(new Error('goal deadline reached'))
 
@@ -5391,7 +5377,7 @@ describe('Ax agent engine', () => {
 
     await expect(
       Promise.resolve(
-        new AxAgentEngine(factory).execute(
+        new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...input,
             run: { ...input.run, executionMode: 'generation-only' },
@@ -5448,7 +5434,7 @@ describe('Ax agent engine', () => {
       void args
     })
 
-    const result = await new AxAgentEngine(factory).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text, event })
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text, event })
 
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe('ABC')
     expect(result).toMatchObject({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9_157 })
@@ -5540,7 +5526,7 @@ describe('Ax agent engine', () => {
       void args
     })
 
-    const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(new AbortController().signal), { text, event })
 
     const limitedPublication = text.mock.calls.map(([delta]) => delta).join('')
     expect(limitedPublication).not.toContain('The install steps are documented.')
@@ -5561,7 +5547,7 @@ describe('Ax agent engine', () => {
     text.mockClear()
     const followUpInput = request(new AbortController().signal)
     const followUpCallStart = calls.length
-    const followUp = await new AxAgentEngine(factory, actions).execute(
+    const followUp = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...followUpInput,
         messages: [...followUpInput.messages, { role: 'assistant', content: publishedPartial }, { role: 'user', content: 'Continue the interrupted response.' }]
@@ -5614,7 +5600,7 @@ describe('Ax agent engine', () => {
     })
 
     const input = request(new AbortController().signal)
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...input, run: { ...input.run, executionMode: 'generation-only' }, purpose: 'root' },
       { text, event }
     )
@@ -5659,7 +5645,7 @@ describe('Ax agent engine', () => {
     })
     const input = request(new AbortController().signal)
 
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...input, run: { ...input.run, executionMode: 'generation-only' }, limits: { maxTurns: 3, maxToolCalls: 0, maxOutputTokens: 4_000 } },
       { text, event }
     )
@@ -5729,7 +5715,7 @@ describe('Ax agent engine', () => {
     const text = vi.fn(async (_delta: string) => {})
 
     const input = request(new AbortController().signal)
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...input, run: { ...input.run, executionMode: 'generation-only' }, purpose },
       { text, event: async () => {} }
     )
@@ -5801,7 +5787,7 @@ describe('Ax agent engine', () => {
     })
     const input = request(new AbortController().signal)
 
-    const result = await new AxAgentEngine(factory).execute({ ...input, run: { ...input.run, executionMode: 'generation-only' } }, { text, event })
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...input, run: { ...input.run, executionMode: 'generation-only' } }, { text, event })
     expect(cancelCalls).toBe(0)
 
     const deltas = text.mock.calls.map(([delta]) => delta)
@@ -5845,7 +5831,7 @@ describe('Ax agent engine', () => {
     const input = request(new AbortController().signal)
     const text = vi.fn(async (_delta: string) => {})
 
-    await new AxAgentEngine(factory).execute(
+    await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...input, run: { ...input.run, executionMode: 'generation-only' }, limits: { maxTurns: 2, maxToolCalls: 0, maxOutputTokens: 3_000 } },
       { text, event: async () => {} }
     )
@@ -5951,7 +5937,7 @@ describe('Ax agent engine', () => {
       pricing })
     } as unknown as AgentProviderFactory
 
-    await new AxAgentEngine(factory, actions).execute(
+    await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 3, maxOutputTokens: 256 } },
       {
         text: async () => {},
@@ -6063,7 +6049,7 @@ describe('Ax agent engine', () => {
       } as unknown as AgentProviderFactory
       const text = vi.fn(async () => {})
 
-      const result = await new AxAgentEngine(factory, actions).execute(
+      const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 256 } },
         {
           text,
@@ -6187,7 +6173,7 @@ describe('Ax agent engine', () => {
       pricing })
     } as unknown as AgentProviderFactory
 
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 3, maxOutputTokens: 256 } },
       {
         text: async () => {},
@@ -6310,7 +6296,7 @@ describe('Ax agent engine', () => {
       pricing })
     } as unknown as AgentProviderFactory
     const text = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         purpose: 'subagent',
@@ -6448,7 +6434,7 @@ describe('Ax agent engine', () => {
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         purpose: 'root',
@@ -6568,7 +6554,7 @@ describe('Ax agent engine', () => {
       pricing })
     } as unknown as AgentProviderFactory
     const text = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         limits: { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 500 }
@@ -6672,7 +6658,7 @@ describe('Ax agent engine', () => {
       let result: AgentEngineResult | null = null
       let error: unknown
       try {
-        result = await new AxAgentEngine(factory, actions).execute(
+        result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...request(new AbortController().signal),
             limits: { maxTurns: scenario.drafts.length + 2, maxToolCalls: scenario.reads.length, maxOutputTokens: 4_000 }
@@ -7224,13 +7210,11 @@ describe('Independent Agent media execution', () => {
     output.media.mockImplementation(async () => {
       order.push('publish')
     })
-    const engine = new AxAgentEngine(
-      factoryFor(async input => {
-        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
-        input.onDispatch()
-        return receipt
-      })
-    )
+    const engine = new AxAgentEngine(factoryFor(async input => {
+      await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+      input.onDispatch()
+      return receipt
+    }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
     const result = await engine.execute({ ...mediaRequest(), generationTools: [], dispatchBudget }, output)
     expect(result.costMicros).toBe(1100)
     expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 4100, costMicros: 8100 })
@@ -7254,7 +7238,7 @@ describe('Independent Agent media execution', () => {
         }
       })
     } as unknown as AgentProviderFactory
-    const result = await new AxAgentEngine(factory).execute({ ...mediaRequest(), dispatchBudget }, sink())
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...mediaRequest(), dispatchBudget }, sink())
     expect(result.totalTokens).toBe(0)
     expect(result.costMicros).toBe(30000)
     expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 0, costMicros: 30000 })
@@ -7264,13 +7248,11 @@ describe('Independent Agent media execution', () => {
   for (const dispatched of [false, true])
     it(`releases only proven pre-dispatch failures (dispatched=${dispatched})`, async () => {
       const dispatchBudget = budget()
-      const engine = new AxAgentEngine(
-        factoryFor(async input => {
-          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
-          if (dispatched) input.onDispatch()
-          throw new Error('bounded failure')
-        })
-      )
+      const engine = new AxAgentEngine(factoryFor(async input => {
+        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+        if (dispatched) input.onDispatch()
+        throw new Error('bounded failure')
+      }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       const output = sink()
       await expect(engine.execute({ ...mediaRequest(), dispatchBudget }, output)).rejects.toThrow('bounded failure')
       expect(dispatchBudget.reserve).toHaveBeenCalledTimes(1)
@@ -7286,16 +7268,14 @@ describe('Independent Agent media execution', () => {
         if (revoked) throw new Error('permission revoked')
       }
       const dispatchBudget = budget()
-      const engine = new AxAgentEngine(
-        factoryFor(async input => {
-          if (revokeAt === 'upload') revoked = true
-          await input.beforeUpload()
-          revoked = true
-          await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
-          input.onDispatch()
-          return receipt
-        })
-      )
+      const engine = new AxAgentEngine(factoryFor(async input => {
+        if (revokeAt === 'upload') revoked = true
+        await input.beforeUpload()
+        revoked = true
+        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+        input.onDispatch()
+        return receipt
+      }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       await expect(engine.execute({ ...mediaRequest(), authorizeMedia, dispatchBudget }, sink())).rejects.toThrow('permission revoked')
       expect(dispatchBudget.release).toHaveBeenCalledTimes(revokeAt === 'upload' ? 0 : 1)
       expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
@@ -7307,13 +7287,11 @@ describe('Independent Agent media execution', () => {
       throw new Error('settlement failed')
     })
     const output = sink()
-    const engine = new AxAgentEngine(
-      factoryFor(async input => {
-        await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
-        input.onDispatch()
-        return receipt
-      })
-    )
+    const engine = new AxAgentEngine(factoryFor(async input => {
+      await input.beforeDispatch({ inputTokens: 100, outputTokens: 4000, totalTokens: 4100 })
+      input.onDispatch()
+      return receipt
+    }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
     await expect(engine.execute({ ...mediaRequest(), dispatchBudget }, output)).rejects.toThrow('settlement failed')
     expect(output.media).not.toHaveBeenCalled()
     expect(dispatchBudget.release).not.toHaveBeenCalled()
@@ -7321,7 +7299,7 @@ describe('Independent Agent media execution', () => {
 
   it('requires binding, admission budget and live authorization before loading a provider', async () => {
     const createMediaBinding = vi.fn()
-    const engine = new AxAgentEngine({ createMediaBinding } as unknown as AgentProviderFactory)
+    const engine = new AxAgentEngine({ createMediaBinding } as unknown as AgentProviderFactory, undefined, undefined, { decisionProviders: fixtureDecisionProviders })
     await expect(engine.execute({ ...mediaRequest(), mediaBindings: {} }, sink())).rejects.toMatchObject({ code: 'AGENT_MEDIA_DISABLED' })
     await expect(engine.execute(mediaRequest(), sink())).rejects.toMatchObject({ code: 'MEDIA_BUDGET_REQUIRED' })
     const { authorizeMedia: _authorizeMedia, ...unauthorized } = mediaRequest()
@@ -7334,7 +7312,7 @@ describe('Independent Agent media execution', () => {
       const createMediaBinding = vi.fn()
       const dispatchBudget = budget()
       await expect(
-        new AxAgentEngine({ createMediaBinding } as unknown as AgentProviderFactory).execute(
+        new AxAgentEngine({ createMediaBinding } as unknown as AgentProviderFactory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...mediaRequest(),
             dispatchBudget,
@@ -7398,7 +7376,7 @@ describe('Independent Agent media execution', () => {
       open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
     }
     const output = sink()
-    await new AxAgentEngine(factory, actions).execute(
+    await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         mediaBindings: { image: bindingId },
@@ -7493,7 +7471,7 @@ describe('Independent Agent media execution', () => {
       }
       const base = request(new AbortController().signal)
       const output = { ...sink(), text: vi.fn(async (_text: string) => {}) }
-      await new AxAgentEngine(factory, actions).execute(
+      await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...base,
           currentPage: null,
@@ -7533,7 +7511,7 @@ describe('Independent Agent media execution', () => {
       const authorizePayload = vi.fn(async () => {
         throw new Error(`source ${state}`)
       })
-      const engine = new AxAgentEngine(factoryFor(generate))
+      const engine = new AxAgentEngine(factoryFor(generate), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
       await expect(
         engine.execute(
           {
@@ -7605,7 +7583,7 @@ describe('Independent Agent media execution', () => {
       const actions: AgentActionSessionProvider = {
         open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
       }
-      await new AxAgentEngine(factory, actions).execute(
+      await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...request(new AbortController().signal),
           mediaBindings: { [kind]: bindingId },
@@ -7668,7 +7646,7 @@ describe('Independent Agent media execution', () => {
         }
       })
     } as unknown as AgentProviderFactory
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...mediaRequest(),
         mediaRequest: { kind: 'video' },
@@ -7766,7 +7744,7 @@ describe('Agent chat attachment dispatch', () => {
         preparedPaths.push(...prepared.parts.map(part => part.path))
         return prepared
       }
-      const action = new AxAgentEngine(factory, undefined, preparePdf).execute(
+      const action = new AxAgentEngine(factory, undefined, preparePdf, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...base,
           run: { ...base.run, executionMode: 'generation-only' },
@@ -7843,7 +7821,7 @@ const pdfDispatchFixture = (preparePdf: typeof prepareAgentPdf, options: { uploa
       unsettledExposure: { tokens: 0, costMicros: 0 }
     }
   }
-  return { upload, countTokens, remove, chat, reserve, engineRequest, engine: new AxAgentEngine(factory, undefined, preparePdf) }
+  return { upload, countTokens, remove, chat, reserve, engineRequest, engine: new AxAgentEngine(factory, undefined, preparePdf, { decisionProviders: fixtureDecisionProviders }) }
 }
 
 const preparedPdfFixture = async (pageCount: number, partCount: number) => {
@@ -8170,7 +8148,7 @@ describe('request-derived evidence coverage', () => {
       open: async () => ({ functions: questionFunctions, invoke, snapshot: async () => ({}), close: () => {} })
     }
     const text = vi.fn(async (_delta: string) => {})
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         messages: [
@@ -8368,7 +8346,7 @@ describe('request-derived evidence coverage', () => {
       })
     }
     const text = vi.fn(async (_delta: string) => {})
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         messages: [{ role: 'user', content: userRequest }],
