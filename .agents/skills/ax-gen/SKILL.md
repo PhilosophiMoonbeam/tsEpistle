@@ -1,7 +1,7 @@
 ---
 name: ax-gen
 description: This skill helps an LLM generate correct AxGen code using @ax-llm/ax. Use when the user asks about ax(), AxGen, generators, forward(), streamingForward(), validation, assertions, streaming assertions, field processors, step hooks, self-tuning, or structured outputs. For MCP clients, transports, prompts, resources, tasks, subscriptions, or authentication use ax-mcp alongside this skill.
-version: "25.0.0"
+version: "25.2.1"
 ---
 
 # AxGen Codegen Rules (@ax-llm/ax)
@@ -46,7 +46,7 @@ const gen3 = ax('input -> output', {
   description: 'A helpful assistant',
   maxRetries: 3,
   maxSteps: 10,
-  temperature: 0.7,
+  modelConfig: { temperature: 0.7 },
 });
 
 const result = await gen.forward(llm, { input: 'Hello world' });

@@ -1,7 +1,7 @@
 ---
 name: ax-audio
 description: This skill helps an LLM generate correct audio code with @ax-llm/ax. Use when the user asks about ai.transcribe(), ai.speak(), signature audio inputs or outputs, agent audio behavior, .chat() conversational audio, OpenAI audio or realtime models, Gemini Live native audio, Grok Voice Agent models, voices, formats, transcripts, or how audio fits with structured outputs.
-version: "25.0.0"
+version: "25.2.1"
 ---
 
 # Audio I/O Codegen Rules (@ax-llm/ax)
@@ -165,6 +165,7 @@ const res = await llm.chat({
   },
 });
 
+if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
 console.log(res.results[0]?.audio?.data);
 console.log(res.results[0]?.audio?.transcript);
@@ -243,6 +244,7 @@ const res = await openai.chat({
   ],
 });
 
+if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
 console.log(res.results[0]?.audio?.data);
 ```
@@ -340,6 +342,7 @@ const res = await gemini.chat({
   ],
 });
 
+if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
 console.log(res.results[0]?.audio?.data);
 ```
@@ -379,6 +382,7 @@ const res = await grok.chat(
   { webSocket: WebSocket }
 );
 
+if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
 console.log(res.results[0]?.audio?.data);
 ```
