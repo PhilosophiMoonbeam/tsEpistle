@@ -9,7 +9,7 @@ import {
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import { fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -520,7 +520,7 @@ describe('Ax agent engine context compaction', () => {
         }
         const units = synthesisSourcesFromRequest(input)
         const draft = calls.length === 3
-          ? { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text.includes('Maya Quinn') || unit.packet.includes('"value":"Maya Quinn"'))?.unitId ?? 'fixture-omitted-contact-unit', statement: fact }
+          ? { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text.includes('Maya Quinn') || synthesisOwnedPacketIncludes(input, unit, '"value":"Maya Quinn"'))?.unitId ?? 'fixture-omitted-contact-unit', statement: fact }
           : { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text === independentFact)?.unitId ?? 'fixture-missing-office-unit', statement: independentFact }
         return response(synthesisFixtureAnswer(input, { claims: [draft], unresolvedFacets: calls.length === 3 ? [] : [0] }), 100, 10)
       })

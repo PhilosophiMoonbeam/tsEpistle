@@ -3,6 +3,7 @@ import { ProxyTracerProvider } from '@opentelemetry/api'
 import * as markdownItModule from 'markdown-it'
 import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
 import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+import { wikiSynthesisOptimizedProgram } from '../../agents/providers/wiki-synthesis-calibration.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 const MarkdownIt = 'default' in markdownItModule ? markdownItModule.default : markdownItModule
@@ -83,7 +84,7 @@ describe('Wiki source-bound typed synthesis', () => {
       chatResponse: { results: [{ index: 0, content: JSON.stringify(empty), finishReason: 'stop' }] }
     })
     const program = createWikiSynthesisProgram([])
-    const emptyContext = await program.forward(service, { ...input, sourceUnits: [], requestFacets: [], availableObservations: [], repairFeedback: '' })
+    const emptyContext = await program.forward(service, { ...input, sourceStructures: [], sourceUnits: [], requestFacets: [], availableObservations: [], repairFeedback: '' })
     expect(emptyContext).toMatchObject(empty)
     const omittedContext = await program.forward(service, { userRequest: input.userRequest })
     expect(omittedContext).toMatchObject(empty)
@@ -154,6 +155,31 @@ describe('Wiki source-bound typed synthesis', () => {
       await expect(generated.result).rejects.toThrow()
       expect(generated.chat).toHaveBeenCalledTimes(1)
     }
+  })
+
+  it('keeps shared dictionary data outside source authority across matching local IDs and revisions', async () => {
+    const owned = {
+      ...source,
+      packet: JSON.stringify({ unitId: source.unitId, recordKey: 's1', contextKeys: [], relatedUnitKeys: [], linkKeys: [] })
+    }
+    const other = { ...owned, evidenceId: 'page:99:revision:7:section:1', text: 'Internal publication requires no approvals.' }
+    const structures: NonNullable<WikiSynthesisInput['sourceStructures']> = [
+      { id: 's1', kind: 'record', payload: JSON.stringify({ id: 'record:approval', unitIds: [source.unitId], text: source.text }) },
+      { id: 's2', kind: 'record', payload: JSON.stringify({ id: 'record:approval', unitIds: [source.unitId], text: other.text }) }
+    ]
+    const program = createWikiSynthesisProgram([owned, { ...other, packet: other.packet.replace('s1', 's2') }], {
+      facetCount: 2,
+      validateClaim: (claim, selected) => claim.statement === selected.text || 'The claim must remain inside its owned source closure.'
+    })
+    program.applyOptimization(wikiSynthesisOptimizedProgram)
+    const run = (prediction: WikiSynthesisAnswer) => program.forward(new AxMockAIService({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+      chatResponse: { results: [{ index: 0, content: JSON.stringify(prediction), finishReason: 'stop' }] }
+    }), { ...input, sourceStructures: structures, sourceUnits: [owned, { ...other, packet: other.packet.replace('s1', 's2') }] })
+    const accepted = await run(answer())
+    expect(renderWikiSynthesisAnswer(accepted)).toContain(`[[cite:${owned.evidenceId}]]`)
+    await expect(run(answer({ claims: [{ ...answer().claims[0]!, statement: other.text }] }))).rejects.toThrow('owned source closure')
+    await expect(run(answer({ claims: [{ ...answer().claims[0]!, evidenceId: 's2', statement: other.text }] }))).rejects.toThrow()
   })
 
   it('rejects conflicting unit bindings rather than letting the last source win', () => {

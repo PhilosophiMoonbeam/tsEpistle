@@ -106,7 +106,8 @@ import {
   createWikiSynthesisStreamGuard,
   renderWikiSynthesisAnswer,
   type WikiSynthesisAnswer,
-  type WikiSynthesisSource
+  type WikiSynthesisSource,
+  type WikiSynthesisStructure
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION, wikiSynthesisOptimizedProgram } from './wiki-synthesis-calibration.ts'
 
@@ -5791,6 +5792,27 @@ export class AxAgentEngine implements AgentEngine {
     const unitEvidence = new Map<string, CitationEvidence>()
     const titleEvidence = new Map<string, CitationEvidence>()
     const sources: WikiSynthesisSource[] = []
+    const sourceStructures: WikiSynthesisStructure[] = []
+    const structureIds = new Map<WikiSynthesisStructure['kind'], Map<string, string>>()
+    const structurePayloads = new WeakMap<object, string>()
+    const internStructure = (kind: WikiSynthesisStructure['kind'], value: object): string => {
+      let payload = structurePayloads.get(value)
+      if (payload === undefined) {
+        payload = canonicalJson(value)
+        structurePayloads.set(value, payload)
+      }
+      let ids = structureIds.get(kind)
+      if (ids === undefined) {
+        ids = new Map<string, string>()
+        structureIds.set(kind, ids)
+      }
+      const existing = ids.get(payload)
+      if (existing !== undefined) return existing
+      const id = `s${sourceStructures.length + 1}`
+      ids.set(payload, id)
+      sourceStructures.push({ id, kind, payload })
+      return id
+    }
     for (const [evidenceId, representation] of evidence) {
       const exposedAssertions = new Set<string>()
       for (const unit of representation.sourceUnits) {
@@ -5813,14 +5835,14 @@ export class AxAgentEngine implements AgentEngine {
             structuralLabel: unit.structuralLabel,
             containerIds: unit.containerIds,
             labels: unit.labels,
-            // Exact values and governing ownership go to the model; raw spans
-            // and repeated physical-unit text stay in the host's immutable proof.
+            // Dictionary entries preserve exact structure data; keys expose only
+            // this immutable unit's closure, never additional source authority.
             closure: {
               unitId: unit.closure.unit.id,
-              record: unit.closure.record,
-              contexts: unit.closure.contexts,
-              relatedUnits: unit.closure.units.filter(owned => owned.id !== unit.closure.unit.id),
-              links: unit.closure.links
+              recordKey: unit.closure.record === null ? null : internStructure('record', unit.closure.record),
+              contextKeys: unit.closure.contexts.map(context => internStructure('context', context)),
+              relatedUnitKeys: unit.closure.units.filter(owned => owned.id !== unit.closure.unit.id).map(owned => internStructure('unit', owned)),
+              linkKeys: unit.closure.links.map(link => internStructure('link', link))
             }
           })
         }
@@ -5982,6 +6004,7 @@ export class AxAgentEngine implements AgentEngine {
         admittedAI,
         {
           userRequest: input.userRequest,
+          sourceStructures,
           sourceUnits: sources,
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
