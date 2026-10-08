@@ -104,6 +104,7 @@ import { type AgentProviderUsage, acceptCumulativeAgentProviderUsage, assertAgen
 import {
   createWikiSynthesisProgram,
   createWikiSynthesisStreamGuard,
+  encodeWikiSynthesisSources,
   renderWikiSynthesisAnswer,
   type WikiSynthesisAnswer,
   type WikiSynthesisSource,
@@ -5810,7 +5811,8 @@ export class AxAgentEngine implements AgentEngine {
       if (existing !== undefined) return existing
       const id = `s${sourceStructures.length + 1}`
       ids.set(payload, id)
-      sourceStructures.push({ id, kind, payload })
+      const data: unknown = JSON.parse(payload)
+      sourceStructures.push({ id, kind, payload: data })
       return id
     }
     for (const [evidenceId, representation] of evidence) {
@@ -5830,21 +5832,21 @@ export class AxAgentEngine implements AgentEngine {
           text: unit.text,
           kind: unit.kind,
           complete: unit.complete,
-          packet: canonicalJson({
-            structuralId: unit.structuralId,
-            structuralLabel: unit.structuralLabel,
-            containerIds: unit.containerIds,
-            labels: unit.labels,
-            // Dictionary entries preserve exact structure data; keys expose only
-            // this immutable unit's closure, never additional source authority.
-            closure: {
-              unitId: unit.closure.unit.id,
-              recordKey: unit.closure.record === null ? null : internStructure('record', unit.closure.record),
-              contextKeys: unit.closure.contexts.map(context => internStructure('context', context)),
-              relatedUnitKeys: unit.closure.units.filter(owned => owned.id !== unit.closure.unit.id).map(owned => internStructure('unit', owned)),
-              linkKeys: unit.closure.links.map(link => internStructure('link', link))
-            }
-          })
+          // Fixed columns remove repeated metadata keys without omitting values.
+          // The last row names only this immutable unit's owned dependencies.
+          packet: canonicalJson([
+            unit.structuralId,
+            unit.structuralLabel,
+            unit.containerIds,
+            unit.labels,
+            [
+              unit.closure.unit.id,
+              unit.closure.record === null ? null : internStructure('record', unit.closure.record),
+              unit.closure.contexts.map(context => internStructure('context', context)),
+              unit.closure.units.filter(owned => owned.id !== unit.closure.unit.id).map(owned => internStructure('unit', owned)),
+              unit.closure.links.map(link => internStructure('link', link))
+            ]
+          ])
         }
         units.set(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]), unit)
         sources.push(source)
@@ -6004,8 +6006,7 @@ export class AxAgentEngine implements AgentEngine {
         admittedAI,
         {
           userRequest: input.userRequest,
-          sourceStructures,
-          sourceUnits: sources,
+          ...encodeWikiSynthesisSources(sources, sourceStructures),
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
           repairFeedback: input.repairFeedback

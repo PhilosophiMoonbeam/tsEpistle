@@ -520,7 +520,7 @@ describe('Ax agent engine context compaction', () => {
         }
         const units = synthesisSourcesFromRequest(input)
         const draft = calls.length === 3
-          ? { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text.includes('Maya Quinn') || synthesisOwnedPacketIncludes(input, unit, '"value":"Maya Quinn"'))?.unitId ?? 'fixture-omitted-contact-unit', statement: fact }
+          ? { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text.includes('Maya Quinn') || synthesisOwnedPacketIncludes(input, unit, 'Maya Quinn'))?.unitId ?? 'fixture-omitted-contact-unit', statement: fact }
           : { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text === independentFact)?.unitId ?? 'fixture-missing-office-unit', statement: independentFact }
         return response(synthesisFixtureAnswer(input, { claims: [draft], unresolvedFacets: calls.length === 3 ? [] : [0] }), 100, 10)
       })

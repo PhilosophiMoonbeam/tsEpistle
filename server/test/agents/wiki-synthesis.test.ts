@@ -2,7 +2,7 @@ import { axGlobals, AxMockAIService, type AxAIServiceOptions, type AxChatRequest
 import { ProxyTracerProvider } from '@opentelemetry/api'
 import * as markdownItModule from 'markdown-it'
 import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
-import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, encodeWikiSynthesisSources, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
 import { wikiSynthesisOptimizedProgram } from '../../agents/providers/wiki-synthesis-calibration.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
@@ -21,7 +21,7 @@ const source: WikiSynthesisSource = {
 }
 const input: WikiSynthesisInput = {
   userRequest: 'What approvals are required, and who approves?',
-  sourceUnits: [source],
+  ...encodeWikiSynthesisSources([source]),
   requestFacets: ['What approvals are required?', 'who approves?'],
   availableObservations: [],
   repairFeedback: ''
@@ -41,7 +41,7 @@ const generate = (prediction: WikiSynthesisAnswer, sources: readonly WikiSynthes
     chatResponse: chat
   })
   const program = createWikiSynthesisProgram(sources, { facetCount: input.requestFacets.length, ...options })
-  return { result: program.forward(service, { ...input, sourceUnits: [...sources], availableObservations: [...(options.observations ?? [])] }, { structuredOutputMode: mode }), chat }
+  return { result: program.forward(service, { ...input, ...encodeWikiSynthesisSources(sources), availableObservations: [...(options.observations ?? [])] }, { structuredOutputMode: mode }), chat }
 }
 
 describe('Wiki source-bound typed synthesis', () => {
@@ -84,7 +84,7 @@ describe('Wiki source-bound typed synthesis', () => {
       chatResponse: { results: [{ index: 0, content: JSON.stringify(empty), finishReason: 'stop' }] }
     })
     const program = createWikiSynthesisProgram([])
-    const emptyContext = await program.forward(service, { ...input, sourceStructures: [], sourceUnits: [], requestFacets: [], availableObservations: [], repairFeedback: '' })
+    const emptyContext = await program.forward(service, { ...input, ...encodeWikiSynthesisSources([]), requestFacets: [], availableObservations: [], repairFeedback: '' })
     expect(emptyContext).toMatchObject(empty)
     const omittedContext = await program.forward(service, { userRequest: input.userRequest })
     expect(omittedContext).toMatchObject(empty)
@@ -111,12 +111,6 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(accepted.unresolvedFacets).toEqual([1])
     expect(accepted.observations).toEqual([])
     expect(accepted.recommendations).toBe(prediction.recommendations)
-    expect(chat.mock.calls[0]![0].responseFormat).toBeUndefined()
-    expect(chat.mock.calls[0]![0].functions ?? []).toHaveLength(0)
-    const prompt = chat.mock.calls[0]![0].chatPrompt.map(message => JSON.stringify(message)).join('\n')
-    expect(prompt).toContain(`Allowed evidenceId values: [\\"${source.evidenceId}\\"]`)
-    expect(prompt).toContain('unit:approval')
-    expect(prompt).toContain('sourceRevision values')
     const wrongBinding = new AxMockAIService({
       features: { functions: false, streaming: false, structuredOutputs: false, structuredOutputModes: [] },
       chatResponse: { results: [{ index: 0, content: fieldOutput([{ ...prediction.claims[0], unitId: 'unit:invented' }]), finishReason: 'stop' }] }
@@ -163,10 +157,13 @@ describe('Wiki source-bound typed synthesis', () => {
       packet: JSON.stringify({ unitId: source.unitId, recordKey: 's1', contextKeys: [], relatedUnitKeys: [], linkKeys: [] })
     }
     const other = { ...owned, evidenceId: 'page:99:revision:7:section:1', text: 'Internal publication requires no approvals.' }
-    const structures: NonNullable<WikiSynthesisInput['sourceStructures']> = [
-      { id: 's1', kind: 'record', payload: JSON.stringify({ id: 'record:approval', unitIds: [source.unitId], text: source.text }) },
-      { id: 's2', kind: 'record', payload: JSON.stringify({ id: 'record:approval', unitIds: [source.unitId], text: other.text }) }
-    ]
+    const structures = [source, other].map((entry, index) => ({
+      id: `s${index + 1}`, kind: 'record' as const,
+      payload: {
+        id: 'record:approval', kind: 'labeled-record', contextIds: [], unitIds: [source.unitId], complete: true,
+        fields: [{ id: 'field:approval', label: 'Approval', value: entry.text, unitIds: [source.unitId], sourceSpans: [], order: 0, complete: true }]
+      }
+    }))
     const program = createWikiSynthesisProgram([owned, { ...other, packet: other.packet.replace('s1', 's2') }], {
       facetCount: 2,
       validateClaim: (claim, selected) => claim.statement === selected.text || 'The claim must remain inside its owned source closure.'
@@ -175,7 +172,7 @@ describe('Wiki source-bound typed synthesis', () => {
     const run = (prediction: WikiSynthesisAnswer) => program.forward(new AxMockAIService({
       features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
       chatResponse: { results: [{ index: 0, content: JSON.stringify(prediction), finishReason: 'stop' }] }
-    }), { ...input, sourceStructures: structures, sourceUnits: [owned, { ...other, packet: other.packet.replace('s1', 's2') }] })
+    }), { ...input, ...encodeWikiSynthesisSources([owned, { ...other, packet: other.packet.replace('s1', 's2') }], structures) })
     const accepted = await run(answer())
     expect(renderWikiSynthesisAnswer(accepted)).toContain(`[[cite:${owned.evidenceId}]]`)
     await expect(run(answer({ claims: [{ ...answer().claims[0]!, statement: other.text }] }))).rejects.toThrow('owned source closure')

@@ -35,16 +35,32 @@ const synthesisField = (input: string, title: string): unknown => {
   const start = input.lastIndexOf(`\n\n${title}: `)
   if (start < 0) throw new Error(`Missing supplied synthesis ${title} field`)
   const value = input.slice(start + title.length + 4)
-  const end = value.search(/\n\n(?:Source Units|Request Facets|Available Observations|Repair Feedback): /u)
+  const end = value.search(/\n\n(?:Source Bindings|Request Facets|Available Observations|Repair Feedback): /u)
   return JSON.parse(end < 0 ? value : value.slice(0, end))
 }
 
 export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): WikiSynthesisSource[] => {
   const input = synthesisInputFromRequest(request)
-  if (input === undefined || !input.includes('\n\nSource Units: ')) return []
-  const sources: unknown = synthesisField(input, 'Source Units')
-  if (!Array.isArray(sources)) throw new Error('Supplied Source Units field is not an array')
-  return sources as WikiSynthesisSource[]
+  if (input === undefined || !input.includes('\n\nSource Bindings: ')) return []
+  const bindings = synthesisField(input, 'Source Bindings')
+  const structures = synthesisField(input, 'Source Structures')
+  if (!Array.isArray(bindings) || !Array.isArray(structures)) throw new Error('Supplied synthesis source transport is not arrays')
+  const sourceData = new Map<string, unknown>()
+  for (const entry of structures)
+    if (Array.isArray(entry) && typeof entry[0] === 'string' && entry[1] === 'source')
+      sourceData.set(entry[0], entry[2])
+  return bindings.map((binding: unknown): WikiSynthesisSource => {
+    if (!Array.isArray(binding) || binding.length !== 4 || binding.some(value => typeof value !== 'string'))
+      throw new Error('Invalid supplied synthesis binding')
+    const data = sourceData.get(binding[3])
+    if (!Array.isArray(data) || data.length !== 5 ||
+      typeof data[0] !== 'string' || typeof data[1] !== 'string' || typeof data[2] !== 'string' || typeof data[3] !== 'boolean' || data[4] === undefined)
+      throw new Error('Missing supplied synthesis source data')
+    return {
+      evidenceId: binding[0], sourceRevision: binding[1], unitId: binding[2],
+      context: data[0], text: data[1], kind: data[2], complete: data[3], packet: JSON.stringify(data[4])
+    }
+  })
 }
 
 export const synthesisOwnedPacketIncludes = (
@@ -55,21 +71,18 @@ export const synthesisOwnedPacketIncludes = (
   const input = synthesisInputFromRequest(request)
   if (input === undefined || !input.includes('\n\nSource Structures: ')) return false
   const packet: unknown = JSON.parse(source.packet)
-  if (typeof packet !== 'object' || packet === null || !('closure' in packet)) return false
-  const closure = packet.closure
-  if (typeof closure !== 'object' || closure === null) return false
+  if (!Array.isArray(packet) || !Array.isArray(packet[4])) return false
+  const closure = packet[4]
   const keys = new Set<string>()
-  for (const [name, value] of Object.entries(closure)) {
-    if (name === 'recordKey' && typeof value === 'string') keys.add(value)
-    if (['contextKeys', 'relatedUnitKeys', 'linkKeys'].includes(name) && Array.isArray(value))
-      for (const key of value) if (typeof key === 'string') keys.add(key)
-  }
+  if (typeof closure[1] === 'string') keys.add(closure[1])
+  for (const dependencies of closure.slice(2))
+    if (Array.isArray(dependencies))
+      for (const key of dependencies) if (typeof key === 'string') keys.add(key)
   const structures = synthesisField(input, 'Source Structures')
   if (!Array.isArray(structures)) throw new Error('Supplied Source Structures field is not an array')
   return structures.some((entry: unknown) =>
-    typeof entry === 'object' && entry !== null &&
-    'id' in entry && typeof entry.id === 'string' && keys.has(entry.id) &&
-    'payload' in entry && typeof entry.payload === 'string' && entry.payload.includes(literal)
+    Array.isArray(entry) && typeof entry[0] === 'string' && keys.has(entry[0]) &&
+    JSON.stringify(entry[2])?.includes(literal) === true
   )
 }
 
