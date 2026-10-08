@@ -1,7 +1,7 @@
 ---
 name: ax-gepa
 description: This skill helps an LLM generate correct AxGEPA optimization code using @ax-llm/ax. Use when the user asks about AxGEPA, GEPA, Pareto optimization, multi-objective prompt tuning, reflective prompt evolution, validationExamples, maxMetricCalls, or optimizing a generator, flow, or agent tree.
-version: "25.0.0"
+version: "25.2.1"
 ---
 
 # GEPA Optimization Codegen Rules (@ax-llm/ax)
@@ -208,7 +208,7 @@ const loaded = JSON.parse(saved);
 program.applyOptimization(loaded);
 ```
 
-- Single-target runs usually populate both `optimizedProgram.instruction` and `optimizedProgram.componentMap`.
+- Single-generator runs store optimized components in `optimizedProgram.componentMap`, with instructions keyed by `${programId}::instruction`. Other components, such as descriptions, have their own keys.
 - Tree-wide runs rely on `componentMap`, keyed by full component key.
 - Pareto points expose candidate configs under `point.configuration.componentMap`.
 

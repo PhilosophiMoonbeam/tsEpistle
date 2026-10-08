@@ -5,57 +5,57 @@
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "248a6931a7c8d7b812f18ca7e187e30959a74baa9a2d11e2905cefe786c8587a",
-      "wellKnownDigest": "sha256:1f840b4b4374b3034bfb011ec68ce619d474333e4f6deca715261d262b52da88"
+      "computedHash": "15aa650d8ba50f59d86352b4e54178f2b2a1bcae1fe291cfe3fd0e23c82858ee",
+      "wellKnownDigest": "sha256:3aa7860f08c8bbe8fa1fc746626f4460d756be277c2cddac8a3d76c2b8e3fc07"
     },
     "ax-agent-context": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "8369b5589b203cddf3a16897815be61462651cb807100406f77b8f132e8d2cff",
-      "wellKnownDigest": "sha256:1c54df49ee222f87110185b4886d6760b1bc54090daeb2de81f9b48b000bf7f3"
+      "computedHash": "6748ef1173f4f970afe2de326b325b268ec025602dfe44f7e60b8803eb79d400",
+      "wellKnownDigest": "sha256:ef289ea9f92bce73ce5485c375248a7214cec22de607945bc47875c05db95064"
     },
     "ax-agent-memory-skills": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "971c7c50be7d312a56363a660cc662724d8cdc35c0a70ef6303cfd41a584d0c1",
-      "wellKnownDigest": "sha256:d58841067e7c8ddbf63bce992f867ca45b4b556ba57e3293b0580a2347ff1a65"
+      "computedHash": "f2d564c88e58d5869eba5c21722127865c156cda9e3ed4ed27bb69c9b065755b",
+      "wellKnownDigest": "sha256:aede1ce859ed1b8b0bff12a8a0202e3c5e530f8ddfa42be035ba3a62fb809a6b"
     },
     "ax-agent-observability": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "306714b856de521008f6d956d6fe7f91c4218ddaab96312316d06c138f4f86a7",
-      "wellKnownDigest": "sha256:cd293c2baea19a3f72ca07f92dfffa4768a6b3e3c2427fb956858cced937a277"
+      "computedHash": "ef0a77436a9787e1a301a281b4747e9b750887da3da8085e26c1f7964c4fcdf1",
+      "wellKnownDigest": "sha256:b6fa8494b24d82cb44a6c3e0a14ad38f872711b8909515627bd7521e18c175dd"
     },
     "ax-agent-optimize": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "0bac328667b4f750be0196145cd45917e921b32b6d5859e7991353c14976f3cf",
-      "wellKnownDigest": "sha256:d9ae91276e2831dd74f4f78ba04949313e1e19dd05149450c80a0a747fd03fdd"
+      "computedHash": "5cd0def516cc510e605c060992a4fcad9580c6f6da6ea3e1e68634381c7ddab2",
+      "wellKnownDigest": "sha256:2bf16ac3e97be580ac33f3bb76edf147b0638449e39b0523b45c16acab6fda55"
     },
     "ax-agent-rlm": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "a54579e955db83189e5c746ccbe2286324a893858e73a4774598b4a51bf3ab36",
-      "wellKnownDigest": "sha256:87e415812508cf0e1faaba1f1d7fda54497a3d16bd715056a5a51d30dfd3c3b3"
+      "computedHash": "0d2de59f12b2a76caaf7782f3a4a10ec23ffe62815dfe73b626a5821e88d3293",
+      "wellKnownDigest": "sha256:6365f23260a8c8fb14741711ad781efbeb92144301ccf39d70b7fb51b91f5804"
     },
     "ax-ai": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "df9ee460371f69e238dce4df00ca10f8a23cf45fa1f6a2420ac3c7ec823fd94b",
-      "wellKnownDigest": "sha256:334080860322b71b454be4e414646f9d20042acd503c93bb1aabeba753d17c4e"
+      "computedHash": "bc4c20471dcfebece252e430f72f470400294449387991d8fb034c4c589109ca",
+      "wellKnownDigest": "sha256:2d303c783561e113e03aa86fabe8fbcaaad620b2689a0cdb4a67eb951e3ab43a"
     },
     "ax-audio": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "ecd7d58ab957bde22fba75d6dd8221a3d45a6c0f886b7a8d21e6357660e0cecc",
-      "wellKnownDigest": "sha256:61f1e984aef127408ae13814383e67ed3b9ca580b6672531def7d92d3d0f3d18"
+      "computedHash": "5ec02dabdff78d16b220a6afafb71dbff2cbcb42a872097cb3f63e2bbdd5475b",
+      "wellKnownDigest": "sha256:fcb3bf6df434c9be1f91e2cb078aa549e31eaab169d00b50f9764291fa2c8d97"
     },
     "ax-event-runtime": {
       "source": "ax-llm.github.io",
@@ -68,64 +68,64 @@
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "3f4a06711ab31de6eb4c323223743d5b4ed88fa03a41a8ef5e49799d80b91155",
-      "wellKnownDigest": "sha256:ee6ffa6db8e6a11bcdd3eb6476b7d6ed159bc854f28e82f5c2d7cca2a090009b"
+      "computedHash": "5018dc65c3b1a1630b33fcf541083d26a3202c6ed1ed1d03c3d6182ff367612a",
+      "wellKnownDigest": "sha256:783ca288a716bde15d8f122d00b4fc4b689d0d018098fc601af62cdfb9e3a151"
     },
     "ax-gen": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "e75f07452a9360b07c8defc99d94b2751e72e7c78a37769b8ea1696caf3b00e9",
-      "wellKnownDigest": "sha256:df14e16c4b164e97743eb8ab531014eef36746e86cd26ff27b81d3a4f73dd71e"
+      "computedHash": "f622be6f841af9afb095cbeba6b2aa2c6da4ff1cf935ca837c311b916107b5d0",
+      "wellKnownDigest": "sha256:48bd74b10a5fea7312823a813ea1e3967de918dd0fe5f3d756570071d1772f03"
     },
     "ax-gepa": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "40bfc32fcb32eb887efbe6b712dd7a1a96de764b66d26cd729aa3f4310290af6",
-      "wellKnownDigest": "sha256:f5de220d60c8101465468dda3cc7d2e8a7521937e1be68bcfd1f38e8fe7029a8"
+      "computedHash": "67e6d2964257ea89f5af766ef4a9f555f489a0cd2eb75ae603a2958af4801645",
+      "wellKnownDigest": "sha256:c2f3794c71f22da0614e2a34eaccf5560538bdd7adef29bb3b410b122e5247c5"
     },
     "ax-llm": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "4a5578551f8e79adf13dfea887ad87fcc3456b0362419e9427b3afb99a8d080d",
-      "wellKnownDigest": "sha256:54e21060c01ec28aefbad63291df436e75aa5dc9fab10d867fca591515afb36a"
+      "computedHash": "75301fed6b994ad9b886b78029556e80ca12fba2be40e4462328d275c9d035e7",
+      "wellKnownDigest": "sha256:ab9afc4c17c3c44df6d62b08d2e73e8c37ba6424e0e3bed77dc4842843dc9110"
     },
     "ax-mcp": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "a0e2dc040fa8db6fabed315fce90c9cd6c49d41b4655e9d9f20fb023ecbac489",
-      "wellKnownDigest": "sha256:b7a410d894442058d4ebad9937c19927f29a30f1fb45fe09e784d5e442449b02"
+      "computedHash": "6d944ad017e99f0c3fc93ea55578f4709d466f1ce8294fccb82e244a66bf0e8b",
+      "wellKnownDigest": "sha256:f293ec1a1f8146a6b821c66627bff10720df99e52df5a2354a812069a46acea8"
     },
     "ax-playbook": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "797f2ccac8f6bb670d6500b30f6e90e731f1aaac848c920ec6ad728d8f7b2310",
-      "wellKnownDigest": "sha256:3335597c720584b2ac4e5f915519eee021a8e62534466422888ea93834f216ff"
+      "computedHash": "f107549408115a5c08fde93c76c917ada483639b1eda6e48327302cc06b0a8d2",
+      "wellKnownDigest": "sha256:2b9baf502ed8ac78920e2c78c87391b38d0d22af8a0e5f170cac0bbf9d5dc74a"
     },
     "ax-refine": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "48357a05998db00515cd991a660553325ad7face7f1e62aafa8cd1a8fb21b1ba",
-      "wellKnownDigest": "sha256:cc7a41b8d79dd0152be143ab78d054f22aaf11a092cd449145d12ddbf12daebc"
+      "computedHash": "5a9fc1fb9b0e2135c54b4345bdda3224f80987eec45fbd37170738a25438e00d",
+      "wellKnownDigest": "sha256:f3112a210caeecbe6be3978c89af5ee63a318fd542459ad19cc0c2e7fddd7695"
     },
     "ax-signature": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "f8000fab7baab5a0acd85d5b5e80e1865bfab3e1d168e3ac5844b4eb9f01c8a9",
-      "wellKnownDigest": "sha256:ef1a3ec89d944e56157f155ff3fcca89af9d9c9c97b3a1e7a4199a1af3bff6e4"
+      "computedHash": "38babdf0b74dde17743bebd105019e6ace5283214853f567d02a161f11dfd1be",
+      "wellKnownDigest": "sha256:bee8afdc93c3f8e11894274e540a7316dd81f91d1a7e772f91e97bfb8ca2e46e"
     },
     "ax-typesafe": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",
       "sourceType": "well-known",
-      "computedHash": "40b7e75119479f91e4c73e153a93f6e7adcede5f602d0c5468a70f890ce4047b",
-      "wellKnownDigest": "sha256:d8b8be32a8aa0b53133d6507ae1cf51bb1e032008bd5b065fbf02aa7c45e0c9d"
+      "computedHash": "e5ebe2b51998060d76b44d5890f4cedfffbe32f6d942b2d61f469d57c0950b22",
+      "wellKnownDigest": "sha256:216986da03cbbe6317345d210d5180ff8c0dbf0fcf01831854ef10b3d5b4f342"
     },
     "codemirror": {
       "source": "solanabettercall/skills",
