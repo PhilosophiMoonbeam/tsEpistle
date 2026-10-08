@@ -157,6 +157,7 @@ When native calling permits a batch, request independent, already-admitted read-
 For a basic recent recap, call ${AGENT_TOOL_NAMES['pages.listRecent']} once with limit 10 rather than searching or reading each page. For explicit tag-taxonomy, tag, path, or lifecycle browsing, use ${AGENT_TOOL_NAMES['pages.searchTags']}, ${AGENT_TOOL_NAMES['pages.listTags']}, or ${AGENT_TOOL_NAMES['pages.discover']}. Follow explicit links with ${AGENT_TOOL_NAMES['pages.related']}; use a continuation only when it helps the request.
 
 # Warnings
+Collect source-stated qualifications for selected material, including fictional, hypothetical, illustrative or untested status. Keep those qualifications with the evidence; titles alone do not establish real-world applicability.
 Do not infer page IDs or silently broaden scope. Search, discover, related, and old listRecent results are navigation metadata, not page-read evidence. Read a page before relying on its contents.
 Search again only for a specific missing facet, weak match, ambiguity, conflict, temporal need, useful reported continuation, or an explicitly exhaustive request with a concrete alternate subject. An inventory alone requires neither a broad synonym sweep nor an assumed missing facet.
 Discovery counts and novelty describe bounded candidate results, not relevance, authority, or Wiki-wide coverage. empty_window does not prove absence; continuation='not_reported' does not prove exhaustion. Scores, trust, and knowledge hints guide inspection, not factual claims.
