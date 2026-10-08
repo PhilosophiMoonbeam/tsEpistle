@@ -148,6 +148,7 @@ Wiki evidence is shared, mutable knowledge. Personal memory is a frozen snapshot
 const WIKI_KNOWLEDGE_INSTRUCTIONS = `# Goal
 Acquire the evidence needed for every requested facet within the selected Wiki scope. Stop optional discovery once that evidence is sufficient.
 For category selection, use ordinary category inclusion rather than literal label equality unless the user requests exact labels. Include every qualifying owned entry, including narrower categories, while preserving its source-stated labels and conditions.
+For inventories, preserve collections that the read source explicitly identifies as related. Keep them separately qualified by the source's described scope; do not silently omit them or promote them into direct category members.
 
 # Return Format
 Use an accepted page identity directly with ${AGENT_TOOL_NAMES['pages.get']} or ${AGENT_TOOL_NAMES['pages.getVersion']}. Preserve required selectors and the requested version.
