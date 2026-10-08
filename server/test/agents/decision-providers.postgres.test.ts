@@ -7,7 +7,12 @@ import { up as addSecrets } from '../../db/migrations/2.5.141.ts'
 import { up as addDecisionProviders, down as removeDecisionProviders } from '../../db/migrations/tsepistle-000051-agent-decision-providers.ts'
 import { DecisionProviderRegistry, type DecisionProviderTransportOptions } from '../../agents/decision-providers.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
-import { TYPESAFE_DECISION_PROVIDER_ID, type DecisionProviderActor, type DecisionProviderWrite } from '../../../shared/agents/decision-providers.ts'
+import {
+  TYPESAFE_DECISION_PROVIDER_ID,
+  type DecisionBatchRequest,
+  type DecisionProviderActor,
+  type DecisionProviderWrite
+} from '../../../shared/agents/decision-providers.ts'
 
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -23,6 +28,13 @@ const decision = {
   state: 'A short definition question',
   instructions: 'Select effort',
   criteria: { simple: 'Short factual answer', complex: 'Multi-step work' }
+}
+const batchDecision: DecisionBatchRequest = {
+  state: decision.state,
+  questions: {
+    effort: { instructions: decision.instructions, criteria: decision.criteria },
+    support: { instructions: 'Is the evidence sufficient?', criteria: { sufficient: 'Sufficient', insufficient: 'Insufficient' } }
+  }
 }
 
 suite('PostgreSQL decision provider persistence and current authorization', () => {
@@ -319,36 +331,64 @@ suite('PostgreSQL decision provider persistence and current authorization', () =
     expect(await registry.get(view.id, actor)).toMatchObject({ revision: 2, checkedAt: null, enabled: false })
   })
 
-  it('rejects an in-flight runtime decision after admin disable while retaining its measured usage', async () => {
-    const started = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<void>()
-    const baseFetch = transport.fetch!
-    const active = new DecisionProviderRegistry(db, secrets, {
-      ...transport,
-      fetch: Object.assign(
-        async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-          if (new URL(String(input)).pathname === '/v1/systemone') {
-            started.resolve()
-            await release.promise
-          }
-          return baseFetch(input, init)
-        },
-        { preconnect: () => {} }
-      ) as typeof fetch
+  it('rejects a preselected batch revision before paid dispatch even while that provider remains enabled', async () => {
+    const snapshot = await registry.selectRuntime()
+    await registry.setDefault(snapshot.id, snapshot.revision, actor)
+    await expect(registry.decideBatch(batchDecision, { providerId: snapshot.id, providerRevision: snapshot.revision })).rejects.toMatchObject({
+      code: 'DECISION_PROVIDER_REVISION_CHANGED',
+      status: 409
     })
-    const pending = active.decide(decision).then(
-      value => ({ value }),
-      error => ({ error })
-    )
-    await started.promise
-    await registry.setEnabled(TYPESAFE_DECISION_PROVIDER_ID, false, 1, actor)
-    release.resolve()
-    expect(await pending).toMatchObject({
-      error: {
-        code: 'DECISION_PROVIDER_REVISION_CHANGED',
-        usage: { inputTokens: 100, outputTokens: 3, totalTokens: 103, totalTokensSource: 'derived' },
-        estimatedCostMicros: 5
-      }
-    })
+    expect(usedCredentials).toHaveLength(0)
   })
+
+  for (const batched of [false, true]) {
+    it(`rejects an in-flight runtime ${batched ? 'batch' : 'decision'} after admin disable while retaining its measured usage`, async () => {
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const baseFetch = transport.fetch!
+      const active = new DecisionProviderRegistry(db, secrets, {
+        ...transport,
+        fetch: Object.assign(
+          async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+            if (new URL(String(input)).pathname === '/v1/systemone') {
+              started.resolve()
+              await release.promise
+              if (batched)
+                return Response.json({
+                  model: 'jev-1.13.0',
+                  answers: {
+                    effort: { type: 'choice', choice: 'simple', probabilities: { simple: 1, complex: 0 }, confidence: 1 },
+                    support: { type: 'choice', choice: 'insufficient', probabilities: { sufficient: 0, insufficient: 1 }, confidence: 0.2 }
+                  },
+                  usage: { input_tokens: 100, output_tokens: 3 }
+                })
+            }
+            return baseFetch(input, init)
+          },
+          { preconnect: () => {} }
+        ) as typeof fetch
+      })
+      const snapshot = await registry.selectRuntime()
+      const dispatched = batched
+        ? active.decideBatch(batchDecision, { providerId: snapshot.id, providerRevision: snapshot.revision })
+        : active.decide(decision)
+      const pending = dispatched.then(
+        value => ({ value }),
+        error => ({ error })
+      )
+      await started.promise
+      await registry.setEnabled(snapshot.id, false, snapshot.revision, actor)
+      release.resolve()
+      expect(await pending).toMatchObject({
+        error: {
+          code: 'DECISION_PROVIDER_REVISION_CHANGED',
+          status: 409,
+          providerId: snapshot.id,
+          providerRevision: snapshot.revision,
+          usage: { inputTokens: 100, outputTokens: 3, totalTokens: 103, totalTokensSource: 'derived' },
+          estimatedCostMicros: 5
+        }
+      })
+    })
+  }
 })

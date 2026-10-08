@@ -391,7 +391,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     const providerFactory = new AgentProviderFactory(wiki.models.knex, secrets)
     utilityModel = new AgentUtilityModel(providerFactory)
     providerConformance = new AgentProviderConformanceRunner(wiki.models.knex, providerFactory, providerRegistry)
-    agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions, undefined, { externalMcp }), {
+    agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions, undefined, { externalMcp, decisionProviders }), {
       router,
       authorizeMedia: ownerId =>
         assertWikiAgentMediaAccess(ownerId, { enabled: wiki.config.agents.enabled, providerEnabled: wiki.config.agents.provider.enabled }),

@@ -5,6 +5,7 @@ import { AxAgentEngine } from '../../agents/providers/engine.ts'
 import { type AgentProviderFactory, type AgentProviderFetch } from '../../agents/providers/factory.ts'
 import { createGeminiMediaTransport } from '../../agents/providers/gemini-media.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
+import { fixtureDecisionProviders } from './synthesis-fixture.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import type { AgentMediaGenerationInput } from '../../agents/providers/media-transport.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -109,7 +110,7 @@ const setup = (response: () => Response) => {
       }
     }
   } as unknown as AgentProviderFactory
-  return { urls, engine: new AxAgentEngine(factory) }
+  return { urls, engine: new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }) }
 }
 const output = () =>
   Response.json({
@@ -251,7 +252,7 @@ describe('Ax media protocol and engine accounting boundary', () => {
         createMediaInput: async () => ({ config: { attachments: true }, transport: { upload, countTokens: async () => 20, delete: remove } })
       } as unknown as AgentProviderFactory
       const { mediaRequest: _mediaRequest, ...base } = request()
-      const pending = new AxAgentEngine(factory).execute(
+      const pending = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...base,
           mediaBindings: {},

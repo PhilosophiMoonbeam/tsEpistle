@@ -5,7 +5,7 @@
     <v-alert type="info" variant="tonal">{{ t('nativeTypeSafeJevUsesItsNativeDecision') }}</v-alert>
     <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="t('loadingDecisionProviders')" />
     <p v-if="loaded && !providers.length">{{ t('noDecisionProvidersConfiguredAddAProvider') }}</p>
-    <v-alert v-if="loaded && providers.length && !providers.some(p => p.isDefault && p.enabled && p.secretConfigured && p.checkedAt)" type="warning" variant="tonal">{{ t('noReadyDecisionDefaultIsConfiguredAutomatic') }}</v-alert>
+    <v-alert v-if="loaded && !providers.some(p => p.isDefault && p.enabled && p.secretConfigured && p.checkedAt && p.config.kind === 'typesafe' && p.config.pricing && ['jev-1.13.0', 'jev-latest', 'jev-preview'].includes(p.config.model))" type="warning" variant="tonal">{{ t('noReadyDecisionDefaultIsConfiguredAutomatic') }}</v-alert>
     <article v-for="p in providers" :key="p.id" class="entry">
       <h3>{{ p.displayName }} <v-chip v-if="p.isDefault" size="small" color="primary">{{ t('default') }}</v-chip></h3>
       <p>{{ t('revision', { dialect: p.config.kind === 'typesafe' ? t('nativeTypeSafeJev') : t('customDialect', { dialect: p.config.dialect }), model: p.config.model, revision: p.revision, Disabled: p.enabled ? t('enabled') : t('disabled') }) }}</p>

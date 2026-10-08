@@ -1,9 +1,14 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { DecisionProviderFailure, type DecisionProviderRegistry } from '../../agents/decision-providers.ts'
+import { AgentRepositoryError } from '../../agents/repository.ts'
+import type { AgentEventData } from '../../../shared/agents/contracts.ts'
+import type { DecisionBatchRequest } from '../../../shared/agents/decision-providers.ts'
+import { readAgentUsageEvent } from '../../agents/providers/usage.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
-import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
+import type { AgentDispatchBudget, AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
-import { fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 
 const evidenceId = 'page:42:revision:1'
 
@@ -11,6 +16,7 @@ interface GroundingFixture {
   readonly execute: () => Promise<AgentEngineResult>
   readonly text: { readonly mock: { readonly calls: readonly [string][] } }
   readonly attempts: number
+  readonly events: readonly AgentEventData[]
 }
 
 const request = (): AgentEngineRequest => ({
@@ -56,14 +62,18 @@ const request = (): AgentEngineRequest => ({
   limits: { maxTurns: 8, maxToolCalls: 32, maxTokens: 100_000 }
 })
 
-// Exercise the real collection, exact typed binding, validation and publication
-// boundary. The fixture supplies drafts, not their grounding verdicts.
+// Exercise real host grounding and publication. External decision verdicts are
+// explicit test fixtures, never evidence of semantic-model accuracy.
 const groundingFixture = (
   content: string,
   anchor: string,
   statement: string,
   rejected?: string,
-  mode: 'native' | 'legacy-packet' = 'native'
+  mode: 'native' | 'legacy-packet' = 'native',
+  options: {
+    readonly decisionProviders?: Pick<DecisionProviderRegistry, 'selectRuntime' | 'decideBatch'>
+    readonly dispatchBudget?: AgentDispatchBudget
+  } = {}
 ): GroundingFixture => {
   let sourceReadRequested = false
   let attempts = 0
@@ -133,10 +143,12 @@ const groundingFixture = (
     })
   }
   const text = vi.fn(async (_delta: string) => {})
-  const event = vi.fn(async (_type: string, _data: unknown) => {})
-  const execute = () => new AxAgentEngine(factory, actions).execute({
+  const events: AgentEventData[] = []
+  const event = vi.fn(async (_type: string, data: AgentEventData) => { events.push(data) })
+  const execute = () => new AxAgentEngine(factory, actions, undefined, { decisionProviders: options.decisionProviders ?? fixtureDecisionProviders }).execute({
     ...request(),
     messages: [{ role: 'user', content: `Read page 42 and report this fact: ${statement}` }],
+    ...(options.dispatchBudget === undefined ? {} : { dispatchBudget: options.dispatchBudget }),
     ...(mode === 'legacy-packet' ? {
       purpose: 'subagent' as const,
       task: {
@@ -151,7 +163,7 @@ const groundingFixture = (
       actionAllowlist: ['pages.get'] as const
     } : {})
   }, { text, event })
-  return { execute, text, get attempts() { return attempts } }
+  return { execute, text, events, get attempts() { return attempts } }
 }
 
 const expectPublication = async (fixture: GroundingFixture, statement: string, attempts: number) => {
@@ -311,5 +323,70 @@ describe('record and continuation restriction boundaries', () => {
     const source = '# Source Guide\n\n## Batches\n\n| Detail | Value |\n| --- | --- |\n| Batch 42 | 30 minutes |'
     const statement = 'Detail: Batch 42; Value: 30 minutes.'
     await expectPublication(groundingFixture(source, '30 minutes', statement, 'Detail: Batch 43; Value: 30 minutes.'), statement, 2)
+  })
+})
+
+describe('mandatory Wiki verification publication and accounting', () => {
+  it('withholds an uncertain candidate until the existing single repair passes independent verification', async () => {
+    let checks = 0
+    const decisionProviders = {
+      ...fixtureDecisionProviders,
+      async decideBatch(input: DecisionBatchRequest) {
+        expect(fixture.text.mock.calls).toHaveLength(0)
+        const result = await fixtureDecisionProviders.decideBatch(input)
+        checks++
+        if (checks === 1) return { ...result, answers: Object.fromEntries(Object.entries(result.answers).map(([key, answer]) => [key, { ...answer, confidence: 0.8 }])) }
+        return result
+      }
+    }
+    const fixture = groundingFixture(quantitySource, '300 g', quantityFact, undefined, 'native', { decisionProviders })
+    await expectPublication(fixture, quantityFact, 2)
+    expect(checks).toBe(2)
+  })
+
+  it('fails before paid generation when the configured decision complement is unavailable', async () => {
+    const fixture = groundingFixture(quantitySource, '300 g', quantityFact, undefined, 'native', {
+      decisionProviders: { ...fixtureDecisionProviders, selectRuntime: async () => { throw new AgentRepositoryError('DECISION_CREDENTIAL_UNAVAILABLE', 'private credential detail', 503) } }
+    })
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_UNAVAILABLE', status: 503 })
+    expect(fixture.attempts).toBe(0)
+    expect(fixture.text.mock.calls).toHaveLength(0)
+    expect(fixture.events).toHaveLength(0)
+  })
+
+  it.each(['known-paid', 'unknown-paid', 'predispatch-revision'] as const)('preserves generating usage and settles only established verification exposure: %s', async mode => {
+    const held = new Map<number, { tokens: number; costMicros: number }>()
+    let nextId = 0
+    const reconciled: { inputTokens: number; outputTokens: number; totalTokens: number; costMicros: number }[] = []
+    const budget: AgentDispatchBudget = {
+      reserve: async maximum => { const id = ++nextId; held.set(id, maximum); return { id, ...maximum } },
+      reconcile: async (reservation, actual) => { held.delete(reservation.id); reconciled.push(actual) },
+      release: async reservation => { held.delete(reservation.id) },
+      consumeTool: async () => {},
+      get unsettledExposure() { return [...held.values()].reduce((sum, entry) => ({ tokens: sum.tokens + entry.tokens, costMicros: sum.costMicros + entry.costMicros }), { tokens: 0, costMicros: 0 }) }
+    }
+    const snapshot = await fixtureDecisionProviders.selectRuntime()
+    snapshot.config.pricing = { ...snapshot.config.pricing!, inputPerMillion: 1, outputPerMillion: 2 }
+    const decisionProviders = {
+      selectRuntime: async () => snapshot,
+      decideBatch: async () => {
+        if (mode === 'predispatch-revision') throw new AgentRepositoryError('DECISION_PROVIDER_REVISION_CHANGED', 'Decision provider revision changed', 409)
+        throw new DecisionProviderFailure('INVALID_DECISION_RESPONSE', snapshot,
+          mode === 'known-paid' ? { inputTokens: 100, outputTokens: 2, totalTokens: 102, totalTokensSource: 'reported' } : null, 7)
+      }
+    }
+    const fixture = groundingFixture(quantitySource, '300 g', quantityFact, undefined, 'native', { decisionProviders, dispatchBudget: budget })
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_FAILED' })
+    expect(fixture.text.mock.calls).toHaveLength(0)
+    expect(fixture.attempts).toBe(1)
+    const verification = fixture.events.find(event => event.purpose === 'verification')!
+    expect(readAgentUsageEvent(verification)).toEqual(mode === 'known-paid'
+      ? { inputTokens: 100, outputTokens: 2, totalTokens: 102, costMicros: 104 }
+      : { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 })
+    expect(reconciled.filter(entry => entry.totalTokens === 102)).toHaveLength(mode === 'known-paid' ? 1 : 0)
+    expect(budget.unsettledExposure).toEqual(mode === 'unknown-paid' ? { tokens: 64_000, costMicros: 128_000 } : { tokens: 0, costMicros: 0 })
+    const generating = fixture.events.filter(event => event.outcome === 'answer_rejected')
+    expect(generating).toHaveLength(1)
+    expect(readAgentUsageEvent(generating[0]!)).toMatchObject({ inputTokens: 10, outputTokens: 2, totalTokens: 12 })
   })
 })

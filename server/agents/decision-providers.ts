@@ -9,6 +9,9 @@ import {
   DecisionProviderConfigSchema,
   DecisionProviderWriteSchema,
   DecisionUsageSchema,
+  type DecisionBatchQuestion,
+  type DecisionBatchRequest,
+  type DecisionBatchResult,
   type DecisionProviderActor,
   type DecisionProviderCheck,
   type DecisionProviderConfig,
@@ -96,16 +99,20 @@ export const normalizeDecisionAnswer = (
   return { choice: answer.choice, probabilities, confidence: answer.confidence }
 }
 
-const validateRequest = (request: DecisionRequest): void => {
-  if (!plain(request) || Object.keys(request).some(key => !['state', 'instructions', 'criteria'].includes(key)) || !plain(request.criteria))
+const validateQuestion = (question: DecisionBatchQuestion): void => {
+  if (!plain(question) || Object.keys(question).some(key => !['instructions', 'criteria'].includes(key)) || !plain(question.criteria))
     throw invalid('INVALID_DECISION_REQUEST', 400)
-  const labels = Object.keys(request.criteria)
+  const labels = Object.keys(question.criteria)
   if (
     labels.length < 1 ||
     labels.length > 255 ||
     labels.some(label => !label || label.length > 255 || hasControlCharacters(label) || ['__proto__', 'constructor', 'prototype'].includes(label))
   )
     throw invalid('INVALID_DECISION_REQUEST', 400)
+  if (question.instructions === null || question.instructions === '') throw invalid('INVALID_DECISION_REQUEST', 400)
+}
+
+const validateEntries = (entries: Iterable<unknown>): void => {
   let count = 0
   const json = (value: unknown, depth: number): void => {
     if (++count > 16_384 || depth > 32) throw invalid('INVALID_DECISION_REQUEST', 400)
@@ -120,12 +127,53 @@ const validateRequest = (request: DecisionRequest): void => {
     }
     throw invalid('INVALID_DECISION_REQUEST', 400)
   }
-  for (const entry of [request.state, request.instructions, ...Object.values(request.criteria)]) {
+  for (const entry of entries) {
     if (entry !== null && typeof entry !== 'string' && !Array.isArray(entry) && !plain(entry)) throw invalid('INVALID_DECISION_REQUEST', 400)
     json(entry, 0)
   }
-  if (request.instructions === null || request.instructions === '') throw invalid('INVALID_DECISION_REQUEST', 400)
+}
+
+const validateRequest = (request: DecisionRequest): void => {
+  if (!plain(request) || Object.keys(request).some(key => !['state', 'instructions', 'criteria'].includes(key)))
+    throw invalid('INVALID_DECISION_REQUEST', 400)
+  validateQuestion({ instructions: request.instructions, criteria: request.criteria })
+  validateEntries([request.state, request.instructions, ...Object.values(request.criteria)])
   if (Buffer.byteLength(JSON.stringify(request)) > MAX_REQUEST_BYTES - 8_192) throw invalid('INVALID_DECISION_REQUEST', 400)
+}
+
+/** Preflight the entire batch against the same aggregate JSON and wire bounds as a single decision. */
+export const validateDecisionBatchRequest = (request: DecisionBatchRequest): void => {
+  if (!plain(request) || Object.keys(request).some(key => !['state', 'questions'].includes(key)) || !plain(request.questions))
+    throw invalid('INVALID_DECISION_REQUEST', 400)
+  const ids = Object.keys(request.questions)
+  if (
+    ids.length < 1 ||
+    ids.length > 255 ||
+    ids.some(id => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,254}$/u.test(id) || ['__proto__', 'constructor', 'prototype'].includes(id))
+  )
+    throw invalid('INVALID_DECISION_REQUEST', 400)
+  function* entries(): Iterable<unknown> {
+    yield request.state
+    for (const question of Object.values(request.questions)) {
+      validateQuestion(question)
+      yield question.instructions
+      yield* Object.values(question.criteria)
+    }
+  }
+  validateEntries(entries())
+  if (Buffer.byteLength(JSON.stringify(request)) > MAX_REQUEST_BYTES - 8_192) throw invalid('INVALID_DECISION_REQUEST', 400)
+}
+
+const normalizeDecisionAnswers = (value: unknown, questions: DecisionBatchRequest['questions']): DecisionBatchResult['answers'] => {
+  const ids = Object.keys(questions)
+  if (!plain(value) || Object.keys(value).length !== ids.length || !ids.every(id => Object.hasOwn(value, id))) throw invalid()
+  return Object.fromEntries(
+    ids.map(id => {
+      const answer = value[id]
+      if (!plain(answer) || answer.type !== 'choice') throw invalid()
+      return [id, normalizeDecisionAnswer(answer, questions[id]!.criteria)]
+    })
+  )
 }
 
 export const estimateDecisionCost = (pricing: DecisionProviderPricing | null, usage: DecisionResult['usage'] | null): DecisionResult['estimatedCost'] => {
@@ -306,12 +354,37 @@ export class DecisionProviderClient {
     options: { signal?: AbortSignal; check?: boolean } = {}
   ): Promise<DecisionResult & { availableModels: readonly string[] }> {
     validateRequest(request)
+    const { answers, ...result } = await this.#execute(snapshot, key, request, options)
+    return { ...result, ...answers.decision! }
+  }
+
+  async executeBatch(
+    snapshot: DecisionProviderRuntime,
+    key: string,
+    request: DecisionBatchRequest,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<DecisionBatchResult> {
+    validateDecisionBatchRequest(request)
+    const { availableModels: _models, ...result } = await this.#execute(snapshot, key, request, options)
+    return result
+  }
+
+  async #execute(
+    snapshot: DecisionProviderRuntime,
+    key: string,
+    request: DecisionRequest | DecisionBatchRequest,
+    options: { signal?: AbortSignal; check?: boolean }
+  ): Promise<DecisionBatchResult & { availableModels: readonly string[] }> {
     const config = validateDecisionProviderConfig(snapshot.config)
+    if (config.kind !== 'typesafe' && 'questions' in request)
+      throw new AgentRepositoryError('DECISION_BATCH_UNSUPPORTED', 'Decision batches require a TypeSafe provider', 400)
+    const questions = 'questions' in request ? request.questions : { decision: { instructions: request.instructions, criteria: request.criteria } }
     const timeout = AbortSignal.timeout(config.timeoutMs)
     const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout
     const started = performance.now()
     let usage: DecisionResult['usage'] | null = null
     let responseModel: string | undefined
+    let answers: DecisionBatchResult['answers'] | undefined
     // These identifiers cross the server boundary in checks/results. A custom
     // service must not turn a write-only bearer token into a public model name.
     const safeModelId = (value: unknown): value is string =>
@@ -378,6 +451,7 @@ export class DecisionProviderClient {
           }
         }
         if (typeof payload.model === 'string') responseModel = payload.model
+        if (config.kind === 'typesafe') answers = normalizeDecisionAnswers(payload.answers, questions)
       }
       return payload
     }
@@ -440,7 +514,6 @@ export class DecisionProviderClient {
     ) as typeof fetch
     try {
       if (!usableCredential(key)) throw new AgentRepositoryError('DECISION_CREDENTIAL_UNAVAILABLE', 'Decision provider credential is unavailable', 503)
-      let answer: unknown
       let model: string
       let availableModels: readonly string[] = []
       if (config.kind === 'typesafe') {
@@ -468,11 +541,11 @@ export class DecisionProviderClient {
         const response = await client.systemOne({
           state: request.state,
           model: config.model,
-          questions: { decision: { type: 'choice', instructions: request.instructions, criteria: request.criteria } }
+          questions: Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, { type: 'choice' as const, ...question }]))
         })
-        answer = response.answers.decision
         model = response.model
       } else {
+        if ('questions' in request) throw new AgentRepositoryError('DECISION_BATCH_UNSUPPORTED', 'Decision batches require a TypeSafe provider', 400)
         if (options.check) {
           const models = await fetchJson(new URL(`${config.baseUrl}/models`), { method: 'GET' })
           if (!plain(models) || !Array.isArray(models.data) || models.data.length > 2_048 || models.data.some(card => !plain(card) || !safeModelId(card.id)))
@@ -544,19 +617,18 @@ export class DecisionProviderClient {
         const result = response.results[0]
         if (response.results.length !== 1 || result?.finishReason !== 'stop' || typeof result.content !== 'string' || result.functionCalls?.length)
           throw invalid()
-        answer = JSON.parse(result.content) as unknown
+        answers = { decision: normalizeDecisionAnswer(JSON.parse(result.content) as unknown, request.criteria) }
         model = responseModel ?? config.model
       }
-      if (!usage || !safeModelId(model)) throw invalid()
+      if (!usage || !answers || !safeModelId(model)) throw invalid()
       if (config.kind === 'typesafe' && (/^jev-\d+\.\d+\.\d+$/u.test(config.model) ? model !== config.model : !/^jev-\d+\.\d+\.\d+$/u.test(model)))
         throw new AgentRepositoryError('DECISION_MODEL_MISMATCH', 'Decision provider did not report the configured model', 502)
-      const normalized = normalizeDecisionAnswer(answer, request.criteria)
       const estimatedCost = estimateDecisionCost(config.pricing, usage)
       return {
         providerId: snapshot.id,
         providerRevision: snapshot.revision,
         model,
-        ...normalized,
+        answers,
         usage,
         latencyMs: Math.max(0, performance.now() - started),
         estimatedCost,
@@ -825,21 +897,42 @@ export class DecisionProviderRegistry {
     return { id: row.id, revision: row.revision, config: this.#config(row) }
   }
   async decide(request: DecisionRequest, options: { providerId?: string; signal?: AbortSignal } = {}): Promise<DecisionResult> {
+    return this.#dispatchRuntime(options, async (snapshot, key) => {
+      const { availableModels: _models, ...result } = await this.#client.execute(snapshot, key, request, options)
+      return result
+    })
+  }
+
+  async decideBatch(
+    request: DecisionBatchRequest,
+    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal } = {}
+  ): Promise<DecisionBatchResult> {
+    return this.#dispatchRuntime(options, (snapshot, key) => this.#client.executeBatch(snapshot, key, request, options))
+  }
+
+  async #dispatchRuntime<Result extends Pick<DecisionBatchResult, 'usage' | 'latencyMs'>>(
+    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal },
+    dispatch: (snapshot: DecisionProviderRuntime, key: string) => Promise<Result>
+  ): Promise<Result> {
     const snapshot = await this.selectRuntime(options.providerId)
-    const row = await this.#row(this.#knex, snapshot.id, snapshot.revision)
+    const row = await this.#row(this.#knex, snapshot.id, options.providerRevision === undefined ? snapshot.revision : options.providerRevision)
     if (!row.enabled) throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider is disabled', 503)
     const key = await this.#key(row)
     if (!key) throw new AgentRepositoryError('DECISION_CREDENTIAL_UNAVAILABLE', 'Decision provider credential is unavailable', 503)
-    const { availableModels: _models, ...result } = await this.#client.execute(snapshot, key, request, options)
+    const ready = await this.#row(this.#knex, snapshot.id, snapshot.revision)
+    if (!ready.enabled) throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider is disabled', 503)
+    const result = await dispatch(snapshot, key)
     try {
       const current = await this.#row(this.#knex, snapshot.id, snapshot.revision)
       if (!current.enabled) throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider is disabled', 503)
+      options.signal?.throwIfAborted()
     } catch (error: unknown) {
       throw new DecisionProviderFailure(
-        error instanceof AgentRepositoryError ? error.code : 'DECISION_PROVIDER_FAILED',
+        options.signal?.aborted ? 'DECISION_ABORTED' : error instanceof AgentRepositoryError ? error.code : 'DECISION_PROVIDER_FAILED',
         snapshot,
         result.usage,
-        result.latencyMs
+        result.latencyMs,
+        error instanceof AgentRepositoryError ? error.status : undefined
       )
     }
     return result

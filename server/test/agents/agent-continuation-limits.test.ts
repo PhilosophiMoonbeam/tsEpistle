@@ -3,7 +3,7 @@ import { AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, AgentProviderService } from '../../agents/providers/factory.ts'
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fullAxFixtureService } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService } from './synthesis-fixture.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
@@ -127,7 +127,7 @@ const responseStream = (responses: readonly AxChatResponse[]): ReadableStream<Ax
 const execute = async (chat: AgentProviderService['service']['chat'], streaming = false, overrides: Partial<AgentEngineRequest> = {}) => {
   const text = vi.fn(async (_delta: string) => {})
   const event = vi.fn(async () => {})
-  const result = new AxAgentEngine(factory(chat, streaming)).execute(request(overrides), { text, event })
+  const result = new AxAgentEngine(factory(chat, streaming), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request(overrides), { text, event })
   return { result, text, event }
 }
 

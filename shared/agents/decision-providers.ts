@@ -76,6 +76,11 @@ export interface DecisionRequest {
   readonly instructions: DecisionEntry
   readonly criteria: Readonly<Record<string, DecisionEntry>>
 }
+export type DecisionBatchQuestion = Pick<DecisionRequest, 'instructions' | 'criteria'>
+export interface DecisionBatchRequest {
+  readonly state: DecisionEntry
+  readonly questions: Readonly<Record<string, DecisionBatchQuestion>>
+}
 const DecisionTokenCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 /** Independent reported totals may include unclassified residual tokens; derived totals cannot. */
 export const DecisionUsageSchema = z
@@ -109,6 +114,9 @@ export interface DecisionResult {
     readonly verifiedAt: string
   } | null
   readonly estimatedCostMicros: number | null
+}
+export interface DecisionBatchResult extends Omit<DecisionResult, 'choice' | 'probabilities' | 'confidence'> {
+  readonly answers: Readonly<Record<string, Pick<DecisionResult, 'choice' | 'probabilities' | 'confidence'>>>
 }
 export interface DecisionProviderCheck {
   readonly availableModels: readonly string[]

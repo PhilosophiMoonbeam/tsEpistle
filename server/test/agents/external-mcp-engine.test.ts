@@ -22,7 +22,7 @@ import type { AgentProviderTransportKind } from '../../agents/providers/registry
 import type { AgentDispatchBudget, AgentEngineRequest } from '../../agents/runtime.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
-import { fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest } from './synthesis-fixture.ts'
 
 const serverId = '00000000-0000-4000-8000-000000000091'
 const png = Buffer.from(
@@ -398,7 +398,7 @@ const fixture = (
       pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
     })
   } as unknown as AgentProviderFactory
-  const engine = new AxAgentEngine(factory, options.wikiActions, undefined, { externalMcp })
+  const engine = new AxAgentEngine(factory, options.wikiActions, undefined, { externalMcp, decisionProviders: fixtureDecisionProviders })
   const controller = new AbortController()
   const base = baseRequest(controller.signal, dispatchBudget)
   const request = {

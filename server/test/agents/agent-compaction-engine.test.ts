@@ -9,7 +9,7 @@ import {
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -218,7 +218,7 @@ describe('Ax agent engine context compaction', () => {
       committed = true
     })
     const budget = sequencedBudget(300_000)
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...engineRequest(history.messages),
         compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
@@ -280,7 +280,7 @@ describe('Ax agent engine context compaction', () => {
         service: fullAxFixtureService(chat)
       }))
     } as unknown as AgentProviderFactory
-    const engine = new AxAgentEngine(factory)
+    const engine = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders })
     const engineInput = {
       ...engineRequest(history.messages),
       compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
@@ -313,7 +313,7 @@ describe('Ax agent engine context compaction', () => {
       create: vi.fn(async () => ({ ...profile, preserveCachePrefix: true, continuationDialect: 'gemini-generate-content-v1' as const, service: fullAxFixtureService(chat) }))
     } as unknown as AgentProviderFactory
     const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...engineRequest(history.messages), compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null } },
       { commitCompaction, text: async () => {}, event: async () => {} }
     )
@@ -361,7 +361,7 @@ describe('Ax agent engine context compaction', () => {
     const original = engineRequest(history.messages)
     const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...original,
         run: { ...original.run, model: 'gemini-3.8-flash', transportKind: 'gemini-api' },
@@ -459,7 +459,7 @@ describe('Ax agent engine context compaction', () => {
       })
     }
     const text = vi.fn(async () => undefined)
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...engineRequest(history.messages),
         run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
@@ -549,7 +549,7 @@ describe('Ax agent engine context compaction', () => {
       const event = vi.fn(async (..._args: [string, unknown]) => {})
       const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
       const base = engineRequest(history.messages)
-      const result = await new AxAgentEngine(factory, actions).execute(
+      const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...base,
           run: { ...base.run, executionMode: 'agent' },
@@ -659,7 +659,7 @@ ${sourceUnit}`,
       })
     }
     const text = vi.fn(async () => undefined)
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...engineRequest(history.messages),
         run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
@@ -705,7 +705,7 @@ ${sourceUnit}`,
     })
     const commitCompaction = vi.fn(async () => undefined)
 
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...engineRequest(history.messages),
         compaction: { checkpoint, sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
@@ -746,7 +746,7 @@ ${sourceUnit}`,
     const commitCompaction = vi.fn(async () => undefined)
     const event = vi.fn(async () => undefined)
 
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...engineRequest(history.messages),
         compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
@@ -796,7 +796,7 @@ ${sourceUnit}`,
     const { factory } = factoryFor(chat)
     const receipts: AgentCompactionReceipt[] = []
     const event = vi.fn(async (_type: string, _data: Record<string, unknown>) => undefined)
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...engineRequest(history.messages), compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null } },
       {
         commitCompaction: async receipt => {
@@ -826,7 +826,7 @@ ${sourceUnit}`,
         return held
       })
       await expect(
-        new AxAgentEngine(factory).execute(
+        new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...engineRequest([{ role: 'user', content: 'Use the retained source.' }]),
             compaction: { sourcePrefixSha256: [], groundedExpiresAt: expiry },
@@ -858,7 +858,7 @@ ${sourceUnit}`,
       const text = vi.fn(async () => undefined)
       const event = vi.fn(async () => undefined)
       await expect(
-        new AxAgentEngine(factory).execute(
+        new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
           {
             ...engineRequest([{ role: 'user', content: 'Use the retained source.' }]),
             compaction: { sourcePrefixSha256: [], groundedExpiresAt: expiry },
@@ -904,7 +904,7 @@ ${sourceUnit}`,
     })
 
     await expect(
-      new AxAgentEngine(factory).execute(
+      new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {
           ...engineRequest(history.messages, controller.signal),
           compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
@@ -925,7 +925,7 @@ ${sourceUnit}`,
     const budget = sequencedBudget(10_000)
 
     const text = vi.fn(async () => undefined)
-    const result = await new AxAgentEngine(factory).execute(
+    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...engineRequest(history.messages),
         compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
@@ -1008,7 +1008,7 @@ ${sourceUnit}`,
     const commitCompaction = vi.fn(async () => undefined)
     const text = vi.fn(async (_delta: string) => undefined)
     const budget = sequencedBudget(400_000)
-    const result = await new AxAgentEngine(factory, actions).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...base,
         run: { ...base.run, executionMode: 'agent' },

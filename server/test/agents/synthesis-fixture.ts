@@ -1,5 +1,60 @@
 import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
+import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
+import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
 import type { WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+
+/**
+ * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
+ * never a production fallback and carries no semantic-accuracy claim: every
+ * question resolves to whichever of its criteria labels is `supports` or
+ * `complete`, so tests must supply labels the engine actually distinguishes.
+ */
+export const fixtureDecisionProviders = {
+  async selectRuntime(): Promise<DecisionProviderRuntime> {
+    return {
+      id: '00000000-0000-4000-8000-000000000002',
+      revision: 1,
+      config: {
+        kind: 'typesafe',
+        model: 'jev-1.13.0',
+        timeoutMs: 5000,
+        pricing: {
+          currency: 'USD',
+          inputPerMillion: 0,
+          outputPerMillion: 0,
+          perRequest: 0,
+          revision: 'fixture',
+          source: 'fixture',
+          verifiedAt: '2026-10-04'
+        }
+      }
+    }
+  },
+  async decideBatch(request: DecisionBatchRequest): Promise<DecisionBatchResult> {
+    const provider = await fixtureDecisionProviders.selectRuntime()
+    const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
+    for (const [id, question] of Object.entries(request.questions)) {
+      const label = Object.keys(question.criteria).find(label => label === 'supports' || label === 'complete')
+      if (label === undefined) throw new Error(`Fixture decision provider has no supports/complete criterion for question ${id}`)
+      const probabilities: Record<string, number> = Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === label ? 1 : 0]))
+      answers[id] = { choice: label, probabilities, confidence: 1 }
+    }
+    const pricing = provider.config.kind === 'typesafe' ? provider.config.pricing : null
+    const amount = pricing
+      ? (0 / 1_000_000) * pricing.inputPerMillion + (0 / 1_000_000) * pricing.outputPerMillion + pricing.perRequest
+      : 0
+    return {
+      providerId: provider.id,
+      providerRevision: provider.revision,
+      model: provider.config.model,
+      answers,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, totalTokensSource: 'derived' },
+      latencyMs: 0,
+      estimatedCost: pricing && { currency: pricing.currency, amount, pricingRevision: pricing.revision, source: pricing.source, verifiedAt: pricing.verifiedAt },
+      estimatedCostMicros: pricing ? Math.round(amount * 1_000_000) : null
+    }
+  }
+} satisfies Pick<DecisionProviderRegistry, 'selectRuntime' | 'decideBatch'>
 
 export const fullAxFixtureService = (
   chat: AxAIService['chat'],
