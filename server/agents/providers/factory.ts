@@ -1085,7 +1085,7 @@ const createLegacyCompletionService = (
     apiKey: secret,
     apiURL: row.baseUrl,
     config: { model: row.model, stream: false },
-    options: { fetch: completionFetch(), timeout: config.timeoutMs, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
+    options: { debug: false, verbose: false, fetch: completionFetch(), timeout: config.timeoutMs, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
   })
   const nativeFeatures = service.getFeatures(row.model)
   service.getFeatures = () => ({
@@ -1149,6 +1149,8 @@ const createRequestScopedService = (
       throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider timeout is invalid', 400)
     const locked: AxAIServiceOptions = {
       ...options,
+      debug: false,
+      verbose: false,
       timeout: Math.min(timeout, defaults.timeout ?? 300_000),
       retry: { maxRetries: 0 },
       includeRequestBodyInErrors: false,
@@ -1530,6 +1532,8 @@ export class AgentProviderFactory {
           { preconnect: transportFetch.preconnect }
         ) as AgentProviderFetch,
         timeout: adapterConfig.timeoutMs,
+        debug: false,
+        verbose: false,
         retry: { maxRetries: 0 },
         includeRequestBodyInErrors: false,
         excludeContentFromTrace: true

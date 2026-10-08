@@ -106,12 +106,27 @@ export class AxSessionHarness {
         }
       ])
     )
-    const session: AxCodeSession = this.#runtime.createSession({ __wikiActions: Object.freeze(callbacks) })
+    let bindings: Record<string, unknown> | undefined
     if (initialSnapshot) {
       const encoded = boundedJson(initialSnapshot, MAX_SNAPSHOT_BYTES, 'INVALID_RUNTIME_SNAPSHOT')
-      const bindings = JSON.parse(encoded) as Record<string, unknown>
+      bindings = JSON.parse(encoded) as Record<string, unknown>
       delete bindings.__wikiActions
-      await session.patchGlobals(bindings)
+    }
+    const functions = actions.map(action => ({
+      name: action.definition.descriptor.name,
+      title: action.definition.descriptor.title,
+      description: action.definition.descriptor.description,
+      parameters: z.toJSONSchema(action.definition.input) as Record<string, unknown>,
+      risk: action.definition.descriptor.risk,
+      group: action.definition.group,
+      capability: action.definition.capability
+    }))
+    const session: AxCodeSession = this.#runtime.createSession({ __wikiActions: Object.freeze(callbacks) })
+    try {
+      if (bindings) await session.patchGlobals(bindings)
+    } catch (error) {
+      session.close()
+      throw error
     }
     let closed = false
     const assertOpen = (): void => {
@@ -119,17 +134,12 @@ export class AxSessionHarness {
     }
     return {
       authoritySha256: null,
-      functions: actions.map(action => ({
-        name: action.definition.descriptor.name,
-        title: action.definition.descriptor.title,
-        description: action.definition.descriptor.description,
-        parameters: z.toJSONSchema(action.definition.input) as Record<string, unknown>,
-        risk: action.definition.descriptor.risk,
-        group: action.definition.group,
-        capability: action.definition.capability
-      })),
+      functions,
       invoke: async (name, input, signal, actionCallId) => {
         assertOpen()
+        // SDK execution is queued, but host authority/result slots belong to one
+        // invocation. Reject overlap before it can replace the active identity.
+        if (invocationSignal) throw new AgentRepositoryError('ACTION_SESSION_BUSY', 'Action session already has an active request', 409)
         if (!offered.has(name as AgentActionName)) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider requested an unavailable action', 403)
         if (!actionCallId || actionCallId.length > 128) throw new AgentRepositoryError('INVALID_ACTION_CALL_ID', 'Action call identity is invalid', 400)
         const inputJson = boundedJson(input, 64 * 1_024, 'INVALID_ACTION_INPUT')

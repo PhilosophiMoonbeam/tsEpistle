@@ -228,7 +228,7 @@ export const createGeminiAxService = (
     name: 'google-gemini',
     apiKey: config.apiKey,
     config: { model: config.model as AxAIGoogleGeminiModel },
-    options: { fetch: config.fetch, timeout: config.timeoutMs, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
+    options: { debug: false, verbose: false, fetch: config.fetch, timeout: config.timeoutMs, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
   })
   let lastService: AxAIService = featureService
   const safeOptions = (options: Readonly<AxAIServiceOptions>): AxAIServiceOptions => {
@@ -237,6 +237,8 @@ export const createGeminiAxService = (
       throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider timeout is invalid', 400)
     const locked: AxAIServiceOptions = {
       ...options,
+      debug: false,
+      verbose: false,
       fetch: config.fetch,
       timeout: Math.min(timeout, config.timeoutMs),
       retry: { maxRetries: 0 },
@@ -379,6 +381,8 @@ export const createGeminiAxService = (
         apiKey: config.apiKey,
         config: { model: config.model as AxAIGoogleGeminiModel },
         options: {
+          debug: false,
+          verbose: false,
           fetch: transportFetch,
           timeout: config.timeoutMs,
           retry: { maxRetries: 0 },
@@ -421,8 +425,8 @@ export const createGeminiAxService = (
         return chunk
       }
       if (!(response instanceof ReadableStream)) return normalize(response)
-      // Ax 25's SSE cancellation does not abort the fetch body. Bind our consumer
-      // directly to the same request signal used by the pinned transport.
+      // Bind normalization and consumer cancellation to the same request signal
+      // used by the pinned transport, including failures in our native guards.
       const reader = response.getReader()
       let closed = false
       let onAbort: (() => void) | undefined

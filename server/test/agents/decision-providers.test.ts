@@ -488,11 +488,12 @@ describe('decision provider protocols', () => {
 })
 
 describe('decision validation and cost semantics', () => {
-  it('normalizes tolerated rounding without changing labels or reporting probabilities as confidence', () => {
-    const result = normalizeDecisionAnswer({ ...answer, probabilities: { simple: 0.79, complex: 0.2 } }, request.criteria)
-    expect(result.probabilities.simple).toBeCloseTo(0.797979797979798)
-    expect(result.probabilities.simple! + result.probabilities.complex!).toBeCloseTo(1)
-    expect(result.confidence).toBe(0.6)
+  it('preserves both inclusive rounding boundaries without treating probabilities as confidence', () => {
+    for (const probabilities of [{ simple: 0.79, complex: 0.2 }, { simple: 0.81, complex: 0.2 }]) {
+      const result = normalizeDecisionAnswer({ ...answer, probabilities }, request.criteria)
+      expect(result.probabilities).toEqual(probabilities)
+      expect(result.confidence).toBe(0.6)
+    }
   })
   it('rejects unknown, missing, negative, nonfinite and nonsumming probabilities and a nonmaximal choice', () => {
     for (const value of [

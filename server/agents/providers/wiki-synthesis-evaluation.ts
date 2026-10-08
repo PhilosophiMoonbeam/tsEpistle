@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { optimize, runControl, axSerializeOptimizedProgram, axDeserializeOptimizedProgram, AxAssertionError, AxGenerateError, type AxAIService, type AxGEPAAdapter, type AxMetricFn, type AxProgramForwardOptions, type AxSerializedOptimizedProgram, type AxTypedExample } from '@ax-llm/ax'
+import { ProxyTracerProvider } from '@opentelemetry/api'
 import { createWikiSynthesisProgram, encodeWikiSynthesisSources, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisBinding, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
 
 const sourceSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), context: z.string(), text: z.string(), kind: z.string(), complete: z.boolean(), packet: z.string() })
@@ -73,12 +74,15 @@ export const validateWikiFixtureClaim = (fixture: WikiSynthesisFixture, claim: W
   return details.some(detail => [...detail.allowedParaphrases, ...detail.allowedAtomicAssertions].some(assertion => statement === assertionText(assertion)))
 }
 
+// Content-exclusion flags do not redact exception messages in inherited spans.
+const privateTracer = new ProxyTracerProvider().getTracer('wiki-synthesis-evaluation-private')
+
 // Override inherited generation defaults, including native GEPA's teacher AxGen.
 // An attached native run control bypasses inherited response-cache reads/writes.
 const offlineForwardOptions = () => ({
   control: runControl(), maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1,
   debug: false, verbose: false,
-  excludeContentFromTrace: true, includeRequestBodyInErrors: false, logger: () => {}
+  excludeContentFromTrace: true, includeRequestBodyInErrors: false, tracer: privateTracer, logger: () => {}
 } satisfies AxProgramForwardOptions<string>)
 
 export interface WikiSynthesisRubric {
@@ -177,18 +181,43 @@ export const evaluateWikiSynthesisFixtures = async (fixtures: readonly WikiSynth
     let answer: WikiSynthesisAnswer | undefined
     const started = performance.now()
     let sourceRejected = false
-    const program = createFixtureProgram([fixture], service, () => { sourceRejected = true })
-    if (artifact) program.applyOptimization(axDeserializeOptimizedProgram(artifact))
     for (let attempt = 0; attempt <= maximumCorrections; attempt++) {
       sourceRejected = false
+      const program = createFixtureProgram([fixture], service, () => { sourceRejected = true })
+      if (artifact) program.applyOptimization(axDeserializeOptimizedProgram(artifact))
+      let completedInference = false
+      let terminalFailure = false
+      // Distinguish a paid, completed invalid answer from a failed dispatch.
+      // AxGenerateError wraps both, and exhausted validation loses its typed cause.
+      const observedChat: AxAIService['chat'] = async (request, options) => {
+        const response = await service.chat(request, options)
+        if (!(response instanceof ReadableStream)) {
+          completedInference = true
+          terminalFailure = response.results.some(result => result.finishReason === 'error' || result.finishReason === 'length')
+        }
+        return response
+      }
+      const observedAI = new Proxy(service, {
+        get(target, property) {
+          if (property === 'chat') return observedChat
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+      })
       try {
-        answer = await program.forward(service, { userRequest: fixture.userRequest, ...encodeWikiSynthesisSources(fixture.sourceUnits), requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: attempt ? 'The previous synthesis failed its source-locality or shape gate. Re-read each complete source unit and preserve requested coverage.' : '' }, offlineForwardOptions())
+        answer = await program.forward(observedAI, { userRequest: fixture.userRequest, ...encodeWikiSynthesisSources(fixture.sourceUnits), requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: attempt ? 'The previous synthesis failed its source-locality or shape gate. Re-read each complete source unit and preserve requested coverage.' : '' }, offlineForwardOptions())
+        if (terminalFailure) {
+          answer = undefined
+          failedAttempts++
+          break
+        }
         renderWikiSynthesisAnswer(answer)
         break
       } catch (error) {
         failedAttempts++
         if (sourceRejected || error instanceof AxAssertionError || error instanceof AxGenerateError && error.cause instanceof AxAssertionError) rejectedAttempts++
-        if (attempt < maximumCorrections) corrections++
+        if (!completedInference || terminalFailure || !(error instanceof AxGenerateError || error instanceof AxAssertionError) || attempt >= maximumCorrections) break
+        corrections++
       }
     }
     results.push({ fixtureId: fixture.id, ...scoreWikiSynthesisAnswer(fixture, answer), rejectedAttempts, failedAttempts, corrections, wallMilliseconds: performance.now() - started })

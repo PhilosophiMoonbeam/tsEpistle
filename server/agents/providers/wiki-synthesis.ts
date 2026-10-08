@@ -146,10 +146,18 @@ observations may only select exact safe complete single lines from the input ava
 const bindingKey = (source: Pick<WikiSynthesisSource, 'evidenceId' | 'sourceRevision' | 'unitId'>): string =>
   JSON.stringify([source.evidenceId, source.sourceRevision, source.unitId])
 
+const hasUnsafeControlCharacters = (value: string): boolean => {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code <= 8 || code === 11 || code === 12 || (code >= 14 && code <= 31) || code === 127) return true
+  }
+  return false
+}
+
 const unsafeText = (value: string): boolean =>
   /\[\[\s*cite\s*:/iu.test(value) ||
   /<(?:[!?]|\/?[a-z][a-z0-9:-]*(?=\s|\/?>|\/$|$))[^>]*(?:>|$)/iu.test(value.replace(/(`+)([\s\S]*?)\1/gu, '')) ||
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value) ||
+  hasUnsafeControlCharacters(value) ||
   /^\s{0,3}\[[^\]\n]+\]:/mu.test(value) ||
   /^\s*(?:`{3,}|~{3,})/mu.test(value)
 

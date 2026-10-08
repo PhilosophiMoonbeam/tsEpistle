@@ -10,7 +10,7 @@ interface DataFile {
 }
 
 const requiredVersions = {
-  '@ax-llm/ax': '25.0.0',
+  '@ax-llm/ax': '25.2.1',
   '@modelcontextprotocol/server': '2.1.0',
   '@modelcontextprotocol/node': '2.1.0',
   '@modelcontextprotocol/express': '2.0.1',

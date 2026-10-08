@@ -632,6 +632,52 @@ describe('Ax agent engine', () => {
     expect(performance.unknownExposureTokens).toBe(Number(performance.serializedRequestBytes) + 4_000)
   })
 
+  it.each(['buffered', 'streamed EOF'] as const)('rejects terminal-error typed synthesis without replay and settles its paid EOF receipt (%s)', async mode => {
+    const fixture = typedRootFixture(input => {
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.text.trim() === fixture.production)!
+      const content = synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] })
+      const receipt = typedFixtureReceipt(content)
+      if (mode === 'buffered') return { ...receipt, results: [{ index: 0, content, finishReason: 'error' }] }
+      return new ReadableStream<AxChatResponse>({
+        start(controller) {
+          controller.enqueue({ results: [{ index: 0, content }] })
+          controller.enqueue({ results: [{ index: 0, finishReason: 'error' }] })
+          controller.enqueue({ ...receipt, results: [{ index: 0, finishReason: 'stop' }] })
+          controller.close()
+        }
+      })
+    })
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(fixture.text).not.toHaveBeenCalled()
+    expect(fixture.outstanding.size).toBe(0)
+    expect(fixture.settled.filter(usage => usage.totalTokens === 12)).toHaveLength(2)
+  })
+
+  it('rejects terminal-error synthesis cancelled before EOF while retaining unknown paid exposure', async () => {
+    const cancel = vi.fn(async () => {})
+    const fixture = typedRootFixture(input => {
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.text.trim() === fixture.production)!
+      return new ReadableStream<AxChatResponse>({
+        start(controller) {
+          controller.enqueue({
+            ...typedFixtureReceipt(''),
+            results: [{ index: 0, finishReason: 'error', content: `{"claims":[${JSON.stringify({ ...source, unitId: 'unknown-unit', statement: fixture.production })}` }]
+          })
+        },
+        cancel
+      })
+    })
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(fixture.text).not.toHaveBeenCalled()
+    expect(fixture.outstanding.size).toBe(1)
+    expect(fixture.settled.filter(usage => usage.totalTokens === 12)).toHaveLength(1)
+  })
+
   it('does not repair a structurally rejected length-limited synthesis stream', async () => {
     const fixture = typedRootFixture(input => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.text.trim() === fixture.production)!

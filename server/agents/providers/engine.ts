@@ -5418,7 +5418,7 @@ export class AxAgentEngine implements AgentEngine {
     if (synthesisNames !== undefined && [...synthesisNames.keys()].some(name => name !== '__axOutput'))
       throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Synthesis cannot offer application tools', 500)
     const observeFinishReason = (finishReason: AxChatResponseResult['finishReason']): void => {
-      if (finishReason === undefined || accumulator.finishReason === 'length') return
+      if (finishReason === undefined || accumulator.finishReason === 'error' || accumulator.finishReason === 'length' && finishReason !== 'error') return
       accumulator.finishReason = finishReason
     }
     const accept = async (response: AxChatResponse): Promise<void> => {
@@ -5632,6 +5632,7 @@ export class AxAgentEngine implements AgentEngine {
         // Cancellation cannot establish the provider's final usage. Keep the
         // dispatched reservation outstanding; runtime settles its exposure
         // separately from measured usage, including after a bounded repair.
+        if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated synthesis with an error')
         return {
           content: '',
           calls: [],
@@ -5721,6 +5722,10 @@ export class AxAgentEngine implements AgentEngine {
         await reconcileReservation({ inputTokens, outputTokens, totalTokens, costMicros })
         failureStage = 'provider_response'
       }
+      // The host buffers streams before AxGen.forward; Ax's non-streaming parser
+      // does not reject error terminals. Retain the EOF receipt, but never turn
+      // failed provider work into an answer, action, or validation replay.
+      if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated its response with an error')
       const settledAt = performance.now()
       return {
         content: deniedToolCall ? '' : content,
