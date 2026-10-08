@@ -310,6 +310,7 @@ const claimSchema = z.object({
 
 const instructions = `# Goal
 Answer every requested facet at its requested granularity from complete bound source assertions and exact host-admitted observations. Preserve complete requested inventories, source-local records, method steps, summary sections and comparison dimensions. Prefer minimally edited source wording.
+For category selection, use ordinary category inclusion rather than literal label equality unless the user requests exact labels. Include every qualifying owned entry, including narrower categories, while preserving its source-stated labels and conditions.
 
 # Return Format
 Return at most 64 claims with evidenceId, sourceRevision, unitId and statement. Copy the exact three-part binding from one complete source; independent enum membership does not validate a triple. Return claims: [] when no complete binding exists.
