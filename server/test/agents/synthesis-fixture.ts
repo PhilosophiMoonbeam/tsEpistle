@@ -57,6 +57,23 @@ const synthesisText = (value: unknown, structures: readonly unknown[]): string =
   return `${'prefix' in value ? value.prefix : ''}${text}${'suffix' in value ? value.suffix : ''}`
 }
 
+const synthesisIdentifier = (value: unknown, structures: readonly unknown[]): unknown => {
+  if (typeof value !== 'number') return value
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error('Invalid synthesis identifier reference')
+  const entry = structures.find(row => Array.isArray(row) && row[0] === `s${value}` && row[1] === 'identifier')
+  if (!Array.isArray(entry) || typeof entry[2] !== 'string') throw new Error('Missing synthesis identifier data')
+  return entry[2]
+}
+
+const synthesisPacket = (packet: unknown, structures: readonly unknown[]): unknown => {
+  if (!Array.isArray(packet) || packet.length !== 5 || !Array.isArray(packet[4])) return packet
+  return [
+    synthesisIdentifier(packet[0], structures), packet[1],
+    Array.isArray(packet[2]) ? packet[2].map(value => synthesisIdentifier(value, structures)) : packet[2],
+    packet[3], [synthesisIdentifier(packet[4][0], structures), ...packet[4].slice(1).map(value => typeof value === 'number' ? `s${value}` : value)]
+  ]
+}
+
 export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): WikiSynthesisSource[] => {
   const input = synthesisInputFromRequest(request)
   if (input === undefined || !input.includes('\n\nSource Bindings: ')) return []
@@ -80,7 +97,7 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): W
       const source = {
         evidenceId: binding[0], sourceRevision: binding[1],
         context: synthesisText(data[0], structures), text: synthesisText(data[1], structures),
-        kind: data[2], complete: data[3], packet: JSON.stringify(data[4])
+        kind: data[2], complete: data[3], packet: JSON.stringify(synthesisPacket(data[4], structures))
       }
       return entry[1].flatMap((reference: unknown): WikiSynthesisSource | WikiSynthesisSource[] => {
         if (typeof reference === 'string') return { ...source, unitId: reference }
@@ -111,9 +128,13 @@ export const synthesisOwnedPacketIncludes = (
   if (!Array.isArray(closure)) return false
   const keys = new Set<string>()
   if (typeof closure[0] === 'string') keys.add(closure[0])
+  else if (typeof closure[0] === 'number') keys.add(`s${closure[0]}`)
   for (const dependencies of closure.slice(1))
     if (Array.isArray(dependencies))
-      for (const key of dependencies) if (typeof key === 'string') keys.add(key)
+      for (const key of dependencies) {
+        if (typeof key === 'string') keys.add(key)
+        else if (typeof key === 'number') keys.add(`s${key}`)
+      }
   const expandText = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(expandText)
     if (typeof value === 'object' && value !== null && 'textKey' in value && Object.keys(value).every(key => textReferenceKeys[key] === true))
