@@ -293,6 +293,9 @@ export const createWikiOfflineDispatchAdmission = async (
         if (sharedState) sharedState.halted = true
         throw offlineFailure()
       }
+      // A paid receipt is still settled below, but error/token-limit terminals
+      // are not completed candidates for Ax's non-streaming parser.
+      if (response.results.some(result => result.finishReason === 'error' || result.finishReason === 'length')) throw offlineFailure()
       signal.throwIfAborted()
     } catch {
       failed = true

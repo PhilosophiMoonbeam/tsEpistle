@@ -1,12 +1,12 @@
 import type { LookupAddress } from 'node:dns'
-import { ax, f, type AxChatRequest } from '@ax-llm/ax'
+import { ax, axGlobals, f } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
 import { z } from 'zod'
 import { AgentProviderFactory, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from '../../agents/providers/prompt-tools.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const capabilities = {
@@ -57,6 +57,47 @@ describe('additional provider transports', () => {
       conformed: true
     })
   }
+
+  it.each([
+    ['openai-responses', 'https://responses.example.test/v1', 'model-test'],
+    ['openresponses', 'https://openresponses.example.test/v1', 'model-test'],
+    ['openai-chat', 'https://chat.example.test/v1', 'model-test'],
+    ['anthropic-messages', 'https://anthropic.example.test/v1', 'claude-sonnet-4-6'],
+    ['gemini-api', 'https://gemini.example.test/v1beta', 'gemini-3.7-flash'],
+    ['legacy-completions', 'https://legacy.example.test/v1', 'model-test']
+  ] as const)('keeps %s private payloads out of inherited and caller-enabled SDK logging without retrying a failed dispatch', async (transportKind, baseUrl, model) => {
+    const id = '00000000-0000-4000-8000-000000000043'
+    await insert({
+      id, transportKind, baseUrl, model,
+      authMode: transportKind === 'gemini-api' ? 'google-api-key' : transportKind === 'anthropic-messages' ? 'anthropic-api-key' : 'bearer'
+    })
+    let calls = 0
+    const privateText = 'private transport prompt'
+    const logger = vi.fn()
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const previousDebug = axGlobals.debug
+    axGlobals.debug = true
+    try {
+      const provider = await new AgentProviderFactory(db, { get: () => 'private-transport-key' }, (async () => {
+        calls++
+        return Response.json({ error: { code: 'temporary_provider_failure', message: 'private provider response' } }, { status: 503 })
+      }) as typeof fetch, publicResolver as never).create(id)
+      expect(provider.service.getOptions()).toMatchObject({ debug: false, verbose: false })
+      const request = { chatPrompt: [{ role: 'user' as const, content: privateText }] }
+      // Global defaults, mutable service defaults and per-call overrides must
+      // all stay below the host's private, single-dispatch accounting boundary.
+      await expect(provider.service.chat(request, { stream: false, logger })).rejects.toThrow()
+      provider.service.setOptions({ debug: true, verbose: true, logger, retry: { maxRetries: 3 } })
+      expect(provider.service.getOptions()).toMatchObject({ debug: false, verbose: false, retry: { maxRetries: 0 } })
+      await expect(provider.service.chat(request, { stream: false, debug: true, verbose: true, logger, retry: { maxRetries: 3 } })).rejects.toThrow()
+      expect(calls).toBe(2)
+      expect(logger).not.toHaveBeenCalled()
+      expect(consoleLog).not.toHaveBeenCalled()
+    } finally {
+      axGlobals.debug = previousDebug
+      consoleLog.mockRestore()
+    }
+  })
 
   it.each([
     ['openai-responses', 'https://api.openai.com/v1', 'gpt-4o'],

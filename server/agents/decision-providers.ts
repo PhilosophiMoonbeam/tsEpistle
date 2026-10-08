@@ -90,7 +90,8 @@ export const normalizeDecisionAnswer = (
     throw invalid()
   const total = labels.reduce((sum, label) => sum + answer.probabilities[label]!, 0)
   if (!Number.isFinite(total) || total <= 0 || Math.abs(total - 1) > 0.01 + Number.EPSILON * labels.length) throw invalid()
-  const probabilities = Object.fromEntries(labels.map(label => [label, answer.probabilities[label]! / total]))
+  // Ax accepts rounding tolerance without changing the native distribution.
+  const probabilities = answer.probabilities
   if (labels.some(label => probabilities[label]! > probabilities[answer.choice]! + Number.EPSILON)) throw invalid()
   return { choice: answer.choice, probabilities, confidence: answer.confidence }
 }
@@ -290,7 +291,7 @@ export interface DecisionProviderRuntime {
 
 /** Uses Ax native System One and Ax's openai-compatible chat normalization.
  * Legacy /completions is an explicit bounded wire adapter: Ax has no native legacy
- * profile in 25.0.0. No automatic dialect detection or credential-bearing redirects.
+ * profile in 25.2.1. No automatic dialect detection or credential-bearing redirects.
  */
 export class DecisionProviderClient {
   readonly #options: DecisionProviderTransportOptions

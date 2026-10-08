@@ -1,3 +1,5 @@
+/// <reference types="bun" />
+
 import { mock, setSystemTime, vi as bunVi } from 'bun:test'
 import { fileURLToPath } from 'node:url'
 

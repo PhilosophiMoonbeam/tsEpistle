@@ -1,9 +1,10 @@
-import { axGlobals, AxMockAIService, type AxAIServiceOptions, type AxChatRequest } from '@ax-llm/ax'
+import { axGlobals, AxMockAIService, type AxAIServiceOptions, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
 import * as markdownItModule from 'markdown-it'
 import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
 import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, encodeWikiSynthesisSources, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
 import { wikiSynthesisOptimizedProgram } from '../../agents/providers/wiki-synthesis-calibration.ts'
+import { evaluateWikiSynthesisFixtures, optimizeWikiSynthesis, parseWikiSynthesisFixtures } from '../../agents/providers/wiki-synthesis-evaluation.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 const MarkdownIt = 'default' in markdownItModule ? markdownItModule.default : markdownItModule
@@ -35,8 +36,8 @@ const answer = (changes: Partial<WikiSynthesisAnswer> = {}): WikiSynthesisAnswer
 })
 
 const generate = (prediction: WikiSynthesisAnswer, sources: readonly WikiSynthesisSource[] = [source], options: WikiSynthesisOptions = {}, mode: 'native' | 'json_object' = 'native') => {
-  const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({ results: [{ index: 0, content: JSON.stringify(prediction), finishReason: 'stop' as const }] }))
-  const service = new AxMockAIService({
+  const chat = vi.fn(async (_request: Readonly<AxChatRequest<unknown>>) => ({ results: [{ index: 0, content: JSON.stringify(prediction), finishReason: 'stop' as const }] }))
+  const service = new AxMockAIService<string>({
     features: { functions: false, streaming: false, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
     chatResponse: chat
   })
@@ -79,7 +80,7 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(generated.chat).toHaveBeenCalledTimes(1)
 
     const empty = answer({ claims: [], unresolvedFacets: [] })
-    const service = new AxMockAIService({
+    const service = new AxMockAIService<string>({
       features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
       chatResponse: { results: [{ index: 0, content: JSON.stringify(empty), finishReason: 'stop' }] }
     })
@@ -98,10 +99,10 @@ describe('Wiki source-bound typed synthesis', () => {
       'Observations: []',
       `Recommendations: ${prediction.recommendations}`
     ].join('\n')
-    const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({
+    const chat = vi.fn(async (_request: Readonly<AxChatRequest<unknown>>) => ({
       results: [{ index: 0, content: fieldOutput(prediction.claims), finishReason: 'stop' as const }]
     }))
-    const service = new AxMockAIService({
+    const service = new AxMockAIService<string>({
       features: { functions: false, streaming: false, structuredOutputs: false, structuredOutputModes: [] },
       chatResponse: chat
     })
@@ -111,12 +112,12 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(accepted.unresolvedFacets).toEqual([1])
     expect(accepted.observations).toEqual([])
     expect(accepted.recommendations).toBe(prediction.recommendations)
-    const wrongBinding = new AxMockAIService({
+    const wrongBinding = new AxMockAIService<string>({
       features: { functions: false, streaming: false, structuredOutputs: false, structuredOutputModes: [] },
       chatResponse: { results: [{ index: 0, content: fieldOutput([{ ...prediction.claims[0], unitId: 'unit:invented' }]), finishReason: 'stop' }] }
     })
     await expect(program.forward(wrongBinding, input)).rejects.toThrow()
-    const malformed = new AxMockAIService({
+    const malformed = new AxMockAIService<string>({
       features: { functions: false, streaming: false, structuredOutputs: false, structuredOutputModes: [] },
       chatResponse: { results: [{ index: 0, content: fieldOutput([{ ...prediction.claims[0], statement: 17 }]), finishReason: 'stop' }] }
     })
@@ -128,7 +129,7 @@ describe('Wiki source-bound typed synthesis', () => {
       const prediction = answer({ unresolvedFacets: [] })
       const content = `Claims: ${JSON.stringify(prediction.claims)}\nUnresolved Facets: []\nObservations: []${suffix}`
       const chat = vi.fn(async () => ({ results: [{ index: 0, content, finishReason: 'stop' as const }] }))
-      const service = new AxMockAIService({
+      const service = new AxMockAIService<string>({
         features: { functions: false, streaming: false, structuredOutputs: false, structuredOutputModes: [] },
         chatResponse: chat
       })
@@ -169,7 +170,7 @@ describe('Wiki source-bound typed synthesis', () => {
       validateClaim: (claim, selected) => claim.statement === selected.text || 'The claim must remain inside its owned source closure.'
     })
     program.applyOptimization(wikiSynthesisOptimizedProgram)
-    const run = (prediction: WikiSynthesisAnswer) => program.forward(new AxMockAIService({
+    const run = (prediction: WikiSynthesisAnswer) => program.forward(new AxMockAIService<string>({
       features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
       chatResponse: { results: [{ index: 0, content: JSON.stringify(prediction), finishReason: 'stop' }] }
     }), { ...input, ...encodeWikiSynthesisSources([owned, { ...other, packet: other.packet.replace('s1', 's2') }], structures) })
@@ -383,15 +384,15 @@ describe('Wiki source-bound typed synthesis', () => {
     const priorTracer = axGlobals.tracer
     const inheritedTracer = new ProxyTracerProvider().getTracer('inherited-test-tracer')
     const inheritedSpans = vi.spyOn(inheritedTracer, 'startSpan')
-    const cache = vi.fn(() => answer({ recommendations: 'An unvalidated cached premise.' }))
+    const cache = vi.fn(() => ({ ...answer({ recommendations: 'An unvalidated cached premise.' }) }))
     const logger = vi.fn()
-    const chat = vi.fn(async (_request: Readonly<AxChatRequest>, _options?: Readonly<AxAIServiceOptions>) =>
+    const chat = vi.fn(async (_request: Readonly<AxChatRequest<unknown>>, _options?: Readonly<AxAIServiceOptions>) =>
       ({ results: [{ index: 0, content: JSON.stringify(answer()), finishReason: 'stop' as const }] }))
     axGlobals.cachingFunction = cache
     axGlobals.debug = true
     axGlobals.tracer = inheritedTracer
     try {
-      const service = new AxMockAIService({
+      const service = new AxMockAIService<string>({
         features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
         options: { debug: true, verbose: true, excludeContentFromTrace: false, includeRequestBodyInErrors: true, logger },
         chatResponse: chat
@@ -401,7 +402,7 @@ describe('Wiki source-bound typed synthesis', () => {
         const accepted = await program.forward(service, input)
         expect(renderWikiSynthesisAnswer(accepted)).toBe('External publication requires two approvals. [[cite:page:42:revision:7:section:1]]')
       }
-      const invalidService = new AxMockAIService({
+      const invalidService = new AxMockAIService<string>({
         features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
         options: { tracer: inheritedTracer, debug: true, verbose: true, logger },
         chatResponse: { results: [{ index: 0, content: JSON.stringify(answer({ recommendations: 'The owner approves automatically.' })), finishReason: 'stop' }] }
@@ -427,17 +428,18 @@ describe('Wiki source-bound typed synthesis', () => {
     const controller = new AbortController()
     let admit!: () => void
     const admitted = new Promise<void>(resolve => { admit = resolve })
-    const chat = vi.fn(async (_request: Readonly<AxChatRequest>, options?: Readonly<AxAIServiceOptions>) => {
+    const chat = vi.fn(async (_request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>) => {
       const signal = options!.abortSignal!
       admit()
       return new Promise<never>((_resolve, reject) => {
         signal.addEventListener('abort', () => reject(new Error('Host request cancelled.')), { once: true })
       })
     })
-    const service = new AxMockAIService({
-      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'], asyncTools: true },
+    const service = new AxMockAIService<string>({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
       chatResponse: chat
     })
+    vi.spyOn(service, 'getFeatures').mockReturnValue({ ...service.getFeatures(), asyncTools: true })
     const session = vi.fn(async () => { throw new Error('A native session must not start for ordinary paid synthesis.') })
     Object.assign(service, { openChatSession: session })
     const program = createWikiSynthesisProgram([source], { facetCount: 2 })
@@ -451,6 +453,91 @@ describe('Wiki source-bound typed synthesis', () => {
     await expect(pending).rejects.toThrow('Host request cancelled')
     expect(chat).toHaveBeenCalledTimes(1)
     expect(session).not.toHaveBeenCalled()
+  })
+})
+
+describe('Wiki synthesis offline correction admission', () => {
+  const fixtures = parseWikiSynthesisFixtures([{
+    id: 'offline-correction', family: 'offline-correction', split: 'selection',
+    provenance: { kind: 'synthetic', adjudication: 'Exact synthetic statement and explicitly unanswered approver facet.' },
+    userRequest: input.userRequest, sourceUnits: [source], requestFacets: ['who approves?'],
+    observations: [], repairFeedback: '', details: [], expectedUnresolvedFacets: [0], variants: []
+  }], 'selection')
+  const acceptedReceipt: AxChatResponse = { results: [{ index: 0, content: JSON.stringify(answer({ unresolvedFacets: [0] })), finishReason: 'stop' }] }
+
+  it.each(['transport', 'error', 'length', 'invalid length'] as const)('does not replay failed offline inference as a schema correction (%s)', async failure => {
+    const chat = vi.fn(async (): Promise<AxChatResponse> => acceptedReceipt)
+    chat.mockImplementationOnce(async () => {
+      if (failure === 'transport') throw new Error('Synthetic transport failure')
+      return { results: [{ index: 0, content: failure === 'invalid length' ? '{"claims":[' : JSON.stringify(answer({ unresolvedFacets: [0] })), finishReason: failure === 'error' ? 'error' : 'length' }] }
+    })
+    const service = new AxMockAIService<string>({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+      chatResponse: chat
+    })
+    const report = await evaluateWikiSynthesisFixtures(fixtures, service, undefined, 1)
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(report).toMatchObject({ failedAttempts: 1, corrections: 0, meanScore: 0 })
+  })
+
+  it('admits one explicit offline correction after a completed invalid output', async () => {
+    const chat = vi.fn(async (): Promise<AxChatResponse> => acceptedReceipt)
+    chat.mockImplementationOnce(async () => ({
+      results: [{ index: 0, content: JSON.stringify(answer({ claims: [{ ...answer().claims[0]!, unitId: 'unknown-unit' }], unresolvedFacets: [0] })), finishReason: 'stop' }]
+    }))
+    const service = new AxMockAIService<string>({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+      chatResponse: chat
+    })
+    const report = await evaluateWikiSynthesisFixtures(fixtures, service, undefined, 1)
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(report).toMatchObject({ failedAttempts: 1, corrections: 1, meanScore: 1 })
+  })
+
+  it('isolates offline student and GEPA teacher failures from inherited recording tracers', async () => {
+    const priorTracer = axGlobals.tracer
+    const inheritedTracer = new ProxyTracerProvider().getTracer('offline-inherited-tracer')
+    const backingTracer = new ProxyTracerProvider().getTracer('offline-span-fixture')
+    const recordedExceptions: unknown[] = []
+    const inheritedSpans = vi.spyOn(inheritedTracer, 'startSpan').mockImplementation(() => {
+      const span = backingTracer.startSpan('offline-private-fixture')
+      vi.spyOn(span, 'isRecording').mockReturnValue(true)
+      vi.spyOn(span, 'recordException').mockImplementation(exception => { recordedExceptions.push(exception) })
+      return span
+    })
+    const privateMarker = 'synthetic-private-failed-output'
+    const studentChat = vi.fn(async () => ({ results: [{ index: 0, content: privateMarker, finishReason: 'stop' as const }] }))
+    const teacherChat = vi.fn(async () => { throw new Error(privateMarker) })
+    const studentAI = new AxMockAIService<string>({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+      options: { tracer: inheritedTracer }, chatResponse: studentChat
+    })
+    const teacherAI = new AxMockAIService<string>({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+      options: { tracer: inheritedTracer }, chatResponse: teacherChat
+    })
+    const train = parseWikiSynthesisFixtures(['offline-private-train-a', 'offline-private-train-b'].map(evidenceId => ({
+      ...fixtures[0]!, id: evidenceId, family: evidenceId, split: 'train',
+      sourceUnits: [{ ...source, evidenceId }],
+      variants: [{ id: 'reference', category: 'reference', expected: 'accept', answer: answer({ claims: [{ ...answer().claims[0]!, evidenceId }], unresolvedFacets: [0] }) }]
+    })), 'train')
+    const selection = parseWikiSynthesisFixtures([{ ...fixtures[0]!, variants: [{ id: 'reference', category: 'reference', expected: 'accept', answer: answer({ unresolvedFacets: [0] }) }] }], 'selection')
+    axGlobals.tracer = inheritedTracer
+    try {
+      await evaluateWikiSynthesisFixtures(fixtures, studentAI)
+      await expect(optimizeWikiSynthesis({
+        train, selection, studentAI, teacherAI, maximumMetricCalls: 6, trials: 1,
+        saveArtifact: async () => { throw new Error('A failed proposal must not save an artifact') },
+        loadFinal: async () => { throw new Error('A failed proposal must not load final fixtures') }
+      })).rejects.toThrow('did not evaluate a changed candidate')
+      expect(studentChat).toHaveBeenCalled()
+      expect(teacherChat).toHaveBeenCalled()
+      expect(recordedExceptions).toHaveLength(0)
+      expect(inheritedSpans).not.toHaveBeenCalled()
+    } finally {
+      axGlobals.tracer = priorTracer
+      inheritedSpans.mockRestore()
+    }
   })
 })
 
