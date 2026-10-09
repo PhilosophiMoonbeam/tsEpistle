@@ -150,12 +150,14 @@ describe('Wiki verification deterministic admission', () => {
       { evidenceId: 'page:related:revision:3:section:collections', sourceRevision: '3',
         source: '# Related collections, not direct recipes\n[Guide](/related/guide)\nUncited collection: seasonal experiments; authored and untested.\n' }
     )
+    // Same literal body and owned record, but a different authoritative revision.
+    inventory[1] = { ...inventory[0]!, evidenceId: 'page:0:revision:8:section:recipes', sourceRevision: '8' }
     const candidate: WikiVerificationInput = {
       userRequest: 'Inventory every supplied recipe with fictional/authored/untested status, elapsed time, serving basis and separately labelled related collections.',
       requestFacets: ['All supplied recipes and their qualifications; related collections separately from direct members'],
       claims: inventory.map(entry => ({ evidenceId: entry.evidenceId, sourceRevision: entry.sourceRevision,
         unitId: entry.unitId, statement: `${entry.context}; ${entry.text}` })),
-      sources: inventory, evidence: reads
+      sources: [...inventory].reverse(), evidence: reads
     }
     const built = buildWikiVerificationPlan(candidate)
     if (built === null) throw new Error('Expected inventory verification plan')
@@ -201,7 +203,26 @@ describe('Wiki verification deterministic admission', () => {
         links: entry.closure.links.map(resolve), dependencies: entry.closure.dependencies.map(resolve)
       }
     }))
-    expect(decoded).toEqual(inventory)
+    expect(decoded).toEqual(candidate.sources)
+    const claimSources = candidate.claims.map((claim, claimIndex) => {
+      const instructions = built.request.questions[`support_${claimIndex}`]!.instructions as unknown as {
+        bound_source: { sourceIndex: number; text: string; context: string; kind: string; governing_text: string[] }
+      }
+      const selected = decoded[instructions.bound_source.sourceIndex]!
+      // Follow the same index the consumer must use: ordinal selection would
+      // borrow a foreign record, and text-only selection could borrow revision 7.
+      expect(selected).toEqual(inventory[claimIndex])
+      expect([selected.evidenceId, selected.sourceRevision, selected.unitId])
+        .toEqual([claim.evidenceId, claim.sourceRevision, claim.unitId])
+      expect(instructions.bound_source).toEqual({
+        sourceIndex: instructions.bound_source.sourceIndex, text: selected.text, context: selected.context, kind: selected.kind,
+        governing_text: inventory[claimIndex]!.closure!.dependencies.map(dependency => dependency.text)
+      })
+      return selected
+    })
+    expect(claimSources[0]!.text).toBe(claimSources[1]!.text)
+    expect(claimSources[0]!.sourceRevision).toBe('7')
+    expect(claimSources[1]!.sourceRevision).toBe('8')
     expect(state.evidence.map(entry => ({ ...entry, source: resolve(entry.source) }))).toEqual(reads)
     // The previous object-valued structure encoding keeps the same interned
     // closures, but exceeds admission even without identifier/column dictionaries.
@@ -214,13 +235,13 @@ describe('Wiki verification deterministic admission', () => {
       }
     }
     expect(new TextEncoder().encode(JSON.stringify(legacyRequest)).byteLength).toBeGreaterThan(128 * 1024 - 8192)
-    const first = decoded[0]!.closure.record as SourceRecord
-    const foreign = decoded[2]!.closure.record as SourceRecord
+    const first = claimSources[0]!.closure.record as SourceRecord
+    const foreign = claimSources[2]!.closure.record as SourceRecord
     expect(first.id).not.toBe(foreign.id)
     expect(first.fields[1]!.value).toBe('1 servings')
     expect(foreign.fields[1]!.value).toBe('2 servings')
     expect(first.fields[0]!.label).toBe('Elapsed, not active')
-    expect(decoded[0]!.closure.contexts).toEqual([inventory[0]!.closure!.contexts[0]])
+    expect(claimSources[0]!.closure.contexts).toEqual([inventory[0]!.closure!.contexts[0]])
     expect(resolve(state.evidence.at(-1)!.source)).toContain('Uncited collection: seasonal experiments; authored and untested.')
     expect(state.evidence.slice(-3, -1).map(entry => [entry.evidenceId, entry.sourceRevision])).toEqual([
       ['page:0:revision:8:section:recipes', '8'], ['page:alias:revision:7:section:recipes', '7']
