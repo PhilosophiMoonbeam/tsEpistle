@@ -98,6 +98,135 @@ describe('Wiki verification deterministic admission', () => {
     for (const bound of changed) expect(() => buildWikiVerificationPlan(input({ sources: [bound] }))).toThrow('Invalid Wiki verification input')
   })
 
+  it('admits a many-claim inventory without losing qualifiers, record ownership or uncited related scopes', () => {
+    const inventory: WikiVerificationSource[] = []
+    const reads: WikiVerificationInput['evidence'][number][] = []
+    for (let index = 0; index < 13; index++) {
+      const identity = `p:${index}:r7:`
+      const heading = '# Fictional, authored, untested recipes\n'
+      const lines = Array.from({ length: 6 }, (_, step) => `R${index}/${step}:${step + 1}h elapsed;${index + 1} servings.\n`)
+      const read = heading + lines.join('') + '\n[guide]: /related\n'
+      const definition = { start: read.indexOf('[guide]:'), end: read.length }
+      const governing: SourceContext = {
+        id: `${identity}heading`, kind: 'heading', sourceSpans: [{ start: 0, end: heading.length }],
+        normalizedLabel: 'Fictional, authored, untested recipes', parentId: null, complete: true
+      }
+      let offset = heading.length
+      const owned: SourceUnit[] = lines.map((text, step) => {
+        const span = { start: offset, end: offset + text.length }
+        offset = span.end
+        const id = `${identity}step:${step}`
+        return {
+          id, kind: 'table-row', sourceSpans: [span], normalizedText: text.trim(),
+          contextIds: [governing.id], recordId: `${identity}record`, structuralLabels: [`R${index}`, `s${step}`],
+          links: [{ label: 'Related', destination: '/related',
+            unitId: id, sourceSpans: [span], dependencySpans: [definition], kind: 'link' }], complete: true
+        }
+      })
+      const ownedRecord: SourceRecord = {
+        id: `${identity}record`, kind: 'table-row', contextIds: [governing.id], unitIds: owned.map(entry => entry.id),
+        fields: owned.flatMap((entry, step) => [
+          { id: `${identity}elapsed:${step}`, label: 'Elapsed, not active', value: `${step + 1}h`,
+            unitIds: [entry.id], sourceSpans: entry.sourceSpans, order: step * 2, complete: true },
+          { id: `${identity}yield:${step}`, label: 'Serving yield', value: `${index + 1} servings`,
+            unitIds: [entry.id], sourceSpans: entry.sourceSpans, order: step * 2 + 1, complete: true }
+        ]), complete: true
+      }
+      const dependencies = [governing.sourceSpans[0]!, ...owned.map(entry => entry.sourceSpans[0]!), definition]
+        .map(span => ({ span, text: read.slice(span.start, span.end) }))
+      const evidenceId = `page:${index}:revision:7:section:recipes`
+      reads.push({ evidenceId, sourceRevision: '7', source: read })
+      for (const entry of owned.slice(0, 2)) inventory.push({
+        evidenceId, sourceRevision: '7', unitId: `${entry.id}:assertion:0`, context: governing.normalizedLabel,
+        text: entry.normalizedText, kind: entry.kind, complete: true,
+        closure: { unit: entry, units: owned, contexts: [governing], record: ownedRecord,
+          links: owned.flatMap(item => item.links), dependencies }
+      })
+    }
+    // Equal body text is not an authority alias: retain each read's exact identity/revision.
+    reads.push(
+      { ...reads[0]!, evidenceId: 'page:0:revision:8:section:recipes', sourceRevision: '8' },
+      { ...reads[0]!, evidenceId: 'page:alias:revision:7:section:recipes' },
+      { evidenceId: 'page:related:revision:3:section:collections', sourceRevision: '3',
+        source: '# Related collections, not direct recipes\n[Guide](/related/guide)\nUncited collection: seasonal experiments; authored and untested.\n' }
+    )
+    const candidate: WikiVerificationInput = {
+      userRequest: 'Inventory every supplied recipe with fictional/authored/untested status, elapsed time, serving basis and separately labelled related collections.',
+      requestFacets: ['All supplied recipes and their qualifications; related collections separately from direct members'],
+      claims: inventory.map(entry => ({ evidenceId: entry.evidenceId, sourceRevision: entry.sourceRevision,
+        unitId: entry.unitId, statement: `${entry.context}; ${entry.text}` })),
+      sources: inventory, evidence: reads
+    }
+    const built = buildWikiVerificationPlan(candidate)
+    if (built === null) throw new Error('Expected inventory verification plan')
+    expect(Object.keys(built.request.questions)).toHaveLength(27)
+    expect(new TextEncoder().encode(JSON.stringify(built.request)).byteLength).toBeLessThanOrEqual(128 * 1024 - 8192)
+
+    // Consumer-side decoding follows the advertised columns, then checks the facts
+    // needed to distinguish governing qualifiers and foreign-record borrowing.
+    type PackedClosure = { unit: number; units: number[]; contexts: number[]; record: number | null; links: number[]; dependencies: number[] }
+    const state = built.request.state as unknown as {
+      structures: { kind: string; value: unknown }[]; structureColumns: Record<string, string[]>; identifiers: string[]
+      sources: (Omit<WikiVerificationSource, 'closure'> & { closure: PackedClosure })[]
+      evidence: { evidenceId: string; sourceRevision: string; source: number }[]
+    }
+    const decodeRow = (kind: string, value: unknown): unknown => {
+      if (kind === 'evidence-source') return value
+      if (!Array.isArray(value)) throw new Error(`Expected ${kind} row`)
+      return Object.fromEntries(state.structureColumns[kind]!.map((column, index) => {
+        const cell: unknown = value[index]
+        if (['id', 'parentId', 'recordId', 'unitId'].includes(column))
+          return [column, cell === null ? null : state.identifiers[cell as number]]
+        if (column === 'contextIds' || column === 'unitIds')
+          return [column, (cell as number[]).map(id => state.identifiers[id])]
+        if (column === 'sourceSpans' || column === 'dependencySpans')
+          return [column, (cell as [number, number][]).map(([start, end]) => ({ start, end }))]
+        if (column === 'span') {
+          const [start, end] = cell as [number, number]
+          return [column, { start, end }]
+        }
+        if (column === 'fields' || column === 'links')
+          return [column, (cell as unknown[]).map(row => decodeRow(column === 'fields' ? 'field' : 'link', row))]
+        return [column, cell]
+      }))
+    }
+    const resolve = (index: number): unknown => {
+      const entry = state.structures[index]!
+      return decodeRow(entry.kind, entry.value)
+    }
+    const decoded = state.sources.map(entry => ({
+      ...entry, closure: {
+        unit: resolve(entry.closure.unit), units: entry.closure.units.map(resolve), contexts: entry.closure.contexts.map(resolve),
+        record: entry.closure.record === null ? null : resolve(entry.closure.record),
+        links: entry.closure.links.map(resolve), dependencies: entry.closure.dependencies.map(resolve)
+      }
+    }))
+    expect(decoded).toEqual(inventory)
+    expect(state.evidence.map(entry => ({ ...entry, source: resolve(entry.source) }))).toEqual(reads)
+    // The previous object-valued structure encoding keeps the same interned
+    // closures, but exceeds admission even without identifier/column dictionaries.
+    const { identifiers: _identifiers, structureColumns: _columns, ...legacyState } = state
+    const legacyRequest = {
+      ...built.request, state: {
+        ...legacyState, evidence: reads,
+        structures: state.structures.filter(entry => entry.kind !== 'evidence-source')
+          .map(entry => ({ kind: entry.kind, value: decodeRow(entry.kind, entry.value) }))
+      }
+    }
+    expect(new TextEncoder().encode(JSON.stringify(legacyRequest)).byteLength).toBeGreaterThan(128 * 1024 - 8192)
+    const first = decoded[0]!.closure.record as SourceRecord
+    const foreign = decoded[2]!.closure.record as SourceRecord
+    expect(first.id).not.toBe(foreign.id)
+    expect(first.fields[1]!.value).toBe('1 servings')
+    expect(foreign.fields[1]!.value).toBe('2 servings')
+    expect(first.fields[0]!.label).toBe('Elapsed, not active')
+    expect(decoded[0]!.closure.contexts).toEqual([inventory[0]!.closure!.contexts[0]])
+    expect(resolve(state.evidence.at(-1)!.source)).toContain('Uncited collection: seasonal experiments; authored and untested.')
+    expect(state.evidence.slice(-3, -1).map(entry => [entry.evidenceId, entry.sourceRevision])).toEqual([
+      ['page:0:revision:8:section:recipes', '8'], ['page:alias:revision:7:section:recipes', '7']
+    ])
+  })
+
 
   it('fails rather than pruning source text or skipping coverage to satisfy unchanged bounds', () => {
     expect(() => buildWikiVerificationPlan(input({ evidence: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, source: 'é'.repeat(70_000) }] }))).toThrow()
