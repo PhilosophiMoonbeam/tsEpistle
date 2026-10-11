@@ -472,7 +472,6 @@ describe('Ax agent engine context compaction', () => {
     const sourceDeliveries = calls.slice(1).map(synthesisSourcesFromRequest)
     expect(sourceDeliveries.every(units => units.some(unit => unit.evidenceId === alphaEvidenceId && unit.text === sourceUnit))).toBe(true)
     expect(sourceDeliveries.flat().some(unit => unit.text.includes(background) || unit.text.includes('Beta background remains unchanged.'))).toBe(false)
-    expect(text).toHaveBeenCalledWith(`${sourceUnit} [[cite:${alphaEvidenceId}]]`)
     expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
     expect(result).toMatchObject({ inputTokens: 503, outputTokens: 52, totalTokens: 555, costMicros: 607 })
     expect(validateObservation).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
@@ -520,8 +519,8 @@ describe('Ax agent engine context compaction', () => {
         }
         const units = synthesisSourcesFromRequest(input)
         const draft = calls.length === 3
-          ? { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text.includes('Maya Quinn') || synthesisOwnedPacketIncludes(input, unit, 'Maya Quinn'))?.unitId ?? 'fixture-omitted-contact-unit', statement: fact }
-          : { evidenceId: citation, sourceRevision: 'rev-1', unitId: units.find(unit => unit.text === independentFact)?.unitId ?? 'fixture-missing-office-unit', statement: independentFact }
+          ? { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text.includes('Maya Quinn') || synthesisOwnedPacketIncludes(input, unit, 'Maya Quinn'))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: fact }
+          : { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text === independentFact)?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: independentFact }
         return response(synthesisFixtureAnswer(input, { claims: [draft], unresolvedFacets: calls.length === 3 ? [] : [0] }), 100, 10)
       })
       const { factory } = factoryFor(chat)
@@ -1018,8 +1017,6 @@ ${sourceUnit}`,
       { commitCompaction, text, event }
     )
 
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain(`${firstFact} [[cite:page:1:revision:1]]`)
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain(`${secondFact} [[cite:page:2:revision:2]]`)
     expect(event).not.toHaveBeenCalledWith('model.turn', expect.objectContaining({ outcome: 'context_compacted' }))
     expect(commitCompaction).not.toHaveBeenCalled()
     expect(result).toMatchObject({

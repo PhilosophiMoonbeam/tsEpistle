@@ -1110,7 +1110,7 @@ describe('Ax orchestration stages', () => {
         const source = sources.find(unit => unit.evidenceId === citation && (turn === 1 ? synthesisOwnedPacketIncludes(input, unit, 'Maya Quinn') : unit.text.includes(independentFact)))
         return {
           results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-            claims: [{ evidenceId: citation, sourceRevision: 'rev-1', unitId: source?.unitId ?? 'undelivered-contact-record', statement }],
+            claims: [{ evidenceId: citation, sourceRevision: 'rev-1', sourceRef: source?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement }],
             unresolvedFacets: turn > 1 ? [0] : []
           }) }]
         } satisfies AxChatResponse
@@ -1166,7 +1166,7 @@ describe('Ax orchestration stages', () => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === citation && unit.text.includes(visibleFact))
       return {
         results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-          claims: [{ evidenceId: citation, sourceRevision: '1', unitId: source?.unitId ?? 'undelivered-contact-section', statement }],
+          claims: [{ evidenceId: citation, sourceRevision: '1', sourceRef: source?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement }],
           unresolvedFacets: turn > 1 ? [0] : []
         }) }]
       } satisfies AxChatResponse

@@ -43,7 +43,7 @@ export interface SourceRecord {
 }
 export interface SourceUnit {
   readonly id: string
-  readonly kind: 'paragraph' | 'list-item' | 'table-row' | 'heading' | 'summary' | 'code' | 'opaque'
+  readonly kind: 'paragraph' | 'list' | 'list-item' | 'table-row' | 'heading' | 'summary' | 'code' | 'opaque'
   readonly sourceSpans: readonly SourceSpan[]
   readonly normalizedText: string
   readonly contextIds: readonly string[]
@@ -78,6 +78,7 @@ const factory = (module: unknown): Factory => {
 const literalMarkdown = factory(markdownItModule)({ html: false, linkify: false })
 const whitespace = (text: string): string => text.replace(/\s+/gu, ' ').trim()
 const identity = (text: string): string => whitespace(text).normalize('NFKC').toLowerCase()
+const presentationAttributes = /\{(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+))(?:\s+(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+)))*\}/gu
 const labelField = (text: string): { label: string; value: string } | null => {
   const match = /^([^:\n]{1,80}):\s*(\S[\s\S]*)$/u.exec(text)
   if (!match || /[.!?]|:\/\//u.test(match[1]!)) return null
@@ -266,6 +267,8 @@ export const parseSourceDocument = (
   const markdown = factory(markdownItModule)({ html: true, breaks: true, linkify: true, typographer: false })
   const environment: { references?: Record<string, { href: string; title: string }> } = {}
   const references = new Map<string, SourceSpan[]>()
+  const referenceDefinitionSpans: SourceSpan[] = []
+  const htmlStarts: number[] = []
   const cut = options.representation === 'recent-excerpt' && options.truncated
   const bounded = (span: SourceSpan): boolean => !cut || span.end < source.length || /\r?\n\s*\r?\n$/u.test(source.slice(span.start, span.end))
   const originalRules = markdown.block.ruler.getRules('')
@@ -282,6 +285,7 @@ export const parseSourceDocument = (
     state.env.references = previous ?? {}
     if (result) {
       const span = { start: activeOffset + (activeStarts[start] ?? 0), end: activeOffset + (activeStarts[state.line] ?? activeStarts.at(-1) ?? 0) }
+      referenceDefinitionSpans.push(span)
       for (const [key, definition] of Object.entries(definitions)) {
         const earlier = references.get(key)?.[0]
         if (!earlier || span.start < earlier.start) {
@@ -394,11 +398,7 @@ export const parseSourceDocument = (
         if (kind !== 'autolink') text += label
         else if (/^mailto:/iu.test(destination)) text += label.replace(/^mailto:/iu, '')
       } else if (token.type === 'code_inline') text += `${token.markup}${token.content}${token.markup}`
-      else if (token.type === 'text')
-        text += token.content.replace(
-          /\{(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+))(?:\s+(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+)))*\}/gu,
-          ''
-        )
+      else if (token.type === 'text') text += token.content.replace(presentationAttributes, '')
       else if (token.type === 'softbreak' || token.type === 'hardbreak') text += '\n'
       else if (token.type === 'image') text += token.content
       else if (token.type === 'html_inline') {
@@ -467,6 +467,7 @@ export const parseSourceDocument = (
         if (token.type === 'html_block' || token.type === 'source_html') {
           const span = range(token, enclosing)
           const column = (token.meta as { startColumn?: number } | null)?.startColumn ?? 0
+          htmlStarts.push(span.start + column)
           result.push(...htmlBlocks(source.slice(span.start + column, span.end), span.start + column))
         } else if (token.type === 'fence' || token.type === 'code_block') {
           const span = range(token, enclosing)
@@ -606,6 +607,7 @@ export const parseSourceDocument = (
   const contexts: SourceContext[] = []
   const contextIndex = new Map<string, { context: SourceContext; order: number }>()
   const records: MutableRecord[] = []
+  const lists: Array<{ block: Block; contextIds: string[]; start: number; end: number }> = []
   const headings: Array<{ level: number; context: SourceContext }> = []
   let headingFloor = 0
   let scope: string[] = []
@@ -765,7 +767,12 @@ export const parseSourceDocument = (
         else visit(block.children, own)
         scope = previous
       } else if (block.type === 'paragraph') paragraph(block, owner)
-      else if (block.type === 'code' || block.type === 'opaque') unit(block, block.type)
+      else if (block.type === 'bullet_list' || block.type === 'ordered_list') {
+        const candidate = { block, contextIds: contextIds(), start: units.length, end: 0 }
+        lists.push(candidate)
+        visit(block.children, owner)
+        candidate.end = units.length
+      } else if (block.type === 'code' || block.type === 'opaque') unit(block, block.type)
       else if (block.type === 'table') {
         const rows: Block[] = []
         const collect = (children: Block[]): void => {
@@ -822,6 +829,27 @@ export const parseSourceDocument = (
       value.complete = false
     }
   }
+  // Containers are issued only after all original identities, including fields,
+  // so adding a selectable list never changes an existing binding or owner.
+  const ownedList = (block: Block, parent: SourceSpan = block.span): boolean => {
+    if (!block.complete || block.span.start < parent.start || block.span.end > parent.end) return false
+    if (block.type === 'bullet_list' || block.type === 'ordered_list') {
+      if (!block.children.length || block.children.some(child => child.type !== 'list_item')) return false
+    } else if (block.type !== 'list_item' && block.type !== 'paragraph') return false
+    // Exact raw quotations must not expose text that the visible projection
+    // masks: HTML attributes/hidden content, code, images or bare destinations.
+    if (block.syntax === 'html' || block.inline?.some(token =>
+      token.type === 'html_inline' || token.type === 'code_inline' || token.type === 'image' ||
+      token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') ||
+      token.type === 'text' && token.content.search(presentationAttributes) !== -1
+    )) return false
+    let end = block.span.start
+    for (const child of block.children) {
+      if (child.span.start < end || !ownedList(child, block.span)) return false
+      end = child.span.end
+    }
+    return true
+  }
   const selectedSections = sections.map(section => ({ ...section, endOffset: source.length, unitIds: [] as string[] }))
   const openSections: number[] = []
   for (let index = 0; index < selectedSections.length; index += 1) {
@@ -843,6 +871,46 @@ export const parseSourceDocument = (
     for (const index of openSections) {
       const section = selectedSections[index]!
       if (member.sourceSpans.some(span => span.start >= section.startOffset && span.end <= section.endOffset)) section.unitIds.push(member.id)
+    }
+  }
+  const recordsById = new Map(records.map(record => [record.id, record]))
+  for (const { block, contextIds: parentContextIds, start, end } of lists) {
+    // Definitions are link syntax, not visible authored list entries.
+    if (!ownedList(block) || start === end ||
+      parentContextIds.some(key => !contextIndex.get(key)!.context.complete) ||
+      referenceDefinitionSpans.some(span => span.start >= block.span.start && span.end <= block.span.end) ||
+      htmlStarts.some(offset => offset >= block.span.start && offset < block.span.end)) continue
+    let complete = true
+    for (let index = start; index < end; index++) {
+      const member = units[index]!
+      if (!member.complete || member.recordId !== null && !recordsById.get(member.recordId)?.complete) {
+        complete = false
+        break
+      }
+    }
+    if (!complete) continue
+    const unitId = id('unit', block.span)
+    const links: SourceLink[] = []
+    const labels = new Set<string>()
+    for (let index = start; index < end; index++) {
+      for (const link of units[index]!.links) {
+        links.push({ ...link, unitId })
+        if (link.kind === 'link') labels.add(link.label)
+      }
+    }
+    units.push({
+      id: unitId,
+      kind: 'list',
+      sourceSpans: [block.span],
+      normalizedText: source.slice(block.span.start, block.span.end),
+      contextIds: parentContextIds,
+      recordId: null,
+      structuralLabels: [...labels],
+      links,
+      complete: true
+    })
+    for (const section of selectedSections) {
+      if (block.span.start >= section.startOffset && block.span.end <= section.endOffset) section.unitIds.push(unitId)
     }
   }
   return { source, units, contexts, records, sections: selectedSections }

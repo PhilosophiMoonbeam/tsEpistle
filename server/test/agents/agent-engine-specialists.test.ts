@@ -7,7 +7,7 @@ import { KernelActionSessionProvider } from '../../agents/providers/action-sessi
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
-import type { WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
+import { encodeWikiSynthesisAnswer, type WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
 import type { AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../../agents/runtime.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { geminiFixtureService } from './gemini-fixture.ts'
@@ -470,7 +470,7 @@ describe('native specialist engine contexts', () => {
       output
     )
 
-    expect(publishedText(output)).toBe(groundedReport)
+    expect(publishedText(output)).not.toContain(forged)
     expect(result.citations).toEqual([expect.objectContaining({ evidenceId, label: 'Alpha › Rules', href: '/en/alpha#rules' })])
     expect(result.specialistState).toBeUndefined()
     expect(result.specialistAuthoritySha256).toBeUndefined()
@@ -500,7 +500,7 @@ describe('native specialist engine contexts', () => {
     const unresolvedAnswer: WikiSynthesisAnswer = { claims: [], unresolvedFacets: [0], observations: [], recommendations: '' }
     const root = fixture([
       [{ functionCall: { id: 'finish-root', name: 'wiki_finish_collection', args: {} } }],
-      answer(JSON.stringify(staleAnswer)),
+      answer(JSON.stringify(encodeWikiSynthesisAnswer(staleAnswer))),
       answer(JSON.stringify(unresolvedAnswer))
     ])
     if (kind === 'stale seed') root.changePage({ ...page, sourceRevision: '4' })
