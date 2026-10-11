@@ -212,7 +212,7 @@ describe('Ax native Gemini application transport', () => {
     })
   })
 
-  it('omits unconfigured thinking and caller cache defaults while binding the profile model', async () => {
+  it('binds the profile model and ceiling without accepting caller cache defaults', async () => {
     await db('agentProviderProfileVersions')
       .where({ id })
       .update({ adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} }) })
@@ -229,7 +229,6 @@ describe('Ax native Gemini application transport', () => {
     )
     expect(sent?.url).toBe(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`)
     expect(sent?.body).toHaveProperty('generationConfig.maxOutputTokens', 123)
-    expect(sent?.body).not.toHaveProperty('generationConfig.thinkingConfig')
     expect(sent?.body).not.toHaveProperty('cachedContent')
   })
 

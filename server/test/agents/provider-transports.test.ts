@@ -227,6 +227,108 @@ describe('additional provider transports', () => {
   })
 
   it.each([
+    ['3.8 Flash default', 'gemini-3.8-flash', undefined, undefined, undefined, undefined, 'low'],
+    ['3.7 Flash default', 'gemini-3.7-flash', 'agent', undefined, undefined, undefined, 'low'],
+    ['3.6 Flash default', 'gemini-3.6-flash', undefined, undefined, undefined, undefined, 'minimal'],
+    ['3.5 Flash-Lite default', 'gemini-3.5-flash-lite', undefined, undefined, undefined, undefined, 'minimal'],
+    ['3.1 Pro default', 'gemini-3.1-pro-preview', undefined, undefined, undefined, undefined, 'low'],
+    ['3 Flash default', 'gemini-3-flash-preview', undefined, undefined, undefined, undefined, 'minimal'],
+    ['retired Pro ID unchanged', 'gemini-3-pro-preview', undefined, undefined, undefined, undefined, undefined],
+    ['2.x unchanged', 'gemini-2.5-flash', undefined, undefined, undefined, undefined, undefined],
+    ['unknown 3.x unchanged', 'gemini-3.99-flash', undefined, undefined, undefined, undefined, undefined],
+    ['unverified spelling unchanged', 'gemini-3.8-flash-custom', undefined, undefined, undefined, undefined, undefined],
+    ['caller default wins automatic policy', 'gemini-3.8-flash', 'agent', 'high', undefined, undefined, 'high'],
+    ['administrator wins caller default', 'gemini-3.8-flash', 'agent', 'low', 'high', undefined, 'high'],
+    ['agent purpose ignores utility effort', 'gemini-3.8-flash', undefined, undefined, undefined, 'high', 'low'],
+    ['utility default remains unset', 'gemini-3.8-flash', 'utility', undefined, 'high', undefined, undefined],
+    ['utility caller default preserved', 'gemini-3.8-flash', 'utility', 'medium', 'high', undefined, 'medium'],
+    ['utility administrator wins caller default', 'gemini-3.8-flash', 'utility', 'low', 'minimal', 'high', 'high']
+  ] as const)(
+    'applies bounded native Gemini effort on the factory wire: %s',
+    async (_label, model, purpose, callerEffort, agentReasoningEffort, utilityReasoningEffort, expectedLevel) => {
+      const id = '00000000-0000-4000-8000-000000000044'
+      await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key', model })
+      await db('agentProviderProfileVersions')
+        .where({ id })
+        .update({
+          adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort, utilityReasoningEffort })
+        })
+      const payloads: Record<string, unknown>[] = []
+      const signedParts = [{ text: 'private reasoning', thought: true, thoughtSignature: 'native-signature' }, { text: 'answer' }]
+      const provider = await new AgentProviderFactory(
+        db,
+        { get: () => 'gemini-key' },
+        (async (_input, init) => {
+          payloads.push(JSON.parse(String(init?.body)))
+          return Response.json({
+            candidates: [{ index: 0, content: { role: 'model', parts: signedParts }, finishReason: 'STOP' }],
+            usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 1, thoughtsTokenCount: 1, totalTokenCount: 4 }
+          })
+        }) as typeof fetch,
+        publicResolver as never
+      ).create(id, { purpose, reasoningEffort: callerEffort })
+      expect(provider.reasoningEffort).toBe(expectedLevel)
+      const first = await provider.service.chat(
+        {
+          chatPrompt: [{ role: 'user', content: 'Read and finish.' }],
+          modelConfig: { maxTokens: 320 }
+        },
+        { stream: false }
+      )
+      if (first instanceof ReadableStream) throw new Error('Expected buffered Gemini output')
+      expect(first.results[0]?.content).toBe('answer')
+      expect(readAgentProviderUsage('gemini-api', first)).toMatchObject({ inputTokens: 2, outputTokens: 1, totalTokens: 4 })
+      expect(first.results[0]?.thoughtBlocks).toHaveLength(1)
+      await provider.service.chat(
+        {
+          chatPrompt: [
+            { role: 'user', content: 'Read and finish.' },
+            { role: 'assistant', content: 'answer', thoughtBlocks: first.results[0]!.thoughtBlocks },
+            { role: 'user', content: 'Continue.' }
+          ],
+          modelConfig: { maxTokens: 320 }
+        },
+        { stream: false }
+      )
+      expect(payloads).toHaveLength(2)
+      for (const payload of payloads) {
+        expect(payload).toHaveProperty('generationConfig.maxOutputTokens', 320)
+        if (expectedLevel === undefined) expect(payload).not.toHaveProperty('generationConfig.thinkingConfig')
+        else expect(payload).toHaveProperty('generationConfig.thinkingConfig', { thinkingLevel: expectedLevel })
+      }
+      expect(payloads[1]).toHaveProperty('contents.1.parts', signedParts)
+    }
+  )
+
+  it.each([
+    ['openai-responses', 'https://responses.example.test/v1', 'model-test'],
+    ['openresponses', 'https://openresponses.example.test/v1', 'model-test'],
+    ['openai-chat', 'https://chat.example.test/v1', 'model-test'],
+    ['anthropic-messages', 'https://anthropic.example.test/v1', 'claude-sonnet-4-6'],
+    ['legacy-completions', 'https://legacy.example.test/v1', 'model-test']
+  ] as const)('keeps native Gemini agent defaults off the %s factory wire', async (transportKind, baseUrl, model) => {
+    const id = '00000000-0000-4000-8000-000000000045'
+    await insert({ id, transportKind, baseUrl, model, authMode: transportKind === 'anthropic-messages' ? 'anthropic-api-key' : 'bearer' })
+    let payload: Record<string, unknown> | undefined
+    const provider = await new AgentProviderFactory(
+      db,
+      { get: () => 'provider-key' },
+      (async (_input, init) => {
+        payload = JSON.parse(String(init?.body))
+        return Response.json({ error: { code: 'temporary_provider_failure' } }, { status: 503 })
+      }) as typeof fetch,
+      publicResolver as never
+    ).create(id)
+    expect(provider.reasoningEffort).toBeUndefined()
+    await expect(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Read and finish.' }] }, { stream: false })).rejects.toThrow()
+    expect(payload).toBeDefined()
+    expect(payload).not.toHaveProperty('reasoning_effort')
+    expect(payload).not.toHaveProperty('reasoning.effort')
+    expect(payload).not.toHaveProperty('output_config.effort')
+    expect(payload).not.toHaveProperty('thinking')
+  })
+
+  it.each([
     ['openai-responses', '00000000-0000-4000-8000-000000000017', 'responses.example.test'],
     ['openresponses', '00000000-0000-4000-8000-000000000011', 'openresponses.example.test']
   ] as const)('runs %s through the storage-off Responses protocol with a no-tools native final', async (transportKind, id, host) => {

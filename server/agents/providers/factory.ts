@@ -4,6 +4,7 @@ import {
   ai,
   type AxAIAnthropicModel,
   type AxAIFeatures,
+  AxAIGoogleGeminiModel,
   type AxAIOpenAIResponsesModel,
   type AxAIOpenAIResponsesRequest,
   type AxAIService,
@@ -56,6 +57,19 @@ const MAX_PROVIDER_RESULT_RECORDS = 65_536
 const MAX_STRUCTURED_DEPTH = 64
 const MAX_STRUCTURED_VALUES = 16_384
 const MAX_STRUCTURED_BYTES = 65_536
+
+// Exact native chat capabilities in Ax 25.2.1 and Google's thinking-level table:
+// https://ai.google.dev/gemini-api/docs/thinking
+// Portable catalog levels may collapse to a different native level. Unknown
+// models (including Gemini 2.x) keep provider defaults instead of guessing.
+const GEMINI_AGENT_DEFAULT_REASONING_EFFORTS: Readonly<Partial<Record<string, AgentReasoningEffort>>> = {
+  [AxAIGoogleGeminiModel.Gemini38Flash]: 'low',
+  [AxAIGoogleGeminiModel.Gemini37Flash]: 'low',
+  [AxAIGoogleGeminiModel.Gemini36Flash]: 'minimal',
+  [AxAIGoogleGeminiModel.Gemini35FlashLite]: 'minimal',
+  [AxAIGoogleGeminiModel.Gemini31Pro]: 'low',
+  [AxAIGoogleGeminiModel.Gemini3Flash]: 'minimal'
+}
 
 export const AGENT_PROVIDER_CONTINUATION_DIALECTS = [
   'openai-responses-reasoning-v1',
@@ -1494,7 +1508,10 @@ export class AgentProviderFactory {
     if (profileEffort !== undefined && !agentProviderReasoningEfforts(row.transportKind).includes(profileEffort)) {
       throw new AgentRepositoryError('PROVIDER_PROFILE_CORRUPT', 'Stored provider reasoning effort is invalid', 500)
     }
-    const reasoningEffort = profileEffort ?? loadOptions.reasoningEffort
+    const reasoningEffort =
+      profileEffort ??
+      loadOptions.reasoningEffort ??
+      (row.transportKind === 'gemini-api' && loadOptions.purpose !== 'utility' ? GEMINI_AGENT_DEFAULT_REASONING_EFFORTS[model] : undefined)
     const endpoint: ProviderEndpoint =
       row.transportKind === 'openai-responses' || row.transportKind === 'openresponses'
         ? '/responses'
