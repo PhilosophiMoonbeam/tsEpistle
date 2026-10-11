@@ -303,6 +303,8 @@ Never run a destructive down migration while an application, MCP client, browser
 
 Route the Wiki hostname normally and apply a stricter exact-path policy to `/mcp` on that same hostname. Preserve `Host`, terminate TLS at trusted ingress, reject unknown hosts, disable proxy buffering for SSE/MCP, and apply an ingress rate limit to MCP.
 
+Agent event streams set `Cache-Control: no-store, no-transform` and `X-Accel-Buffering: no`, preventing application compression and intermediary transforms from holding queued/activity events until terminal completion. Preserve these directives at ingress. Verify first-event delivery while a run is still open, not only a successful final replay. Verified answer text remains withheld until source validation completes; early activity is not unverified answer publication.
+
 Representative policy:
 
 ```nginx

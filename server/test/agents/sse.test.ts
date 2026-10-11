@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { createServer, get, type ClientRequest, type IncomingMessage } from 'node:http'
+import { createBrotliDecompress, createGunzip, type BrotliDecompress, type Gunzip } from 'node:zlib'
+import compression from 'compression'
+import express from 'express'
 import type { Response } from 'express'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
@@ -73,6 +77,119 @@ describe('agent event SSE lifecycle', () => {
     expect(response.end).toHaveBeenCalledOnce()
     expect(connections.has(7)).toBe(false)
   })
+
+  it('delivers a stored event through compression before the run is allowed to finish', async () => {
+    const data = '{"message":"queued before completion"}'
+    await knex('agentRuns').insert({ id: 'run-live', ownerId: 7, status: 'running', eventSequence: 1 })
+    await knex('agentEvents').insert({
+      id: 'event-live',
+      runId: 'run-live',
+      sequence: 1,
+      type: 'run.queued',
+      attempt: 1,
+      schemaVersion: 1,
+      dataSha256: sha256(data),
+      data,
+      createdAt: new Date('2026-08-17T12:00:00.000Z')
+    })
+
+    const connections = new Map<number, number>()
+    const controller = new AbortController()
+    let streaming: Promise<unknown> | undefined
+    let streamEnded = false
+    const app = express()
+    app.use(compression())
+    app.get('/events', (request, response) => {
+      streaming = streamOwnedAgentEvents(knex, request, response, 7, 'run-live', connections, {
+        maximumConnectionsPerUser: 1,
+        reconciliationMilliseconds: 1,
+        keepaliveMilliseconds: 60_000,
+        signal: controller.signal
+      }).then(
+        () => {
+          streamEnded = true
+        },
+        error => {
+          streamEnded = true
+          response.destroy(error)
+          return error
+        }
+      )
+    })
+    const server = createServer(app)
+    let response: IncomingMessage | undefined
+    let decoder: Gunzip | BrotliDecompress | undefined
+    let client: ClientRequest | undefined
+    // Real loopback I/O and compression need the platform clock; fake timers
+    // cannot drive socket delivery. This deadline only bounds a buffering
+    // deadlock: terminal status is withheld until a complete event arrives.
+    const deadline = setTimeout(() => controller.abort(new Error('SSE event remained buffered while the run was open')), 5_000)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Expected a loopback TCP listener')
+      response = await new Promise<IncomingMessage>((resolve, reject) => {
+        client = get({
+          hostname: '127.0.0.1',
+          port: address.port,
+          path: '/events',
+          headers: { 'Accept-Encoding': 'gzip, br' },
+          agent: false,
+          signal: controller.signal
+        }, resolve)
+        client.once('error', reject)
+      })
+      expect(response.statusCode).toBe(200)
+      const encoding = response.headers['content-encoding']
+      if (encoding === 'gzip') decoder = createGunzip()
+      else if (encoding === 'br') decoder = createBrotliDecompress()
+      else if (encoding) throw new Error(`Unsupported response encoding: ${encoding}`)
+      const body = decoder ? response.pipe(decoder) : response
+      response.on('error', error => decoder?.destroy(error))
+      body.setEncoding('utf8')
+      let received = ''
+      let earlyEventReceived = false
+      for await (const chunk of body) {
+        received += chunk
+        const frameEnd = received.indexOf('\n\n')
+        if (earlyEventReceived || frameEnd < 0) continue
+        const frame = received.slice(0, frameEnd)
+        expect(frame.split('\n').slice(0, 2)).toEqual(['id: 1', 'event: run.queued'])
+        const envelope = JSON.parse(frame.split('\n').find(line => line.startsWith('data: '))!.slice(6))
+        expect(envelope).toEqual({
+          schemaVersion: 1,
+          attempt: 1,
+          data: { message: 'queued before completion' },
+          createdAt: '2026-08-17T12:00:00.000Z'
+        })
+        expect(streamEnded).toBe(false)
+        expect(connections.get(7)).toBe(1)
+        expect(await knex('agentRuns').where({ id: 'run-live' }).first('status')).toEqual({ status: 'running' })
+        earlyEventReceived = true
+        await knex('agentRuns').where({ id: 'run-live' }).update({ status: 'partial' })
+      }
+      expect(earlyEventReceived).toBe(true)
+      expect(await streaming).toBeUndefined()
+      expect(connections.has(7)).toBe(false)
+    } finally {
+      clearTimeout(deadline)
+      controller.abort()
+      decoder?.destroy()
+      response?.destroy()
+      client?.destroy()
+      server.closeAllConnections()
+      await streaming
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => {
+          if (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
+          else resolve()
+        })
+      })
+    }
+  }, 10_000)
 
   it('resumes owner-scoped stored events from Last-Event-ID and closes without replaying them again', async () => {
     await knex('agentRuns').insert({ id: 'run-reconnect', ownerId: 7, status: 'partial', eventSequence: 3 })

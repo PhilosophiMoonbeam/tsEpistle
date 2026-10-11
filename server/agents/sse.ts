@@ -150,7 +150,8 @@ export const streamOwnedAgentEvents = async (
     if (closed || limits.signal?.aborted || req.aborted || res.destroyed) return
     res.status(200)
     res.set({
-      'Cache-Control': 'no-store',
+      // Compression and intermediary transforms must not buffer live events.
+      'Cache-Control': 'no-store, no-transform',
       'Content-Type': 'text/event-stream; charset=utf-8',
       'X-Accel-Buffering': 'no',
       Connection: 'keep-alive'
