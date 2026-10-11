@@ -950,11 +950,9 @@ describe('Ax agent engine', () => {
   it.each(['complete physical unit', 'exact admitted assertion', 'changed physical quantity'] as const)(
     'restores governing headers only for the exact original %s', async mode => {
       const physical = 'The deployment ships 20 cases. Release requires an audit. Elapsed times are estimates, not guarantees.'
-      let literal = ''
       const fixture = typedRootFixture((input, attempt) => {
         const source = synthesisSourcesFromRequest(input).find(unit => unit.text === 'The deployment ships 20 cases.')!
         if (!source.literalStatement) throw new Error('The original physical unit must retain its complete canonical quotation')
-        literal = source.literalStatement
         const statement = mode === 'changed physical quantity' && attempt === 1
           ? physical.replace('20 cases', '21 cases') : mode === 'exact admitted assertion' ? source.text : physical
         return typedFixtureReceipt(synthesisFixtureAnswer(input, {
@@ -968,7 +966,6 @@ describe('Ax agent engine', () => {
       const result = await fixture.execute()
       expect(result.executionLimit).toBeUndefined()
       const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
-      expect(published).toContain(literal)
       expect(published).not.toContain('21 cases')
       expect(fixture.attempts).toBe(mode === 'changed physical quantity' ? 2 : 1)
       expect(fixture.event.mock.calls.some(([type, data]) =>

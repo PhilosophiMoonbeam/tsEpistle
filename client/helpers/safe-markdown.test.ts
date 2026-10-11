@@ -2,7 +2,7 @@ import { describe, expect, it } from '../../server/test/bun-test.mts'
 
 import { renderSafeMarkdown } from './safe-markdown.ts'
 import { parseSourceDocument } from '../../server/agents/providers/source-document.ts'
-import { renderWikiSynthesisAnswer } from '../../server/agents/providers/wiki-synthesis.ts'
+import { escapeWikiSourceText, renderWikiSynthesisAnswer } from '../../server/agents/providers/wiki-synthesis.ts'
 
 describe('safe markdown rendering', () => {
   it('renders markdown links with isolated new-tab behavior', () => {
@@ -25,6 +25,37 @@ describe('safe markdown rendering', () => {
     expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('[href]')).toBeNull()
     expect(container.textContent).toContain(rawHtml)
+  })
+
+  it('displays CommonMark source escapes as literal text during streaming and after completion', () => {
+    const source = '# Recipe ! " $ % & \' ( ) * + , - . / : ; < = > ? @ [ \\ ] ^ _ ` { | } ~\n[run](javascript:alert(1)) <img src=x onerror=alert(1)> [[cite:source]] \\A'
+    for (const streaming of [true, false]) {
+      const container = document.createElement('div')
+      container.innerHTML = renderSafeMarkdown(`${escapeWikiSourceText(source)}\n\n[[cite:verified]]`, {
+        streaming,
+        resolveCitation: evidenceId => ({ evidenceId, number: 1, label: 'Verified source', href: '/en/catalog' })
+      })
+
+      expect(container.textContent?.replaceAll('\n', '')).toContain(source.replaceAll('\n', ''))
+      expect(container.querySelector('h1, em, strong, code, img')).toBeNull()
+      expect([...container.querySelectorAll('a')].map(anchor => anchor.getAttribute('href'))).toEqual(['/en/catalog'])
+      expect(container.querySelectorAll('[data-agent-citation]').length).toBe(1)
+    }
+  })
+
+  it('keeps backslashes and citation-like text verbatim inside code while streaming', () => {
+    const inline = String.raw`\*literal\* \\ [[cite:inline]]`
+    const fenced = String.raw`\# literal \\ [[cite:fenced]]`
+    const container = document.createElement('div')
+    container.innerHTML = renderSafeMarkdown(`\`${inline}\`\n\n\`\`\`text\n${fenced}\n\`\`\`\n\nPending [[cite:partial`, {
+      streaming: true,
+      resolveCitation: evidenceId => ({ evidenceId, number: 1, label: 'Source', href: '/en/catalog' })
+    })
+
+    expect([...container.querySelectorAll('code')].map(element => element.textContent)).toEqual([inline, `${fenced}\n`])
+    expect(container.querySelector('[data-agent-citation]')).toBeNull()
+    expect(container.textContent).toContain('Pending ')
+    expect(container.textContent).not.toContain('[[cite:partial')
   })
 
   it('retains quoted source identities and conditions without activating author punctuation', () => {

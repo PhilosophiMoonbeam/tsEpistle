@@ -166,6 +166,18 @@ export interface WikiSynthesisClaim {
   readonly statement: string
 }
 
+/** Host-only presentation of one exact protected quotation; never model output. */
+export interface WikiSourceQuotationPresentation extends WikiSynthesisClaim {
+  readonly text: string
+  readonly contexts: readonly string[]
+  readonly kind: 'quotation' | 'membership'
+  readonly label?: string
+}
+
+/** Both the immutable binding and the unchanged canonical statement select display. */
+export const wikiSynthesisPresentationKey = (claim: WikiSynthesisClaim): string =>
+  JSON.stringify([claim.evidenceId, claim.sourceRevision, claim.unitId, claim.statement])
+
 export interface WikiSynthesisWireClaim {
   readonly sourceRef: string
   readonly statement: string
@@ -361,6 +373,79 @@ export const renderWikiSynthesisAnswer = (answer: WikiSynthesisAnswer, literalSt
       ? escapeWikiSourceText(text) : text
     return `${statement}${/[\r\n]/u.test(statement) ? '\n\n' : ' '}[[cite:${claim.evidenceId}]]`
   })
+  sections.push(...answer.observations)
+  if (sections.length === 0) sections.push('I cannot establish a sourced answer from the available evidence.')
+  const recommendations = answer.recommendations?.trim()
+  if (recommendations) sections.push(`## Recommendations\n\n${recommendations}`)
+  return sections.join('\n\n')
+}
+
+/**
+ * Publication-only rendering after canonical source/whole-answer verification.
+ * Exact owned metadata supplies every substitution; ordinary model assertions
+ * retain their original rendering and are never deduplicated or rewritten.
+ */
+export const renderReadableWikiSynthesisAnswer = (
+  answer: WikiSynthesisAnswer,
+  literalStatements: ReadonlySet<string>,
+  literalListStatements: ReadonlyMap<string, string> | undefined,
+  presentations: ReadonlyMap<string, WikiSourceQuotationPresentation>
+): string => {
+  const safe = validateWikiSynthesisShape(answer, literalListStatements)
+  if (safe !== true) throw new Error(safe)
+  const rows: {
+    presentation: WikiSourceQuotationPresentation | undefined
+    renderedStatement: string
+    citationIds: string[]
+  }[] = []
+  const duplicates = new Map<string, typeof rows[number]>()
+  for (const claim of answer.claims) {
+    const key = wikiSynthesisPresentationKey(claim)
+    const supplied = presentations.get(key)
+    const presentation = supplied !== undefined && wikiSynthesisPresentationKey(supplied) === key ? supplied : undefined
+    const duplicateKey = presentation === undefined ? undefined
+      : JSON.stringify([presentation.kind, presentation.contexts, presentation.label ?? null, presentation.text])
+    const duplicate = duplicateKey === undefined ? undefined : duplicates.get(duplicateKey)
+    if (duplicate !== undefined) {
+      if (!duplicate.citationIds.includes(claim.evidenceId)) duplicate.citationIds.push(claim.evidenceId)
+      continue
+    }
+    const text = claim.statement.trim()
+    const renderedStatement = presentation !== undefined ? escapeWikiSourceText(presentation.text.trim())
+      : literalStatements.has(claim.statement) || literalListStatements?.get(bindingKey(claim)) === claim.statement
+        ? escapeWikiSourceText(text) : text
+    const row = { presentation, renderedStatement, citationIds: [claim.evidenceId] }
+    rows.push(row)
+    if (duplicateKey !== undefined) duplicates.set(duplicateKey, row)
+  }
+  const sections: string[] = []
+  let previousContexts: readonly string[] = []
+  let previousLabel: string | undefined
+  let list: string[] = []
+  const flushList = (): void => {
+    if (list.length) sections.push(list.join('\n'))
+    list = []
+  }
+  for (const row of rows) {
+    const contexts = row.presentation?.contexts ?? []
+    let shared = 0
+    while (shared < contexts.length && shared < previousContexts.length && contexts[shared] === previousContexts[shared]) shared++
+    const changedContext = shared !== contexts.length || shared !== previousContexts.length
+    // Returning from a narrower scope must visibly reopen the broader one,
+    // rather than leave a later item under the preceding nested condition.
+    if (changedContext && shared === contexts.length) shared = 0
+    const label = row.presentation?.kind === 'membership' ? row.presentation.label : undefined
+    if (changedContext || label !== previousLabel || row.presentation?.kind !== 'membership') flushList()
+    for (const context of contexts.slice(shared)) sections.push(`**${escapeWikiSourceText(context)}**`)
+    if (label !== undefined && (changedContext || label !== previousLabel)) sections.push(`**${escapeWikiSourceText(label)}**`)
+    const citations = row.citationIds.map(evidenceId => `[[cite:${evidenceId}]]`).join(' ')
+    const statement = `${row.renderedStatement}${/[\r\n]/u.test(row.renderedStatement) ? '\n\n' : ' '}${citations}`
+    if (row.presentation?.kind === 'membership') list.push(`- ${statement}`)
+    else sections.push(statement)
+    previousContexts = contexts
+    previousLabel = label
+  }
+  flushList()
   sections.push(...answer.observations)
   if (sections.length === 0) sections.push('I cannot establish a sourced answer from the available evidence.')
   const recommendations = answer.recommendations?.trim()
