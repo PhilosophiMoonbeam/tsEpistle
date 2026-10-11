@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
-import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { AxAIServiceAbortedError, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import { AgentProviderAttemptError, type AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { AgentProviderConformanceRunner } from '../../agents/providers/conformance.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
@@ -512,14 +512,27 @@ describe('provider conformance runner', () => {
     expect(JSON.stringify(report)).not.toContain(privateDetail)
   })
 
-  it('recognizes the exact Ax-wrapped abort cause during conformance', async () => {
+  it.each([
+    { form: 'originalError wrapper', failure: (reason: unknown) => Object.assign(new Error('Provider request failed'), { originalError: reason }) },
+    {
+      form: 'genuine Ax abort error',
+      failure: (reason: unknown) => new AxAIServiceAbortedError('https://provider.example.test/v1/completions', undefined, undefined, { abortReason: reason })
+    },
+    {
+      form: 'wrapped genuine Ax abort error',
+      failure: (reason: unknown) =>
+        new Error('Provider request failed', {
+          cause: new AxAIServiceAbortedError('https://provider.example.test/v1/completions', undefined, undefined, { abortReason: reason })
+        })
+    }
+  ])('recognizes the exact abort reason in $form during conformance', async ({ failure }) => {
     const setConformed = vi.fn(async () => {})
     const factory = {
       create: async () => ({
         ...service(async input => successfulPromptResponse(input)),
         service: {
           chat: async (input: Readonly<AxChatRequest>, options?: { abortSignal?: AbortSignal }) => {
-            if (options?.abortSignal?.aborted) throw Object.assign(new Error('Provider request failed'), { originalError: options.abortSignal.reason })
+            if (options?.abortSignal?.aborted) throw failure(options.abortSignal.reason)
             return successfulPromptResponse(input)
           }
         }
@@ -547,10 +560,21 @@ describe('provider conformance runner', () => {
     expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_CANCELLATION_IGNORED' })
   })
   it.each([
-    ['plain error', new Error('provider request failed')],
-    ['unrelated abort error', new DOMException('independent network abort', 'AbortError')],
-    ['unrelated abort code', Object.assign(new Error('independent error'), { code: 'ERR_ABORTED' })]
-  ])('does not accept a %s as honoring pre-dispatch cancellation', async (_name, failure) => {
+    ['plain error', (_reason: unknown) => new Error('provider request failed')],
+    ['unrelated abort error', (_reason: unknown) => new DOMException('independent network abort', 'AbortError')],
+    ['unrelated abort code', (_reason: unknown) => Object.assign(new Error('independent error'), { code: 'ERR_ABORTED' })],
+    [
+      'genuine Ax abort error with a foreign reason',
+      (_reason: unknown) =>
+        new AxAIServiceAbortedError('https://provider.example.test/v1/completions', undefined, undefined, {
+          abortReason: new Error('independent cancellation')
+        })
+    ],
+    [
+      'generic error with a forged exact abort context',
+      (reason: unknown) => Object.assign(new Error('independent error'), { context: { abortReason: reason } })
+    ]
+  ] as const)('does not accept a %s as honoring pre-dispatch cancellation', async (_name, failure) => {
     const setConformed = vi.fn(async () => {})
     let dispatched = 0
     const factory = {
@@ -558,7 +582,7 @@ describe('provider conformance runner', () => {
         ...service(async () => ({ results: [{ index: 0, content: 'ok' }], modelUsage: usage })),
         service: {
           chat: async (_input: Readonly<AxChatRequest>, options?: { abortSignal?: AbortSignal }) => {
-            if (options?.abortSignal?.aborted) throw failure
+            if (options?.abortSignal?.aborted) throw failure(options.abortSignal.reason)
             dispatched++
             return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
           }

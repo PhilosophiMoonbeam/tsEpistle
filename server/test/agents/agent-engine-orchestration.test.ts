@@ -1,4 +1,5 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
 
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
@@ -16,6 +17,12 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 
 import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
+
+const visibleWikiText = (content: string): string => {
+  const container = document.createElement('div')
+  container.innerHTML = renderSafeMarkdown(content)
+  return container.textContent ?? ''
+}
 
 const run = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -335,7 +342,7 @@ describe('Ax orchestration stages', () => {
     releasedReader.releaseLock()
   })
 
-  it('switches to bounded synthesis after tool-result capacity and returns an explicit context limit', async () => {
+  it('does not complete collection from a trailing finish after omitted or unexecuted source reads', async () => {
     const calls = Array.from({ length: 10 }, (_, index) => ({
       id: `second-${index}`,
       type: 'function' as const,
@@ -343,7 +350,11 @@ describe('Ax orchestration stages', () => {
     }))
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
-      { results: [{ index: 0, functionCalls: calls }] }
+      {
+        results: [
+          { index: 0, functionCalls: [...calls, { id: 'finish-capacity', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }] }
+        ]
+      }
     ]
     const synthesisRequests: Readonly<AxChatRequest<unknown>>[] = []
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -355,9 +366,20 @@ describe('Ax orchestration stages', () => {
       }
       return responses.shift()!
     })
-    const invoke = vi.fn(async (_name: string, _input: unknown, _signal: AbortSignal, actionCallId: string) => ({
-      content: actionCallId === calls[0]!.id ? 'x'.repeat(120_000) : 'x'.repeat(3_000)
-    }))
+    const invoke = vi.fn(async (_name: string, input: unknown, _signal: AbortSignal, actionCallId: string) => {
+      if (typeof input !== 'object' || input === null || !('id' in input) || typeof input.id !== 'number') throw new Error('Expected an admitted page ID')
+      return {
+        id: input.id,
+        locale: 'en',
+        path: `page-${input.id}`,
+        title: `Page ${input.id}`,
+        sourceRevision: 'rev-1',
+        contentType: 'markdown',
+        content: actionCallId === calls[0]!.id ? 'x'.repeat(120_000) : 'x'.repeat(3_000),
+        citation: { evidenceId: `page:${input.id}:revision:rev-1`, label: `Page ${input.id}`, href: `/en/page-${input.id}` },
+        citationSections: []
+      }
+    })
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
@@ -776,42 +798,59 @@ describe('Ax orchestration stages', () => {
         authoritySha256: null
       })
     }
-    const reserveSequence = vi.fn(async () => {
-      throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Daily quota is exhausted', 409)
-    })
-    const reserve = vi.fn(async (amount: { tokens: number; costMicros: number }) => ({ id: 1, ...amount }))
-    const reconcile = vi.fn(async () => {})
-    const consumeTool = vi.fn(async () => {})
+    const budget = new PublicationBudgetLedger(Number.MAX_SAFE_INTEGER)
+    const deniedExposure: { tokens: number; costMicros: number }[] = []
+    // Neither collection nor a fallback draft may spend without a publication hold.
+    budget.reserveSequence = async maximum => {
+      deniedExposure.push(maximum)
+      throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Daily quota is exhausted', 429)
+    }
+    const measuredUsage: AgentDispatchUsage[] = []
     const text = vi.fn(async () => {})
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+    const chat = async (input: Readonly<AxChatRequest<unknown>>) => {
+      expect(input.functions ?? []).toEqual([])
+      const tokens = { promptTokens: 3, completionTokens: 2, totalTokens: 5 }
+      measuredUsage.push({ inputTokens: tokens.promptTokens, outputTokens: tokens.completionTokens, totalTokens: tokens.totalTokens, costMicros: 7 })
       return {
         results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }],
-        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens }
       } satisfies AxChatResponse
-    })
+    }
     const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTurns: 3, maxToolCalls: 2, maxOutputTokens: 128 },
-        dispatchBudget: {
-          reserveSequence,
-          reserve,
-          reconcile,
-          release: vi.fn(async () => {}),
-          consumeTool,
-          unsettledExposure: { tokens: 0, costMicros: 0 }
-        }
+        dispatchBudget: budget
       },
       { text, event: async () => {} }
     )
-    expect(reserveSequence).toHaveBeenCalledOnce()
     expect(invoke).not.toHaveBeenCalled()
-    expect(chat).toHaveBeenCalledOnce()
-    expect(chat.mock.calls.flatMap(([input]) => input.functions ?? []).map(fn => fn.name)).toEqual([])
-    expect(reserve).toHaveBeenCalledOnce()
-    expect(consumeTool).not.toHaveBeenCalled()
-    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 7 })
-    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+    expect(deniedExposure.length).toBeGreaterThan(0)
+    for (const exposure of deniedExposure) {
+      expect(exposure.tokens).toBeGreaterThan(0)
+      expect(exposure.costMicros).toBeGreaterThan(0)
+    }
+    expect(budget.tools).toBe(0)
+    const actualUsage = measuredUsage.reduce(
+      (total, usage) => ({
+        inputTokens: total.inputTokens + usage.inputTokens,
+        outputTokens: total.outputTokens + usage.outputTokens,
+        totalTokens: total.totalTokens + usage.totalTokens,
+        costMicros: total.costMicros + usage.costMicros
+      }),
+      { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+    )
+    expect(result).toMatchObject(actualUsage)
+    expect(budget.consumedTokens).toBe(actualUsage.totalTokens)
+    expect(budget.consumedCostMicros).toBe(actualUsage.costMicros)
+    expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(budget.allocatedTokens).toBe(budget.returnedTokens + actualUsage.totalTokens)
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    expect(published.trim().length).toBeGreaterThan(0)
+    expect(published).not.toContain('Must not be read')
+    expect(published).not.toContain('Unverified')
+    expect(published).not.toContain('[[cite:')
+    expect(result.executionLimit).toEqual({ reason: 'quota', publication: 'inability' })
     expect(result.citations).toBeUndefined()
   })
 
@@ -969,8 +1008,11 @@ describe('Ax orchestration stages', () => {
       expect.objectContaining({ accepted: false, issues: expect.arrayContaining([expect.stringContaining('Review beta')]) }),
       expect.objectContaining({ accepted: true, finalCitationIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'] })
     ])
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Alpha requires review. [[cite:page:1:revision:rev-1]]')
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Beta requires audit. [[cite:page:2:revision:rev-2]]')
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    expect(visibleWikiText(published)).toContain('Alpha requires review.')
+    expect(visibleWikiText(published)).toContain('Beta requires audit.')
+    expect(published).toContain('[[cite:page:1:revision:rev-1]]')
+    expect(published).toContain('[[cite:page:2:revision:rev-2]]')
   })
 
   it('discloses an unresolved comparison side when the first and only turn publishes sourced partial findings', async () => {
@@ -1012,13 +1054,14 @@ describe('Ax orchestration stages', () => {
     )
 
     const published = text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain('Alpha requires review. [[cite:page:1:revision:rev-1]]')
+    expect(visibleWikiText(published)).toContain('Alpha requires review.')
+    expect(published).toContain('[[cite:page:1:revision:rev-1]]')
     expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:1:revision:rev-1' })])
     expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
     const disclosure = published.slice(published.indexOf('[[cite:page:1:revision:rev-1]]') + '[[cite:page:1:revision:rev-1]]'.length)
     expect(disclosure).toMatch(/Beta/iu)
     expect(disclosure).toMatch(/not established|unverified|unresolved|not verified|not supported/iu)
-    expect(published).not.toContain('Beta requires audit.')
+    expect(visibleWikiText(published)).not.toContain('Beta requires audit.')
   })
 
   it.each([
@@ -1161,8 +1204,9 @@ describe('Ax orchestration stages', () => {
       { text, event }
     )
     const published = text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).not.toContain(unseenFact)
-    expect(published).toContain(`${visibleFact} [[cite:${citation}]]`)
+    expect(visibleWikiText(published)).not.toContain(unseenFact)
+    expect(visibleWikiText(published)).toContain(visibleFact)
+    expect(published).toContain(`[[cite:${citation}]]`)
     expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
   })
@@ -1381,8 +1425,11 @@ describe('Ax orchestration stages', () => {
       expect.objectContaining({ accepted: false, issues: expect.arrayContaining([expect.stringContaining('explicitly disclosing')]) }),
       expect.objectContaining({ accepted: true, finalCitationIds: ['page:1:revision:rev-1', 'page:2:revision:rev-2'] })
     ])
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Alpha requires review. [[cite:page:1:revision:rev-1]]')
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('However, beta requires audit. [[cite:page:2:revision:rev-2]]')
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    expect(visibleWikiText(published)).toContain('Alpha requires review.')
+    expect(visibleWikiText(published)).toContain('However, beta requires audit.')
+    expect(published).toContain('[[cite:page:1:revision:rev-1]]')
+    expect(published).toContain('[[cite:page:2:revision:rev-2]]')
   })
   it('keeps a post-dispatch reservation unsettled when rejecting a post-response capability violation', async () => {
     const response = {
@@ -2596,6 +2643,108 @@ class PublicationBudgetLedger implements AgentDispatchBudget {
 }
 
 describe('bounded root publication accounting', () => {
+  for (const refuseSecondRead of [false, true]) {
+    it(`settles read-plus-finish usage without charging the control${refuseSecondRead ? ' and retains collection after an unexecuted read' : ''}`, async () => {
+      const budget = new PublicationBudgetLedger(120_000)
+      const consumeTool = budget.consumeTool.bind(budget)
+      let toolAttempts = 0
+      budget.consumeTool = async () => {
+        if (++toolAttempts === 2 && refuseSecondRead) throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Read reservation unavailable', 409)
+        await consumeTool()
+      }
+      const collectionRequests: Readonly<AxChatRequest<unknown>>[] = []
+      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+        const final = synthesisInputFromRequest(input) !== undefined
+        if (!final) collectionRequests.push(input)
+        const first = collectionRequests.length === 1
+        const functionCalls = [
+          { id: first ? 'read-alpha' : 'retry-beta', type: 'function' as const, function: { name: 'wiki_get_page', params: first ? '{"id":1}' : '{"id":2}' } },
+          ...(first && refuseSecondRead
+            ? [
+                {
+                  id: 'read-beta',
+                  type: 'function' as const,
+                  function: { name: 'wiki_get_page', params: '{"id":2}' }
+                }
+              ]
+            : []),
+          { id: first ? 'finish-first' : 'finish-retry', type: 'function' as const, function: { name: 'wiki_finish_collection', params: '{}' } }
+        ]
+        if (!final && !first) {
+          expect(input.functions?.some(fn => fn.name === 'wiki_get_page')).toBe(true)
+          expect(JSON.stringify(input.chatPrompt)).toContain('collection_not_finished')
+        }
+        return {
+          results: [
+            final
+              ? {
+                  index: 0,
+                  content: synthesisFixtureAnswer(
+                    input,
+                    {
+                      claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }]
+                    },
+                    { bindings: { 'page:1:revision:rev-1': { text: 'Alpha requires review.' } } }
+                  )
+                }
+              : { index: 0, functionCalls }
+          ],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+        } satisfies AxChatResponse
+      })
+      const invoke = vi.fn(async (_name: string, input: unknown) => {
+        if (typeof input !== 'object' || input === null || !('id' in input) || typeof input.id !== 'number') throw new Error('Expected an admitted page ID')
+        const id = input.id
+        return {
+          id,
+          locale: 'en',
+          path: id === 1 ? 'alpha' : 'beta',
+          title: id === 1 ? 'Alpha' : 'Beta',
+          contentType: 'markdown',
+          sourceRevision: `rev-${id}`,
+          content: id === 1 ? 'Alpha requires review.' : 'Beta requires approval.',
+          citation: { evidenceId: `page:${id}:revision:rev-${id}`, label: id === 1 ? 'Alpha' : 'Beta', href: `/en/${id === 1 ? 'alpha' : 'beta'}` },
+          citationSections: []
+        }
+      })
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+          invoke,
+          validateObservation: async () => true,
+          snapshot: async () => ({}),
+          close: () => {},
+          authoritySha256: null
+        })
+      }
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (_type: string, _data: unknown) => {})
+      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
+        decisionProviders: fixtureDecisionProviders
+      }).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          messages: [{ role: 'user', content: 'What does Alpha require?' }],
+          limits: { maxTurns: 8, maxToolCalls: 3, maxTokens: budget.maximumTokens, maxOutputTokens: 512 },
+          dispatchBudget: budget
+        },
+        { text, event }
+      )
+      expect(result.executionLimit).toBeUndefined()
+      expect(visibleWikiText(text.mock.calls.map(([delta]) => delta).join(''))).toContain('Alpha requires review.')
+      expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:1:revision:rev-1' })])
+      expect(chat).toHaveBeenCalledTimes(refuseSecondRead ? 3 : 2)
+      expect(invoke).toHaveBeenCalledTimes(refuseSecondRead ? 2 : 1)
+      expect(budget.tools).toBe(refuseSecondRead ? 2 : 1)
+      expect(result.totalTokens).toBe(refuseSecondRead ? 15 : 10)
+      expect(budget.consumedTokens).toBe(result.totalTokens)
+      expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+      expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
+      expect(event.mock.calls.filter(([type]) => type === 'tool.completed')).toHaveLength(refuseSecondRead ? 2 : 1)
+      expect(event.mock.calls.filter(([type]) => type === 'tool.failed')).toHaveLength(refuseSecondRead ? 1 : 0)
+    })
+  }
+
   it('enforces the actual compact native source request boundary before consuming synthesis quota', async () => {
     const synthesisRequests: Readonly<AxChatRequest<unknown>>[] = []
     const collectionRequests: Readonly<AxChatRequest<unknown>>[] = []
@@ -2752,12 +2901,12 @@ describe('bounded root publication accounting', () => {
       expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
       expect(budget.closedUnused).toHaveLength(1)
       const published = text.mock.calls.map(([delta]) => delta).join('')
-      expect(published).not.toContain('does not require review')
+      expect(visibleWikiText(published)).not.toContain('does not require review')
       if (outcome === 'length') {
         expect(result.outputLimited).toBe(true)
         expect(result.suggestions).toEqual([expect.objectContaining({ id: 'continue-output-limit' })])
         expect(result.citations).toBeUndefined()
-        expect(published).not.toContain('Alpha requires review.')
+        expect(visibleWikiText(published)).not.toContain('Alpha requires review.')
         expect(budget.closedUnused[0]).toBeGreaterThan(512)
       } else if (outcome === 'exhausted') {
         expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
@@ -2765,7 +2914,7 @@ describe('bounded root publication accounting', () => {
       } else {
         expect(result.executionLimit).toBeUndefined()
         expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:1:revision:rev-1' })])
-        expect(published).toContain('Alpha requires review.')
+        expect(visibleWikiText(published)).toContain('Alpha requires review.')
         if (outcome === 'first-accepted') expect(budget.closedUnused[0]).toBeGreaterThan(512)
       }
     })

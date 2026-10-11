@@ -21,8 +21,26 @@ describe('root request metadata provenance and framing', () => {
     expect(result.content).toBe(`\n${action}\n`)
     expect(result.metadataPresent).toBe(true)
     expect(result.framingIssue).toBeUndefined()
-    expect(parsePromptToolCall(result.content, new Set(['wiki_get_page']))).toEqual({ name: 'wiki_get_page', params: { id: 42 } })
+    expect(parsePromptToolCall(result.content, new Set(['wiki_get_page']))).toEqual([{ name: 'wiki_get_page', params: { id: 42 } }])
     expect(() => parsePromptToolCall(result.content, new Set())).toThrow(expect.objectContaining({ code: 'INVALID_PROVIDER_RESPONSE' }))
+  })
+
+  it('preserves a final read batch and finish control after removing request metadata', () => {
+    const calls = [
+      { name: 'wiki_get_page', arguments: { id: 42 } },
+      { name: 'wiki_get_page', arguments: { id: 43 } },
+      { name: 'wiki_finish_collection', arguments: {} }
+    ]
+    const batch = `<wiki-tool-call>${JSON.stringify(calls)}</wiki-tool-call>`
+    const result = extractRootRequestMetadata(`${validPlan}\n${batch}`, first)
+    expect(result.requestPlan).toHaveLength(2)
+    expect(result.framingIssue).toBeUndefined()
+    expect(result.content).toBe(`\n${batch}`)
+    expect(parsePromptToolCall(result.content, new Set(calls.map(call => call.name)))).toEqual([
+      { name: 'wiki_get_page', params: { id: 42 } },
+      { name: 'wiki_get_page', params: { id: 43 } },
+      { name: 'wiki_finish_collection', params: {} }
+    ])
   })
 
   it('accepts plan, unresolved facets, and a factual body in the first no-call response', () => {
@@ -62,7 +80,7 @@ describe('root request metadata provenance and framing', () => {
     expect(result.requestPlan).toBeUndefined()
     expect(result.framingIssue).toBeUndefined()
     expect(result.metadataPresent).toBe(true)
-    expect(parsePromptToolCall(result.content, new Set(['wiki_get_page']))).toEqual({ name: 'wiki_get_page', params: { id: 42 } })
+    expect(parsePromptToolCall(result.content, new Set(['wiki_get_page']))).toEqual([{ name: 'wiki_get_page', params: { id: 42 } }])
   })
 
   it('binds quotes only to the supplied latest request, never an earlier request', () => {

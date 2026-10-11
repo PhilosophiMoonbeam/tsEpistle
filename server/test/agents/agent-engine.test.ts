@@ -150,14 +150,14 @@ type QuestionActionName =
   | 'pages.prepareCreate'
   | 'memory.manage'
   | 'browser.observe'
-type QuestionToolName = QuestionActionName | 'wiki_enable_tools'
+type QuestionToolName = QuestionActionName | 'wiki_enable_tools' | 'wiki_finish_collection'
 type QuestionCall = {
   readonly id: string
   readonly name: QuestionToolName
-  readonly arguments: Readonly<Record<string, unknown>>
+  readonly arguments: unknown
 }
 type QuestionStep =
-  | { readonly calls: readonly QuestionCall[]; readonly metadata?: string }
+  | { readonly calls: readonly QuestionCall[]; readonly metadata?: string; readonly promptArray?: true }
   | { readonly answer: string | ((input: Readonly<AxChatRequest<unknown>>) => string); readonly bindings?: SynthesisFixtureBindings }
 type QuestionMode = 'native' | 'prompt'
 
@@ -179,10 +179,26 @@ const questionResponses = (mode: QuestionMode, steps: readonly QuestionStep[]) =
               id: call.id,
               type: 'function' as const,
               function: {
-                name: call.name === 'wiki_enable_tools' ? call.name : AGENT_TOOL_NAMES[call.name],
+                name: call.name === 'wiki_enable_tools' || call.name === 'wiki_finish_collection' ? call.name : AGENT_TOOL_NAMES[call.name],
                 params: JSON.stringify(call.arguments)
               }
             }))
+          }
+        ]
+      })
+      continue
+    }
+    if (step.promptArray || (step.calls.some(call => call.name === 'wiki_finish_collection') && step.calls.length > 1)) {
+      responses.push({
+        results: [
+          {
+            index: 0,
+            content: `${step.metadata ?? ''}<wiki-tool-call>${JSON.stringify(
+              step.calls.map(call => ({
+                name: call.name === 'wiki_enable_tools' || call.name === 'wiki_finish_collection' ? call.name : AGENT_TOOL_NAMES[call.name],
+                arguments: call.arguments
+              }))
+            )}</wiki-tool-call>`
           }
         ]
       })
@@ -195,7 +211,7 @@ const questionResponses = (mode: QuestionMode, steps: readonly QuestionStep[]) =
           {
             index: 0,
             content: `${metadata}<wiki-tool-call>${JSON.stringify({
-              name: call.name === 'wiki_enable_tools' ? call.name : AGENT_TOOL_NAMES[call.name],
+              name: call.name === 'wiki_enable_tools' || call.name === 'wiki_finish_collection' ? call.name : AGENT_TOOL_NAMES[call.name],
               arguments: call.arguments
             })}</wiki-tool-call>`
           }
@@ -258,6 +274,26 @@ const questionFunctions = [
   }
 ] as const
 
+const questionMemoryAction: AxHarnessFunction = {
+  name: 'memory.manage',
+  title: 'Manage memory',
+  description: 'Manage scoped memory',
+  parameters: { type: 'object', properties: { action: { type: 'string' } } },
+  risk: 'reversible-write',
+  group: 'core',
+  capability: ACTION_CATALOG['memory.manage'].capability
+}
+
+const questionProposalAction: AxHarnessFunction = {
+  name: 'pages.prepareCreate',
+  title: ACTION_CATALOG['pages.prepareCreate'].descriptor.title,
+  description: ACTION_CATALOG['pages.prepareCreate'].descriptor.description,
+  parameters: { type: 'object', properties: {} },
+  risk: ACTION_CATALOG['pages.prepareCreate'].descriptor.risk,
+  group: ACTION_CATALOG['pages.prepareCreate'].group,
+  capability: ACTION_CATALOG['pages.prepareCreate'].capability
+}
+
 const questionFixture = (
   mode: QuestionMode,
   steps: readonly QuestionStep[],
@@ -302,12 +338,13 @@ const questionFixture = (
   const text = vi.fn(async (_message: string) => {})
   const event = vi.fn(async (_type: string, _data: unknown) => {})
   const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
-  const execute = (userMessage: string, limits?: AgentEngineRequest['limits']) =>
+  const execute = (userMessage: string, limits?: AgentEngineRequest['limits'], dispatchBudget?: AgentEngineRequest['dispatchBudget']) =>
     engine.execute(
       {
         ...request(new AbortController().signal),
         messages: [{ role: 'user' as const, content: userMessage }],
-        ...(limits === undefined ? {} : { limits })
+        ...(limits === undefined ? {} : { limits }),
+        ...(dispatchBudget === undefined ? {} : { dispatchBudget })
       },
       { text, event }
     )
@@ -423,6 +460,392 @@ const candidateDiscovery = (returnedCount: number, newCandidateCount: number, re
 })
 
 describe('Ax agent engine', () => {
+  it('continues from an independent strict-text read array to a sole finish and synthesis with both sources', async () => {
+    const alpha = 'Alpha requires review.'
+    const beta = 'Beta requires approval.'
+    const fixture = questionFixture(
+      'prompt',
+      [
+        {
+          promptArray: true,
+          calls: [
+            { id: 'ordinary-read-alpha', name: 'pages.get', arguments: { id: 42 } },
+            { id: 'ordinary-read-beta', name: 'pages.get', arguments: { id: 43 } }
+          ]
+        },
+        { calls: [{ id: 'finish-after-reads', name: 'wiki_finish_collection', arguments: {} }] },
+        { answer: `${alpha} [[cite:page:42:revision:1:section:1]]\n\n${beta} [[cite:page:43:revision:1:section:1]]` }
+      ],
+      (_name, input) => {
+        expect(fixture.text).not.toHaveBeenCalled()
+        const id = questionRecord(input).id
+        if (id !== 42 && id !== 43) throw new Error('Expected an independent source page')
+        return questionReadPage(id, '1', id === 42 ? 'Alpha' : 'Beta', id === 42 ? 'alpha' : 'beta', 'Requirements', 'requirements', id === 42 ? alpha : beta)
+      }
+    )
+    const result = await fixture.execute('What do Alpha and Beta require? Read both pages.')
+    expect(result.executionLimit).toBeUndefined()
+    expect(fixture.providerCalls).toHaveLength(3)
+    expect(fixture.invoke.mock.calls.map(([name, input]) => [name, questionRecord(input).id])).toEqual([
+      ['pages.get', 42],
+      ['pages.get', 43]
+    ])
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'tool.completed')).toHaveLength(2)
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).toContain(alpha)
+    expect(published).toContain(beta)
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1:section:1', 'page:43:revision:1:section:1'])
+  })
+
+  it.each(['mutation', 'proposal', 'discovery', 'unavailable call', 'schema-invalid read', 'mutation first'] as const)(
+    'rejects a strict-text array without finish before any batch action, tool budget or publication: %s',
+    async invalid => {
+      const read: QuestionCall = { id: 'valid-array-read', name: 'pages.get', arguments: { id: 42 } }
+      const mutation: QuestionCall = {
+        id: 'array-mutation',
+        name: 'memory.manage',
+        arguments: { action: 'add', target: 'user', content: 'Prefers concise answers.' }
+      }
+      const inadmissible: QuestionCall =
+        invalid === 'mutation' || invalid === 'mutation first'
+          ? mutation
+          : invalid === 'proposal'
+            ? {
+                id: 'array-proposal',
+                name: 'pages.prepareCreate',
+                arguments: {
+                  path: 'guides/source-finder',
+                  locale: 'en',
+                  title: 'Source finder',
+                  description: '',
+                  content: '# Source finder',
+                  contentType: 'markdown',
+                  isPublished: true,
+                  tags: []
+                }
+              }
+            : invalid === 'discovery'
+              ? { id: 'array-discovery', name: 'wiki_enable_tools', arguments: { category: 'explore' } }
+              : invalid === 'unavailable call'
+                ? { id: 'array-unavailable', name: 'pages.getOkf', arguments: { id: 43 } }
+                : { id: 'array-invalid-schema', name: 'pages.get', arguments: { id: 'not-a-page-id' } }
+      // Admit the real proposal descriptor before testing its risk, not its category availability.
+      const prerequisites: QuestionStep[] =
+        invalid === 'proposal' ? [{ calls: [{ id: 'enable-array-authoring', name: 'wiki_enable_tools', arguments: { category: 'authoring' } }] }] : []
+      const fixture = questionFixture(
+        'prompt',
+        [...prerequisites, { promptArray: true, calls: invalid === 'mutation first' ? [inadmissible, read] : [read, inadmissible] }],
+        () => questionReadPage(42, '1', 'Alpha', 'alpha', 'Requirements', 'requirements', 'Alpha requires review.'),
+        [questionMemoryAction, questionProposalAction]
+      )
+      let reservationId = 0
+      const dispatchBudget = {
+        reserve: vi.fn(async (maximum: { tokens: number; costMicros: number }) => ({ id: ++reservationId, ...maximum })),
+        reconcile: vi.fn(async () => {}),
+        release: vi.fn(async () => {}),
+        consumeTool: vi.fn(async () => {}),
+        unsettledExposure: { tokens: 0, costMicros: 0 }
+      } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
+      await expect(fixture.execute('Read Alpha and perform the requested action.', undefined, dispatchBudget)).rejects.toMatchObject({
+        code: 'INVALID_PROVIDER_RESPONSE',
+        status: 502
+      })
+      expect(fixture.invoke).not.toHaveBeenCalled()
+      expect(fixture.providerCalls).toHaveLength(prerequisites.length + 1)
+      expect(dispatchBudget.consumeTool).toHaveBeenCalledTimes(prerequisites.length)
+      const prerequisiteActions = prerequisites.length === 0 ? [] : ['wiki_enable_tools']
+      for (const eventType of ['tool.started', 'tool.completed']) {
+        expect(fixture.event.mock.calls.filter(([type]) => type === eventType).map(([, data]) => questionRecord(data).actionName)).toEqual(prerequisiteActions)
+      }
+      expect(fixture.text).not.toHaveBeenCalled()
+    }
+  )
+
+  for (const mode of ['native', 'prompt'] as const) {
+    it(`publishes complete read evidence with one fewer collection model call after a trailing finish (${mode})`, async () => {
+      const read = { id: 'read-alpha', name: 'pages.get', arguments: { id: 42 } } as const
+      const finish = { id: 'finish-alpha', name: 'wiki_finish_collection', arguments: {} } as const
+      const answer = 'Alpha requires review. [[cite:page:42:revision:1:section:1]]'
+      const page = questionReadPage(42, '1', 'Alpha', 'alpha', 'Requirements', 'requirements', 'Alpha requires review.')
+      const batched = questionFixture(mode, [{ calls: [read, finish] }, { answer }], () => page)
+      const separate = questionFixture(mode, [{ calls: [read] }, { calls: [finish] }, { answer }], () => page)
+      const result = await batched.execute('What does Alpha require?')
+      const baseline = await separate.execute('What does Alpha require?')
+      expect(result.executionLimit).toBeUndefined()
+      expect(result.citations).toEqual(baseline.citations)
+      expect(visibleWikiText(batched.text.mock.calls.map(([delta]) => delta).join(''))).toContain('Alpha requires review.')
+      expect(batched.providerCalls).toHaveLength(2)
+      expect(separate.providerCalls).toHaveLength(3)
+      expect(batched.invoke).toHaveBeenCalledOnce()
+      expect(batched.event.mock.calls.filter(([type]) => type === 'tool.completed')).toHaveLength(1)
+    })
+
+    it(`waits for every source read before publishing a multi-source final batch (${mode})`, async () => {
+      const alpha = 'Alpha requires review.'
+      const beta = 'Beta requires approval.'
+      const fixture = questionFixture(
+        mode,
+        [
+          {
+            calls: [
+              { id: 'read-alpha-batch', name: 'pages.get', arguments: { id: 42 } },
+              { id: 'read-beta-batch', name: 'pages.get', arguments: { id: 43 } },
+              { id: 'finish-both', name: 'wiki_finish_collection', arguments: {} }
+            ]
+          },
+          { answer: `${alpha} [[cite:page:42:revision:1:section:1]]\n\n${beta} [[cite:page:43:revision:1:section:1]]` }
+        ],
+        (_name, input) => {
+          const id = questionRecord(input).id
+          if (id !== 42 && id !== 43) throw new Error('Expected an admitted source page')
+          return questionReadPage(id, '1', id === 42 ? 'Alpha' : 'Beta', id === 42 ? 'alpha' : 'beta', 'Requirements', 'requirements', id === 42 ? alpha : beta)
+        }
+      )
+      const result = await fixture.execute('What do Alpha and Beta require? Read both pages.')
+      expect(result.executionLimit).toBeUndefined()
+      expect(fixture.providerCalls).toHaveLength(2)
+      expect(fixture.invoke.mock.calls.map(([, input]) => questionRecord(input).id)).toEqual([42, 43])
+      const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+      expect(published).toContain(alpha)
+      expect(published).toContain(beta)
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1:section:1', 'page:43:revision:1:section:1'])
+    })
+
+    it.each(['throws', 'error output', 'missing source'] as const)(
+      `continues collection after a premature trailing finish with %s (${mode})`,
+      async failure => {
+        const page = questionReadPage(42, '1', 'Alpha', 'alpha', 'Requirements', 'requirements', 'Alpha requires review.')
+        let attempts = 0
+        const fixture = questionFixture(
+          mode,
+          [
+            {
+              calls: [
+                { id: 'premature-read', name: 'pages.get', arguments: { id: 42 } },
+                { id: 'premature-finish', name: 'wiki_finish_collection', arguments: {} }
+              ]
+            },
+            {
+              calls: [
+                { id: 'fresh-read', name: 'pages.get', arguments: { id: 42 } },
+                { id: 'fresh-finish', name: 'wiki_finish_collection', arguments: {} }
+              ]
+            },
+            { answer: 'Alpha requires review. [[cite:page:42:revision:1:section:1]]' }
+          ],
+          () => {
+            if (++attempts > 1) return page
+            if (failure === 'throws') throw new AgentRepositoryError('PAGE_NOT_FOUND', 'Source read unavailable', 404)
+            return failure === 'error output' ? { error: { code: 'PAGE_NOT_FOUND' } } : { ...page, content: undefined }
+          }
+        )
+        const result = await fixture.execute('What does Alpha require?')
+        expect(result.executionLimit).toBeUndefined()
+        expect(fixture.invoke).toHaveBeenCalledTimes(2)
+        expect(fixture.providerCalls).toHaveLength(3)
+        expect(JSON.stringify(fixture.providerCalls[1]?.chatPrompt)).toContain('collection_not_finished')
+        expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain('Alpha requires review.')
+        expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:1:section:1' })])
+      }
+    )
+
+    it.each(['finish first', 'duplicate finish', 'nonempty finish', 'search', 'discovery', 'mutation'] as const)(
+      `rejects an invalid finish batch before any action or publication: %s (${mode})`,
+      async invalid => {
+        const read = { id: 'read-before-invalid', name: 'pages.get', arguments: { id: 42 } } as const
+        const finish = { id: 'finish-invalid', name: 'wiki_finish_collection', arguments: {} } as const
+        const calls: readonly QuestionCall[] =
+          invalid === 'finish first'
+            ? [finish, read]
+            : invalid === 'duplicate finish'
+              ? [read, finish, { ...finish, id: 'duplicate-finish' }]
+              : invalid === 'nonempty finish'
+                ? [read, { ...finish, arguments: { done: true } }]
+                : [
+                    read,
+                    {
+                      id: 'inadmissible-action',
+                      name: invalid === 'search' ? 'pages.search' : invalid === 'discovery' ? 'wiki_enable_tools' : 'memory.manage',
+                      arguments:
+                        invalid === 'search' ? { query: 'Alpha' } : invalid === 'discovery' ? { category: 'explore' } : { operation: 'add', text: 'changed' }
+                    },
+                    finish
+                  ]
+        const fixture = questionFixture(mode, [{ calls }], () => ({}), [
+          {
+            name: 'memory.manage',
+            title: 'Manage memory',
+            description: 'Change memory',
+            parameters: { type: 'object', properties: {} },
+            risk: 'reversible-write',
+            group: 'core'
+          }
+        ])
+        await expect(fixture.execute('What does Alpha require?')).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+        expect(fixture.invoke).not.toHaveBeenCalled()
+        expect(fixture.text).not.toHaveBeenCalled()
+        expect(fixture.event.mock.calls.filter(([type]) => type === 'tool.started')).toHaveLength(0)
+      }
+    )
+
+    // Keep payloads inside explicit rows: a bare [] is an empty it.each argument tuple.
+    it.each([
+      ['null', null],
+      ['array', []],
+      ['wrong-id object', { id: 'not-a-page-id' }]
+    ] as const)(`rejects a schema-invalid source read in a trailing finish batch before any action (${mode}): %s`, async (_shape, invalidArguments) => {
+      const fixture = questionFixture(
+        mode,
+        [
+          {
+            calls: [
+              { id: 'valid-before-invalid', name: 'pages.get', arguments: { id: 42 } },
+              { id: 'schema-invalid-read', name: 'pages.get', arguments: invalidArguments },
+              { id: 'schema-invalid-finish', name: 'wiki_finish_collection', arguments: {} }
+            ]
+          }
+        ],
+        () => questionReadPage(42, '1', 'Alpha', 'alpha', 'Requirements', 'requirements', 'Alpha requires review.')
+      )
+      let reservationId = 0
+      const dispatchBudget = {
+        reserve: vi.fn(async (maximum: { tokens: number; costMicros: number }) => ({ id: ++reservationId, ...maximum })),
+        reconcile: vi.fn(async () => {}),
+        release: vi.fn(async () => {}),
+        consumeTool: vi.fn(async () => {}),
+        unsettledExposure: { tokens: 0, costMicros: 0 }
+      } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
+      await expect(fixture.execute('What does Alpha require?', undefined, dispatchBudget)).rejects.toMatchObject({
+        code: 'INVALID_PROVIDER_RESPONSE',
+        status: 502
+      })
+      expect(fixture.invoke).not.toHaveBeenCalled()
+      expect(dispatchBudget.consumeTool).not.toHaveBeenCalled()
+      expect(fixture.event.mock.calls.filter(([type]) => type === 'tool.started')).toHaveLength(0)
+      expect(fixture.event.mock.calls.filter(([type]) => type === 'tool.completed')).toHaveLength(0)
+      expect(fixture.text).not.toHaveBeenCalled()
+    })
+
+    it.each([false, true])(
+      `requires the final recent read's own complete receipt despite an earlier full page read (${mode}, truncated=%s)`,
+      async truncated => {
+        const fact = 'Alpha requires review.'
+        const page = questionReadPage(42, '1', 'Alpha', 'alpha', 'Requirements', 'requirements', fact)
+        const recent = {
+          kind: 'recent-page-evidence',
+          requestedLimit: 1,
+          exhausted: true,
+          pages: [
+            {
+              id: 42,
+              locale: 'en',
+              path: 'alpha',
+              title: 'Alpha',
+              sourceRevision: '1',
+              contentType: 'markdown',
+              updatedAt: page.updatedAt,
+              content: truncated ? page.content.slice(0, page.content.indexOf(fact) + 8) : page.content,
+              sourceContentCharacters: page.content.length,
+              contentTruncated: truncated,
+              citation: page.citation
+            }
+          ]
+        }
+        const followUp: QuestionStep[] = truncated
+          ? [
+              {
+                calls: [
+                  { id: 'follow-up-full-read', name: 'pages.get', arguments: { id: 42 } },
+                  { id: 'follow-up-full-finish', name: 'wiki_finish_collection', arguments: {} }
+                ]
+              }
+            ]
+          : []
+        const fixture = questionFixture(
+          mode,
+          [
+            { calls: [{ id: 'earlier-full-read', name: 'pages.get', arguments: { id: 42 } }] },
+            {
+              calls: [
+                { id: 'final-recent-read', name: 'pages.listRecent', arguments: { limit: 1 } },
+                { id: 'final-recent-finish', name: 'wiki_finish_collection', arguments: {} }
+              ]
+            },
+            ...followUp,
+            { answer: `${fact} [[cite:page:42:revision:1:section:1]]`, bindings: { 'page:42:revision:1:section:1': { text: fact } } }
+          ],
+          name => (name === 'pages.listRecent' ? recent : page)
+        )
+        const result = await fixture.execute('What does Alpha require? Read the full Alpha page.')
+        expect(result.executionLimit).toBeUndefined()
+        expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(
+          truncated ? ['pages.get', 'pages.listRecent', 'pages.get'] : ['pages.get', 'pages.listRecent']
+        )
+        expect(fixture.providerCalls).toHaveLength(truncated ? 4 : 3)
+        if (truncated) expect(JSON.stringify(fixture.providerCalls[2]?.chatPrompt)).toContain('collection_not_finished')
+        expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
+        expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:1:section:1' })])
+      }
+    )
+
+    it.each(['truncated excerpt', 'navigation metadata'] as const)(
+      `keeps retrieval open after a trailing finish with recent %s (${mode})`,
+      async incomplete => {
+        const fact = 'Alpha requires review.'
+        const page = questionReadPage(42, '1', 'Alpha', 'alpha', 'Requirements', 'requirements', fact)
+        const recent =
+          incomplete === 'navigation metadata'
+            ? { pages: [{ id: 42, title: 'Alpha', citation: page.citation }] }
+            : {
+                kind: 'recent-page-evidence',
+                requestedLimit: 1,
+                exhausted: true,
+                pages: [
+                  {
+                    id: 42,
+                    locale: 'en',
+                    path: 'alpha',
+                    title: 'Alpha',
+                    sourceRevision: '1',
+                    contentType: 'markdown',
+                    updatedAt: page.updatedAt,
+                    content: page.content.slice(0, page.content.indexOf(fact) + 8),
+                    sourceContentCharacters: page.content.length,
+                    contentTruncated: true,
+                    citation: page.citation
+                  }
+                ]
+              }
+        const fixture = questionFixture(
+          mode,
+          [
+            {
+              calls: [
+                { id: 'recent-read', name: 'pages.listRecent', arguments: { limit: 1 } },
+                { id: 'recent-finish', name: 'wiki_finish_collection', arguments: {} }
+              ]
+            },
+            {
+              calls: [
+                { id: 'complete-read', name: 'pages.get', arguments: { id: 42 } },
+                { id: 'complete-finish', name: 'wiki_finish_collection', arguments: {} }
+              ]
+            },
+            { answer: `${fact} [[cite:page:42:revision:1:section:1]]`, bindings: { 'page:42:revision:1:section:1': { text: fact } } }
+          ],
+          name => (name === 'pages.listRecent' ? recent : page)
+        )
+        const result = await fixture.execute('What does Alpha require? Read the full Alpha page.')
+        expect(result.executionLimit).toBeUndefined()
+        expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.listRecent', 'pages.get'])
+        expect(fixture.providerCalls).toHaveLength(3)
+        expect(JSON.stringify(fixture.providerCalls[1]?.chatPrompt)).toContain('collection_not_finished')
+        expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
+        expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:1:section:1' })])
+      }
+    )
+  }
+
   const typedRootFixture = (
     generate: (input: Readonly<AxChatRequest>, attempt: number) => AxChatResponse | ReadableStream<AxChatResponse>,
     revokeAfterSnapshot = false,
@@ -3191,15 +3614,6 @@ describe('Ax agent engine', () => {
       citationSections: []
     }
     const memoryInput = { action: 'add', target: 'user', content: 'Prefers concise answers.' }
-    const memoryAction: AxHarnessFunction = {
-      name: 'memory.manage',
-      title: 'Manage memory',
-      description: 'Manage scoped memory',
-      parameters: { type: 'object', properties: { action: { type: 'string' } } },
-      risk: 'reversible-write',
-      group: 'core',
-      capability: ACTION_CATALOG['memory.manage'].capability
-    }
     const calls: QuestionCall[] = [
       { id: 'read-runbook', name: 'pages.get', arguments: { id: 6 } },
       { id: 'save-preference', name: 'memory.manage', arguments: memoryInput }
@@ -3225,7 +3639,7 @@ describe('Ax agent engine', () => {
                 characters: 24,
                 limit: 2200
               },
-        [memoryAction]
+        [questionMemoryAction]
       )
 
     const accepted = build(true, ['Memory operation changed user memory.'])
@@ -3290,7 +3704,6 @@ describe('Ax agent engine', () => {
       summary: 'Create a page after approval.',
       expiresAt: '2026-09-26T12:00:00.000Z'
     }
-    const definition = ACTION_CATALOG['pages.prepareCreate']
     let deliveredLine = ''
     let unsupportedLine = ''
     const fixture = questionFixture(
@@ -3337,17 +3750,7 @@ describe('Ax agent engine', () => {
         if (name === 'pages.prepareCreate') return proposal
         throw new Error(`Unexpected proposal lifecycle action ${name}`)
       },
-      [
-        {
-          name: 'pages.prepareCreate',
-          title: definition.descriptor.title,
-          description: definition.descriptor.description,
-          parameters: { type: 'object', properties: {} },
-          risk: definition.descriptor.risk,
-          group: definition.group,
-          capability: definition.capability
-        }
-      ]
+      [questionProposalAction]
     )
     const result = await fixture.execute('Read the runbook and prepare a Source finder page, then report its proposal status.')
     expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get', 'pages.prepareCreate'])

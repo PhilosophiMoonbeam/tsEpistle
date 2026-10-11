@@ -141,7 +141,7 @@ const CORE_INSTRUCTIONS = `# Goal
 Complete the user's requested scope with admitted actions and source-grounded evidence. Check applicable skills before task actions.
 
 # Return Format
-During collection, return admitted action calls, not a freeform Wiki answer. When wiki_finish_collection is in the visible catalog and the requested facets have sufficient evidence and required actions are complete, call it alone with empty arguments. If evidence remains unavailable, finish with the gaps understood rather than repeating optional discovery. The host produces the typed source-local answer. Without that collection control, answer directly within the requested scope and applicable evidence rules; do not request unavailable tools.
+During collection, return admitted action calls, not a freeform Wiki answer. When wiki_finish_collection is visible and requested facets have sufficient evidence and required actions are complete, call it with empty arguments, alone or last in a batch of independent admitted read-only Wiki source reads. Append it only when those reads are expected to resolve the remaining facts and source qualifications; otherwise inspect their results and continue retrieval. If evidence remains unavailable, finish alone with the gaps understood rather than repeating optional discovery. The host produces the typed source-local answer. Without that collection control, answer directly within the requested scope and applicable evidence rules; do not request unavailable tools.
 Answer the requested facts from read pages and cite every factual claim. Preserve each source's applicable conditions, safety restrictions, status, units, quantities, timing, and estimate labels. Generate inventories from the delivered reads; disclose missing information and limited discovery scope.
 For a broad inventory, include source-defined named options from read related collections in a separately labeled related section. Distinguish their source-stated role from direct entries; do not treat organizers, ingredients, or incidental mentions as entries.
 When reporting a source-stated time, quantity, or safety conclusion, also disclose applicable prerequisites from that same read page. A directory value does not remove conditions in its detailed entry.
@@ -167,7 +167,7 @@ For inventories, preserve collections that the read source explicitly identifies
 Use an accepted page identity directly with ${AGENT_TOOL_NAMES['pages.get']} or ${AGENT_TOOL_NAMES['pages.getVersion']}. Preserve required selectors and the requested version.
 Otherwise, make one targeted ${AGENT_TOOL_NAMES['pages.search']} for the distinctive subject and requested facets. Read promising candidates, including differently titled inventory hits. Read a named source directly. For broad inventories or category filters, read a relevant collection, index, or directory first. Read linked pages only for missing requested facts or explicitly requested citations.
 A read collection is itself page-content evidence. If its owned entries explicitly establish the selection criteria and requested fields, use those entries and finish collection. Do not open individual pages merely to corroborate fields already established by the collection; open them only for a specific missing fact, a conflict, a required action, or an explicit individual-page read or citation request.
-When native calling permits a batch, request independent, already-admitted read-only actions together. Calls with prerequisites remain ordered across turns. Do not combine wiki_finish_collection with actions or use tools before their category becomes active.
+Request independent, already-admitted read-only actions together when the calling protocol permits a batch. Calls with prerequisites remain ordered across turns. Only admitted read-only Wiki source reads may precede a trailing wiki_finish_collection; never combine it with discovery, search, mutations or external tools. Do not use tools before their category becomes active.
 For a basic recent recap, call ${AGENT_TOOL_NAMES['pages.listRecent']} once with limit 10 rather than searching or reading each page. For explicit tag-taxonomy, tag, path, or lifecycle browsing, use ${AGENT_TOOL_NAMES['pages.searchTags']}, ${AGENT_TOOL_NAMES['pages.listTags']}, or ${AGENT_TOOL_NAMES['pages.discover']}. Follow explicit links with ${AGENT_TOOL_NAMES['pages.related']}; use a continuation only when it helps the request.
 
 # Warnings
@@ -3760,7 +3760,14 @@ const withSynthesisControl = (tools: ProviderTools | null): ProviderTools | null
       ...tools.functions,
       {
         name: SYNTHESIS_CONTROL_NAME,
-        description: 'Finish source collection and required actions, then produce the answer with the host typed synthesis program. Call alone; does not execute any action.',
+        description: `# Goal
+Finish source collection and required actions for host typed synthesis.
+# Return Format
+Empty arguments, alone or last after independent admitted read-only Wiki source reads.
+# Warnings
+Batch only when the reads are expected to resolve remaining requested facts and source qualifications. Failed, omitted or incomplete reads leave collection open. Never combine with discovery, search, mutations or external tools.
+# Context Dump
+This control executes no action and grants no authority.`,
         parameters: { type: 'object', properties: {}, additionalProperties: false }
       }
     ]
@@ -5864,15 +5871,18 @@ export class AxAgentEngine implements AgentEngine {
       if (framingIssue === undefined && tools?.mode === 'prompt') {
         if (accumulator.calls.size > 0)
           throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Prompt tool provider emitted an unexpected native action call', 502)
-        const call = parsePromptToolCall(content, new Set(tools.actionNames.keys()))
-        if (call) {
-          const id = randomUUID()
+        const calls = parsePromptToolCall(content, new Set(tools.actionNames.keys()))
+        if (calls) {
           appendCalls(
             accumulator,
             [
               {
                 index: 0,
-                functionCalls: [{ id, type: 'function', function: { name: call.name, params: call.params } }]
+                functionCalls: calls.map(call => ({
+                  id: randomUUID(),
+                  type: 'function' as const,
+                  function: { name: call.name, params: call.params }
+                }))
               }
             ],
             tools.actionNames,
@@ -5886,7 +5896,7 @@ export class AxAgentEngine implements AgentEngine {
       const deniedToolCall = synthesis === undefined && framingIssue === undefined && tools === null && accumulator.calls.size > 0
       if (deniedToolCall && !allowDeniedToolCall)
         throw new AgentRepositoryError('UNEXPECTED_PROVIDER_TOOL_CALL', 'Provider requested an action without an action session', 502)
-      if (framingIssue === undefined && tools && !provider.capabilities.parallelToolCalls && accumulator.calls.size > 1)
+      if (framingIssue === undefined && tools?.mode === 'native' && !provider.capabilities.parallelToolCalls && accumulator.calls.size > 1)
         throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider emitted parallel action calls contrary to its capability profile', 502)
       const calls =
         deniedToolCall || framingIssue !== undefined
@@ -7684,7 +7694,7 @@ export class AxAgentEngine implements AgentEngine {
             ((contextPlan.requestFacets === undefined && contextPlan.observedRecentEvidence) ||
               contextPlan.requestFacets?.some((facet, index) => facet.coverage === 'recent-window' && !contextPlan.recentWindows.has(index)) === true)
           const requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, result.rootUnresolvedFacets ?? [], unestablishedCoverage)
-          let assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
+          const assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
           let assessmentEvidence: ReadonlyMap<string, CitationEvidence> = dispatchEvidence
           let assessment =
             request.purpose === 'planner'
@@ -8193,17 +8203,81 @@ export class AxAgentEngine implements AgentEngine {
             )
           )
         }
+        let finishIndex = -1
+        for (let index = 0; index < result.calls.length; index++) {
+          if (result.calls[index]!.providerName !== SYNTHESIS_CONTROL_NAME) continue
+          if (finishIndex !== -1) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Finish collection must be an empty trailing control', 502)
+          finishIndex = index
+        }
+        if (finishIndex !== -1) {
+          const finish = result.calls[finishIndex]!
+          const parsed = parseCanonicalToolInput(finish.params, turnLimits)
+          if (
+            finishIndex !== result.calls.length - 1 ||
+            !activeTools.actionNames.has(SYNTHESIS_CONTROL_NAME) ||
+            typeof parsed.input !== 'object' ||
+            parsed.input === null ||
+            Array.isArray(parsed.input) ||
+            Object.keys(parsed.input).length !== 0
+          )
+            throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Finish collection must be an empty trailing control', 502)
+          // Validate the entire batch before any invocation, including reads
+          // appearing before a malformed or inadmissible trailing control.
+          for (let readIndex = 0; readIndex < finishIndex; readIndex++) {
+            const read = result.calls[readIndex]!
+            const name = activeTools.actionNames.get(read.providerName)
+            const descriptor = activeTools.turn.activeFunctions.find(fn => fn.name === name)
+            const input = parseCanonicalToolInput(read.params, turnLimits).input
+            if (
+              name === undefined ||
+              !isPageReadActionName(name) ||
+              descriptor?.risk !== 'read' ||
+              activeTools.externalBindings?.has(read.providerName) ||
+              activeDiscoveryTurn === null ||
+              activeActionSession === null ||
+              !ACTION_CATALOG[name].input.safeParse(input).success ||
+              resolveToolDiscoveryCall(activeDiscoveryTurn, name, input)?.kind !== 'action'
+            )
+              throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Finish collection may follow only admitted read-only Wiki source reads', 502)
+          }
+        } else if (mode === 'prompt' && result.calls.length > 1) {
+          // Prompt batches must be fully admitted internal reads before any
+          // tool starts, consumes its budget, or changes discovery state.
+          for (let callIndex = 0; callIndex < result.calls.length; callIndex++) {
+            const call = result.calls[callIndex]!
+            const name = activeTools.actionNames.get(call.providerName)
+            const descriptor = activeTools.turn.activeFunctions.find(fn => fn.name === name)
+            const input = parseCanonicalToolInput(call.params, turnLimits).input
+            if (
+              name === undefined ||
+              name === TOOL_DISCOVERY_CONTROL_NAME ||
+              descriptor?.risk !== 'read' ||
+              activeTools.externalBindings?.has(call.providerName) ||
+              activeDiscoveryTurn === null ||
+              activeActionSession === null ||
+              ACTION_CATALOG[name as AgentActionName]?.input.safeParse(input).success !== true ||
+              resolveToolDiscoveryCall(activeDiscoveryTurn, name, input)?.kind !== 'action'
+            )
+              throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Prompt batches may contain only admitted internal read-only actions', 502)
+          }
+        }
+        let completedFinishReads = 0
         for (let callIndex = 0; callIndex < result.calls.length; callIndex++) {
           assertCompactionContextFresh(request)
           const call = result.calls[callIndex]!
           if (call.providerName === SYNTHESIS_CONTROL_NAME && activeTools.actionNames.has(SYNTHESIS_CONTROL_NAME)) {
-            const parsed = parseCanonicalToolInput(call.params, turnLimits)
-            if (result.calls.length !== 1 || typeof parsed.input !== 'object' || parsed.input === null || Array.isArray(parsed.input) || Object.keys(parsed.input).length !== 0)
-              throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Finish collection must be a sole control with empty arguments', 502)
-            providerResultMessage(activePrompt, mode, call.id, call.providerName, { status: 'collection_finished' })
-            phase = 'synthesizing'
-            discoveryTurn = null
-            tools = null
+            request.signal.throwIfAborted()
+            if (completedFinishReads !== callIndex) {
+              providerResultMessage(activePrompt, mode, call.id, call.providerName, {
+                status: 'collection_not_finished',
+                reason: 'Source reads did not all deliver complete citable evidence. Inspect their results and continue collection.'
+              })
+            } else {
+              providerResultMessage(activePrompt, mode, call.id, call.providerName, { status: 'collection_finished' })
+              phase = 'synthesizing'
+              discoveryTurn = null
+              tools = null
+            }
             break
           }
           const actionCallId = actionCallIdFor(request, call.id)
@@ -8608,6 +8682,52 @@ export class AxAgentEngine implements AgentEngine {
               ...(summary === null ? {} : { summary }),
               ...(delivered ? {} : { contextExclusion: capacityContextExclusion('omitted') })
             })
+            if (finishIndex !== -1 && delivered && evidenceCollection.conflictingEvidenceIds.length === 0) {
+              const sourceActionCallId = cached?.actionCallId ?? actionCallId
+              let completeReads = 0
+              for (const evidence of citationRegistry.values()) {
+                if (excludedEvidenceIds.has(evidence.citation.evidenceId)) continue
+                if (
+                  evidence.representations.some(
+                    representation =>
+                      !representation.section &&
+                      representation.sourceActionName === resolved.name &&
+                      representation.readReceipts.some(receipt => receipt.actionCallId === sourceActionCallId) &&
+                      representation.sourceUnits.some(unit => unit.complete) &&
+                      (representation.binding.representation !== 'recent-excerpt' ||
+                        metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false) &&
+                      representation.deliveries.some(
+                        delivery =>
+                          delivery.actionCallId === sourceActionCallId &&
+                          activePrompt.some(message => {
+                            const payload = trackedEvidenceMessages.get(message)
+                            return (
+                              payload !== undefined &&
+                              payload.callId === delivery.providerCallId &&
+                              payload.actionCallId === delivery.actionCallId &&
+                              payload.actionName === representation.sourceActionName &&
+                              !payload.validationOnly &&
+                              (payload.units === undefined
+                                ? payloadSupportsEvidence(payload.output, representation.sourceActionName, evidence, representation)
+                                : payload.evidenceId === evidence.citation.evidenceId &&
+                                  payload.representationIdentity === representation.identity &&
+                                  payload.units.some(unit => unit.complete) &&
+                                  payload.units.every(unit =>
+                                    representation.sourceUnits.some(
+                                      original => original === unit || canonicalJson(sourceUnitPacket(original)) === canonicalJson(sourceUnitPacket(unit))
+                                    )
+                                  ))
+                            )
+                          })
+                      )
+                  )
+                )
+                  completeReads++
+              }
+              const sourceOutput = asRecord(output)
+              const expectedReads = resolved.name === 'pages.listRecent' ? (sourceOutput === null ? undefined : recentEvidenceRows(sourceOutput)?.length) : 1
+              if (expectedReads !== undefined && expectedReads > 0 && completeReads === expectedReads) completedFinishReads++
+            }
           } catch (error) {
             const code =
               typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string'
