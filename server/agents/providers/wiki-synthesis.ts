@@ -170,8 +170,10 @@ export interface WikiSynthesisClaim {
 export interface WikiSourceQuotationPresentation extends WikiSynthesisClaim {
   readonly text: string
   readonly contexts: readonly string[]
-  readonly kind: 'quotation' | 'membership'
+  readonly kind: 'quotation' | 'membership' | 'entry'
   readonly label?: string
+  /** Original authored source-span start, used only to order protected display. */
+  readonly sourceOrder?: number
 }
 
 /** Both the immutable binding and the unchanged canonical statement select display. */
@@ -382,8 +384,9 @@ export const renderWikiSynthesisAnswer = (answer: WikiSynthesisAnswer, literalSt
 
 /**
  * Publication-only rendering after canonical source/whole-answer verification.
- * Exact owned metadata supplies every substitution; ordinary model assertions
- * retain their original rendering and are never deduplicated or rewritten.
+ * Exact owned metadata supplies every substitution. Contiguous protected runs
+ * retain first-seen evidence/revision groups and authored source order; ordinary
+ * model assertions are ordering barriers, never deduplicated or rewritten.
  */
 export const renderReadableWikiSynthesisAnswer = (
   answer: WikiSynthesisAnswer,
@@ -393,59 +396,95 @@ export const renderReadableWikiSynthesisAnswer = (
 ): string => {
   const safe = validateWikiSynthesisShape(answer, literalListStatements)
   if (safe !== true) throw new Error(safe)
-  const rows: {
+  type Row = {
     presentation: WikiSourceQuotationPresentation | undefined
     renderedStatement: string
     citationIds: string[]
-  }[] = []
-  const duplicates = new Map<string, typeof rows[number]>()
+  }
+  const rows: Row[] = []
+  let protectedRun: Row[] = []
+  const flushProtectedRun = (): void => {
+    const groups = new Map<string, Row[]>()
+    for (const row of protectedRun) {
+      const presentation = row.presentation!
+      const key = JSON.stringify([presentation.evidenceId, presentation.sourceRevision])
+      const group = groups.get(key)
+      if (group === undefined) groups.set(key, [row])
+      else group.push(row)
+    }
+    const duplicates = new Map<string, Row>()
+    for (const group of groups.values()) {
+      group.sort((left, right) => {
+        const aOrder = left.presentation!.sourceOrder ?? Infinity
+        const bOrder = right.presentation!.sourceOrder ?? Infinity
+        return aOrder === bOrder ? 0 : aOrder < bOrder ? -1 : 1
+      })
+      for (const row of group) {
+        const presentation = row.presentation!
+        const duplicateKey = JSON.stringify([presentation.kind, presentation.contexts, presentation.label ?? null, presentation.text])
+        const duplicate = duplicates.get(duplicateKey)
+        if (duplicate !== undefined) {
+          for (const evidenceId of row.citationIds) {
+            if (!duplicate.citationIds.includes(evidenceId)) duplicate.citationIds.push(evidenceId)
+          }
+        } else {
+          rows.push(row)
+          duplicates.set(duplicateKey, row)
+        }
+      }
+    }
+    protectedRun = []
+  }
   for (const claim of answer.claims) {
     const key = wikiSynthesisPresentationKey(claim)
     const supplied = presentations.get(key)
     const presentation = supplied !== undefined && wikiSynthesisPresentationKey(supplied) === key ? supplied : undefined
-    const duplicateKey = presentation === undefined ? undefined
-      : JSON.stringify([presentation.kind, presentation.contexts, presentation.label ?? null, presentation.text])
-    const duplicate = duplicateKey === undefined ? undefined : duplicates.get(duplicateKey)
-    if (duplicate !== undefined) {
-      if (!duplicate.citationIds.includes(claim.evidenceId)) duplicate.citationIds.push(claim.evidenceId)
-      continue
-    }
     const text = claim.statement.trim()
     const renderedStatement = presentation !== undefined ? escapeWikiSourceText(presentation.text.trim())
       : literalStatements.has(claim.statement) || literalListStatements?.get(bindingKey(claim)) === claim.statement
         ? escapeWikiSourceText(text) : text
     const row = { presentation, renderedStatement, citationIds: [claim.evidenceId] }
-    rows.push(row)
-    if (duplicateKey !== undefined) duplicates.set(duplicateKey, row)
+    if (presentation !== undefined) protectedRun.push(row)
+    else {
+      flushProtectedRun()
+      rows.push(row)
+    }
   }
+  flushProtectedRun()
   const sections: string[] = []
-  let previousContexts: readonly string[] = []
-  let previousLabel: string | undefined
+  let previousScope: string | undefined
   let list: string[] = []
   const flushList = (): void => {
     if (list.length) sections.push(list.join('\n'))
     list = []
   }
   for (const row of rows) {
-    const contexts = row.presentation?.contexts ?? []
-    let shared = 0
-    while (shared < contexts.length && shared < previousContexts.length && contexts[shared] === previousContexts[shared]) shared++
-    const changedContext = shared !== contexts.length || shared !== previousContexts.length
-    // Returning from a narrower scope must visibly reopen the broader one,
-    // rather than leave a later item under the preceding nested condition.
-    if (changedContext && shared === contexts.length) shared = 0
-    const label = row.presentation?.kind === 'membership' ? row.presentation.label : undefined
-    if (changedContext || label !== previousLabel || row.presentation?.kind !== 'membership') flushList()
-    for (const context of contexts.slice(shared)) sections.push(`**${escapeWikiSourceText(context)}**`)
-    if (label !== undefined && (changedContext || label !== previousLabel)) sections.push(`**${escapeWikiSourceText(label)}**`)
+    const presentation = row.presentation
+    if (presentation !== undefined) {
+      const scope = JSON.stringify([presentation.contexts, presentation.label ?? null])
+      if (scope !== previousScope) {
+        flushList()
+        // Reopen the complete ancestry, including a broader scope after a
+        // conditional one; never let a later item inherit a prior condition.
+        const labels = [...presentation.contexts, ...(presentation.label === undefined ? [] : [presentation.label])]
+        sections.push(`### ${labels.length ? labels.map(escapeWikiSourceText).join(' — ') : 'Source quotations'}`)
+        previousScope = scope
+      }
+    } else if (previousScope !== undefined) {
+      flushList()
+      sections.push('## Additional source-bound statements')
+      previousScope = undefined
+    }
     const citations = row.citationIds.map(evidenceId => `[[cite:${evidenceId}]]`).join(' ')
     const statement = `${row.renderedStatement}${/[\r\n]/u.test(row.renderedStatement) ? '\n\n' : ' '}${citations}`
-    if (row.presentation?.kind === 'membership') list.push(`- ${statement}`)
-    else sections.push(statement)
-    previousContexts = contexts
-    previousLabel = label
+    if (presentation?.kind === 'membership' || presentation?.kind === 'entry') list.push(`- ${statement}`)
+    else {
+      flushList()
+      sections.push(statement)
+    }
   }
   flushList()
+  if (answer.observations.length && previousScope !== undefined) sections.push('## Observations')
   sections.push(...answer.observations)
   if (sections.length === 0) sections.push('I cannot establish a sourced answer from the available evidence.')
   const recommendations = answer.recommendations?.trim()

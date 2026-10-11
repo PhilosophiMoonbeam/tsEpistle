@@ -159,14 +159,16 @@ export const getLiteralSourcePresentation = (
     .filter(context => context.kind !== 'table-header')
     .map(context => context.normalizedLabel))
   const { unit, record } = source.closure
+  const sourceOrder = unit.sourceSpans[0]!.start
   if (record?.kind === 'table-row' && statement === getLiteralSourceMembershipStatement(source)) {
     const field = record.fields.find(field => field.unitIds.length === 1 && field.unitIds[0] === unit.id)!
-    // Quoted labels retain source-membership semantics even when the author's
-    // label itself looks like a proposition, instruction or claimed world fact.
-    return Object.freeze({ ...binding, text: `"${field.value}"`, contexts, kind: 'membership', label: field.label })
+    // The explicit authored field label retains source-membership semantics;
+    // the value stays exact source text, without artificial quotation marks.
+    return Object.freeze({ ...binding, text: field.value, contexts, kind: 'membership', label: field.label, sourceOrder })
   }
   const text = record?.fields.length
     ? record.fields.map(field => `${field.label}: ${field.value}`).join(' | ')
     : unit.normalizedText
-  return Object.freeze({ ...binding, text, contexts, kind: 'quotation' })
+  const kind = !record?.fields.length && (unit.kind === 'heading' || unit.kind === 'list-item') ? 'entry' : 'quotation'
+  return Object.freeze({ ...binding, text, contexts, kind, sourceOrder })
 }
