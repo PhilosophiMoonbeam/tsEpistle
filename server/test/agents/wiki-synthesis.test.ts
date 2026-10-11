@@ -60,6 +60,143 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
+  it('resolves explicit quotation selections before public results and both host validation boundaries on native and JSON-object wire paths', async () => {
+    const literalStatement = 'Status: Illustrative and untested | Scope: External publication only | Required approvals: **two**.'
+    const quoted = { ...source, literalStatement }
+    const selection = answer({ claims: [{ ...answer().claims[0]!, statement: '' }] })
+    for (const mode of ['native', 'json_object'] as const) {
+      const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number]) => claim.statement === literalStatement)
+      const validateAnswer = vi.fn((candidate: WikiSynthesisAnswer) => candidate.claims[0]?.statement === literalStatement)
+      const generated = generate(selection, [quoted], { validateClaim, validateAnswer }, mode)
+      const accepted = await generated.result
+      expect(accepted.claims).toEqual([{ ...selection.claims[0]!, statement: literalStatement }])
+      expect(validateClaim).toHaveBeenCalledTimes(1)
+      expect(validateAnswer).toHaveBeenCalledTimes(1)
+      expect(renderWikiSynthesisAnswer(accepted, new Set([literalStatement]))).toContain('Illustrative and untested')
+      expect(generated.chat).toHaveBeenCalledTimes(1)
+      const authored = generate(answer(), [quoted], { validateClaim: claim => claim.statement === source.text }, mode)
+      expect((await authored.result).claims[0]?.statement).toBe(source.text)
+    }
+  })
+
+  it('fails closed on invalid literal selections without synthesizing defaults or repairing output', async () => {
+    const quoted = { ...source, literalStatement: source.text }
+    const other = { ...quoted, evidenceId: 'page:99:revision:12', sourceRevision: '12', unitId: 'unit:owner' }
+    const selected = { ...answer().claims[0]!, statement: '' }
+    const { statement: _statement, ...missingStatement } = selected
+    const cases = [
+      { claim: selected, sources: [source] },
+      { claim: selected, sources: [{ ...quoted, complete: false }] },
+      { claim: { ...selected, unitId: 'unknown' }, sources: [quoted] },
+      { claim: { ...selected, sourceRevision: '6' }, sources: [quoted] },
+      { claim: { ...selected, unitId: other.unitId }, sources: [quoted, other] },
+      { claim: missingStatement, sources: [quoted] },
+      { claim: { ...selected, statement: ' \t ' }, sources: [quoted] },
+      ...[null, '', ' \t ', '<script>forged</script>', 'Unsafe [[cite:other]]', 'é'.repeat(65_537)].map(literalStatement => ({
+        claim: selected, sources: [{ ...quoted, literalStatement }]
+      }))
+    ]
+    for (const mode of ['native', 'json_object'] as const) {
+      for (const scenario of cases) {
+        const generated = generate(answer({ claims: [scenario.claim] as WikiSynthesisAnswer['claims'] }), scenario.sources, {}, mode)
+        await expect(generated.result).rejects.toThrow()
+        expect(generated.chat).toHaveBeenCalledTimes(1)
+      }
+    }
+    const denied = generate(answer({ claims: [selected] }), [quoted], { validateClaim: () => 'Source qualification is required.' })
+    await expect(denied.result).rejects.toThrow('Source qualification is required')
+    expect(denied.chat).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds cumulative canonical expansion by the existing provider content budget without clipping quotations', async () => {
+    const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(200) }
+    const selected = { ...answer().claims[0]!, statement: '' }
+    const claims = Array.from({ length: 64 }, () => ({ ...selected }))
+    for (const mode of ['native', 'json_object'] as const) {
+      const generated = generate(answer({ claims }), [quoted], { maxOutputTokens: 1_024 }, mode)
+      await expect(generated.result).rejects.toThrow('content byte limit')
+      expect(generated.chat).toHaveBeenCalledTimes(1)
+      const accepted = await generate(answer({ claims: [selected] }), [quoted], { maxOutputTokens: 1_024 }, mode).result
+      expect(accepted.claims[0]?.statement).toBe(quoted.literalStatement)
+    }
+    const guard = createWikiSynthesisStreamGuard([quoted], { maxOutputTokens: 1_024 })
+    expect(guard(`{"claims":[${JSON.stringify(selected)}`)).toBeUndefined()
+    expect(guard(claims.slice(1).map(claim => `,${JSON.stringify(claim)}`).join(''))).toContain('content byte limit')
+  })
+
+  it('streams only canonical quotation selections through incomplete-array transitions and rejects truncated or failed terminal output', async () => {
+    const quoted = { ...source, literalStatement: 'Status: Illustrative only | External publication requires two approvals.' }
+    const selected = { ...answer().claims[0]!, statement: '' }
+    const first = `{"claims":[${JSON.stringify(selected)},{"evidenceId":`
+    const tail = `${JSON.stringify(selected.evidenceId)},"sourceRevision":"7","unitId":"unit:approval","statement":""}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
+    for (const mode of ['native', 'json_object'] as const) {
+      for (const finish of ['stop', 'length', 'error', 'truncated'] as const) {
+        const chat = vi.fn(async () => new ReadableStream<AxChatResponse>({
+          start(controller) {
+            controller.enqueue({ results: [{ index: 0, content: first }] })
+            if (finish !== 'truncated') controller.enqueue({ results: [{ index: 0, content: tail }] })
+            controller.enqueue({ results: [{ index: 0, finishReason: finish === 'truncated' ? 'stop' : finish }] })
+            controller.close()
+          }
+        }))
+        const service = new AxMockAIService<string>({
+          features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
+          chatResponse: chat
+        })
+        const program = createWikiSynthesisProgram([quoted], { facetCount: 2 })
+        const claims: WikiSynthesisAnswer['claims'] = []
+        const consume = async () => {
+          for await (const chunk of program.streamingForward(service, { ...input, ...encodeWikiSynthesisSources([quoted]) }, { structuredOutputMode: mode })) {
+            for (const claim of chunk.delta.claims ?? []) {
+              expect(claim.statement).toBe(quoted.literalStatement)
+              claims.push(claim)
+            }
+          }
+        }
+        if (finish === 'stop') {
+          await consume()
+          expect(claims).toEqual([{ ...selected, statement: quoted.literalStatement }, { ...selected, statement: quoted.literalStatement }])
+        } else {
+          await expect(consume()).rejects.toThrow()
+        }
+        expect(chat).toHaveBeenCalledTimes(1)
+      }
+    }
+  })
+
+  it('isolates canonical streaming byte allowances by sample index through repaired partial arrays', async () => {
+    const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(1_200) }
+    const selected = { ...answer().claims[0]!, statement: '' }
+    const first = `{"claims":[${JSON.stringify(selected)},{"evidenceId":`
+    const tail = `${JSON.stringify(selected.evidenceId)},"sourceRevision":"7","unitId":"unit:approval","statement":""}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
+    const chat = vi.fn(async () => new ReadableStream<AxChatResponse>({
+      start(controller) {
+        for (const content of [first, tail]) {
+          controller.enqueue({ results: [{ index: 0, content }, { index: 1, content }] })
+        }
+        controller.enqueue({ results: [{ index: 0, finishReason: 'stop' }, { index: 1, finishReason: 'stop' }] })
+        controller.close()
+      }
+    }))
+    const service = new AxMockAIService<string>({
+      features: { functions: false, streaming: true, structuredOutputs: true, structuredOutputModes: ['native'] },
+      chatResponse: chat
+    })
+    const program = createWikiSynthesisProgram([quoted], { facetCount: 2, maxOutputTokens: 1_024 })
+    const samples = new Map<number, WikiSynthesisAnswer['claims']>()
+    for await (const chunk of program.streamingForward(service, { ...input, ...encodeWikiSynthesisSources([quoted]) }, { structuredOutputMode: 'native', sampleCount: 2 })) {
+      if (chunk.delta.claims === undefined) continue
+      const claims = samples.get(chunk.index) ?? []
+      claims.push(...chunk.delta.claims)
+      samples.set(chunk.index, claims)
+    }
+    expect([...samples.keys()].sort()).toEqual([0, 1])
+    for (const claims of samples.values()) {
+      expect(claims).toEqual([{ ...selected, statement: quoted.literalStatement }, { ...selected, statement: quoted.literalStatement }])
+    }
+    expect(chat).toHaveBeenCalledTimes(1)
+  })
+
   it('preserves Markdown autolinks while refusing HTML tags in generated statements', async () => {
     const linkedSource = { ...source, text: 'Approval guide: <https://docs.company.test/approvals>.' }
     const prediction = answer({ claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: linkedSource.text }] })
@@ -530,6 +667,33 @@ describe('Wiki synthesis offline correction admission', () => {
 })
 
 describe('Wiki synthesis incremental stable-invariant guard', () => {
+  it('uses the same exact-source quotation authority only when an empty-selection claim completes', () => {
+    const quoted = { ...source, literalStatement: 'Status: Illustrative only | External publication requires two approvals.' }
+    const selected = { ...answer().claims[0]!, statement: '' }
+    const valid = JSON.stringify(answer({ claims: [selected] }))
+    for (let boundary = 0; boundary <= valid.length; boundary++) {
+      const guard = createWikiSynthesisStreamGuard([quoted])
+      expect(guard(valid.slice(0, boundary))).toBeUndefined()
+      expect(guard(valid.slice(boundary))).toBeUndefined()
+    }
+    const other = { ...quoted, evidenceId: 'page:99:revision:12', sourceRevision: '12', unitId: 'unit:owner' }
+    for (const scenario of [
+      { claim: selected, sources: [source] },
+      { claim: selected, sources: [{ ...quoted, complete: false }] },
+      { claim: selected, sources: [{ ...quoted, literalStatement: 'Unsafe [[cite:other]]' }] },
+      { claim: selected, sources: [{ ...quoted, literalStatement: 'é'.repeat(65_537) }] },
+      { claim: { ...selected, unitId: 'unknown' }, sources: [quoted] },
+      { claim: { ...selected, sourceRevision: '6' }, sources: [quoted] },
+      { claim: { ...selected, unitId: other.unitId }, sources: [quoted, other] }
+    ]) {
+      const guard = createWikiSynthesisStreamGuard(scenario.sources)
+      const claim = JSON.stringify(scenario.claim)
+      expect(guard(`{"claims":[${claim.slice(0, -1)}`)).toBeUndefined()
+      expect(guard('}')).toBeDefined()
+      expect(guard(']}')).toBeDefined()
+    }
+  })
+
   it('accepts valid JSON split at every boundary without treating escaped recommendation text as claims', () => {
     const prediction = answer({
       recommendations: 'Consider the quoted text: "claims": [{ "unitId": "hostile" }].',
