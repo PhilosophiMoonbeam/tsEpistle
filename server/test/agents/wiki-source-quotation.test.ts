@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { parseSourceDocument } from '../../agents/providers/source-document.ts'
-import { getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
+import { getLiteralSourcePresentation, getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
 import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
 import type { WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
 
@@ -165,6 +165,44 @@ describe('complete original source quotations', () => {
     expect(statement).toBe('Policies › Label | Restriction: The source links to "Staff may access records" in the "Label" field.')
     expect(isLiteralSourceClaim(claim(source, statement), source)).toBe(true)
     expect(isLiteralSourceClaim(claim(source, 'Staff may access records.'), source)).toBe(false)
+  })
+
+  it('presents exact linked membership as quoted labels with intact conditions, not provenance paths', () => {
+    const source = sourceFor(fixture('# Catalog\n\n## Only after review\n\nEntry | Time | Condition\n--- | --- | ---\n[Staff may access records](/policy) | 30 minutes | Requires approval\n'), 'Entry: Staff may access records')
+    const statement = getLiteralSourceStatement(source)!
+    const presentation = getLiteralSourcePresentation(source)
+    expect(presentation).toEqual({
+      ...claim(source, statement),
+      text: '"Staff may access records"',
+      contexts: ['Catalog', 'Only after review'],
+      kind: 'membership',
+      label: 'Entry'
+    })
+    expect(isLiteralSourceClaim(claim(source, presentation!.text), source)).toBe(false)
+    expect(getLiteralSourceStatement(source)).toBe(statement)
+    expect(getLiteralSourcePresentation(source, statement.replace('Only after review', 'Approved'))).toBeNull()
+    expect(getLiteralSourcePresentation({ ...source, complete: false })).toBeNull()
+  })
+
+  it('presents complete qualification paragraphs and numeric fields without dropping measurement scope or conditions', () => {
+    const body = 'These entries are authored. They remain untested. Total times are estimates.'
+    const source = sourceFor(fixture(`# Catalog\n\n${body}\n`), body)
+    for (const [index, text] of ['These entries are authored.', 'They remain untested.', 'Total times are estimates.'].entries()) {
+      const derived = { ...source, text, unitId: `${source.closure!.unit.id}:assertion:${index}` }
+      const presentation = getLiteralSourcePresentation(derived)!
+      expect(presentation.text).toBe(body)
+      expect(presentation.contexts).toEqual(['Catalog'])
+      expect(presentation.statement).toBe(`Catalog: ${body}`)
+      expect(presentation.unitId).toBe(derived.unitId)
+      expect(getLiteralSourcePresentation(derived, text)).toBeNull()
+    }
+    const numeric = sourceFor(fixture('# Preparations\n\n## Durations in hours\n\n### Only when cooled inputs are available\n\nDetail | Value\n--- | ---\nElapsed time | 2\n'), 'Value: 2')
+    expect(getLiteralSourcePresentation(numeric)).toEqual({
+      ...claim(numeric, getLiteralSourceStatement(numeric)!),
+      text: 'Detail: Elapsed time | Value: 2',
+      contexts: ['Preparations', 'Durations in hours', 'Only when cooled inputs are available'],
+      kind: 'quotation'
+    })
   })
   it('does not discard nested units or preconditions from a numeric quotation', () => {
     const source = sourceFor(fixture('# Rice preparations\n\n## Durations in hours\n\n### Only when previously cooled rice is available\n\nDetail | Value\n--- | ---\nElapsed time | 2\n'), 'Value: 2')

@@ -1,5 +1,5 @@
 import type { SourceContext, SourceSpan, SourceUnit } from './source-document.ts'
-import type { WikiSynthesisAnswer } from './wiki-synthesis.ts'
+import type { WikiSourceQuotationPresentation, WikiSynthesisAnswer } from './wiki-synthesis.ts'
 import type { WikiVerificationSource } from './wiki-verification.ts'
 
 const spanKey = (span: SourceSpan): string => `${span.start}:${span.end}`
@@ -139,4 +139,34 @@ export const isLiteralSourceClaim = (claim: WikiSynthesisAnswer['claims'][number
   const statement = getLiteralSourceStatement(source)
   return statement !== null && (claim.statement === statement || source.kind === 'page-title' && claim.statement === `${statement}.` ||
     (source.closure?.record?.fields.length ?? 0) > 0 && claim.statement === literalRecordStatement(source))
+}
+
+/**
+ * Derive display only from the exact closed native quotation. Canonical text
+ * remains the verification authority; no model prose is parsed or stripped.
+ */
+export const getLiteralSourcePresentation = (
+  source: WikiVerificationSource,
+  statement: string | null = getLiteralSourceStatement(source)
+): WikiSourceQuotationPresentation | null => {
+  if (statement === null) return null
+  const binding = { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement }
+  if (!isLiteralSourceClaim(binding, source)) return null
+  if (source.closure === null) return Object.freeze({ ...binding, text: statement, contexts: Object.freeze([]), kind: 'quotation' })
+  const contexts = Object.freeze(governingContexts(source)
+    // Column headers are structural provenance. Their meaning-bearing labels
+    // remain in the exact fields or the membership's explicit display label.
+    .filter(context => context.kind !== 'table-header')
+    .map(context => context.normalizedLabel))
+  const { unit, record } = source.closure
+  if (record?.kind === 'table-row' && statement === getLiteralSourceMembershipStatement(source)) {
+    const field = record.fields.find(field => field.unitIds.length === 1 && field.unitIds[0] === unit.id)!
+    // Quoted labels retain source-membership semantics even when the author's
+    // label itself looks like a proposition, instruction or claimed world fact.
+    return Object.freeze({ ...binding, text: `"${field.value}"`, contexts, kind: 'membership', label: field.label })
+  }
+  const text = record?.fields.length
+    ? record.fields.map(field => `${field.label}: ${field.value}`).join(' | ')
+    : unit.normalizedText
+  return Object.freeze({ ...binding, text, contexts, kind: 'quotation' })
 }

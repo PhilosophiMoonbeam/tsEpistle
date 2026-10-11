@@ -110,15 +110,18 @@ import {
   createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
   renderWikiSynthesisAnswer,
+  renderReadableWikiSynthesisAnswer,
+  wikiSynthesisPresentationKey,
   escapeWikiSourceText,
   type WikiSynthesisAnswer,
+  type WikiSourceQuotationPresentation,
   type WikiSynthesisSource,
   type WikiSynthesisStructure
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
 import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verification.ts'
-import { getLiteralSourceMembershipStatement, getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
+import { getLiteralSourceMembershipStatement, getLiteralSourceStatement, getLiteralSourcePresentation, isLiteralSourceClaim } from './wiki-source-quotation.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -3162,6 +3165,7 @@ interface NativeDraft {
   readonly evidence: ReadonlyMap<string, CitationEvidence>
   readonly content: string
   readonly literalStatements: ReadonlySet<string>
+  readonly contentByteLimit: number
   readonly trustedObservations: ReadonlySet<string>
 }
 
@@ -6185,7 +6189,7 @@ export class AxAgentEngine implements AgentEngine {
         rendered = content
         // The program calls this only after every exact binding and source-local
         // claim passes. Boundaries belong to the host renderer, not prose parsing.
-        nativeDraft = { answer, evidence: unitEvidence, content, literalStatements, trustedObservations: new Set(input.observations) }
+        nativeDraft = { answer, evidence: unitEvidence, content, literalStatements, contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes, trustedObservations: new Set(input.observations) }
         if (answer.claims.length === 0 && answer.observations.length === 0 && answer.unresolvedFacets.length !== input.requestFacets.length) {
           rejection = 'An inability must disclose every unresolved requested facet.'
           return rejection
@@ -8035,9 +8039,30 @@ export class AxAgentEngine implements AgentEngine {
               'The approved action completed, but its assistant response could not be recovered',
               409
             )
+          let acceptedBaseContent = result.content
+          if ((request.purpose ?? 'root') === 'root' && result.rootNativeDraft !== undefined) {
+            const draft = result.rootNativeDraft
+            const presentations = new Map<string, WikiSourceQuotationPresentation>()
+            const listStatements = new Map<string, string>()
+            for (const claim of draft.answer.claims) {
+              const key = canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId])
+              const unit = draft.evidence.get(key)?.sourceUnits.find(candidate => candidate.identity === claim.unitId)
+              if (unit === undefined) continue
+              const source = verificationSourceUnit(claim.evidenceId, claim.sourceRevision, unit)
+              const presentation = getLiteralSourcePresentation(source, claim.statement)
+              if (presentation !== null) presentations.set(wikiSynthesisPresentationKey(claim), presentation)
+              if (unit.kind === 'list') {
+                const statement = getLiteralSourceStatement(source)
+                if (statement !== null) listStatements.set(key, statement)
+              }
+            }
+            acceptedBaseContent = renderReadableWikiSynthesisAnswer(draft.answer, draft.literalStatements, listStatements, presentations)
+            if (Buffer.byteLength(acceptedBaseContent, 'utf8') > draft.contentByteLimit)
+              throw new AgentRepositoryError('PROVIDER_RESPONSE_TOO_LARGE', 'Readable synthesis output exceeded its admitted content byte limit.', 502)
+          }
           const acceptedContent = request.specialist
             ? result.content
-            : `${result.content}${(request.purpose ?? 'root') === 'root' ? recentExcerptDisclosure(assessment.citationIds, assessmentEvidence) : ''}${partialCoverageDisclosure(
+            : `${acceptedBaseContent}${(request.purpose ?? 'root') === 'root' ? recentExcerptDisclosure(assessment.citationIds, assessmentEvidence) : ''}${partialCoverageDisclosure(
                 executedOmittedCount(),
                 notExecutedActionCallIds.size
               )}${(request.purpose ?? 'root') === 'root' ? evidenceConflictDisclosure(evidenceConflictIds.size > 0) : ''}${requestDisclosure}`

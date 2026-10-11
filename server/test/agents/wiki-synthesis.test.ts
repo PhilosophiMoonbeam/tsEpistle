@@ -3,7 +3,7 @@ import { axGlobals, AxMockAIService, type AxAIServiceOptions, type AxChatRequest
 import { ProxyTracerProvider } from '@opentelemetry/api'
 import * as markdownItModule from 'markdown-it'
 import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
-import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, wikiSynthesisSourceRef, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisSource, type WikiSynthesisStructure } from '../../agents/providers/wiki-synthesis.ts'
+import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, wikiSynthesisSourceRef, wikiSynthesisPresentationKey, renderReadableWikiSynthesisAnswer, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisSource, type WikiSynthesisStructure, type WikiSourceQuotationPresentation } from '../../agents/providers/wiki-synthesis.ts'
 import { evaluateWikiSynthesisFixtures, optimizeWikiSynthesis, parseWikiSynthesisFixtures } from '../../agents/providers/wiki-synthesis-evaluation.ts'
 import { synthesisAuthoredContentFromRequest, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -78,6 +78,83 @@ describe('Wiki source-bound typed synthesis', () => {
       const authored = generate(answer(), [quoted], { validateClaim: claim => claim.statement === source.text }, mode)
       expect((await authored.result).claims[0]?.statement).toBe(source.text)
     }
+  })
+
+  it('groups protected inventory labels and merges only exact displayed duplicates while retaining every canonical claim and citation', () => {
+    const qualification = { ...answer().claims[0]!, unitId: 'status:0', statement: 'Catalog: Authored and untested. Total times are estimates.' }
+    const qualificationCopy = { ...qualification, unitId: 'status:1', evidenceId: 'page:43:revision:7' }
+    const atlas = { ...qualification, unitId: 'atlas', statement: 'Catalog › Only after review › Entry | Time: The source links to "Atlas" in the "Entry" field.' }
+    const atlasCopy = { ...atlas, unitId: 'atlas:other', evidenceId: 'page:43:revision:7' }
+    const beacon = { ...atlas, unitId: 'beacon', statement: atlas.statement.replace('Atlas', 'Beacon') }
+    const selected = answer({ claims: [qualification, qualificationCopy, atlas, atlasCopy, beacon], observations: [], recommendations: '' })
+    const originals = JSON.stringify(selected)
+    const protectedRows: WikiSourceQuotationPresentation[] = [
+      { ...qualification, text: 'Authored and untested. Total times are estimates.', contexts: ['Catalog'], kind: 'quotation' },
+      { ...qualificationCopy, text: 'Authored and untested. Total times are estimates.', contexts: ['Catalog'], kind: 'quotation' },
+      { ...atlas, text: '"Atlas"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
+      { ...atlasCopy, text: '"Atlas"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
+      { ...beacon, text: '"Beacon"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' }
+    ]
+    const presented = renderReadableWikiSynthesisAnswer(selected, new Set(selected.claims.map(claim => claim.statement)), undefined,
+      new Map(protectedRows.map(row => [wikiSynthesisPresentationKey(row), row])))
+    const html = markdown.render(formatAgentCitationMarkers(presented, evidenceId => ({
+      number: evidenceId === qualification.evidenceId ? 1 : 2, label: 'Catalog', href: null
+    })))
+    expect(html.match(/Authored and untested/gu)).toHaveLength(1)
+    expect(html.match(/Only after review/gu)).toHaveLength(1)
+    expect(html).toContain('<ul>')
+    expect(html.match(/<li>/gu)).toHaveLength(2)
+    expect(html).toContain('&quot;Atlas&quot; <strong>[1]</strong> <strong>[2]</strong>')
+    expect(html).toContain('&quot;Beacon&quot; <strong>[1]</strong>')
+    expect(html).not.toContain('source links')
+    expect(html).not.toContain('›')
+    expect(html).not.toContain('Entry | Time')
+    expect(JSON.stringify(selected)).toBe(originals)
+    expect(renderWikiSynthesisAnswer(selected, new Set(selected.claims.map(claim => claim.statement)))).toContain('source links')
+  })
+
+  it('keeps different qualifications and fields separate and visibly restores a broader scope after nested items', () => {
+    const member = { ...answer().claims[0]!, statement: 'Catalog: The source links to "Atlas" in the "Entry" field.' }
+    const rows: WikiSourceQuotationPresentation[] = [
+      { ...member, unitId: 'review', text: '"Atlas"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
+      { ...member, unitId: 'approval', text: '"Atlas"', contexts: ['Catalog', 'Only with approval'], kind: 'membership', label: 'Entry' },
+      { ...member, unitId: 'broad', text: '"Atlas"', contexts: ['Catalog'], kind: 'membership', label: 'Entry' },
+      { ...member, unitId: 'alias', text: '"Atlas"', contexts: ['Catalog'], kind: 'membership', label: 'Alias' }
+    ]
+    const selected = answer({ claims: rows.map(({ evidenceId, sourceRevision, unitId, statement }) => ({ evidenceId, sourceRevision, unitId, statement })) })
+    const presented = renderReadableWikiSynthesisAnswer(selected, new Set([member.statement]), undefined,
+      new Map(rows.map(row => [wikiSynthesisPresentationKey(row), row])))
+    const html = markdown.render(formatAgentCitationMarkers(presented, () => ({ number: 1, label: 'Catalog', href: null })))
+    expect(html.match(/<li>/gu)).toHaveLength(4)
+    expect(presented).toContain('Only after review')
+    expect(presented).toContain('Only with approval')
+    expect(presented.match(/\*\*Catalog\*\*/gu)).toHaveLength(2)
+    expect(presented).toContain('**Alias**')
+  })
+
+  it('never rewrites unowned narrative or quantities, or reuses a display mapping across statement, revision or unit boundaries', () => {
+    const canonical = answer().claims[0]!
+    const presented: WikiSourceQuotationPresentation = {
+      ...canonical, text: 'Unrelated shortcut', contexts: ['Catalog'], kind: 'quotation'
+    }
+    for (const changed of [
+      { ...presented, statement: 'Changed statement.' },
+      { ...presented, sourceRevision: '8' },
+      { ...presented, unitId: 'foreign' }
+    ]) {
+      const result = renderReadableWikiSynthesisAnswer(answer(), noLiteralStatements, undefined,
+        new Map([[wikiSynthesisPresentationKey(canonical), changed]]))
+      expect(result).toBe(renderWikiSynthesisAnswer(answer(), noLiteralStatements))
+    }
+    const narrative = answer({ claims: [
+      canonical,
+      { ...canonical, unitId: 'source-link-prose', statement: 'The source links to Atlas in the Entry field.' },
+      { ...canonical, unitId: 'duration', statement: 'Elapsed time: 2 hours, only when cooled inputs are available.' },
+      { ...canonical, unitId: 'duration:copy', statement: 'Elapsed time: 2 hours, only when cooled inputs are available.' }
+    ] })
+    const result = renderReadableWikiSynthesisAnswer(narrative, noLiteralStatements, undefined, new Map())
+    expect(result).toBe(renderWikiSynthesisAnswer(narrative, noLiteralStatements))
+    expect(result.match(/Elapsed time/gu)).toHaveLength(2)
   })
 
   it('admits only exact own complete native-list selections and preserves authored bytes before escaped rendering', async () => {
