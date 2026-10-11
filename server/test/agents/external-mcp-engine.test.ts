@@ -19,7 +19,7 @@ import { AgentRepositoryError } from '../../agents/repository.ts'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import type { AgentProviderTransportKind } from '../../agents/providers/registry.ts'
-import type { AgentDispatchBudget, AgentEngineRequest } from '../../agents/runtime.ts'
+import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentDispatchUsage, AgentEngineRequest } from '../../agents/runtime.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest } from './synthesis-fixture.ts'
@@ -161,6 +161,7 @@ const fixture = (
   let modelSteps = 0
   let closed = 0
   let reservationId = 0
+  const outstanding = new Map<number, AgentDispatchBudgetReservation>()
   let forgedAnswerSent = false
   const protocolCalls: { method: string; params: unknown }[] = []
   const modelRequests: Readonly<AxChatRequest>[] = []
@@ -318,14 +319,34 @@ const fixture = (
   } as unknown as ExternalMcpService
   const reserve = vi.fn(async (maximum: { tokens: number; costMicros: number }) => {
     if (options.paidDenied) throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'No quota', 409)
-    return { id: ++reservationId, ...maximum }
+    const reservation = { id: ++reservationId, ...maximum }
+    outstanding.set(reservation.id, reservation)
+    return reservation
   })
   const consumeTool = vi.fn(async () => {
     if (options.toolDenied) throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'No tool budget', 409)
   })
-  const reconcile = vi.fn(async () => {})
-  const release = vi.fn(async () => {})
-  const dispatchBudget: AgentDispatchBudget = { reserve, consumeTool, reconcile, release }
+  const reconcile = vi.fn(async (reservation: AgentDispatchBudgetReservation, _actual: AgentDispatchUsage) => {
+    outstanding.delete(reservation.id)
+  })
+  const release = vi.fn(async (reservation: AgentDispatchBudgetReservation) => {
+    outstanding.delete(reservation.id)
+  })
+  const dispatchBudget: AgentDispatchBudget = {
+    reserve,
+    consumeTool,
+    reconcile,
+    release,
+    get unsettledExposure() {
+      let tokens = 0
+      let costMicros = 0
+      for (const exposure of outstanding.values()) {
+        tokens += exposure.tokens
+        costMicros += exposure.costMicros
+      }
+      return { tokens, costMicros }
+    }
+  }
   const chat = vi.fn(async (request: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
     modelRequests.push(request)
     modelSteps++
@@ -456,6 +477,30 @@ const fixture = (
   }
 }
 
+const expectSettledUsage = (
+  receipts: readonly (readonly [AgentDispatchBudgetReservation, AgentDispatchUsage])[],
+  budget: AgentDispatchBudget | undefined,
+  result: AgentDispatchUsage
+): void => {
+  // Publication verification has its own receipt; aggregate usage, not reconciliation call shape.
+  const usage = receipts.reduce<AgentDispatchUsage>(
+    (total, [, actual]) => ({
+      inputTokens: total.inputTokens + actual.inputTokens,
+      outputTokens: total.outputTokens + actual.outputTokens,
+      totalTokens: total.totalTokens + actual.totalTokens,
+      costMicros: total.costMicros + actual.costMicros
+    }),
+    { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
+  )
+  expect(usage).toEqual({
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    totalTokens: result.totalTokens,
+    costMicros: result.costMicros
+  })
+  expect(budget?.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+}
+
 describe('external MCP in the admitted native host loop', () => {
   it('lets the model choose an offered native tool and preserves attributed raw protocol/multimodal results in the next paid step', async () => {
     const f = fixture()
@@ -487,9 +532,8 @@ describe('external MCP in the admitted native host loop', () => {
     const started = f.event.mock.calls.find(([type]) => type === 'tool.started')?.[1] as { actionName: string; risk: string }
     expect(isExternalMcpToolCallName(started.actionName)).toBe(true)
     expect(started.risk).toBe('external') // readOnlyHint from the remote endpoint is not trusted.
-    expect(f.reserve).toHaveBeenCalledTimes(3)
     expect(f.reserve.mock.calls[1]?.[0].tokens).toBe(300_000) // Configured conservative context ceiling, not measured media tokens.
-    expect(f.reconcile).toHaveBeenCalledTimes(3)
+    expectSettledUsage(f.reconcile.mock.calls, f.request.dispatchBudget, result)
     expect(synthesisInputFromRequest(f.modelRequests[2]!)).toBeDefined()
     expect(f.consumeTool).toHaveBeenCalledTimes(1)
     expect(f.request.beforeExternalTool).toHaveBeenCalledTimes(1)
@@ -523,7 +567,7 @@ describe('external MCP in the admitted native host loop', () => {
     } finally {
       finish.resolve()
     }
-    await running
+    const result = await running
     const message = f.modelRequests[1]!.chatPrompt.find(message => message.role === 'function')
     expect(message).toMatchObject({
       functionId: 'external-1',
@@ -536,8 +580,9 @@ describe('external MCP in the admitted native host loop', () => {
       task.era === 'legacy' ? ['tasks/get', 'tasks/result'] : ['tasks/get']
     )
     expect(f.protocolCalls.filter(call => call.method === 'tools/call')).toHaveLength(1)
-    expect(f.chat).toHaveBeenCalledTimes(3)
-    expect(f.reserve).toHaveBeenCalledTimes(3)
+    expect(result).toMatchObject({ inputTokens: 11, outputTokens: 8, totalTokens: 19, costMicros: 27 })
+    expect(f.modelRequests.some(request => synthesisInputFromRequest(request) !== undefined)).toBe(true)
+    expectSettledUsage(f.reconcile.mock.calls, f.request.dispatchBudget, result)
   })
 
   it.each(['failed', 'cancelled', 'input_required'] as const)(
@@ -722,7 +767,7 @@ describe('external MCP in the admitted native host loop', () => {
         structuredContent: { retryable: false }
       }
     })
-    await f.engine.execute(f.request, { text: f.text, event: f.event })
+    const result = await f.engine.execute(f.request, { text: f.text, event: f.event })
     const message = f.modelRequests[1]!.chatPrompt.find(message => message.role === 'function')
     expect(message).toMatchObject({ isError: true, protocolResult: { protocol: { kind: 'mcp', namespace, name: 'inventory_lookup' }, value: f.result } })
     expect(
@@ -734,7 +779,9 @@ describe('external MCP in the admitted native host loop', () => {
     expect(reduceAgentEvents(f.emittedEvents, f.request.run.id).tools).toMatchObject([
       { actionName: `mcp.${namespace}.tools.inventory_lookup`, risk: 'external', state: 'failed', proposalId: null }
     ])
-    expect(f.reconcile).toHaveBeenCalledTimes(3)
+    expect(result).toMatchObject({ inputTokens: 11, outputTokens: 8, totalTokens: 19, costMicros: 27 })
+    expect(result.citations).toBeUndefined()
+    expectSettledUsage(f.reconcile.mock.calls, f.request.dispatchBudget, result)
     expect(f.close).toHaveBeenCalledTimes(1)
   })
 
@@ -970,6 +1017,68 @@ describe('external MCP in the admitted native host loop', () => {
     expect(reduceAgentEvents(f.emittedEvents, f.request.run.id).tools).toMatchObject([
       { actionName: `mcp.${namespace}.tools.inventory_lookup`, risk: 'external', state: 'cancelled', proposalId: null }
     ])
+  })
+
+  it('rejects a trailing finish batch containing an external native operation before any Wiki read or external fence', async () => {
+    const invoke = vi.fn(async () => ({ id: 42, title: 'Inventory', content: 'Current inventory is available.' }))
+    const wikiActions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Read one page',
+            risk: 'read',
+            group: 'core',
+            parameters: {
+              type: 'object',
+              properties: { id: { type: 'number' } },
+              required: ['id'],
+              additionalProperties: false
+            }
+          }
+        ],
+        invoke,
+        snapshot: async () => ({}),
+        close: () => {},
+        authoritySha256: null
+      })
+    }
+    const chat = vi.fn(async (request: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      const read = request.functions?.find(tool => tool.name === AGENT_TOOL_NAMES['pages.get'])
+      const external = request.functions?.find(tool => tool.description?.includes('"tool":"inventory_lookup"'))
+      const finish = request.functions?.find(tool => tool.name === 'wiki_finish_collection')
+      if (!read || !external || !finish) throw new Error('Expected admitted Wiki read, native external binding and finish control')
+      return {
+        results: [
+          {
+            index: 0,
+            finishReason: 'function_call',
+            functionCalls: [
+              { id: 'wiki-read', type: 'function', function: { name: read.name, params: '{"id":42}' } },
+              { id: 'external-call', type: 'function', function: { name: external.name, params: '{"query":"current inventory"}' } },
+              { id: 'finish', type: 'function', function: { name: finish.name, params: '{}' } }
+            ]
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+      }
+    })
+    const f = fixture({ wikiActions, service: fullAxFixtureService(chat) })
+    await expect(f.engine.execute(f.request, { text: f.text, event: f.event })).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      status: 502
+    })
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(f.externalMcp.openForUser).toHaveBeenCalledTimes(1)
+    expect(f.protocolCalls.some(call => call.method === 'tools/list')).toBe(true)
+    expect(invoke).not.toHaveBeenCalled()
+    expect(f.protocolCalls.filter(call => call.method === 'tools/call')).toHaveLength(0)
+    expect(f.request.beforeExternalTool).not.toHaveBeenCalled()
+    expect(f.consumeTool).not.toHaveBeenCalled()
+    expect(f.emittedEvents.some(event => event.type === 'tool.started')).toBe(false)
+    expect(f.text).not.toHaveBeenCalled()
+    expect(f.close).toHaveBeenCalledTimes(1)
   })
 
   it('rejects an external tool impersonating Wiki apply before paid inference or mutation', async () => {
@@ -1234,7 +1343,8 @@ describe('external MCP native provider-wire identities', () => {
     }
     expect(f.reserve.mock.calls[1]?.[0].tokens).toBe(300_000)
     expect(f.consumeTool).toHaveBeenCalledTimes(2)
-    expect(f.reconcile).toHaveBeenCalledTimes(3)
+    expect(result).toMatchObject({ inputTokens: 11, outputTokens: 8, totalTokens: 19, costMicros: 27 })
+    expectSettledUsage(f.reconcile.mock.calls, f.request.dispatchBudget, result)
     expect(result.citations).toBeUndefined()
     expect(f.close).toHaveBeenCalledTimes(1)
   })

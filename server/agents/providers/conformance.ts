@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { AxChatRequest, AxChatResponse, AxChatResponseResult } from '@ax-llm/ax'
+import { AxAIServiceAbortedError, type AxChatRequest, type AxChatResponse, type AxChatResponseResult } from '@ax-llm/ax'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { AgentProviderAttemptError, AgentProviderFactory, type AgentProviderService } from './factory.ts'
@@ -201,6 +201,7 @@ const isCancellationError = (error: unknown, reason: unknown): boolean => {
   let current = error
   for (let depth = 0; depth < 4; depth++) {
     if (current === reason) return true
+    if (current instanceof AxAIServiceAbortedError && current.context.abortReason === reason) return true
     if (typeof current !== 'object' || current === null) return false
     const original = Reflect.get(current, 'originalError')
     const cause = Reflect.get(current, 'cause')
@@ -290,8 +291,9 @@ const verifyToolCalling = async (provider: AgentProviderService): Promise<'nativ
     model: provider.model
   })
   if (first.calls.length > 0) throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Prompt tool provider emitted a native action call', 502)
-  const call = parsePromptToolCall(first.content, new Set([PROBE_TOOL.name]))
-  if (!call || call.name !== PROBE_TOOL.name || call.params.token !== token)
+  const calls = parsePromptToolCall(first.content, new Set([PROBE_TOOL.name]))
+  const call = calls?.[0]
+  if (!call || calls?.length !== 1 || call.name !== PROBE_TOOL.name || call.params.token !== token)
     throw new AgentRepositoryError('CONFORMANCE_TOOL_INVALID', 'Provider did not follow the prompt action protocol', 502)
   const receipt = randomUUID()
   const final = await providerChat(provider, {

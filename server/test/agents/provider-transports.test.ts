@@ -2,6 +2,7 @@ import type { LookupAddress } from 'node:dns'
 import { ax, axGlobals, f } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
 import { z } from 'zod'
+import { AgentProviderConformanceRunner } from '../../agents/providers/conformance.ts'
 import { AgentProviderFactory, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from '../../agents/providers/prompt-tools.ts'
@@ -647,18 +648,107 @@ describe('additional provider transports', () => {
     expect(payloads[1]).not.toHaveProperty('tools')
   })
 
-  it.each(['model-test', 'gpt-5-mini'])('keeps %s legacy native prompts buffered and supports parsed-field Ax generation without native functions', async model => {
+  it.each([
+    { form: 'object', count: 1 },
+    { form: 'array', count: 1 },
+    { form: 'array', count: 2 }
+  ])('requires exactly one receipt probe despite strict text batch support: %j', async ({ form, count }) => {
+    const id = '00000000-0000-4000-8000-000000000044'
+    const profileId = '00000000-0000-4000-8000-000000000045'
+    await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header' })
+    await db.schema.createTable('agentProviderProfiles', table => {
+      table.string('id').primary()
+      table.string('currentVersionId')
+      table.dateTime('deletedAt').nullable()
+    })
+    await db.schema.createTable('agentProviderConformanceReports', table => {
+      table.string('id').primary()
+      table.string('profileVersionId')
+      table.string('status')
+      table.text('checks')
+      table.string('errorCode').nullable()
+      table.integer('actorId')
+      table.dateTime('startedAt')
+      table.dateTime('completedAt')
+    })
+    await db('agentProviderProfiles').insert({ id: profileId, currentVersionId: id })
+    const prompts: string[] = []
+    const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+      signal?.throwIfAborted()
+      expect(String(input)).toBe('https://legacy.example.test/v1/completions')
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('x-api-key')).toBe('legacy-key')
+      const payload = JSON.parse(String(init?.body)) as { model: string; prompt: unknown; stream: boolean }
+      const prompt = payload.prompt
+      if (typeof prompt !== 'string') throw new Error(`Expected native legacy prompt text; received ${typeof prompt}, array=${Array.isArray(prompt)}`)
+      expect(payload).toMatchObject({ model: 'model-test', stream: false })
+      prompts.push(prompt)
+      const result = /<wiki-tool-result>([\s\S]*?)<\/wiki-tool-result>/u.exec(prompt)
+      const token = /exactly once with token ([0-9a-f-]+)/u.exec(prompt)?.[1]
+      let text = 'ok'
+      if (result?.[1]) {
+        const envelope = JSON.parse(result[1]) as { result: { receipt: string } }
+        text = `ACKNOWLEDGED ${envelope.result.receipt}`
+      } else if (token) {
+        const call = { name: 'wiki_conformance_echo', arguments: { token } }
+        text = `<wiki-tool-call>${JSON.stringify(form === 'array' ? Array.from({ length: count }, () => call) : call)}</wiki-tool-call>`
+      }
+      signal?.throwIfAborted()
+      return Response.json({ choices: [{ text }], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } })
+    }
+    const factory = new AgentProviderFactory(db, { get: () => 'legacy-key' }, fetchImplementation as typeof fetch, publicResolver as never)
+    const setConformed = vi.fn(async () => {})
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed }).run(profileId, 7)
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        { name: 'pre-dispatch-cancellation', passed: true },
+        { name: 'buffered-response', passed: true },
+        { name: 'declared-usage', passed: true }
+      ])
+    )
+    if (count === 1) {
+      expect(report).toMatchObject({
+        status: 'passed',
+        errorCode: null,
+        checks: expect.arrayContaining([{ name: 'prompt-tool-round-trip', passed: true }])
+      })
+      expect(prompts).toHaveLength(3)
+      expect(prompts[2]).toContain('<wiki-tool-result>')
+    } else {
+      expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_TOOL_INVALID' })
+      expect(prompts).toHaveLength(2)
+      expect(prompts.every(prompt => !prompt.includes('<wiki-tool-result>'))).toBe(true)
+    }
+    expect(setConformed).toHaveBeenCalledWith(profileId, id, count === 1, 7)
+  })
+
+  it.each([
+    { model: 'model-test', batch: false },
+    { model: 'gpt-5-mini', batch: false },
+    { model: 'model-test', batch: true },
+    { model: 'gpt-5-mini', batch: true }
+  ])('keeps legacy prompts buffered and supports strict text calls and parsed-field Ax generation: %j', async ({ model, batch }) => {
     const id = '00000000-0000-4000-8000-000000000013'
     await insert({ id, transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'api-key-header', model })
     const payloads: Record<string, unknown>[] = []
     let headers = new Headers()
+    const requestedCalls = [
+      { name: 'wiki_get_page', arguments: { id: 42 } },
+      ...(batch
+        ? [
+            { name: 'wiki_get_page', arguments: { id: 43 } },
+            { name: 'wiki_finish_collection', arguments: {} }
+          ]
+        : [])
+    ]
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       const payload = JSON.parse(String(init?.body)) as Record<string, unknown>
       payloads.push(payload)
       headers = new Headers(init?.headers)
       let text = 'ACKNOWLEDGED receipt-42'
       if (payloads.length === 1) text = 'legacy'
-      else if (payloads.length === 2) text = '<wiki-tool-call>{"name":"wiki_get_page","arguments":{"id":42}}</wiki-tool-call>'
+      else if (payloads.length === 2) text = `<wiki-tool-call>${JSON.stringify(batch ? requestedCalls : requestedCalls[0])}</wiki-tool-call>`
       return Response.json({ choices: [{ text }], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'legacy-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
@@ -682,26 +772,41 @@ describe('additional provider transports', () => {
       description: 'Read a page',
       parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } }
     }
+    const definitions = [
+      definition,
+      ...(batch ? [{ name: 'wiki_finish_collection', description: 'Finish source collection', parameters: { type: 'object' as const, properties: {} } }] : [])
+    ]
     const toolTurn = await provider.service.chat(
       {
         chatPrompt: [
-          { role: 'system', content: promptToolInstructions([definition]) },
-          { role: 'user', content: 'Call wiki_get_page with ID 42.' }
+          { role: 'system', content: promptToolInstructions(definitions) },
+          { role: 'user', content: batch ? 'Read pages 42 and 43, then finish collection.' : 'Call wiki_get_page with ID 42.' }
         ]
       },
       { stream: true }
     )
     if (toolTurn instanceof ReadableStream) throw new Error('Legacy completions unexpectedly streamed prompt tools')
-    const call = parsePromptToolCall(toolTurn.results[0]?.content ?? '', new Set([definition.name]))
-    expect(call).toEqual({ name: 'wiki_get_page', params: { id: 42 } })
-    if (!call) throw new Error('Legacy completions did not return the prompt action')
+    const calls = parsePromptToolCall(toolTurn.results[0]?.content ?? '', new Set(definitions.map(tool => tool.name)))
+    expect(calls).toEqual([
+      { name: 'wiki_get_page', params: { id: 42 } },
+      ...(batch
+        ? [
+            { name: 'wiki_get_page', params: { id: 43 } },
+            { name: 'wiki_finish_collection', params: {} }
+          ]
+        : [])
+    ])
+    if (!calls) throw new Error('Legacy completions did not return the prompt actions')
     const final = await provider.service.chat(
       {
         chatPrompt: [
           { role: 'system', content: 'No actions are available for this final response.' },
           { role: 'user', content: 'Use the action result and reply with its receipt.' },
           { role: 'assistant', content: toolTurn.results[0]?.content ?? '' },
-          { role: 'user', content: promptToolResultMessage('legacy-call', call.name, { receipt: 'receipt-42' }) }
+          ...calls.map((call, index) => ({
+            role: 'user' as const,
+            content: promptToolResultMessage(`legacy-call-${index}`, call.name, { receipt: 'receipt-42' })
+          }))
         ]
       },
       { stream: true }

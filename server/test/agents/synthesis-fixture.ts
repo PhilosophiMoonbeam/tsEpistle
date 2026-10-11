@@ -195,8 +195,8 @@ export const synthesisCollectionControl = (request: Readonly<AxChatRequest>): Ax
   const native = request.functions?.some(tool => tool.name === 'wiki_finish_collection') === true
   const prompt = request.chatPrompt.some(message =>
     message.role === 'system' &&
-    message.content.includes('strict text tool protocol') &&
-    /"name"\s*:\s*"wiki_finish_collection"/u.test(message.content)
+    /<wiki-tool-call>\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{\s*\}\s*\}\s*<\/wiki-tool-call>/u.test(message.content) &&
+    /"name"\s*:\s*"wiki_finish_collection"\s*,\s*"description"\s*:\s*"(?:[^"\\]|\\.)*"\s*,\s*"parameters"\s*:\s*\{/u.test(message.content)
   )
   if (!native && !prompt) return undefined
   return {
