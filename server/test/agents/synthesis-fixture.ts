@@ -1,7 +1,7 @@
 import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
-import type { WikiSynthesisProjection, WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+import { wikiSynthesisSourceRef, type WikiSynthesisProjection, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
 
 /**
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
@@ -123,7 +123,7 @@ const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevisio
       const row = structures.sources[entry[0]]
       if (row === undefined) throw new Error('Missing supplied synthesis source row')
       return entry[1].map((value: unknown) => {
-        if (value === null || typeof value !== 'object' || !('unitId' in value) || typeof value.unitId !== 'string' ||
+        if (value === null || typeof value !== 'object' || !('sourceRef' in value) || typeof value.sourceRef !== 'string' ||
           !('text' in value) || typeof value.text !== 'string')
           throw new Error('Invalid supplied synthesis projection')
         // The fixture reads the encoder's original selected projection fields.
@@ -134,7 +134,9 @@ const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevisio
   })
 }
 
-export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): WikiSynthesisSource[] => {
+export type SynthesisFixtureSource = Omit<WikiSynthesisSource, 'unitId'> & { readonly sourceRef: string }
+
+export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): SynthesisFixtureSource[] => {
   const input = synthesisInputFromRequest(request)
   if (input === undefined) return []
   const structures = synthesisStructures(input)
@@ -146,7 +148,7 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): W
       authoredContent: authoredContentForRow(structures, row)
     }
     return {
-      evidenceId, sourceRevision, unitId: projection.unitId,
+      evidenceId, sourceRevision, sourceRef: projection.sourceRef,
       context: row.context, text: projection.text, kind: row.kind, complete: row.complete,
       packet: JSON.stringify(packet), literalStatement
     }
@@ -162,12 +164,13 @@ const authoredContentForRow = (structures: ReadableSources, row: ReadableSourceR
 
 export const synthesisAuthoredContentFromRequest = (
   request: Readonly<AxChatRequest>,
-  source: WikiSynthesisSource
+  source: WikiSynthesisSource | SynthesisFixtureSource
 ): string[] => {
   const input = synthesisInputFromRequest(request)
   if (input === undefined) return []
   const selected = synthesisSourceRows(input).find(entry =>
-    entry.evidenceId === source.evidenceId && entry.sourceRevision === source.sourceRevision && entry.projection.unitId === source.unitId
+    entry.evidenceId === source.evidenceId && entry.sourceRevision === source.sourceRevision &&
+    entry.projection.sourceRef === ('sourceRef' in source ? source.sourceRef : wikiSynthesisSourceRef(source))
   )
   if (selected === undefined) return []
   return authoredContentForRow(synthesisStructures(input), selected.row)
@@ -175,7 +178,7 @@ export const synthesisAuthoredContentFromRequest = (
 
 export const synthesisOwnedPacketIncludes = (
   request: Readonly<AxChatRequest>,
-  source: WikiSynthesisSource,
+  source: WikiSynthesisSource | SynthesisFixtureSource,
   literal: string
 ): boolean => [
   source.context, source.text, ...(source.literalStatement === null ? [] : [source.literalStatement]),
@@ -222,6 +225,7 @@ export interface SynthesisFixtureClaim {
   readonly statement: string
   readonly sourceRevision?: string
   readonly unitId?: string
+  readonly sourceRef?: string
 }
 
 export interface SynthesisFixtureAnswer {
@@ -265,26 +269,31 @@ export const synthesisFixtureAnswer = (
     answer = { claims }
   } else answer = fixture
   const claims = answer.claims.map(claim => {
-    let candidates = sources.filter(source => source.evidenceId === claim.evidenceId && (claim.unitId === undefined || source.unitId === claim.unitId))
-    if (claim.unitId === undefined) {
+    const revision = claim.sourceRevision ?? /:revision:([^:]+)/u.exec(claim.evidenceId)?.[1]
+    const explicitRef = claim.sourceRef ?? (claim.unitId === undefined ? undefined : wikiSynthesisSourceRef({
+      evidenceId: claim.evidenceId, sourceRevision: revision ?? 'fixture-unknown-revision', unitId: claim.unitId
+    }))
+    let candidates = sources.filter(source => source.evidenceId === claim.evidenceId &&
+      (revision === undefined || source.sourceRevision === revision) && (explicitRef === undefined || source.sourceRef === explicitRef))
+    if (explicitRef === undefined) {
       const titleAssertion = /^(?:(?:The\s+)?(?:(?:current|this)\s+)?page(?:'s)?\s+(?:is\s+(?:titled|named|called)|(?:title|name)\s+is)|(?:Title|Page\s+title)\s*:)/iu.test(claim.statement)
       candidates = candidates.filter(source => (source.kind === 'page-title') === titleAssertion)
       if (!titleAssertion && (options.bindings?.[claim.evidenceId] === undefined || typeof options.bindings[claim.evidenceId] === 'number'))
         candidates = candidates.filter(source => source.kind !== 'heading')
     }
     const binding = options.bindings?.[claim.evidenceId]
-    if (claim.unitId === undefined && binding !== undefined) {
+    if (explicitRef === undefined && binding !== undefined) {
       candidates = typeof binding === 'number'
         ? candidates.slice(binding, binding + 1)
         : candidates.filter(source => (binding.text === undefined || source.text === binding.text) && (binding.context === undefined || source.context === binding.context))
     }
-    if (candidates.length > 1 && (claim.sourceRevision === undefined || claim.unitId === undefined))
+    if (candidates.length > 1 && explicitRef === undefined)
       throw new Error(`Select an explicit source unit for fixture citation ${claim.evidenceId}`)
     const source = candidates.length === 1 ? candidates[0] : undefined
     return {
-      evidenceId: claim.evidenceId,
-      sourceRevision: claim.sourceRevision ?? source?.sourceRevision ?? /:revision:([^:]+)/u.exec(claim.evidenceId)?.[1] ?? 'fixture-unknown-revision',
-      unitId: claim.unitId ?? source?.unitId ?? 'fixture-unknown-unit',
+      sourceRef: explicitRef ?? source?.sourceRef ?? wikiSynthesisSourceRef({
+        evidenceId: claim.evidenceId, sourceRevision: revision ?? 'fixture-unknown-revision', unitId: 'fixture-unknown-unit'
+      }),
       statement: claim.statement
     }
   })

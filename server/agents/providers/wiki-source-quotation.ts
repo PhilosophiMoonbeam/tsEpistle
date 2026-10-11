@@ -11,7 +11,7 @@ const closedSource = (source: WikiVerificationSource): boolean => {
   if (closure === null) return false
   const { unit, units, contexts, record, links, dependencies } = closure
   if (!unit.complete || unit.kind !== source.kind || !unit.sourceSpans.length) return false
-  if ((unit.kind === 'heading' || unit.kind === 'summary' || unit.kind === 'table-row' || (record?.fields.length ?? 0) > 0) &&
+  if ((unit.kind === 'list' || unit.kind === 'heading' || unit.kind === 'summary' || unit.kind === 'table-row' || (record?.fields.length ?? 0) > 0) &&
     source.text !== unit.normalizedText) return false
   const owned = new Map(units.map(entry => [entry.id, entry]))
   const governing = new Map(contexts.map(entry => [entry.id, entry]))
@@ -44,7 +44,9 @@ const closedSource = (source: WikiVerificationSource): boolean => {
       text.length !== span.end - span.start || !requiredSpans.has(key) || supplied.has(key)) return false
     supplied.add(key)
   }
-  return requiredSpans.size === supplied.size
+  return requiredSpans.size === supplied.size &&
+    (unit.kind !== 'list' || record === null && unit.sourceSpans.length === 1 &&
+      dependencies.some(({ span, text }) => spanKey(span) === spanKey(unit.sourceSpans[0]!) && text === unit.normalizedText))
 }
 
 const ownContext = (source: WikiVerificationSource, unit: SourceUnit = source.closure!.unit): SourceContext | undefined =>

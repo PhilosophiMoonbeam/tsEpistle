@@ -2314,7 +2314,7 @@ const decorativeStructuralToken = (value: string): boolean =>
 
 const structuralMembers = (evidence: CitationEvidence): readonly StructuralMember[] =>
   evidence.sourceUnits
-    .filter(unit => unit.complete && unit.kind !== 'code' && unit.kind !== 'opaque')
+    .filter(unit => unit.complete && unit.kind !== 'code' && unit.kind !== 'opaque' && unit.kind !== 'list')
     .flatMap(unit => {
       const seen = new Set<string>()
       return unit.labels.flatMap(label => {
@@ -6119,7 +6119,7 @@ export class AxAgentEngine implements AgentEngine {
     let normalizedClaims: WeakMap<WikiSynthesisAnswer['claims'][number], WikiSynthesisAnswer['claims'][number]> | undefined
     const program = createWikiSynthesisProgram(sources, {
       structured,
-      maxOutputTokens,
+      maxOutputTokens: () => maxOutputTokens,
       observations: input.observations,
       facetCount: input.requestFacets.length,
       validateClaim: (claim, source) => {
@@ -6170,13 +6170,13 @@ export class AxAgentEngine implements AgentEngine {
         }
         return true
       },
-      validateAnswer: (answer, content, literalStatements) => {
+      validateAnswer: (answer, content, literalStatements, literalListStatements) => {
         if (normalizedClaims !== undefined) {
           for (let index = 0; index < answer.claims.length; index++) {
             const normalized = normalizedClaims.get(answer.claims[index]!)
             if (normalized !== undefined) answer.claims[index] = normalized
           }
-          content = renderWikiSynthesisAnswer(answer, literalStatements)
+          content = renderWikiSynthesisAnswer(answer, literalStatements, literalListStatements)
         }
         if (Buffer.byteLength(JSON.stringify(answer), 'utf8') > deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes) {
           rejection = 'Canonical synthesis output exceeded its provider content byte limit.'

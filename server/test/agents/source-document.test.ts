@@ -87,6 +87,36 @@ describe('source document original-source dependencies', () => {
 })
 
 describe('source document explicit ownership', () => {
+  it('adds complete list ownership without changing original item or later assertion identities', () => {
+    const document = parse('- Ada\n- Bea\n\nOutside.\n')
+    const ada = member(document, 'Ada')
+    const bea = member(document, 'Bea')
+    expect(ada.id).toBe('unit:0:6:2')
+    expect(ada.contextIds).toEqual(['context:0:6:0'])
+    expect(ada.recordId).toBe('record:0:6:1')
+    expect(ada.kind).toBe('list-item')
+    expect(bea.recordId).not.toBe(ada.recordId)
+    expect(member(document, 'Outside.').id).toBe('unit:13:22:6')
+    const container = document.units.find(unit => unit.kind === 'list')!
+    expect(container.recordId).toBeNull()
+    expect(slices(document, container.sourceSpans)).toEqual(['- Ada\n- Bea\n\n'])
+    expect(document.records.find(record => record.id === ada.recordId)!.unitIds).toEqual([ada.id])
+  })
+
+  it('assigns appended containers to only their original heading sections', () => {
+    const first = '- First\n\n'
+    const second = '1. Second\n'
+    const document = parse(`# Root\n\n${first}## Child\n\n${second}`)
+    const parent = member(document, first)
+    const child = member(document, second)
+    expect(labels(document, parent)).toEqual(['Root'])
+    expect(labels(document, child)).toEqual(['Root', 'Child'])
+    expect(document.sections[0]!.unitIds).toContain(parent.id)
+    expect(document.sections[0]!.unitIds).toContain(child.id)
+    expect(document.sections[1]!.unitIds).toContain(child.id)
+    expect(document.sections[1]!.unitIds).not.toContain(parent.id)
+  })
+
   it('keeps nested labeled fields with their actual list identity and parent condition', () => {
     const document = parse(
       '# Operations\n\n- Only during maintenance:\n  - Ada\n    - **Channel:** east\n    - Window: before 17:00\n  - Bea\n    - Channel: west\n'

@@ -958,7 +958,7 @@ describe('Ax agent engine', () => {
         const statement = mode === 'changed physical quantity' && attempt === 1
           ? physical.replace('20 cases', '21 cases') : mode === 'exact admitted assertion' ? source.text : physical
         return typedFixtureReceipt(synthesisFixtureAnswer(input, {
-          claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement }]
+          claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement }]
         }))
       }, false, undefined, {
         title: 'Deployment guide',
@@ -987,7 +987,7 @@ describe('Ax agent engine', () => {
         claims: [{
           evidenceId: source.evidenceId,
           sourceRevision: source.sourceRevision,
-          unitId: source.unitId,
+          sourceRef: source.sourceRef,
           statement: `| Component | Region | Status |\n| --- | --- | --- |\n| API | ${attempt === 1 ? 'West' : 'East'} | Active |`
         }]
       }))
@@ -1035,7 +1035,7 @@ describe('Ax agent engine', () => {
           claims: [{
             evidenceId: bound.evidenceId,
             sourceRevision: bound.sourceRevision,
-            unitId: bound.unitId,
+            sourceRef: bound.sourceRef,
             statement: attempt === 1 ? rejectedStatement : statement
           }]
         }))
@@ -1129,7 +1129,7 @@ describe('Ax agent engine', () => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.text.trim() === fixture.production)!
       if (attempt === 1) return new ReadableStream<AxChatResponse>({
         start(controller) {
-          controller.enqueue({ results: [{ index: 0, content: `{"claims":[${JSON.stringify({ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: 'unknown-unit', statement: fixture.production })}` }] })
+          controller.enqueue({ results: [{ index: 0, content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }] })
         },
         cancel
       })
@@ -1177,13 +1177,12 @@ describe('Ax agent engine', () => {
 
   it('rejects terminal-error synthesis cancelled before EOF while retaining unknown paid exposure', async () => {
     const cancel = vi.fn(async () => {})
-    const fixture = typedRootFixture(input => {
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.text.trim() === fixture.production)!
+    const fixture = typedRootFixture(() => {
       return new ReadableStream<AxChatResponse>({
         start(controller) {
           controller.enqueue({
             ...typedFixtureReceipt(''),
-            results: [{ index: 0, finishReason: 'error', content: `{"claims":[${JSON.stringify({ ...source, unitId: 'unknown-unit', statement: fixture.production })}` }]
+            results: [{ index: 0, finishReason: 'error', content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }]
           })
         },
         cancel
@@ -1199,11 +1198,10 @@ describe('Ax agent engine', () => {
   })
 
   it('does not repair a structurally rejected length-limited synthesis stream', async () => {
-    const fixture = typedRootFixture(input => {
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.text.trim() === fixture.production)!
+    const fixture = typedRootFixture(() => {
       return new ReadableStream<AxChatResponse>({
         start(controller) {
-          controller.enqueue({ results: [{ index: 0, finishReason: 'length', content: `{"claims":[${JSON.stringify({ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: 'unknown-unit', statement: fixture.production })}` }] })
+          controller.enqueue({ results: [{ index: 0, finishReason: 'length', content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }] })
         }
       })
     })
@@ -1244,7 +1242,7 @@ describe('Ax agent engine', () => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === evidenceId && unit.kind === 'page-title')!
       if (!source.literalStatement) throw new Error('An authoritative page title requires its exact original literal hint')
       return typedFixtureReceipt(synthesisFixtureAnswer(input, {
-        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: source.literalStatement }]
+        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement: source.literalStatement }]
       }))
     }, false, undefined, {
       content,
@@ -2834,13 +2832,17 @@ describe('Ax agent engine', () => {
     const evidenceId = 'page:42:revision:1:section:1'
     const fixture = questionFixture('native', [
       { calls: [{ id: 'read-owned-structure', name: 'pages.get', arguments: { id: 42 } }] },
-      { answer: input => synthesisFixtureAnswer(input, {
-        claims: authored.map(([text, statement]) => ({
-          evidenceId,
-          statement,
-          unitId: synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === evidenceId && unit.text === text)!.unitId
-        }))
-      }) }
+      { answer: input => {
+        const sources = synthesisSourcesFromRequest(input)
+        return synthesisFixtureAnswer(input, {
+          claims: authored.map(([text, statement]) => {
+            const owners = sources.filter(unit => unit.evidenceId === evidenceId && unit.sourceRevision === '1' &&
+              unit.complete && unit.kind !== 'list' && unit.text.includes(text))
+            if (owners.length !== 1) throw new Error(`Expected one original membership owner for ${evidenceId}: ${text}`)
+            return { ...owners[0]!, statement }
+          })
+        })
+      } }
     ], () => questionReadPage(42, '1', 'Homepage', 'home', 'General Info', 'general-info', source))
     const result = await fixture.execute('What does this local navigation or pricing source establish?')
     expect(result.executionLimit).toBeUndefined()
@@ -2919,12 +2921,17 @@ describe('Ax agent engine', () => {
         [general]: { text: 'Terms remain valid for 30 days after delivery.' },
         [acme]: { text: 'Indiana orders route through the "Midwest" contact.' }
       } }) },
-      { answer: input => synthesisFixtureAnswer(input, {
-        claims: authored.map(([evidenceId, text, statement]) => ({
-          evidenceId, statement,
-          unitId: synthesisSourcesFromRequest(input).find(source => source.evidenceId === evidenceId && source.text === text)?.unitId ?? 'missing-authored-unit'
-        }))
-      }) }
+      { answer: input => {
+        const sources = synthesisSourcesFromRequest(input)
+        return synthesisFixtureAnswer(input, {
+          claims: authored.map(([evidenceId, text, statement]) => {
+            const owners = sources.filter(source => source.evidenceId === evidenceId && source.sourceRevision === '1' &&
+              source.complete && source.kind !== 'list' && source.text.includes(text))
+            if (owners.length !== 1) throw new Error(`Expected one original summary owner for ${evidenceId}: ${text}`)
+            return { ...owners[0]!, statement }
+          })
+        })
+      } }
     ], () => page)
     const result = await fixture.execute('Summarize the current Wiki page and cite the key sections.')
     expect(result.executionLimit).toBeUndefined()
@@ -2974,7 +2981,7 @@ describe('Ax agent engine', () => {
       input => ({ results: [{ index: 0, content: synthesisFixtureAnswer(input, {
         claims: authored.map(([evidenceId, text, statement]) => ({
           evidenceId, statement,
-          unitId: synthesisSourcesFromRequest(input).find(source => source.evidenceId === evidenceId && source.text === text)?.unitId ?? 'missing-authored-unit'
+          sourceRef: synthesisSourcesFromRequest(input).find(source => source.evidenceId === evidenceId && source.text === text)?.sourceRef ?? 'sAAAAAAAAAAAAAAAA'
         }))
       }) }] })
     ]
@@ -8399,7 +8406,7 @@ describe('request-derived evidence coverage', () => {
         return {
           evidenceId: source.evidenceId,
           sourceRevision: source.sourceRevision,
-          unitId: source.unitId,
+          sourceRef: source.sourceRef,
           statement: claim.statement
         }
       }),
@@ -8462,7 +8469,7 @@ describe('request-derived evidence coverage', () => {
       const claims = selected.map(source => {
         if (!source.literalStatement) throw new Error('Authoritative metadata must retain its exact original title hint')
         return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
-          unitId: source.unitId, statement: source.literalStatement }
+          sourceRef: source.sourceRef, statement: source.literalStatement }
       })
       if (mode === 'provider mutation') providerRevision++
       return { results: [{ index: 0, content: synthesisFixtureAnswer(input, {

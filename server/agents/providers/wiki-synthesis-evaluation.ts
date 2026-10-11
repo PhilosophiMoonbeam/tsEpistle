@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { optimize, runControl, axSerializeOptimizedProgram, axDeserializeOptimizedProgram, AxAssertionError, AxGenerateError, type AxAIService, type AxGEPAAdapter, type AxMetricFn, type AxProgramForwardOptions, type AxSerializedOptimizedProgram, type AxTypedExample } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
-import { createWikiSynthesisProgram, encodeWikiSynthesisSources, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisBindingGroup, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
+import { createWikiSynthesisProgram, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisBindingGroup, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
 
 const sourceSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), context: z.string(), text: z.string(), kind: z.string(), complete: z.boolean(), packet: z.string(), literalStatement: z.string().nullable() })
 const claimSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), statement: z.string() })
@@ -120,7 +120,9 @@ export const scoreWikiSynthesisAnswer = (fixture: WikiSynthesisFixture, value: u
   const empty = { score: 0, shapeSafe: false, precision: 0, coverage: 0, exactIntegrity: 0, locality: 0, falseRejection: fixture.details.length > 0 ? 1 : 0, coveredDetails: 0, requestedDetails: fixture.details.length, rejectedClaims: 0 }
   if (!parsed.success) return empty
   const answer = parsed.data
-  const shapeSafe = validateWikiSynthesisShape(answer) === true
+  const literalLists = new Map(fixture.sourceUnits.filter(source => source.complete && source.kind === 'list' && source.literalStatement !== null)
+    .map(source => [JSON.stringify([source.evidenceId, source.sourceRevision, source.unitId]), source.literalStatement!]))
+  const shapeSafe = validateWikiSynthesisShape(answer, literalLists) === true
   let valid = 0
   let local = 0
   let exact = 0
@@ -252,11 +254,11 @@ export const optimizeWikiSynthesis = async (input: {
   let mutatedCandidateEvaluations = 0
   const evaluatedMutations = new Set<string>()
   const tuning = [...input.train, ...input.selection]
-  const program = createFixtureProgram([input.train[0]!], input.studentAI, () => { rejectedAttempts++ })
+  const program = createFixtureProgram(tuning, input.studentAI, () => { rejectedAttempts++ })
   const initialComponents = Object.fromEntries(program.getOptimizableComponents().map(component => [component.key, component.current]))
   const examples = (fixtures: readonly WikiSynthesisFixture[]) => fixtures.map(fixture => ({
     userRequest: fixture.userRequest, ...encodeWikiSynthesisSources(fixture.sourceUnits), requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: fixture.repairFeedback,
-    ...fixture.variants.find(variant => variant.id === 'reference')!.answer
+    ...encodeWikiSynthesisAnswer(fixture.variants.find(variant => variant.id === 'reference')!.answer)
   }))
   const metric: AxMetricFn = ({ prediction, example }) => {
     metricCalls++

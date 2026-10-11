@@ -92,7 +92,7 @@ const groundingFixture = (
       attempts++
       return {
         results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-          claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: attempts === 1 && rejected !== undefined ? rejected : statement }]
+          claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement: attempts === 1 && rejected !== undefined ? rejected : statement }]
         }) }],
         modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
       }
