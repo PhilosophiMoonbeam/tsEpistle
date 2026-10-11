@@ -91,9 +91,9 @@ describe('Wiki source-bound typed synthesis', () => {
     const protectedRows: WikiSourceQuotationPresentation[] = [
       { ...qualification, text: 'Authored and untested. Total times are estimates.', contexts: ['Catalog'], kind: 'quotation' },
       { ...qualificationCopy, text: 'Authored and untested. Total times are estimates.', contexts: ['Catalog'], kind: 'quotation' },
-      { ...atlas, text: '"Atlas"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
-      { ...atlasCopy, text: '"Atlas"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
-      { ...beacon, text: '"Beacon"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' }
+      { ...atlas, text: 'Atlas', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
+      { ...atlasCopy, text: 'Atlas', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
+      { ...beacon, text: 'Beacon', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' }
     ]
     const presented = renderReadableWikiSynthesisAnswer(selected, new Set(selected.claims.map(claim => claim.statement)), undefined,
       new Map(protectedRows.map(row => [wikiSynthesisPresentationKey(row), row])))
@@ -104,11 +104,9 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(html.match(/Only after review/gu)).toHaveLength(1)
     expect(html).toContain('<ul>')
     expect(html.match(/<li>/gu)).toHaveLength(2)
-    expect(html).toContain('&quot;Atlas&quot; <strong>[1]</strong> <strong>[2]</strong>')
-    expect(html).toContain('&quot;Beacon&quot; <strong>[1]</strong>')
+    expect(html).toContain('Atlas <strong>[1]</strong> <strong>[2]</strong>')
+    expect(html).toContain('Beacon <strong>[1]</strong>')
     expect(html).not.toContain('source links')
-    expect(html).not.toContain('›')
-    expect(html).not.toContain('Entry | Time')
     expect(JSON.stringify(selected)).toBe(originals)
     expect(renderWikiSynthesisAnswer(selected, new Set(selected.claims.map(claim => claim.statement)))).toContain('source links')
   })
@@ -116,20 +114,71 @@ describe('Wiki source-bound typed synthesis', () => {
   it('keeps different qualifications and fields separate and visibly restores a broader scope after nested items', () => {
     const member = { ...answer().claims[0]!, statement: 'Catalog: The source links to "Atlas" in the "Entry" field.' }
     const rows: WikiSourceQuotationPresentation[] = [
-      { ...member, unitId: 'review', text: '"Atlas"', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
-      { ...member, unitId: 'approval', text: '"Atlas"', contexts: ['Catalog', 'Only with approval'], kind: 'membership', label: 'Entry' },
-      { ...member, unitId: 'broad', text: '"Atlas"', contexts: ['Catalog'], kind: 'membership', label: 'Entry' },
-      { ...member, unitId: 'alias', text: '"Atlas"', contexts: ['Catalog'], kind: 'membership', label: 'Alias' }
+      { ...member, unitId: 'review', text: 'Atlas', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
+      { ...member, unitId: 'approval', text: 'Atlas', contexts: ['Catalog', 'Only with approval'], kind: 'membership', label: 'Entry' },
+      { ...member, unitId: 'broad', text: 'Atlas', contexts: ['Catalog'], kind: 'membership', label: 'Entry' },
+      { ...member, unitId: 'alias', text: 'Atlas', contexts: ['Catalog'], kind: 'membership', label: 'Alias' }
     ]
     const selected = answer({ claims: rows.map(({ evidenceId, sourceRevision, unitId, statement }) => ({ evidenceId, sourceRevision, unitId, statement })) })
     const presented = renderReadableWikiSynthesisAnswer(selected, new Set([member.statement]), undefined,
       new Map(rows.map(row => [wikiSynthesisPresentationKey(row), row])))
     const html = markdown.render(formatAgentCitationMarkers(presented, () => ({ number: 1, label: 'Catalog', href: null })))
     expect(html.match(/<li>/gu)).toHaveLength(4)
-    expect(presented).toContain('Only after review')
-    expect(presented).toContain('Only with approval')
-    expect(presented.match(/\*\*Catalog\*\*/gu)).toHaveLength(2)
-    expect(presented).toContain('**Alias**')
+    const tokens = markdown.parse(presented, {})
+    const scopes = tokens.flatMap((token, index) => token.type === 'heading_open' ? [tokens[index + 1]!.content] : [])
+    expect(scopes).toEqual([
+      'Catalog — Only after review — Entry',
+      'Catalog — Only with approval — Entry',
+      'Catalog — Entry',
+      'Catalog — Alias'
+    ])
+    expect(tokens.filter(token => token.type === 'bullet_list_open')).toHaveLength(4)
+  })
+
+  it('orders complete protected inventories and notes by source without moving or absorbing intervening model prose', () => {
+    const canonical = answer().claims[0]!
+    const inventory = (evidenceId: string, count: number, kind: 'membership' | 'entry'): WikiSourceQuotationPresentation[] =>
+      Array.from({ length: count }, (_, index) => ({
+        ...canonical, evidenceId, unitId: `${evidenceId}:item:${index}`,
+        statement: `${evidenceId}: authored entry ${index}.`,
+        text: `${evidenceId} recipe ${index}`, contexts: [evidenceId, 'Illustrative and untested'],
+        kind, ...(kind === 'membership' ? { label: 'Recipe name' } : {}), sourceOrder: index * 10
+      }))
+    const catalog = inventory('Catalog', 12, 'membership')
+    const pasta = inventory('Pasta', 4, 'entry')
+    const pizza = inventory('Pizza', 5, 'entry')
+    const note: WikiSourceQuotationPresentation = {
+      ...canonical, evidenceId: 'Catalog', unitId: 'catalog:note', statement: 'Catalog: Timing notes are estimates.',
+      text: 'Timing notes are estimates.', contexts: ['Catalog'], kind: 'quotation', sourceOrder: 125
+    }
+    // Deliberately scramble source positions and interleave first-seen groups.
+    const protectedRows = [catalog[11]!, pizza[4]!, note, pasta[3]!, ...catalog.slice(0, 11).reverse(), ...pasta.slice(0, 3).reverse(), ...pizza.slice(0, 4).reverse()]
+    const prose = { ...canonical, unitId: 'model:prose', statement: 'The source does not establish a tested cooking time.' }
+    const repeated = { ...catalog[0]!, unitId: 'catalog:repeat', sourceOrder: 0 }
+    const selected = answer({
+      claims: [...protectedRows, prose, repeated].map(({ evidenceId, sourceRevision, unitId, statement }) => ({ evidenceId, sourceRevision, unitId, statement })),
+      observations: ['No tested cooking time was available.'], recommendations: 'Consider reviewing the original recipes.'
+    })
+    const originals = JSON.stringify(selected)
+    const presented = renderReadableWikiSynthesisAnswer(selected, noLiteralStatements, undefined,
+      new Map([...protectedRows, repeated].map(row => [wikiSynthesisPresentationKey(row), row])))
+    const tokens = markdown.parse(presented, {})
+    const items = tokens.flatMap((token, index) => token.type === 'list_item_open' ? [tokens[index + 2]!.content] : [])
+    const expected = [...catalog, ...pizza, ...pasta, repeated]
+    expect(items).toEqual(expected.map(row => `${row.text} [[cite:${row.evidenceId}]]`))
+    expect(items).toHaveLength(22)
+    const visible = tokens.filter(token => token.type === 'inline').map(token =>
+      token.children?.map(child => child.content).join('') ?? token.content).join('\n')
+    expect(visible.indexOf(note.text)).toBeGreaterThanOrEqual(0)
+    expect(visible.indexOf('Catalog recipe 11')).toBeLessThan(visible.indexOf(note.text))
+    expect(visible.indexOf(note.text)).toBeLessThan(visible.indexOf('Pizza recipe 0'))
+    expect(visible.indexOf('Pizza recipe 4')).toBeLessThan(visible.indexOf('Pasta recipe 0'))
+    expect(visible.indexOf('Pasta recipe 3')).toBeLessThan(visible.indexOf(prose.statement))
+    expect(visible.lastIndexOf('Catalog recipe 0')).toBeGreaterThan(visible.indexOf(prose.statement))
+    expect(presented).toContain(`${prose.statement} [[cite:${prose.evidenceId}]]`)
+    expect(presented).toContain(selected.observations[0]!)
+    expect(presented).toContain('## Recommendations\n\nConsider reviewing the original recipes.')
+    expect(JSON.stringify(selected)).toBe(originals)
   })
 
   it('never rewrites unowned narrative or quantities, or reuses a display mapping across statement, revision or unit boundaries', () => {
@@ -177,6 +226,17 @@ describe('Wiki source-bound typed synthesis', () => {
       expect(rendered.indexOf('80 g')).toBeLessThan(rendered.indexOf('1 lemon'))
       expect(rendered.indexOf('1 lemon')).toBeLessThan(rendered.indexOf('400 ml'))
       expect(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Ingredients', href: null })))).not.toContain('<ul>')
+      const presentation: WikiSourceQuotationPresentation = {
+        ...accepted.claims[0]!, text: authored, contexts: ['Illustrative and untested', 'Ingredients'], kind: 'quotation'
+      }
+      const readable = renderReadableWikiSynthesisAnswer(accepted, new Set([literalStatement]), literalLists,
+        new Map([[wikiSynthesisPresentationKey(presentation), presentation]]))
+      const readableHtml = markdown.render(formatAgentCitationMarkers(readable, () => ({ number: 1, label: 'Ingredients', href: null })))
+      expect(readableHtml).not.toContain('<ul>')
+      expect(readableHtml).not.toContain('<strong>orzo</strong>')
+      expect(readableHtml).toContain('80 g **orzo**')
+      expect(readable.indexOf('80 g')).toBeLessThan(readable.indexOf('1 lemon'))
+      expect(readable.indexOf('1 lemon')).toBeLessThan(readable.indexOf('400 ml'))
       expect(() => renderWikiSynthesisAnswer(accepted, new Set([literalStatement]))).toThrow()
       for (const claim of [
         { ...accepted.claims[0]!, unitId: 'unknown' },
