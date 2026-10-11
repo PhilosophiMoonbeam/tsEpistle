@@ -1,4 +1,5 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { DecisionProviderFailure, type DecisionProviderRegistry } from '../../agents/decision-providers.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentEventData } from '../../../shared/agents/contracts.ts'
@@ -11,6 +12,12 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 
 const evidenceId = 'page:42:revision:1'
+
+const visibleWikiText = (content: string): string => {
+  const container = document.createElement('div')
+  container.innerHTML = renderSafeMarkdown(content)
+  return container.textContent ?? ''
+}
 
 interface GroundingFixture {
   readonly execute: () => Promise<AgentEngineResult>
@@ -169,12 +176,16 @@ const groundingFixture = (
 const expectPublication = async (fixture: GroundingFixture, statement: string, attempts: number) => {
   const result = await fixture.execute()
   expect(result.executionLimit).toBeUndefined()
-  expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(statement)
+  const expectedText = statement.includes('\n') ? visibleWikiText(statement) : statement
+  expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join('')).replace(/\s+/g, ' '))
+    .toContain(expectedText.replace(/\s+/g, ' ').trim())
   expect(result.citations?.map(citation => citation.evidenceId)).toEqual([evidenceId])
   expect(fixture.attempts).toBe(attempts)
 }
 
 const quantityFact = 'The 300 g orzo quantity makes 4 servings; the chickpeas are measured before draining.'
+const verificationFact = 'These recipes are untested and their total times are estimates.'
+const verificationSource = '# Source Guide\n\nThese recipes are authored and untested; total times are estimates.'
 const quantitySource = `# Source Guide\n\n## Notes\n\n${quantityFact}\n\nThe chickpeas are simmered after draining.`
 const chilledFact = 'The soup may be served; only after it is safely chilled.'
 const chilledSource = `# Source Guide\n\n## Safety\n\n${chilledFact}`
@@ -334,13 +345,14 @@ describe('mandatory Wiki verification publication and accounting', () => {
       async decideBatch(input: DecisionBatchRequest) {
         expect(fixture.text.mock.calls).toHaveLength(0)
         const result = await fixtureDecisionProviders.decideBatch(input)
+        if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports'))) throw new Error('Expected a narrow source-support decision')
         checks++
         if (checks === 1) return { ...result, answers: Object.fromEntries(Object.entries(result.answers).map(([key, answer]) => [key, { ...answer, confidence: 0.8 }])) }
         return result
       }
     }
-    const fixture = groundingFixture(quantitySource, '300 g', quantityFact, undefined, 'native', { decisionProviders })
-    await expectPublication(fixture, quantityFact, 2)
+    const fixture = groundingFixture(verificationSource, 'These recipes', verificationFact, undefined, 'native', { decisionProviders })
+    await expectPublication(fixture, verificationFact, 2)
     expect(checks).toBe(2)
   })
 
@@ -375,11 +387,11 @@ describe('mandatory Wiki verification publication and accounting', () => {
           mode === 'known-paid' ? { inputTokens: 100, outputTokens: 2, totalTokens: 102, totalTokensSource: 'reported' } : null, 7)
       }
     }
-    const fixture = groundingFixture(quantitySource, '300 g', quantityFact, undefined, 'native', { decisionProviders, dispatchBudget: budget })
+    const fixture = groundingFixture(verificationSource, 'These recipes', verificationFact, undefined, 'native', { decisionProviders, dispatchBudget: budget })
     await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_FAILED' })
     expect(fixture.text.mock.calls).toHaveLength(0)
     expect(fixture.attempts).toBe(1)
-    const verification = fixture.events.find(event => event.purpose === 'verification')!
+    const verification = fixture.events.find(event => event.purpose === 'verification' && event.outcome === 'verification_failed')!
     expect(readAgentUsageEvent(verification)).toEqual(mode === 'known-paid'
       ? { inputTokens: 100, outputTokens: 2, totalTokens: 102, costMicros: 104 }
       : { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 })

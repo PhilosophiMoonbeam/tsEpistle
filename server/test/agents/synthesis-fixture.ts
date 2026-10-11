@@ -1,13 +1,13 @@
 import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
-import type { WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+import type { WikiSynthesisProjection, WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
 
 /**
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
- * never a production fallback and carries no semantic-accuracy claim: every
- * question resolves to whichever of its criteria labels is `supports` or
- * `complete`, so tests must supply labels the engine actually distinguishes.
+ * never a production fallback and carries no semantic-accuracy claim:
+ * applicability resolves to `other`; semantic questions resolve to `supports`
+ * or `complete`. Inventory-specific tests must provide their own decisions.
  */
 export const fixtureDecisionProviders = {
   async selectRuntime(): Promise<DecisionProviderRuntime> {
@@ -34,8 +34,8 @@ export const fixtureDecisionProviders = {
     const provider = await fixtureDecisionProviders.selectRuntime()
     const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
     for (const [id, question] of Object.entries(request.questions)) {
-      const label = Object.keys(question.criteria).find(label => label === 'supports' || label === 'complete')
-      if (label === undefined) throw new Error(`Fixture decision provider has no supports/complete criterion for question ${id}`)
+      const label = Object.keys(question.criteria).find(label => label === 'other' || label === 'supports' || label === 'bounded')
+      if (label === undefined) throw new Error(`Fixture decision provider has no supported mock criterion for question ${id}`)
       const probabilities: Record<string, number> = Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === label ? 1 : 0]))
       answers[id] = { choice: label, probabilities, confidence: 1 }
     }
@@ -92,115 +92,95 @@ const synthesisField = (input: string, title: string): unknown => {
   return JSON.parse(end < 0 ? value : value.slice(0, end))
 }
 
-const textReferenceKeys: Readonly<Record<string, true>> = { textKey: true, prefix: true, suffix: true }
-
-const synthesisText = (value: unknown, structures: readonly unknown[]): string => {
-  if (typeof value === 'string') return value
-  if (typeof value !== 'object' || value === null || !('textKey' in value) || typeof value.textKey !== 'string' ||
-    Object.keys(value).some(key => textReferenceKeys[key] !== true) ||
-    ('prefix' in value && typeof value.prefix !== 'string') || ('suffix' in value && typeof value.suffix !== 'string'))
-    throw new Error('Invalid supplied synthesis text reference')
-  const entry = structures.find(row => Array.isArray(row) && row[0] === value.textKey && row[1] === 'text')
-  if (!Array.isArray(entry)) throw new Error('Missing supplied synthesis text data')
-  const encoded: unknown = entry[2]
-  let text: string
-  if (typeof encoded === 'string') text = encoded
-  else if (Array.isArray(encoded) && encoded.length === 3 && typeof encoded[0] === 'string' &&
-    typeof encoded[1] === 'number' && Number.isSafeInteger(encoded[1]) && encoded[1] > 0 && typeof encoded[2] === 'string')
-    text = encoded[0].repeat(encoded[1]) + encoded[2]
-  else throw new Error('Invalid supplied synthesis text data')
-  return `${'prefix' in value ? value.prefix : ''}${text}${'suffix' in value ? value.suffix : ''}`
+interface ReadableSourceRow {
+  readonly context: string
+  readonly kind: string
+  readonly complete: boolean
+  readonly literalStatementName: string | null
+  readonly packet?: unknown
+  readonly authoredContentNames?: readonly string[]
 }
 
-const synthesisIdentifier = (value: unknown, structures: readonly unknown[]): unknown => {
-  if (typeof value !== 'number') return value
-  if (!Number.isSafeInteger(value) || value < 1) throw new Error('Invalid synthesis identifier reference')
-  const entry = structures.find(row => Array.isArray(row) && row[0] === `s${value}` && row[1] === 'identifier')
-  if (!Array.isArray(entry) || typeof entry[2] !== 'string') throw new Error('Missing synthesis identifier data')
-  return entry[2]
+interface ReadableSources {
+  readonly sources: Record<string, ReadableSourceRow>
+  readonly authoredContent: Record<string, { text: string }>
+  readonly quotations: Record<string, { literalStatement: string }>
 }
 
-const synthesisPacket = (packet: unknown, structures: readonly unknown[]): unknown => {
-  if (!Array.isArray(packet) || packet.length !== 5 || !Array.isArray(packet[4])) return packet
-  return [
-    synthesisIdentifier(packet[0], structures), packet[1],
-    Array.isArray(packet[2]) ? packet[2].map(value => synthesisIdentifier(value, structures)) : packet[2],
-    packet[3], [synthesisIdentifier(packet[4][0], structures), ...packet[4].slice(1).map(value => typeof value === 'number' ? `s${value}` : value)]
-  ]
+const synthesisStructures = (input: string): ReadableSources =>
+  synthesisField(input, 'Source Structures') as ReadableSources
+
+const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevision: string; projection: WikiSynthesisProjection; row: ReadableSourceRow }[] => {
+  const bindings = synthesisField(input, 'Source Bindings')
+  const structures = synthesisStructures(input)
+  if (!Array.isArray(bindings)) throw new Error('Supplied synthesis bindings are not an array')
+  return bindings.flatMap((binding: unknown) => {
+    if (!Array.isArray(binding) || binding.length !== 3 || typeof binding[0] !== 'string' || typeof binding[1] !== 'string' || !Array.isArray(binding[2]))
+      throw new Error('Invalid supplied synthesis binding group')
+    return binding[2].flatMap((entry: unknown) => {
+      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || !Array.isArray(entry[1]))
+        throw new Error('Invalid supplied synthesis binding entry')
+      const row = structures.sources[entry[0]]
+      if (row === undefined) throw new Error('Missing supplied synthesis source row')
+      return entry[1].map((value: unknown) => {
+        if (value === null || typeof value !== 'object' || !('unitId' in value) || typeof value.unitId !== 'string' ||
+          !('text' in value) || typeof value.text !== 'string')
+          throw new Error('Invalid supplied synthesis projection')
+        // The fixture reads the encoder's original selected projection fields.
+        const projection = value as WikiSynthesisProjection
+        return { evidenceId: binding[0] as string, sourceRevision: binding[1] as string, projection, row }
+      })
+    })
+  })
 }
 
 export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): WikiSynthesisSource[] => {
   const input = synthesisInputFromRequest(request)
-  if (input === undefined || !input.includes('\n\nSource Bindings: ')) return []
-  const bindings = synthesisField(input, 'Source Bindings')
-  const structures = synthesisField(input, 'Source Structures')
-  if (!Array.isArray(bindings) || !Array.isArray(structures)) throw new Error('Supplied synthesis source transport is not arrays')
-  const sourceData = new Map<string, unknown>()
-  for (const entry of structures)
-    if (Array.isArray(entry) && typeof entry[0] === 'string' && entry[1] === 'source')
-      sourceData.set(entry[0], entry[2])
-  return bindings.flatMap((binding: unknown): WikiSynthesisSource[] => {
-    if (!Array.isArray(binding) || binding.length !== 3 || typeof binding[0] !== 'string' || typeof binding[1] !== 'string' || !Array.isArray(binding[2]))
-      throw new Error('Invalid supplied synthesis binding group')
-    return binding[2].flatMap((entry: unknown): WikiSynthesisSource[] => {
-      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || !Array.isArray(entry[1]))
-        throw new Error('Invalid supplied synthesis binding entry')
-      const data = sourceData.get(entry[0])
-      if (!Array.isArray(data) || data.length !== 5 ||
-        typeof data[2] !== 'string' || typeof data[3] !== 'boolean' || data[4] === undefined)
-        throw new Error('Missing supplied synthesis source data')
-      const source = {
-        evidenceId: binding[0], sourceRevision: binding[1],
-        context: synthesisText(data[0], structures), text: synthesisText(data[1], structures),
-        kind: data[2], complete: data[3], packet: JSON.stringify(synthesisPacket(data[4], structures))
-      }
-      return entry[1].flatMap((reference: unknown): WikiSynthesisSource | WikiSynthesisSource[] => {
-        if (typeof reference === 'string') return { ...source, unitId: reference }
-        if (!Array.isArray(reference) || reference.length !== 3 || typeof reference[0] !== 'string' ||
-          typeof reference[1] !== 'number' || !Number.isSafeInteger(reference[1]) ||
-          typeof reference[2] !== 'number' || !Number.isSafeInteger(reference[2]) || reference[2] < 1 ||
-          !Number.isSafeInteger(reference[1] + reference[2] - 1))
-          throw new Error('Invalid supplied synthesis unit range')
-        return Array.from({ length: reference[2] }, (_, index) => ({ ...source, unitId: `${reference[0]}${reference[1] + index}` }))
-      })
-    })
+  if (input === undefined) return []
+  const structures = synthesisStructures(input)
+  return synthesisSourceRows(input).map(({ evidenceId, sourceRevision, projection, row }) => {
+    const literalStatement = row.literalStatementName === null ? null : structures.quotations[row.literalStatementName]?.literalStatement
+    if (literalStatement === undefined) throw new Error('Missing supplied synthesis quotation')
+    const packet = row.authoredContentNames === undefined ? row.packet : {
+      structuralLabel: projection.structuralLabel ?? null, labels: projection.labels ?? [],
+      authoredContent: authoredContentForRow(structures, row)
+    }
+    return {
+      evidenceId, sourceRevision, unitId: projection.unitId,
+      context: row.context, text: projection.text, kind: row.kind, complete: row.complete,
+      packet: JSON.stringify(packet), literalStatement
+    }
   })
+}
+
+const authoredContentForRow = (structures: ReadableSources, row: ReadableSourceRow): string[] =>
+  (row.authoredContentNames ?? []).map(name => {
+    const content = structures.authoredContent[name]
+    if (content === undefined) throw new Error('Missing supplied synthesis authored content')
+    return content.text
+  })
+
+export const synthesisAuthoredContentFromRequest = (
+  request: Readonly<AxChatRequest>,
+  source: WikiSynthesisSource
+): string[] => {
+  const input = synthesisInputFromRequest(request)
+  if (input === undefined) return []
+  const selected = synthesisSourceRows(input).find(entry =>
+    entry.evidenceId === source.evidenceId && entry.sourceRevision === source.sourceRevision && entry.projection.unitId === source.unitId
+  )
+  if (selected === undefined) return []
+  return authoredContentForRow(synthesisStructures(input), selected.row)
 }
 
 export const synthesisOwnedPacketIncludes = (
   request: Readonly<AxChatRequest>,
   source: WikiSynthesisSource,
   literal: string
-): boolean => {
-  const input = synthesisInputFromRequest(request)
-  if (input === undefined || !input.includes('\n\nSource Structures: ')) return false
-  const packet: unknown = JSON.parse(source.packet)
-  if (!Array.isArray(packet) || !Array.isArray(packet[4])) return false
-  const structures = synthesisField(input, 'Source Structures')
-  if (!Array.isArray(structures)) throw new Error('Supplied Source Structures field is not an array')
-  const closureKey = packet[4][1]
-  const closure = structures.find(entry => Array.isArray(entry) && entry[0] === closureKey && entry[1] === 'closure')?.[2]
-  if (!Array.isArray(closure)) return false
-  const keys = new Set<string>()
-  if (typeof closure[0] === 'string') keys.add(closure[0])
-  else if (typeof closure[0] === 'number') keys.add(`s${closure[0]}`)
-  for (const dependencies of closure.slice(1))
-    if (Array.isArray(dependencies))
-      for (const key of dependencies) {
-        if (typeof key === 'string') keys.add(key)
-        else if (typeof key === 'number') keys.add(`s${key}`)
-      }
-  const expandText = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(expandText)
-    if (typeof value === 'object' && value !== null && 'textKey' in value && Object.keys(value).every(key => textReferenceKeys[key] === true))
-      return synthesisText(value, structures)
-    return value
-  }
-  return structures.some((entry: unknown) =>
-    Array.isArray(entry) && typeof entry[0] === 'string' && keys.has(entry[0]) &&
-    JSON.stringify(expandText(entry[2]))?.includes(literal) === true
-  )
-}
+): boolean => [
+  source.context, source.text, ...(source.literalStatement === null ? [] : [source.literalStatement]),
+  ...synthesisAuthoredContentFromRequest(request, source)
+].some(text => text.includes(literal))
 
 export const synthesisObservationsFromRequest = (request: Readonly<AxChatRequest>): readonly string[] => {
   const input = synthesisInputFromRequest(request)

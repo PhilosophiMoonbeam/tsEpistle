@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { optimize, runControl, axSerializeOptimizedProgram, axDeserializeOptimizedProgram, AxAssertionError, AxGenerateError, type AxAIService, type AxGEPAAdapter, type AxMetricFn, type AxProgramForwardOptions, type AxSerializedOptimizedProgram, type AxTypedExample } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
-import { createWikiSynthesisProgram, encodeWikiSynthesisSources, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisBindingGroup, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
+import { createWikiSynthesisProgram, encodeWikiSynthesisSources, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisBindingGroup, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
 
-const sourceSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), context: z.string(), text: z.string(), kind: z.string(), complete: z.boolean(), packet: z.string() })
+const sourceSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), context: z.string(), text: z.string(), kind: z.string(), complete: z.boolean(), packet: z.string(), literalStatement: z.string().nullable() })
 const claimSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), statement: z.string() })
 const answerSchema = z.object({ claims: z.array(claimSchema).max(64), unresolvedFacets: z.array(z.number().int().nonnegative()).max(64), observations: z.array(z.string()), recommendations: z.string().default('') })
 const fixtureSchema = z.object({
@@ -211,7 +211,6 @@ export const evaluateWikiSynthesisFixtures = async (fixtures: readonly WikiSynth
           failedAttempts++
           break
         }
-        renderWikiSynthesisAnswer(answer)
         break
       } catch (error) {
         failedAttempts++
@@ -295,7 +294,6 @@ export const optimizeWikiSynthesis = async (input: {
           prediction = await bound.forward(input.studentAI, {
             userRequest: fixture.userRequest, ...encodeWikiSynthesisSources(fixture.sourceUnits), requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: fixture.repairFeedback
           }, offlineForwardOptions())
-          renderWikiSynthesisAnswer(prediction)
         } catch (error) {
           failed = true
           failedAttempts++

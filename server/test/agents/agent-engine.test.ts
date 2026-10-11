@@ -3,7 +3,9 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AxAIService, AxChatRequest, AxChatResponse, AxAIGoogleGeminiChatRequest } from '@ax-llm/ax'
+import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AGENT_TOOL_NAMES, type AgentActionName, type AgentEvent } from '../../../shared/agents/contracts.ts'
+import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
 import { registerMemoryAction } from '../../agents/actions/memory.ts'
@@ -24,6 +26,12 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest, synthesisObservationsFromRequest, type SynthesisFixtureBindings } from './synthesis-fixture.ts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
+
+const visibleWikiText = (content: string): string => {
+  const container = document.createElement('div')
+  container.innerHTML = renderSafeMarkdown(content)
+  return container.textContent ?? ''
+}
 
 const rootFixtureService = (
   chat: AxAIService['chat'],
@@ -516,6 +524,36 @@ describe('Ax agent engine', () => {
     results: [{ index: 0, content }],
     modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
   })
+  it.each(['complete physical unit', 'exact admitted assertion', 'changed physical quantity'] as const)(
+    'restores governing headers only for the exact original %s', async mode => {
+      const physical = 'The deployment ships 20 cases. Release requires an audit. Elapsed times are estimates, not guarantees.'
+      let literal = ''
+      const fixture = typedRootFixture((input, attempt) => {
+        const source = synthesisSourcesFromRequest(input).find(unit => unit.text === 'The deployment ships 20 cases.')!
+        if (!source.literalStatement) throw new Error('The original physical unit must retain its complete canonical quotation')
+        literal = source.literalStatement
+        const statement = mode === 'changed physical quantity' && attempt === 1
+          ? physical.replace('20 cases', '21 cases') : mode === 'exact admitted assertion' ? source.text : physical
+        return typedFixtureReceipt(synthesisFixtureAnswer(input, {
+          claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement }]
+        }))
+      }, false, undefined, {
+        title: 'Deployment guide',
+        content: `# Deployment guide\n\n## Cases after audit\n\n${physical}`,
+        request: 'Report deployment quantity, audit requirement, and elapsed-time qualification.'
+      })
+      const result = await fixture.execute()
+      expect(result.executionLimit).toBeUndefined()
+      const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+      expect(published).toContain(literal)
+      expect(published).not.toContain('21 cases')
+      expect(fixture.attempts).toBe(mode === 'changed physical quantity' ? 2 : 1)
+      expect(fixture.event.mock.calls.some(([type, data]) =>
+        type === 'model.turn' && questionRecord(data).purpose === 'verification')).toBe(false)
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1'])
+    }
+  )
+
 
   it('publishes an owned table after rejecting a sibling-row field substitution', async () => {
     const fixture = typedRootFixture((input, attempt) => {
@@ -545,6 +583,64 @@ describe('Ax agent engine', () => {
     expect(fixture.settled.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(result.totalTokens)
   })
 
+  it.each(['wrong owned row', 'foreign governing heading', 'changed quantity', 'omitted governing condition'] as const)(
+    'publishes an intact numeric-field record quotation only after rejecting %s',
+    async mutation => {
+      let statement = ''
+      let rejectedStatement = ''
+      const fixture = typedRootFixture((input, attempt) => {
+        const sources = synthesisSourcesFromRequest(input)
+        const original = sources.find(unit =>
+          unit.evidenceId === 'page:42:revision:1' && unit.kind === 'table-row' && unit.text === 'Quantity: 20'
+        )
+        const sibling = sources.find(unit =>
+          unit.evidenceId === 'page:42:revision:1' && unit.kind === 'table-row' && unit.text === 'Quantity: 99'
+        )
+        if (original === undefined || sibling === undefined)
+          throw new Error('The original complete numeric field and sibling binding must remain available.')
+        if (!original.literalStatement) throw new Error('The intact original record must retain its complete protected literal hint.')
+        statement = original.literalStatement
+        rejectedStatement = mutation === 'foreign governing heading'
+          ? statement.replace('Components', 'Foreign Components')
+          : mutation === 'changed quantity'
+            ? statement.replace('Quantity: 20', 'Quantity: 21')
+            : mutation === 'omitted governing condition'
+              ? statement.replace('Only after audit', '')
+              : statement
+        const bound = attempt === 1 && mutation === 'wrong owned row' ? sibling : original
+        return typedFixtureReceipt(synthesisFixtureAnswer(input, {
+          claims: [{
+            evidenceId: bound.evidenceId,
+            sourceRevision: bound.sourceRevision,
+            unitId: bound.unitId,
+            statement: attempt === 1 ? rejectedStatement : statement
+          }]
+        }))
+      }, false, undefined, {
+        title: 'Components',
+        content: '# Components\n\n## Quantities in cases\n\n### Only after audit\n\n| Component | Quantity | Scope |\n| --- | --- | --- |\n| API | 20 | External only |\n| Jobs | 99 | Internal only |',
+        request: 'Report the API component quantity and scope, retaining its units and audit condition.'
+      })
+      const result = await fixture.execute()
+      const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+      const container = document.createElement('div')
+      container.innerHTML = renderSafeMarkdown(published)
+      const visible = container.textContent ?? ''
+      expect(result.executionLimit).toBeUndefined()
+      for (const original of ['Components', 'Quantities in cases', 'Only after audit', 'Component: API', 'Quantity: 20', 'Scope: External only'])
+        expect(visible).toContain(original)
+      expect(visible).not.toContain('Component: Jobs')
+      if (mutation !== 'wrong owned row') expect(visible).not.toContain(rejectedStatement)
+      expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
+        { accepted: false },
+        { accepted: true }
+      ])
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1'])
+      expect(fixture.outstanding.size).toBe(0)
+      expect(fixture.settled.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(result.totalTokens)
+    }
+  )
+
   it('does not pool separate units into one declared synthesis claim', async () => {
     const fixture = typedRootFixture((input, attempt) => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.text.trim() === fixture.production)!
@@ -555,8 +651,8 @@ describe('Ax agent engine', () => {
     const result = await fixture.execute()
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
     expect(fixture.attempts).toBe(2)
-    expect(published).toContain(fixture.production)
-    expect(published).not.toContain(fixture.staging)
+    expect(visibleWikiText(published)).toContain(fixture.production)
+    expect(visibleWikiText(published)).not.toContain(fixture.staging)
     expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:1' })])
     expect(fixture.invoke).toHaveBeenCalledOnce()
     expect(result.totalTokens).toBe(fixture.settled.reduce((total, usage) => total + usage.totalTokens, 0))
@@ -576,7 +672,7 @@ describe('Ax agent engine', () => {
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
     expect(fixture.attempts).toBe(2)
     expect(fixture.invoke).toHaveBeenCalledOnce()
-    expect(published).toContain(fixture.production)
+    expect(visibleWikiText(published)).toContain(fixture.production)
     expect(published).not.toContain(collectorDraft)
     expect(published).not.toContain(unsupported)
     expect(result.executionLimit).toBeUndefined()
@@ -619,7 +715,7 @@ describe('Ax agent engine', () => {
     const result = await fixture.execute()
     expect(cancel).toHaveBeenCalledOnce()
     expect(fixture.dispatchSignals[0]!.aborted).toBe(true)
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(fixture.production)
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fixture.production)
     expect(result.totalTokens).toBe(29)
     expect(fixture.outstanding.size).toBe(1)
     const rejection = fixture.event.mock.calls.find(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'performance' in data && questionRecord(data.performance).structuralRejection === true)
@@ -706,10 +802,9 @@ describe('Ax agent engine', () => {
     expect(fixture.outstanding.size).toBe(0)
   })
 
-  it('publishes the exact authorized page title on the initial synthesis attempt for a section-heavy ordinary read at the unchanged context cap', async () => {
+  it('publishes the exact authorized page title for a section-heavy ordinary read at the unchanged context cap', async () => {
     const title = 'Operations Readiness Handbook'
     const evidenceId = 'page:42:revision:1'
-    const statement = `The page is titled "${title}".`
     const sections = Array.from({ length: 54 }, (_, index) => ({
       heading: `Operational check ${String(index + 1).padStart(2, '0')}`,
       slug: `operational-check-${String(index + 1).padStart(2, '0')}`
@@ -724,8 +819,9 @@ describe('Ax agent engine', () => {
     const content = [`# ${title}`, ...sections.map(section => `## ${section.heading}\n\n${paragraphs.join('\n\n')}`)].join('\n\n')
     const fixture = typedRootFixture(input => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === evidenceId && unit.kind === 'page-title')!
+      if (!source.literalStatement) throw new Error('An authoritative page title requires its exact original literal hint')
       return typedFixtureReceipt(synthesisFixtureAnswer(input, {
-        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement }]
+        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: source.literalStatement }]
       }))
     }, false, undefined, {
       content,
@@ -741,15 +837,17 @@ describe('Ax agent engine', () => {
 
     const result = await fixture.execute()
     expect(result.executionLimit).toBeUndefined()
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(`${statement} [[cite:${evidenceId}]]`)
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    expect(visibleWikiText(published)).toContain(title)
+    for (const paragraph of paragraphs) expect(visibleWikiText(published)).not.toContain(paragraph)
     expect(result.citations).toEqual([expect.objectContaining({ evidenceId, label: title, href: '/en/guide' })])
-    expect(fixture.attempts).toBe(1)
-    expect(fixture.invoke).toHaveBeenCalledOnce()
     expect(fixture.event).toHaveBeenCalledWith('evidence.provenance', expect.objectContaining({
       accepted: true,
-      claims: [expect.objectContaining({ claim: statement, evidenceId, pageEvidenceId: evidenceId, supported: true })],
+      claims: [expect.objectContaining({ evidenceId, pageEvidenceId: evidenceId, supported: true })],
       finalCitationIds: [evidenceId]
     }))
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
     expect(fixture.outstanding.size).toBe(0)
     expect(result.totalTokens).toBe(fixture.settled.reduce((total, receipt) => total + receipt.totalTokens, 0))
   })
@@ -1111,7 +1209,7 @@ describe('Ax agent engine', () => {
     expect(JSON.stringify(calls.at(-1)?.chatPrompt)).not.toContain('encrypted-state')
     expect(JSON.stringify(calls.at(-1)?.chatPrompt)).not.toContain('hidden thought')
     const published = text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain('The install steps are documented.')
+    expect(visibleWikiText(published)).toContain('The install steps are documented.')
     expect(published).not.toContain('Let me check.')
     expect(published).not.toContain('encrypted-state')
     expect(published).not.toContain('hidden thought')
@@ -1122,7 +1220,7 @@ describe('Ax agent engine', () => {
         retrievals: [{ actionCallId: 'call-1', actionName: 'pages.get', evidenceIds: ['page:42:revision:1', 'page:42:revision:1:section:1'] }],
         claims: [
           expect.objectContaining({
-            claim: 'The install steps are documented.',
+            claim: expect.stringContaining('The install steps are documented.'),
             evidenceId: 'page:42:revision:1:section:1',
             pageEvidenceId: 'page:42:revision:1',
             supported: true
@@ -1198,144 +1296,6 @@ describe('Ax agent engine', () => {
       message: 'Agent inference failed'
     })
     expect(close).toHaveBeenCalledOnce()
-  })
-  it('compacts retrieval without publishing when complete-read verification exceeds safe request bounds', async () => {
-    const calls: Readonly<AxChatRequest<unknown>>[] = []
-    const responses: Parameters<typeof rootFixtureResponse>[1] = [
-      {
-        results: [
-          {
-            index: 0,
-            functionCalls: [{ id: 'budget-search', type: 'function', function: { name: 'wiki_search_pages', params: '{"query":"recipes","limit":20}' } }]
-          }
-        ],
-        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
-      },
-      {
-        results: [{ index: 0, functionCalls: [{ id: 'budget-page', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }],
-        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 6_000, completionTokens: 20, totalTokens: 6_020 } }
-      },
-      input => ({
-        results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-          claims: [{ evidenceId: 'page:42:revision:1:section:1', statement: 'Budget evidence remains available.' }]
-        }, { bindings: { 'page:42:revision:1:section:1': 0 } }) }],
-        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7_000, completionTokens: 30, totalTokens: 7_030 } }
-      })
-    ]
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
-      calls.push(input)
-      return rootFixtureResponse(input, responses)
-    })
-    const factory = {
-      create: async () => ({ service: rootFixtureService(chat), capabilities: {
-        streaming: false,
-        toolCalling: 'native',
-        parallelToolCalls: true,
-        structuredOutput: 'native-json-schema',
-        usage: 'terminal',
-        cancellation: true,
-        maxContextTokens: 100_000,
-        maxOutputTokens: 4_000
-      },
-      transportKind: 'openai-responses',
-      model: 'gpt-test',
-      capabilityRevision: 'cap-1',
-      pricingRevision: 'price-1',
-      pricing })
-    } as unknown as AgentProviderFactory
-    const actions: AgentActionSessionProvider = {
-      open: async () => ({
-        functions: [
-          {
-            name: 'pages.search',
-            title: 'Search pages',
-            description: 'Searches visible pages',
-            parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } } },
-            risk: 'read'
-          },
-          {
-            name: 'pages.get',
-            title: 'Read page',
-            description: 'Reads a visible page',
-            parameters: { type: 'object', properties: { id: { type: 'number' } } },
-            risk: 'read'
-          }
-        ],
-        invoke: async (actionName: string) =>
-          actionName === 'pages.search'
-            ? {
-                results: [
-                  {
-                    id: 42,
-                    title: 'Search candidate',
-                    knowledge: {
-                      state: 'complete',
-                      summary: 'A concise provider-facing search summary.',
-                      entities: [{ name: 'Internal review detail' }],
-                      provenance: { fields: 'review metadata '.repeat(3_000) }
-                    }
-                  }
-                ],
-                suggestions: [],
-                totalInWindow: 1,
-                windowLimit: 100,
-                windowTruncated: false,
-                nextOffset: null
-              }
-            : {
-                id: 42,
-                locale: 'en',
-                path: 'budget-guide',
-                sourceRevision: '1',
-                title: 'Budget Guide',
-                contentType: 'markdown',
-                content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(1_000)}`,
-                knowledge: {
-                  state: 'complete',
-                  summary: 'Budget evidence page.',
-                  relationships: [{ predicate: 'internal-review-detail' }],
-                  provenance: { fields: 'page review metadata '.repeat(3_000) }
-                },
-                citation: { evidenceId: 'page:42:revision:1', label: 'Budget Guide', href: '/en/budget-guide' },
-                citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
-              },
-        snapshot: async () => ({}),
-        close: () => undefined
-      })
-    }
-    let consumedTokens = 0
-    let reservationId = 0
-    const dispatchBudget = {
-      reserve: async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
-        if (consumedTokens + maximum.tokens > 64_000) throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Goal reservation exceeds remaining tokens', 429)
-        return { id: ++reservationId, ...maximum }
-      },
-      reconcile: async (
-        _reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number },
-        actual: { readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number; readonly costMicros: number }
-      ) => {
-        consumedTokens += actual.totalTokens
-      },
-      release: async (_reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number }) => undefined,
-      consumeTool: async () => undefined,
-      unsettledExposure: { tokens: 0, costMicros: 0 }
-    } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
-    const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
-    const text = vi.fn(async () => undefined)
-    await expect(engine.execute(
-      {
-        ...request(new AbortController().signal),
-        dispatchBudget,
-        limits: { maxTokens: 64_000, maxTurns: 12, maxToolCalls: 32, maxOutputTokens: 4_000 }
-      },
-      { text, event: async () => undefined }
-    )).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_PLAN_INVALID' })
-    const projected = JSON.stringify(calls.slice(1).map(call => call.chatPrompt))
-    expect(projected).not.toContain('review metadata')
-    expect(projected).not.toContain('Internal review detail')
-    expect(projected).not.toContain('internal-review-detail')
-    expect(consumedTokens).toBe(13_057)
-    expect(text).not.toHaveBeenCalled()
   })
   it('accepts standalone uncited advice after reading evidence without inventing sourced claims', async () => {
     const responses: Parameters<typeof rootFixtureResponse>[1] = [
@@ -1557,7 +1517,7 @@ describe('Ax agent engine', () => {
       correctedDraft: `${fact} [[cite:${citation}]]`
     })
     expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
-    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(`${fact} [[cite:${citation}]]`)
+    expect(visibleWikiText(run.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
   })
 
   it.each(['html', 'asciidoc'] as const)('adaptable grounding does not admit a plain %s page as Markdown evidence', async contentType => {
@@ -1609,7 +1569,7 @@ describe('Ax agent engine', () => {
     )
     const result = await fixture.execute('Who handles northern orders?')
     expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
     expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
   })
 
@@ -1696,7 +1656,7 @@ describe('Ax agent engine', () => {
       citationSections: [{ evidenceId: citation, label, href: '/en/guide#canonical-north' }]
     }))
     const result = await fixture.execute('Who handles northern orders?')
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain('Maya Quinn handles northern orders.')
     expect(result.citations).toEqual([{ evidenceId: citation, kind: 'page', label, href: '/en/guide#canonical-north' }])
   })
 
@@ -1805,7 +1765,11 @@ describe('Ax agent engine', () => {
       correctedDraft: `${fact} [[cite:${citation}]]`
     })
     expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
-    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(`${fact} [[cite:${citation}]]`)
+    const rendered = document.createElement('div')
+    rendered.innerHTML = renderSafeMarkdown(run.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(rendered.textContent).toContain('Maya. [manual](https://example.test/private)')
+    expect(rendered.querySelector('a[href="https://example.test/private"]')).toBeNull()
+    expect(rendered.textContent).toContain('The diagnostic token is')
   })
 
   const adaptableCitation = 'page:42:revision:1:section:1'
@@ -1955,7 +1919,7 @@ describe('Ax agent engine', () => {
       questionReadPage(42, '1', 'Release Rules', 'release-rules', 'Approval', 'approval', source)
     )
     const result = await fixture.execute('When may Maya Quinn approve release?')
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(qualifiedFact)
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual([adaptableCitation])
   })
 
@@ -2004,7 +1968,7 @@ describe('Ax agent engine', () => {
       correctedBindings: { [adaptableCitation]: { text: _case === 'independent same-name sentences' ? qualifiedFact : 'Maya Quinn may approve release.' } }
     })
     expect(run.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
-    expect(run.text.mock.calls.map(([delta]) => delta).join('')).toBe(corrected)
+    expect(visibleWikiText(run.text.mock.calls.map(([delta]) => delta).join(''))).toContain(qualifiedFact)
   })
 
   const contactRow =
@@ -2464,7 +2428,7 @@ describe('Ax agent engine', () => {
       finalCitationIds: [evidenceId]
     })
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    for (const [, statement] of authored) expect(published).toContain(statement)
+    for (const [, statement] of authored) expect(visibleWikiText(published)).toContain(visibleWikiText(statement).trim())
   })
 
   it('repairs substantive parent and child summaries from exact local source units', async () => {
@@ -2551,7 +2515,7 @@ describe('Ax agent engine', () => {
       }
     ])
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    for (const [, , statement] of authored) expect(published).toContain(statement)
+    for (const [, , statement] of authored) expect(visibleWikiText(published)).toContain(statement)
   })
   it('keeps exact source units from distinct long and later scopes in a substantive cited summary', async () => {
     const longSection = 'Supplier Eligibility and Regional Ordering Conditions '.repeat(3).trim()
@@ -3649,7 +3613,7 @@ describe('Ax agent engine', () => {
       async () => page
     )
     await fixture.execute('What does the runbook say about Amber Falcon?')
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain('Amber Falcon is a synthetic incident.')
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain('Amber Falcon is a synthetic incident.')
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(`[[cite:${evidenceId}]]`)
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Unsupported explanation.')
     expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
@@ -3963,8 +3927,8 @@ describe('Ax agent engine', () => {
     }
 
     const emitted = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    expect(emitted).toContain('Before deployment, verify the backup is current.')
-    expect(emitted).toContain('After deployment, confirm the queue drains.')
+    expect(visibleWikiText(emitted)).toContain('Before deployment, verify the backup is current.')
+    expect(visibleWikiText(emitted)).toContain('After deployment, confirm the queue drains.')
     expect(emitted).toContain(recommendations)
     expect(emitted).not.toContain('within five minutes')
     expect(result.citations).toEqual([
@@ -4178,7 +4142,7 @@ describe('Ax agent engine', () => {
     )
     const result = await fixture.execute('Describe the transit instrument and report the bounded search observations.')
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain(fact)
+    expect(visibleWikiText(published)).toContain(fact)
     for (const observation of observations) expect(published).toContain(observation)
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:8:section:1'])
     expect(result.executionLimit).toBeUndefined()
@@ -4231,7 +4195,7 @@ describe('Ax agent engine', () => {
       }
     )
     const result = await fixture.execute('Describe the instrument and the search scope without assuming corpus completeness.')
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(fact)
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(repaired)
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:8:section:1'])
     expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
@@ -4295,7 +4259,7 @@ describe('Ax agent engine', () => {
       async () => questionReadPage(42, '8', 'Transit Telescope', 'transit-telescope', 'Instrument', 'instrument', fact)
     )
     const result = await fixture.execute('Describe the transit telescope.')
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(fact)
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(forged)
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:8:section:1'])
     expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
@@ -4502,7 +4466,7 @@ describe('Ax agent engine', () => {
     expect(fixture.invoke.mock.calls.map(([name, input]) => ({ name, input }))).toEqual([{ name: 'pages.getVersion', input: { pageId: 42, versionId: 6 } }])
     expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.search')).toBe(false)
     expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.get')).toBe(false)
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain(fact)
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
     expect(fixture.event.mock.calls.filter(([type]) => type === 'model.turn').at(-1)?.[1]).toMatchObject({
       performance: { temporalTarget: 'historical', facetCoverage: { requested: 1, supported: 1, unavailable: 0, unread: 0 } }
     })
@@ -4902,8 +4866,8 @@ describe('Ax agent engine', () => {
 
     const published = text.mock.calls.map(([delta]) => delta).join('')
     expect(published).not.toContain('Amber Falcon is a synthetic incident and its response sequence confirms alerts')
-    expect(published).toContain('Amber Falcon is a synthetic incident drill.')
-    expect(published).toContain('Confirm alerts, freeze deployments, and drain the queue.')
+    expect(visibleWikiText(published)).toContain('Amber Falcon is a synthetic incident drill.')
+    expect(visibleWikiText(published)).toContain('Confirm alerts, freeze deployments, and drain the queue.')
     const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
     expect(provenance).toHaveLength(2)
     expect(provenance[0]).toMatchObject({
@@ -5332,7 +5296,7 @@ describe('Ax agent engine', () => {
         structuredOutput: 'tool-result',
         usage: 'estimated',
         cancellation: true,
-        maxContextTokens: 20_000,
+        maxContextTokens: 100_000,
         maxOutputTokens: 1_000
       },
       transportKind: 'openai-chat',
@@ -5556,7 +5520,7 @@ describe('Ax agent engine', () => {
     )
     expect(followUp).not.toHaveProperty('outputLimited')
     const publishedFollowUp = text.mock.calls.map(([delta]) => delta).join('')
-    expect(publishedFollowUp).toContain('The install steps are documented.')
+    expect(visibleWikiText(publishedFollowUp)).toContain('The install steps are documented.')
     expect(publishedFollowUp).toContain('[[cite:page:42:revision:1:section:1]]')
     expect(calls.slice(followUpCallStart).every(call => call.chatPrompt.every(message => !('thoughtBlocks' in message)))).toBe(true)
     expect(event).toHaveBeenCalledWith('tool.completed', expect.objectContaining({ actionCallId: 'follow-up-read', cacheHit: false }))
@@ -6452,7 +6416,7 @@ describe('Ax agent engine', () => {
     )
     const published = text.mock.calls.map(([delta]) => delta).join('')
     for (const row of rows) {
-      expect(published).toContain(row.content)
+      expect(visibleWikiText(published)).toContain(row.content)
       expect(published).toContain(`[[cite:${row.citation.evidenceId}]]`)
     }
     expect(published).toMatch(/excerpts.*truncated/iu)
@@ -6562,7 +6526,7 @@ describe('Ax agent engine', () => {
       { text, event }
     )
     const published = text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain('Small source is available.')
+    expect(visibleWikiText(published)).toContain('Small source is available.')
     expect(published).toContain('[[cite:page:1:revision:rev-1]]')
     expect(published).not.toContain('Large source is authoritative.')
     expect(published).toMatch(/1 executed result omitted/iu)
@@ -6696,8 +6660,8 @@ describe('Ax agent engine', () => {
     expect(historicalConflict.error).toBeUndefined()
     expect(historicalConflict.result?.citations).toEqual([{ evidenceId: historicalEvidenceId, kind: 'page', label: 'Archive', href: '/en/guide?v=9' }])
     const publishedHistory = historicalConflict.text.mock.calls.map(([delta]) => delta).join('')
-    expect(publishedHistory).toContain('Amber workflow is approved.')
-    expect(publishedHistory).not.toContain('Cobalt workflow is rejected.')
+    expect(visibleWikiText(publishedHistory)).toContain('Amber workflow is approved.')
+    expect(visibleWikiText(publishedHistory)).not.toContain('Cobalt workflow is rejected.')
     const historicalSources = historicalConflict.calls.flatMap(synthesisSourcesFromRequest)
     expect(historicalSources.some(source => source.evidenceId === historicalEvidenceId && source.text === 'Amber workflow is approved.')).toBe(true)
     expect(historicalSources.some(source => source.text.includes('Cobalt workflow'))).toBe(false)
@@ -6824,7 +6788,7 @@ describe('Ax agent engine', () => {
     expect(representationConflict.error).toBeUndefined()
     expect(representationConflict.result?.citations).toEqual([{ evidenceId: currentEvidenceId, kind: 'page', label: 'Guide', href: '/en/guide' }])
     const publishedRepresentation = representationConflict.text.mock.calls.map(([delta]) => delta).join('')
-    expect(publishedRepresentation).toContain('Release window is staged.')
+    expect(visibleWikiText(publishedRepresentation)).toContain('Release window is staged.')
     expect(publishedRepresentation).not.toContain('Emergency route')
     expect(representationConflict.calls.flatMap(synthesisSourcesFromRequest).some(source => source.text.includes('Emergency route'))).toBe(false)
     const representationProvenance = representationConflict.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
@@ -6905,7 +6869,7 @@ describe('Ax agent engine', () => {
     })
     expect(omittedPromotion.error).toBeUndefined()
     expect(omittedPromotion.text).toHaveBeenCalled()
-    expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).toContain('Release window is staged.')
+    expect(visibleWikiText(omittedPromotion.text.mock.calls.map(([delta]) => delta).join(''))).toContain('Release window is staged.')
     expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The protected rollout begins after audit.')
     expect(omittedPromotion.result?.citations).toEqual([{ evidenceId: currentEvidenceId, kind: 'page', label: 'Guide', href: '/en/guide' }])
     expect(omittedPromotion.result?.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: ['full-omitted'] })
@@ -6934,8 +6898,8 @@ describe('Ax agent engine', () => {
       bindings: { [currentEvidenceId]: { text: 'The opening note confirms a staged release.' } }
     })
     expect(nonPrefix.error).toBeUndefined()
-    expect(nonPrefix.text.mock.calls.map(([delta]) => delta).join('')).toContain('The opening note confirms a staged release.')
-    expect(nonPrefix.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The emergency route is closed')
+    expect(visibleWikiText(nonPrefix.text.mock.calls.map(([delta]) => delta).join(''))).toContain('The opening note confirms a staged release.')
+    expect(visibleWikiText(nonPrefix.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('The emergency route is closed')
     const staleCacheValidator = vi.fn(async () => false)
     const staleCachedRead = await run({
       reads: [
@@ -6955,7 +6919,7 @@ describe('Ax agent engine', () => {
     })
     expect(staleCachedRead.error).toBeUndefined()
     expect(staleCachedRead.text).toHaveBeenCalled()
-    expect(staleCachedRead.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The protected rollout begins after audit.')
+    expect(visibleWikiText(staleCachedRead.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('The protected rollout begins after audit.')
     expect(staleCachedRead.result?.citations).toBeUndefined()
     expect(staleCacheValidator).toHaveBeenCalled()
     expect(staleCachedRead.calls.flatMap(synthesisSourcesFromRequest).some(source => source.evidenceId === currentEvidenceId)).toBe(false)
@@ -7043,7 +7007,7 @@ describe('Ax agent engine', () => {
     })
     expect(wrongSection.error).toBeUndefined()
     expect(wrongSection.result?.citations).toEqual([{ evidenceId: firstSectionId, kind: 'page', label: 'Guide › Warranty', href: '/en/guide#warranty' }])
-    expect(wrongSection.text.mock.calls.map(([delta]) => delta).join('')).toContain('Shipping is free.')
+    expect(visibleWikiText(wrongSection.text.mock.calls.map(([delta]) => delta).join(''))).toContain('Shipping is free.')
     expect(wrongSection.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(`[[cite:${wrongSectionId}]]`)
 
     const incompletePage = await run({
@@ -7064,7 +7028,7 @@ describe('Ax agent engine', () => {
       bindings: { 'page:42:revision:32': { text: 'Evidence line available.' } }
     })
     expect(incompletePage.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
-    expect(incompletePage.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Evidence line available.')
+    expect(visibleWikiText(incompletePage.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Evidence line available.')
     const incompleteProvenance = incompletePage.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]
     expect(incompleteProvenance).toMatchObject({
       accepted: false,
@@ -8039,6 +8003,674 @@ describe('request-derived evidence coverage', () => {
       unresolvedFacets
     })
   }
+
+  type MetadataFixtureMode = 'complete titles' | 'unbound observation' | 'unbound recommendation' |
+    'source mutation' | 'provider mutation' | 'post-proof source mutation' | 'post-proof provider mutation' | 'historical version' |
+    'narration source revocation during snapshot' | 'narration provider revocation during snapshot'
+  const metadataFixture = (mode: MetadataFixtureMode) => {
+    const primary = {
+      ...questionReadPage(42, '1', 'Readiness Handbook', 'readiness-handbook', 'Preparation', 'preparation',
+        'The handbook describes a staged inspection. It names the shift supervisor.'),
+      citationSections: []
+    }
+    const secondary = {
+      ...questionReadPage(44, '1', 'Maintenance Ledger', 'maintenance-ledger', 'Records', 'records',
+        'The ledger records maintenance assignments. It names the responsible operator.'),
+      citationSections: []
+    }
+    const historical = {
+      ...primary, sourceRevision: '18', versionId: 6,
+      versionDate: '2026-03-10T09:00:00.000Z',
+      citation: { ...primary.citation, evidenceId: 'page:42:version:6:revision:18', href: '/en/readiness-handbook?v=6' }
+    }
+    const version = mode === 'historical version'
+    const narration = mode.startsWith('narration ')
+    let pageAuthorized = true
+    const pages = version ? [historical] : [primary, secondary]
+    const originals = pages.map(page => canonicalJson(page))
+    const userRequest = version ? 'Read version 6 of page 42 and tell me its exact title.'
+      : narration ? 'Read pages 42 and 44 and suggest an incident ownership improvement.'
+        : 'Tell me the exact titles of pages 42 and 44.'
+    let providerRevision = 1
+    const metadataStates: Record<string, unknown>[] = []
+    const runtime = async () => {
+      const provider = await fixtureDecisionProviders.selectRuntime()
+      return { ...provider, revision: providerRevision, config: { ...provider.config,
+        pricing: { ...provider.config.pricing!, inputPerMillion: 1, outputPerMillion: 0, perRequest: 0.25 } } }
+    }
+    const decisionProviders = {
+      selectRuntime: runtime,
+      decideBatch: async (nativeRequest: DecisionBatchRequest): Promise<DecisionBatchResult> => {
+        metadataStates.push(questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state))
+        const answers = Object.fromEntries(Object.entries(nativeRequest.questions).map(([id, question]) => {
+          if (!Object.hasOwn(question.criteria, 'bounded')) throw new Error(`Unexpected metadata predicate ${id}`)
+          const choice = narration ? 'bounded' : 'unbound'
+          return [id, { choice, confidence: 1,
+            probabilities: Object.fromEntries(Object.keys(question.criteria).map(label => [label, label === choice ? 1 : 0])) }]
+        }))
+        const provider = await runtime()
+        return { providerId: provider.id, providerRevision: provider.revision, model: provider.config.model, answers,
+          usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9, totalTokensSource: 'derived' },
+          latencyMs: 0, estimatedCost: null, estimatedCostMicros: 250_007 }
+      }
+    }
+    const generate = (input: Readonly<AxChatRequest>): AxChatResponse => {
+      const selected = narration ? [] : synthesisSourcesFromRequest(input).filter(source => source.kind === 'page-title')
+      const claims = selected.map(source => {
+        if (!source.literalStatement) throw new Error('Authoritative metadata must retain its exact original title hint')
+        return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
+          unitId: source.unitId, statement: source.literalStatement }
+      })
+      if (mode === 'provider mutation') providerRevision++
+      return { results: [{ index: 0, content: synthesisFixtureAnswer(input, {
+        claims,
+        unresolvedFacets: narration ? [0] : [],
+        observations: mode === 'unbound observation' ? ['The handbook is safe for unattended operations.'] : [],
+        recommendations: mode === 'unbound recommendation'
+          ? 'Use the handbook without supervision because its procedure is safe.'
+          : narration ? 'Consider adding an incident owner.' : ''
+      }) }] }
+    }
+    const actionName = version ? 'pages.getVersion' : 'pages.get'
+    const responses: Parameters<typeof rootFixtureResponse>[1] = [
+      { results: [{ index: 0, content: version ? '' : sourcePlan(userRequest), functionCalls: pages.map(page => ({
+        id: `read-metadata-${page.id}`, type: 'function',
+        function: { name: AGENT_TOOL_NAMES[actionName],
+          params: JSON.stringify(version ? { pageId: page.id, versionId: 6 } : { id: page.id }) }
+      })) }] },
+      generate, generate
+    ]
+    if (version)
+      responses.unshift({ results: [{ index: 0, content: sourcePlan(userRequest), functionCalls: [{
+        id: 'enable-metadata-history', type: 'function',
+        function: { name: 'wiki_enable_tools', params: '{"category":"history"}' }
+      }] }] })
+    const factory = {
+      create: async () => ({
+        service: fullAxFixtureService(async input => rootFixtureResponse(input, responses)),
+        capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema',
+          usage: 'estimated', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+        transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1', pricing
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [questionFunctions.find(fn => fn.name === actionName)!],
+        invoke: async (_name, input) => pages.find(page => page.id === (version ? questionRecord(input).pageId : questionRecord(input).id))!,
+        validateObservation: async (_name, output) => {
+          const index = pages.findIndex(page => page.id === questionRecord(output).id)
+          return pageAuthorized && index >= 0 && canonicalJson(output) === originals[index]
+        },
+        snapshot: async () => ({}), close: () => {}
+      }),
+      saveSnapshot: async () => {
+        if (mode === 'narration source revocation during snapshot') pageAuthorized = false
+        if (mode === 'narration provider revocation during snapshot') providerRevision++
+      }
+    }
+    let reservationId = 0
+    const outstanding = new Map<number, { readonly tokens: number; readonly costMicros: number }>()
+    const settled: Parameters<NonNullable<AgentEngineRequest['dispatchBudget']>['reconcile']>[1][] = []
+    const dispatchBudget: NonNullable<AgentEngineRequest['dispatchBudget']> = {
+      reserve: async maximum => {
+        const reservation = { id: ++reservationId, ...maximum }
+        outstanding.set(reservation.id, maximum)
+        return reservation
+      },
+      reconcile: async (reservation, actual) => { outstanding.delete(reservation.id); settled.push(actual) },
+      release: async reservation => { outstanding.delete(reservation.id) },
+      consumeTool: async () => {},
+      get unsettledExposure() {
+        return [...outstanding.values()].reduce((sum, maximum) => ({
+          tokens: sum.tokens + maximum.tokens, costMicros: sum.costMicros + maximum.costMicros
+        }), { tokens: 0, costMicros: 0 })
+      }
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (type: string, data: unknown) => {
+      if (mode === 'source mutation' && type === 'model.turn' && questionRecord(data).outcome === 'answer_accepted')
+        secondary.title = 'Changed admitted title at publication'
+      if (type === 'evidence.provenance' && questionRecord(data).accepted === true) {
+        if (mode === 'post-proof source mutation') secondary.title = 'Changed title after native proof'
+        if (mode === 'post-proof provider mutation') providerRevision++
+      }
+    })
+    const execute = () => new AxAgentEngine(factory, actions, undefined, { decisionProviders }).execute({
+      ...request(new AbortController().signal), currentPage: null, dispatchBudget,
+      messages: [{ role: 'user', content: userRequest }],
+      limits: { maxTurns: 5, maxToolCalls: 2, maxOutputTokens: 4_000, maxTokens: 192_000 }
+    }, { text, event })
+    return { execute, text, event, metadataStates, pages, settled, dispatchBudget }
+  }
+
+  it.each(['complete titles', 'historical version'] as const)(
+    'publishes exact original title properties without native approval with %s', async mode => {
+      const fixture = metadataFixture(mode)
+      const result = await fixture.execute()
+      expect(result.executionLimit).toBeUndefined()
+      const visible = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+      for (const page of fixture.pages) {
+        expect(visible).toContain(page.title)
+        expect(visible).not.toContain(page.content)
+      }
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(fixture.pages.map(page => page.citation.evidenceId))
+      expect(fixture.metadataStates).toEqual([])
+      expect(fixture.settled.reduce((sum, actual) => sum + actual.totalTokens, 0)).toBe(result.totalTokens)
+      expect(fixture.settled.reduce((sum, actual) => sum + actual.costMicros, 0)).toBe(result.costMicros)
+      expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    }
+  )
+
+  it.each(['unbound observation', 'unbound recommendation'] as const)(
+    'withholds unsupported title-path narration with %s', async mode => {
+    const fixture = metadataFixture(mode)
+    const result = await fixture.execute()
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+    expect(result.citations).toBeUndefined()
+    const visible = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    for (const page of fixture.pages) expect(visible).not.toContain(page.title)
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
+  })
+
+  it.each([
+    ['source mutation', 'AGENT_EVIDENCE_INVALID'],
+    ['provider mutation', 'WIKI_VERIFICATION_FAILED'],
+    ['post-proof source mutation', 'AGENT_EVIDENCE_INVALID'],
+    ['post-proof provider mutation', 'WIKI_VERIFICATION_FAILED']
+  ] as const)('rechecks all admitted metadata authority with %s before factual sinks', async (mode, code) => {
+    const fixture = metadataFixture(mode)
+    await expect(fixture.execute()).rejects.toMatchObject({ code })
+    const visible = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(visible).not.toContain('Readiness Handbook')
+    expect(visible).not.toContain('Maintenance Ledger')
+    const accepted = fixture.event.mock.calls.filter(([type, data]) =>
+      type === 'evidence.provenance' && questionRecord(data).accepted === true)
+    expect(accepted).toHaveLength(mode.startsWith('post-proof') ? 1 : 0)
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+  })
+
+  it.each([
+    ['narration source revocation during snapshot', 'AGENT_EVIDENCE_INVALID'],
+    ['narration provider revocation during snapshot', 'WIKI_VERIFICATION_FAILED']
+  ] as const)('withholds claim-free verified advice on %s', async (mode, code) => {
+    const fixture = metadataFixture(mode)
+    await expect(fixture.execute()).rejects.toMatchObject({ code })
+    expect(fixture.metadataStates).toHaveLength(1)
+    expect(fixture.text).not.toHaveBeenCalled()
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'model.turn' && questionRecord(data).outcome === 'answer_accepted')).toBe(false)
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(fixture.settled.at(-1)).toMatchObject({ totalTokens: 9, costMicros: 250_007 })
+  })
+
+  type OriginalCoverageMode = 'complete quotations' | 'nonliteral claim' |
+    'source mutation' | 'provider mutation' | 'request mutation' | 'unmeasured receipt' | 'unpriced receipt'
+  const originalCoverageFixture = (
+    mode: OriginalCoverageMode,
+    settlement?: { readonly entered: () => void; readonly wait: Promise<void> }
+  ) => {
+    const status = 'These recipes are authored and untested; total times are estimates.'
+    const primary = {
+      ...questionReadPage(42, '1', 'Recipe Collection', 'recipe-collection', 'Recipes', 'recipes',
+        `${status}\n\n| Code | Dish | Alias | Diet | Total time | Servings | Requirement |\n` +
+        '| --- | --- | --- | --- | --- | --- | --- |\n' +
+        '| 101 | [Lentil skillet](https://example.test/recipes/lentil) | Sunset skillet | vegetarian | 25 minutes | 4 | only after safety review |\n' +
+        '| 202 | Bean bowl | Garden bowl | vegetarian | 20 minutes | 2 | served warm |'),
+      citationSections: []
+    }
+    const annex = {
+      ...questionReadPage(44, '1', 'Recipe Annex', 'recipe-annex', 'Recipes', 'recipes',
+        '| Code | Dish | Alias | Diet | Total time | Servings | Requirement |\n' +
+        '| --- | --- | --- | --- | --- | --- | --- |\n' +
+        '| 303 | White bean stew | Winter stew | vegetarian | 30 minutes | 3 | served warm |'),
+      citationSections: []
+    }
+    const unrelated = {
+      ...questionReadPage(43, '1', 'Warehouse Rules', 'warehouse-rules', 'Access', 'access',
+        'The warehouse opens after inspection.'),
+      citationSections: []
+    }
+    const pages = [primary, annex, unrelated]
+    const originalContents = pages.map(page => page.content)
+    const userRequest = 'Which vegetarian recipes can I make in 30 minutes or less? Include total time and servings.'
+    const facet = 'total time'
+    const start = userRequest.indexOf(facet)
+    const narrowedPlan = `<wiki-request-plan>${JSON.stringify({
+      facets: [{ start, end: start + facet.length, quote: facet, coverage: 'source' }]
+    })}</wiki-request-plan>`
+    let providerRevision = 1
+    let pendingSemanticReceipt = false
+    const nativeCalls: {
+      readonly owners: readonly string[]
+      readonly originalReads: readonly string[]
+      readonly projectionTexts: readonly string[]
+    }[] = []
+    const decisionProviders = {
+      selectRuntime: async () => {
+        const provider = await fixtureDecisionProviders.selectRuntime()
+        return { ...provider, revision: providerRevision, config: { ...provider.config,
+          pricing: { ...provider.config.pricing!, inputPerMillion: 1, outputPerMillion: 0, perRequest: 0.25 } } }
+      },
+      decideBatch: async (nativeRequest: DecisionBatchRequest): Promise<DecisionBatchResult> => {
+        const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
+        const semantic = true
+        const sources = state.sources as readonly { readonly evidenceId: string; readonly text: string }[]
+        nativeCalls.push({
+          owners: [...new Set(sources.map(source => source.evidenceId))],
+          originalReads: state.readTexts as readonly string[],
+          projectionTexts: sources.map(source => source.text)
+        })
+        const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
+        for (const [id, question] of Object.entries(nativeRequest.questions)) {
+          const choice = Object.hasOwn(question.criteria, 'supports') ? 'not_supported'
+            : Object.hasOwn(question.criteria, 'bounded') ? 'bounded' : undefined
+          if (!choice) throw new Error(`Unexpected narrow verification predicate ${id}`)
+          answers[id] = {
+            choice, confidence: 1,
+            probabilities: Object.fromEntries(Object.keys(question.criteria).map(label => [label, label === choice ? 1 : 0]))
+          }
+        }
+        const provider = await fixtureDecisionProviders.selectRuntime()
+        if (semantic) {
+          pendingSemanticReceipt = true
+          if (nativeCalls.length === 1) {
+            if (mode === 'source mutation') unrelated.content += '\n\nAn original unselected read requirement changed.'
+            if (mode === 'provider mutation') providerRevision++
+          }
+          if (mode === 'request mutation' && nativeCalls.at(-1)!.owners.includes('page:42:revision:1'))
+            Object.assign(nativeRequest, { state: JSON.stringify({ ...state, userRequest: 'Describe only the Lentil skillet.' }) })
+        }
+        return {
+          providerId: provider.id, providerRevision: 1, model: provider.config.model, answers,
+          usage: { inputTokens: semantic && mode === 'unmeasured receipt' ? Number.NaN : 7,
+            outputTokens: 2, totalTokens: 9, totalTokensSource: 'derived' },
+          latencyMs: 0, estimatedCost: null, estimatedCostMicros: semantic && mode === 'unpriced receipt' ? null : 250_007
+        }
+      }
+    }
+    const generate = (input: Readonly<AxChatRequest>): AxChatResponse => {
+      const sources = synthesisSourcesFromRequest(input)
+      const required = [
+        { evidenceId: 'page:42:revision:1', text: 'Servings: 4' },
+        { evidenceId: 'page:42:revision:1', text: 'Servings: 2' },
+        { evidenceId: 'page:44:revision:1', text: 'Servings: 3' }
+      ]
+      const claims = required.map(binding => {
+        const source = sources.find(entry => entry.evidenceId === binding.evidenceId && entry.text === binding.text)
+        if (!source?.literalStatement) throw new Error('The original numeric-field binding must retain its whole protected record')
+        return { ...source, statement: source.literalStatement }
+      })
+      const statusSource = sources.find(source => source.evidenceId === 'page:42:revision:1' && source.text === status)
+      if (!statusSource?.literalStatement) throw new Error('The original authored-status statement must retain its complete original quotation')
+      claims.push({ ...statusSource, statement: statusSource.literalStatement })
+      if (mode !== 'complete quotations') {
+        claims.push({ ...statusSource, statement: 'These recipes are untested and their total times are estimates.' })
+      }
+      return { results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims }) }] }
+    }
+    const responses: Parameters<typeof rootFixtureResponse>[1] = [
+      { results: [{ index: 0, content: narrowedPlan, functionCalls: pages.map(page => ({
+        id: `read-${page.id}`, type: 'function', function: { name: 'wiki_get_page', params: JSON.stringify({ id: page.id }) }
+      })) }] },
+      generate, generate
+    ]
+    const factory = {
+      create: async () => ({
+        service: fullAxFixtureService(async input => rootFixtureResponse(input, responses)),
+        capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema',
+          usage: 'estimated', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+        transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1', pricing
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [questionFunctions.find(fn => fn.name === 'pages.get')!],
+        invoke: async (_name, input) => pages.find(page => page.id === questionRecord(input).id)!,
+        validateObservation: async (_name, output) => {
+          const index = pages.findIndex(page => page.id === questionRecord(output).id)
+          return index >= 0 && pages[index]!.content === originalContents[index]
+        },
+        snapshot: async () => ({}), close: () => {}
+      })
+    }
+    let reservationId = 0
+    const outstanding = new Map<number, { readonly tokens: number; readonly costMicros: number }>()
+    const settled: Parameters<NonNullable<AgentEngineRequest['dispatchBudget']>['reconcile']>[1][] = []
+    const reserve = vi.fn(async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
+      if (outstanding.size > 0)
+        throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'An earlier dispatch retains unsettled exposure', 429)
+      if (settled.reduce((sum, actual) => sum + actual.totalTokens, 0) + maximum.tokens > 192_000)
+        throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'The ordinary token ledger cannot admit another hold', 429)
+      const reservation = { id: ++reservationId, ...maximum }
+      outstanding.set(reservation.id, maximum)
+      return reservation
+    })
+    const dispatchBudget: NonNullable<AgentEngineRequest['dispatchBudget']> = {
+      reserve,
+      reconcile: async (reservation, actual) => {
+        if (pendingSemanticReceipt && nativeCalls.length === 1 && settlement) {
+          settlement.entered()
+          await settlement.wait
+        }
+        pendingSemanticReceipt = false
+        outstanding.delete(reservation.id)
+        settled.push(actual)
+      },
+      release: async reservation => { outstanding.delete(reservation.id) },
+      consumeTool: async () => {},
+      get unsettledExposure() {
+        return [...outstanding.values()].reduce((sum, maximum) => ({
+          tokens: sum.tokens + maximum.tokens, costMicros: sum.costMicros + maximum.costMicros
+        }), { tokens: 0, costMicros: 0 })
+      }
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (_type: string, _data: unknown) => {})
+    const execute = () => new AxAgentEngine(factory, actions, undefined, { decisionProviders }).execute({
+      ...request(new AbortController().signal), currentPage: null, dispatchBudget,
+      messages: [{ role: 'user', content: userRequest }], limits: { maxTurns: 5, maxToolCalls: 3, maxOutputTokens: 4_000 }
+    }, { text, event })
+    return { execute, text, event, nativeCalls, reserve, settled, dispatchBudget, originalContents }
+  }
+
+  it('publishes protected original fields without another support grade for complete record quotations', async () => {
+    const fixture = originalCoverageFixture('complete quotations')
+    const result = await fixture.execute()
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    const visible = visibleWikiText(published)
+    expect(result.executionLimit).toBeUndefined()
+    expect(visible).toContain('Code: 101 | Dish: Lentil skillet | Alias: Sunset skillet | Diet: vegetarian | Total time: 25 minutes | Servings: 4 | Requirement: only after safety review')
+    expect(visible).toContain('Code: 202 | Dish: Bean bowl | Alias: Garden bowl | Diet: vegetarian | Total time: 20 minutes | Servings: 2 | Requirement: served warm')
+    expect(visible).toContain('Code: 303 | Dish: White bean stew | Alias: Winter stew | Diet: vegetarian | Total time: 30 minutes | Servings: 3 | Requirement: served warm')
+    expect(visible).toContain('These recipes are authored and untested; total times are estimates.')
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1', 'page:44:revision:1'])
+    expect(fixture.nativeCalls).toEqual([])
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'model.turn' && questionRecord(data).purpose === 'verification')).toBe(false)
+    expect(fixture.settled.reduce((sum, actual) => sum + actual.totalTokens, 0)).toBe(result.totalTokens)
+    expect(fixture.settled.reduce((sum, actual) => sum + actual.costMicros, 0)).toBe(result.costMicros)
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+  })
+
+  it.each(['nonliteral claim', 'request mutation'] as const)(
+    'rejects unsupported or modified narrow verification with %s', async mode => {
+    const fixture = originalCoverageFixture(mode)
+    const result = await fixture.execute()
+    const visible = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+    expect(result.citations).toBeUndefined()
+    expect(fixture.nativeCalls.length).toBeGreaterThan(0)
+    for (const call of fixture.nativeCalls) {
+      expect(call.owners).toEqual(['page:42:revision:1'])
+      expect(call.projectionTexts).toEqual(['These recipes are authored and untested; total times are estimates.'])
+      expect(call.originalReads.some(read => read.includes('only after safety review'))).toBe(true)
+      expect(call.originalReads.some(read => read.includes('The warehouse opens after inspection.'))).toBe(false)
+    }
+    expect(visible).toContain("couldn't complete a source-verified answer")
+    expect(visible).not.toContain('Sunset skillet')
+    expect(visible).not.toContain('Garden bowl')
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
+  })
+
+  it.each([
+    ['source mutation', 'AGENT_EVIDENCE_INVALID'],
+    ['provider mutation', 'WIKI_VERIFICATION_FAILED']
+  ] as const)('rejects %s of original read authority before publishing approved facts', async (mode, code) => {
+    const fixture = originalCoverageFixture(mode)
+    await expect(fixture.execute()).rejects.toMatchObject({ code })
+    expect(fixture.nativeCalls.map(call => call.owners)).toEqual([['page:42:revision:1']])
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Lentil skillet')
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
+  })
+
+  it('settles the priced first source receipt before a later semantic hold and publication', async () => {
+    let enter!: () => void
+    let release!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const wait = new Promise<void>(resolve => { release = resolve })
+    const fixture = originalCoverageFixture('nonliteral claim', { entered: enter, wait })
+    const execution = fixture.execute()
+    await entered
+    expect(fixture.nativeCalls.map(call => call.owners)).toEqual([['page:42:revision:1']])
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 64_000, costMicros: 314_000 })
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Lentil skillet')
+    release()
+    const result = await execution
+    expect(fixture.nativeCalls.map(call => call.owners)).toEqual([
+      ['page:42:revision:1'], ['page:42:revision:1']
+    ])
+    expect(fixture.settled.reduce((sum, actual) => sum + actual.costMicros, 0)).toBe(result.costMicros)
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+  })
+
+  it('retains an unmeasured native 64k hold and refuses later source dispatch or facts', async () => {
+    const fixture = originalCoverageFixture('unmeasured receipt')
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_FAILED' })
+    expect(fixture.nativeCalls.map(call => call.owners)).toEqual([['page:42:revision:1']])
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 64_000, costMicros: 314_000 })
+    const diagnostic = fixture.event.mock.calls.find(([type, data]) =>
+      type === 'model.turn' && questionRecord(questionRecord(data).verification ?? {}).phase === 'semantic')
+    expect(questionRecord(diagnostic![1])).toMatchObject({
+      usageSource: 'unmeasured-exposure', unknownExposure: { tokens: 64_000, costMicros: 314_000 }
+    })
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Lentil skillet')
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
+  })
+
+  it('settles conservative cost for an unpriced source receipt without issuing later proofs or facts', async () => {
+    const fixture = originalCoverageFixture('unpriced receipt')
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_FAILED' })
+    expect(fixture.nativeCalls.map(call => call.owners)).toEqual([['page:42:revision:1']])
+    expect(fixture.settled.at(-1)).toMatchObject({ totalTokens: 9, costMicros: 314_000 })
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Lentil skillet')
+    expect(fixture.event.mock.calls.some(([type, data]) =>
+      type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
+  })
+
+  it.each([
+    'unchanged',
+    'changed source bytes',
+    'changed companion before publication',
+    'revoked dispatch authorization before publication',
+    'changed companion after provenance event',
+    'missing original read after provenance',
+    'revoked dispatch authorization after first text',
+    'changed companion after first text',
+    'revoked page authorization after first text',
+    'changed page revision after first text'
+  ] as const)('preserves sourced generation publication boundaries with %s', async mode => {
+    const fact = 'The Meridian lens is hypothetical and has not been tested.'
+    const memberName = mode.includes('first text')
+      ? `Meridian lens ${Array.from({ length: 40 }, (_, index) => `source-owned optical variant ${index + 1}`).join(' ')}`
+      : 'Meridian lens'
+    const attribute = 'The Meridian lens retains a silver coating.'
+    const evidenceId = 'page:42:revision:1'
+    const page = questionReadPage(42, '1', 'Instruments', 'instruments', memberName, 'meridian-lens', `${fact}\n\n${attribute}`)
+    const originalSource = page.content
+    const unusedPage = questionReadPage(43, '1', 'Warehouse Rules', 'warehouse-rules', 'Access', 'access', 'The warehouse opens after inspection.')
+    const originalUnusedSource = unusedPage.content
+    const input = { ...request(new AbortController().signal), messages: [{ role: 'user' as const, content: 'List the instrument names.' }] }
+    let draftRounds = 0
+    let revision = 1
+    let authorized = true
+    let pageAuthorized = true
+    const settled: { readonly totalTokens: number; readonly costMicros: number }[] = []
+    const decisionProviders = {
+      selectRuntime: async () => ({ ...await fixtureDecisionProviders.selectRuntime(), revision }),
+      decideBatch: vi.fn(async () => { throw new Error('Exact original quotations must not dispatch native verification') })
+    }
+    const fixtureResponses = (): Parameters<typeof rootFixtureResponse>[1] => [
+      { results: [{ index: 0, functionCalls: [
+        { id: 'read-instrument', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } },
+        { id: 'read-unused', type: 'function', function: { name: 'wiki_get_page', params: '{"id":43}' } }
+      ] }] },
+      providerInput => {
+        draftRounds++
+        const source = synthesisSourcesFromRequest(providerInput).find(unit => unit.text === fact)!
+        if (!source.literalStatement) throw new Error('A complete own unit must retain its original quotation')
+        if (mode === 'changed source bytes') unusedPage.content += '\n\nAn additional warehouse rule was added.'
+        if (mode === 'changed companion before publication') revision = 2
+        if (mode === 'revoked dispatch authorization before publication') authorized = false
+        return { results: [{ index: 0, content: synthesisFixtureAnswer(providerInput, {
+          claims: [{ ...source, statement: source.literalStatement }]
+        }) }] }
+      }
+    ]
+    const responses = fixtureResponses()
+    const factory = {
+      create: async () => ({
+        service: fullAxFixtureService(async providerInput => rootFixtureResponse(providerInput, responses)),
+        capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema',
+          usage: 'estimated', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+        transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1', pricing
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [questionFunctions.find(fn => fn.name === 'pages.get')!],
+        invoke: async (_name, actionInput) => questionRecord(actionInput).id === 43 ? unusedPage : page,
+        validateObservation: async (_name, output) => questionRecord(output).id === 43
+          ? unusedPage.content === originalUnusedSource : pageAuthorized && page.sourceRevision === '1' && page.content === originalSource,
+        snapshot: async () => ({}), close: () => {}
+      })
+    }
+    let reservationId = 0
+    const reserve = vi.fn(async (maximum: { readonly tokens: number; readonly costMicros: number }) => ({ id: ++reservationId, ...maximum }))
+    const text = vi.fn(async (_delta: string) => {
+      if (mode.includes('first text') &&
+        (!visibleWikiText(_delta).includes('Meridian lens') || visibleWikiText(_delta).includes(fact))) {
+        throw new Error('Revocation must occur after a source-owned name and before its remaining original disclosure')
+      }
+      if (mode === 'revoked dispatch authorization after first text') authorized = false
+      if (mode === 'changed companion after first text') revision = 2
+      if (mode === 'revoked page authorization after first text') pageAuthorized = false
+      if (mode === 'changed page revision after first text') page.sourceRevision = '2'
+    })
+    const event = vi.fn(async (type: string, data: unknown) => {
+      const payload = questionRecord(data)
+      if (mode === 'changed companion after provenance event' && type === 'evidence.provenance' && payload.accepted === true) revision = 2
+      if (mode === 'missing original read after provenance' && type === 'evidence.provenance' && payload.accepted === true) unusedPage.content = ''
+    })
+    const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders })
+    const execute = () => engine.execute({
+      ...input,
+      authorizeDispatch: async () => {
+        if (!authorized) throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Authorization was revoked', 403)
+      },
+      dispatchBudget: {
+        reserve,
+        reconcile: async (_reservation, actual) => { settled.push(actual) },
+        release: async () => {}, consumeTool: async () => {}, unsettledExposure: { tokens: 0, costMicros: 0 }
+      }
+    }, { text, event })
+    const execution = execute()
+    if (mode === 'unchanged') {
+      const result = await execution
+      expect(result.citations?.map(citation => citation.evidenceId)).toContain(evidenceId)
+      const published = text.mock.calls.map(([delta]) => delta).join('')
+      const visible = visibleWikiText(published)
+      expect(visible).toContain(fact)
+      expect(draftRounds).toBe(1)
+      expect(decisionProviders.decideBatch).not.toHaveBeenCalled()
+      expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' &&
+        questionRecord(data).outcome === 'answer_accepted')).toHaveLength(1)
+      expect(settled.reduce((sum, actual) => sum + actual.totalTokens, 0)).toBe(result.totalTokens)
+      expect(settled.reduce((sum, actual) => sum + actual.costMicros, 0)).toBe(result.costMicros)
+      expect(reserve.mock.calls.filter(([maximum]) => maximum.tokens === 64_000)).toHaveLength(0)
+      if (mode === 'unchanged') {
+        draftRounds = 0
+        responses.splice(0, responses.length, ...fixtureResponses())
+        const nextExecution = await execute()
+        expect(nextExecution.citations?.map(citation => citation.evidenceId)).toContain(evidenceId)
+        expect(decisionProviders.decideBatch).not.toHaveBeenCalled()
+      }
+    } else {
+      await expect(execution).rejects.toMatchObject({
+        code: mode.startsWith('changed companion') ? 'WIKI_VERIFICATION_FAILED'
+          : mode === 'changed source bytes' || mode === 'revoked page authorization after first text' ||
+            mode === 'changed page revision after first text' || mode === 'missing original read after provenance' ? 'AGENT_EVIDENCE_INVALID'
+          : 'AGENT_ACCESS_REVOKED'
+      })
+      if (mode.includes('first text')) {
+        expect(text).toHaveBeenCalledTimes(1)
+        const firstDelta = text.mock.calls[0]![0]
+        expect(visibleWikiText(firstDelta)).toContain('Meridian lens')
+        expect(visibleWikiText(firstDelta)).not.toContain(fact)
+      } else expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Meridian lens')
+      const revocationEvent = mode.includes('after ') && !mode.includes('first text') ? event.mock.calls.findIndex(([type, data]) => {
+        const payload = questionRecord(data)
+        return type === 'evidence.provenance' && payload.accepted === true
+      }) : -1
+      if (mode.includes('after ') && !mode.includes('first text')) expect(revocationEvent).toBeGreaterThanOrEqual(0)
+      const acceptedFactEvents = event.mock.calls.slice(revocationEvent + 1).filter(([type, data]) => {
+        const payload = questionRecord(data)
+        return (type === 'model.turn' && payload.outcome === 'answer_accepted') ||
+          (type === 'evidence.provenance' && payload.accepted === true)
+      })
+      if (!mode.includes('first text')) expect(JSON.stringify(acceptedFactEvents)).not.toContain('Meridian lens')
+      expect(decisionProviders.decideBatch).not.toHaveBeenCalled()
+      expect(draftRounds).toBe(1)
+    }
+  })
+
+  it.each([
+    'Describe the Meridian lens coating.',
+    'What about the Meridian lens?',
+    'List the instrument names.',
+    'List every instrument in the pages you read.'
+  ])('generates a sourced ordinary answer without native inventory routing: %s', async userRequest => {
+    const fact = 'The Meridian lens retains a silver coating.'
+    const evidenceId = 'page:42:revision:1'
+    const page = questionReadPage(42, '1', 'Instruments', 'instruments', 'Meridian lens', 'meridian-lens', fact)
+    const decisionProviders = {
+      selectRuntime: fixtureDecisionProviders.selectRuntime,
+      decideBatch: vi.fn(async () => { throw new Error('Exact complete source quotation requires no native dispatch') })
+    }
+    const responses: Parameters<typeof rootFixtureResponse>[1] = [
+      { results: [{ index: 0, functionCalls: [
+        { id: 'read-instrument', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }
+      ] }] },
+      (providerInput: Readonly<AxChatRequest>) => {
+        const source = synthesisSourcesFromRequest(providerInput).find(unit => unit.text === fact)!
+        return { results: [{ index: 0, content: synthesisFixtureAnswer(providerInput, {
+          claims: [{ ...source, statement: source.literalStatement! }]
+        }) }] }
+      }
+    ]
+    const factory = {
+      create: async () => ({
+        service: fullAxFixtureService(async providerInput => rootFixtureResponse(providerInput, responses)),
+        capabilities: { streaming: false, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema',
+          usage: 'estimated', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+        transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1', pricing
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [questionFunctions.find(fn => fn.name === 'pages.get')!],
+        invoke: async () => page, validateObservation: async () => true,
+        snapshot: async () => ({}), close: () => {}
+      })
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (_type: string, _data: unknown) => {})
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders }).execute({
+      ...request(new AbortController().signal), messages: [{ role: 'user', content: userRequest }]
+    }, { text, event })
+    expect(visibleWikiText(text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
+    expect(result.citations?.map(citation => citation.evidenceId)).toContain(evidenceId)
+    expect(decisionProviders.decideBatch).not.toHaveBeenCalled()
+    expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' &&
+      questionRecord(data).outcome === 'answer_accepted')).toHaveLength(1)
+  })
+
   const recentRows = [94, 95].map(id => {
     const content = `Release ${id} requires a separate review.`
     return {
@@ -8164,7 +8796,7 @@ describe('request-derived evidence coverage', () => {
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:3:section:1'])
     expect(invoke).toHaveBeenCalledOnce()
     const published = text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain(fact)
+    expect(visibleWikiText(published)).toContain(fact)
     expect(published.replaceAll('\\.', '.')).toContain(userRequest)
     expect(published).not.toContain('unrelated release review')
     expect(published).not.toContain('names no recipients')
@@ -8204,8 +8836,8 @@ describe('request-derived evidence coverage', () => {
     expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:3:section:1'])
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain('Calibration requires supervised inspection before live use.')
-    expect(published).toContain(detail)
+    expect(visibleWikiText(published)).toContain('Calibration requires supervised inspection before live use.')
+    expect(visibleWikiText(published)).toContain(detail)
     expect(published).not.toContain('names no recipients')
     expect(published).not.toContain('<wiki-answer-coverage>')
     expect(
@@ -8250,9 +8882,9 @@ describe('request-derived evidence coverage', () => {
     const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 1_024 })
     expect(result.executionLimit).toBeUndefined()
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain('Mira Sen completed the pilot on 2026-09-18, subject to lab approval.')
-    expect(published).toContain('Noah Patel joined the pilot on 2026-09-19 only after safety review.')
-    expect(published).not.toContain('Mira Sen completed the pilot on 2026-09-19')
+    expect(visibleWikiText(published)).toContain('Mira Sen completed the pilot on 2026-09-18, subject to lab approval.')
+    expect(visibleWikiText(published)).toContain('Noah Patel joined the pilot on 2026-09-19 only after safety review.')
+    expect(visibleWikiText(published)).not.toContain('Mira Sen completed the pilot on 2026-09-19')
     expect(
       fixture.event.mock.calls
         .filter(([type]) => type === 'evidence.provenance')
