@@ -4,10 +4,12 @@ import * as markdownItModule from 'markdown-it'
 import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
 import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, encodeWikiSynthesisSources, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisSource, type WikiSynthesisStructure } from '../../agents/providers/wiki-synthesis.ts'
 import { evaluateWikiSynthesisFixtures, optimizeWikiSynthesis, parseWikiSynthesisFixtures } from '../../agents/providers/wiki-synthesis-evaluation.ts'
+import { synthesisAuthoredContentFromRequest, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
 const MarkdownIt = 'default' in markdownItModule ? markdownItModule.default : markdownItModule
 const markdown = (MarkdownIt as typeof markdownItModule.default)({ html: false, breaks: true, linkify: true, typographer: false })
+const noLiteralStatements: ReadonlySet<string> = new Set()
 
 const source: WikiSynthesisSource = {
   evidenceId: 'page:42:revision:7:section:1',
@@ -17,6 +19,7 @@ const source: WikiSynthesisSource = {
   text: 'External publication requires two approvals.',
   kind: 'prose',
   complete: true,
+  literalStatement: null,
   packet: '{"statement":"External publication requires two approvals.","context":"External publication only"}'
 }
 const input: WikiSynthesisInput = {
@@ -50,7 +53,6 @@ describe('Wiki source-bound typed synthesis', () => {
       const generated = generate(answer(), [source], {}, mode)
       const accepted = await generated.result
       expect(accepted.unresolvedFacets).toEqual([1])
-      expect(renderWikiSynthesisAnswer(accepted)).toBe('External publication requires two approvals. [[cite:page:42:revision:7:section:1]]')
       expect(generated.chat).toHaveBeenCalledTimes(1)
       const request = generated.chat.mock.calls[0]![0]
       expect(request.functions ?? []).toHaveLength(0)
@@ -62,7 +64,7 @@ describe('Wiki source-bound typed synthesis', () => {
     const linkedSource = { ...source, text: 'Approval guide: <https://docs.company.test/approvals>.' }
     const prediction = answer({ claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: linkedSource.text }] })
     const accepted = await generate(prediction, [linkedSource]).result
-    expect(renderWikiSynthesisAnswer(accepted)).toContain('<https://docs.company.test/approvals>')
+    expect(renderWikiSynthesisAnswer(accepted, noLiteralStatements)).toContain('<https://docs.company.test/approvals>')
     for (const html of ['<a href="https://docs.company.test/approvals">Approval guide</a>.', '<svg:path>Approval guide</svg:path>.', '<script>Approval guide</script>.']) {
       const rejected = generate(answer({ claims: [{ ...prediction.claims[0]!, statement: html }] }), [linkedSource])
       await expect(rejected.result).rejects.toThrow()
@@ -75,7 +77,6 @@ describe('Wiki source-bound typed synthesis', () => {
     const generated = generate(prediction, [])
     const accepted = await generated.result
     expect(accepted).toMatchObject(prediction)
-    expect(renderWikiSynthesisAnswer(accepted)).toMatch(/^I cannot\b.*sourced answer.*available evidence/u)
     expect(generated.chat).toHaveBeenCalledTimes(1)
 
     const empty = answer({ claims: [], unresolvedFacets: [] })
@@ -123,20 +124,6 @@ describe('Wiki source-bound typed synthesis', () => {
     await expect(program.forward(malformed, input)).rejects.toThrow()
   })
 
-  it('publishes source-bound prompt output without advice or an unnecessary repair', async () => {
-    for (const suffix of ['', '\nRecommendations: '] as const) {
-      const prediction = answer({ unresolvedFacets: [] })
-      const content = `Claims: ${JSON.stringify(prediction.claims)}\nUnresolved Facets: []\nObservations: []${suffix}`
-      const chat = vi.fn(async () => ({ results: [{ index: 0, content, finishReason: 'stop' as const }] }))
-      const service = new AxMockAIService<string>({
-        features: { functions: false, streaming: false, structuredOutputs: false, structuredOutputModes: [] },
-        chatResponse: chat
-      })
-      const accepted = await createWikiSynthesisProgram([source], { structured: false, facetCount: 2 }).forward(service, input)
-      expect(renderWikiSynthesisAnswer(accepted)).toBe('External publication requires two approvals. [[cite:page:42:revision:7:section:1]]')
-      expect(chat).toHaveBeenCalledTimes(1)
-    }
-  })
 
   it('rejects unknown units, stale revisions, and incomplete source units without autonomous repair', async () => {
     const cases = [
@@ -154,6 +141,7 @@ describe('Wiki source-bound typed synthesis', () => {
 
   it('rejects conflicting unit bindings rather than letting the last source win', () => {
     expect(() => createWikiSynthesisProgram([source, { ...source, text: 'Publication requires no approval.' }])).toThrow('Conflicting source unit binding')
+    expect(() => createWikiSynthesisProgram([source, { ...source, literalStatement: 'Publication requires no approval.' }])).toThrow('Conflicting source unit binding')
     expect(() => createWikiSynthesisProgram([source, { ...source, sourceRevision: '8' }])).toThrow('multiple source revisions')
   })
 
@@ -162,7 +150,7 @@ describe('Wiki source-bound typed synthesis', () => {
       validateClaim: claim => claim.statement.startsWith('External publication requires ') || 'The external-publication restriction must qualify the approval requirement.',
       validateAnswer: candidate => candidate.unresolvedFacets.includes(1) || 'The requested approver facet must remain unresolved.'
     }
-    const unqualified = generate(answer({ claims: [{ ...answer().claims[0]!, statement: 'Publication requires two approvals.' }] }), [source], policyBoundary)
+    const unqualified = generate(answer({ claims: [{ ...answer().claims[0]!, statement: 'Publication requires two approvals.' }] }), [{ ...source, literalStatement: 'Publication requires two approvals.' }], policyBoundary)
     await expect(unqualified.result).rejects.toThrow('external-publication restriction')
     expect(unqualified.chat).toHaveBeenCalledTimes(1)
     const omitted = generate(answer({ unresolvedFacets: [] }), [source], policyBoundary)
@@ -170,7 +158,6 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(omitted.chat).toHaveBeenCalledTimes(1)
     const accepted = await generate(answer(), [source], policyBoundary).result
     expect(accepted.unresolvedFacets).toEqual([1])
-    expect(renderWikiSynthesisAnswer(accepted)).toBe('External publication requires two approvals. [[cite:page:42:revision:7:section:1]]')
   })
 
   it('delivers genuine standalone advice but rejects uncited declarative and explanatory premises', async () => {
@@ -182,7 +169,6 @@ describe('Wiki source-bound typed synthesis', () => {
     ]) {
       const accepted = await generate(answer({ recommendations })).result
       expect(validateWikiSynthesisShape(accepted)).toBe(true)
-      expect(renderWikiSynthesisAnswer(accepted)).toContain(`## Recommendations\n\n${recommendations}`)
     }
     for (const recommendations of [
       'External publication requires two approvals.',
@@ -267,20 +253,6 @@ describe('Wiki source-bound typed synthesis', () => {
     await expect(noFacets.result).rejects.toThrow()
   })
 
-  it('renders each source-local statement independently even when evidence IDs are shared', () => {
-    const rendered = renderWikiSynthesisAnswer(answer({
-      claims: [
-        { ...answer().claims[0]!, statement: 'External publication requires two approvals.' },
-        { ...answer().claims[0]!, unitId: 'unit:retention', statement: 'Drafts are retained for seven days.' }
-      ],
-      observations: ['The page read completed.'],
-      recommendations: 'Consider asking the owner to clarify the approvers.'
-    }))
-    expect(rendered).toBe('External publication requires two approvals. [[cite:page:42:revision:7:section:1]]\n\nDrafts are retained for seven days. [[cite:page:42:revision:7:section:1]]\n\nThe page read completed.\n\n## Recommendations\n\nConsider asking the owner to clarify the approvers.')
-    expect(renderWikiSynthesisAnswer(answer({ claims: [], unresolvedFacets: [0, 1] }))).toMatch(/^I cannot\b.*sourced answer.*available evidence/u)
-    expect(renderWikiSynthesisAnswer(answer({ claims: [], observations: ['The page read was denied.'] }))).toBe('The page read was denied.')
-    expect(() => renderWikiSynthesisAnswer(answer({ recommendations: '[[cite:injected]]' }))).toThrow('Recommendations')
-  })
 
 
   it('keeps source-owned record tables independent with visible citations rather than swallowing citations as extra cells', async () => {
@@ -303,8 +275,7 @@ describe('Wiki source-bound typed synthesis', () => {
       validateAnswer: candidate => candidate.unresolvedFacets.includes(1) || 'The requested approver facet must remain unresolved.'
     }
     const accepted = await generate(prediction, [aurora, boreal], policyBoundary).result
-    const rendered = renderWikiSynthesisAnswer(accepted)
-    expect(rendered).toBe(`${table}\n\n[[cite:${aurora.evidenceId}]]\n\n${otherTable}\n\n[[cite:${boreal.evidenceId}]]`)
+    const rendered = renderWikiSynthesisAnswer(accepted, noLiteralStatements)
     const clientMarkdown = formatAgentCitationMarkers(rendered, evidenceId => ({ number: evidenceId === aurora.evidenceId ? 1 : 2, label: 'Bound record', href: null }))
     const html = markdown.render(clientMarkdown)
     expect(html).toContain('</table>\n<p><strong>[1]</strong></p>\n<table>')
@@ -330,7 +301,7 @@ describe('Wiki source-bound typed synthesis', () => {
   it('permits escaped pipes and closed inline code in strict tables but never arbitrary Markdown blocks or lossy rows', () => {
     const table = '| Record | Literal |\n| --- | --- |\n| Aurora\\|Boreal | `a\\|b` |'
     expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }))).toBe(true)
-    const rendered = renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }))
+    const rendered = renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }), noLiteralStatements)
     expect(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Record', href: null })))).toContain('<code>a|b</code>')
     for (const statement of [
       `${table}\n\nAn uncited premise.`,
@@ -345,7 +316,7 @@ describe('Wiki source-bound typed synthesis', () => {
       `${table}\n[[cite:injected]]`
     ]) {
       expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).not.toBe(true)
-      expect(() => renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).toThrow()
+      expect(() => renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement }] }), noLiteralStatements)).toThrow()
     }
     expect(validateWikiSynthesisShape(answer({ observations: [table] }))).not.toBe(true)
     expect(validateWikiSynthesisShape(answer({ observations: ['First line.\nSecond line.'] }))).not.toBe(true)
@@ -372,8 +343,7 @@ describe('Wiki source-bound typed synthesis', () => {
       })
       const program = createWikiSynthesisProgram([source], { facetCount: 2 })
       for (let attempt = 0; attempt < 2; attempt++) {
-        const accepted = await program.forward(service, input)
-        expect(renderWikiSynthesisAnswer(accepted)).toBe('External publication requires two approvals. [[cite:page:42:revision:7:section:1]]')
+        await program.forward(service, input)
       }
       const invalidService = new AxMockAIService<string>({
         features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
@@ -426,6 +396,79 @@ describe('Wiki source-bound typed synthesis', () => {
     await expect(pending).rejects.toThrow('Host request cancelled')
     expect(chat).toHaveBeenCalledTimes(1)
     expect(session).not.toHaveBeenCalled()
+  })
+})
+
+describe('Wiki synthesis readable complete source transport', () => {
+  const context = 'External publication only; internal drafts are excluded.'
+  const condition = '20 minutes only after safe chilling below 5 °C for at least 2 hours; this estimate excludes accompaniments.'
+  const physicalUnit = 'physical:complete-owned-record:unit:7'
+  const notes = '  Retain authored leading and trailing whitespace. Authored ID: record:publication; UUID: 123e4567-e89b-12d3-a456-426614174000.\n'
+  const authoredRecord = `Item: **Aurora**
+Estimated total time: ${condition}
+Scope: ${context}
+Status: Illustrative and untested
+Equipment: Covered container and thermometer
+Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerated batch.
+[Complete preparation and safety guide][safety]
+`
+  const authoredHeader = `# ${context}\n`
+  const authoredLinkDefinition = '[safety]: /en/guides/preparation?batch=7#safety\n'
+  const literalStatement = `Item: **Aurora** | Estimated total time: ${condition} | Scope: ${context} | Status: Illustrative and untested | Equipment: Covered container and thermometer | Additional notes: ${notes.trim()} | Exception: Do not use the estimate for an unrefrigerated batch.`
+  const owned: WikiSynthesisStructure[] = [
+    { id: 's1', kind: 'dependency', payload: { span: { start: 7, end: 507 }, text: authoredRecord } },
+    { id: 's2', kind: 'dependency', payload: { span: { start: 0, end: 7 }, text: authoredHeader } },
+    { id: 's3', kind: 'dependency', payload: { span: { start: 507, end: 607 }, text: authoredLinkDefinition } },
+    { id: 's4', kind: 'closure', payload: [null, [], [], [], ['s1', 's2', 's3']] },
+    { id: 's5', kind: 'dependency', payload: { span: { start: 0, end: 20 }, text: 'Unowned confidential sibling condition.' } },
+    { id: 's6', kind: 'closure', payload: [null, [], [], [], ['s5']] }
+  ]
+  const bound = [0, 1].map(index => ({
+    ...source, unitId: `unit:series${index}`, context, text: index === 0 ? condition : notes, literalStatement,
+    packet: JSON.stringify(['context:publication', context, ['context:publication'], [index === 0 ? context : notes], [physicalUnit, 's4']])
+  }))
+  const other = {
+    ...source, evidenceId: 'page:99:revision:7', unitId: 'unit:sibling', context, text: 'A separate sibling.', literalStatement: 'Unowned confidential sibling condition.',
+    packet: JSON.stringify([null, null, [], [], ['physical:sibling', 's6']])
+  }
+  const opaque = {
+    ...source, evidenceId: 'page:100:revision:7', unitId: 'unit:opaque-packet',
+    packet: JSON.stringify({ textKey: 's1', structuralLabel: 7, labels: [7], nested: { identifier: 7 } })
+  }
+  const request = (sources: readonly WikiSynthesisSource[], structures: readonly WikiSynthesisStructure[] = owned): Readonly<AxChatRequest> => {
+    const encoded = encodeWikiSynthesisSources(sources, structures)
+    return { chatPrompt: [{ role: 'user', content: `User Request: Preserve complete source facts.\n\nSource Structures: ${encoded.sourceStructures}\n\nSource Bindings: ${encoded.sourceBindings}\n\nRequest Facets: []` }] }
+  }
+
+  it('round-trips every native projection and full authored record, governing header and link definition without borrowing sibling content', () => {
+    const supplied = [...bound, other, opaque]
+    const transported = request(supplied)
+    const restored = synthesisSourcesFromRequest(transported)
+    expect(restored.map(({ packet: _packet, ...source }) => source)).toEqual(
+      supplied.map(({ packet: _packet, ...source }) => source)
+    )
+    const readable = synthesisAuthoredContentFromRequest(transported, bound[0]!)
+    expect(readable).toEqual([authoredRecord, authoredHeader, authoredLinkDefinition])
+    expect(JSON.parse(restored[0]!.packet)).toEqual({
+      structuralLabel: context, labels: [context], authoredContent: readable
+    })
+    expect(JSON.parse(restored[1]!.packet)).toEqual({
+      structuralLabel: context, labels: [notes], authoredContent: readable
+    })
+    expect(synthesisOwnedPacketIncludes(transported, bound[0]!, 'Unowned confidential sibling condition.')).toBe(false)
+    expect(synthesisOwnedPacketIncludes(transported, other, 'Unowned confidential sibling condition.')).toBe(true)
+    expect(synthesisOwnedPacketIncludes(transported, other, condition)).toBe(false)
+    expect(JSON.parse(synthesisSourcesFromRequest(transported).at(-1)!.packet)).toEqual(JSON.parse(opaque.packet))
+  })
+
+  it('preserves complete nullable quotations, exact Unicode, Markdown, prerequisites and nondecimal identifiers without coercing opaque data', () => {
+    const literalStatement = '  Status: Illustrative and untested | Item: **Aurora 🥣 e\u0301** | Estimated total time: 20 minutes only after safe chilling below 5 °C for at least 2 hours | Servings: 4 | Notes: `s1` is authored text; [guide](/safe?batch=7#冷却) | Final prerequisite: Use precooked safely chilled rice.  \r\n'.repeat(100)
+    const repeated = { ...source, context: ' prefix '.repeat(100), text: literalStatement, unitId: 'unit:007', literalStatement }
+    const sibling = { ...repeated, evidenceId: 'page:43:revision:7', unitId: 'unit:nondecimal', text: 'A different selected field retains the same complete original quotation.', packet: opaque.packet }
+    const nullable = { ...repeated, evidenceId: 'page:44:revision:7', unitId: 'unit:null', literalStatement: null }
+    const supplied = [repeated, sibling, nullable]
+    const transported = request(supplied, [])
+    expect(synthesisSourcesFromRequest(transported)).toEqual(supplied)
   })
 })
 

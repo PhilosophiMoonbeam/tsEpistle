@@ -17,6 +17,7 @@
         "text": "Lab equipment checkout lasts 48 hours and requires supervisor consent.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Lab equipment checkout lasts 48 hours and requires supervisor consent.\"}"
       },
       {
@@ -27,6 +28,7 @@
         "text": "Laser equipment requires certified training before checkout.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Laser equipment requires certified training before checkout.\"}"
       }
     ],
@@ -294,6 +296,7 @@
         "text": "Cold-room alarms activate when temperature >= 6 C for 12 minutes.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Cold-room alarms activate when temperature >= 6 C for 12 minutes.\"}"
       },
       {
@@ -304,6 +307,7 @@
         "text": "Cold-room entry is limited to trained staff; visitors cannot enter.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Cold-room entry is limited to trained staff; visitors cannot enter.\"}"
       }
     ],
@@ -588,6 +592,7 @@
         "text": "Travel requests use https://example.edu/travel.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Travel requests use https://example.edu/travel.\"}"
       },
       {
@@ -598,6 +603,7 @@
         "text": "Reimbursement uses https://example.edu/expense.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Reimbursement uses https://example.edu/expense.\"}"
       }
     ],
@@ -865,6 +871,7 @@
         "text": "Urgent support responds within 2 hours during business hours only.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Urgent support responds within 2 hours during business hours only.\"}"
       },
       {
@@ -875,6 +882,7 @@
         "text": "Routine support responds within 3 business days.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Routine support responds within 3 business days.\"}"
       }
     ],
@@ -1130,7 +1138,7 @@
     "id": "final-incomplete", "family": "final-incomplete", "split": "final",
     "provenance": {"kind": "synthetic", "adjudication": "Manual: a partial chemical-storage clause has no complete answerable statement; preserve unresolved scope and do not complete it."},
     "userRequest": "Describe the chemical storage restriction.",
-    "sourceUnits": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "unitId": "clause", "context": "Chemical storage", "text": "Chemical storage is forbidden unless", "kind": "paragraph", "complete": false, "packet": "{\"kind\":\"paragraph\",\"text\":\"Chemical storage is forbidden unless\",\"truncated\":true}"}],
+    "sourceUnits": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "unitId": "clause", "context": "Chemical storage", "text": "Chemical storage is forbidden unless", "kind": "paragraph", "complete": false, "literalStatement": null, "packet": "{\"kind\":\"paragraph\",\"text\":\"Chemical storage is forbidden unless\",\"truncated\":true}"}],
     "requestFacets": ["chemical storage restriction"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
     "variants": [
       {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},

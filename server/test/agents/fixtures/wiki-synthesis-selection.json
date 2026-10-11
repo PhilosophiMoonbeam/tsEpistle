@@ -17,6 +17,7 @@
         "text": "Backups expire after 14 days. Only operators can restore backups.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Backups expire after 14 days. Only operators can restore backups.\"}"
       },
       {
@@ -27,6 +28,7 @@
         "text": "Restore operations require an incident ticket.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Restore operations require an incident ticket.\"}"
       }
     ],
@@ -293,6 +295,7 @@
         "text": "Canary rollout requires errorRate < 0.5% for 4 hours.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Canary rollout requires errorRate < 0.5% for 4 hours.\"}"
       },
       {
@@ -303,6 +306,7 @@
         "text": "Stable rollout requires operator approval and cannot run on weekends.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Stable rollout requires operator approval and cannot run on weekends.\"}"
       }
     ],
@@ -602,6 +606,7 @@
         "text": "Audit guide: https://example.net/audit.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Audit guide: https://example.net/audit.\"}"
       },
       {
@@ -612,6 +617,7 @@
         "text": "Policy guide: https://example.net/policy.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Policy guide: https://example.net/policy.\"}"
       }
     ],
@@ -879,6 +885,7 @@
         "text": "Uploads must be <= 8 MB per file.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Uploads must be <= 8 MB per file.\"}"
       },
       {
@@ -889,6 +896,7 @@
         "text": "Private keys must never be uploaded.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Private keys must never be uploaded.\"}"
       }
     ],

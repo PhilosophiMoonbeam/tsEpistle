@@ -17,6 +17,7 @@
         "text": "Archive logs are retained for 30 days. Deletion requires manager approval.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Archive logs are retained for 30 days. Deletion requires manager approval.\"}"
       },
       {
@@ -27,6 +28,7 @@
         "text": "Scratch logs are retained for 7 days without approval.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Scratch logs are retained for 7 days without approval.\"}"
       }
     ],
@@ -346,6 +348,7 @@
         "text": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Latency alerts fire only when p95 > 250 ms for 3 consecutive windows.\"}"
       },
       {
@@ -356,6 +359,7 @@
         "text": "Exports are permitted only for administrators.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Exports are permitted only for administrators.\"}"
       }
     ],
@@ -652,6 +656,7 @@
         "text": "Enrollment uses https://example.org/enroll; cancellation is not handled here.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Enrollment uses https://example.org/enroll; cancellation is not handled here.\"}"
       },
       {
@@ -662,6 +667,7 @@
         "text": "Cancellation uses https://example.org/cancel.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Cancellation uses https://example.org/cancel.\"}"
       }
     ],
@@ -941,6 +947,7 @@
         "text": "Deployment requires approval from 2 reviewers.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Deployment requires approval from 2 reviewers.\"}"
       },
       {
@@ -951,6 +958,7 @@
         "text": "Guests may not deploy, even with reviewer approval.",
         "kind": "paragraph",
         "complete": true,
+        "literalStatement": null,
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Guests may not deploy, even with reviewer approval.\"}"
       }
     ],
@@ -1221,7 +1229,7 @@
     "id": "train-truncated", "family": "train-truncated", "split": "train",
     "provenance": {"kind": "synthetic", "adjudication": "Manual: a truncated source cannot substantiate a complete requested retention policy; abstention is correct, not false rejection."},
     "userRequest": "State the complete telemetry retention policy.",
-    "sourceUnits": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "unitId": "partial", "context": "Telemetry policy", "text": "Telemetry is retained for 21", "kind": "paragraph", "complete": false, "packet": "{\"kind\":\"paragraph\",\"text\":\"Telemetry is retained for 21\",\"truncated\":true}"}],
+    "sourceUnits": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "unitId": "partial", "context": "Telemetry policy", "text": "Telemetry is retained for 21", "kind": "paragraph", "complete": false, "literalStatement": null, "packet": "{\"kind\":\"paragraph\",\"text\":\"Telemetry is retained for 21\",\"truncated\":true}"}],
     "requestFacets": ["complete telemetry retention policy"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
     "variants": [
       {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},
