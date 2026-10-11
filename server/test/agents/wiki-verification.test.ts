@@ -68,7 +68,7 @@ const batchResults = (built: WikiVerificationPlan, answers = acceptedAnswers(bui
   built.requests.map(request => result(Object.fromEntries(Object.keys(request.questions)
     .filter(id => Object.hasOwn(answers, id)).map(id => [id, answers[id]!]))))
 const state = (request: DecisionBatchRequest) => JSON.parse(request.state as string) as {
-  sources: WikiVerificationSource[]
+  sources: (Omit<WikiVerificationSource, 'closure'> & { closure?: WikiVerificationSource['closure'] })[]
   sourceIndexes: number[]
   candidate: WikiVerificationInput['claims']
   claimIndexes: number[]
@@ -322,7 +322,8 @@ describe('Wiki verification narrow additional narration', () => {
     const built = buildWikiVerificationPlan({ ...quotedInput(), candidateExtras })!
     expect(Object.values(built.checks).map(check => check.kind)).toEqual(['narration'])
     expect(state(built.requests[0]!).candidateExtras).toEqual(candidateExtras)
-    expect(state(built.requests[0]!).sources).toEqual([recordSource])
+    expect(state(built.requests[0]!).sources[0]!.text).toBe(recordSource.text)
+    expect(built.originalSources).toEqual([recordSource])
     expect(readsFrom(built.requests[0]!)).toEqual(input().evidence)
     for (const choice of ['unbound', 'not_established']) {
       const verdict = { choice, probabilities: { bounded: 0.01, unbound: choice === 'unbound' ? 0.98 : 0.01,
@@ -331,6 +332,17 @@ describe('Wiki verification narrow additional narration', () => {
     }
     expect(assessWikiVerificationResults(built, batchResults(built)).valid).toBe(true)
     expect(assessWikiVerificationResults(built, []).valid).toBe(false)
+  })
+
+  it('rejects mutation of original dependencies omitted from narration transport', () => {
+    const built = buildWikiVerificationPlan({ ...quotedInput(), candidateExtras: { observations: ['Consider reading the guide.'], recommendations: '' } })!
+    expect(built.literalSupportCount).toBe(1)
+    expect(Object.keys(built.checks)).toEqual(['narration_0'])
+    Reflect.set(built.originalSources[0]!.closure!.dependencies[0]!, 'text', 'Changed original dependency')
+    expect(assessWikiVerificationResults(built, batchResults(built))).toEqual({
+      valid: false,
+      issues: ['Wiki verification request or required checks changed after issuance.']
+    })
   })
 
   it('retains source support and narration as separate mandatory predicates', () => {

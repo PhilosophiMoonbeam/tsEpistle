@@ -504,12 +504,11 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
   for (const source of completeSources) if (source.literalStatement !== null) literalStatements.add(source.literalStatement)
   const evidenceIds = [...new Set(completeSources.map(source => source.evidenceId))]
   const revisions = [...new Set(completeSources.map(source => source.sourceRevision))]
-  const unitIds = [...new Set(completeSources.map(source => source.unitId))]
   const allowed = (values: string[]) => values.length === 0 ? z.never() : z.enum(values)
   const boundClaimSchema = claimSchema.extend({
     evidenceId: allowed(evidenceIds).describe('Allowed complete-source evidence IDs; copy the exact binding triple from one source.'),
     sourceRevision: allowed(revisions).describe('Allowed complete-source revisions; must belong to the selected evidence ID and unit ID.'),
-    unitId: allowed(unitIds).describe('Allowed complete-source unit IDs; must belong to the selected evidence ID and revision.')
+    unitId: z.string().describe("Copy the selected complete source binding's original unit ID unchanged; it must belong to the exact evidence ID and revision.")
   })
   const claimDescription = completeSources.length === 0
     ? `# Goal
@@ -521,7 +520,7 @@ Do not invent a source assertion or binding.
 # Context Dump
 The admitted complete-source set is empty.`
     : `# Goal
-Answer user-requested facts and required source qualifications. Prefer the selected source's exact non-null literalStatement when it covers the requested fact.
+Answer user-requested facts and include source-written qualifications governing selected facts even when the user does not request them. Bind qualifications separately when outside the selected unit. Prefer the selected source's exact non-null literalStatement when it covers the requested fact.
 # Return Format
 At most 64 objects with required string keys evidenceId, sourceRevision, unitId and statement; no extra keys. Copy one complete binding triple unchanged. Each statement is one atomic assertion, the requested facts of one owned record, or its exact literalStatement with every original ordered field and supplied governing prefix retained. Copy literalStatement without embellishment, punctuation changes or formatting rewrites. If the same whole-record quotation occurs under multiple original bindings, choose one complete binding. Nonliteral name-only rows use <identity field label>: <identity field value>; explicit structural members use <exact container label>: <exact member label>. Keep independently bound members separate unless an intact whole-record quotation covers them; do not assume one identity field per record. For broad inventories, enumerate every named member or category in supplied related-collection reads, retaining separate scope; a collection title or description alone is incomplete when names are available. Comparisons separate independent sources, not one record's fields or requested dimensions.
 # Warnings
@@ -556,7 +555,20 @@ Each group is [evidenceId,sourceRevision,entries]. Each entry is [sourceName,pro
     .output('claims', z.array(boundClaimSchema).max(completeSources.length === 0 ? 0 : MAX_CLAIMS).describe(claimDescription))
     .output('unresolvedFacets', z.array(z.number().int().min(0).max(Math.max(0, facetCount - 1))).max(facetCount))
     .output('observations', z.array(z.string()).max(observations.size))
-    .output('recommendations', z.string().optional().describe('Omit or leave empty when there is no advice; otherwise standalone imperative suggestions (Consider, Review, Ask, Check, Verify), modal suggestions, or questions. No declarative explanations, because/since/given/therefore premises, or additional factual sentences; put all factual premises in source-bound claims.'))
+    .output(
+      'recommendations',
+      z
+        .string()
+        .optional()
+        .describe(`# Goal
+Give advice only when the user requests it.
+# Return Format
+Otherwise omit or leave empty. Use standalone imperative or modal suggestions, or questions.
+# Warnings
+No declarative explanations, causal premises or additional factual sentences. Put factual premises in source-bound claims.
+# Context Dump
+Source-fact requests do not require recommendations.`)
+    )
   if (options.structured !== false) signatureBuilder.useStructured()
   const signature = signatureBuilder.build()
   // Ax's installed Standard Schema adapter drops Zod4 enum values and array
@@ -573,7 +585,9 @@ Each group is [evidenceId,sourceRevision,entries]. Each entry is [sourceName,pro
           fields: {
             evidenceId: evidenceIds.length ? { type: 'class' as const, isArray: false, options: evidenceIds } : { type: 'string' as const, isArray: false },
             sourceRevision: revisions.length ? { type: 'class' as const, isArray: false, options: revisions } : { type: 'string' as const, isArray: false },
-            unitId: unitIds.length ? { type: 'class' as const, isArray: false, options: unitIds } : { type: 'string' as const, isArray: false },
+            // Native IDs remain readable in sourceBindings; the exact host
+            // registry gate rejects invented or cross-bound IDs before publication.
+            unitId: { type: 'string' as const, isArray: false },
             statement: { type: 'string' as const, isArray: false, description: claimSchema.shape.statement.description! }
           }
         }

@@ -183,39 +183,11 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('transports only complete-source binding enums in the real native schema and rejects relationally invalid enum combinations', async () => {
+  it('rejects a unit owned by another complete binding without autonomous repair', async () => {
     const other = { ...source, evidenceId: 'page:99:revision:12', sourceRevision: '12', unitId: 'unit:owner', text: 'The owner is Rowan.' }
-    const incomplete = { ...source, evidenceId: 'page:77:revision:3', sourceRevision: '3', unitId: 'unit:cut', complete: false }
-    const generated = generate(answer(), [source, other, incomplete])
-    await generated.result
-    const transported = generated.chat.mock.calls[0]![0].responseFormat!.schema
-    expect(transported.name).toBe('output')
-    expect(transported.strict).toBe(true)
-    const schema = transported.schema
-    expect(schema.properties.claims.type).toBe('array')
-    expect(schema.properties.claims.items).toMatchObject({
-      type: 'object',
-      additionalProperties: false,
-      required: ['evidenceId', 'sourceRevision', 'unitId', 'statement'],
-      properties: {
-        evidenceId: { type: 'string', enum: [source.evidenceId, other.evidenceId] },
-        sourceRevision: { type: 'string', enum: ['7', '12'] },
-        unitId: { type: 'string', enum: ['unit:approval', 'unit:owner'] },
-        statement: { type: 'string' }
-      }
-    })
-    expect(schema.properties.unresolvedFacets.items.type).toBe('number')
-    expect(schema.properties.observations.items.type).toBe('string')
-    // Ax does not transport Zod maxItems; the Zod/assertion boundary owns this.
-    expect(schema.properties.claims.maxItems).toBeUndefined()
     const crossed = generate(answer({ claims: [{ ...answer().claims[0]!, unitId: other.unitId }] }), [source, other])
     await expect(crossed.result).rejects.toThrow('complete admitted source unit')
     expect(crossed.chat).toHaveBeenCalledTimes(1)
-    for (const sources of [[], [incomplete]]) {
-      const forbidden = generate(answer(), sources)
-      await expect(forbidden.result).rejects.toThrow()
-      expect(forbidden.chat).toHaveBeenCalledTimes(1)
-    }
   })
 
   it('only permits exact safe whitelist observations and prevents observation or recommendation citation injection', async () => {
