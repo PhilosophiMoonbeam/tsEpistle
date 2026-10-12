@@ -8,7 +8,7 @@ This section is the operator authority for runtime behavior and safe operating b
 
 ### Current chat workspace UI
 
-Redundant composer helper notices are removed; actionable connection, admission and mutation-lock messages remain. **Images** defaults on only when image generation is supported for the current conversation, and users can deselect it. While reading the transcript, the composer is 20% transparent (80% opaque); focusing or engaging it quickly restores full opacity.
+Redundant composer helper notices are removed; actionable connection, admission and mutation-lock messages remain. **Images** defaults on only when image generation is supported for the current conversation, and users can deselect it. While reading the transcript, the composer is 20% opaque (80% transparent); focusing or engaging it quickly restores full opacity.
 
 Memory and History share one exclusive left panel at every viewport width. Opening either replaces the other directly, with in-panel controls for swapping views. Desktop panels leave the conversation visible; narrow layouts retain modal focus trapping and focus restoration. Memory mutations continue to block unsafe closing or switching.
 
