@@ -30,7 +30,7 @@ const productionRequest={memory:{user:[],agent:[]},skills:[],run:{executionMode:
 const prefix=engine.prompt(productionRequest,null,undefined,false,true,'final-synthesis')
 const result:any={sourceUtf8Bytes:bytes(page.content),sourceCharacters:page.content.length,sourceSha256:createHash('sha256').update(page.content).digest('hex'),projectedUnitCount:units.length,completeProjectedUnits:units.filter(u=>u.complete).length,parsedSectionCount:sections.length,providedCitationSections:citationSections.length,registeredEvidenceCount:all.size,contextCeiling:128000,outputAllowance:8192,model,tocApproximation,assumptions:['Mock response only; no Google/TypeSafe transport or network dispatch','Captures generated Ax request before admission; does not invoke full agent runtime','Empty memory and selected skills; all-Wiki scope; one request facet; no observations/repair feedback','No tokenizer estimate claimed; all quantities explicitly bytes/counts','Ordinary collected conversation is not appended to typed generation; final-synthesis production prefix is prepended']}
 async function capture(label:string,evidence:Map<any,any>){
- const {sources,sourceStructures}=engine.probeBuildSynthesisSources(evidence);const wire=encodeWikiSynthesisSources(sources,sourceStructures)
+ const {sources,sourceStructures}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]});const wire=encodeWikiSynthesisSources(sources,sourceStructures)
  type TextRef=number|[number,number,number]
  type LocatorMetricsStructures={texts:string[];sources:Array<{3:TextRef;4:TextRef|null;5?:TextRef[]|null}>}
  const structures:LocatorMetricsStructures=JSON.parse(wire.sourceStructures);const bindings=JSON.parse(wire.sourceBindings)

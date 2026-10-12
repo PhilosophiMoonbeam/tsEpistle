@@ -24,7 +24,7 @@ import { PdfFixtureDocument } from './pdf-fixture.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest, synthesisObservationsFromRequest, type SynthesisFixtureBindings } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest, synthesisObservationsFromRequest, type SynthesisFixtureBindings, type SynthesisFixtureSource } from './synthesis-fixture.ts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
@@ -535,6 +535,56 @@ describe('Ax agent engine', () => {
     expect(countContextTokens).not.toHaveBeenCalled()
     expect(fixture.event.mock.calls.some(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
   })
+
+  it.each(['Who is our Falcon contact?', 'Compare all Falcon contacts and warehouse rules, including every qualification.'])(
+    'keeps complete owned records and every alias selectable across corrected frames for %s',
+    async question => {
+      const background = 'Warehouse parcels remain sealed until dispatch.'
+      const record = '- Name: Morgan Vale; Role: Falcon account representative; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147; Qualification: fictional routing specimen only.'
+      const page = questionReadPage(42, '2', 'Supplier routing', 'suppliers', 'Falcon contacts', 'falcon-contacts', record)
+      page.content = `# Supplier routing\n\n${background}\n\n## Falcon contacts\n\n${record}`
+      const frames: SynthesisFixtureSource[][] = []
+      const answer = (input: Readonly<AxChatRequest>) => {
+        const sources = synthesisSourcesFromRequest(input)
+        frames.push(sources)
+        // Exercise first-occurrence selection at the provider boundary, rather
+        // than searching past unrelated complete body quotations.
+        const source = sources.find(candidate => candidate.kind !== 'page-title' && candidate.kind !== 'heading' && candidate.literalStatement !== null)!
+        expect(source.literalStatement).toContain('Morgan Vale')
+        expect(source.literalStatement).toContain('fictional routing specimen only')
+        return synthesisFixtureAnswer(input, {
+          claims: [{
+            ...source,
+            sourceRef: frames.length === 1 ? 'sAAAAAAAAAAAAAAAA' : source.sourceRef,
+            statement: ''
+          }]
+        })
+      }
+      const fixture = questionFixture('native', [
+        { calls: [
+          { id: 'owned-record-read', name: 'pages.get', arguments: { id: 42 } },
+          { id: 'owned-record-finish', name: 'wiki_finish_collection', arguments: {} }
+        ] },
+        { answer },
+        { answer }
+      ], () => page, [], { maxContextTokens: 128_000, maxOutputTokens: 8_192 })
+      const result = await fixture.execute(question, { maxOutputTokens: 8_192 })
+      expect(frames).toHaveLength(2)
+      // Correction must retain the same complete universe, protected original
+      // closures and stable refs, not merely the selected record.
+      expect(frames[1]).toEqual(frames[0])
+      expect(new Set(frames[0]!.map(source => source.evidenceId))).toEqual(new Set([
+        'page:42:revision:2', 'page:42:revision:2:section:1'
+      ]))
+      expect(frames[0]!.some(source => source.text.includes(background))).toBe(true)
+      const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+      for (const value of ['Morgan Vale', 'Falcon account representative', 'morgan.vale@example.invalid', '+1 202 555 0147', 'fictional routing specimen only']) {
+        expect(published).toContain(value)
+      }
+      expect(result.executionLimit).toBeUndefined()
+      expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
+    }
+  )
 
   it.each([119_808, 128_000])('uses the full generated frame native input boundary %s without another paid collection turn', async nativeInputTokens => {
     const contact = 'Morgan Vale is the Falcon account representative.'
