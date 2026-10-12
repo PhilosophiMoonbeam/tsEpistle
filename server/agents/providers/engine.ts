@@ -2937,7 +2937,11 @@ const provenanceData = (accepted: boolean, assessment: DraftAssessment, retrieva
   claims: assessment.claims.slice(0, MAX_ANSWER_CITATIONS).map(({ repairClaim: _repairClaim, ...claim }) => claim),
   finalCitationIds: accepted ? assessment.citationIds.slice(0, MAX_ANSWER_CITATIONS) : []
 })
-const relevantSourceUnits = (fragment: string, evidence: CitationEvidence): readonly CitationSourceUnit[] => {
+const relevantSourceUnits = (
+  fragment: string,
+  evidence: CitationEvidence,
+  orientationOnly = false
+): readonly CitationSourceUnit[] => {
   const terms = normalizedTerms(fragment)
   const termSet = new Set(terms)
   const ranked = evidence.sourceUnits
@@ -2956,7 +2960,7 @@ const relevantSourceUnits = (fragment: string, evidence: CitationEvidence): read
         matches,
         textMatches,
         structuralMatches,
-        serializedLength: Buffer.byteLength(JSON.stringify(sourceUnitPacket(unit)), 'utf8')
+        serializedLength: orientationOnly ? 0 : Buffer.byteLength(JSON.stringify(sourceUnitPacket(unit)), 'utf8')
       }
     })
     .filter(candidate => candidate.matches > 0 && candidate.unit.complete)
@@ -6117,6 +6121,45 @@ export class AxAgentEngine implements AgentEngine {
         titleEvidence.set(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]), representation)
         sources.push(source)
       }
+    }
+    // Presentation priority is not admission: every exact source and alias stays
+    // in the frame, including unmatched units and governing qualifications.
+    // Rank once across owners so incidental page order cannot bury an intact
+    // requested record. Protected quotations expose its complete owned fields.
+    const sourceUnits = new Map<WikiSynthesisSource, CitationSourceUnit>()
+    const orientationUnits: CitationSourceUnit[] = []
+    const quotationTerms = new Map<string, readonly string[]>()
+    for (const source of sources) {
+      const unit = units.get(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]))
+      if (unit === undefined) continue
+      sourceUnits.set(source, unit)
+      const quotation = source.literalStatement ?? ''
+      let terms = quotationTerms.get(quotation)
+      if (terms === undefined) {
+        terms = normalizedTerms(quotation, true)
+        quotationTerms.set(quotation, terms)
+      }
+      const textTerms = new Set(unit.textTerms)
+      for (const term of terms) textTerms.add(term)
+      const allTerms = new Set(unit.terms)
+      for (const term of textTerms) allTerms.add(term)
+      orientationUnits.push({ ...unit, textTerms, terms: allTerms })
+    }
+    const orientationEvidence = evidence.values().next().value as CitationEvidence | undefined
+    if (orientationEvidence !== undefined) {
+      const ranked = relevantSourceUnits(
+        [input.userRequest, ...input.requestFacets].join('\n'),
+        { ...orientationEvidence, sourceUnits: orientationUnits },
+        true
+      )
+      const priority = new Map<CitationSourceUnit['closure'], number>()
+      for (const unit of ranked) if (!priority.has(unit.closure)) priority.set(unit.closure, priority.size)
+      sources.sort((left, right) => {
+        const leftUnit = sourceUnits.get(left)
+        const rightUnit = sourceUnits.get(right)
+        return (leftUnit === undefined ? Infinity : priority.get(leftUnit.closure) ?? Infinity) -
+          (rightUnit === undefined ? Infinity : priority.get(rightUnit.closure) ?? Infinity)
+      })
     }
     let rejection: string | undefined
     let rendered: string | undefined

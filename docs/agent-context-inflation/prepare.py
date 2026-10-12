@@ -20,7 +20,7 @@ rewritten=re.sub(r"(from\s+['\"])(\.[^'\"]+)(['\"])",lambda m:m[1]+str((source.p
 # Bare imports resolve against the installed project packages through the temp symlink.
 (root/'node_modules').symlink_to(repo/'node_modules') if not (root/'node_modules').exists() else None
 rewritten+='\nexport { parseSourceDocument, projectedSourceUnits, collectPageEvidence, sourceSections, prompt, serializedProviderRequestBytes };\n'
-rewritten+='\nexport const probeBuildSynthesisSources=(evidence: ReadonlyMap<string,CitationEvidence>)=>{\n'+block+'return {sources,sourceStructures};\n};\n'
+rewritten+='\nexport const probeBuildSynthesisSources=(evidence: ReadonlyMap<string,CitationEvidence>,input:{readonly userRequest:string;readonly requestFacets:readonly string[]})=>{\n'+block+'return {sources,sourceStructures};\n};\n'
 page_reads=(repo/'server/agents/actions/page-reads.ts').read_text()
 a=page_reads.index('const tocSections =');b=page_reads.index('const parsePage =',a)
 rewritten+='\n'+page_reads[a:b].replace('const pageCitation =','const productionPageCitation =')+'\nexport {productionPageCitation};\n'

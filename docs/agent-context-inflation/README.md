@@ -33,20 +33,22 @@ The parent-verified current launcher result (`/tmp/wiki-context-after.json`) mea
 
 | Quantity | Historical fixture | Current compact fixture |
 | --- | ---: | ---: |
-| Complete root-only serialized Ax request bytes | 221,151 | 104,630 |
-| Complete root + sections serialized Ax request bytes | 258,525 | 110,472 |
-| Root-only input bytes + 8,192 output allowance | 229,343 | 112,822 |
-| Root + sections input bytes + 8,192 output allowance | 266,717 | 118,664 |
+| Complete root-only serialized Ax request bytes | 221,151 | 98,022 |
+| Complete root + sections serialized Ax request bytes | 258,525 | 103,845 |
+| Root-only input bytes + 8,192 output allowance | 229,343 | 106,214 |
+| Root + sections input bytes + 8,192 output allowance | 266,717 | 112,037 |
 | Fits the diagnostic 128,000 ceiling, root / sections | no / no | yes / yes |
 | Root-only `sourceBindings` JSON bytes | 49,588 | 7,720 |
-| Root + sections `sourceBindings` JSON bytes | 84,206 | 13,188 |
+| Root + sections `sourceBindings` JSON bytes | 84,206 | 13,169 |
 | `sourceStructures` JSON bytes, either variant | 137,715 | 75,207 |
 
-The final serialized frame shrank by 116,521 bytes (52.69%) for root-only and 148,053 bytes (57.27%) for root plus sections. Current frame-to-source **byte** ratios are 6.37× and 6.73× respectively; these are not model-token ratios or provider usage. Both diagnostic sums fit without changing the 128,000 ceiling or 8,192 output allowance.
+The final serialized frame shrank by 123,129 bytes (55.68%) for root-only and 154,680 bytes (59.83%) for root plus sections. Current frame-to-source **byte** ratios are 5.97× and 6.32× respectively; these are not model-token ratios or provider usage. Both diagnostic sums fit without changing the 128,000 ceiling or 8,192 output allowance.
 
 In either current nonempty variant, the physical pool contains 355 strings: 49,070 UTF-8 text bytes and 50,556 JSON bytes. The 260 positional scope rows occupy 24,630 JSON bytes; the complete `sourceStructures` object occupies 75,207 bytes including its enclosing syntax. Remaining storage includes complete authored and quoted roles whose exact strings can overlap without being identical: substring reuse does not eliminate every duplicated passage, nor may those roles be clipped or silently pruned to improve fit.
 
 Substring reuse is bounded to 32 Mi UTF-16 code units of cumulative search work, an optimization limit rather than a source-length or context-capacity limit. Once that budget is exhausted, complete exact strings remain as whole pool entries; exact deduplication is unconditional. No admitted alias, body unit, complete quotation, authored dependency or qualification is removed by that limit.
+
+The engine orders complete sources using existing generic request relevance, but does not select a smaller evidence universe: unmatched units, aliases and governing qualifications remain in the frame with their unchanged host references. This order is orientation, not authority or proof of exhaustive coverage. The synthesis contract prioritizes requested facts and necessary source-written qualifications rather than an unrequested page inventory; shortening repeated instructions reduces the output schema from 5,797 to 2,180 JSON bytes.
 
 The probe reports physical `pooledTextUtf8Bytes`, `pooledTextJsonBytes` and `scopeJsonBytes`, plus binding and complete generated Ax-frame bytes. Unique selected-text, quotation and authored-dependency counts/UTF-8 bytes are computed by decoding exact locator uses. Those semantic categories can overlap one another and the physical pool: they are **not disjoint storage buckets** and must not be summed to explain pool size.
 
