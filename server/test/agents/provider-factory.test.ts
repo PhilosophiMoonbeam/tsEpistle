@@ -14,7 +14,7 @@ import { readAgentProviderUsage, readAgentUsageEvent } from '../../agents/provid
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
-import { afterEach, describe, expect, it } from '../bun-test.mts'
+import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const privateResolver = async (): Promise<LookupAddress[]> => [{ address: '127.0.0.1', family: 4 }]
@@ -108,7 +108,7 @@ describe('guarded provider fetch', () => {
     expect(called).toBe(0)
   })
 
-  it('allows only exact Gemini GenerateContent paths and query dialects for the configured model', async () => {
+  it('allows only exact Gemini generation and official native count paths for the configured model', async () => {
     let called = 0
     const implementation = async (): Promise<Response> => {
       called++
@@ -128,6 +128,7 @@ describe('guarded provider fetch', () => {
     const init = { method: 'POST', body: '{}' }
     await guarded(`${base}/models/gemini-3.7-flash:generateContent`, init)
     await guarded(`${base}/models/gemini-3.7-flash:streamGenerateContent?alt=sse`, init)
+    await guarded(`${base}/models/gemini-3.7-flash:countTokens`, init)
     for (const path of [
       '/interactions',
       '/interactions/id',
@@ -135,7 +136,8 @@ describe('guarded provider fetch', () => {
       '/models/gemini-3.7-flash:generateContent?key=credential',
       '/models/gemini-3.7-flash:streamGenerateContent',
       '/models/gemini-3.7-flash:streamGenerateContent?alt=sse&key=credential',
-      '/models/gemini-3.7-flash:countTokens'
+      '/models/gemini-3.8-flash:countTokens',
+      '/models/gemini-3.7-flash:countTokens?key=credential'
     ]) {
       await expect(Promise.resolve(guarded(base + path, init))).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
     }
@@ -145,7 +147,25 @@ describe('guarded provider fetch', () => {
     await expect(Promise.resolve(guarded('https://other.example.test/v1beta/models/gemini-3.7-flash:generateContent', init))).rejects.toMatchObject({
       code: 'PROVIDER_EGRESS_DENIED'
     })
-    expect(called).toBe(2)
+    expect(called).toBe(3)
+  })
+
+  it('denies native count on custom origins and rechecks live authorization before dispatch', async () => {
+    let called = 0
+    const implementation = (async () => { called++; return Response.json({ totalTokens: 9 }) }) as typeof fetch
+    const init = { method: 'POST', body: '{}' }
+    const custom = createGuardedProviderFetch('https://custom.example.test/v1beta', 'gemini-chat', {}, implementation, publicResolver as never,
+      deriveAgentProviderResourceLimits(100), undefined, 'gemini-3.7-flash')
+    await expect(custom('https://custom.example.test/v1beta/models/gemini-3.7-flash:countTokens', init)).rejects.toMatchObject({ code: 'PROVIDER_EGRESS_DENIED' })
+    const official = 'https://generativelanguage.googleapis.com/v1beta'
+    const guarded = createGuardedProviderFetch(official, 'gemini-chat', {}, implementation, publicResolver as never,
+      deriveAgentProviderResourceLimits(100), undefined, 'gemini-3.7-flash', undefined,
+      async () => { throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Profile changed', 409) })
+    await expect(guarded(`${official}/models/gemini-3.7-flash:countTokens`, init)).rejects.toMatchObject({ code: 'PROFILE_VERSION_CHANGED' })
+    const controller = new AbortController()
+    controller.abort()
+    await expect(guarded(`${official}/models/gemini-3.7-flash:countTokens`, { ...init, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(called).toBe(0)
   })
 
   it('blocks redirects and exposes only bounded retry metadata for provider failures', async () => {
@@ -665,6 +685,8 @@ const seedInputProvider = async (db: Knex): Promise<string> => {
     table.string('secretReference')
     table.text('adapterConfig')
     table.text('capabilities')
+    table.string('capabilityRevision')
+    table.string('pricingRevision')
     table.boolean('conformed')
   })
   await db('agentProviderProfiles').insert({ id: profileId, currentVersionId: versionId, conformed: true, status: 'enabled', deletedAt: null })
@@ -693,6 +715,8 @@ const seedInputProvider = async (db: Knex): Promise<string> => {
       maxContextTokens: 32_000,
       maxOutputTokens: 4_000
     }),
+    capabilityRevision: 'wiki-protocol-capabilities-v4:gemini-api',
+    pricingRevision: 'price-v1|1000000|2000000',
     conformed: true
   })
   return versionId
@@ -701,6 +725,83 @@ const seedInputProvider = async (db: Knex): Promise<string> => {
 describe('Ax provider factory', () => {
   let db: Knex | undefined
   afterEach(async () => db?.destroy())
+
+  it.each(['generation', 'counting'] as const)('honors shortened setOptions timeout for $0 with locked private transport options', async operation => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const versionId = await seedInputProvider(db)
+    const entered = Promise.withResolvers<AbortSignal>()
+    const pendingFetch = Promise.withResolvers<Response>()
+    const requests: string[] = []
+    const implementation = (async (input, init) => {
+      requests.push(String(input))
+      const signal = init?.signal
+      if (!signal) throw new Error('Missing transport cancellation signal')
+      signal.addEventListener('abort', () => pendingFetch.reject(signal.reason), { once: true })
+      entered.resolve(signal)
+      return pendingFetch.promise
+    }) as typeof fetch
+    const provider = await new AgentProviderFactory(db, { get: () => 'private-provider-key' }, implementation, publicResolver as never).create(versionId)
+    const guardedFetch = provider.service.getOptions().fetch
+    const bypassFetch = vi.fn(async () => Response.json({ totalTokens: 1 }))
+    const logger = vi.fn()
+    provider.service.setOptions({
+      timeout: 25,
+      abortSignal: new AbortController().signal,
+      fetch: bypassFetch as typeof fetch,
+      debug: true,
+      verbose: true,
+      logger,
+      includeRequestBodyInErrors: true,
+      excludeContentFromTrace: false,
+      retry: { maxRetries: 3 },
+      corsProxy: 'https://untrusted.example/',
+      webSocket: {}
+    })
+    expect(provider.service.getOptions()).toMatchObject({
+      timeout: 25,
+      debug: false,
+      verbose: false,
+      includeRequestBodyInErrors: false,
+      excludeContentFromTrace: true,
+      retry: { maxRetries: 0 }
+    })
+    expect(provider.service.getOptions().fetch).toBe(guardedFetch)
+    expect(provider.service.getOptions().corsProxy).toBeUndefined()
+    expect(provider.service.getOptions().webSocket).toBeUndefined()
+    const priorModel = provider.service.getLastUsedChatModel()
+    const priorMetrics = structuredClone(provider.service.getMetrics())
+    const caller = new AbortController()
+    const request = { chatPrompt: [{ role: 'user' as const, content: 'Private timeout prompt.' }] }
+    vi.useFakeTimers()
+    const running = operation === 'counting'
+      ? provider.countContextTokens!(request, caller.signal)
+      : provider.service.chat(request, { stream: false, abortSignal: caller.signal })
+    const failure = running.catch((error: unknown) => error)
+    try {
+      const transportSignal = await entered.promise
+      await vi.advanceTimersByTimeAsync(24)
+      expect(transportSignal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(transportSignal.aborted).toBe(true)
+      const error = await failure
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toHaveProperty('modelUsage')
+      const exposed = `${String(error)} ${JSON.stringify(error)}`
+      expect(exposed).not.toContain('private-provider-key')
+      expect(exposed).not.toContain('Private timeout prompt.')
+      const endpoint = operation === 'counting' ? 'countTokens' : 'generateContent'
+      expect(requests).toEqual([`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:${endpoint}`])
+      expect(bypassFetch).not.toHaveBeenCalled()
+      expect(logger).not.toHaveBeenCalled()
+      expect(provider.service.getLastUsedChatModel()).toEqual(priorModel)
+      expect(provider.service.getMetrics()).toEqual(priorMetrics)
+    } finally {
+      caller.abort()
+      pendingFetch.reject(new DOMException('The request was aborted', 'AbortError'))
+      await failure
+      vi.useRealTimers()
+    }
+  })
 
   it('generates from an independently bound image version without any LLM profile or conformance', async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })

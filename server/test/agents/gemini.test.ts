@@ -1,7 +1,8 @@
 import type { LookupAddress } from 'node:dns'
 import { ax, f, type AxChatRequest, type AxChatResponse, type AxFunctionJSONSchema } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
-import { AgentProviderFactory, decodeAgentProviderContinuation, encodeAgentProviderContinuation } from '../../agents/providers/factory.ts'
+import { AgentProviderAttemptError, AgentProviderFactory, decodeAgentProviderContinuation, encodeAgentProviderContinuation } from '../../agents/providers/factory.ts'
+import { classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
@@ -69,6 +70,151 @@ describe('Ax native Gemini application transport', () => {
   afterEach(async () => db.destroy())
   const provider = (fetchImplementation: typeof fetch) =>
     new AgentProviderFactory(db, { get: () => 'credential-fixture' }, fetchImplementation, publicResolver as never).create(id)
+
+  it('counts the complete final native request without generation, usage settlement, or history mutation', async () => {
+    const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = []
+    const service = await provider((async (input, init) => {
+      requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) })
+      return Response.json({ totalTokens: 137 })
+    }) as typeof fetch)
+    const parts = [{ text: 'Prior answer.', thoughtSignature: 'signed-answer' }]
+    const schema: AxFunctionJSONSchema = {
+      type: 'object', properties: { result: { type: 'string', enum: ['yes', 'no'] } }, required: ['result'], additionalProperties: false
+    }
+    const request: AxChatRequest = {
+      chatPrompt: [
+        { role: 'system', content: 'Private system instructions.' },
+        { role: 'user', content: 'Earlier question.' },
+        { role: 'assistant', content: 'Prior answer.', thoughtBlocks: [{ data: 'wiki.gemini.generate-content.v1:' + JSON.stringify(parts), encrypted: true }] },
+        { role: 'user', content: [{ type: 'text', text: 'Inspect this image.' }, { type: 'image', mimeType: 'image/png', image: 'aW1hZ2U=' }] }
+      ],
+      functions: [{ name: 'record_result', description: 'Record the result', parameters: schema }],
+      responseFormat: { type: 'json_schema', schema: { name: 'result', schema } },
+      modelConfig: { maxTokens: 123 }
+    }
+    const original = structuredClone(request)
+    const priorModel = service.service.getLastUsedChatModel()
+    const priorMetrics = structuredClone(service.service.getMetrics())
+    expect(await service.countContextTokens!(request, new AbortController().signal)).toBe(137)
+    expect(request).toEqual(original)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe(`https://generativelanguage.googleapis.com/v1beta/models/${model}:countTokens`)
+    expect(requests[0]?.headers.get('x-goog-api-key')).toBe('credential-fixture')
+    expect(requests[0]?.body).toMatchObject({
+      generateContentRequest: {
+        model: `models/${model}`,
+        generationConfig: { maxOutputTokens: 123, responseJsonSchema: schema },
+        tools: [{ function_declarations: [{ name: 'record_result', parametersJsonSchema: schema }] }]
+      }
+    })
+    const native = requests[0]!.body.generateContentRequest as Record<string, unknown>
+    expect(JSON.stringify(native)).toContain('Private system instructions.')
+    expect(native.contents).toContainEqual({ role: 'model', parts })
+    expect(JSON.stringify(native.contents)).toContain('aW1hZ2U=')
+    expect(service.service.getLastUsedChatModel()).toEqual(priorModel)
+    expect(service.service.getMetrics()).toEqual(priorMetrics)
+  })
+
+  it('rejects malformed native counts and sanitizes provider failures without dispatching generation', async () => {
+    for (const totalTokens of [-1, 1.5, '12', Number.MAX_SAFE_INTEGER + 1, null]) {
+      let calls = 0
+      const service = await provider((async () => { calls++; return Response.json({ totalTokens }) }) as typeof fetch)
+      await expect(service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal))
+        .rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      expect(calls).toBe(1)
+    }
+    for (const body of ['{}', '{', JSON.stringify({ totalTokens: 2, error: { message: 'Private prompt.' } }), JSON.stringify({ totalTokens: 2, padding: 'x'.repeat(65_536) })]) {
+      const service = await provider((async () => new Response(body, { headers: { 'content-type': 'application/json' } })) as typeof fetch)
+      await expect(service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal))
+        .rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    }
+    let calls = 0
+    const service = await provider((async () => { calls++; throw new Error('credential-fixture Private prompt.') }) as typeof fetch)
+    const failure: unknown = await service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal)
+      .catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', message: 'Gemini returned an invalid or incomplete response' })
+    expect(`${String(failure)} ${JSON.stringify(failure)}`).not.toContain('credential-fixture')
+    expect(`${String(failure)} ${JSON.stringify(failure)}`).not.toContain('Private prompt.')
+    const controller = new AbortController()
+    controller.abort()
+    await expect(service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, controller.signal))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    expect(calls).toBe(1)
+  })
+
+  it.each([
+    { status: 401, providerCode: 'UNAUTHENTICATED', category: 'PROVIDER_AUTH_REJECTED' },
+    { status: 403, providerCode: 'PERMISSION_DENIED', category: 'PROVIDER_AUTH_REJECTED' },
+    { status: 429, providerCode: 'RESOURCE_EXHAUSTED', category: 'PROVIDER_RATE_LIMITED' },
+    { status: 500, providerCode: 'INTERNAL', category: 'PROVIDER_UNAVAILABLE' },
+    { status: 503, providerCode: 'UNAVAILABLE', category: 'PROVIDER_UNAVAILABLE' },
+    { status: 504, providerCode: 'DEADLINE_EXCEEDED', category: 'PROVIDER_TIMEOUT' }
+  ])('retains sanitized native-count status $status and execution category $category', async ({ status, providerCode, category }) => {
+    const requests: string[] = []
+    const service = await provider((async input => {
+      requests.push(String(input))
+      return Response.json(
+        { error: { code: status, status: providerCode, message: 'credential-fixture Private prompt.' } },
+        { status, headers: { 'retry-after': '2' } }
+      )
+    }) as typeof fetch)
+    const priorModel = service.service.getLastUsedChatModel()
+    const priorMetrics = structuredClone(service.service.getMetrics())
+    const error: unknown = await service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal)
+      .catch((failure: unknown) => failure)
+    expect(error).toBeInstanceOf(AgentProviderAttemptError)
+    expect(error).toMatchObject({ status, code: providerCode, message: 'Provider request failed', retryAfterMilliseconds: 2_000, retryable: status >= 429 })
+    const failure = classifyAgentExecutionFailure(error, 'context_admission')
+    expect(failure).toMatchObject({ code: category, stage: 'context_admission', providerStatus: status })
+    const exposed = `${String(error)} ${JSON.stringify(error)} ${JSON.stringify(failure)}`
+    expect(exposed).not.toContain('credential-fixture')
+    expect(exposed).not.toContain('Private prompt.')
+    expect(error).not.toHaveProperty('modelUsage')
+    expect(requests).toEqual([`https://generativelanguage.googleapis.com/v1beta/models/${model}:countTokens`])
+    expect(service.service.getLastUsedChatModel()).toEqual(priorModel)
+    expect(service.service.getMetrics()).toEqual(priorMetrics)
+  })
+
+  it.each(['caller', 'service'] as const)('cancels an in-flight native count from the $0 signal without generation or usage', async source => {
+    const entered = Promise.withResolvers<AbortSignal>()
+    const pendingFetch = Promise.withResolvers<Response>()
+    const requests: string[] = []
+    const service = await provider((async (input, init) => {
+      requests.push(String(input))
+      const signal = init?.signal
+      if (!signal) throw new Error('Missing transport cancellation signal')
+      signal.addEventListener('abort', () => pendingFetch.reject(signal.reason), { once: true })
+      entered.resolve(signal)
+      return pendingFetch.promise
+    }) as typeof fetch)
+    const caller = new AbortController()
+    const defaultController = new AbortController()
+    service.service.setOptions({ abortSignal: defaultController.signal })
+    const priorModel = service.service.getLastUsedChatModel()
+    const priorMetrics = structuredClone(service.service.getMetrics())
+    const failure = service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, caller.signal)
+      .catch((error: unknown) => error)
+    try {
+      const transportSignal = await entered.promise
+      expect(transportSignal.aborted).toBe(false)
+      const controller = source === 'caller' ? caller : defaultController
+      controller.abort()
+      expect(transportSignal.aborted).toBe(true)
+      const error = await failure
+      expect(error).toMatchObject({ name: 'AbortError' })
+      expect(error).not.toHaveProperty('modelUsage')
+      expect(`${String(error)} ${JSON.stringify(error)}`).not.toContain('credential-fixture')
+      expect(`${String(error)} ${JSON.stringify(error)}`).not.toContain('Private prompt.')
+      expect(requests).toEqual([`https://generativelanguage.googleapis.com/v1beta/models/${model}:countTokens`])
+      expect(service.service.getLastUsedChatModel()).toEqual(priorModel)
+      expect(service.service.getMetrics()).toEqual(priorMetrics)
+    } finally {
+      caller.abort()
+      defaultController.abort()
+      pendingFetch.reject(new DOMException('The request was aborted', 'AbortError'))
+      await failure
+    }
+  })
 
   it('preserves union action schemas, output caps, thinking and exact multi-signature action continuation without native Search', async () => {
     const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = []

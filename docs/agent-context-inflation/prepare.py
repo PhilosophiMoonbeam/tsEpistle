@@ -8,7 +8,13 @@ if not root.is_relative_to(pathlib.Path(tempfile.gettempdir()).resolve()):raise 
 root.mkdir(parents=True,exist_ok=True);root.chmod(0o700)
 if (script_dir/'probe.ts').resolve()!=(root/'probe.ts').resolve():shutil.copyfile(script_dir/'probe.ts',root/'probe.ts')
 source=repo/'server/agents/providers/engine.ts';text=source.read_text()
-start=text.index('    const units = new Map<string, CitationSourceUnit>()',text.index('  async #synthesisTurn('));end=text.index('    let rejection: string | undefined',start)
+# Keep the extraction confined to the actual production construction, before admission.
+# The engine preflight reuses this block; do not copy its diagnostics or dispatch code.
+turn_start=text.index('  async #synthesisTurn(')
+turn_end=text.find('\n  async #',turn_start+1)
+if turn_end<0:turn_end=len(text)
+start=text.index('    const units = new Map<string, CitationSourceUnit>()',turn_start,turn_end)
+end=text.index('    let rejection: string | undefined',start,turn_end)
 block=text[start:end]
 rewritten=re.sub(r"(from\s+['\"])(\.[^'\"]+)(['\"])",lambda m:m[1]+str((source.parent/m[2]).resolve())+m[3],text)
 # Bare imports resolve against the installed project packages through the temp symlink.

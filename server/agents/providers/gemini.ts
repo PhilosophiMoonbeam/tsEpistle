@@ -13,7 +13,7 @@ import { z } from 'zod'
 import type { AgentReasoningEffort } from '../../../shared/agents/contracts.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
-import type { AgentProviderFetch, AgentProviderResourceLimits, AgentProviderService, ProviderThoughtBlock } from './factory.ts'
+import { AgentProviderAttemptError, type AgentProviderFetch, type AgentProviderResourceLimits, type AgentProviderService, type ProviderThoughtBlock } from './factory.ts'
 import { assertAgentTokenUsage } from './usage.ts'
 
 const STATE_PREFIX = 'wiki.gemini.generate-content.v1:'
@@ -223,7 +223,7 @@ export interface GeminiAxServiceOptions {
 
 export const createGeminiAxService = (
   config: GeminiAxServiceOptions
-): AxAIService & Pick<AgentProviderService, 'nativeMediaCapabilities'> => {
+): AxAIService & Pick<AgentProviderService, 'nativeMediaCapabilities' | 'countContextTokens'> => {
   const featureService = ai({
     name: 'google-gemini',
     apiKey: config.apiKey,
@@ -253,28 +253,7 @@ export const createGeminiAxService = (
     throw new AgentRepositoryError('UNSUPPORTED_PROVIDER_OPERATION', 'This provider service permits admitted chat requests only', 400)
   }
   let nativeMediaCapabilities = featureService.getFeatures(config.model).media
-  return {
-    getId: () => featureService.getId(),
-    getName: () => featureService.getName(),
-    getFeatures: () => featureService.getFeatures(config.model),
-    getModelList: () => featureService.getModelList(),
-    getMetrics: () => lastService.getMetrics(),
-    getLogger: () => featureService.getLogger(),
-    getLastUsedChatModel: () => lastService.getLastUsedChatModel(),
-    getLastUsedEmbedModel: () => lastService.getLastUsedEmbedModel(),
-    getLastUsedModelConfig: () => lastService.getLastUsedModelConfig(),
-    getEstimatedCost: usage => featureService.getEstimatedCost(usage),
-    getOptions: () => featureService.getOptions(),
-    setOptions: options => featureService.setOptions(safeOptions(options)),
-    validateChatRequest: (request, options) => featureService.validateChatRequest?.({ ...request, model: config.model }, options),
-    embed: unsupported,
-    transcribe: unsupported,
-    speak: unsupported,
-    openChatSession: unsupported,
-    get nativeMediaCapabilities() {
-      return nativeMediaCapabilities
-    },
-    async chat(request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>) {
+  const execute = async (request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>, countOnly = false) => {
       const defaults = featureService.getOptions()
       options = safeOptions({ ...defaults, ...options })
       const cancellation = new AbortController()
@@ -284,6 +263,9 @@ export const createGeminiAxService = (
         ...(options.abortSignal ? [options.abortSignal] : [])
       ])
       signal.throwIfAborted()
+      let counted: number | undefined
+      let countFailure: unknown
+      const countComplete = new Error('Native token count completed')
       const state: GeminiWireState = { parts: [], partsBytes: 2, terminal: false, usage: false, usageFrames: [], emittedState: false }
       const nativeAssistantParts = request.chatPrompt
         .filter(message => message.role === 'assistant')
@@ -343,7 +325,7 @@ export const createGeminiAxService = (
           const { thinkingConfig: _defaultThinking, ...generationConfig } = body.generationConfig
           body.generationConfig = {
             ...generationConfig,
-            maxOutputTokens: config.maxOutputTokens,
+            maxOutputTokens: Math.min(config.maxOutputTokens, request.modelConfig?.maxTokens ?? config.maxOutputTokens),
             ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
             ...(level === undefined ? {} : { thinkingConfig })
           }
@@ -370,6 +352,51 @@ export const createGeminiAxService = (
           if (!request.functions?.length) {
             delete body.tools
             delete body.toolConfig
+          }
+          if (countOnly) {
+            // Official models.countTokens accepts the full GenerateContentRequest:
+            // https://ai.google.dev/api/tokens#method:-models.counttokens
+            try {
+            // Ax's request signal includes its effective service timeout; do not
+            // replace it with the configured ceiling or caller cancellation.
+            const transportSignal = init.signal ? AbortSignal.any([signal, init.signal]) : signal
+            if (config.baseUrl.replace(/\/$/u, '') !== official)
+              throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Gemini token counting requires the official endpoint', 502)
+            const response = await config.fetch(`${official}/models/${config.model}:countTokens`, {
+              ...init,
+              body: JSON.stringify({ generateContentRequest: { ...body, model: `models/${config.model}` } }),
+              signal: transportSignal
+            })
+            if (!response.ok || response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/json') throw invalid()
+            const reader = response.body?.getReader()
+            if (!reader) throw invalid()
+            let bytes = 0
+            let text = ''
+            const decoder = new TextDecoder('utf-8', { fatal: true })
+            try {
+              while (true) {
+                transportSignal.throwIfAborted()
+                const item = await reader.read()
+                if (item.done) break
+                bytes += item.value.byteLength
+                if (bytes > Math.min(config.limits.rawBodyBytes, 65_536)) throw invalid()
+                text += decoder.decode(item.value, { stream: true })
+              }
+              text += decoder.decode()
+              const payload: unknown = JSON.parse(text)
+              if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || 'error' in payload || !('totalTokens' in payload) || !token(payload.totalTokens)) throw invalid()
+              counted = payload.totalTokens
+            } finally {
+              await reader.cancel().catch(() => {})
+              reader.releaseLock()
+            }
+            } catch (error) {
+              countFailure = error
+              throw error
+            }
+            // Stop Ax after its native conversion: counting never parses a generation
+            // response, dispatches generation, or manufactures a usage receipt.
+            throw countComplete
           }
           const response = await config.fetch(config.baseUrl.replace(/\/$/u, '') + relative, { ...init, body: JSON.stringify(body) })
           return checkedResponse(response, state, config.limits)
@@ -403,10 +430,20 @@ export const createGeminiAxService = (
       // public request permits unknown model keys, which must not override it.
       const { model: _model, ...profileRequest } = request
       const { thinkingTokenBudget: _thinkingTokenBudget, contextCache: _contextCache, ...chatOptions } = options ?? {}
-      const response = await service.chat(
-        { ...profileRequest, chatPrompt, modelConfig },
-        { ...chatOptions, abortSignal: signal, showThoughts: false, fetch: transportFetch }
-      )
+      let response: AxChatResponse | ReadableStream<AxChatResponse>
+      try {
+        response = await service.chat(
+          { ...profileRequest, chatPrompt, modelConfig },
+          { ...chatOptions, abortSignal: signal, showThoughts: false, fetch: transportFetch }
+        )
+      } catch (error) {
+        if (!countOnly) throw error
+        signal.throwIfAborted()
+        if (counted !== undefined) return counted
+        if (countFailure instanceof AgentRepositoryError || countFailure instanceof AgentProviderAttemptError) throw countFailure
+        if (error instanceof AgentRepositoryError || error instanceof AgentProviderAttemptError) throw error
+        throw invalid()
+      }
       lastService = service
       const normalize = (chunk: AxChatResponse): AxChatResponse => {
         for (const result of chunk.results) delete result.thoughtBlocks
@@ -474,6 +511,36 @@ export const createGeminiAxService = (
           cancellation.abort(reason ?? new DOMException('The stream was cancelled', 'AbortError'))
         }
       })
+    }
+  return {
+    getId: () => featureService.getId(),
+    getName: () => featureService.getName(),
+    getFeatures: () => featureService.getFeatures(config.model),
+    getModelList: () => featureService.getModelList(),
+    getMetrics: () => lastService.getMetrics(),
+    getLogger: () => featureService.getLogger(),
+    getLastUsedChatModel: () => lastService.getLastUsedChatModel(),
+    getLastUsedEmbedModel: () => lastService.getLastUsedEmbedModel(),
+    getLastUsedModelConfig: () => lastService.getLastUsedModelConfig(),
+    getEstimatedCost: usage => featureService.getEstimatedCost(usage),
+    getOptions: () => featureService.getOptions(),
+    setOptions: options => featureService.setOptions(safeOptions(options)),
+    validateChatRequest: (request, options) => featureService.validateChatRequest?.({ ...request, model: config.model }, options),
+    embed: unsupported,
+    transcribe: unsupported,
+    speak: unsupported,
+    openChatSession: unsupported,
+    get nativeMediaCapabilities() { return nativeMediaCapabilities },
+    chat: async (request, options) => {
+      const response = await execute(request, options)
+      if (typeof response === 'number') throw invalid()
+      return response
+    },
+    countContextTokens: async (request, signal) => {
+      const countSignal = AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs)])
+      const result = await execute(request, { abortSignal: countSignal, stream: false }, true)
+      if (typeof result !== 'number') throw invalid()
+      return result
     }
   }
 }

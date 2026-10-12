@@ -825,6 +825,8 @@ describe('Ax orchestration stages', () => {
       { text, event: async () => {} }
     )
     expect(invoke).not.toHaveBeenCalled()
+    expect(measuredUsage).toEqual([])
+    expect(result).toMatchObject({ inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 })
     expect(deniedExposure.length).toBeGreaterThan(0)
     for (const exposure of deniedExposure) {
       expect(exposure.tokens).toBeGreaterThan(0)
@@ -2810,20 +2812,30 @@ describe('bounded root publication accounting', () => {
     expect(admittedBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
     expect(admittedBudget.allocatedTokens).toBe(admittedBudget.returnedTokens + admittedBudget.consumedTokens)
 
-    // Reuse the same source and native schema with a provider context one byte
-    // below the observed encoded request. No duplicated-source overhead is assumed.
+    // The overflowing candidate read is omitted before synthesis. Early
+    // adaptation must publish an explicit inability without another paid turn.
     const budget = new PublicationBudgetLedger(120_000)
     const text = vi.fn(async () => {})
-    await expect(new AxAgentEngine(factoryFor(chat, { usage: 'terminal', maxContextTokens: nativeRequestBytes - 1 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const limited = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal', maxContextTokens: nativeRequestBytes - 1 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       { ...request, limits: { ...request.limits, maxTokens: budget.maximumTokens }, dispatchBudget: budget },
       { text, event: async () => {} }
-    )).rejects.toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE' })
+    )
+    expect(limited.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: ['read-alpha'] })
+    expect(limited.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+    expect(limited.citations).toBeUndefined()
+    const published = visibleWikiText(text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).toContain("I couldn't complete a source-verified answer")
+    expect(published).toContain('provider context capacity was exhausted')
+    expect(published).not.toContain('Alpha requires review.')
+    expect(limited.totalTokens).toBe(5)
+    expect(limited.costMicros).toBe(7)
 
     expect(invoke).toHaveBeenCalledTimes(2)
     expect(synthesisRequests).toHaveLength(1)
     expect(collectionRequests).toHaveLength(2)
-    expect(text).not.toHaveBeenCalled()
+    expect(text).toHaveBeenCalled()
     expect(budget.tools).toBe(1)
+    expect(budget.dispatched).toHaveLength(0)
     expect(budget.reconciled).toHaveLength(1)
     expect(budget.consumedTokens).toBe(5)
     expect(budget.consumedCostMicros).toBe(7)

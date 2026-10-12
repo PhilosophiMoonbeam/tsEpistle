@@ -3205,6 +3205,7 @@ interface TurnResult extends AgentTokenUsage {
     readonly unknownExposureTokens?: number
     readonly unknownExposureCostMicros?: number
     readonly structuralRejection?: boolean
+    readonly synthesisFrame?: Readonly<Record<string, string | number | boolean | null>>
   }
 }
 const MAX_DIAGNOSTIC_TURN_CHARACTERS = 32_000
@@ -3673,7 +3674,7 @@ const providerExposureFor = (
     0,
     hasMedia
       ? provider.capabilities.maxContextTokens - maxOutputTokens
-      : Math.min(provider.capabilities.maxContextTokens - maxOutputTokens, serializedRequestBytes)
+      : serializedRequestBytes
   )
   const outputExposureTokens = maxOutputTokens
   return {
@@ -4733,6 +4734,7 @@ interface PublicationSequencePlan {
   readonly bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number }
   readonly tokens: number
   readonly costMicros: number
+  readonly synthesisFrame?: Readonly<Record<string, string | number | boolean | null>>
 }
 
 const boundedPublicationSequence = (
@@ -6008,9 +6010,12 @@ export class AxAgentEngine implements AgentEngine {
       readonly coverage: Parameters<typeof assessDraft>[2]
       readonly assessableContent: (content: string) => string
       readonly reserveRepair: boolean
+      readonly contextMeasurements?: Map<string, number>
     },
-    sequence?: AgentDispatchBudgetSequence
-  ): Promise<TurnResult> {
+    sequence?: AgentDispatchBudgetSequence,
+    diagnosticSink?: AgentEngineSink,
+    preflight = false
+  ): Promise<TurnResult | PublicationSequencePlan> {
     const units = new Map<string, CitationSourceUnit>()
     const unitEvidence = new Map<string, CitationEvidence>()
     const titleEvidence = new Map<string, CitationEvidence>()
@@ -6202,6 +6207,9 @@ export class AxAgentEngine implements AgentEngine {
         return true
       }
     })
+    const encodedSources = encodeWikiSynthesisSources(sources, sourceStructures)
+    const preflightComplete = new Error('Typed synthesis preflight complete')
+    let preflightPlan: PublicationSequencePlan | undefined
     let dispatched: TurnResult | undefined
     let dispatchFailure: unknown
     const admittedChat: AxAIService['chat'] = async generation => {
@@ -6218,14 +6226,68 @@ export class AxAgentEngine implements AgentEngine {
         )
         const generationRequest: Readonly<AxChatRequest> = { ...generation, model: provider.model, chatPrompt: generatedPrompt }
         const serializedBytes = serializedProviderRequestBytes(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
-        const contextOutputAllowance = provider.capabilities.maxContextTokens - serializedBytes
+        const prefixBytes = Buffer.byteLength(prompt(request, null, undefined, false, true, 'final-synthesis'), 'utf8')
+        const structureData = asRecord(JSON.parse(encodedSources.sourceStructures))
+        const frameDiagnostics = {
+          sourceCount: evidence.size,
+          bindingCount: sources.length,
+          uniqueUnitCount: new Set(sources.map(source => canonicalJson([source.evidenceId.split(':section:')[0], source.sourceRevision, source.unitId]))).size,
+          sourceBytes: [...evidence.values()].reduce((sum, source) => sum + Buffer.byteLength(source.source, 'utf8'), 0),
+          bindingBytes: Buffer.byteLength(encodedSources.sourceBindings, 'utf8'),
+          structureBytes: Buffer.byteLength(encodedSources.sourceStructures, 'utf8'),
+          sharedTextBytes: Buffer.byteLength(JSON.stringify(structureData?.texts ?? []), 'utf8'),
+          authoredBytes: [...new Set([...units.values()].flatMap(unit => unit.closure.dependencies.map(dependency => dependency.text)))].reduce((sum, text) => sum + Buffer.byteLength(text, 'utf8'), 0),
+          schemaBytes: Buffer.byteLength(JSON.stringify(asRecord(asRecord(generation.responseFormat)?.schema)?.schema ?? generation.functions?.find(fn => fn.name === '__axOutput')?.parameters ?? generation.responseFormat ?? null), 'utf8'),
+          prefixBytes,
+          serializedRequestBytes: serializedBytes,
+          requestedOutputTokens: maxOutputTokens,
+          preflight
+        }
+        let nativeInputTokens: number | undefined
+        let contextInputTokens = serializedBytes
+        if (serializedBytes + maxOutputTokens > provider.capabilities.maxContextTokens && provider.countContextTokens !== undefined) {
+          const countRequest = providerRequestFor(provider, null, generatedPrompt, maxOutputTokens, undefined, generationRequest)
+          const key = createHash('sha256').update(JSON.stringify(countRequest)).digest('hex')
+          nativeInputTokens = input.contextMeasurements?.get(key)
+          if (nativeInputTokens === undefined) {
+            request.signal.throwIfAborted()
+            await request.authorizeDispatch?.()
+            nativeInputTokens = await provider.countContextTokens(countRequest, request.signal)
+            request.signal.throwIfAborted()
+            if (!Number.isSafeInteger(nativeInputTokens) || nativeInputTokens < 0)
+              throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid native context token count', 502)
+            input.contextMeasurements?.set(key, nativeInputTokens)
+          }
+          contextInputTokens = nativeInputTokens
+        }
+        const contextOutputAllowance = provider.capabilities.maxContextTokens - contextInputTokens
+        const budgetOutputAllowance = maximumDispatchTokens === undefined ? maxOutputTokens : maximumDispatchTokens - serializedBytes
+        const reason = contextOutputAllowance < 1 ? 'context_limit' : budgetOutputAllowance < 1 ? 'token_allowance' :
+          Math.min(contextOutputAllowance, budgetOutputAllowance) < maxOutputTokens ? 'output_reduced' : nativeInputTokens === undefined ? 'byte_bound_fit' : 'native_count_fit'
+        const synthesisFrame = { ...frameDiagnostics, nativeInputTokens: nativeInputTokens ?? null, reason }
+        if (contextOutputAllowance < 1 || budgetOutputAllowance < 1)
+          await diagnosticSink?.event('evidence.provenance', {
+            purpose: 'context_admission',
+            stage: 'synthesis_frame_admission',
+            synthesisFrame
+          })
         if (contextOutputAllowance < 1)
           throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Typed source context and its output schema exceed the selected provider context limit; original history is preserved', 413)
-        const budgetOutputAllowance = maximumDispatchTokens === undefined ? maxOutputTokens : maximumDispatchTokens - serializedBytes
         if (budgetOutputAllowance < 1)
           throw classifyAgentExecutionFailure(new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Typed source context and its output schema exceed the remaining token allowance', 409), 'dispatch_admission')
         maxOutputTokens = Math.min(maxOutputTokens, contextOutputAllowance, budgetOutputAllowance)
         const exposure = providerExposureFor(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
+        const repairExposure = input.reserveRepair ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure') : 0
+        const publicationTokens = safeUsageAddition(exposure.totalExposureTokens, repairExposure, 'Typed publication exposure')
+        if (preflight) {
+          preflightPlan = {
+            bounded: { chatPrompt: generatedPrompt, maxOutputTokens },
+            tokens: publicationTokens,
+            costMicros: agentProviderCostMicros(provider.pricing, 0, 0, publicationTokens),
+            synthesisFrame
+          }
+          throw preflightComplete
+        }
         if (sequence !== undefined) {
           const repairExposure = input.reserveRepair ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure') : 0
           const maximum = safeUsageAddition(exposure.totalExposureTokens, repairExposure, 'Typed publication exposure')
@@ -6248,6 +6310,8 @@ export class AxAgentEngine implements AgentEngine {
           undefined,
           { request: generationRequest, guard: createWikiSynthesisStreamGuard(sources, { maxOutputTokens }) }
         )
+        if (dispatched.performance !== undefined)
+          dispatched = { ...dispatched, performance: { ...dispatched.performance, synthesisFrame } }
         return {
           results: [
             {
@@ -6288,7 +6352,7 @@ export class AxAgentEngine implements AgentEngine {
         admittedAI,
         {
           userRequest: input.userRequest,
-          ...encodeWikiSynthesisSources(sources, sourceStructures),
+          ...encodedSources,
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
           repairFeedback: input.repairFeedback
@@ -6297,6 +6361,7 @@ export class AxAgentEngine implements AgentEngine {
       )
     } catch (error) {
       request.signal.throwIfAborted()
+      if (dispatchFailure === preflightComplete && preflightPlan !== undefined) return preflightPlan
       if (dispatchFailure !== undefined) throw dispatchFailure
       if (dispatched === undefined || (!(error instanceof AxGenerateError) && !(error instanceof AxAssertionError))) throw error
       return {
@@ -6976,20 +7041,25 @@ export class AxAgentEngine implements AgentEngine {
         turnTools: ProviderTools | null,
         system: ChatPromptMessage,
         maximumOutputTokens: number,
-        validationResults: EvidenceValidationCache
-      ): Promise<void> => {
+        validationResults: EvidenceValidationCache,
+        completeTypedContext = false
+      ): Promise<ReadonlyMap<string, CitationEvidence> | undefined> => {
         // Without a host freshness validator, only the current action's already
         // delivered result may be used. Never restore stored evidence, but do not
         // revoke an in-run direct read merely because restoration is unavailable.
         if (typeof validateObservation !== 'function') return
         let restored = false
         let restoredBytes = 0
-        let residentView = evidenceSnapshotForPrompt(citationRegistry, [system, ...conversation, ...activePrompt], trackedEvidenceMessages, excludedEvidenceIds)
+        // Typed restoration is an isolated authority snapshot, never ordinary
+        // provider transcript evidence. Its sources are delivered only by the
+        // subsequent real compact generation, after context admission.
+        const restorationPrompt = completeTypedContext ? [...activePrompt] : activePrompt
+        let residentView = evidenceSnapshotForPrompt(citationRegistry, [system, ...conversation, ...restorationPrompt], trackedEvidenceMessages, excludedEvidenceIds)
         const question = request.messages.at(-1)?.content ?? ''
         for (const [evidenceId, evidence] of citationRegistry) {
           if (excludedEvidenceIds.has(evidenceId)) continue
           const claims = restorationClaims.get(evidenceId) ?? []
-          if (evidence.section && claims.length === 0) continue
+          if (evidence.section && claims.length === 0 && !completeTypedContext) continue
           const alreadyResident = residentView.get(evidenceId)
           const representations = [...evidence.representations].sort(
             (left, right) => evidenceRepresentationPriority(left) - evidenceRepresentationPriority(right)
@@ -7012,9 +7082,9 @@ export class AxAgentEngine implements AgentEngine {
             if (availableUnits.length === 0) continue
             const scopedRepresentation = { ...representation, sourceUnits: availableUnits }
             const scopedEvidence = citationEvidenceWithRepresentation(evidence.citation, evidence.pageEvidenceId, scopedRepresentation, [scopedRepresentation])
-            const candidates: CitationSourceUnit[] = []
+            const candidates: CitationSourceUnit[] = completeTypedContext ? availableUnits.filter(unit => unit.complete) : []
             const candidateIds = new Set<string>()
-            for (const target of [...claims, question]) {
+            for (const target of completeTypedContext ? [] : [...claims, question]) {
               for (const unit of relevantSourceUnits(target, scopedEvidence)) {
                 if (candidateIds.has(unit.identity)) continue
                 candidateIds.add(unit.identity)
@@ -7030,16 +7100,18 @@ export class AxAgentEngine implements AgentEngine {
               )
                 continue
               if (!unit.complete) continue
-              const candidate = evidenceUnitContextMessage(evidence, representation, receipt, unit)
+              const candidate: ChatPromptMessage = completeTypedContext
+                ? { role: 'user', content: 'Canonical source authority retained for tool-free typed synthesis.' }
+                : evidenceUnitContextMessage(evidence, representation, receipt, unit)
               const unitBytes = Buffer.byteLength(String(candidate.content), 'utf8')
-              if (unitBytes > MAX_RESTORED_UNIT_BYTES || restoredBytes + unitBytes > MAX_RESTORED_CONTEXT_BYTES) continue
+              if (!completeTypedContext && (unitBytes > MAX_RESTORED_UNIT_BYTES || restoredBytes + unitBytes > MAX_RESTORED_CONTEXT_BYTES)) continue
               try {
-                boundedChatPrompt(provider, turnTools, system, conversation, [...activePrompt, candidate], maximumOutputTokens)
+                if (!completeTypedContext) boundedChatPrompt(provider, turnTools, system, conversation, [...activePrompt, candidate], maximumOutputTokens)
               } catch (error) {
                 if (isContextLimitFailure(error)) continue
                 throw error
               }
-              activePrompt.push(candidate)
+              restorationPrompt.push(candidate)
               rememberEvidenceMessage(
                 candidate,
                 representation.deliveries.find(delivery => delivery.actionCallId === receipt.actionCallId)?.providerCallId ?? receipt.actionCallId,
@@ -7052,10 +7124,10 @@ export class AxAgentEngine implements AgentEngine {
               )
               restored = true
               restoredBytes += unitBytes
-              if (++addedForEvidence >= 3) break
-              residentView = evidenceSnapshotForPrompt(
+              if (++addedForEvidence >= 3 && !completeTypedContext) break
+              if (!completeTypedContext) residentView = evidenceSnapshotForPrompt(
                 citationRegistry,
-                [system, ...conversation, ...activePrompt],
+                [system, ...conversation, ...restorationPrompt],
                 trackedEvidenceMessages,
                 excludedEvidenceIds
               )
@@ -7064,7 +7136,10 @@ export class AxAgentEngine implements AgentEngine {
           }
           if (!validRepresentationFound) excludedEvidenceIds.add(evidenceId)
         }
-        if (restored) activeBatchEnds.push(activePrompt.length)
+        if (restored && !completeTypedContext) activeBatchEnds.push(activePrompt.length)
+        return completeTypedContext
+          ? evidenceSnapshotForPrompt(citationRegistry, [system, ...conversation, ...restorationPrompt], trackedEvidenceMessages, excludedEvidenceIds)
+          : undefined
       }
       const captureSpecialistResult = async (
         content: string,
@@ -7365,6 +7440,8 @@ export class AxAgentEngine implements AgentEngine {
       let finalizationDraftDispatched = false
       let rootMetadataStripped = false
       let publicationCorrectionReserved = maxTurns > 1
+      const synthesisContextMeasurements = new Map<string, number>()
+      let initialPublicationLimit: 'quota' | 'tokens' | undefined
       if ((request.purpose ?? 'root') === 'root') {
         const reservePrompt = activePrompt
         try {
@@ -7405,11 +7482,10 @@ export class AxAgentEngine implements AgentEngine {
           finalizationExposureTokens = plan.tokens
           reservedFinalizationTokens = plan.tokens
         } catch (error) {
-          if (
-            isContextLimitFailure(error) ||
-            (error instanceof AgentRepositoryError && (error.code === 'AGENT_QUOTA_EXHAUSTED' || error.code === 'AGENT_TOKEN_BUDGET_LIMITED'))
-          )
+          if (error instanceof AgentRepositoryError && (error.code === 'AGENT_QUOTA_EXHAUSTED' || error.code === 'AGENT_TOKEN_BUDGET_LIMITED')) {
+            initialPublicationLimit = error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens'
             phase = 'synthesizing'
+          } else if (isContextLimitFailure(error)) phase = 'synthesizing'
           else throw error
         }
       }
@@ -7449,6 +7525,7 @@ export class AxAgentEngine implements AgentEngine {
             : { contextLimit: { reason: 'tool_result_capacity' as const, omittedActionCallIds: [...omittedActionCallIds] } })
         }
       }
+      if (initialPublicationLimit !== undefined) return await publishExecutionLimit(initialPublicationLimit)
       for (let turn = 0; turn < maxTurns; turn++) {
         let remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
         if (remainingTokens < 1) {
@@ -7497,8 +7574,15 @@ export class AxAgentEngine implements AgentEngine {
         const systemMessage = systemMessageFor(tools)
         const requestedMaxOutputTokens = Math.min(generationOutputCeiling(request, provider), remainingTokens)
         const promptValidationResults = turn === 0 ? initialValidationResults : new Map<string, Promise<boolean>>()
+        const typedFinalization = tools === null && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent'
         let bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number }
+        let typedEvidence: ReadonlyMap<string, CitationEvidence> | undefined
           try {
+            if (typedFinalization) {
+              await reauthorizeEvidencePrompt(promptValidationResults)
+              typedEvidence = await restoreEvidenceContext(null, systemMessage, requestedMaxOutputTokens, promptValidationResults, true)
+              bounded = { chatPrompt: [systemMessage, ...conversation, ...activePrompt], maxOutputTokens: Math.min(requestedMaxOutputTokens, finalizationMaxOutputTokens) }
+            } else {
             // First dispatch of a run: the previous run has finished responding and the user's turn is next,
             // so the relaxed turn-boundary threshold applies.
             await compactContext(turn + 1, tools, requestedMaxOutputTokens, false, turn === 0, 'all', promptValidationResults)
@@ -7506,11 +7590,13 @@ export class AxAgentEngine implements AgentEngine {
             await restoreEvidenceContext(tools, systemMessage, requestedMaxOutputTokens, promptValidationResults)
             remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
             bounded = boundedChatPrompt(provider, tools, systemMessage, conversation, activePrompt, requestedMaxOutputTokens)
+            }
           } catch (error) {
             if (error instanceof AgentExecutionFailure) throw error
             throw classifyAgentExecutionFailure(error, 'context_admission')
           }
           try {
+            if (!typedFinalization) {
             bounded = boundedAttemptWithinBudget(
               provider,
               tools,
@@ -7524,6 +7610,7 @@ export class AxAgentEngine implements AgentEngine {
               const exposure = providerExposureFor(provider, tools, bounded.chatPrompt, bounded.maxOutputTokens)
               if (exposure.totalExposureTokens > remainingTokens - reservedFinalizationTokens)
                 throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Collection would consume the publication allowance', 409)
+            }
             }
           } catch (error) {
             if (
@@ -7556,7 +7643,7 @@ export class AxAgentEngine implements AgentEngine {
             }
             throw error
           }
-          if (tools === null && (request.purpose ?? 'root') === 'root') {
+          if (tools === null && (request.purpose ?? 'root') === 'root' && !typedFinalization) {
             try {
               let plan: PublicationSequencePlan
               try {
@@ -7601,7 +7688,7 @@ export class AxAgentEngine implements AgentEngine {
             // #turn reconciles only its dispatched child; the unused correction
             // hold stays in this sequence until the next dispatch or finally.
           }
-        const dispatchEvidence = evidenceSnapshotForPrompt(citationRegistry, bounded.chatPrompt, trackedEvidenceMessages, excludedEvidenceIds)
+        const dispatchEvidence = typedEvidence ?? evidenceSnapshotForPrompt(citationRegistry, bounded.chatPrompt, trackedEvidenceMessages, excludedEvidenceIds)
         const deliveredAttributedLines = new Set<string>()
         const deliveredBrowserAttributions: BrowserAttribution[] = []
         for (const message of bounded.chatPrompt) {
@@ -7616,6 +7703,13 @@ export class AxAgentEngine implements AgentEngine {
         try {
           const maximumDispatchTokens = request.dispatchBudget === undefined ? undefined : remainingTokens
           if (tools === null && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
+            // Capacity-omitted reads cannot be repaired by paying for an empty
+            // synthesis frame. Retained admitted sources may still support a
+            // partial answer, but an empty authority snapshot ends acquisition.
+            if (executedOmittedCount() > 0 && ![...dispatchEvidence.values()].some(evidence =>
+              hasAuthoritativePageTitle(evidence) || evidence.sourceUnits.some(unit => unit.complete && unit.kind !== 'opaque')
+            ))
+              return await publishExecutionLimit('evidence')
             if (contextPlan.requestFacets === undefined && contextPlan.intent.length > 0)
               contextPlan.requestFacets = [{ start: 0, end: contextPlan.intent.length, quote: contextPlan.intent, coverage: 'source' }]
             synthesisProvider ??= await this.#factory.create(request.run.providerProfileVersionId, {
@@ -7628,11 +7722,11 @@ export class AxAgentEngine implements AgentEngine {
               ...deliveredAttributedLines,
               ...deliveredBrowserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))
             ]
-            result = await this.#synthesisTurn(
+            const synthesisResult = await this.#synthesisTurn(
               synthesisProvider,
               request,
               bounded.maxOutputTokens,
-              maximumDispatchTokens,
+              remainingTokens,
               dispatchEvidence,
               {
                 userRequest: contextPlan.intent,
@@ -7645,9 +7739,13 @@ export class AxAgentEngine implements AgentEngine {
                 },
                 assessableContent: content => assessableActionStatusContent(content, deliveredAttributedLines, deliveredBrowserAttributions),
                 reserveRepair: rejectedDraftCount === 0 && turn + 1 < maxTurns,
+                contextMeasurements: synthesisContextMeasurements,
               },
-              sequence
+              sequence,
+              sink
             )
+            if (!('content' in synthesisResult)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Synthesis returned a preflight instead of an answer', 500)
+            result = synthesisResult
           } else {
             result = await this.#turn(
               provider,
@@ -8166,6 +8264,7 @@ export class AxAgentEngine implements AgentEngine {
         }
         let toolBudgetExhausted = false
         let contextLimitedThisTurn = false
+        let deliveredSourceReadThisTurn = false
         const capacityMessagesFor = (fromIndex: number): readonly ChatPromptMessage[] =>
           result.calls.slice(fromIndex).map(nextCall => {
             const nextActionCallId = actionCallIdFor(request, nextCall.id)
@@ -8176,8 +8275,44 @@ export class AxAgentEngine implements AgentEngine {
           fromIndex: number,
           candidateTools: ProviderTools,
           candidateSystem: ChatPromptMessage,
-          sourceRead = false
+          sourceRead?: { readonly actionName: PageReadActionName; readonly actionCallId: string; readonly providerCallId: string; readonly output: unknown; readonly providerOutput: unknown; readonly expectedVersionId: number | null | undefined }
         ): Promise<boolean> => {
+          if (sourceRead !== undefined && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
+            // A portable candidate must fit the actual typed frame before it
+            // becomes authority. Native counting is deferred to the completed
+            // batch so cancellation and count failure stay outside tool errors.
+            if (provider.countContextTokens !== undefined) return true
+            const validationResults: EvidenceValidationCache = new Map()
+            await reauthorizeEvidencePrompt(validationResults)
+            const retained = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, validationResults, true) ??
+              evidenceSnapshotForPrompt(citationRegistry, [systemMessageFor(null), ...conversation, ...activePrompt], trackedEvidenceMessages, excludedEvidenceIds)
+            const prospectiveRegistry = new Map(citationRegistry)
+            collectPageEvidence(sourceRead.actionName, sourceRead.actionCallId, sourceRead.output, prospectiveRegistry, [], sourceRead.expectedVersionId, sourceRead.providerCallId)
+            rememberEvidenceMessage(candidate, sourceRead.providerCallId, sourceRead.actionCallId, sourceRead.actionName, sourceRead.providerOutput, sourceRead.output,
+              unavailableEvidenceContext())
+            const candidateEvidence = evidenceSnapshotForPrompt(prospectiveRegistry, [candidate], trackedEvidenceMessages, excludedEvidenceIds)
+            const prospectiveEvidence = new Map(retained)
+            for (const [evidenceId, evidence] of candidateEvidence) prospectiveEvidence.set(evidenceId, evidence)
+            try {
+              const plan = await this.#synthesisTurn(provider, request, finalizationMaxOutputTokens, undefined, prospectiveEvidence, {
+                userRequest: contextPlan.intent,
+                requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
+                observations: activePrompt.flatMap(message => [
+                  ...(trackedAttributedMessages.get(message) ?? []),
+                  ...[...(trackedBrowserMessages.get(message)?.quotedUnits ?? [])].map(unit => `${trackedBrowserMessages.get(message)!.prefix}${unit}`)
+                ]),
+                repairFeedback,
+                coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
+                assessableContent: content => content,
+                reserveRepair: false
+              }, undefined, undefined, true)
+              if (!('bounded' in plan)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Candidate admission unexpectedly dispatched', 500)
+              return true
+            } catch (error) {
+              if (isContextLimitFailure(error)) return false
+              throw error
+            }
+          }
           const additional = [candidate, ...capacityMessagesFor(fromIndex), { role: 'user' as const, content: CAPACITY_COVERAGE_RESERVE }]
           if ((request.purpose ?? 'root') === 'root') {
             try {
@@ -8677,8 +8812,12 @@ export class AxAgentEngine implements AgentEngine {
             const delivered =
               cached?.delivered === false
                 ? false
-                : (await fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem, isPageReadActionName(resolved.name))) &&
-                  (finalizationSequence !== undefined ||
+                : (await fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem, isPageReadActionName(resolved.name) ? {
+                    actionName: resolved.name, actionCallId: cached?.actionCallId ?? actionCallId, providerCallId: call.id,
+                    output, providerOutput, expectedVersionId: requestedVersionIdForAction(resolved.name, input)
+                  } : undefined)) &&
+                  (((request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent' && isPageReadActionName(resolved.name)) ||
+                    finalizationSequence !== undefined ||
                     fitsProviderResult(provider, prospectiveTools, prospectiveSystem, conversation, activePrompt, candidate, requestedMaxOutputTokens))
             if (pageReadKey !== null && cached === undefined && typeof validateObservation === 'function')
               pageReadCache.set(pageReadKey, { actionCallId, output, delivered })
@@ -8686,6 +8825,7 @@ export class AxAgentEngine implements AgentEngine {
               delivered && cached === undefined
                 ? collectEvidence(resolved.name, actionCallId, output, requestedVersionIdForAction(resolved.name, input), call.id)
                 : { recent: null, conflictingEvidenceIds: [] }
+            if (delivered && isPageReadActionName(resolved.name)) deliveredSourceReadThisTurn = true
             const deliveredOutput = delivered
               ? providerOutputForEvidenceCollection(resolved.name, providerOutput, evidenceCollection.conflictingEvidenceIds)
               : capacityResult(actionCallId, resolved.name)
@@ -8794,6 +8934,60 @@ export class AxAgentEngine implements AgentEngine {
           }
         }
         activeBatchEnds.push(activePrompt.length)
+        if (deliveredSourceReadThisTurn && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
+          // Capture Ax's actual schema and generated messages before paying for
+          // another collector acknowledgement. No evidence is pruned or clipped.
+          const preflightValidationResults: EvidenceValidationCache = new Map()
+          await reauthorizeEvidencePrompt(preflightValidationResults)
+          const preflightEvidence = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, preflightValidationResults, true) ??
+            evidenceSnapshotForPrompt(citationRegistry, [systemMessageFor(null), ...conversation, ...activePrompt], trackedEvidenceMessages, excludedEvidenceIds)
+          const attributedLines = new Set<string>()
+          const browserAttributions: BrowserAttribution[] = []
+          for (const message of activePrompt) {
+            for (const line of trackedAttributedMessages.get(message) ?? []) attributedLines.add(line)
+            const attribution = trackedBrowserMessages.get(message)
+            if (attribution !== undefined) browserAttributions.push(attribution)
+          }
+          synthesisProvider ??= await this.#factory.create(request.run.providerProfileVersionId, {
+            purpose: 'agent',
+            ...(provider.transportKind === WIKI_SYNTHESIS_CALIBRATION.transportKind && provider.model === WIKI_SYNTHESIS_CALIBRATION.model
+              ? { reasoningEffort: WIKI_SYNTHESIS_CALIBRATION.reasoningEffort }
+              : {})
+          })
+          try {
+            const remaining = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
+            const plan = await this.#synthesisTurn(synthesisProvider, request, finalizationMaxOutputTokens, remaining, preflightEvidence, {
+              userRequest: contextPlan.intent,
+              requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
+              observations: [...attributedLines, ...browserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))],
+              repairFeedback,
+              coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
+              assessableContent: content => assessableActionStatusContent(content, attributedLines, browserAttributions),
+              reserveRepair: false,
+              contextMeasurements: synthesisContextMeasurements
+            }, undefined, sink, true)
+            if (!('bounded' in plan)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Synthesis preflight unexpectedly dispatched', 500)
+            try {
+              await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
+            } catch (error) {
+              if (plan.synthesisFrame !== undefined && error instanceof AgentRepositoryError &&
+                (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED'))
+                await sink.event('evidence.provenance', {
+                  purpose: 'context_admission',
+                  stage: 'synthesis_frame_admission',
+                  synthesisFrame: { ...plan.synthesisFrame, reason: error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota_allowance' : 'sequence_allowance' }
+                })
+              throw error
+            }
+            reservedFinalizationTokens = finalizationExposureTokens = plan.tokens
+            finalizationMaxOutputTokens = plan.bounded.maxOutputTokens
+          } catch (error) {
+            if ((error instanceof AgentExecutionFailure || error instanceof AgentRepositoryError) &&
+              (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED'))
+              return await publishExecutionLimit(error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens')
+            throw classifyAgentExecutionFailure(error, 'context_admission')
+          }
+        }
         if (phase === 'collecting' && !contextLimitedThisTurn && !toolBudgetExhausted && turn + 1 < maxTurns) {
           let nextTurnFits = true
           const nextTurn = activeDiscovery?.previewNextTurn() ?? null

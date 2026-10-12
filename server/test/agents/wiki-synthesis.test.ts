@@ -832,7 +832,7 @@ describe('Wiki source-bound typed synthesis', () => {
   })
 })
 
-describe('Wiki synthesis readable complete source transport', () => {
+describe('Wiki synthesis compact complete source transport', () => {
   const context = 'External publication only; internal drafts are excluded.'
   const condition = '20 minutes only after safe chilling below 5 °C for at least 2 hours; this estimate excludes accompaniments.'
   const physicalUnit = 'physical:complete-owned-record:unit:7'
@@ -931,6 +931,128 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     const supplied = [repeated, sibling, nullable]
     const transported = request(supplied, [])
     expect(synthesisSourcesFromRequest(transported)).toEqual(supplied.map(({ unitId, ...source }) => ({ ...source, sourceRef: wikiSynthesisSourceRef({ ...source, unitId }) })))
+  })
+
+  it('keeps opaque JSON bytes and unresolved lookalike packets unchanged rather than coercing them through parsed values', () => {
+    const packets = [
+      '{"integer":9007199254740993, "negativeZero":-0, "escaped":"\\u51b7\\u5374", "nullable":null}\r\n',
+      'null',
+      '["context",null,[],[],["physical","missing-closure"]]',
+      '["context",null,[],[],["physical","s4"],"extra authored data"]'
+    ]
+    const supplied = packets.map((packet, index) => ({
+      ...opaque, unitId: `opaque:${index}`, packet, literalStatement: null
+    }))
+    const restored = synthesisSourcesFromRequest(request(supplied))
+    expect(restored.map(row => row.packet)).toEqual(packets)
+    expect(restored.map(row => row.literalStatement)).toEqual(packets.map(() => null))
+  })
+
+  it('retains whole entries and every original alias after adversarial long-prefix searches exhaust substring optimization', () => {
+    const prefix = 'a'.repeat(32_768)
+    const structures: WikiSynthesisStructure[] = []
+    const supplied: WikiSynthesisSource[] = []
+    const records: string[] = []
+    for (let index = 0; index < 48; index++) {
+      const record = `${prefix}|${String(index).padStart(3, '0')}| 🥣 e\u0301\r\n[guide](/safe#冷却)${'z'.repeat(128)}\n`
+      records.push(record)
+      structures.push(
+        { id: `prefix:dependency:${index}`, kind: 'dependency', payload: { text: record } },
+        { id: `prefix:closure:${index}`, kind: 'closure', payload: [null, [], [], [], [`prefix:dependency:${index}`]] }
+      )
+      for (let alias = 0; alias < 2; alias++) {
+        supplied.push({
+          ...source, evidenceId: `page:prefix:alias:${alias}`, unitId: `unit:prefix:${index}`,
+          context: '  Complete authored scope 🥣 e\u0301\r\n', text: record.slice(0, -1),
+          literalStatement: alias === 0 ? record : null,
+          packet: JSON.stringify([null, null, [], [], [`physical:prefix:${index}`, `prefix:closure:${index}`]])
+        })
+      }
+    }
+    const opaquePacket = '{"integer":9007199254740993, "negativeZero":-0, "escaped":"\\u51b7\\u5374", "tail":"END OF COMPLETE FRAME"}\r\n'
+    supplied.push({ ...opaque, packet: opaquePacket })
+    const encoded = encodeWikiSynthesisSources(supplied, structures)
+    const transported = request(supplied, structures)
+    const restored = synthesisSourcesFromRequest(transported)
+    const byRef = new Map(restored.map(row => [row.sourceRef, row]))
+    expect(restored).toHaveLength(supplied.length)
+    expect(byRef.size).toBe(supplied.length)
+    for (const { packet: _packet, unitId, ...native } of supplied) {
+      const sourceRef = wikiSynthesisSourceRef({ ...native, unitId })
+      const { packet: _restoredPacket, ...row } = byRef.get(sourceRef)!
+      expect(row).toEqual({ ...native, sourceRef })
+    }
+    for (let index = 0; index < records.length; index++) {
+      for (let alias = 0; alias < 2; alias++) {
+        expect(synthesisAuthoredContentFromRequest(transported, supplied[index * 2 + alias]!)).toEqual([records[index]])
+      }
+    }
+    expect(byRef.get(wikiSynthesisSourceRef(supplied.at(-1)!))!.packet).toBe(opaquePacket)
+    const pool = JSON.parse(encoded.sourceStructures).texts as string[]
+    // Equal-length authored peers cannot share distinct text. Retain each once,
+    // while every alias still resolves to that exact complete original record.
+    for (const record of records) expect(pool.filter(text => text === record)).toHaveLength(1)
+    // A late selected field fits its authored parent, but fallback preserves it
+    // as a whole entry rather than continuing unbounded long-prefix searches.
+    expect(pool).toContain(records.at(-1)!.slice(0, -1))
+    expect(pool.filter(text => text === records.at(-1)!.slice(0, -1))).toHaveLength(1)
+    expect(Buffer.byteLength(encoded.sourceStructures, 'utf8')).toBeGreaterThan(prefix.length * records.length)
+  })
+
+  it('shares overlapping complete authored spans, quotations and aliases while preserving every binding within a conservative context window', async () => {
+    const structures: WikiSynthesisStructure[] = []
+    const supplied: WikiSynthesisSource[] = []
+    const records: string[] = []
+    const authored: string[][] = []
+    for (let index = 0; index < 12; index++) {
+      const heading = `# Record ${index}: Illustrative and untested\n`
+      const line = `Item: **Aurora ${index} 🥣 e\u0301** | Prerequisite: Safely chill below 5 °C for at least 2 hours | Guide: [safety][safe${index}]\n`
+      const body = line.repeat(32)
+      const definition = `[safe${index}]: /safe?record=${index}#冷却\n`
+      const record = `${heading}${body}${definition}`
+      records.push(record)
+      authored.push([record, body, heading, definition])
+      const references = authored[index]!.map((text, dependency) => {
+        const id = `dependency:${index}:${dependency}`
+        structures.push({ id, kind: 'dependency', payload: { text } })
+        return id
+      })
+      structures.push({ id: `closure:${index}`, kind: 'closure', payload: [null, [], [], [], references] })
+      for (let alias = 0; alias < 5; alias++) {
+        supplied.push({
+          ...source, evidenceId: `page:capacity:alias:${alias}`, sourceRevision: alias === 4 ? 'revision:8' : source.sourceRevision,
+          unitId: `unit:record:${index}`, context: heading, text: line,
+          literalStatement: body, packet: JSON.stringify([null, heading, [], [heading], [`physical:${index}`, `closure:${index}`]])
+        })
+      }
+    }
+    const encoded = encodeWikiSynthesisSources(supplied, structures)
+    const transported = request(supplied, structures)
+    const restored = synthesisSourcesFromRequest(transported)
+    const restoredByRef = new Map(restored.map(({ packet: _packet, ...row }) => [row.sourceRef, row]))
+    expect(restoredByRef.size).toBe(supplied.length)
+    for (const { packet: _packet, unitId, ...row } of supplied) {
+      const sourceRef = wikiSynthesisSourceRef({ ...row, unitId })
+      expect(restoredByRef.get(sourceRef)).toEqual({ ...row, sourceRef })
+    }
+    for (let index = 0; index < supplied.length; index++) {
+      expect(synthesisAuthoredContentFromRequest(transported, supplied[index]!)).toEqual(authored[Math.floor(index / 5)])
+    }
+    const unsharedBytes = Buffer.byteLength(records.join(''), 'utf8')
+    expect(Buffer.byteLength(JSON.stringify(encoded), 'utf8')).toBeLessThan(unsharedBytes + 12_000)
+    const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({
+      results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [] }), finishReason: 'stop' as const }]
+    }))
+    const service = new AxMockAIService<string>({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+      chatResponse: chat
+    })
+    await createWikiSynthesisProgram(supplied).forward(service, {
+      ...input, ...encoded, requestFacets: []
+    }, { structuredOutputMode: 'native' })
+    expect(chat).toHaveBeenCalledTimes(1)
+    // Include a conservative host-prefix allowance as well as the requested output.
+    expect(Buffer.byteLength(JSON.stringify(chat.mock.calls[0]![0]), 'utf8') + 2_500 + 8_192).toBeLessThan(128_000)
   })
 })
 

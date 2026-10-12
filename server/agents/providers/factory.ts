@@ -454,6 +454,8 @@ export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputToke
 
 export interface AgentProviderService {
   readonly service: AxAIService
+  /** Unpaid native input preflight; does not represent billable usage. */
+  readonly countContextTokens?: (request: Readonly<AxChatRequest>, signal: AbortSignal) => Promise<number>
   readonly capabilities: AgentProviderCapabilities
   readonly mediaInputs: AgentMediaInputs
   /** Actual configured Ax model facts, resolved eagerly before attachment admission. */
@@ -759,8 +761,10 @@ const geminiGenerateEndpointAllowed = (base: URL, url: URL, init?: RequestInit, 
   const prefix = `${base.pathname.replace(/\/$/u, '')}/models/`
   if (!url.pathname.startsWith(prefix)) return false
   const relative = url.pathname.slice(prefix.length)
-  const match = /^([a-z0-9][a-z0-9._-]{0,254}):(generateContent|streamGenerateContent)$/u.exec(relative)
+  const match = /^([a-z0-9][a-z0-9._-]{0,254}):(generateContent|streamGenerateContent|countTokens)$/u.exec(relative)
   if (!match || (model !== undefined && match[1] !== model)) return false
+  if (match[2] === 'countTokens')
+    return model !== undefined && exactProviderBase(base, 'https://generativelanguage.googleapis.com', '/v1beta') && !url.search
   return match[2] === 'generateContent' ? !url.search : url.search === '?alt=sse'
 }
 
@@ -1145,7 +1149,7 @@ const requestOutputTokens = (request: Readonly<AxChatRequest<unknown>>, ceiling:
   return Math.min(requested, ceiling)
 }
 
-type ProviderChatService = AxAIService & Pick<AgentProviderService, 'nativeMediaCapabilities'>
+type ProviderChatService = AxAIService & Pick<AgentProviderService, 'nativeMediaCapabilities' | 'countContextTokens'>
 
 const createRequestScopedService = (
   capabilities: AgentProviderCapabilities,
@@ -1216,6 +1220,34 @@ const createRequestScopedService = (
     get nativeMediaCapabilities() {
       return nativeMediaCapabilities
     },
+    ...(featureService.countContextTokens ? {
+      countContextTokens: async (request: Readonly<AxChatRequest>, signal: AbortSignal): Promise<number> => {
+        const outputTokens = requestOutputTokens(request, ceiling)
+        const attached = readAgentProviderResourceLimits(request)
+        const limits = attached
+          ? { ...attached, maxOutputTokens: Math.min(attached.maxOutputTokens, outputTokens) }
+          : deriveAgentProviderResourceLimits(outputTokens)
+        let applicationError: AgentRepositoryError | undefined
+        const controller = new AbortController()
+        const defaultsSnapshot = featureService.getOptions()
+        const service = build({
+          limits,
+          onLimit: error => controller.abort(error),
+          onError: error => { applicationError ??= error }
+        })
+        try {
+          if (!service.countContextTokens) throw new AgentRepositoryError('UNSUPPORTED_PROVIDER_OPERATION', 'Native token counting is unavailable', 400)
+          service.setOptions(safeOptions(defaultsSnapshot, service.getOptions().fetch))
+          return await service.countContextTokens({
+            ...request,
+            model,
+            modelConfig: { ...request.modelConfig, maxTokens: limits.maxOutputTokens }
+          }, AbortSignal.any([signal, controller.signal, ...(defaultsSnapshot.abortSignal ? [defaultsSnapshot.abortSignal] : [])]))
+        } catch (error) {
+          throw applicationError ?? error
+        }
+      }
+    } : {}),
     chat: async (request, options) => {
       const controller = new AbortController()
       let applicationError: AgentRepositoryError | undefined
@@ -1645,6 +1677,7 @@ export class AgentProviderFactory {
     }
     return {
       service,
+      ...(service.countContextTokens ? { countContextTokens: service.countContextTokens } : {}),
       capabilities,
       mediaInputs: agentProviderMediaInputs(row.transportKind, adapterConfig),
       get nativeMediaCapabilities() {
