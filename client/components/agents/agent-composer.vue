@@ -142,7 +142,6 @@
         >{{ dictationTimerLabel }}</span>
       </div>
     </div>
-    <p :id="composerIds.keyboardHelp" class="agent-composer__keyboard-help" :class="{ 'sr-only': coarseInput }">{{ keyboardHelp }}</p>
 
     <p v-if="composerNotice" class="agent-composer__notice" role="alert">{{ composerNotice }}</p>
 
@@ -767,7 +766,6 @@ const composerIds = {
   commandPartial: `${composerId}-command-partial`,
   commandEmpty: `${composerId}-command-empty`,
   status: `${composerId}-status`,
-  keyboardHelp: `${composerId}-keyboard-help`,
   attachmentReason: `${composerId}-attachment-reason`,
 } as const
 const commandOptionId = (versionId: string): string => `${composerIds.commandResults}-${versionId}`
@@ -892,11 +890,6 @@ const handleFoldResize = (): void => {
 const coarseInput = ref(false)
 let coarseInputQuery: MediaQueryList | null = null
 const updateCoarseInput = (): void => { coarseInput.value = coarseInputQuery?.matches ?? false }
-const keyboardHelp = computed(() => t(coarseInput.value
-  ? 'common:agentComposer.keyboardHelpTouch'
-  : props.draftEditable && (props.disabled || sendInProgress.value || props.canStop)
-    ? 'common:agentComposer.keyboardHelpBusy'
-    : 'common:agentComposer.keyboardHelpDesktop'))
 const composerInputLabel = computed(() =>
   goalMode.value
     ? t('common:agentComposer.defineOutcomeWikiAgent')
@@ -906,8 +899,7 @@ const composerInputLabel = computed(() =>
 )
 const composerInputDescriptionIds = computed(() => [
   props.externalDescriptionId?.trim(),
-  composerIds.status,
-  composerIds.keyboardHelp
+  composerIds.status
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
   if (goalMode.value) return t('common:agentComposer.describeBoundedOutcomeWiki')
@@ -1459,13 +1451,11 @@ onBeforeUnmount(() => {
 .agent-composer__media-attachments :deep(.v-btn) { flex-shrink: 0; }
 .agent-composer__uploading,
 .agent-composer__attachment-count,
-.agent-composer__keyboard-help,
 .agent-composer__command-limit {
   color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
 }
 .agent-composer__attachment-count { margin-inline-start: var(--wiki-space-1); }
-.agent-composer__keyboard-help { margin: var(--wiki-space-1) 0; }
 .agent-composer__command-limit { margin: var(--wiki-space-2) var(--wiki-space-3); }
 .agent-composer__attach-wrapper { display: inline-flex; }
 
@@ -1916,7 +1906,6 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-.agent-composer__keyboard-help.sr-only,
 .agent-composer__live-status,
 .agent-composer__command-status {
   position: absolute;

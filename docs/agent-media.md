@@ -38,6 +38,8 @@ Generation and model input are separate authorities:
 - Admission pins immutable media version IDs into the canonical admission/queued event alongside the LLM binding. Goals and durable continuations retain their authoritative bindings. Current account access, grants, enabled state, current version and credential readiness are rechecked after guarded DNS resolution, immediately before credential-bearing HTTP dispatch. A changed binding fails closed; it does not silently substitute another model or retry paid generation. This protects the host dispatch boundary, not instantaneous cancellation of an already-dispatched remote request.
 - Ordinary run generation controls restrict offered tools. An explicit direct media response uses its matching admitted operation. Planners and child inference do not acquire root generation authority.
 
+In the chat composer, **Images** is selected by default only when image generation is supported for the current conversation; users can deselect it. Other generation choices remain explicit. Redundant image-reference and media-readiness helper notices are omitted; capability controls and actionable errors still describe unavailable operations.
+
 ### Implemented generation APIs
 
 | API | Operation | Reference input | Configuration boundary |

@@ -28,6 +28,17 @@
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
       :tabindex="panelMode === 'modal' ? -1 : undefined"
     >
+      <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
+        <v-btn
+          prepend-icon="mdi-brain"
+          variant="text"
+          :aria-label="$t('common:agentWorkspace.memory')"
+          :aria-expanded="memoryOpen"
+          aria-controls="agent-memory-panel"
+          :aria-disabled="memoryMutationBusy ? 'true' : undefined"
+          @click="toggleMemory"
+        >{{ $t('common:agentWorkspace.memory') }}</v-btn>
+      </div>
       <AgentHistoryPanel
         :heading-id="historyHeadingId"
         :description-id="historyDescriptionId"
@@ -125,6 +136,7 @@
             </template>
             <v-list density="compact">
               <v-list-item
+                v-if="!historyOpen && !memoryOpen"
                 class="inline-agent__panel-menu-item inline-agent__panel-menu-item--compact"
                 link
                 prepend-icon="mdi-brain"
@@ -424,6 +436,7 @@
                   @focusin="handleComposerFocusIn"
                   @focusout="handleComposerFocusOut"
                   @keydown="handleComposerFocusIn"
+                  @pointerdown="handleComposerFocusIn"
                 >
                   <div class="inline-agent__composer-inner">
                     <p
@@ -520,6 +533,22 @@
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
       :tabindex="panelMode === 'modal' ? -1 : undefined"
     >
+      <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
+        <v-tooltip location="bottom" :text="historyToggleBlocked ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.history')">
+          <template #activator="{ props: tooltipProps }">
+            <v-btn
+              v-bind="tooltipProps"
+              prepend-icon="mdi-history"
+              variant="text"
+              :aria-label="$t('common:agentWorkspace.history')"
+              :aria-expanded="historyOpen"
+              aria-controls="agent-history-panel"
+              :aria-disabled="historyToggleBlocked ? 'true' : undefined"
+              @click="toggleHistory"
+            >{{ $t('common:agentWorkspace.history') }}</v-btn>
+          </template>
+        </v-tooltip>
+      </div>
       <AgentMemoryManager
         :model-value="memoryOpen"
         :csrf-token="csrfToken"
@@ -1332,10 +1361,13 @@ const closeMemory = (): void => {
 }
 const updateMemoryOpen = (open: boolean): void => {
   if (open && (connectionBlocked.value || admissionBlocked.value)) return
-  if (open) memoryOpen.value = true
-  else closeMemory()
+  if (open) {
+    if (memoryMutationBusy.value) return
+    historyOpen.value = false
+    memoryOpen.value = true
+  } else closeMemory()
 }
-const historyToggleBlocked = computed(() => memoryMutationBusy.value && memoryOpen.value && panelMode.value !== 'wide')
+const historyToggleBlocked = computed(() => memoryMutationBusy.value && memoryOpen.value)
 const requestClose = (): void => {
   if (memoryMutationBusy.value) return
   emit('close')
@@ -1349,7 +1381,7 @@ const toggleHistory = (): void => {
   }
   if (!networkActionAllowed()) return
   historyOpen.value = true
-  if (panelMode.value !== 'wide') memoryOpen.value = false
+  memoryOpen.value = false
 }
 const toggleMemory = (): void => {
   if (memoryMutationBusy.value) return
@@ -1360,7 +1392,7 @@ const toggleMemory = (): void => {
   }
   if (!networkActionAllowed()) return
   memoryOpen.value = true
-  if (panelMode.value !== 'wide') historyOpen.value = false
+  historyOpen.value = false
 }
 const reconcilePanelMode = (): void => {
   const nextMode = window.matchMedia('(min-width: 1760px)').matches
@@ -1368,21 +1400,6 @@ const reconcilePanelMode = (): void => {
     : window.matchMedia('(min-width: 1024px)').matches
       ? 'docked'
       : 'modal'
-  if (panelMode.value === 'wide' && nextMode !== 'wide' && historyOpen.value && memoryOpen.value) {
-    if (memoryMutationBusy.value) {
-      historyOpen.value = false
-      panelMode.value = nextMode
-      return
-    }
-    const activeElement = document.activeElement
-    const focusedPanel = memoryPanel.value?.contains(activeElement)
-      ? 'memory'
-      : historyPanel.value?.contains(activeElement)
-        ? 'history'
-        : null
-    if (focusedPanel === 'memory') historyOpen.value = false
-    else memoryOpen.value = false
-  }
   panelMode.value = nextMode
 }
 const closePanels = (): void => {
@@ -1901,8 +1918,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   -webkit-backdrop-filter: blur(36px) saturate(160%);
   backdrop-filter: blur(36px) saturate(160%);
 }
-/* Conversations panel open: the identity block slides flush against the panel. */
-.inline-agent--history .inline-agent__toolbar {
+/* Either left-side panel brings the remaining swap toggle flush to the panel. */
+.inline-agent--history .inline-agent__toolbar,
+.inline-agent--memory .inline-agent__toolbar {
   padding-inline-start: 0;
 }
 .inline-agent__toolbar :deep(.v-toolbar__content) {
@@ -2008,9 +2026,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   opacity: .6;
 }
 
-/* Phones keep Memory in the More chat actions menu; wider layouts show the toggle. */
+/* Phones keep Memory in More when closed, but expose it beside an open History panel. */
 @media (max-width: 639.98px) {
-  .inline-agent__memory-toggle { display: none !important; }
+  .inline-agent:not(.inline-agent--history) .inline-agent__memory-toggle { display: none !important; }
 }
 @media (min-width: 640px) {
   .inline-agent__panel-menu-item--compact { display: none !important; }
@@ -2027,16 +2045,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     border-inline-end-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
-/* With the Conversations panel open the History toggle collapses so the
-   avatar and conversation name slide left against the panel; closing the
-   panel lets the toggle slide back in. The button stays mounted so focus
-   restoration keeps working (visibility, not display, hides it). */
-.inline-agent--history .inline-agent__mobile-navigation {
+/* Hide only the active panel's toggle; the other remains available for swapping.
+   Both buttons stay mounted so closing restores focus to the visible trigger. */
+.inline-agent--history .inline-agent__mobile-navigation,
+.inline-agent--memory .inline-agent__mobile-navigation {
   margin-inline-end: var(--wiki-space-3);
   padding-inline-end: 0;
 }
 
-.inline-agent--history .inline-agent__history-toggle {
+.inline-agent--history .inline-agent__history-toggle,
+.inline-agent--memory .inline-agent__memory-toggle {
   width: 0;
   min-width: 0 !important;
   padding-inline: 0 !important;
@@ -2045,7 +2063,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   pointer-events: none;
 }
 
-.inline-agent__history-toggle {
+.inline-agent__history-toggle,
+.inline-agent__memory-toggle {
   transition:
     width var(--wiki-motion-fast) var(--wiki-motion-ease),
     min-width var(--wiki-motion-fast) var(--wiki-motion-ease),
@@ -2668,6 +2687,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border-top: 0;
   background: transparent;
   box-shadow: none;
+  opacity: 1;
+  transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) {
+  opacity: .8;
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
   border-color: var(--wiki-surface-border-strong);
@@ -2705,11 +2729,48 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__side {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   overflow: hidden;
   border-radius: var(--wiki-panel-radius);
   outline: none;
   background: var(--wiki-surface-raised);
+}
+
+.inline-agent__side--history,
+.inline-agent--memory .inline-agent__side--memory {
+  animation: agentPanelIn var(--wiki-motion-slow) var(--wiki-motion-ease);
+}
+
+@keyframes agentPanelIn {
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.inline-agent__panel-navigation {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: var(--wiki-chrome-height, 3.25rem);
+  align-items: center;
+  padding-inline: var(--wiki-space-2);
+  border-bottom: 1px solid var(--wiki-surface-border);
+}
+
+.inline-agent__panel-navigation [aria-disabled='true'] {
+  opacity: .6;
+}
+
+.inline-agent__side > :deep(.agent-history),
+.inline-agent__side > :deep(.agent-memory) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .inline-agent__side:focus-visible {
@@ -2749,7 +2810,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent[data-panel-mode="docked"].inline-agent--memory {
-  grid-template-columns: minmax(0, 1fr) 22rem;
+  grid-template-columns: 22rem minmax(0, 1fr);
 }
 
 .inline-agent[data-panel-mode="wide"].inline-agent--history {
@@ -2757,12 +2818,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent[data-panel-mode="wide"].inline-agent--memory {
-  grid-template-columns: minmax(0, 1fr) 22rem;
+  grid-template-columns: 22rem minmax(0, 1fr);
 }
 
-.inline-agent[data-panel-mode="wide"].inline-agent--history.inline-agent--memory {
-  grid-template-columns: 20rem minmax(0, 1fr) 22rem;
-}
 
 .inline-agent[data-panel-mode="docked"] .inline-agent__card,
 .inline-agent[data-panel-mode="wide"] .inline-agent__card {
@@ -2771,13 +2829,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent[data-panel-mode="docked"].inline-agent--history .inline-agent__card,
-.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__card {
+.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__card,
+.inline-agent[data-panel-mode="docked"].inline-agent--memory .inline-agent__card,
+.inline-agent[data-panel-mode="wide"].inline-agent--memory .inline-agent__card {
   grid-column: 2;
 }
 
-.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__side--memory {
-  grid-column: 3;
-}
 
 .inline-agent[data-panel-mode="docked"] .inline-agent__side,
 .inline-agent[data-panel-mode="wide"] .inline-agent__side {
@@ -2799,8 +2856,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent[data-panel-mode="docked"] .inline-agent__side--memory,
 .inline-agent[data-panel-mode="wide"] .inline-agent__side--memory {
-  grid-column: 2;
-  border-inline-start: 1px solid var(--wiki-surface-border);
+  grid-column: 1;
+  border-inline-end: 1px solid var(--wiki-surface-border);
 }
 
 .inline-agent[data-panel-mode="docked"] .inline-agent__side :deep(.agent-history),
@@ -2841,9 +2898,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent[data-panel-mode="modal"] .inline-agent__side--memory {
-  inset-inline-start: auto;
-  inset-inline-end: 0;
-  justify-self: end;
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  justify-self: start;
 }
 
 .inline-agent[data-panel-mode="modal"] .inline-agent__scrim {
@@ -3150,6 +3207,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__loading-mark {
+    animation: none;
+  }
+  .inline-agent__side {
     animation: none;
   }
   .inline-agent__starter,

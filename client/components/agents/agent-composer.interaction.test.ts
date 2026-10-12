@@ -958,29 +958,6 @@ describe('Agent composer instance accessibility', () => {
     expect(new Set(descriptionIds).size).toBe(descriptionIds.length)
   })
 
-  it('keeps touch keyboard guidance described without taking visible editor space', async () => {
-    const mounted = mountComposer({ initialDraft: 'next question' })
-    const bindings = lastBindings as unknown as { coarseInput: Ref<boolean> }
-    bindings.coarseInput.value = true
-    await Vue.nextTick()
-    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
-    const help = mounted.root.querySelector<HTMLElement>('.agent-composer__keyboard-help')
-    if (!textarea || !help) throw new Error('Composer input guidance did not render')
-    expect(textarea.getAttribute('aria-describedby')?.split(/\s+/)).toContain(help.id)
-    expect(help.textContent).toBe(translateEnglish('common:agentComposer.keyboardHelpTouch'))
-    const enter = new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
-    textarea.dispatchEvent(enter)
-    expect(enter.defaultPrevented).toBe(false)
-    expect(mounted.sent).toEqual([])
-    expect(browserWindow.getComputedStyle(help).position).toBe('absolute')
-    expect(browserWindow.getComputedStyle(help).height).toBe('1px')
-    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
-    await Vue.nextTick()
-    expect(mounted.sent.map(message => message.content)).toEqual(['next question'])
-    bindings.coarseInput.value = false
-    await Vue.nextTick()
-    expect(browserWindow.getComputedStyle(help).position).not.toBe('absolute')
-  })
 })
 
 describe('Agent composer media and menu interactions', () => {
@@ -1044,15 +1021,15 @@ describe('Agent composer media and menu interactions', () => {
       translateEnglish('common:agentComposerMedia.video'),
       translateEnglish('common:agentComposerMedia.music')
     ])
-    for (const option of options) {
+    for (const [index, option] of options.entries()) {
       expect(option.getAttribute('aria-disabled')).not.toBe('true')
-      expect(option.getAttribute('aria-checked')).toBe('false')
+      expect(option.getAttribute('aria-checked')).toBe(index === 0 ? 'true' : 'false')
     }
     options[0].click()
-    await waitForRealSurface(() => !menu.isConnected, 'image generation preference selected')
+    await waitForRealSurface(() => !menu.isConnected, 'image generation preference deselected')
     // Vuetify briefly guards click reopening after selection; keyboard opening remains available.
     const musicMenu = await openRealCreationMenu(root, true)
-    expect(musicMenu.querySelector('[role="menuitemcheckbox"]')?.getAttribute('aria-checked')).toBe('true')
+    expect(musicMenu.querySelector('[role="menuitemcheckbox"]')?.getAttribute('aria-checked')).toBe('false')
     const musicOption = Array.from(musicMenu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')).find(
       option => option.querySelector('.v-list-item-title')?.textContent?.trim() === translateEnglish('common:agentComposerMedia.music')
     )
@@ -1061,17 +1038,17 @@ describe('Agent composer media and menu interactions', () => {
     await waitForRealSurface(() => !musicMenu.isConnected, 'music generation preference selected')
     const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
     if (!textarea) throw new Error('Real composer textbox did not render')
-    textarea.value = 'Create an image with accompanying music'
+    textarea.value = 'Create accompanying music without images'
     textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
     await Vue.nextTick()
     root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
     await Vue.nextTick()
     expect(mounted.sent).toEqual([
       {
-        content: 'Create an image with accompanying music',
+        content: 'Create accompanying music without images',
         invokedSkillVersionIds: [],
         mode: 'message',
-        media: { attachmentIds: [], generationTools: ['image', 'music'] }
+        media: { attachmentIds: [], generationTools: ['music'] }
       }
     ])
     expect(mounted.uploads).toEqual([])
@@ -1106,9 +1083,10 @@ describe('Agent composer media and menu interactions', () => {
     const imageOption = creationMenu.querySelector<HTMLElement>('[role="menuitemcheckbox"]')
     if (!imageOption) throw new Error('Image generation option did not render at attachment capacity')
     expect(imageOption.getAttribute('aria-disabled')).not.toBe('true')
+    expect(imageOption.getAttribute('aria-checked')).toBe('true')
     imageOption.click()
     await waitForRealSurface(() => !creationMenu.isConnected, 'full-capacity generation preference selection')
-    expect(root.querySelector('.agent-composer__create')?.getAttribute('data-state')).toBe('selected')
+    expect(root.querySelector('.agent-composer__create')?.getAttribute('data-state')).toBeNull()
     expect(mounted.uploads).toHaveLength(4)
     await selectRealFiles(root, [new File(['%PDF-1.4\nfifth\n%%EOF\n'], 'five.pdf', { type: 'application/pdf' })])
     await waitForRealSurface(
