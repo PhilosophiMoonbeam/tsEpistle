@@ -6,6 +6,12 @@ This document separates the current normative runtime contract and mode-selected
 
 This section is the operator authority for runtime behavior and safe operating boundaries. It is not itself a build, deployment, live-provider run, or release-attestation result. In Development Sprint, retain a truthful focused smoke result for the changed behavior. Enterprise Release retains its comprehensive acceptance evidence. A health response alone is insufficient in either mode.
 
+### Current chat workspace UI
+
+Redundant composer helper notices are removed; actionable connection, admission and mutation-lock messages remain. **Images** defaults on only when image generation is supported for the current conversation, and users can deselect it. While reading the transcript, the composer is 20% transparent (80% opaque); focusing or engaging it quickly restores full opacity.
+
+Memory and History share one exclusive left panel at every viewport width. Opening either replaces the other directly, with in-panel controls for swapping views. Desktop panels leave the conversation visible; narrow layouts retain modal focus trapping and focus restoration. Memory mutations continue to block unsafe closing or switching.
+
 ### Request admission and provider continuation
 
 - A send resolves the provider profile/version and selected skills inside the same database transaction as session-version, owner, group, and run admission. A failed provider or skill admission commits no partially admitted run. The provider service is request-scoped: load it for the agent request/run, create a fresh adapter/transport scope for each chat invocation, and do not share mutable SDK, request, response, or continuation state across requests.
@@ -662,7 +668,7 @@ Wiki adopts the bounded, curated shape of Hermes Agent's default memory rather t
 | About you | Identity, preferences, communication style, and working habits | 1,375 characters |
 | Agent notes | Stable project, environment, convention, workflow, correction, and completed-work facts | 2,200 characters |
 
-Entries are rows in `agentMemories`, scoped by `ownerId`, exact-deduplicated by content hash, and deleted with the owning user. `wiki_manage_memory` gives the Agent add/replace/remove operations; the right-side Memory panel gives the user equivalent review, edit, remove, and clear controls without covering the conversation on desktop. Writes reject invisible control characters, role/context fences, instruction-override language, embedded credentials, ambiguous substring matches, stale versions, and over-capacity results.
+Entries are rows in `agentMemories`, scoped by `ownerId`, exact-deduplicated by content hash, and deleted with the owning user. `wiki_manage_memory` gives the Agent add/replace/remove operations; the left-side Memory panel gives the user equivalent review, edit, remove, and clear controls without covering the conversation on desktop, sharing its exclusive position with History. Writes reject invisible control characters, role/context fences, instruction-override language, embedded credentials, ambiguous substring matches, stale versions, and over-capacity results.
 
 Each new conversation captures one immutable JSON snapshot in `agentSessions.memorySnapshot`. Every run in that conversation receives the same snapshot, preserving a stable prompt prefix and preventing a mid-conversation memory write from silently changing prior context. Live writes are immediately durable and their tool result reports the current store, but prompt recall begins with the next conversation. The prompt labels recalled entries as user-specific data: useful preferences and facts, never authorization, tool input, or policy.
 

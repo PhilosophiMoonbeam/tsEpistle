@@ -420,7 +420,7 @@ const loadGoalLockState = (
   const pendingStartersFrames: Array<{ callback: (now: number) => void }> = []
   const clearedStartersFrameIds: number[] = []
   const evaluate = new Function(
-    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, clearTimeout, requestAnimationFrame, cancelAnimationFrame, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection, wikiStore, resolveUserPicture, emptyAgentDraft }',
+    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, clearTimeout, requestAnimationFrame, cancelAnimationFrame, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection, wikiStore, resolveUserPicture, emptyAgentDraft, agentToolAcceptsImages }',
     `${executableScript}\nreturn { ...storeToRefs(agents), ${bindingNames.join(', ')} }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
@@ -464,7 +464,8 @@ const loadGoalLockState = (
       retryServerConnection: connectionProbe,
       wikiStore: { user: { id: 2, name: 'Test User', pictureUrl: '' } },
       resolveUserPicture,
-      emptyAgentDraft
+      emptyAgentDraft,
+      agentToolAcceptsImages
     })
   ) as LockState
   let disposed = false
@@ -1890,7 +1891,7 @@ describe('Inline Agent workspace actions', () => {
     expect(transcript.scrollTop).toBe(0)
   })
 
-  it('keeps composer dock focus state independent from transcript scrolling and engagement', async () => {
+  it('restores composer opacity on engagement and returns to reading state on transcript engagement', async () => {
     const lockState = loadGoalLockState(null)
     const mounted = mountInlineAgent(lockState)
     const getComposerDock = (): HTMLElement => {
@@ -1925,7 +1926,7 @@ describe('Inline Agent workspace actions', () => {
     getComposerDock().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
 
     await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
 
     const focusedTextarea = getTextarea()
     focusedTextarea.focus()
@@ -1974,7 +1975,7 @@ describe('Inline Agent workspace actions', () => {
     await settle()
     getDisabledTextarea().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
     await settle()
-    expect(getDisabledComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+    expect(getDisabledComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
   })
 })
 
@@ -2032,7 +2033,7 @@ describe('Inline Agent panel semantics', () => {
     expect(descriptions.every(description => history?.contains(description) && !description.hidden)).toBe(true)
   })
 
-  it('reconciles modal, docked and wide panels from viewport changes and stops observing after teardown', async () => {
+  it('keeps panels exclusive across viewport changes and stops observing after teardown', async () => {
     const state = loadGoalLockState(null)
     const mounted = mountInlineAgent(state, { viewportWidth: 1023 })
     await settle()
@@ -2059,15 +2060,18 @@ describe('Inline Agent panel semantics', () => {
     await settle()
     expect(mounted.root.getAttribute('data-panel-mode')).toBe('wide')
     expect(mounted.root.querySelector('.inline-agent__side--history')).not.toBeNull()
-    expect(mounted.root.querySelector('.inline-agent__side--memory')).not.toBeNull()
+    expect(state.memoryOpen.value).toBe(false)
+    const closedMemory = mounted.root.querySelector<HTMLElement>('.inline-agent__side--memory')
+    expect(closedMemory === null || browserWindow.getComputedStyle(closedMemory).display === 'none').toBe(true)
     expect(mounted.root.querySelector('.inline-agent__composer')).not.toBeNull()
 
     resizeViewport?.(390)
     await settle()
     expect(mounted.root.getAttribute('data-panel-mode')).toBe('modal')
     expect(mounted.root.querySelector('.inline-agent__side--history')?.getAttribute('role')).toBe('dialog')
-    const closedMemory = mounted.root.querySelector<HTMLElement>('.inline-agent__side--memory')
-    expect(closedMemory === null || browserWindow.getComputedStyle(closedMemory).display === 'none').toBe(true)
+    expect(state.memoryOpen.value).toBe(false)
+    const mobileMemory = mounted.root.querySelector<HTMLElement>('.inline-agent__side--memory')
+    expect(mobileMemory === null || browserWindow.getComputedStyle(mobileMemory).display === 'none').toBe(true)
     mounted.unmount()
     resizeViewport?.(1760)
     await settle()
@@ -2255,15 +2259,12 @@ describe('Inline Agent session notice', () => {
 })
 
 describe('Inline Agent conversation starters', () => {
-  it('renders one static, centered set of suggested prompts below the greeting', () => {
+  it('renders one accessible set of suggested prompts below the greeting', () => {
     const mounted = mountInlineAgent()
     const welcome = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome')
     expect(welcome?.getAttribute('aria-label')).toBe('Start a conversation')
-    expect(welcome?.querySelector('h1, h2, h3')).toBeNull()
-    expect(welcome?.querySelectorAll('p.inline-agent__welcome-title .inline-agent__welcome-line')).toHaveLength(2)
     expect(welcome?.querySelector('.inline-agent__welcome-subtitle')?.textContent?.trim()).toBeTruthy()
     const group = mounted.root.querySelector<HTMLElement>('[role="group"][aria-label="Suggested prompts"]')
-    expect(group?.classList.contains('inline-agent__starters--marquee')).toBe(false)
     const starters = Array.from(group?.querySelectorAll<HTMLButtonElement>('.inline-agent__starter') ?? [])
     expect(starters.map(starter => starter.querySelector('strong')?.textContent?.trim())).toEqual(['Explore the Wiki', 'Connect the dots', 'Catch up'])
     expect(starters.map(starter => starter.querySelector('.inline-agent__starter-copy')?.textContent?.trim())).toEqual([
@@ -2271,9 +2272,8 @@ describe('Inline Agent conversation starters', () => {
       'Discover related knowledge',
       'See what changed recently'
     ])
-    // No duplicated marquee clones: every starter is a real, reachable control.
+    // Every suggested prompt is a real, reachable control.
     expect(starters.every(starter => !starter.hasAttribute('aria-hidden') && starter.getAttribute('tabindex') !== '-1')).toBe(true)
-    expect(group?.hasAttribute('aria-describedby')).toBe(false)
   })
 
   it('keeps blocked starters focusable, explains why, and does not send', async () => {

@@ -24,7 +24,7 @@ if (!script) throw new Error('Media composer script is missing')
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 const evaluate = new Function(
   'dependencies',
-  `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, useTranslate, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, locked, removeAttachment, chooseFiles, chooseUpload, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, attachmentMimeTypes, attachmentsAvailable, imageReferencesOnly, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`
+  `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, useTranslate, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, locked, removeAttachment, chooseFiles, chooseUpload, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, attachmentMimeTypes, attachmentsAvailable, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`
 )
 interface WakeLockSentinelStub {
   release: () => Promise<void>
@@ -601,7 +601,6 @@ describe('Agent media composer lifecycle', () => {
     try {
       expect(await harness.api.editImage(media)).toBe(false)
       expect(requests).toBe(0)
-      expect(rendered.host.textContent).toContain(translateEnglish('common:agentComposerMedia.modelAnalysisAttachments'))
       expect(await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })])).toBe(true)
       harness.api.clear()
     } finally {
@@ -636,8 +635,6 @@ describe('Agent media composer lifecycle', () => {
       const input = rendered.host.querySelector<HTMLInputElement>('input[type="file"]')
       expect(input?.disabled).toBe(false)
       expect(input?.accept).toContain('image/png')
-      expect(rendered.host.textContent).toContain(translateEnglish('common:agentComposerMedia.imageToolReferencesOnly'))
-      expect(rendered.host.textContent).not.toContain(translateEnglish('common:agentComposerMedia.modelAnalysisAttachments'))
       expect(await harness.api.addFiles([new File(['bytes'], 'reference.png', { type: 'image/png' })])).toBe(true)
       harness.api.toggleGenerationTool('video')
       await nextTick()
@@ -1345,11 +1342,10 @@ describe('re-attaching a detached attachment', () => {
 })
 
 describe('creation tool selection', () => {
-  it('starts with no consent, preserves explicit choices on refresh, and only removes revoked tools', async () => {
+  it('defaults only Images, preserves deselection on refresh, and removes revoked tools', async () => {
     const harness = mount({ media: { attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false } })
-    expect(harness.api.selectedGenerationTools.value).toEqual([])
-    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
-    harness.api.toggleGenerationTool('image')
+    expect(harness.api.selectedGenerationTools.value).toEqual(['image'])
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image'] }])
     harness.api.toggleGenerationTool('video')
     await nextTick()
     expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image', 'video'] }])
@@ -1375,19 +1371,85 @@ describe('creation tool selection', () => {
   })
   it('allows an explicit empty whitelist and suppresses tools in unsupported execution modes', async () => {
     const harness = mount({ media: { attachments: false, imageGeneration: true, transcription: false } })
-    harness.api.toggleGenerationTool('image')
-    await nextTick()
     expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image'] }])
     harness.api.toggleGenerationTool('image')
     await nextTick()
     expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
-    harness.api.toggleGenerationTool('image')
     harness.props.generationToolsEnabled = false
+    harness.api.toggleGenerationTool('image')
+    expect(harness.api.selectedGenerationTools.value).toEqual([])
+    harness.props.generationToolsEnabled = true
     await nextTick()
     expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
     harness.api.toggleGenerationTool('image')
-    expect(harness.api.selectedGenerationTools.value).toEqual(['image'])
+    await nextTick()
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image'] }])
+    harness.props.generationToolsEnabled = false
+    await nextTick()
+    expect(harness.api.selectedGenerationTools.value).toEqual([])
+    expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
+    harness.api.toggleGenerationTool('image')
+    expect(harness.api.selectedGenerationTools.value).toEqual([])
     harness.unmount()
+  })
+  it('admits image references by default and removes them when image authority is revoked', async () => {
+    const requests: Array<{ path: string; method: string | undefined }> = []
+    const harness = mount({
+      media: {
+        attachments: true,
+        imageGeneration: true,
+        transcription: false,
+        inputMimeTypes: [],
+        mediaToolInputs: { image: { images: true, documents: false, audio: false, video: false } }
+      },
+      fetch: async (input, init) => {
+        requests.push({ path: String(input), method: init?.method })
+        return response({ media })
+      }
+    })
+    try {
+      expect(harness.api.attachmentMimeTypes.value).toContain('image/png')
+      expect(await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })])).toBe(true)
+      harness.props.capabilities!.imageGeneration = false
+      await nextTick()
+      expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
+      expect(harness.api.attachments.value).toEqual([])
+      expect(harness.api.attachmentsAvailable.value).toBe(false)
+      expect(requests).toContainEqual({ path: `/_api/agents/media/${mediaId}`, method: 'DELETE' })
+      expect(await harness.api.addFiles([new File(['bytes'], 'image.png', { type: 'image/png' })])).toBe(false)
+      expect(requests.filter(request => request.method === 'POST')).toHaveLength(1)
+      harness.props.capabilities!.imageGeneration = true
+      await nextTick()
+      expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image'] }])
+    } finally {
+      harness.unmount()
+    }
+  })
+
+  it('resets image deselection for a new session but never defaults tools in an unsupported mode', async () => {
+    const harness = mount({
+      media: { attachments: false, imageGeneration: true, videoGeneration: true, transcription: false },
+      generationToolsEnabled: false
+    })
+    try {
+      expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: [] }])
+      harness.props.generationToolsEnabled = true
+      await nextTick()
+      expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image'] }])
+      harness.api.toggleGenerationTool('image')
+      harness.api.toggleGenerationTool('video')
+      await nextTick()
+      expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['video'] }])
+      harness.props.capabilities!.imageGeneration = false
+      harness.props.capabilities!.imageGeneration = true
+      await nextTick()
+      expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['video'] }])
+      harness.props.session = { ...harness.props.session, id: '00000000-0000-4000-8000-000000000099' }
+      await nextTick()
+      expect(harness.events.at(-1)).toEqual(['change', { attachmentIds: [], generationTools: ['image'] }])
+    } finally {
+      harness.unmount()
+    }
   })
 })
 

@@ -4,7 +4,6 @@
          This component owns the capture/transcription pipeline and renders pending attachments only. -->
     <input ref="fileInput" class="agent-media-composer__file" type="file" :accept="attachmentMimeTypes.join(',')" multiple :aria-label="$t('common:agentComposerMedia.chooseMediaFiles')" :disabled="locked || !session || !attachmentsAvailable || attachments.length >= 4" @change="chooseFiles" />
     <p v-if="generationOptions.length && generationToolsEnabled === false" class="agent-media-composer__hint">{{ $t('common:agentComposerMedia.creationToolsAvailableConversations') }}</p>
-    <p v-if="attachmentsAvailable" class="agent-media-composer__hint">{{ $t(imageReferencesOnly ? 'common:agentComposerMedia.imageToolReferencesOnly' : 'common:agentComposerMedia.modelAnalysisAttachments') }}</p>
     <slot
       name="attachments"
       :attachments="attachments"
@@ -17,7 +16,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from '../../helpers/agents-api.ts'
 import AgentAssetPicker from './agent-asset-picker.vue'
@@ -40,19 +39,25 @@ const assetPickerOpen = ref(false)
 const attachments = ref<AgentMediaView[]>([])
 type GenerationTool = 'image' | 'video' | 'music'
 const selectedGenerationTools = ref<GenerationTool[]>([])
+const imageGenerationDeselected = ref(false)
 const admittedGenerationTools = computed(() => props.generationToolsEnabled === false ? [] : selectedGenerationTools.value)
 const attachmentMimeTypes = computed(() => agentAttachmentMimeTypes(props.capabilities, admittedGenerationTools.value))
 const attachmentsAvailable = computed(() => attachmentMimeTypes.value.length > 0)
-const imageReferencesOnly = computed(() => attachmentMimeTypes.value.length > 0 && agentAttachmentMimeTypes(props.capabilities, []).length === 0)
 const generationOptions = computed(() => [
   { value: 'image' as const, enabled: props.capabilities?.imageGeneration, title: t('common:agentComposerMedia.images'), icon: 'mdi-image-outline' },
   { value: 'video' as const, enabled: props.capabilities?.videoGeneration, title: t('common:agentComposerMedia.video'), icon: 'mdi-movie-open-outline' },
   { value: 'music' as const, enabled: props.capabilities?.musicGeneration, title: t('common:agentComposerMedia.music'), icon: 'mdi-music-note-outline' }
 ].filter(option => option.enabled))
-watch(generationOptions, options => {
-  // Availability can revoke a choice, but only a user action can enable one.
-  selectedGenerationTools.value = options.filter(option => selectedGenerationTools.value.includes(option.value)).map(option => option.value)
-}, { immediate: true })
+watch([generationOptions, () => props.generationToolsEnabled, () => props.session?.id], ([options, enabled, sessionId], previous) => {
+  if (previous && sessionId !== previous[2]) {
+    imageGenerationDeselected.value = false
+    selectedGenerationTools.value = []
+  }
+  // Default Images only while authorized; remember an explicit opt-out for this session.
+  selectedGenerationTools.value = enabled === false ? [] : options
+    .filter(option => selectedGenerationTools.value.includes(option.value) || (option.value === 'image' && !imageGenerationDeselected.value))
+    .map(option => option.value)
+}, { immediate: true, flush: 'sync' })
 const error = ref('')
 /** Dictation failures surface through the composer's notice, not the attachment error slot. */
 const dictationError = ref('')
@@ -245,6 +250,7 @@ const cancelDictation = () => {
 }
 const toggleGenerationTool = (tool: GenerationTool) => {
   if (locked.value || props.generationToolsEnabled === false || !generationOptions.value.some(option => option.value === tool)) return
+  if (tool === 'image') imageGenerationDeselected.value = selectedGenerationTools.value.includes('image')
   selectedGenerationTools.value = selectedGenerationTools.value.includes(tool) ? selectedGenerationTools.value.filter(item => item !== tool) : generationOptions.value.filter(option => option.value === tool || selectedGenerationTools.value.includes(option.value)).map(option => option.value)
 }
 const clear = () => {
