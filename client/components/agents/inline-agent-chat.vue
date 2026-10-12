@@ -2066,21 +2066,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__history-toggle,
 .inline-agent__memory-toggle {
   transition:
-    width var(--wiki-motion-fast) var(--wiki-motion-ease),
-    min-width var(--wiki-motion-fast) var(--wiki-motion-ease),
-    padding-inline var(--wiki-motion-fast) var(--wiki-motion-ease),
     opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
     visibility 0s linear 0s;
 }
 
-.inline-agent--history .inline-agent__history-toggle {
-  transition:
-    width var(--wiki-motion-fast) var(--wiki-motion-ease),
-    min-width var(--wiki-motion-fast) var(--wiki-motion-ease),
-    padding-inline var(--wiki-motion-fast) var(--wiki-motion-ease),
-    opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
-    visibility 0s linear var(--wiki-motion-fast);
-}
 
 .inline-agent__panel-menu-item {
   min-block-size: 44px;
@@ -2691,7 +2680,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) {
-  opacity: .8;
+  opacity: .2;
 }
 .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
   border-color: var(--wiki-surface-border-strong);
