@@ -12,6 +12,8 @@ Redundant composer helper notices are removed; actionable connection, admission 
 
 Memory and History share one exclusive left panel at every viewport width. Opening either replaces the other directly, with in-panel controls for swapping views. Desktop panels leave the conversation visible; narrow layouts retain modal focus trapping and focus restoration. Memory mutations continue to block unsafe closing or switching.
 
+Ctrl/⌘+Shift+A toggles Wiki Agent open and closed; closing does not open Search. Ctrl/⌘+K remains the separate Search shortcut.
+
 ### Request admission and provider continuation
 
 - A send resolves the provider profile/version and selected skills inside the same database transaction as session-version, owner, group, and run admission. A failed provider or skill admission commits no partially admitted run. The provider service is request-scoped: load it for the agent request/run, create a fresh adapter/transport scope for each chat invocation, and do not share mutable SDK, request, response, or continuation state across requests.

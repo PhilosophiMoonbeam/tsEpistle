@@ -113,6 +113,24 @@ const fixture = (mobile = false) => {
 }
 
 describe('header search keyboard entry', () => {
+  it('toggles Agent open and closed without opening Search, including reopening after close', async () => {
+    for (const mobile of [false, true]) {
+      for (const modifier of ['ctrlKey', 'metaKey']) {
+        const { state, key } = fixture(mobile)
+        state.searchIsFocused = false
+        state.searchMode = 'ask'
+        for (const open of [true, false, true]) {
+          const event = key('a', { [modifier]: true, shiftKey: true })
+          state.handleSearchShortcut(event)
+          await state.$nextTick()
+          expect(event.defaultPrevented).toBe(true)
+          expect(state.searchIsFocused).toBe(open)
+          if (open) expect(state.searchMode).toBe('ask')
+        }
+      }
+    }
+  })
+
   it('focuses the active desktop or mobile field with either platform shortcut and preserves the query', async () => {
     for (const mobile of [false, true]) {
       for (const modifier of ['ctrlKey', 'metaKey']) {
