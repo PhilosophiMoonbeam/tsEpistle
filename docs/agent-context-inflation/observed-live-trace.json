@@ -1,0 +1,117 @@
+{
+  "codeRevision": "252b8c465a8fabecde430431561e95316225dd65",
+  "question": "Who is our Falcon contact?",
+  "session": "fresh temporary session; no prior user/assistant history",
+  "runId": "498556f1-3ddb-4ddc-9191-1638a2bb1eef",
+  "pageRevision": "2",
+  "rawPageUtf8Bytes": 16443,
+  "userEstimatedRawPageTokens": 4973,
+  "userEstimateIndependentlyTokenized": false,
+  "profileContextLimit": 128000,
+  "profileOutputLimit": 8192,
+  "events": [
+    {
+      "type": "model.turn",
+      "createdAt": "2026-10-12T22:31:14.752+00:00",
+      "purpose": "routing",
+      "outcome": null,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 0,
+      "performance": null,
+      "unknownExposure": null
+    },
+    {
+      "type": "usage.updated",
+      "createdAt": "2026-10-12T22:31:14.821+00:00",
+      "status": null,
+      "errorCode": null
+    },
+    {
+      "type": "model.turn",
+      "createdAt": "2026-10-12T22:31:17.949+00:00",
+      "purpose": null,
+      "outcome": "tool_calls",
+      "inputTokens": 5313,
+      "outputTokens": 69,
+      "totalTokens": 5509,
+      "performance": {
+        "admissionMs": 41.28564699739218,
+        "cacheCreationInputTokensReported": null,
+        "cachedInputTokensReported": null,
+        "cacheHitCount": 0,
+        "dispatchToFirstChunkMs": 2240.7270659953356,
+        "inputTokensReported": 5313,
+        "invalidatedEvidenceCount": 0,
+        "previouslyDeliveredSourceUnits": 0,
+        "providerElapsedMs": 2578.152151994407,
+        "providerUsageReported": true,
+        "rejectedDraftCount": 0,
+        "reservedFinalizationTokens": 44190,
+        "residentSourceUnits": 0,
+        "serializationMs": 0.2488429993391037,
+        "serializedRequestBytes": 25542,
+        "settlementMs": 0.7652360051870346,
+        "totalTokensReported": 5509
+      },
+      "unknownExposure": null
+    },
+    {
+      "type": "tool.completed",
+      "createdAt": "2026-10-12T22:31:19.145+00:00",
+      "action": "pages.search",
+      "elapsedMs": 1027.400908999145,
+      "cacheHit": false
+    },
+    {
+      "type": "model.turn",
+      "createdAt": "2026-10-12T22:31:32.884+00:00",
+      "purpose": null,
+      "outcome": "tool_calls",
+      "inputTokens": 6785,
+      "outputTokens": 29,
+      "totalTokens": 8449,
+      "performance": {
+        "admissionMs": 84.234659999609,
+        "cacheCreationInputTokensReported": null,
+        "cachedInputTokensReported": null,
+        "cacheHitCount": 0,
+        "dispatchToFirstChunkMs": 13453.3367960006,
+        "inputTokensReported": 6785,
+        "invalidatedEvidenceCount": 0,
+        "previouslyDeliveredSourceUnits": 0,
+        "providerElapsedMs": 13510.206077001989,
+        "providerUsageReported": true,
+        "rejectedDraftCount": 0,
+        "reservedFinalizationTokens": 58968,
+        "residentSourceUnits": 0,
+        "serializationMs": 0.4417419955134392,
+        "serializedRequestBytes": 32724,
+        "settlementMs": 0.20576000213623047,
+        "totalTokensReported": 8449
+      },
+      "unknownExposure": null
+    },
+    {
+      "type": "tool.completed",
+      "createdAt": "2026-10-12T22:31:34.842+00:00",
+      "action": "pages.get",
+      "elapsedMs": 454.23738899827003,
+      "cacheHit": false
+    },
+    {
+      "type": "message.completed",
+      "createdAt": "2026-10-12T22:31:35.578+00:00",
+      "status": "failed",
+      "errorCode": null
+    },
+    {
+      "type": "run.failed",
+      "createdAt": "2026-10-12T22:31:35.578+00:00",
+      "errorCode": "AGENT_CONTEXT_TOO_LARGE",
+      "status": "failed",
+      "attempt": null,
+      "failureStage": "unknown"
+    }
+  ]
+}
