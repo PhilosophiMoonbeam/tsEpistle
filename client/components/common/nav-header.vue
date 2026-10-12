@@ -1246,9 +1246,8 @@ export default defineComponent({
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
       if (!this.canEnterAgent) return
       event.preventDefault()
-      if (this.searchMode === 'ask') {
-        this.searchMode = 'search'
-        void this.focusSearchField()
+      if (this.searchMode === 'ask' && this.searchIsFocused) {
+        void this.searchEscape()
         return
       }
       this.searchIsShown = true
