@@ -1907,9 +1907,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   box-shadow: none;
   -webkit-backdrop-filter: var(--wiki-chrome-blur);
   backdrop-filter: var(--wiki-chrome-blur);
-  transition:
-    background-color var(--wiki-motion-slow) var(--wiki-motion-ease),
-    padding-inline-start var(--wiki-motion-slow) var(--wiki-motion-ease);
+  transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
 /* Included page: the header blurs much harder than the conversation glass so
    the page's navigation and text underneath are not readable through it. */
