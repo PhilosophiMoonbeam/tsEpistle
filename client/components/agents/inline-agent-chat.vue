@@ -2387,6 +2387,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__follow-jump {
   animation: agentFollowJumpIn var(--wiki-motion-fast) var(--wiki-motion-ease);
+  opacity: .8;
   box-sizing: border-box;
   min-width: 36px;
   min-height: 36px;

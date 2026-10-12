@@ -876,8 +876,8 @@ onBeforeUnmount(() => {
 .agent-markdown :deep(a[data-agent-citation='true']),
 .agent-markdown :deep(strong[data-agent-citation='true']) {
   align-items: center;
-  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 20%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 32%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 50%, var(--wiki-surface-border));
   border-radius: var(--wiki-radius-pill);
   color: rgb(var(--v-theme-on-surface));
   display: inline-flex;
@@ -896,8 +896,7 @@ onBeforeUnmount(() => {
 
 .agent-markdown :deep(a[data-agent-citation='true']:hover),
 .agent-markdown :deep(strong[data-agent-citation='true']:hover) {
-  background: color-mix(in srgb, var(--wiki-accent-warm) 17%, var(--wiki-surface-raised));
-  border-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
+  border-color: color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 75%, var(--wiki-surface-border));
 }
 
 @media (max-width: 599.98px) {
@@ -963,5 +962,28 @@ onBeforeUnmount(() => {
   .agent-markdown :deep(.agent-markdown__copy:focus-visible) {
     outline-color: Highlight;
   }
+}
+</style>
+
+<style>
+/* Shared by inline citations and Sources; decimal suffixes give a five-number cycle. */
+:where(.agent-markdown [data-agent-citation='true'], .agent-sources__number):is([data-citation-number$='1'], [data-citation-number$='6']) {
+  --agent-citation-tint: #e9b0c3;
+}
+
+:where(.agent-markdown [data-agent-citation='true'], .agent-sources__number):is([data-citation-number$='2'], [data-citation-number$='7']) {
+  --agent-citation-tint: #efc19a;
+}
+
+:where(.agent-markdown [data-agent-citation='true'], .agent-sources__number):is([data-citation-number$='3'], [data-citation-number$='8']) {
+  --agent-citation-tint: #acd8bf;
+}
+
+:where(.agent-markdown [data-agent-citation='true'], .agent-sources__number):is([data-citation-number$='4'], [data-citation-number$='9']) {
+  --agent-citation-tint: #accde9;
+}
+
+:where(.agent-markdown [data-agent-citation='true'], .agent-sources__number):is([data-citation-number$='5'], [data-citation-number$='0']) {
+  --agent-citation-tint: #c9b8e8;
 }
 </style>

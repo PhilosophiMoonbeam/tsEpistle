@@ -180,13 +180,13 @@
               <ol class="agent-web-sources__list">
                 <li v-for="(item, index) in entry.googleSearchCitations" :key="`${item.citation.url}:${item.citation.startIndex}:${item.citation.endIndex}`">
                   <a v-if="item.safeHref" :href="item.safeHref" target="_blank" rel="noopener noreferrer">
-                    <span class="agent-sources__number">{{ index + 1 }}</span>
+                    <span class="agent-sources__number" :data-citation-number="index + 1">{{ index + 1 }}</span>
                     <strong>{{ item.citation.title }}</strong>
                     <v-icon icon="mdi-open-in-new" size="14" aria-hidden="true" />
                     <span class="agent-sources__new-window"> {{ $t('common:agentThread.opensNewTab') }}</span>
                   </a>
                   <span v-else>
-                    <span class="agent-sources__number">{{ index + 1 }}</span>
+                    <span class="agent-sources__number" :data-citation-number="index + 1">{{ index + 1 }}</span>
                     <strong>{{ item.citation.title }}</strong>
                   </span>
                   <blockquote v-if="item.quote">{{ item.quote }}</blockquote>
@@ -213,7 +213,7 @@
                     :rel="group.safeHref ? 'noopener noreferrer' : undefined"
                     @click="previewCitation($event, group.previewSelector)"
                   >
-                    <span v-if="group.pageCitation" class="agent-sources__number">{{ group.pageCitation.number }}</span>
+                    <span v-if="group.pageCitation" class="agent-sources__number" :data-citation-number="group.pageCitation.number">{{ group.pageCitation.number }}</span>
                     <v-icon v-else icon="mdi-file-document-outline" size="18" aria-hidden="true" />
                     <strong>{{ group.pageLabel }}</strong>
                     <v-icon v-if="group.safeHref" :icon="group.previewSelector ? 'mdi-text-box-search-outline' : 'mdi-open-in-new'" size="15" aria-hidden="true" />
@@ -233,7 +233,7 @@
                         :aria-label="$t('common:agentThread.citation', { number: citationEntry.number, label: citationEntry.citation.label, value: citationEntry.previewSelector ? ` ${$t('common:agentThread.previewSource')}` : citationEntry.safeHref ? ` ${$t('common:agentThread.opensNewTab')}` : '', interpolation: { escapeValue: false } })"
                         @click="previewCitation($event, citationEntry.previewSelector)"
                       >
-                        <span class="agent-sources__number">{{ citationEntry.number }}</span>
+                        <span class="agent-sources__number" :data-citation-number="citationEntry.number">{{ citationEntry.number }}</span>
                         <span class="agent-sources__label">{{ citationEntry.sectionLabel }}</span>
                         <v-icon v-if="citationEntry.safeHref" :icon="citationEntry.previewSelector ? 'mdi-text-box-search-outline' : 'mdi-open-in-new'" size="14" aria-hidden="true" />
                       </component>
@@ -1212,9 +1212,9 @@ watch(
 
 .agent-sources__number {
   align-items: center;
-  background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
+  background: color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 32%, var(--wiki-surface-raised));
   block-size: var(--wiki-space-6);
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-border));
+  border: 1px solid color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 50%, var(--wiki-surface-border));
   border-radius: var(--wiki-radius-pill);
   box-sizing: border-box;
   color: rgb(var(--v-theme-on-surface));
@@ -1222,7 +1222,8 @@ watch(
   font-family: var(--wiki-font-mono);
   font-size: var(--wiki-label-size);
   font-weight: 720;
-  inline-size: var(--wiki-space-6);
+  min-inline-size: var(--wiki-space-6);
+  padding-inline: var(--wiki-space-1);
   justify-items: center;
   justify-self: start;
   line-height: 1;
