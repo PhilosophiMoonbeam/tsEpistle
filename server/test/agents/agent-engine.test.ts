@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AxAIService, AxChatRequest, AxChatResponse, AxAIGoogleGeminiChatRequest } from '@ax-llm/ax'
@@ -18,6 +18,7 @@ import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/pro
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
+import { parseSourceDocument } from '../../agents/providers/source-document.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
 import { PdfFixtureDocument } from './pdf-fixture.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
@@ -298,7 +299,13 @@ const questionFixture = (
   mode: QuestionMode,
   steps: readonly QuestionStep[],
   invokeAction: (name: QuestionActionName, input: unknown) => unknown | Promise<unknown>,
-  extraFunctions: readonly AxHarnessFunction[] = []
+  extraFunctions: readonly AxHarnessFunction[] = [],
+  providerOptions: {
+    readonly maxContextTokens?: number
+    readonly maxOutputTokens?: number
+    readonly countContextTokens?: (input: Readonly<AxChatRequest>, signal: AbortSignal) => Promise<number>
+  } = {},
+  requestOptions: Partial<AgentEngineRequest> = {}
 ) => {
   const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
   const responses = questionResponses(mode, steps)
@@ -321,14 +328,15 @@ const questionFixture = (
       structuredOutput: mode === 'native' ? 'native-json-schema' : 'prompt-only',
       usage: 'estimated',
       cancellation: true,
-      maxContextTokens: 100_000,
-      maxOutputTokens: 4_000
+      maxContextTokens: providerOptions.maxContextTokens ?? 100_000,
+      maxOutputTokens: providerOptions.maxOutputTokens ?? 4_000
     },
     transportKind: mode === 'native' ? 'openai-responses' : 'legacy-completions',
     model: 'gpt-test',
     capabilityRevision: 'cap-1',
     pricingRevision: 'price-1',
-    pricing })
+    pricing,
+    ...(providerOptions.countContextTokens === undefined ? {} : { countContextTokens: providerOptions.countContextTokens }) })
   } as unknown as AgentProviderFactory
   const invoke = vi.fn(async (name: string, input: unknown) => invokeAction(name as QuestionActionName, input))
   const close = vi.fn()
@@ -343,6 +351,7 @@ const questionFixture = (
       {
         ...request(new AbortController().signal),
         messages: [{ role: 'user' as const, content: userMessage }],
+        ...requestOptions,
         ...(limits === undefined ? {} : { limits }),
         ...(dispatchBudget === undefined ? {} : { dispatchBudget })
       },
@@ -460,6 +469,156 @@ const candidateDiscovery = (returnedCount: number, newCandidateCount: number, re
 })
 
 describe('Ax agent engine', () => {
+  it('finalizes a semantic Falcon contact record beside the complete capacity fixture at 128000/8192 without counting', async () => {
+    const background = await readFile(new URL('../../../docs/agent-context-inflation/falcon-like.md', import.meta.url), 'utf8')
+    const contact = '- Name: Morgan Vale; Role: Falcon account representative; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147.'
+    const page = questionReadPage(42, '2', 'Supplier routing', 'suppliers', 'Falcon', 'falcon', contact)
+    page.content = `${background}\n\n## Falcon\n\n${contact}`
+    const countContextTokens = vi.fn(async () => { throw new Error('Portable fixture must fit without native counting') })
+    const fixture = questionFixture('native', [
+      { calls: [
+        { id: 'falcon-record-read', name: 'pages.get', arguments: { id: 42 } },
+        { id: 'falcon-record-finish', name: 'wiki_finish_collection', arguments: {} }
+      ] },
+      { answer: input => {
+        const source = synthesisSourcesFromRequest(input).find(source =>
+          source.evidenceId === 'page:42:revision:2' && source.sourceRevision === '2' &&
+          source.complete && source.literalStatement !== null &&
+          source.literalStatement.includes('Morgan Vale') &&
+          source.literalStatement.includes('Falcon account representative') &&
+          source.literalStatement.includes('morgan.vale@example.invalid') &&
+          source.literalStatement.includes('+1 202 555 0147')
+        )
+        return synthesisFixtureAnswer(input, {
+          claims: source === undefined ? [] : [{
+            evidenceId: source.evidenceId,
+            sourceRevision: source.sourceRevision,
+            sourceRef: source.sourceRef,
+            statement: ''
+          }]
+        })
+      } }
+    ], () => page, [], { maxContextTokens: 128_000, maxOutputTokens: 8_192, countContextTokens })
+    const result = await fixture.execute('Who is our Falcon contact?', { maxOutputTokens: 8_192 })
+    const synthesisRequest = fixture.providerCalls[1]!
+    const sources = synthesisSourcesFromRequest(synthesisRequest)
+    const ownedSources = sources.filter(source => source.evidenceId === 'page:42:revision:2' && source.sourceRevision === '2')
+    const contactSources = ownedSources.filter(source => source.complete && source.literalStatement !== null &&
+      source.literalStatement.includes('Morgan Vale') &&
+      source.literalStatement.includes('Falcon account representative') &&
+      source.literalStatement.includes('morgan.vale@example.invalid') &&
+      source.literalStatement.includes('+1 202 555 0147'))
+    expect(sources.length).toBeGreaterThan(250)
+    expect(contactSources.length).toBeGreaterThan(0)
+    const retainedAuthoredText = ownedSources.flatMap(source => {
+      const authoredContent = questionRecord(JSON.parse(source.packet)).authoredContent
+      return Array.isArray(authoredContent) ? authoredContent.filter((text): text is string => typeof text === 'string') : []
+    })
+    const backgroundUnits = parseSourceDocument(background, { representation: 'markdown', truncated: false }).units
+      .filter(unit => unit.complete && unit.kind !== 'opaque' && unit.normalizedText.trim().length > 0)
+    for (const unit of backgroundUnits) {
+      for (const span of unit.sourceSpans) {
+        const original = background.slice(span.start, span.end)
+        expect(retainedAuthoredText.some(text => text.includes(original))).toBe(true)
+      }
+    }
+    expect(synthesisRequest.modelConfig?.maxTokens).toBe(8_192)
+    expect(Buffer.byteLength(JSON.stringify(synthesisRequest), 'utf8') + 8_192).toBeLessThanOrEqual(128_000)
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).toContain('Morgan Vale')
+    expect(published).toContain('Falcon account representative')
+    expect(published).toContain('morgan.vale@example.invalid')
+    expect(published).toContain('+1 202 555 0147')
+    expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:2' })])
+    expect(result.executionLimit).toBeUndefined()
+    expect(fixture.providerCalls).toHaveLength(2)
+    expect(countContextTokens).not.toHaveBeenCalled()
+    expect(fixture.event.mock.calls.some(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
+  })
+
+  it.each([119_808, 128_000])('uses the full generated frame native input boundary %s without another paid collection turn', async nativeInputTokens => {
+    const contact = 'Morgan Vale is the Falcon account representative.'
+    const page = questionReadPage(42, '2', 'Supplier routing', 'suppliers', 'Falcon', 'falcon', contact)
+    page.content = `# Supplier routing\n\nComplete required background: ${'z'.repeat(150_000)}\n\n## Falcon\n\n${contact}`
+    const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>, signal: AbortSignal) => {
+      expect(signal.aborted).toBe(false)
+      expect(JSON.stringify(input)).toContain('Prefers concise, evidence-first answers.')
+      expect(JSON.stringify(input)).toContain('Wiki project uses PostgreSQL and Bun.')
+      expect(JSON.stringify(input)).toContain('Use page tools.')
+      expect(input.responseFormat ?? input.functions).toBeDefined()
+      expect(JSON.stringify(input)).toContain('z'.repeat(150_000))
+      return nativeInputTokens
+    })
+    const fixture = questionFixture('native', [
+      { calls: [{ id: 'native-frame-read', name: 'pages.get', arguments: { id: 42 } }] },
+      { answer: `${contact}[[cite:page:42:revision:2]]`, bindings: { 'page:42:revision:2': { text: contact } } }
+    ], () => page, [], { maxContextTokens: 128_000, maxOutputTokens: 8_192, countContextTokens })
+    if (nativeInputTokens === 128_000) {
+      await expect(fixture.execute('Who is our Falcon contact?', { maxOutputTokens: 8_192 })).rejects.toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE' })
+      expect(fixture.providerCalls).toHaveLength(1)
+      expect(fixture.text).not.toHaveBeenCalled()
+    } else {
+      const result = await fixture.execute('Who is our Falcon contact?', { maxOutputTokens: 8_192 })
+      expect(result.executionLimit).toBeUndefined()
+      expect(fixture.providerCalls).toHaveLength(2)
+      expect(fixture.providerCalls[1]?.modelConfig?.maxTokens).toBe(8_192)
+      expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain('Morgan Vale')
+    }
+    expect(countContextTokens).toHaveBeenCalledOnce()
+    const diagnostics = fixture.event.mock.calls.flatMap(([type, data]) => {
+      const record = questionRecord(data)
+      if (type === 'evidence.provenance' && record.purpose === 'context_admission') return [questionRecord(record.synthesisFrame)]
+      if (type === 'model.turn' && record.performance !== undefined) {
+        const frame = questionRecord(record.performance).synthesisFrame
+        if (frame !== undefined) return [questionRecord(frame)]
+      }
+      return []
+    })
+    expect(diagnostics[0]).toMatchObject({ nativeInputTokens, reason: nativeInputTokens === 128_000 ? 'context_limit' : 'native_count_fit', preflight: nativeInputTokens === 128_000 })
+    expect(JSON.stringify(diagnostics)).not.toContain('Morgan Vale')
+    expect(JSON.stringify(diagnostics)).not.toContain('Prefers concise')
+  })
+
+  it('does not let a low native count bypass the conservative remaining run allowance', async () => {
+    const page = questionReadPage(42, '2', 'Supplier routing', 'suppliers', 'Falcon', 'falcon', 'Morgan Vale is the Falcon account representative.')
+    page.content = `# Supplier routing\n\nComplete required closure: ${'q'.repeat(300_000)}\n\n## Falcon\n\nMorgan Vale is the Falcon account representative.`
+    const countContextTokens = vi.fn(async () => 100)
+    const fixture = questionFixture('native', [
+      { calls: [{ id: 'quota-frame-read', name: 'pages.get', arguments: { id: 42 } }] }
+    ], () => page, [], { maxContextTokens: 128_000, maxOutputTokens: 8_192, countContextTokens })
+    const result = await fixture.execute('Who is our Falcon contact?', { maxOutputTokens: 8_192, maxTokens: 250_000 })
+    expect(result.executionLimit).toEqual({ reason: 'tokens', publication: 'inability' })
+    expect(fixture.providerCalls).toHaveLength(1)
+    expect(countContextTokens).toHaveBeenCalledOnce()
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(fixture.event.mock.calls.filter(([type, data]) => type === 'evidence.provenance' && questionRecord(data).purpose === 'context_admission').map(([, data]) => questionRecord(questionRecord(data).synthesisFrame)))
+      .toContainEqual(expect.objectContaining({ reason: 'token_allowance', nativeInputTokens: 100 }))
+    expect(result.totalTokens).toBeGreaterThan(0)
+  })
+  it('cancels native frame counting without synthesizing or recording an unpaid model turn', async () => {
+    const controller = new AbortController()
+    const page = questionReadPage(42, '2', 'Supplier routing', 'suppliers', 'Falcon', 'falcon', 'Morgan Vale is the Falcon account representative.')
+    page.content = `# Supplier routing\n\nRequired complete background: ${'w'.repeat(150_000)}\n\n## Falcon\n\nMorgan Vale is the Falcon account representative.`
+    const countContextTokens = vi.fn(async (_input: Readonly<AxChatRequest>, signal: AbortSignal) => {
+      expect(signal).toBe(controller.signal)
+      controller.abort(new Error('Native context count cancelled'))
+      return 10_000
+    })
+    const fixture = questionFixture('native', [
+      { calls: [{ id: 'cancel-frame-read', name: 'pages.get', arguments: { id: 42 } }] }
+    ], () => page, [], { maxContextTokens: 128_000, maxOutputTokens: 8_192, countContextTokens }, { signal: controller.signal })
+    await expect(fixture.execute('Who is our Falcon contact?', { maxOutputTokens: 8_192 })).rejects.toMatchObject({
+      code: 'PROVIDER_REQUEST_FAILED',
+      stage: 'context_admission'
+    })
+    expect(controller.signal.aborted).toBe(true)
+    expect(fixture.providerCalls).toHaveLength(1)
+    expect(countContextTokens).toHaveBeenCalledOnce()
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(fixture.text).not.toHaveBeenCalled()
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'model.turn')).toHaveLength(1)
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'tool.completed')).toHaveLength(1)
+  })
   it('continues from an independent strict-text read array to a sole finish and synthesis with both sources', async () => {
     const alpha = 'Alpha requires review.'
     const beta = 'Beta requires approval.'
@@ -4759,10 +4918,8 @@ describe('Ax agent engine', () => {
     expect(promptHistory).not.toContain(hiddenCandidate.okfResourceUri)
     expect(fixture.invoke).toHaveBeenCalledOnce()
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Wiki discovery window (')
-    expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
-      expect.objectContaining({ accepted: false }),
-      expect.objectContaining({ accepted: true })
-    ])
+    expect(result.citations).toBeUndefined()
+    expect(fixture.providerCalls).toHaveLength(1)
   })
 
   it('preserves exact recent-page excerpt evidence and its citation in the provider projection', async () => {

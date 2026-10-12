@@ -1,7 +1,7 @@
 import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
-import { wikiSynthesisSourceRef, type WikiSynthesisProjection, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+import { wikiSynthesisSourceRef, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
 
 /**
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
@@ -92,43 +92,67 @@ const synthesisField = (input: string, title: string): unknown => {
   return JSON.parse(end < 0 ? value : value.slice(0, end))
 }
 
+type TextRef = number | [index: number, start: number, end: number]
+type SourceRow = [
+  context: TextRef, kind: string, complete: boolean, selectedText: TextRef,
+  literalStatement: TextRef | null, authoredTexts: TextRef[] | null,
+  structuralLabel: TextRef | null, labels: TextRef[], opaquePacket?: TextRef
+]
+
 interface ReadableSourceRow {
   readonly context: string
   readonly kind: string
   readonly complete: boolean
-  readonly literalStatementName: string | null
-  readonly packet?: unknown
-  readonly authoredContentNames?: readonly string[]
+  readonly text: string
+  readonly literalStatement: string | null
+  readonly packet?: string
+  readonly authoredTexts?: readonly string[]
+  readonly structuralLabel: string | null
+  readonly labels: readonly string[]
 }
 
 interface ReadableSources {
-  readonly sources: Record<string, ReadableSourceRow>
-  readonly authoredContent: Record<string, { text: string }>
-  readonly quotations: Record<string, { literalStatement: string }>
+  readonly texts: readonly string[]
+  readonly sources: readonly SourceRow[]
 }
 
 const synthesisStructures = (input: string): ReadableSources =>
   synthesisField(input, 'Source Structures') as ReadableSources
 
-const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevision: string; projection: WikiSynthesisProjection; row: ReadableSourceRow }[] => {
+const suppliedText = (structures: ReadableSources, reference: TextRef): string => {
+  const index = typeof reference === 'number' ? reference : reference[0]
+  const text = structures.texts[index]
+  if (text === undefined) throw new Error('Missing supplied synthesis text')
+  if (typeof reference === 'number') return text
+  const [, start, end] = reference
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > text.length)
+    throw new Error('Invalid supplied synthesis text span')
+  return text.slice(start, end)
+}
+
+const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevision: string; sourceRef: string; row: ReadableSourceRow }[] => {
   const bindings = synthesisField(input, 'Source Bindings')
   const structures = synthesisStructures(input)
+  const text = (reference: TextRef): string => suppliedText(structures, reference)
   if (!Array.isArray(bindings)) throw new Error('Supplied synthesis bindings are not an array')
   return bindings.flatMap((binding: unknown) => {
     if (!Array.isArray(binding) || binding.length !== 3 || typeof binding[0] !== 'string' || typeof binding[1] !== 'string' || !Array.isArray(binding[2]))
       throw new Error('Invalid supplied synthesis binding group')
     return binding[2].flatMap((entry: unknown) => {
-      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || !Array.isArray(entry[1]))
+      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'number' || !Number.isSafeInteger(entry[0]) || !Array.isArray(entry[1]))
         throw new Error('Invalid supplied synthesis binding entry')
-      const row = structures.sources[entry[0]]
-      if (row === undefined) throw new Error('Missing supplied synthesis source row')
+      const tuple = structures.sources[entry[0]]
+      if (tuple === undefined) throw new Error('Missing supplied synthesis source row')
+      const row: ReadableSourceRow = {
+        context: text(tuple[0]), kind: tuple[1], complete: tuple[2], text: text(tuple[3]),
+        literalStatement: tuple[4] === null ? null : text(tuple[4]),
+        ...(tuple[5] === null ? { packet: text(tuple[8]!) } : { authoredTexts: tuple[5].map(text) }),
+        structuralLabel: tuple[6] === null ? null : text(tuple[6]), labels: tuple[7].map(text)
+      }
       return entry[1].map((value: unknown) => {
-        if (value === null || typeof value !== 'object' || !('sourceRef' in value) || typeof value.sourceRef !== 'string' ||
-          !('text' in value) || typeof value.text !== 'string')
+        if (!Array.isArray(value) || value.length !== 1 || typeof value[0] !== 'string')
           throw new Error('Invalid supplied synthesis projection')
-        // The fixture reads the encoder's original selected projection fields.
-        const projection = value as WikiSynthesisProjection
-        return { evidenceId: binding[0] as string, sourceRevision: binding[1] as string, projection, row }
+        return { evidenceId: binding[0] as string, sourceRevision: binding[1] as string, sourceRef: value[0], row }
       })
     })
   })
@@ -139,28 +163,17 @@ export type SynthesisFixtureSource = Omit<WikiSynthesisSource, 'unitId'> & { rea
 export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): SynthesisFixtureSource[] => {
   const input = synthesisInputFromRequest(request)
   if (input === undefined) return []
-  const structures = synthesisStructures(input)
-  return synthesisSourceRows(input).map(({ evidenceId, sourceRevision, projection, row }) => {
-    const literalStatement = row.literalStatementName === null ? null : structures.quotations[row.literalStatementName]?.literalStatement
-    if (literalStatement === undefined) throw new Error('Missing supplied synthesis quotation')
-    const packet = row.authoredContentNames === undefined ? row.packet : {
-      structuralLabel: projection.structuralLabel ?? null, labels: projection.labels ?? [],
-      authoredContent: authoredContentForRow(structures, row)
-    }
+  return synthesisSourceRows(input).map(({ evidenceId, sourceRevision, sourceRef, row }) => {
+    const packet = row.authoredTexts === undefined ? row.packet! : JSON.stringify({
+      structuralLabel: row.structuralLabel, labels: row.labels, authoredContent: row.authoredTexts
+    })
     return {
-      evidenceId, sourceRevision, sourceRef: projection.sourceRef,
-      context: row.context, text: projection.text, kind: row.kind, complete: row.complete,
-      packet: JSON.stringify(packet), literalStatement
+      evidenceId, sourceRevision, sourceRef,
+      context: row.context, text: row.text, kind: row.kind, complete: row.complete,
+      packet, literalStatement: row.literalStatement
     }
   })
 }
-
-const authoredContentForRow = (structures: ReadableSources, row: ReadableSourceRow): string[] =>
-  (row.authoredContentNames ?? []).map(name => {
-    const content = structures.authoredContent[name]
-    if (content === undefined) throw new Error('Missing supplied synthesis authored content')
-    return content.text
-  })
 
 export const synthesisAuthoredContentFromRequest = (
   request: Readonly<AxChatRequest>,
@@ -170,10 +183,10 @@ export const synthesisAuthoredContentFromRequest = (
   if (input === undefined) return []
   const selected = synthesisSourceRows(input).find(entry =>
     entry.evidenceId === source.evidenceId && entry.sourceRevision === source.sourceRevision &&
-    entry.projection.sourceRef === ('sourceRef' in source ? source.sourceRef : wikiSynthesisSourceRef(source))
+    entry.sourceRef === ('sourceRef' in source ? source.sourceRef : wikiSynthesisSourceRef(source))
   )
   if (selected === undefined) return []
-  return authoredContentForRow(synthesisStructures(input), selected.row)
+  return [...(selected.row.authoredTexts ?? [])]
 }
 
 export const synthesisOwnedPacketIncludes = (

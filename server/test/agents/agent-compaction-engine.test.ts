@@ -202,6 +202,91 @@ const sequencedBudget = (availableTokens: number): AgentDispatchBudget & { reado
 }
 
 describe('Ax agent engine context compaction', () => {
+  it('retains exact source eligibility after old-history compaction and counts changed correction context without fake turns', async () => {
+    const history = canonicalMessages([
+      { role: 'user', content: `OLDEST_CONTACT_CONSTRAINT:${'a'.repeat(40_000)}` },
+      { role: 'assistant', content: `OLDEST_CONTACT_DECISION:${'b'.repeat(40_000)}` },
+      { role: 'user', content: `TAIL_CONTACT_CONSTRAINT:${'c'.repeat(8_000)}` },
+      { role: 'assistant', content: `TAIL_CONTACT_DECISION:${'d'.repeat(8_000)}` },
+      { role: 'user', content: 'Who is our Falcon contact?' }
+    ])
+    const originals = structuredClone(history.messages)
+    const contact = 'Morgan Vale is the Falcon account representative.'
+    const content = `# Supplier routing\n\nRequired complete source background: ${'v'.repeat(150_000)}\n\n## Falcon\n\n${contact}`
+    const calls: Readonly<AxChatRequest>[] = []
+    const counted: Readonly<AxChatRequest>[] = []
+    const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>, signal: AbortSignal) => {
+      expect(signal.aborted).toBe(false)
+      counted.push(input)
+      expect(input.responseFormat ?? input.functions).toBeDefined()
+      expect(JSON.stringify(input)).toContain('Frozen routing preference')
+      expect(JSON.stringify(input)).toContain('Retain source record qualifications')
+      expect(JSON.stringify(input)).toContain('v'.repeat(150_000))
+      return 10_000
+    })
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      calls.push(input)
+      if (calls.length === 1) return response('Retain the original supplier constraints and the current contact lookup.', 100, 10)
+      if (calls.length === 2) return {
+        ...response('', 100, 10),
+        results: [{
+          index: 0,
+          functionCalls: [
+            { id: 'contact-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+            { id: 'contact-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }
+          ]
+        }]
+      }
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.text === contact)!
+      return response(synthesisFixtureAnswer(input, {
+        claims: [{
+          evidenceId: source.evidenceId,
+          sourceRevision: source.sourceRevision,
+          sourceRef: source.sourceRef,
+          statement: calls.length === 3 ? 'Morgan Vale is the Falcon chief financial officer.' : contact
+        }],
+        unresolvedFacets: []
+      }), 100, 10)
+    })
+    const factory = {
+      create: async () => ({ ...profile, countContextTokens, service: fullAxFixtureService(chat) })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({
+      id: 1, locale: 'en', path: 'suppliers', title: 'Supplier routing', sourceRevision: '2', contentType: 'markdown', content,
+      citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' }, citationSections: []
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read source', parameters: { type: 'object', properties: {} }, risk: 'read', group: 'core' }],
+        invoke, snapshot: async () => ({}), close: () => {}, validateObservation: async () => true
+      })
+    }
+    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (_type: string, _data: unknown) => {})
+    const budget = sequencedBudget(1_000_000)
+    const base = engineRequest(history.messages)
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+      ...base,
+      run: { ...base.run, executionMode: 'agent' },
+      memory: { user: ['Frozen routing preference'], agent: [] },
+      skills: [{ id: '00000000-0000-4000-8000-000000000108', name: 'routing', skillMarkdown: 'Retain source record qualifications' }],
+      compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
+      dispatchBudget: budget
+    }, { text, event, commitCompaction })
+    expect(history.messages).toEqual(originals)
+    expect(commitCompaction).toHaveBeenCalledOnce()
+    expect(calls).toHaveLength(4)
+    expect(countContextTokens).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(counted[1])).toContain('chief financial officer')
+    expect(JSON.stringify(counted[0])).not.toContain('chief financial officer')
+    expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_rejected')).toHaveLength(1)
+    expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_accepted')).toHaveLength(1)
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Morgan Vale')
+    expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('chief financial officer')
+    expect(result.totalTokens).toBe(440)
+    expect(budget.consumed()).toBe(result.totalTokens)
+  })
   it('folds old constraints with the same model, commits before follow-on, and preserves canonical originals and the newest tail', async () => {
     const history = oversizedHistory()
     const original = structuredClone(history.messages)

@@ -1,6 +1,6 @@
 # Falcon context inflation: developer handoff
 
-## Finding
+## Historical finding
 
 A roughly 5,000-token page is not being rejected by Google as a 128,000-token document. The failing tsEpistle guard counts **UTF-8 bytes of the complete serialized Ax request**, then subtracts that byte count from a profile field called `maxContextTokens`.
 
@@ -12,7 +12,7 @@ The portable anonymized fixture reproduces the same structural problem without t
 
 ## Scope and files
 
-Investigated application revision: `252b8c465a8fabecde430431561e95316225dd65`, Bun 1.4.2, `@ax-llm/ax` 25.2.1, Gemini profile model `gemini-3.8-flash`. Source line references below refer to that revision. This handoff adds diagnostics and documentation; it does not change application code, prompts, profile limits, accounting, or authorization.
+Investigated application revision: `252b8c465a8fabecde430431561e95316225dd65`, Bun 1.4.2, `@ax-llm/ax` 25.2.1, Gemini profile model `gemini-3.8-flash`. All original findings, tables, live observations and source line references below describe that historical revision, not the compact implementation. Historical metric files are retained unchanged.
 
 | File | Purpose |
 | --- | --- |
@@ -24,6 +24,34 @@ Investigated application revision: `252b8c465a8fabecde430431561e95316225dd65`, B
 | [reproduce.py](reproduce.py), [prepare.py](prepare.py), [probe.ts](probe.ts) | Offline reproduction using the checkout's actual production functions |
 
 The fixture consistently pseudonymizes words and numbers with a private salted mapping while retaining Markdown/HTML syntax and parsing-sensitive continuation keywords. HTTP and email destinations use `example.invalid`. It contains no original people, contact details, working share URLs, share keys, credentials, cookies, login state or personal memories. The salt is not exported. Some labels are intentionally nonsensical: this is a **capacity/binding topology fixture**, not a semantic-answer benchmark.
+
+## Current compact implementation and measurement
+
+The current encoder emits one lossless `sourceStructures` text pool and positional scope rows, with exact text references represented as pool indexes or UTF-16 `[index,start,endExclusive]` slices. `sourceBindings` retains all admitted evidence/revision aliases and host-issued source references; sharing storage does not merge their authority or discard complete quotations, authored dependencies or qualifications.
+
+The parent-verified current launcher result (`/tmp/wiki-context-after.json`) measures the committed 16,426-byte fixture with all 259 complete projected body units, 6 registered evidence identities, 260 root projections, 437 root-plus-section evidence/revision aliases and 260 distinct native unit IDs preserved. The source still has 11 parsed sections and 12 supplied TOC citations. Historical metric files remain unchanged; the before/after comparison below uses the portable fixture, not the private original.
+
+| Quantity | Historical fixture | Current compact fixture |
+| --- | ---: | ---: |
+| Complete root-only serialized Ax request bytes | 221,151 | 104,630 |
+| Complete root + sections serialized Ax request bytes | 258,525 | 110,472 |
+| Root-only input bytes + 8,192 output allowance | 229,343 | 112,822 |
+| Root + sections input bytes + 8,192 output allowance | 266,717 | 118,664 |
+| Fits the diagnostic 128,000 ceiling, root / sections | no / no | yes / yes |
+| Root-only `sourceBindings` JSON bytes | 49,588 | 7,720 |
+| Root + sections `sourceBindings` JSON bytes | 84,206 | 13,188 |
+| `sourceStructures` JSON bytes, either variant | 137,715 | 75,207 |
+
+The final serialized frame shrank by 116,521 bytes (52.69%) for root-only and 148,053 bytes (57.27%) for root plus sections. Current frame-to-source **byte** ratios are 6.37× and 6.73× respectively; these are not model-token ratios or provider usage. Both diagnostic sums fit without changing the 128,000 ceiling or 8,192 output allowance.
+
+In either current nonempty variant, the physical pool contains 355 strings: 49,070 UTF-8 text bytes and 50,556 JSON bytes. The 260 positional scope rows occupy 24,630 JSON bytes; the complete `sourceStructures` object occupies 75,207 bytes including its enclosing syntax. Remaining storage includes complete authored and quoted roles whose exact strings can overlap without being identical: substring reuse does not eliminate every duplicated passage, nor may those roles be clipped or silently pruned to improve fit.
+
+Substring reuse is bounded to 32 Mi UTF-16 code units of cumulative search work, an optimization limit rather than a source-length or context-capacity limit. Once that budget is exhausted, complete exact strings remain as whole pool entries; exact deduplication is unconditional. No admitted alias, body unit, complete quotation, authored dependency or qualification is removed by that limit.
+
+The probe reports physical `pooledTextUtf8Bytes`, `pooledTextJsonBytes` and `scopeJsonBytes`, plus binding and complete generated Ax-frame bytes. Unique selected-text, quotation and authored-dependency counts/UTF-8 bytes are computed by decoding exact locator uses. Those semantic categories can overlap one another and the physical pool: they are **not disjoint storage buckets** and must not be summed to explain pool size.
+
+`requestedInputPlusOutput` and `passesRequestedContext` retain the conservative serialized-frame-byte + 8,192 comparison at 128,000. The observed fits above establish **offline byte-capacity proof only**, not a native token count or proof of the new admission path. Actual generated-frame preflight, provider-native context counting, quota accounting and successful publication require engine tests and an authorized live smoke; a mock establishes none of those. Engine/native/live gates are not claimed successful here. Native/public quota policy is unchanged. The read-only offline diagnostic emits numeric metrics (sizes/counts, model configuration and a source hash), never source text or credentials; it does not dispatch to a provider or perform network fetches, and the metrics file is created with private `0600` permissions. Run the launcher below against the current checkout to produce a separate numeric metrics file, without overwriting the historical baselines.
+
 
 ## Fresh live reproduction
 
@@ -49,7 +77,7 @@ Production had 102 applied migrations with a clear migration lock. The investiga
 
 ## Reproduce on another system
 
-Use the repository's supported Bun installation and Python 3.9 or later. Install the frozen dependencies in a checkout whose application source matches the investigated revision:
+Use the repository's supported Bun installation and Python 3.9 or later. Install the frozen dependencies in the checkout to measure. Use the investigated revision only when reproducing the historical numbers:
 
 ```sh
 bun install --frozen-lockfile
@@ -60,7 +88,7 @@ The command is independent of the current working directory when invoked with th
 
 It constructs `AxMockAIService`, captures the actual Ax-generated request, and supplies a synthetic empty answer solely to complete the mock call. Global `fetch` throws if invoked. No Google or TypeSafe service is constructed, no application is started, no database or tools are run, and no provider key is needed. Dependency installation is the only step that ordinarily requires network access. FFmpeg and qpdf are not needed for this diagnostic.
 
-For the committed fixture at the investigated code/dependency versions, expect:
+For the committed fixture at the **historical investigated** code/dependency versions, expect:
 
 - 16,426 source UTF-8 bytes; 259 complete projected units; 11 parsed sections.
 - 12 supplied TOC citation entries; 6 evidence identities actually registered.
@@ -81,13 +109,13 @@ Metadata can include inline `content` or a relative `contentFile`. A bare `.md` 
 
 ### What the offline numbers establish
 
-Preparation exposes existing lexical engine helpers in a **temporary copy**, and extracts the exact synthesis source-construction block and production page-read TOC/citation functions. The probe executes production parsing, sentence/record projection, closures, root/section evidence normalization, source construction, encoding, Ax prompt generation and native output-schema generation. It also prepends the real `final-synthesis` host prompt before calling the production serialization-size helper.
+Preparation exposes existing lexical engine helpers in a **temporary copy**, extracts the exact synthesis source-construction block retained in `#synthesisTurn`, and extracts the production page-read TOC/citation functions. The production preflight reuses that construction; its dispatch/admission code is not executed by this probe. The probe executes production parsing, sentence/record projection, closures, root/section evidence normalization, source construction, encoding, Ax prompt generation and native output-schema generation. It also prepends the real `final-synthesis` host prompt before calling the production serialization-size helper.
 
-This is a reconstruction, **not a production capture of the rejected full frame**. Assumptions are empty memory/skills, all-Wiki scope, one literal request facet, no observations, no correction feedback and the stated model/output allowance. The 2,140-byte host prefix is included. Ordinary conversation messages are not appended to this typed generation, matching its production construction. Different live request options can change fixed overhead; the failed frame's byte breakdown is not currently logged. Even the minimal/root-only case establishes failure without prior chat history.
+This is a reconstruction, **not a production capture of the rejected full frame**. Assumptions are empty memory/skills, all-Wiki scope, one literal request facet, no observations, no correction feedback and the stated model/output allowance. The measured production host prefix is included (2,140 bytes in the historical reconstruction). Ordinary conversation messages are not appended to this typed generation, matching its production construction. Different live request options can change fixed overhead; the historical failed frame's byte breakdown was not logged. At the investigated revision, even the minimal/root-only case established failure without prior chat history.
 
 These are serialized **Ax request** bytes. The Gemini adapter subsequently converts Ax fields to Google's native body; that body, its exact tokenization and its treatment of schema instructions were not measured here. The mock does not establish a semantically correct answer, native provider conformance, paid exposure settlement or end-to-end publication.
 
-## Measured expansion
+## Historical measured expansion
 
 The anonymized specimen preserves the original's measured parser/binding cardinalities; its content and URL lengths differ slightly.
 
@@ -138,7 +166,7 @@ The probe also reports an empty-source baseline, 14,033 final bytes for the priv
 6. **Ax adds signature instructions and structured output.** `wiki-synthesis.ts:700–821`, `createWikiSynthesisProgram`. Inspect the captured field sizes and installed Ax prompt generation. Output descriptions appear in the Ax system output instructions and native response schema. This is fixed overhead for the nonempty cases, not a per-unit growing schema enumeration.
 7. **The final frame gets the host prefix and a late capacity check.** `engine.ts:6207–6272`, `admittedChat`, especially 6220–6228. The prefix is prepended, the complete serialized Ax frame is measured, then context and budget output allowances are calculated.
 
-Current `sourceRef` output schema uses the fixed pattern `^s[A-Za-z0-9_-]{16}$` (`wiki-synthesis.ts:789–797`). It does **not** enumerate all 437 source bindings in the schema. A proposed diagnosis or fix based on a growing per-source schema enum would be addressing the wrong representation at this revision. Ax's separate `fieldDescriptions` metadata is not another populated copy for these fields in the captured requests.
+At the investigated revision, the `sourceRef` output schema uses the fixed pattern `^s[A-Za-z0-9_-]{16}$` (`wiki-synthesis.ts:789–797`). It does **not** enumerate all 437 source bindings in the schema. A proposed diagnosis or fix based on a growing per-source schema enum would be addressing the wrong representation at this revision. Ax's separate `fieldDescriptions` metadata is not another populated copy for these fields in the captured requests.
 
 ## Accounting, admission and why retrieval passes first
 
@@ -165,7 +193,7 @@ A correction-capable synthesis sequence can reserve twice its typed exposure plu
 
 ## Suggested investigation and fix boundaries
 
-The following are review directions, not an implemented fix or an instruction to weaken integrity checks:
+The following were the original handoff's review directions, not claims about completed current behavior or instructions to weaken integrity checks:
 
 1. Add private, numeric pre-dispatch telemetry for the actual rejected typed frame: body bytes, binding/structure bytes, projection count versus unique-unit count, schema bytes, prefix bytes and the exact context/budget reason. Do not persist page content, full prompts, credentials or rejected drafts merely to collect sizes.
 2. Separate representation efficiency from admission units. Establish a model-appropriate context estimate or native token count for the converted request, and retain explicit conservative unknown-exposure/settlement policy. Document whether each ceiling is tokens, serialized bytes or policy exposure units. A generic bytes/4 conversion is not a demonstrated Gemini tokenizer or safe accounting migration.
@@ -191,4 +219,4 @@ Relevant existing suites to examine: `server/test/agents/wiki-synthesis.test.ts`
 
 ## Remaining uncertainty
 
-This investigation proves sufficient structural expansion and the local units comparison to reproduce failure. It does not provide the exact rejected live frame, native Gemini token count, a provider context-limit error, a completed answer fix or a new pricing/quota policy. The separate Formica summary previously exhausted evidence validation; that semantic failure is outside this Falcon capacity reproduction and should not be conflated with it.
+The historical investigation proves sufficient structural expansion and the local units comparison to reproduce failure. It does not provide the exact rejected live frame, native Gemini token count, a provider context-limit error, a completed answer fix or a new pricing/quota policy. Current compact-wire measurements must be reported separately, and offline mock results do not remove the engine/native/live verification requirements above. The separate Formica summary previously exhausted evidence validation; that semantic failure is outside this Falcon capacity reproduction and should not be conflated with it.
