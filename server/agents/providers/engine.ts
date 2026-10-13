@@ -889,7 +889,12 @@ const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit):
     }
     return new RegExp(`(?<![\\p{L}\\p{N}.+\\-])${literal}(?![\\p{L}\\p{N}])(?!\\s+(?:(?:working|calendar|supported)\\s+)?(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|KB|MB|GB)\\b)`, 'giu')
   }
-  const fields = numericFields.map(field => ({ field, pattern: quantityPattern(field.value) }))
+  const labelCounts = new Map<string, number>()
+  const fields = numericFields.map(field => {
+    const labelTerms = normalizedTerms(field.label.replace(/\p{Pd}/gu, ' '), true)
+    for (const term of labelTerms) labelCounts.set(term, (labelCounts.get(term) ?? 0) + 1)
+    return { field, labelTerms, originalLabelTerms: normalizedTerms(field.label, true), pattern: quantityPattern(field.value) }
+  })
   // Unsupported numeric shapes keep the pre-existing admission path; supported
   // scalar shapes must not fall back to punctuation-losing lexical matching.
   if (fields.some(candidate => candidate.pattern === null)) return null
@@ -897,8 +902,12 @@ const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit):
   return parts.every(part => {
     const numbers = [...part.matchAll(/[-+]?\d+(?:[.,]\d+)*(?::\d+)*/gu)]
     if (numbers.length === 0) return true
-    const terms = normalizedTerms(part, true)
-    const owners = fields.filter(candidate => normalizedTerms(candidate.field.label, true).some(term => terms.includes(term)))
+    const terms = normalizedTerms(part.replace(/\p{Pd}/gu, ' '), true)
+    const originalTerms = normalizedTerms(part, true)
+    const distinguishingOwners = fields.filter(candidate =>
+      candidate.labelTerms.some(term => labelCounts.get(term) === 1 && terms.includes(term)))
+    const owners = distinguishingOwners.length > 0 ? distinguishingOwners :
+      fields.filter(candidate => candidate.originalLabelTerms.some(term => originalTerms.includes(term)))
     // An explicit original field association is still required, even when
     // this record has just one scalar. Ambiguous multi-field prose stays shut.
     if (owners.length !== 1) return false
@@ -2250,7 +2259,8 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit, semanticAdm
   // first field is prose, not a row identity that must be copied word for word.
   const firstIdentifiers = semanticAdmission ? identifierTerms(first.value, true) : []
   const firstTerms = semanticAdmission ? significantTokens(first.value, true) : []
-  const literalIdentity = !semanticAdmission || firstTerms.length > 0 && firstTerms.every(term => firstIdentifiers.includes(term))
+  const literalIdentity = !semanticAdmission || /^(?:name|id|identifier)$/iu.test(first.label.trim()) ||
+    firstTerms.length > 0 && firstTerms.every(term => firstIdentifiers.includes(term))
   // A two-column key/value record can be stated as "Key: value". Resolve only
   // this exact owned key, then validate its value as the second explicit field.
   // Keep link destinations attached to their original field. Wording projection
@@ -2806,7 +2816,8 @@ const completeListOriginalRecords = (
 const completeListSingleRecordProtectedAssociationsMatch = (
   claim: string,
   list: CitationSourceUnit,
-  records: readonly CitationSourceUnit[]
+  records: readonly CitationSourceUnit[],
+  witnesses: readonly CitationSourceUnit[] = records
 ): boolean => {
   const values = records.flatMap(candidate => candidate.closure.record!.fields.map(field => lexicalTokens(field.value, true).map(normalizedToken)))
   const containsValue = (tokens: readonly string[], value: readonly string[]): boolean =>
@@ -2827,8 +2838,8 @@ const completeListSingleRecordProtectedAssociationsMatch = (
   const claimedValues = values.filter(value => containsValue(tokens, value))
   if (identifiers.length === 0 && addresses.length === 0 && links.length === 0 && literals.length === 0 &&
     numericSegments(claim).length === 0 && claimedValues.length === 0)
-    return true
-  return records.some(original => {
+    return witnesses.length > 0
+  return witnesses.some(original => {
     const record = original.closure.record!
     const text = record.fields.length >= 2
       ? record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
@@ -2881,30 +2892,43 @@ const completeListProtectedAssociationsMatch = (
   records: readonly CitationSourceUnit[]
 ): boolean => {
   if (completeListSingleRecordProtectedAssociationsMatch(claim, list, records)) return true
-  // Named/contact records retain one connected witness, including lowercase
-  // schema identities and omitted owners. Demonstratives alone do not turn an
-  // anonymous policy statement into a named-owner assertion.
+  // Whole-claim witnesses above retain the existing single-record path. Only
+  // independently bound clauses may use sibling records; an omitted owner or
+  // personal pronoun cannot inherit an identity from an adjacent segment.
   const prose = semanticMarkdownText(claim).replace(/^(?:(?:in|according\s+to|under|within|per)\b[^,:;.!?]*[,;:]\s*)+/iu, '')
-  if (/\b(?:he|she|his|her|hers|they|their|theirs|them|it|its|former|latter)\b/iu.test(prose) ||
-    records.some(original => {
-      const record = original.closure.record!
-      const first = record.fields[0]
-      if (first === undefined) return true
-      // Original identity/contact schema, not claim wording, fences missing
-      // owners as well as lowercase names before any independent splitting.
-      if (original.closure.links.length > 0 || record.fields.some(field =>
-        /^(?:name|id|identifier|contact|e[- ]?mail|phone(?: number)?|telephone|url|link)$/iu.test(field.label.trim()) ||
-        (field.value.match(identityAddressPattern)?.length ?? 0) > 0
-      )) return true
-      const tokens = significantTokens(first.value, true)
-      const identifiers = identifierTerms(first.value, true)
-      return tokens.length > 0 && tokens.every(token => identifiers.includes(token))
-    }))
+  if (/\b(?:he|she|his|her|hers|they|their|theirs|them|it|its|former|latter)\b/iu.test(prose))
     return false
   const segments = sourceLocalSegments(claim, true)
-  return segments.length > 1 && segments.every(segment => records.some(original =>
-    completeListSingleRecordProtectedAssociationsMatch(segment, list, [original])
-  ))
+  return segments.length > 1 && segments.every(segment => records.some(original => {
+    const record = original.closure.record!
+    const first = record.fields[0]
+    if (first === undefined) return false
+    const identityFields = record.fields.filter(field => /^(?:name|id|identifier)$/iu.test(field.label.trim()))
+    const firstTerms = significantTokens(first.value, true)
+    const firstIdentifiers = identifierTerms(first.value, true)
+    const scalarIdentity = firstTerms.length > 0 && firstTerms.every(term => firstIdentifiers.includes(term))
+    const protectedOwner = original.closure.links.length > 0 || record.fields.some(field =>
+      /^(?:contact|e[- ]?mail|phone(?: number)?|telephone|url|link)$/iu.test(field.label.trim()) ||
+      (field.value.match(identityAddressPattern)?.length ?? 0) > 0
+    )
+    const owners = identityFields.length > 0 ? identityFields : scalarIdentity || protectedOwner ? [first] : []
+    if (owners.length > 0 && !owners.some(field => {
+      const identity = normalizedHeading(field.value)
+      // A shared name/scalar alone does not select a row. A separately retained
+      // unique original ID can still connect records that share the same name.
+      if (records.some(other => other.closure.record!.id !== record.id &&
+        other.closure.record!.fields.some((candidate, index) =>
+          (index === 0 || /^(?:name|id|identifier)$/iu.test(candidate.label.trim())) &&
+          normalizedHeading(candidate.value) === identity
+        ))) return false
+      const value = field.value.trim().replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
+      return value.length > 0 && new RegExp(`(?<![\\p{L}\\p{N}'’])${value}(?![\\p{L}\\p{N}'’])`, 'iu').test(semanticMarkdownText(segment))
+    })) return false
+    // Keep every original value in the protected comparison, while allowing
+    // only this record to witness the clause. Filtering the source values down
+    // to the candidate would hide lowercase sibling identities and role swaps.
+    return completeListSingleRecordProtectedAssociationsMatch(segment, list, records, [original])
+  }))
 }
 
 const exactTypedIdentifiersMatch = (claim: string, unit: CitationSourceUnit): boolean => {
@@ -6710,9 +6734,11 @@ export class AxAgentEngine implements AgentEngine {
           : message.role === 'user'
             ? message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
             : ''
-        return content.trim() ? [{ role: message.role, content }] : []
+        return content.trim() ? [`${message.role}:\n${content}`] : []
       })
-    const conversationContext = previousConversation.length > 0 ? JSON.stringify(previousConversation) : undefined
+    const conversationContext = previousConversation.length > 0
+      ? previousConversation.join('\n\n')
+      : undefined
     const preflightComplete = new Error('Typed synthesis preflight complete')
     let preflightPlan: PublicationSequencePlan | undefined
     let dispatched: TurnResult | undefined
