@@ -2704,7 +2704,7 @@ const assessTypedClaimEligibility = (
     ...markdownInlineTokens(claim.statement).flatMap(token => {
       if (token.type !== 'code_inline' && token.type !== 'image') return []
       const destination = token.attrGet('src')
-      return destination === null ? [token.content] : [token.content, destination]
+      return destination === null ? [token.content] : [token.content, String(destination)]
     }),
     ...renderedLinkSignatures(claim.statement).flatMap(signature => {
       const link = JSON.parse(signature) as { readonly label: string; readonly destination: string }
