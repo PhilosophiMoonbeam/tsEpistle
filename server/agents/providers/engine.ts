@@ -882,12 +882,20 @@ const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit):
       const amount = escapeQuantityPattern(prefixCurrency?.[2] ?? suffixCurrency![1]!)
       literal = `(?:${code}\\s*${amount}|${amount}\\s*${code})`
     } else {
-      // Clocks retain their punctuation; duration/dimension words come from
-      // this field, not a number-set or a unit-conversion dictionary.
-      if (!/^\d+(?:[.,]\d+)*(?::\d+)*\s+[\p{L}][\p{L}\s-]*$/u.test(scalar)) return null
-      literal = escapeQuantityPattern(scalar)
+      // Clocks retain their punctuation. Only source-stated human duration
+      // nouns inflect; every qualifier and dimension word stays attached.
+      const duration = scalar.match(/^(\d+(?:[.,]\d+)*)\s+((?:[\p{L}]+[\s-]+)*)(seconds?|minutes?|hours?|days?|weeks?|months?|years?)$/u)
+      if (duration !== null) {
+        const count = escapeQuantityPattern(duration[1]!)
+        const qualifiers = duration[2]!.trim().split(/[\s-]+/u).filter(Boolean).map(escapeQuantityPattern)
+        const dimension = escapeQuantityPattern(duration[3]!.replace(/s$/u, ''))
+        literal = [count, ...qualifiers, `${dimension}s?`].join('(?:\\s+|-)')
+      } else {
+        if (!/^\d+(?:[.,]\d+)*(?::\d+)*\s+[\p{L}][\p{L}\s-]*$/u.test(scalar)) return null
+        literal = escapeQuantityPattern(scalar)
+      }
     }
-    return new RegExp(`(?<![\\p{L}\\p{N}.+\\-])${literal}(?![\\p{L}\\p{N}])(?!\\s+(?:(?:working|calendar|supported)\\s+)?(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|KB|MB|GB)\\b)`, 'giu')
+    return new RegExp(`(?<![\\p{L}\\p{N}.+\\-])${literal}(?![\\p{L}\\p{N}])(?![\\s-]+(?:(?:working|calendar|supported)[\\s-]+)?(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|KB|MB|GB)\\b)`, 'giu')
   }
   const labelCounts = new Map<string, number>()
   const fields = numericFields.map(field => {
@@ -898,6 +906,10 @@ const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit):
   // Unsupported numeric shapes keep the pre-existing admission path; supported
   // scalar shapes must not fall back to punctuation-losing lexical matching.
   if (fields.some(candidate => candidate.pattern === null)) return null
+  const nonnumericLabels = record.fields.filter(field => !/\p{N}/u.test(field.value)).map(field => ({
+    terms: normalizedTerms(field.label.replace(/\p{Pd}/gu, ' '), true),
+    originalTerms: normalizedTerms(field.label, true)
+  }))
   const parts = semanticMarkdownText(claim).split(/[,;|]|\s+\band\b\s+|\n/iu)
   return parts.every(part => {
     const numbers = [...part.matchAll(/[-+]?\d+(?:[.,]\d+)*(?::\d+)*/gu)]
@@ -908,15 +920,23 @@ const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit):
       candidate.labelTerms.some(term => labelCounts.get(term) === 1 && terms.includes(term)))
     const owners = distinguishingOwners.length > 0 ? distinguishingOwners :
       fields.filter(candidate => candidate.originalLabelTerms.some(term => originalTerms.includes(term)))
-    // An explicit original field association is still required, even when
-    // this record has just one scalar. Ambiguous multi-field prose stays shut.
-    if (owners.length !== 1) return false
-    const quantities = [...part.matchAll(owners[0]!.pattern!)]
-    return quantities.length > 0 && numbers.every(number => quantities.some(quantity => {
+    // Explicit labels cannot borrow another field's quantity. Without a label,
+    // each numeric token needs exactly one complete quantity witness in this
+    // same original record; native semantic proof still owns its meaning.
+    if (owners.length > 1) return false
+    if (owners.length === 0 && nonnumericLabels.some(label =>
+      label.terms.some(term => terms.includes(term)) || label.originalTerms.some(term => originalTerms.includes(term))))
+      return false
+    const candidates = owners.length === 1 ? owners : fields
+    const quantities = candidates.map(candidate => [...part.matchAll(candidate.pattern!)])
+    return numbers.every(number => {
       const start = number.index ?? 0
-      const quantityStart = quantity.index ?? 0
-      return start >= quantityStart && start + number[0].length <= quantityStart + quantity[0].length
-    }))
+      const witnesses = quantities.filter(matches => matches.some(quantity => {
+        const quantityStart = quantity.index ?? 0
+        return start >= quantityStart && start + number[0].length <= quantityStart + quantity[0].length
+      }))
+      return witnesses.length === 1
+    })
   })
 }
 
