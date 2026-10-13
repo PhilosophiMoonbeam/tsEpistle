@@ -32,7 +32,7 @@ const result:any={sourceUtf8Bytes:bytes(page.content),sourceCharacters:page.cont
 async function capture(label:string,evidence:Map<any,any>){
  const {sources,sourceStructures}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]});const wire=encodeWikiSynthesisSources(sources,sourceStructures)
  type TextRef=number|[number,number,number]
- type SourceRow=[unknown,unknown,unknown,string,TextRef|null,TextRef[]|null,unknown,unknown,unknown?]
+ type SourceRow={ref:string;context:TextRef;kind:string;complete:boolean;text:string;literalStatement:TextRef|null;authoredTexts:TextRef[]|null;structuralLabel:TextRef|null;labels:TextRef[];opaquePacket?:TextRef}
  type LocatorMetricsStructures={texts:Record<number,string>;sources:Record<number,SourceRow>;owners:Record<number,[string,string]>}
  const structures:LocatorMetricsStructures=JSON.parse(wire.sourceStructures);const bindings:Record<string,[number,number]>=JSON.parse(wire.sourceBindings)
  if(!structures.texts||!structures.sources||Array.isArray(structures.texts)||Array.isArray(structures.sources)||typeof structures.texts!=='object'||typeof structures.sources!=='object')throw Error('Expected explicit numeric-key source dictionaries')
@@ -42,9 +42,9 @@ async function capture(label:string,evidence:Map<any,any>){
  let structureScopeCount=0;let pooledTextCount=0;let pooledTextUtf8Bytes=0
  for(const key in structures.sources){
   const row=structures.sources[Number(key)];structureScopeCount++
-  selectedTexts.add(row[3])
-  if(row[4]!==null)quotations.add(decode(row[4]))
-  for(const ref of row[5]??[])authoredDependencies.add(decode(ref))
+  selectedTexts.add(row.text)
+  if(row.literalStatement!==null)quotations.add(decode(row.literalStatement))
+  for(const ref of row.authoredTexts??[])authoredDependencies.add(decode(ref))
  }
  for(const key in structures.texts){pooledTextCount++;pooledTextUtf8Bytes+=bytes(structures.texts[Number(key)])}
  const uniqueTextBytes=(texts:Set<string>)=>{let sum=0;for(const text of texts)sum+=bytes(text);return sum}

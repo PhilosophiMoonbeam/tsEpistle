@@ -93,11 +93,18 @@ const synthesisField = (input: string, title: string): unknown => {
 }
 
 type TextRef = number | [poolKey: number, start: number, endExclusive: number]
-type SourceRow = [
-  context: TextRef, kind: string, complete: boolean, selectedText: string,
-  literalStatement: TextRef | null, authoredTexts: TextRef[] | null,
-  structuralLabel: TextRef | null, labels: TextRef[], opaquePacket?: TextRef
-]
+type SourceRow = {
+  ref: string
+  context: TextRef
+  kind: string
+  complete: boolean
+  text: string
+  literalStatement: TextRef | null
+  authoredTexts: TextRef[] | null
+  structuralLabel: TextRef | null
+  labels: TextRef[]
+  opaquePacket?: TextRef
+}
 
 interface ReadableSourceRow {
   readonly context: string
@@ -152,14 +159,18 @@ const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevisio
     const owner = structures.owners[ownerKey]
     if (!Array.isArray(owner) || owner.length !== 2 || owner.some(value => typeof value !== 'string'))
       throw new Error('Missing supplied synthesis owner')
-    const tuple = structures.sources[scopeKey]
-    if (tuple === undefined) throw new Error('Missing supplied synthesis source row')
-    if (typeof tuple[3] !== 'string') throw new Error('Supplied synthesis selected text must be an inline string')
+    const supplied = structures.sources[scopeKey]
+    if (supplied === undefined || supplied === null || typeof supplied !== 'object' || Array.isArray(supplied))
+      throw new Error('Missing supplied synthesis source row')
+    if (typeof supplied.text !== 'string') throw new Error('Supplied synthesis selected text must be an inline string')
+    const canonicalBinding = (bindings as Record<string, unknown>)[supplied.ref]
+    if (typeof supplied.ref !== 'string' || !Array.isArray(canonicalBinding) || canonicalBinding[0] !== scopeKey)
+      throw new Error('Supplied synthesis canonical ref must bind its exact source scope')
     const row: ReadableSourceRow = {
-      context: text(tuple[0]), kind: tuple[1], complete: tuple[2], text: tuple[3],
-      literalStatement: tuple[4] === null ? null : text(tuple[4]),
-      ...(tuple[5] === null ? { packet: text(tuple[8]!) } : { authoredTexts: tuple[5].map(text) }),
-      structuralLabel: tuple[6] === null ? null : text(tuple[6]), labels: tuple[7].map(text)
+      context: text(supplied.context), kind: supplied.kind, complete: supplied.complete, text: supplied.text,
+      literalStatement: supplied.literalStatement === null ? null : text(supplied.literalStatement),
+      ...(supplied.authoredTexts === null ? { packet: text(supplied.opaquePacket!) } : { authoredTexts: supplied.authoredTexts.map(text) }),
+      structuralLabel: supplied.structuralLabel === null ? null : text(supplied.structuralLabel), labels: supplied.labels.map(text)
     }
     return { evidenceId: owner[0], sourceRevision: owner[1], sourceRef, row }
   })

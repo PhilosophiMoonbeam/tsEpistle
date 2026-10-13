@@ -900,11 +900,17 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
   it('offers every alias under subset-stable references and resolves global-universe outputs to exact original identities', async () => {
     const supplied = [source, ...bound, other, opaque,
       { ...bound[0]!, evidenceId: 'page:alias:revision:8', sourceRevision: '8', unitId: 'unit:alias' }]
-    const bindingMap = JSON.parse(encodeWikiSynthesisSources(supplied, owned).sourceBindings) as Record<string, [number, number]>
+    const encoded = encodeWikiSynthesisSources(supplied, owned)
+    const bindingMap = JSON.parse(encoded.sourceBindings) as Record<string, [number, number]>
+    const rows = JSON.parse(encoded.sourceStructures).sources as Record<number, { ref: string; text: string }>
     const aliasBinding = bindingMap[wikiSynthesisSourceRef(supplied.at(-1)!)]!
     const originalBinding = bindingMap[wikiSynthesisSourceRef(bound[0]!)]!
     expect(aliasBinding[0]).toBe(originalBinding[0])
     expect(aliasBinding[1]).not.toBe(originalBinding[1])
+    const shared = rows[originalBinding[0]]!
+    expect(shared.ref).toBe(wikiSynthesisSourceRef(bound[0]!))
+    expect(bindingMap[shared.ref]![0]).toBe(originalBinding[0])
+    expect(shared.text).toBe(bound[0]!.text)
     const all = synthesisSourcesFromRequest(request(supplied))
     const subset = [other, bound[1]!, bound[0]!, supplied.at(-1)!]
     const selected = synthesisSourcesFromRequest(request(subset))
@@ -940,14 +946,16 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     const supplied = [repeated, sibling, nullable]
     const encoded = encodeWikiSynthesisSources(supplied)
     const { sources: rows, texts, owners } = JSON.parse(encoded.sourceStructures) as {
-      sources: Record<number, unknown[]>
+      sources: Record<number, { ref: string; text: string }>
       texts: Record<number, string>
       owners: Record<number, [string, string]>
     }
     const bindings = JSON.parse(encoded.sourceBindings) as Record<string, [number, number]>
     for (const native of supplied) {
       const [scopeKey, ownerKey] = bindings[wikiSynthesisSourceRef(native)]!
-      expect(rows[scopeKey]![3]).toBe(native.text)
+      const row = rows[scopeKey]!
+      expect(row.text).toBe(native.text)
+      expect(bindings[row.ref]![0]).toBe(scopeKey)
       expect(owners[ownerKey]).toEqual([native.evidenceId, native.sourceRevision])
     }
     expect(Object.values(texts)).not.toContain(sibling.text)
