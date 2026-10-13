@@ -32,6 +32,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Laser equipment requires certified training before checkout.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "final-lab-checkout", "sourceRevision": "final-lab-r1", "readId": "fixture:final-lab:final-lab-checkout", "title": "final-lab", "representation": "markdown", "complete": true, "source": "Lab equipment checkout lasts 48 hours and requires supervisor consent."}, {"evidenceId": "final-lab-training", "sourceRevision": "final-lab-r1", "readId": "fixture:final-lab:final-lab-training", "title": "final-lab", "representation": "markdown", "complete": true, "source": "Laser equipment requires certified training before checkout."}],
     "requestFacets": [
       "checkout duration",
       "training requirements"
@@ -311,6 +312,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Cold-room entry is limited to trained staff; visitors cannot enter.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "final-temperature-temperature", "sourceRevision": "final-temperature-r1", "readId": "fixture:final-temperature:final-temperature-temperature", "title": "final-temperature", "representation": "markdown", "complete": true, "source": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."}, {"evidenceId": "final-temperature-access", "sourceRevision": "final-temperature-r1", "readId": "fixture:final-temperature:final-temperature-access", "title": "final-temperature", "representation": "markdown", "complete": true, "source": "Cold-room entry is limited to trained staff; visitors cannot enter."}],
     "requestFacets": [
       "thresholds",
       "access policy"
@@ -607,6 +609,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Reimbursement uses https://example.edu/expense.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "final-forms-travel", "sourceRevision": "final-forms-r1", "readId": "fixture:final-forms:final-forms-travel", "title": "final-forms", "representation": "markdown", "complete": true, "source": "Travel requests use https://example.edu/travel."}, {"evidenceId": "final-forms-expense", "sourceRevision": "final-forms-r1", "readId": "fixture:final-forms:final-forms-expense", "title": "final-forms", "representation": "markdown", "complete": true, "source": "Reimbursement uses https://example.edu/expense."}],
     "requestFacets": [
       "travel request",
       "reimbursement"
@@ -886,6 +889,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Routine support responds within 3 business days.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "final-support-urgent", "sourceRevision": "final-support-r1", "readId": "fixture:final-support:final-support-urgent", "title": "final-support", "representation": "markdown", "complete": true, "source": "Urgent support responds within 2 hours during business hours only."}, {"evidenceId": "final-support-routine", "sourceRevision": "final-support-r1", "readId": "fixture:final-support:final-support-routine", "title": "final-support", "representation": "markdown", "complete": true, "source": "Routine support responds within 3 business days."}],
     "requestFacets": [
       "urgent",
       "routine"
@@ -1139,6 +1143,7 @@
     "provenance": {"kind": "synthetic", "adjudication": "Manual: a partial chemical-storage clause has no complete answerable statement; preserve unresolved scope and do not complete it."},
     "userRequest": "Describe the chemical storage restriction.",
     "sourceUnits": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "unitId": "clause", "context": "Chemical storage", "text": "Chemical storage is forbidden unless", "kind": "paragraph", "complete": false, "literalStatement": null, "packet": "{\"kind\":\"paragraph\",\"text\":\"Chemical storage is forbidden unless\",\"truncated\":true}"}],
+    "sourceReads": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "readId": "fixture:final-incomplete:final-incomplete-clause", "title": "Chemical storage", "representation": "markdown", "complete": false, "source": "Chemical storage is forbidden unless"}],
     "requestFacets": ["chemical storage restriction"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
     "variants": [
       {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},

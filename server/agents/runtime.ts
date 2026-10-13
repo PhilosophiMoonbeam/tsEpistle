@@ -608,6 +608,147 @@ const persistedResearchEvidence = (data: Readonly<Record<string, unknown>>, task
   }
 }
 
+const retainedPageReads = (rows: readonly RuntimeContextRow[]): readonly AgentRetainedPageRead[] => {
+  const reads: AgentRetainedPageRead[] = []
+  const receipts = new Set<string>()
+  for (const row of rows) {
+    if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored page read event hash is invalid', 500)
+    const data = parsedObject(row.data, 'AGENT_EVENT_CORRUPT')
+    if (parsedContextExclusion(data, 'AGENT_EVENT_CORRUPT') !== undefined || data.errorCode !== undefined || data.isError === true) continue
+    const actionName = data.actionName
+    if (actionName !== 'pages.get' && actionName !== 'pages.getVersion' && actionName !== 'pages.getOkf') continue
+    if (typeof data.actionCallId !== 'string' || data.actionCallId.length === 0 || typeof data.result !== 'string') continue
+    let output: unknown
+    try {
+      output = JSON.parse(data.result)
+    } catch {
+      continue
+    }
+    if (typeof output !== 'object' || output === null || Array.isArray(output)) continue
+    const page = output as Readonly<Record<string, unknown>>
+    const source = actionName === 'pages.getOkf' ? page.document : page.content
+    if (
+      typeof source !== 'string' ||
+      (actionName === 'pages.getOkf' ? page.mediaType !== 'text/markdown' : page.contentType !== 'markdown') ||
+      (typeof page.sourceRevision !== 'string' && typeof page.sourceRevision !== 'number') ||
+      typeof page.citation !== 'object' ||
+      page.citation === null ||
+      page.contentTruncated === true ||
+      page.complete === false ||
+      page.status === 'omitted' ||
+      page.status === 'error' ||
+      (page.sourceContentCharacters !== undefined && page.sourceContentCharacters !== source.length)
+    )
+      continue
+    if (
+      page.groundedExpiresAt !== undefined &&
+      page.groundedExpiresAt !== null &&
+      (typeof page.groundedExpiresAt !== 'string' || !Number.isFinite(Date.parse(page.groundedExpiresAt)) || Date.parse(page.groundedExpiresAt) <= Date.now())
+    )
+      continue
+    const actionCallId =
+      data.cacheHit === true && typeof data.reusedActionCallId === 'string' && data.reusedActionCallId.length > 0
+        ? data.reusedActionCallId
+        : data.actionCallId
+    const receiptKey = `${actionName}:${actionCallId}`
+    if (receipts.has(receiptKey)) continue
+    receipts.add(receiptKey)
+    reads.push({ actionCallId, actionName, output: page })
+  }
+  return reads
+}
+
+const loadRetainedPageReads = async (knex: Knex, claim: AgentRunClaim, signal: AbortSignal): Promise<readonly AgentRetainedPageRead[]> => {
+  const reads: AgentRetainedPageRead[] = []
+  const receipts = new Set<string>()
+  const sources = new Set<string>()
+  // Page size bounds working memory, not the retained corpus or lifetime history.
+  const pageSize = 128
+  const postgres = knex.client.config.client === 'pg' || knex.client.config.client === 'postgresql'
+  const eventField = (table: 'events' | 'started', field: string): string =>
+    postgres ? `${table}.data::jsonb ->> '${field}'` : `json_extract(${table}.data, '$.${field}')`
+  for (let offset = 0; ; offset += pageSize) {
+    signal.throwIfAborted()
+    const rows = (await knex('agentEvents as events')
+      .join('agentRuns as runs', 'runs.id', 'events.runId')
+      .leftJoin('agentEvents as started', function () {
+        this.on('started.runId', '=', 'events.runId')
+          .andOn('started.type', '=', knex.raw('?', ['tool.started']))
+          .andOn(knex.raw(`${eventField('started', 'actionCallId')} = ${eventField('events', 'actionCallId')}`))
+      })
+      .where({ 'runs.ownerId': claim.ownerId, 'runs.sessionId': claim.sessionId, 'events.type': 'tool.completed' })
+      .andWhere('runs.id', '!=', claim.id)
+      .whereRaw(`${eventField('events', 'actionName')} IN (?, ?, ?)`, ['pages.get', 'pages.getVersion', 'pages.getOkf'])
+      .orderBy('runs.queuedAt', 'desc')
+      .orderBy('events.sequence', 'desc')
+      .orderBy('events.id', 'desc')
+      .limit(pageSize)
+      .offset(offset)
+      .select(
+        'events.id',
+        'started.data as selectorData',
+        'started.dataSha256 as selectorDataSha256',
+        knex.raw(`${eventField('events', 'actionName')} AS "actionName"`),
+        knex.raw(`${eventField('events', 'actionCallId')} AS "actionCallId"`),
+        knex.raw(`${eventField('events', 'reusedActionCallId')} AS "reusedActionCallId"`),
+        knex.raw(`${eventField('events', 'cacheHit')} AS "cacheHit"`),
+        knex.raw(`${eventField('started', 'input')} AS "input"`)
+      )) as Array<{
+        id: string
+        actionName: string
+        actionCallId: string | null
+        reusedActionCallId: string | null
+        cacheHit: string | number | null
+        input: string | null
+        selectorData: string | null
+        selectorDataSha256: string | null
+      }>
+    for (const row of rows) {
+      signal.throwIfAborted()
+      const actionCallId = (row.cacheHit === 'true' || row.cacheHit === 1) && row.reusedActionCallId ? row.reusedActionCallId : row.actionCallId
+      if (!actionCallId) continue
+      const receiptKey = `${row.actionName}:${actionCallId}`
+      if (receipts.has(receiptKey)) continue
+      // Numeric original selectors identify superseded current reads without loading
+      // their raw bodies. Path selectors still resolve through the canonical result.
+      if (row.input !== null) {
+        if (row.selectorData === null || sha256(row.selectorData) !== row.selectorDataSha256)
+          throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored page selector event hash is invalid', 500)
+        try {
+          const input: unknown = JSON.parse(row.input)
+          if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+            const selector = input as Record<string, unknown>
+            const id = selector.pageId ?? selector.id
+            const version = selector.versionId ?? null
+            const representation = row.actionName === 'pages.getOkf' ? 'okf' : 'markdown'
+            if (typeof id === 'number' && sources.has(JSON.stringify([id, version, representation]))) continue
+          }
+        } catch {
+          // Invalid selector metadata cannot hide a potentially complete observation.
+        }
+      }
+      const event = (await knex('agentEvents').where({ id: row.id }).first('data', 'dataSha256')) as RuntimeContextRow | undefined
+      if (!event) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored page read event disappeared', 500)
+      const [read] = retainedPageReads([event])
+      if (!read) continue
+      receipts.add(receiptKey)
+      const page = read.output
+      const pageId = page.pageId ?? page.id
+      const versionId = page.versionId ?? null
+      if (typeof pageId !== 'number' || !Number.isSafeInteger(pageId) || pageId <= 0) continue
+      if (versionId !== null && (typeof versionId !== 'number' || !Number.isSafeInteger(versionId) || versionId <= 0)) continue
+      if (read.actionName === 'pages.getVersion' && versionId === null) continue
+      const representation = read.actionName === 'pages.getOkf' ? 'okf' : 'markdown'
+      const sourceKey = JSON.stringify([pageId, versionId, representation])
+      if (sources.has(sourceKey)) continue
+      sources.add(sourceKey)
+      reads.push(read)
+    }
+    if (rows.length < pageSize) break
+  }
+  return reads
+}
+
 export interface AgentResolvedAdmission {
   readonly maxAttempts?: number
   readonly ownerAuthVersion?: number
@@ -689,6 +830,13 @@ export interface AgentRecoveredAction {
   readonly output: unknown
 }
 
+/** Prior complete observations, not proof of delivery to the current provider. */
+export interface AgentRetainedPageRead {
+  readonly actionCallId: string
+  readonly actionName: 'pages.get' | 'pages.getVersion' | 'pages.getOkf'
+  readonly output: Readonly<Record<string, unknown>>
+}
+
 export interface AgentSpecialistEngineContext {
   readonly contextId: string
   readonly taskClass: string
@@ -734,6 +882,7 @@ export interface AgentEngineRequest {
   readonly skills: readonly AgentEngineSkill[]
   readonly dispatchBudget?: AgentDispatchBudget
   readonly priorActivity?: readonly AgentPriorRunActivity[]
+  readonly retainedPageReads?: readonly AgentRetainedPageRead[]
   readonly recoveredAction?: AgentRecoveredAction
   readonly signal: AbortSignal
 }
@@ -1192,6 +1341,59 @@ const priorRunActivity = (rows: readonly RuntimePriorEventRow[]): readonly Agent
       tools: run.tools
     }
   })
+}
+
+const completePriorActivityWindow = async (
+  knex: Knex,
+  claim: AgentRunClaim,
+  rows: readonly RuntimePriorEventRow[],
+  signal: AbortSignal
+): Promise<readonly RuntimePriorEventRow[]> => {
+  const chronological = [...rows].reverse()
+  const starts = new Set<string>()
+  for (const row of chronological) {
+    if (row.type !== 'tool.started') continue
+    const data = parsedObject(row.data, 'AGENT_PRIOR_ACTIVITY_CORRUPT')
+    if (typeof data.actionCallId === 'string' && data.actionCallId.length > 0) starts.add(`${row.runId}:${data.actionCallId}`)
+  }
+  const recovered: RuntimePriorEventRow[] = []
+  const postgres = knex.client.config.client === 'pg' || knex.client.config.client === 'postgresql'
+  const callIdExpression = postgres ? "events.data::jsonb ->> 'actionCallId'" : "json_extract(events.data, '$.actionCallId')"
+  for (const row of chronological) {
+    if (row.type !== 'tool.completed' && row.type !== 'tool.failed' && row.type !== 'tool.notExecuted') continue
+    const data = parsedObject(row.data, 'AGENT_PRIOR_ACTIVITY_CORRUPT')
+    if (typeof data.actionCallId !== 'string' || data.actionCallId.length === 0) continue
+    const key = `${row.runId}:${data.actionCallId}`
+    if (starts.has(key)) continue
+    signal.throwIfAborted()
+    // A bounded event window can cut through a real action. Recover only its
+    // original start, never a fabricated boundary or the remainder of history.
+    const boundaries = (await knex('agentEvents as events')
+      .join('agentRuns as runs', 'runs.id', 'events.runId')
+      .where({
+        'runs.id': row.runId,
+        'runs.ownerId': claim.ownerId,
+        'runs.sessionId': claim.sessionId,
+        'events.type': 'tool.started'
+      })
+      .whereRaw(`${callIdExpression} = ?`, [data.actionCallId])
+      .limit(2)
+      .select('events.sequence', 'events.data', 'events.dataSha256')) as Array<{ sequence: number; data: string; dataSha256: string }>
+    const boundary = boundaries[0]
+    if (boundaries.length !== 1 || !boundary || Number(boundary.sequence) >= Number(row.sequence))
+      throw new AgentRepositoryError('AGENT_PRIOR_ACTIVITY_CORRUPT', 'Stored tool activity has no unique earlier start boundary', 500)
+    if (sha256(boundary.data) !== boundary.dataSha256)
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored tool start event hash is invalid', 500)
+    recovered.push({ ...row, sequence: Number(boundary.sequence), type: 'tool.started', data: boundary.data })
+    starts.add(key)
+  }
+  const byRun = new Map<string, RuntimePriorEventRow[]>()
+  for (const row of [...chronological, ...recovered]) {
+    const events = byRun.get(row.runId) ?? []
+    events.push(row)
+    byRun.set(row.runId, events)
+  }
+  return [...byRun.values()].flatMap(events => events.sort((left, right) => Number(left.sequence) - Number(right.sequence)))
 }
 
 const generationToolsHint = (value: string | undefined): readonly AgentGenerationTool[] | undefined => {
@@ -3389,7 +3591,7 @@ export class AgentProductRuntime {
           .join('agentMessages as userMessages', 'userMessages.id', 'runs.userMessageId')
           .join('agentMessages as assistantMessages', 'assistantMessages.id', 'runs.assistantMessageId')
           .join('agentEvents as events', 'events.runId', 'runs.id')
-          .where('runs.sessionId', claim.sessionId)
+          .where({ 'runs.ownerId': claim.ownerId, 'runs.sessionId': claim.sessionId })
           .andWhere('runs.id', '!=', claim.id)
           .whereIn('events.type', ['model.turn', 'evidence.provenance', 'tool.started', 'tool.completed', 'tool.notExecuted', 'tool.failed'])
           .orderBy('runs.queuedAt', 'desc')
@@ -3415,7 +3617,7 @@ export class AgentProductRuntime {
       claim = { ...claim, mediaBindings }
       const knowledgeContext = knowledgeContextHint(contextRow?.data)
       const memory = decodeAgentMemorySnapshot(sessionRow.memorySnapshot)
-      const priorActivity = priorRunActivity([...priorEventRows].reverse())
+      const priorActivity = priorRunActivity(await completePriorActivityWindow(this.#knex, claim, priorEventRows, executionSignal))
       const mediaIndex = messageRows.length
         ? await this.#knex<AgentMediaMetadata>('agentMedia')
             .where({ ownerId: claim.ownerId, sessionId: claim.sessionId })
@@ -3794,6 +3996,7 @@ export class AgentProductRuntime {
         memory,
         skills,
         priorActivity,
+        retainedPageReads: await loadRetainedPageReads(this.#knex, claim, executionSignal),
         dispatchBudget,
         signal: executionSignal,
         ...(remainingGoalTokens === null || remainingGoalToolCalls === null

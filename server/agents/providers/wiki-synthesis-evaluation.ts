@@ -2,15 +2,16 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { optimize, runControl, axSerializeOptimizedProgram, axDeserializeOptimizedProgram, AxAssertionError, AxGenerateError, type AxAIService, type AxGEPAAdapter, type AxMetricFn, type AxProgramForwardOptions, type AxSerializedOptimizedProgram, type AxTypedExample } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
-import { createWikiSynthesisProgram, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource } from './wiki-synthesis.ts'
+import { createWikiSynthesisProgram, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource, type WikiSynthesisReferenceIndex } from './wiki-synthesis.ts'
 
 const sourceSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), context: z.string(), text: z.string(), kind: z.string(), complete: z.boolean(), packet: z.string(), literalStatement: z.string().nullable() })
+const readSchema = z.object({ evidenceId: z.string().min(1), sourceRevision: z.string().min(1), readId: z.string().min(1), title: z.string().nullable(), representation: z.string().min(1), complete: z.boolean(), source: z.string() }).strict()
 const claimSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), statement: z.string() })
 const answerSchema = z.object({ claims: z.array(claimSchema).max(64), unresolvedFacets: z.array(z.number().int().nonnegative()).max(64), observations: z.array(z.string()), recommendations: z.string().default('') })
 const fixtureSchema = z.object({
   id: z.string(), family: z.string(), split: z.enum(['train', 'selection', 'final']),
   provenance: z.object({ kind: z.literal('synthetic'), adjudication: z.string() }),
-  userRequest: z.string(), sourceUnits: z.array(sourceSchema), requestFacets: z.array(z.string()), observations: z.array(z.string()), repairFeedback: z.string(),
+  userRequest: z.string(), sourceUnits: z.array(sourceSchema), sourceReads: z.array(readSchema), requestFacets: z.array(z.string()), observations: z.array(z.string()), repairFeedback: z.string(),
   details: z.array(z.object({ id: z.string(), evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), facet: z.number().int().nonnegative(), allOf: z.array(z.string()), exact: z.array(z.string()), allowedParaphrases: z.array(z.string()), allowedAtomicAssertions: z.array(z.string()).default([]) })),
   expectedUnresolvedFacets: z.array(z.number().int().nonnegative()),
   variants: z.array(z.object({ id: z.string(), category: z.string(), expected: z.enum(['accept', 'reject', 'incomplete']), answer: answerSchema }))
@@ -207,7 +208,7 @@ export const evaluateWikiSynthesisFixtures = async (fixtures: readonly WikiSynth
         }
       })
       try {
-        answer = await program.forward(observedAI, { userRequest: fixture.userRequest, ...encodeWikiSynthesisSources(fixture.sourceUnits), requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: attempt ? 'The previous synthesis failed its source-locality or shape gate. Re-read each complete source unit and preserve requested coverage.' : '' }, offlineForwardOptions())
+        answer = await program.forward(observedAI, { userRequest: fixture.userRequest, ...encodeWikiSynthesisSources(fixture.sourceUnits, fixture.sourceReads), requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: attempt ? 'The previous synthesis failed its source-locality or shape gate. Re-read each complete source unit and preserve requested coverage.' : '' }, offlineForwardOptions())
         if (terminalFailure) {
           answer = undefined
           failedAttempts++
@@ -254,13 +255,15 @@ export const optimizeWikiSynthesis = async (input: {
   let mutatedCandidateEvaluations = 0
   const evaluatedMutations = new Set<string>()
   const tuning = [...input.train, ...input.selection]
-  const fixtureWires = new Map(tuning.map(fixture => [fixture, encodeWikiSynthesisSources(fixture.sourceUnits)]))
-  const fixtureRefs = new Map(tuning.map(fixture => [fixture, new Set(Object.keys(JSON.parse(fixtureWires.get(fixture)!.sourceBindings) as Record<string, [number, number]>))]))
+  const fixtureWires = new Map(tuning.map(fixture => [fixture, encodeWikiSynthesisSources(fixture.sourceUnits, fixture.sourceReads)]))
+  const wireRefs = (encoded: string): string[] =>
+    Object.entries((JSON.parse(encoded) as WikiSynthesisReferenceIndex).units)
+      .flatMap(([sourceRef, source]) => [sourceRef, ...Object.values(source.aliases ?? {}).flatMap(references => references.split(' '))])
+  const fixtureRefs = new Map(tuning.map(fixture => [fixture, new Set(wireRefs(fixtureWires.get(fixture)!.sourceReferences))]))
   const matchedExamples = new WeakMap<object, WikiSynthesisFixture | undefined>()
-  const matchFixture = (example: { userRequest?: unknown; sourceBindings?: unknown }): WikiSynthesisFixture | undefined => {
+  const matchFixture = (example: { userRequest?: unknown; sourceReferences?: unknown }): WikiSynthesisFixture | undefined => {
     if (matchedExamples.has(example)) return matchedExamples.get(example)
-    const bindings = JSON.parse(example.sourceBindings as string) as Record<string, [number, number]>
-    const refs = Object.keys(bindings)
+    const refs = wireRefs(example.sourceReferences as string)
     let matched: WikiSynthesisFixture | undefined
     for (const fixture of tuning) {
       const originalRefs = fixtureRefs.get(fixture)!

@@ -30,24 +30,20 @@ const productionRequest={memory:{user:[],agent:[]},skills:[],run:{executionMode:
 const prefix=engine.prompt(productionRequest,null,undefined,false,true,'final-synthesis')
 const result:any={sourceUtf8Bytes:bytes(page.content),sourceCharacters:page.content.length,sourceSha256:createHash('sha256').update(page.content).digest('hex'),projectedUnitCount:units.length,completeProjectedUnits:units.filter(u=>u.complete).length,parsedSectionCount:sections.length,providedCitationSections:citationSections.length,registeredEvidenceCount:all.size,contextCeiling:128000,outputAllowance:8192,model,tocApproximation,assumptions:['Mock response only; no Google/TypeSafe transport or network dispatch','Captures generated Ax request before admission; does not invoke full agent runtime','Empty memory and selected skills; all-Wiki scope; one request facet; no observations/repair feedback','No tokenizer estimate claimed; all quantities explicitly bytes/counts','Ordinary collected conversation is not appended to typed generation; final-synthesis production prefix is prepended']}
 async function capture(label:string,evidence:Map<any,any>){
- const {sources,sourceStructures}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]});const wire=encodeWikiSynthesisSources(sources,sourceStructures)
- type TextRef=number|[number,number,number]
- type SourceRow={ref:string;context:TextRef;kind:string;complete:boolean;text:string;literalStatement:TextRef|null;authoredTexts:TextRef[]|null;structuralLabel:TextRef|null;labels:TextRef[];opaquePacket?:TextRef}
- type LocatorMetricsStructures={texts:Record<number,string>;sources:Record<number,SourceRow>;owners:Record<number,[string,string]>}
- const structures:LocatorMetricsStructures=JSON.parse(wire.sourceStructures);const bindings:Record<string,[number,number]>=JSON.parse(wire.sourceBindings)
- if(!structures.texts||!structures.sources||Array.isArray(structures.texts)||Array.isArray(structures.sources)||typeof structures.texts!=='object'||typeof structures.sources!=='object')throw Error('Expected explicit numeric-key source dictionaries')
- const decode=(ref:TextRef):string=>typeof ref==='number'?structures.texts[ref]:structures.texts[ref[0]].slice(ref[1],ref[2])
- // These exact-use categories overlap each other and the physical pool; never add them.
- const selectedTexts=new Set<string>();const quotations=new Set<string>();const authoredDependencies=new Set<string>()
- let structureScopeCount=0;let pooledTextCount=0;let pooledTextUtf8Bytes=0
- for(const key in structures.sources){
-  const row=structures.sources[Number(key)];structureScopeCount++
-  selectedTexts.add(row.text)
-  if(row.literalStatement!==null)quotations.add(decode(row.literalStatement))
-  for(const ref of row.authoredTexts??[])authoredDependencies.add(decode(ref))
+ const {sources,sourceReads}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]})
+ const wire=encodeWikiSynthesisSources(sources,sourceReads)
+ type Reference={scope:number;text:string;quotation?:true;title?:true;aliases?:Record<string,string>;preview?:true;rawSpans?:{start:number;end:number}[]}
+ const index:{scopes:Record<string,{readRef:string;evidenceId:string}>;units:Record<string,Reference>}=JSON.parse(wire.sourceReferences)
+ const references=Object.values(index.units)
+ const physicalReads=new Map<string,string>()
+ for(const read of sourceReads){
+  const prior=physicalReads.get(read.readId)
+  if(prior!==undefined&&prior!==read.source)throw Error('Conflicting physical read content')
+  physicalReads.set(read.readId,read.source)
+  if(!wire.sourceText.includes(read.source))throw Error('Complete original read content was excluded')
  }
- for(const key in structures.texts){pooledTextCount++;pooledTextUtf8Bytes+=bytes(structures.texts[Number(key)])}
- const uniqueTextBytes=(texts:Set<string>)=>{let sum=0;for(const text of texts)sum+=bytes(text);return sum}
+ const selectedTexts=new Set(references.map(row=>row.text))
+ const projectionCount=references.reduce((sum,row)=>sum+1+Object.values(row.aliases??{}).reduce((count,refs)=>count+refs.split(' ').length,0),0)
  let captured:any
  const ai=new AxMockAIService({features:{functions:false,streaming:false,structuredOutputs:true,structuredOutputModes:['native']},chatResponse:async(request:any)=>{captured=request;return {results:[{index:0,content:JSON.stringify({claims:[],unresolvedFacets:[0],observations:[]}),finishReason:'stop'}]}}})
  const program=createWikiSynthesisProgram(sources,{facetCount:1,structured:true,maxOutputTokens:8192})
@@ -56,9 +52,27 @@ async function capture(label:string,evidence:Map<any,any>){
  const chatPrompt=captured.chatPrompt.map((message:any,index:number)=>index===0&&message.role==='system'?{...message,content:prefix+'\n\n'+message.content}:message)
  const final={...captured,model,chatPrompt,modelConfig:{...captured.modelConfig,maxTokens:8192}}
  const serialized=engine.serializedProviderRequestBytes({model},null,chatPrompt,8192,final)
- const bindingGroups=new Set(sources.map(s=>JSON.stringify([s.evidenceId,s.sourceRevision]))).size
- const projectionCount=Object.keys(bindings).length
- result[label]={evidenceCount:evidence.size,synthesisSources:sources.length,uniqueNativeUnits:new Set(sources.map(s=>s.unitId)).size,structureInputEntries:sourceStructures.length,bindingGroups,projectionCount,projectedTextBytes:sources.reduce((sum,s)=>sum+bytes(s.text),0),uniqueProjectedTextBytes:[...new Set(sources.map(s=>s.text))].reduce((sum,s)=>sum+bytes(s),0),sourceBindingsBytes:bytes(wire.sourceBindings),sourceStructuresBytes:bytes(wire.sourceStructures),structureScopeCount,scopeJsonBytes:bytes(structures.sources),pooledTextCount,pooledTextUtf8Bytes,pooledTextJsonBytes:bytes(structures.texts),uniqueSelectedTextCount:selectedTexts.size,uniqueSelectedTextUtf8Bytes:uniqueTextBytes(selectedTexts),uniqueQuotationCount:quotations.size,uniqueQuotationUtf8Bytes:uniqueTextBytes(quotations),uniqueAuthoredDependencyCount:authoredDependencies.size,uniqueAuthoredDependencyUtf8Bytes:uniqueTextBytes(authoredDependencies),axChatPromptBytes:bytes(captured.chatPrompt),axSystemContentBytes:bytes(captured.chatPrompt[0].content),axUserContentBytes:captured.chatPrompt.filter((m:any)=>m.role==='user').reduce((n,m)=>n+bytes(m.content),0),responseFormatBytes:bytes(captured.responseFormat),outputSchemaBytes:bytes(captured.responseFormat?.schema?.schema??captured.responseFormat),productionPrefixBytes:bytes(prefix),finalSerializedAxRequestBytes:serialized,contextOutputAllowance:128000-serialized,requestedInputPlusOutput:serialized+8192,passesRequestedContext:serialized+8192<=128000,topLevelComponentJsonBytes:Object.fromEntries(Object.entries(final).map(([k,v])=>[k,bytes(v)]))}
+ if(label==='rootAndSections'&&process.env.PROBE_REQUEST_FILE)writeFileSync(process.env.PROBE_REQUEST_FILE,JSON.stringify(final),{mode:0o600})
+ result[label]={
+  evidenceCount:evidence.size,synthesisSources:sources.length,
+  uniqueNativeUnits:new Set(sources.map(s=>s.unitId)).size,
+  physicalReadCount:physicalReads.size,rawReadUtf8Bytes:[...physicalReads.values()].reduce((sum,text)=>sum+bytes(text),0),
+  bindingGroups:new Set(sources.map(s=>JSON.stringify([s.evidenceId,s.sourceRevision]))).size,
+  projectionCount,canonicalReferenceCount:references.length,aliasReferenceCount:projectionCount-references.length,
+  projectedTextBytes:sources.reduce((sum,s)=>sum+bytes(s.text),0),
+  uniqueIndexTextCount:selectedTexts.size,uniqueIndexTextUtf8Bytes:[...selectedTexts].reduce((sum,text)=>sum+bytes(text),0),
+  previewReferenceCount:references.filter(row=>row.preview===true).length,
+  previewUtf8Bytes:references.filter(row=>row.preview===true).reduce((sum,row)=>sum+bytes(row.text),0),
+  inlineFullReferenceCount:references.filter(row=>row.preview!==true).length,
+  originalSelectedTextUtf8Bytes:[...new Set(sources.map(source=>source.text))].reduce((sum,text)=>sum+bytes(text),0),
+  sourceTextBytes:bytes(wire.sourceText),sourceReferencesBytes:bytes(wire.sourceReferences),
+  axChatPromptBytes:bytes(captured.chatPrompt),axSystemContentBytes:bytes(captured.chatPrompt[0].content),
+  axUserContentBytes:captured.chatPrompt.filter((m:any)=>m.role==='user').reduce((sum,m)=>sum+bytes(m.content),0),
+  responseFormatBytes:bytes(captured.responseFormat),outputSchemaBytes:bytes(captured.responseFormat?.schema?.schema??captured.responseFormat),
+  productionPrefixBytes:bytes(prefix),finalSerializedAxRequestBytes:serialized,
+  contextOutputAllowance:128000-serialized,requestedInputPlusOutput:serialized+8192,passesRequestedContext:serialized+8192<=128000,
+  topLevelComponentJsonBytes:Object.fromEntries(Object.entries(final).map(([key,value])=>[key,bytes(value)]))
+ }
 }
 await capture('rootOnly',new Map([[evidenceId,all.get(evidenceId)]]));await capture('rootAndSections',all);await capture('noSourceBaseline',new Map())
 writeFileSync(root+'/'+(process.env.PROBE_METRICS_FILE??'metrics.json'),JSON.stringify(result,null,2),{mode:0o600})

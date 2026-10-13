@@ -1,6 +1,8 @@
 import { describe, expect, it } from '../bun-test.mts'
 
 import { parseSourceDocument, type ParsedSourceDocument, type SourceSpan, type SourceUnit } from '../../agents/providers/source-document.ts'
+import { getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
+import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
 
 const parse = (source: string): ParsedSourceDocument => parseSourceDocument(source, { representation: 'markdown', truncated: false })
 const slices = (document: ParsedSourceDocument, spans: readonly SourceSpan[]): string[] => spans.map(span => document.source.slice(span.start, span.end))
@@ -87,6 +89,50 @@ describe('source document original-source dependencies', () => {
 })
 
 describe('source document explicit ownership', () => {
+  it('keeps a prose clock inside its exact complete literal source statement', () => {
+    const text = 'Cedar warehouse closes at 18:30 on Fridays.'
+    const document = parse(text)
+    const unit = member(document, text)
+    const source: WikiVerificationSource = {
+      evidenceId: 'read:clock',
+      sourceRevision: 'revision:clock',
+      unitId: unit.id,
+      context: '',
+      text: unit.normalizedText,
+      kind: unit.kind,
+      complete: unit.complete,
+      closure: {
+        unit,
+        units: document.units,
+        contexts: document.contexts,
+        record: document.records[0] ?? null,
+        links: unit.links,
+        dependencies: unit.sourceSpans.map(span => ({ span, text: document.source.slice(span.start, span.end) }))
+      }
+    }
+    expect(getLiteralSourceStatement(source)).toBe(text)
+    expect(isLiteralSourceClaim({ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: text }, source)).toBe(true)
+    expect(unit.kind).toBe('paragraph')
+    expect(unit.complete).toBe(true)
+    expect(unit.recordId).toBeNull()
+    expect(document.records).toEqual([])
+  })
+
+  it.each([
+    'Hours:18:30\n',
+    'Hours: 18:30\n',
+    '| Hours |\n| --- |\n| 18:30 |\n'
+  ])('retains authored Hours field ownership and its complete clock value: %s', text => {
+    const document = parse(text)
+    const record = document.records[0]!
+    expect(record.complete).toBe(true)
+    expect(record.fields.map(field => [field.label, field.value])).toEqual([['Hours', '18:30']])
+    const field = record.fields[0]!
+    const unit = document.units.find(entry => entry.id === field.unitIds[0])!
+    expect(unit.recordId).toBe(record.id)
+    expect(unit.complete).toBe(true)
+  })
+
   it('adds complete list ownership without changing original item or later assertion identities', () => {
     const document = parse('- Ada\n- Bea\n\nOutside.\n')
     const ada = member(document, 'Ada')

@@ -32,6 +32,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Restore operations require an incident ticket.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "selection-backups-backup", "sourceRevision": "selection-backups-r1", "readId": "fixture:selection-backups:selection-backups-backup", "title": "selection-backups", "representation": "markdown", "complete": true, "source": "Backups expire after 14 days. Only operators can restore backups."}, {"evidenceId": "selection-backups-restore", "sourceRevision": "selection-backups-r1", "readId": "fixture:selection-backups:selection-backups-restore", "title": "selection-backups", "representation": "markdown", "complete": true, "source": "Restore operations require an incident ticket."}],
     "requestFacets": [
       "backup retention",
       "restore permission"
@@ -310,6 +311,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Stable rollout requires operator approval and cannot run on weekends.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "selection-rollout-canary", "sourceRevision": "selection-rollout-r1", "readId": "fixture:selection-rollout:selection-rollout-canary", "title": "selection-rollout", "representation": "markdown", "complete": true, "source": "Canary rollout requires errorRate < 0.5% for 4 hours."}, {"evidenceId": "selection-rollout-stable", "sourceRevision": "selection-rollout-r1", "readId": "fixture:selection-rollout:selection-rollout-stable", "title": "selection-rollout", "representation": "markdown", "complete": true, "source": "Stable rollout requires operator approval and cannot run on weekends."}],
     "requestFacets": [
       "canary",
       "stable"
@@ -621,6 +623,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Policy guide: https://example.net/policy.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "selection-guide-audit", "sourceRevision": "selection-guide-r1", "readId": "fixture:selection-guide:selection-guide-audit", "title": "selection-guide", "representation": "markdown", "complete": true, "source": "Audit guide: https://example.net/audit."}, {"evidenceId": "selection-guide-policy", "sourceRevision": "selection-guide-r1", "readId": "fixture:selection-guide:selection-guide-policy", "title": "selection-guide", "representation": "markdown", "complete": true, "source": "Policy guide: https://example.net/policy."}],
     "requestFacets": [
       "audit",
       "policy"
@@ -900,6 +903,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Private keys must never be uploaded.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "selection-limits-size", "sourceRevision": "selection-limits-r1", "readId": "fixture:selection-limits:selection-limits-size", "title": "selection-limits", "representation": "markdown", "complete": true, "source": "Uploads must be <= 8 MB per file."}, {"evidenceId": "selection-limits-private", "sourceRevision": "selection-limits-r1", "readId": "fixture:selection-limits:selection-limits-private", "title": "selection-limits", "representation": "markdown", "complete": true, "source": "Private keys must never be uploaded."}],
     "requestFacets": [
       "upload limits",
       "restricted content"
@@ -1152,6 +1156,7 @@
     "id": "selection-missing", "family": "selection-missing", "split": "selection",
     "provenance": {"kind": "synthetic", "adjudication": "Manual: no source units were admitted for the requested rotation interval; disclose the unresolved facet without inventing an interval."},
     "userRequest": "Give the certificate rotation interval.",
+    "sourceReads": [],
     "sourceUnits": [], "requestFacets": ["certificate rotation interval"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
     "variants": [
       {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},

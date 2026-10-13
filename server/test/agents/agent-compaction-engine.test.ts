@@ -1,4 +1,6 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
+import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
 import {
   type AgentCompactionCanonicalSource,
   type AgentCompactionReceipt,
@@ -9,10 +11,17 @@ import {
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
-import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest } from '../../agents/runtime.ts'
+import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
+
+const visibleWikiText = (content: string): string => {
+  const container = document.createElement('div')
+  container.innerHTML = renderSafeMarkdown(content)
+  return container.textContent ?? ''
+}
+
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 const profile = {
@@ -202,6 +211,314 @@ const sequencedBudget = (availableTokens: number): AgentDispatchBudget & { reado
 }
 
 describe('Ax agent engine context compaction', () => {
+  it.each(['native count', 'typed generation', 'ordinary generation'] as const)(
+    'rechecks original page authority after awaited admission before %s egress',
+    async boundary => {
+      const fact = 'Cedar warehouse closes at 18:30 on Fridays.'
+      const content = `# Supplier routing\n\n${boundary === 'ordinary generation' ? '' : 'v'.repeat(150_000)}\n\n${fact}`
+      const page = {
+        id: 1, locale: 'en', path: 'suppliers', title: 'Supplier routing', sourceRevision: '2', contentType: 'markdown', content,
+        citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' }, citationSections: []
+      }
+      let readable = true
+      let directReadReturned = false
+      const dispatched: { readonly input: Readonly<AxChatRequest>; readonly readable: boolean }[] = []
+      const counted: { readonly input: Readonly<AxChatRequest>; readonly readable: boolean }[] = []
+      const validations: boolean[] = []
+      const validateObservation = vi.fn(async () => {
+        validations.push(readable)
+        return readable
+      })
+      const invoke = vi.fn(async () => {
+        directReadReturned = true
+        return page
+      })
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read source',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' }],
+          invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+        })
+      }
+      const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        dispatched.push({ input, readable })
+        if (synthesisInputFromRequest(input) !== undefined) {
+          const source = synthesisSourcesFromRequest(input).find(unit => unit.text === fact)!
+          return response(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }), 100, 10)
+        }
+        if (boundary === 'ordinary generation' && !directReadReturned) return {
+          ...response('', 100, 10),
+          results: [{ index: 0, functionCalls: [{
+            id: 'cedar-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' }
+          }] }]
+        }
+        return {
+          ...response('', 100, 10),
+          results: [{ index: 0, functionCalls: [{
+            id: 'cedar-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' }
+          }] }]
+        }
+      })
+      const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>) => {
+        counted.push({ input, readable })
+        await Promise.resolve()
+        if (boundary === 'typed generation' && synthesisInputFromRequest(input) !== undefined) readable = false
+        return 10_000
+      })
+      const factory = {
+        create: async () => ({ ...profile, countContextTokens, service: fullAxFixtureService(chat) })
+      } as unknown as AgentProviderFactory
+      const text = vi.fn(async (_delta: string) => {})
+      const base = engineRequest([{ role: 'user', content: 'When does Cedar warehouse close on Fridays?' }])
+      await expect(new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+        ...base, run: { ...base.run, executionMode: 'agent' },
+        ...(boundary === 'ordinary generation' ? {} : {
+          retainedPageReads: [{ actionCallId: 'prior-supplier-read', actionName: 'pages.get' as const, output: page }]
+        }),
+        // A retained complete read can answer in one turn; do not require a
+        // collection loop before its real typed/count admission boundary.
+        ...(boundary === 'native count' ? { limits: { ...base.limits, maxTurns: 1 } } : {}),
+        authorizeDispatch: async () => {
+          await Promise.resolve()
+          if (boundary === 'native count' ||
+            boundary === 'ordinary generation' && directReadReturned) readable = false
+        },
+        dispatchBudget: sequencedBudget(1_000_000)
+      }, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+      expect(readable).toBe(false)
+      expect(validations).toContain(true)
+      expect(validations).toContain(false)
+      expect(dispatched.every(dispatch => dispatch.readable)).toBe(true)
+      expect(dispatched.filter(dispatch => synthesisInputFromRequest(dispatch.input) !== undefined)).toEqual([])
+      if (boundary === 'native count')
+        expect(counted.filter(count => synthesisInputFromRequest(count.input) !== undefined)).toEqual([])
+      if (boundary === 'typed generation')
+        expect(counted.some(count => synthesisInputFromRequest(count.input) !== undefined && count.readable)).toBe(true)
+      expect(visibleWikiText(text.mock.calls.flat().join(''))).not.toContain(fact)
+      expect(invoke).toHaveBeenCalledTimes(boundary === 'ordinary generation' ? 1 : 0)
+    }
+  )
+
+  it('rechecks a subagent original read after awaited admission before sending its active transcript to the summarizer', async () => {
+    const fact = 'Supplier 1 requires its own receipt.'
+    const page = {
+      id: 1, locale: 'en', path: 'suppliers-1', title: 'Supplier 1',
+      sourceRevision: '2', contentType: 'markdown',
+      content: `# Supplier 1\n\n${fact}\n\n${'Storage rules for supplier 1. '.repeat(1400)}`,
+      citation: { evidenceId: 'page:1:revision:2', label: 'Supplier 1', href: '/en/suppliers-1' },
+      citationSections: []
+    }
+    let readable = true
+    let readCount = 0
+    let collectionTurns = 0
+    let collectionFinished = false
+    let compactionAdmitted = false
+    const validations: boolean[] = []
+    const dispatched: { readonly input: Readonly<AxChatRequest>; readonly readable: boolean }[] = []
+    const summaryRequests: Readonly<AxChatRequest>[] = []
+    const validateObservation = vi.fn(async () => {
+      validations.push(readable)
+      return readable
+    })
+    const invoke = vi.fn(async (name: string) => {
+      if (name === 'pages.get') {
+        readCount++
+        return page
+      }
+      return { results: [] }
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          { name: 'pages.get', title: 'Read page', description: 'Read source',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' },
+          { name: 'pages.search', title: 'Search pages', description: 'Check current supplier candidates',
+            parameters: { type: 'object', properties: { query: { type: 'string' } } }, risk: 'read', group: 'core' }
+        ],
+        invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+      })
+    }
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      dispatched.push({ input, readable })
+      if (synthesisInputFromRequest(input) !== undefined) {
+        const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text === fact)
+        return response(synthesisFixtureAnswer(input, {
+          claims: source === undefined ? [] : [{ ...source, statement: fact }],
+          unresolvedFacets: source === undefined ? [0] : []
+        }), 100, 10)
+      }
+      if ((input.functions?.length ?? 0) === 0 && synthesisInputFromRequest(input) === undefined) {
+        summaryRequests.push(input)
+        return response('Retain all supplier receipt requirements and their original source restrictions.', 100, 10)
+      }
+      collectionTurns++
+      if (collectionTurns <= 3) return {
+        ...response('', 100, 10),
+        results: [{ index: 0, content: 'Inspection planning notes remain provisional. '.repeat(collectionTurns === 1 ? 20 : 800), functionCalls: [{
+          id: `supplier-collection-${collectionTurns}`, type: 'function',
+          function: collectionTurns === 1
+            ? { name: 'wiki_get_page', params: '{"id":1}' }
+            : { name: AGENT_TOOL_NAMES['pages.search'], params: '{"query":"supplier receipt requirements"}' }
+        }] }]
+      }
+      collectionFinished = true
+      return {
+        ...response('', 100, 10),
+        results: [{ index: 0, functionCalls: [{
+          id: 'suppliers-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' }
+        }] }]
+      }
+    })
+    const factory = {
+      create: async () => ({ ...profile, service: fullAxFixtureService(chat) })
+    } as unknown as AgentProviderFactory
+    const underlyingBudget = sequencedBudget(1_000_000)
+    const budget: AgentDispatchBudget = {
+      reserveSequence: async maximum => {
+        const sequence = await underlyingBudget.reserveSequence!(maximum)
+        // Before finish, this scoped admission funds active-transcript
+        // compaction, not the subsequent typed publication sequence.
+        if (!collectionFinished && readCount > 0) {
+          compactionAdmitted = true
+          await Promise.resolve()
+          readable = false
+        }
+        return sequence
+      },
+      reserve: underlyingBudget.reserve,
+      reconcile: underlyingBudget.reconcile,
+      release: underlyingBudget.release,
+      consumeTool: underlyingBudget.consumeTool,
+      get unsettledExposure() { return underlyingBudget.unsettledExposure }
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const base = engineRequest([{ role: 'user', content: 'Read supplier page 1, check current supplier candidates, and report its receipt requirement.' }])
+    const containsRawRead = (value: unknown): boolean => {
+      if (typeof value === 'string') {
+        if (value.includes(page.content)) return true
+        try { return containsRawRead(JSON.parse(value)) } catch { return false }
+      }
+      if (Array.isArray(value)) return value.some(containsRawRead)
+      return value !== null && typeof value === 'object' && Object.values(value).some(containsRawRead)
+    }
+    let result: AgentEngineResult | undefined
+    try {
+      result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+        ...base, purpose: 'subagent', run: { ...base.run, executionMode: 'agent' },
+        limits: { ...base.limits, maxTurns: 8 },
+        dispatchBudget: budget
+      }, { text, event: async () => {} })
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+    }
+    expect(compactionAdmitted).toBe(true)
+    expect(readCount).toBe(1)
+    expect(validations).toContain(true)
+    expect(validations).toContain(false)
+    expect(dispatched.some(dispatch => dispatch.readable && containsRawRead(dispatch.input.chatPrompt))).toBe(true)
+    expect(dispatched.some(dispatch => !dispatch.readable && containsRawRead(dispatch.input.chatPrompt))).toBe(false)
+    expect(summaryRequests.some(input => containsRawRead(input.chatPrompt))).toBe(false)
+    expect(visibleWikiText(text.mock.calls.flat().join(''))).not.toContain(fact)
+    expect(result?.citations).toBeUndefined()
+  })
+
+
+  it.each([
+    [40_000, 10_000, 'real soft history compaction'],
+    [150_000, 10_000, 'direct typed native admission'],
+    [150_000, 128_000, 'native capacity refusal']
+  ] as const)('retains a complete prior read under ordinary history pressure (%s chars, %s native tokens, %s)', async (sourceCharacters, nativeInputTokens, route) => {
+    const fact = 'Cedar warehouse closes at 18:30 on Fridays.'
+    const unaskedFact = 'Falcon dispatch requires a signed manifest.'
+    const content = `# Supplier routing\n\n${unaskedFact}\n\nRequired complete source background: ${'v'.repeat(sourceCharacters)}\n\n## Cedar warehouse\n\n${fact}`
+    const page = {
+      id: 1, locale: 'en', path: 'suppliers', title: 'Supplier routing', sourceRevision: '2', contentType: 'markdown', content,
+      citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' }, citationSections: []
+    }
+    const history = canonicalMessages([
+      { role: 'user', content: `OLD_FALCON_LOOKUP:${'a'.repeat(40_000)}` },
+      { role: 'assistant', content: `OLD_FALCON_ANSWER:${'b'.repeat(40_000)}` },
+      { role: 'user', content: `TAIL_CONSTRAINT:${'c'.repeat(8_000)}` },
+      { role: 'assistant', content: `TAIL_DECISION:${'d'.repeat(8_000)}` },
+      { role: 'user', content: 'And when does Cedar warehouse close on Fridays?' }
+    ])
+    let historyCompacted = false
+    const summaries: Readonly<AxChatRequest>[] = []
+    const typedDeliveries: { readonly input: Readonly<AxChatRequest>; readonly historyCompacted: boolean }[] = []
+    const counted: Readonly<AxChatRequest>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if ((input.functions?.length ?? 0) === 0 && synthesisInputFromRequest(input) === undefined) {
+        summaries.push(input)
+        return response('Retain the Cedar followup and original supplier constraints.', 100, 10)
+      }
+      if (synthesisInputFromRequest(input) === undefined) return {
+        ...response('', 100, 10),
+        results: [{ index: 0, functionCalls: [
+          { id: 'cached-cedar-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+          { id: 'cedar-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }
+        ] }]
+      }
+      typedDeliveries.push({ input, historyCompacted })
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text === fact)
+      if (source === undefined) throw new Error('The complete retained original must remain eligible for fresh typed delivery')
+      return response(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }), 100, 10)
+    })
+    const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>) => {
+      counted.push(input)
+      return nativeInputTokens
+    })
+    const factory = {
+      create: async () => ({ ...profile, countContextTokens, service: fullAxFixtureService(chat) })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => { throw new Error('A validated complete prior read must not fetch the page again') })
+    const validateObservation = vi.fn(async () => true)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read source',
+          parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' }],
+        invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+      })
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const base = engineRequest(history.messages)
+    const execution = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+      ...base, run: { ...base.run, executionMode: 'agent' },
+      retainedPageReads: [{ actionCallId: 'prior-supplier-read', actionName: 'pages.get', output: page }],
+      compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
+      dispatchBudget: sequencedBudget(1_000_000)
+    }, {
+      text, event: async () => {},
+      commitCompaction: async () => { historyCompacted = true }
+    })
+    if (route === 'native capacity refusal') {
+      await expect(execution).rejects.toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE' })
+      expect(typedDeliveries).toEqual([])
+      expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
+      expect(invoke).not.toHaveBeenCalled()
+      expect(text.mock.calls).toEqual([])
+      return
+    }
+    const result = await execution
+    expect(invoke).not.toHaveBeenCalled()
+    expect(typedDeliveries.length).toBeGreaterThan(0)
+    for (const delivery of typedDeliveries) expect(synthesisReadsFromRequest(delivery.input)).toEqual([
+      expect.objectContaining({ evidenceId: page.citation.evidenceId, complete: true, readText: content })
+    ])
+    if (route === 'real soft history compaction') {
+      expect(summaries.some(input => input.chatPrompt.some(message =>
+        message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLD_FALCON_LOOKUP:')))).toBe(true)
+      expect(typedDeliveries.every(delivery => delivery.historyCompacted)).toBe(true)
+    } else {
+      expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
+    }
+    const published = text.mock.calls.flat().join('')
+    expect(visibleWikiText(published)).toContain(fact)
+    expect(visibleWikiText(published)).not.toContain(unaskedFact)
+    expect(published).toContain(`[[cite:${page.citation.evidenceId}]]`)
+    expect(result.citations).toEqual([expect.objectContaining({ evidenceId: page.citation.evidenceId })])
+    expect(result.executionLimit).toBeUndefined()
+  })
+
   it('retains exact source eligibility after old-history compaction and counts changed correction context without fake turns', async () => {
     const history = canonicalMessages([
       { role: 'user', content: `OLDEST_CONTACT_CONSTRAINT:${'a'.repeat(40_000)}` },
@@ -465,7 +782,7 @@ describe('Ax agent engine context compaction', () => {
     expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ performance: expect.objectContaining({ cachedInputTokensReported: 3 }) }))
     expect(result).toMatchObject({ totalTokens: 12, costMicros: 16 })
   })
-  it('delivers only relevant exact child page units instead of oversized background', async () => {
+  it('retains complete child reads through corrected answers without selecting unrelated background for publication', async () => {
     const history = canonicalMessages([{ role: 'user', content: 'What does Alpha require before release?' }])
     const sourceUnit = 'Alpha release depends on a verified staging receipt.'
     const background = 'Neutral operational background remains unchanged. '.repeat(900)
@@ -510,15 +827,17 @@ describe('Ax agent engine context compaction', () => {
       }
     ]
     const calls: Readonly<AxChatRequest<unknown>>[] = []
+    let typedDrafts = 0
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       calls.push(input)
-      if (calls.length === 1) {
-        const control = synthesisCollectionControl(input)
-        if (control !== undefined) return control
-      }
-      return response(synthesisFixtureAnswer(input, calls.length === 2
+      const control = synthesisCollectionControl(input)
+      if (control !== undefined) return control
+      if (synthesisInputFromRequest(input) === undefined)
+        return response('Retain Alpha’s original release restriction and the bounded source scope.', 100, 10)
+      const firstDraft = ++typedDrafts === 1
+      return response(synthesisFixtureAnswer(input, firstDraft
         ? `Alpha release does not require a verified staging receipt. [[cite:${alphaEvidenceId}]]`
-        : `${sourceUnit} [[cite:${alphaEvidenceId}]]`, { bindings: { [alphaEvidenceId]: { text: sourceUnit } } }), calls.length === 2 ? 200 : 300, calls.length === 2 ? 20 : 30)
+        : `${sourceUnit} [[cite:${alphaEvidenceId}]]`, { bindings: { [alphaEvidenceId]: { text: sourceUnit } } }), firstDraft ? 200 : 300, firstDraft ? 20 : 30)
     })
     const { factory } = factoryFor(chat)
     const validateObservation = vi.fn(async () => true)
@@ -544,6 +863,7 @@ describe('Ax agent engine context compaction', () => {
       })
     }
     const text = vi.fn(async () => undefined)
+    const event = vi.fn(async (_type: string, _data: unknown) => {})
     const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...engineRequest(history.messages),
@@ -551,14 +871,23 @@ describe('Ax agent engine context compaction', () => {
         research: { packets: [], incompleteTasks: [], evidenceSeeds },
         compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null }
       },
-      { text, event: async () => undefined }
+      { text, event }
     )
 
-    const sourceDeliveries = calls.slice(1).map(synthesisSourcesFromRequest)
-    expect(sourceDeliveries.every(units => units.some(unit => unit.evidenceId === alphaEvidenceId && unit.text === sourceUnit))).toBe(true)
-    expect(sourceDeliveries.flat().some(unit => unit.text.includes(background) || unit.text.includes('Beta background remains unchanged.'))).toBe(false)
+    const sourceDeliveries = calls.filter(input => synthesisInputFromRequest(input) !== undefined).map(synthesisReadsFromRequest)
+    expect(sourceDeliveries.length).toBeGreaterThan(0)
+    expect(sourceDeliveries.every(reads => reads.some(read => read.evidenceId === alphaEvidenceId && read.readText === alphaContent))).toBe(true)
+    expect(sourceDeliveries.every(reads => reads.some(read => read.evidenceId === betaEvidenceId && read.readText === betaContent))).toBe(true)
+    const published = text.mock.calls.flat().join('')
+    expect(visibleWikiText(published)).not.toContain('Neutral operational background remains unchanged.')
+    expect(visibleWikiText(published)).not.toContain('Beta background remains unchanged.')
+    expect(visibleWikiText(published)).toContain(sourceUnit)
+    expect(visibleWikiText(published)).not.toContain('Alpha release does not require a verified staging receipt.')
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
+      { accepted: false },
+      { accepted: true }
+    ])
     expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
-    expect(result).toMatchObject({ inputTokens: 503, outputTokens: 52, totalTokens: 555, costMicros: 607 })
     expect(validateObservation).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
   })
 
@@ -581,7 +910,8 @@ describe('Ax agent engine context compaction', () => {
       'Name: Maya Quinn; Email: [maya@example.test](mailto:maya@example.test)'
     ]
   ] as const)('adaptable compaction reentry preserves complete %s closures without borrowing omitted dependencies', async (_dependency, template, fact) => {
-    for (const complete of [true, false]) {
+    for (const delivery of ['complete', 'padded', 'missing'] as const) {
+      const complete = delivery !== 'missing'
       const history = canonicalMessages([
         { role: 'user', content: `OLD_CONTACT_CONSTRAINT:${'a'.repeat(40_000)}` },
         { role: 'assistant', content: `OLD_CONTACT_DECISION:${'b'.repeat(40_000)}` },
@@ -593,7 +923,17 @@ describe('Ax agent engine context compaction', () => {
       const answer = `${fact} [[cite:${citation}]]`
       const independentFact = 'The contact office opens at 09:00.'
       const independentAnswer = `${independentFact} [[cite:${citation}]]`
-      const content = `# Contacts\n\n${independentFact}\n\n${template.replace('{{padding}}', complete ? '' : ` <!--${'presentational padding '.repeat(700)}-->`).replace('{{title}}', complete ? 'Contact' : 'presentational padding '.repeat(700))}\n\n${'Neutral office background. '.repeat(900)}`
+      const missingDependency: Readonly<Record<string, string>> = {
+        'parent identity': '- Name: Maya Quinn',
+        'required condition': '- Maya Quinn may approve release.',
+        'sibling field': '- Name: Maya Quinn\n  - Phone: 555-0100 x42',
+        'table header': 'Name | Contact code\n--- | ---\nMaya Quinn | 555-0100 x42',
+        'reference definition': '- Name: Maya Quinn\n  - Email: [maya@example.test][maya]'
+      }
+      const record = delivery === 'missing' ? missingDependency[_dependency]! :
+        template.replace('{{padding}}', delivery === 'padded' ? ` <!--${'presentational padding '.repeat(700)}-->` : '')
+          .replace('{{title}}', delivery === 'padded' ? 'presentational padding '.repeat(700) : 'Contact')
+      const content = `# Contacts\n\n${independentFact}\n\n${record}\n\n${'Neutral office background. '.repeat(900)}`
       const calls: Readonly<AxChatRequest<unknown>>[] = []
       const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
         calls.push(input)
@@ -604,7 +944,7 @@ describe('Ax agent engine context compaction', () => {
         }
         const units = synthesisSourcesFromRequest(input)
         const draft = calls.length === 3
-          ? { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text.includes('Maya Quinn') || synthesisOwnedPacketIncludes(input, unit, 'Maya Quinn'))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: fact }
+          ? { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text.includes('Maya Quinn'))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: fact }
           : { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text === independentFact)?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: independentFact }
         return response(synthesisFixtureAnswer(input, { claims: [draft], unresolvedFacets: calls.length === 3 ? [] : [0] }), 100, 10)
       })
@@ -667,16 +1007,20 @@ describe('Ax agent engine context compaction', () => {
       expect(commitCompaction).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'context_compacted' }))
       const published = text.mock.calls.map(([delta]) => delta).join('')
       if (complete) {
-        expect(published).toContain(answer)
+        expect(synthesisReadsFromRequest(calls.at(-1)!)).toEqual([
+          expect.objectContaining({ readText: content, complete: true })
+        ])
+        expect(visibleWikiText(published)).toContain(visibleWikiText(answer))
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
       } else {
-        expect(published).not.toContain(answer)
-        expect(published).toContain(independentAnswer)
+        expect(visibleWikiText(published)).not.toContain(visibleWikiText(answer))
+        expect(visibleWikiText(published)).toContain(visibleWikiText(independentAnswer))
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
       }
+      expect(published).toContain(`[[cite:${citation}]]`)
     }
   })
 
