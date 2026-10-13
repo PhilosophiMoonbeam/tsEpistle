@@ -39,6 +39,8 @@ The synthesis input is now `sourceText` plus `sourceReferences`. `sourceText` co
       scope, text,
       preview?: true,
       record?: recordKey,
+      atomic?: true,
+      block?: "list" | "table",
       rawSpans?: [{ start, end }],
       title?: true,
       aliases?: { [originalScopeKey]: "originalAliasRef originalAliasRef" }
@@ -53,14 +55,14 @@ The portable fixture still has 16,426 original UTF-8 bytes. All 259 earlier comp
 
 | Quantity | Previous named-row transport | First complete-read iteration | Current complete-read index |
 | --- | ---: | ---: | ---: |
-| Root-only serialized Ax request bytes | 159,534 | 95,519 | 64,966 |
-| Root + sections serialized Ax request bytes | 165,023 | 113,233 | 72,692 |
-| Root + sections input bytes + 8,192 output allowance | 173,215 | 121,425 | 80,884 |
-| Root + sections selector/index JSON bytes | 12,070 bindings + 129,833 structures | 74,562 | 35,097 |
+| Root-only serialized Ax request bytes | 159,534 | 95,519 | 66,048 |
+| Root + sections serialized Ax request bytes | 165,023 | 113,233 | 73,774 |
+| Root + sections input bytes + 8,192 output allowance | 173,215 | 121,425 | 81,966 |
+| Root + sections selector/index JSON bytes | 12,070 bindings + 129,833 structures | 74,562 | 35,931 |
 | Complete original read bytes | 16,426 | 16,426 | 16,426 |
 | Selectable original root/section bindings | 437 | 437 | 440 |
 
-The current request is 59.28% smaller root-only and 55.95% smaller with sections than the previous transport. These are measured byte reductions, **not measured model-token reductions**. All 437 earlier references remain selectable; three additional projections expose two genuine original multi-sentence units that artificial atomic splitting had hidden. Their initial index cost was 622 bytes. The medium-display and concise-policy refinement removes 5,410 serialized root-request bytes; the reference-resolution instruction adds 268 bytes, for 5,142 bytes net. There are 19 safe previews and 243 fully inline selections; unchanged original selected text is 21,163 bytes, versus 15,400 displayed index-text bytes. Grouped alias strings also remove the measured admission failure for a separate 74,821-byte pair of complete child reads with 1,748 repeated original aliases. Neither source text nor selector identities are dropped to fit; existing real output resizing remains. This fixture has no earlier conversation. Warm conversations separately include admitted user/assistant text and existing compaction notes, never collected tool traffic or thought blocks; that meaningful history is counted in their actual generated request.
+The current request is 58.60% smaller root-only and 55.29% smaller with sections than the previous transport. These are measured byte reductions, **not measured model-token reductions**. All 437 earlier references remain selectable; three additional projections expose two genuine original multi-sentence units that artificial atomic splitting had hidden. The index retains 19 safe previews and 243 fully inline selections; unchanged original selected text is 21,163 bytes, versus 15,400 displayed index-text bytes. Selector clarity adds only `atomic:true` for a narrow original assertion and `block:"list"|"table"` for a complete native container. Six atomic and 50 block markers cost 834 index bytes on this fixture, rather than a proof or field catalog; they distinguish selecting one assertion, one owned record, or an entire original block. Host authority is unchanged. Grouped aliases also remove the measured admission failure for a separate 74,821-byte pair of complete child reads with 1,748 repeated aliases. Neither author content nor selector identities are dropped to fit. This fixture has no earlier conversation; warm requests separately count admitted user/assistant text and compaction notes, never collected tool traffic or thought blocks.
 
 Fresh pre-change native measurements on an owned fictional fixture confirmed the follow-up problem independently of the offline capacity specimen. A role-only answer took 34.450 seconds; its typed generation reported 75,759 input tokens. The ordinary same-session delivery follow-up fetched the same page again, made five separate roughly 11,000-input-token verification calls, attempted a repair and ended partial. Those calls were real accounted application requests, not an offline tokenizer estimate.
 
