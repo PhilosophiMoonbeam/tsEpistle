@@ -873,19 +873,15 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     return { chatPrompt: [{ role: 'user', content: `User Request: Preserve complete source facts.\n\nSource Structures: ${encoded.sourceStructures}\n\nSource Bindings: ${encoded.sourceBindings}\n\nRequest Facets: []` }] }
   }
 
-  it('round-trips every native projection and full authored record, governing header and link definition without borrowing sibling content', () => {
+  it('round-trips every source reference and full authored record, governing header and link definition without borrowing sibling content', () => {
     const supplied = [...bound, other, opaque]
     const transported = request(supplied)
-    const dictionaries = JSON.parse(encodeWikiSynthesisSources(supplied, owned).sourceStructures) as {
-      texts: Record<number, string>; sources: Record<number, unknown>
-    }
-    expect(Array.isArray(dictionaries.texts)).toBe(false)
-    expect(Array.isArray(dictionaries.sources)).toBe(false)
-    expect(dictionaries.texts).toHaveProperty('0')
-    expect(dictionaries.sources).toHaveProperty('0')
     const restored = synthesisSourcesFromRequest(transported)
     expect(restored.map(({ packet: _packet, ...source }) => source)).toEqual(
-      supplied.map(({ packet: _packet, unitId: _unitId, ...source }) => ({ ...source, sourceRef: wikiSynthesisSourceRef({ ...source, unitId: _unitId }) }))
+      supplied.map(({ packet: _packet, evidenceId: _evidenceId, sourceRevision: _sourceRevision, unitId: _unitId, ...row }) => ({
+        ...row, evidenceId: _evidenceId, sourceRevision: _sourceRevision,
+        sourceRef: wikiSynthesisSourceRef({ evidenceId: _evidenceId, sourceRevision: _sourceRevision, unitId: _unitId })
+      }))
     )
     const readable = synthesisAuthoredContentFromRequest(transported, bound[0]!)
     expect(readable).toEqual([authoredRecord, authoredHeader, authoredLinkDefinition])
@@ -902,9 +898,15 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
   })
 
   it('offers every alias under subset-stable references and resolves global-universe outputs to exact original identities', async () => {
-    const supplied = [source, ...bound, other, opaque]
+    const supplied = [source, ...bound, other, opaque,
+      { ...bound[0]!, evidenceId: 'page:alias:revision:8', sourceRevision: '8', unitId: 'unit:alias' }]
+    const bindingMap = JSON.parse(encodeWikiSynthesisSources(supplied, owned).sourceBindings) as Record<string, [number, number]>
+    const aliasBinding = bindingMap[wikiSynthesisSourceRef(supplied.at(-1)!)]!
+    const originalBinding = bindingMap[wikiSynthesisSourceRef(bound[0]!)]!
+    expect(aliasBinding[0]).toBe(originalBinding[0])
+    expect(aliasBinding[1]).not.toBe(originalBinding[1])
     const all = synthesisSourcesFromRequest(request(supplied))
-    const subset = [other, bound[1]!, bound[0]!]
+    const subset = [other, bound[1]!, bound[0]!, supplied.at(-1)!]
     const selected = synthesisSourcesFromRequest(request(subset))
     expect(new Set(all.map(source => source.sourceRef)).size).toBe(supplied.length)
     for (let index = 0; index < subset.length; index++) {
@@ -937,7 +939,9 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     const nullable = { ...repeated, evidenceId: 'page:44:revision:7', unitId: 'unit:null', literalStatement: null }
     const supplied = [repeated, sibling, nullable]
     const transported = request(supplied, [])
-    expect(synthesisSourcesFromRequest(transported)).toEqual(supplied.map(({ unitId, ...source }) => ({ ...source, sourceRef: wikiSynthesisSourceRef({ ...source, unitId }) })))
+    expect(synthesisSourcesFromRequest(transported)).toEqual(supplied.map(({ evidenceId, sourceRevision, unitId, ...row }) => ({
+      ...row, evidenceId, sourceRevision, sourceRef: wikiSynthesisSourceRef({ evidenceId, sourceRevision, unitId })
+    })))
   })
 
   it('keeps opaque JSON bytes and unresolved lookalike packets unchanged rather than coercing them through parsed values', () => {
@@ -984,10 +988,10 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     const byRef = new Map(restored.map(row => [row.sourceRef, row]))
     expect(restored).toHaveLength(supplied.length)
     expect(byRef.size).toBe(supplied.length)
-    for (const { packet: _packet, unitId, ...native } of supplied) {
-      const sourceRef = wikiSynthesisSourceRef({ ...native, unitId })
+    for (const { packet: _packet, evidenceId, sourceRevision, unitId, ...native } of supplied) {
+      const sourceRef = wikiSynthesisSourceRef({ evidenceId, sourceRevision, unitId })
       const { packet: _restoredPacket, ...row } = byRef.get(sourceRef)!
-      expect(row).toEqual({ ...native, sourceRef })
+      expect(row).toEqual({ ...native, evidenceId, sourceRevision, sourceRef })
     }
     for (let index = 0; index < records.length; index++) {
       for (let alias = 0; alias < 2; alias++) {
@@ -1038,9 +1042,9 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     const restored = synthesisSourcesFromRequest(transported)
     const restoredByRef = new Map(restored.map(({ packet: _packet, ...row }) => [row.sourceRef, row]))
     expect(restoredByRef.size).toBe(supplied.length)
-    for (const { packet: _packet, unitId, ...row } of supplied) {
-      const sourceRef = wikiSynthesisSourceRef({ ...row, unitId })
-      expect(restoredByRef.get(sourceRef)).toEqual({ ...row, sourceRef })
+    for (const { packet: _packet, evidenceId, sourceRevision, unitId, ...row } of supplied) {
+      const sourceRef = wikiSynthesisSourceRef({ evidenceId, sourceRevision, unitId })
+      expect(restoredByRef.get(sourceRef)).toEqual({ ...row, evidenceId, sourceRevision, sourceRef })
     }
     for (let index = 0; index < supplied.length; index++) {
       expect(synthesisAuthoredContentFromRequest(transported, supplied[index]!)).toEqual(authored[Math.floor(index / 5)])
