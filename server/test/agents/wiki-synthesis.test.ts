@@ -211,6 +211,60 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
+  it('adds only the own canonical context to an explicit exact complete raw list in final and streaming consumers', async () => {
+    const raw = '- 80 g **orzo**\r\n- 1 lemon\r\n- 400 ml stock\r\n'
+    const literalStatement = `Illustrative and untested › Ingredients: ${raw}`
+    const owned = { ...source, kind: 'list', text: raw, literalStatement }
+    const sibling = { ...owned, unitId: 'unit:sibling', literalStatement: `Internal draft › Ingredients: ${raw}` }
+    const selected = answer({ claims: [{ ...answer().claims[0]!, statement: raw }] })
+    for (const mode of ['native', 'json_object'] as const) {
+      const accepted = await generate(selected, [owned, sibling], {
+        validateClaim: claim => claim.statement === literalStatement
+      }, mode).result
+      expect(accepted.claims).toEqual([{ ...selected.claims[0]!, statement: literalStatement }])
+      expect(accepted.claims[0]!.statement.slice(0, -raw.length)).toBe('Illustrative and untested › Ingredients: ')
+      expect(accepted.claims[0]!.statement.slice(-raw.length)).toBe(raw)
+      const wire = encodeWikiSynthesisAnswer(selected)
+      const guard = createWikiSynthesisStreamGuard([owned, sibling])
+      for (const character of JSON.stringify(wire)) expect(guard(character)).toBeUndefined()
+      const service = new AxMockAIService<string>({
+        features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
+        chatResponse: async () => new ReadableStream<AxChatResponse>({
+          start(controller) {
+            const body = JSON.stringify(wire)
+            controller.enqueue({ results: [{ index: 0, content: body.slice(0, body.length - 1) }] })
+            controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
+            controller.close()
+          }
+        })
+      })
+      const streamed: WikiSynthesisAnswer['claims'] = []
+      for await (const chunk of createWikiSynthesisProgram([owned, sibling], { facetCount: 2 }).streamingForward(service, {
+        ...input, ...encodeFixtureSources([owned, sibling])
+      }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
+      expect(streamed).toEqual(accepted.claims)
+      for (const scenario of [
+        { row: owned, statement: '- 80 g **orzo**\r\n- 1 lemon\r\n' },
+        { row: owned, statement: '- 1 lemon\r\n- 80 g **orzo**\r\n- 400 ml stock\r\n' },
+        { row: owned, statement: raw.replace('400 ml', '500 ml') },
+        { row: owned, statement: raw.replaceAll('\r\n', '\n') },
+        { row: owned, statement: sibling.literalStatement },
+        { row: owned, statement: '' },
+        { row: { ...owned, complete: false }, statement: raw },
+        { row: { ...owned, literalStatement: null }, statement: raw },
+        { row: { ...owned, kind: 'prose' }, statement: raw },
+        { row: { ...owned, literalStatement: 'Invented body\r\n' }, statement: raw }
+      ]) {
+        const proposal = answer({ claims: [{ ...selected.claims[0]!, statement: scenario.statement }] })
+        await expect(generate(proposal, [scenario.row], {}, mode).result).rejects.toThrow()
+        expect(createWikiSynthesisStreamGuard([scenario.row])(JSON.stringify(encodeWikiSynthesisAnswer(proposal)))).toBeDefined()
+      }
+      const unknown = answer({ claims: [{ ...selected.claims[0]!, unitId: 'unknown' }] })
+      await expect(generate(unknown, [owned], {}, mode).result).rejects.toThrow()
+      expect(createWikiSynthesisStreamGuard([owned])(JSON.stringify(encodeWikiSynthesisAnswer(unknown)))).toBeDefined()
+    }
+  })
+
   it('retains trusted canonical host replacements without accepting replacement provenance outside the original registry', async () => {
     const quoted = { ...source, literalStatement: `Illustrative only: ${source.text}` }
     const wire = encodeWikiSynthesisAnswer(answer())
@@ -799,6 +853,30 @@ describe('Wiki synthesis complete registered read transport', () => {
       expect(accepted.claims).toEqual([{ ...prediction.claims[0]!, statement: root.literalStatement }])
       expect(validateClaim).toHaveBeenCalledTimes(1)
     }
+  })
+
+  it('associates only fields of the same owned record across exact scope aliases and keeps equal-valued records separate', () => {
+    const lead = { ...root, unitId: 'field:lead', ownedRecordId: 'record:delivery', text: 'Lead time: 3 working days', literalStatement: null }
+    const scope = { ...lead, unitId: 'field:scope', text: 'Scope: mainland only' }
+    const exception = { ...lead, unitId: 'field:exception', text: 'Exception: islands require separate quote' }
+    const equalValue = { ...lead, unitId: 'field:other-lead', ownedRecordId: 'record:other' }
+    const otherRead = { ...lead, evidenceId: 'page:99:revision:7' }
+    const alias = { ...lead, evidenceId: section.evidenceId }
+    const supplied = [lead, scope, exception, equalValue, otherRead, alias, { ...root, unitId: 'field:unowned' }]
+    const reads = [read, { ...read, evidenceId: section.evidenceId }, { ...read, evidenceId: otherRead.evidenceId, readId: 'physical:99:7' }]
+    const delivered = synthesisSourcesFromRequest(request(supplied, reads))
+    const byRef = new Map(delivered.map(row => [row.sourceRef, row]))
+    const marker = byRef.get(wikiSynthesisSourceRef(lead))!.record
+    expect(marker).toBeDefined()
+    for (const field of [scope, exception, alias])
+      expect(byRef.get(wikiSynthesisSourceRef(field))!.record).toBe(marker)
+    for (const unrelated of [equalValue, otherRead])
+      expect(byRef.get(wikiSynthesisSourceRef(unrelated))!.record).not.toBe(marker)
+    expect(byRef.get(wikiSynthesisSourceRef(supplied[6]!))!.record).toBeUndefined()
+    expect(delivered.map(row => row.sourceRef).sort()).toEqual(supplied.map(wikiSynthesisSourceRef).sort())
+    for (const row of delivered) expect(row.readText).toBe(body)
+    expect(() => encodeWikiSynthesisSources([lead, { ...lead, ownedRecordId: 'record:other' }], reads)).toThrow('Conflicting source unit binding')
+    expect(() => encodeWikiSynthesisSources([{ ...lead, ownedRecordId: '' }], reads)).toThrow()
   })
 
   it('keeps identical selected text attached to different physical reads and rejects foreign or expired owner reads', async () => {
