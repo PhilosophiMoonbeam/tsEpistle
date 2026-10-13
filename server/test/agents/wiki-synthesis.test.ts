@@ -876,6 +876,13 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
   it('round-trips every native projection and full authored record, governing header and link definition without borrowing sibling content', () => {
     const supplied = [...bound, other, opaque]
     const transported = request(supplied)
+    const dictionaries = JSON.parse(encodeWikiSynthesisSources(supplied, owned).sourceStructures) as {
+      texts: Record<number, string>; sources: Record<number, unknown>
+    }
+    expect(Array.isArray(dictionaries.texts)).toBe(false)
+    expect(Array.isArray(dictionaries.sources)).toBe(false)
+    expect(dictionaries.texts).toHaveProperty('0')
+    expect(dictionaries.sources).toHaveProperty('0')
     const restored = synthesisSourcesFromRequest(transported)
     expect(restored.map(({ packet: _packet, ...source }) => source)).toEqual(
       supplied.map(({ packet: _packet, unitId: _unitId, ...source }) => ({ ...source, sourceRef: wikiSynthesisSourceRef({ ...source, unitId: _unitId }) }))
@@ -988,7 +995,7 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
       }
     }
     expect(byRef.get(wikiSynthesisSourceRef(supplied.at(-1)!))!.packet).toBe(opaquePacket)
-    const pool = JSON.parse(encoded.sourceStructures).texts as string[]
+    const pool = Object.values(JSON.parse(encoded.sourceStructures).texts as Record<number, string>)
     // Equal-length authored peers cannot share distinct text. Retain each once,
     // while every alias still resolves to that exact complete original record.
     for (const record of records) expect(pool.filter(text => text === record)).toHaveLength(1)
