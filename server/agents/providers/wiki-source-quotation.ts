@@ -1,5 +1,5 @@
 import type { SourceContext, SourceSpan, SourceUnit } from './source-document.ts'
-import type { WikiSourceQuotationPresentation, WikiSynthesisAnswer } from './wiki-synthesis.ts'
+import type { WikiSynthesisAnswer } from './wiki-synthesis.ts'
 import type { WikiVerificationSource } from './wiki-verification.ts'
 
 const spanKey = (span: SourceSpan): string => `${span.start}:${span.end}`
@@ -121,7 +121,7 @@ export const getLiteralSourceMembershipStatement = (source: WikiVerificationSour
   return labels.length ? `${labels.join(' › ')}: ${statement}` : statement
 }
 
-/** Complete original quotation with its governing context; not a world-fact inference. */
+/** Exact selected assertion or owned record with its governing context; not a world-fact inference. */
 export const getLiteralSourceStatement = (source: WikiVerificationSource): string | null => {
   if (!closedSource(source)) return null
   if (source.kind === 'page-title') return `The page is titled "${source.text}"`
@@ -130,45 +130,20 @@ export const getLiteralSourceStatement = (source: WikiVerificationSource): strin
   if (!unit.normalizedText.includes(source.text) ||
     (record && (record.unitIds.length !== 1 || record.unitIds[0] !== unit.id))) return null
   const labels = governingContexts(source).map(context => context.normalizedLabel)
-  return labels.length ? `${labels.join(' › ')}: ${unit.normalizedText}` : unit.normalizedText
+  return labels.length ? `${labels.join(' › ')}: ${source.text}` : source.text
 }
 
 /** Exact linked members and complete quotations are mechanical; other claims need semantic support. */
 export const isLiteralSourceClaim = (claim: WikiSynthesisAnswer['claims'][number], source: WikiVerificationSource): boolean => {
   if (claim.evidenceId !== source.evidenceId || claim.sourceRevision !== source.sourceRevision || claim.unitId !== source.unitId) return false
+  const closure = source.closure
+  if (source.kind === 'paragraph' && closure?.record === null && source.text !== closure.unit.normalizedText) {
+    // A subset can omit a governing qualification from the rest of its
+    // paragraph. Keep the original binding and use the existing semantic check.
+    return false
+  }
   const statement = getLiteralSourceStatement(source)
   return statement !== null && (claim.statement === statement || source.kind === 'page-title' && claim.statement === `${statement}.` ||
     (source.closure?.record?.fields.length ?? 0) > 0 && claim.statement === literalRecordStatement(source))
 }
 
-/**
- * Derive display only from the exact closed native quotation. Canonical text
- * remains the verification authority; no model prose is parsed or stripped.
- */
-export const getLiteralSourcePresentation = (
-  source: WikiVerificationSource,
-  statement: string | null = getLiteralSourceStatement(source)
-): WikiSourceQuotationPresentation | null => {
-  if (statement === null) return null
-  const binding = { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement }
-  if (!isLiteralSourceClaim(binding, source)) return null
-  if (source.closure === null) return Object.freeze({ ...binding, text: statement, contexts: Object.freeze([]), kind: 'quotation' })
-  const contexts = Object.freeze(governingContexts(source)
-    // Column headers are structural provenance. Their meaning-bearing labels
-    // remain in the exact fields or the membership's explicit display label.
-    .filter(context => context.kind !== 'table-header')
-    .map(context => context.normalizedLabel))
-  const { unit, record } = source.closure
-  const sourceOrder = unit.sourceSpans[0]!.start
-  if (record?.kind === 'table-row' && statement === getLiteralSourceMembershipStatement(source)) {
-    const field = record.fields.find(field => field.unitIds.length === 1 && field.unitIds[0] === unit.id)!
-    // The explicit authored field label retains source-membership semantics;
-    // the value stays exact source text, without artificial quotation marks.
-    return Object.freeze({ ...binding, text: field.value, contexts, kind: 'membership', label: field.label, sourceOrder })
-  }
-  const text = record?.fields.length
-    ? record.fields.map(field => `${field.label}: ${field.value}`).join(' | ')
-    : unit.normalizedText
-  const kind = !record?.fields.length && (unit.kind === 'heading' || unit.kind === 'list-item') ? 'entry' : 'quotation'
-  return Object.freeze({ ...binding, text, contexts, kind, sourceOrder })
-}

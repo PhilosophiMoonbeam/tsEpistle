@@ -487,7 +487,7 @@ describe('Ax agent engine', () => {
       { answer: input => {
         const source = synthesisSourcesFromRequest(input).find(source =>
           source.evidenceId === 'page:42:revision:2' && source.sourceRevision === '2' &&
-          source.complete && source.quotation && source.text === 'Name: Morgan Vale' &&
+          source.complete && source.text === 'Name: Morgan Vale' &&
           source.readText.includes('Falcon account representative') &&
           source.readText.includes('morgan.vale@example.invalid') &&
           source.readText.includes('+1 202 555 0147')
@@ -497,7 +497,7 @@ describe('Ax agent engine', () => {
             evidenceId: source.evidenceId,
             sourceRevision: source.sourceRevision,
             sourceRef: source.sourceRef,
-            statement: ''
+            statement: 'Falcon: Name: Morgan Vale | Role: Falcon account representative | Email: morgan.vale@example.invalid | Phone: +1 202 555 0147.'
           }]
         })
       } }
@@ -531,13 +531,13 @@ describe('Ax agent engine', () => {
         const sources = synthesisSourcesFromRequest(input)
         frames.push(sources)
         const source = sources.find(candidate => candidate.evidenceId === 'page:42:revision:2' &&
-          candidate.quotation && candidate.text === 'Name: Morgan Vale')!
+          candidate.text === 'Name: Morgan Vale')!
         expect(source.readText).toContain('fictional routing specimen only')
         return synthesisFixtureAnswer(input, {
           claims: [{
             ...source,
             sourceRef: frames.length === 1 ? 'sAAAAAAAAAAAAAAAA' : source.sourceRef,
-            statement: ''
+            statement: 'Supplier routing › Falcon contacts: Name: Morgan Vale | Role: Falcon account representative | Email: morgan.vale@example.invalid | Phone: +1 202 555 0147 | Qualification: fictional routing specimen only.'
           }]
         })
       }
@@ -589,7 +589,7 @@ describe('Ax agent engine', () => {
       frames.push(sources)
       const source = sources.find(candidate =>
         candidate.evidenceId === 'page:76:revision:1' && candidate.sourceRevision === '1' &&
-        candidate.complete && candidate.quotation && candidate.kind !== 'page-title' &&
+        candidate.complete && candidate.kind !== 'page-title' &&
         candidate.readText.includes('Morgan Vale') &&
         candidate.readText.includes('morgan.vale@example.invalid') &&
         candidate.readText.includes('+1 202 555 0147') &&
@@ -664,6 +664,11 @@ describe('Ax agent engine', () => {
       expect(published).not.toContain('+1 202 555 0147')
       expect(published).not.toContain('Email:')
       expect(published).not.toContain('Phone:')
+      const rendered = fixture.text.mock.calls.map(([delta]) => delta).join('')
+      const container = document.createElement('div')
+      container.innerHTML = renderSafeMarkdown(rendered)
+      expect(container.querySelectorAll('h1,h2,h3,h4,h5,h6')).toHaveLength(0)
+      expect(published).not.toContain('Source quotations')
       expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:76:revision:1' })])
       expect(result.executionLimit).toBeUndefined()
       expect(frames).toHaveLength(1)
@@ -1252,30 +1257,84 @@ describe('Ax agent engine', () => {
     results: [{ index: 0, content }],
     modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
   })
-  it.each(['complete physical unit', 'exact admitted assertion', 'changed physical quantity'] as const)(
-    'restores governing headers only for the exact original %s', async mode => {
+  it.each(['explicit requested assertions', 'exact admitted assertion', 'borrowed native siblings'] as const)(
+    'retains selected original assertion scope for %s', async mode => {
       const physical = 'The deployment ships 20 cases. Release requires an audit. Elapsed times are estimates, not guarantees.'
       const fixture = typedRootFixture((input, attempt) => {
-        const source = synthesisSourcesFromRequest(input).find(unit => unit.text === 'The deployment ships 20 cases.')!
-        expect(source.quotation).toBe(true)
-        const statement = mode === 'changed physical quantity' && attempt === 1
-          ? physical.replace('20 cases', '21 cases') : mode === 'exact admitted assertion' ? source.text : physical
-        return typedFixtureReceipt(synthesisFixtureAnswer(input, {
-          claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement }]
-        }))
+        const sources = synthesisSourcesFromRequest(input)
+        const selected = sources.find(unit => unit.text === 'The deployment ships 20 cases.')!
+        const claims = mode === 'explicit requested assertions'
+          ? ['The deployment ships 20 cases.', 'Release requires an audit.', 'Elapsed times are estimates, not guarantees.'].map(text => ({
+            ...sources.find(unit => unit.text === text)!, statement: text
+          }))
+          : [{ ...selected, statement: mode === 'borrowed native siblings' && attempt === 1 ? physical : selected.text }]
+        return typedFixtureReceipt(synthesisFixtureAnswer(input, { claims }))
       }, false, undefined, {
         title: 'Deployment guide',
         content: `# Deployment guide\n\n## Cases after audit\n\n${physical}`,
-        request: 'Report deployment quantity, audit requirement, and elapsed-time qualification.'
+        request: mode === 'explicit requested assertions'
+          ? 'Report deployment quantity, audit requirement, and elapsed-time qualification.'
+          : 'Report only the deployment quantity and its governing audit condition.'
       })
       const result = await fixture.execute()
       expect(result.executionLimit).toBeUndefined()
       const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
-      expect(published).not.toContain('21 cases')
-      expect(fixture.attempts).toBe(mode === 'changed physical quantity' ? 2 : 1)
-      expect(fixture.event.mock.calls.some(([type, data]) =>
-        type === 'model.turn' && questionRecord(data).purpose === 'verification')).toBe(false)
+      expect(published).toContain('Cases after audit')
+      expect(published).toContain('The deployment ships 20 cases.')
+      if (mode === 'explicit requested assertions') {
+        expect(published).toContain('Release requires an audit.')
+        expect(published).toContain('Elapsed times are estimates, not guarantees.')
+      } else {
+        expect(published).not.toContain('Release requires an audit.')
+        expect(published).not.toContain('Elapsed times are estimates, not guarantees.')
+      }
+      expect(fixture.attempts).toBe(mode === 'borrowed native siblings' ? 2 : 1)
       expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1'])
+      expect(fixture.outstanding.size).toBe(0)
+      expect(fixture.settled.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(result.totalTokens)
+    }
+  )
+
+  it.each(['requested shipping clauses', 'explicit complete list'] as const)(
+    'publishes %s only within its original atomic or list binding', async mode => {
+      const lead = 'Standard lead time is 3 days for mainland in-stock orders.'
+      const island = 'Remote-island orders add 2 days.'
+      const threshold = 'Free delivery starts at 500 dollars for mainland in-stock orders.'
+      const unrelated = 'Returns require unused packaging.'
+      const authored = `- ${lead} ${island}\n- ${threshold} ${unrelated}\n`
+      const fixture = typedRootFixture(input => {
+        const sources = synthesisSourcesFromRequest(input)
+        const requested = mode === 'explicit complete list' ? [authored] : [lead, island, threshold]
+        return typedFixtureReceipt(synthesisFixtureAnswer(input, {
+          claims: requested.map(text => {
+            const source = sources.find(unit => unit.text === text)
+            if (source === undefined) throw new Error('Expected the complete original list or selected atomic assertion.')
+            return { ...source, statement: mode === 'explicit complete list' ? `Shipping: ${authored}` : text }
+          })
+        }))
+      }, false, undefined, {
+        title: 'Shipping',
+        content: `# Shipping\n\n${authored}`,
+        request: mode === 'explicit complete list'
+          ? 'Quote the complete shipping list, including its returns clause.'
+          : 'Give standard lead time and free-delivery threshold with mainland/in-stock restrictions and the remote-island exception. Exclude returns.'
+      })
+      const result = await fixture.execute()
+      const rendered = fixture.text.mock.calls.map(([delta]) => delta).join('')
+      const published = visibleWikiText(rendered)
+      expect(result.executionLimit).toBeUndefined()
+      for (const clause of [lead, island, threshold]) expect(published).toContain(clause)
+      if (mode === 'explicit complete list') expect(published).toContain(unrelated)
+      else expect(published).not.toContain(unrelated)
+      expect(published).not.toContain('Source quotations')
+      const container = document.createElement('div')
+      container.innerHTML = renderSafeMarkdown(rendered)
+      expect(container.querySelectorAll('h1,h2,h3,h4,h5,h6')).toHaveLength(0)
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1'])
+      expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data))
+        .toMatchObject([{ accepted: true }])
+      expect(fixture.outstanding.size).toBe(0)
+      expect(fixture.settled.reduce((total, usage) => total + usage.totalTokens, 0)).toBe(result.totalTokens)
     }
   )
 
@@ -1323,7 +1382,6 @@ describe('Ax agent engine', () => {
         )
         if (original === undefined || sibling === undefined)
           throw new Error('The original complete numeric field and sibling binding must remain available.')
-        expect(original.quotation).toBe(true)
         rejectedStatement = mutation === 'foreign governing heading'
           ? statement.replace('Components', 'Foreign Components')
           : mutation === 'changed quantity'
@@ -1541,7 +1599,6 @@ describe('Ax agent engine', () => {
     const content = [`# ${title}`, ...sections.map(section => `## ${section.heading}\n\n${paragraphs.join('\n\n')}`)].join('\n\n')
     const fixture = typedRootFixture(input => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === evidenceId && unit.kind === 'page-title')!
-      expect(source.quotation).toBe(true)
       return typedFixtureReceipt(synthesisFixtureAnswer(input, {
         claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement: `The page is titled "${title}".` }]
       }))
@@ -8791,9 +8848,8 @@ describe('request-derived evidence coverage', () => {
     const generate = (input: Readonly<AxChatRequest>): AxChatResponse => {
       const selected = narration ? [] : synthesisSourcesFromRequest(input).filter(source => source.kind === 'page-title')
       const claims = selected.map(source => {
-        if (!source.quotation) throw new Error('Authoritative metadata must have an observed quotation selector')
         return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
-          sourceRef: source.sourceRef, statement: '' }
+          sourceRef: source.sourceRef, statement: `The page is titled "${source.text}"` }
       })
       if (mode === 'provider mutation') providerRevision++
       return { results: [{ index: 0, content: synthesisFixtureAnswer(input, {
@@ -9034,19 +9090,23 @@ describe('request-derived evidence coverage', () => {
     }
     const generate = (input: Readonly<AxChatRequest>): AxChatResponse => {
       const sources = synthesisSourcesFromRequest(input)
+      const header = 'Code | Dish | Alias | Diet | Total time | Servings | Requirement'
       const required = [
-        { evidenceId: 'page:42:revision:1', text: 'Servings: 4' },
-        { evidenceId: 'page:42:revision:1', text: 'Servings: 2' },
-        { evidenceId: 'page:44:revision:1', text: 'Servings: 3' }
+        { evidenceId: 'page:42:revision:1', text: 'Servings: 4',
+          statement: `Recipe Collection › Recipes › ${header}: Code: 101 | Dish: Lentil skillet | Alias: Sunset skillet | Diet: vegetarian | Total time: 25 minutes | Servings: 4 | Requirement: only after safety review` },
+        { evidenceId: 'page:42:revision:1', text: 'Servings: 2',
+          statement: `Recipe Collection › Recipes › ${header}: Code: 202 | Dish: Bean bowl | Alias: Garden bowl | Diet: vegetarian | Total time: 20 minutes | Servings: 2 | Requirement: served warm` },
+        { evidenceId: 'page:44:revision:1', text: 'Servings: 3',
+          statement: `Recipe Annex › Recipes › ${header}: Code: 303 | Dish: White bean stew | Alias: Winter stew | Diet: vegetarian | Total time: 30 minutes | Servings: 3 | Requirement: served warm` }
       ]
       const claims = required.map(binding => {
         const source = sources.find(entry => entry.evidenceId === binding.evidenceId && entry.text === binding.text)
-        if (!source?.quotation) throw new Error('The original numeric-field binding must offer its own quotation selector')
-        return { ...source, statement: '' }
+        if (!source) throw new Error('Missing original numeric-field binding')
+        return { ...source, statement: binding.statement }
       })
       const statusSource = sources.find(source => source.evidenceId === 'page:42:revision:1' && source.text === status)
-      if (!statusSource?.quotation) throw new Error('The original authored-status statement must offer its own quotation selector')
-      claims.push({ ...statusSource, statement: '' })
+      if (!statusSource) throw new Error('Missing original authored-status binding')
+      claims.push({ ...statusSource, statement: `Recipe Collection › Recipes: ${status}` })
       if (mode !== 'complete quotations') {
         claims.push({ ...statusSource, statement: 'These recipes are untested and their total times are estimates.' })
       }
@@ -9257,12 +9317,11 @@ describe('request-derived evidence coverage', () => {
       providerInput => {
         draftRounds++
         const source = synthesisSourcesFromRequest(providerInput).find(unit => unit.text === fact)!
-        if (!source.quotation) throw new Error('A complete own unit must offer its original quotation selector')
         if (mode === 'changed source bytes') unusedPage.content += '\n\nAn additional warehouse rule was added.'
         if (mode === 'changed companion before publication') revision = 2
         if (mode === 'revoked dispatch authorization before publication') authorized = false
         return { results: [{ index: 0, content: synthesisFixtureAnswer(providerInput, {
-          claims: [{ ...source, statement: '' }]
+          claims: [{ ...source, statement: `Instruments › ${memberName}: ${fact}` }]
         }) }] }
       }
     ]
@@ -9383,7 +9442,7 @@ describe('request-derived evidence coverage', () => {
       (providerInput: Readonly<AxChatRequest>) => {
         const source = synthesisSourcesFromRequest(providerInput).find(unit => unit.text === fact)!
         return { results: [{ index: 0, content: synthesisFixtureAnswer(providerInput, {
-          claims: [{ ...source, statement: '' }]
+          claims: [{ ...source, statement: `Instruments › Meridian lens: ${fact}` }]
         }) }] }
       }
     ]

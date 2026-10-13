@@ -110,18 +110,15 @@ import {
   createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
   renderWikiSynthesisAnswer,
-  renderReadableWikiSynthesisAnswer,
-  wikiSynthesisPresentationKey,
   escapeWikiSourceText,
   type WikiSynthesisAnswer,
-  type WikiSourceQuotationPresentation,
   type WikiSynthesisSource,
   type WikiSynthesisRead
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import { assessWikiVerificationResults, buildWikiVerificationPlan, validateWikiVerificationSource } from './wiki-verification.ts'
 import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verification.ts'
-import { getLiteralSourceMembershipStatement, getLiteralSourceStatement, getLiteralSourcePresentation, isLiteralSourceClaim } from './wiki-source-quotation.ts'
+import { getLiteralSourceMembershipStatement, getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -1752,7 +1749,7 @@ const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerE
   const serialized = renderedStatement?.trim()
   const boundStatementMatched = serialized === undefined || prefix.trim() === serialized
   const current = statement !== undefined && boundStatementMatched ? { claim: statement, start: 0 } : currentClaimSlice(prefix)
-  const assessmentClaim = current.claim
+  const assessmentClaim = boundStatement !== undefined && boundStatementMatched ? boundStatement : current.claim
   const renderedClaim = statement !== undefined && boundStatementMatched ? serialized! : assessmentClaim
   const unboundPrefix = prefix.slice(0, current.start)
   const compactPrefix = prefix.replace(/\s+/gu, ' ').trim()
@@ -2600,7 +2597,8 @@ const assessClaimClauses = (
         complete: unit.complete,
         closure: unit.closure
       }
-      if (isLiteralSourceClaim(binding, protectedOriginalWikiVerificationSource)) {
+      if (isLiteralSourceClaim(binding, protectedOriginalWikiVerificationSource) ||
+        binding.statement === getLiteralSourceStatement(protectedOriginalWikiVerificationSource)) {
         const terms = normalizedTerms(claim)
         return [{ text: claim, terms, matchedTerms: terms, supported: true, kind: 'fact', bodyFact: isBodyFactUnit(unit) }]
       }
@@ -6309,10 +6307,10 @@ export class AxAgentEngine implements AgentEngine {
         if (boundEvidence !== undefined) {
           const unit = boundEvidence.sourceUnits.find(entry => entry.identity === source.unitId)
           const closure = unit?.closure
-          // Expand exact admitted text to its own complete assertion or linked
-          // member quotation with governing headers; never invent row facts.
+          // Add governing context to an explicitly selected assertion or linked
+          // member; never expand an atomic binding to its native unit's siblings.
           if (unit?.complete && closure?.unit.complete &&
-            (claim.statement === closure.unit.normalizedText || claim.statement === unit.text)) {
+            claim.statement === unit.text) {
             const original = verificationSourceUnit(source.evidenceId, source.sourceRevision, unit)
             const statement = !closure.record || closure.record.fields.length === 0 && closure.record.unitIds.length === 1 &&
               closure.record.unitIds[0] === closure.unit.id
@@ -6322,7 +6320,7 @@ export class AxAgentEngine implements AgentEngine {
               const normalized = { ...claim, statement }
               normalizedClaims ??= new WeakMap()
               normalizedClaims.set(claim, normalized)
-              return isLiteralSourceClaim(normalized, original)
+              return assessTypedClaimEligibility(normalized, boundEvidence).eligible
             }
           }
         }
@@ -8415,27 +8413,10 @@ export class AxAgentEngine implements AgentEngine {
               'The approved action completed, but its assistant response could not be recovered',
               409
             )
-          let acceptedBaseContent = result.content
-          if ((request.purpose ?? 'root') === 'root' && result.rootNativeDraft !== undefined) {
-            const draft = result.rootNativeDraft
-            const presentations = new Map<string, WikiSourceQuotationPresentation>()
-            const listStatements = new Map<string, string>()
-            for (const claim of draft.answer.claims) {
-              const key = canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId])
-              const unit = draft.evidence.get(key)?.sourceUnits.find(candidate => candidate.identity === claim.unitId)
-              if (unit === undefined) continue
-              const source = verificationSourceUnit(claim.evidenceId, claim.sourceRevision, unit)
-              const presentation = getLiteralSourcePresentation(source, claim.statement)
-              if (presentation !== null) presentations.set(wikiSynthesisPresentationKey(claim), presentation)
-              if (unit.kind === 'list') {
-                const statement = getLiteralSourceStatement(source)
-                if (statement !== null) listStatements.set(key, statement)
-              }
-            }
-            acceptedBaseContent = renderReadableWikiSynthesisAnswer(draft.answer, draft.literalStatements, listStatements, presentations)
-            if (Buffer.byteLength(acceptedBaseContent, 'utf8') > draft.contentByteLimit)
-              throw new AgentRepositoryError('PROVIDER_RESPONSE_TOO_LARGE', 'Readable synthesis output exceeded its admitted content byte limit.', 502)
-          }
+          const acceptedBaseContent = result.content
+          if ((request.purpose ?? 'root') === 'root' && result.rootNativeDraft !== undefined &&
+            Buffer.byteLength(acceptedBaseContent, 'utf8') > result.rootNativeDraft.contentByteLimit)
+            throw new AgentRepositoryError('PROVIDER_RESPONSE_TOO_LARGE', 'Canonical synthesis output exceeded its admitted content byte limit.', 502)
           const acceptedContent = request.specialist
             ? result.content
             : `${acceptedBaseContent}${(request.purpose ?? 'root') === 'root' ? recentExcerptDisclosure(assessment.citationIds, assessmentEvidence) : ''}${partialCoverageDisclosure(
