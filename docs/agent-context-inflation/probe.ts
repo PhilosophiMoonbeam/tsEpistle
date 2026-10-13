@@ -32,7 +32,7 @@ const result:any={sourceUtf8Bytes:bytes(page.content),sourceCharacters:page.cont
 async function capture(label:string,evidence:Map<any,any>){
  const {sources,sourceStructures}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]});const wire=encodeWikiSynthesisSources(sources,sourceStructures)
  type TextRef=number|[number,number,number]
- type SourceRow=[unknown,unknown,unknown,TextRef,TextRef|null,TextRef[]|null,unknown,unknown,unknown?]
+ type SourceRow=[unknown,unknown,unknown,string,TextRef|null,TextRef[]|null,unknown,unknown,unknown?]
  type LocatorMetricsStructures={texts:Record<number,string>;sources:Record<number,SourceRow>;owners:Record<number,[string,string]>}
  const structures:LocatorMetricsStructures=JSON.parse(wire.sourceStructures);const bindings:Record<string,[number,number]>=JSON.parse(wire.sourceBindings)
  if(!structures.texts||!structures.sources||Array.isArray(structures.texts)||Array.isArray(structures.sources)||typeof structures.texts!=='object'||typeof structures.sources!=='object')throw Error('Expected explicit numeric-key source dictionaries')
@@ -42,7 +42,7 @@ async function capture(label:string,evidence:Map<any,any>){
  let structureScopeCount=0;let pooledTextCount=0;let pooledTextUtf8Bytes=0
  for(const key in structures.sources){
   const row=structures.sources[Number(key)];structureScopeCount++
-  selectedTexts.add(decode(row[3]))
+  selectedTexts.add(row[3])
   if(row[4]!==null)quotations.add(decode(row[4]))
   for(const ref of row[5]??[])authoredDependencies.add(decode(ref))
  }
