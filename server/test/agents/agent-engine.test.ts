@@ -469,12 +469,12 @@ const candidateDiscovery = (returnedCount: number, newCandidateCount: number, re
 })
 
 describe('Ax agent engine', () => {
-  it('finalizes a semantic Falcon contact record beside the complete capacity fixture at 128000/8192 without counting', async () => {
+  it('finalizes the complete capacity fixture at 128000/8192 using native context admission rather than dropping a contact record', async () => {
     const background = await readFile(new URL('../../../docs/agent-context-inflation/falcon-like.md', import.meta.url), 'utf8')
     const contact = '- Name: Morgan Vale; Role: Falcon account representative; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147.'
     const page = questionReadPage(42, '2', 'Supplier routing', 'suppliers', 'Falcon', 'falcon', contact)
     page.content = `${background}\n\n## Falcon\n\n${contact}`
-    const countContextTokens = vi.fn(async () => { throw new Error('Portable fixture must fit without native counting') })
+    const countContextTokens = vi.fn(async () => 64_000)
     const fixture = questionFixture('native', [
       { calls: [
         { id: 'falcon-record-read', name: 'pages.get', arguments: { id: 42 } },
@@ -523,7 +523,7 @@ describe('Ax agent engine', () => {
       }
     }
     expect(synthesisRequest.modelConfig?.maxTokens).toBe(8_192)
-    expect(Buffer.byteLength(JSON.stringify(synthesisRequest), 'utf8') + 8_192).toBeLessThanOrEqual(128_000)
+    expect(Buffer.byteLength(JSON.stringify(synthesisRequest), 'utf8') + 8_192).toBeGreaterThan(128_000)
     const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
     expect(published).toContain('Morgan Vale')
     expect(published).toContain('Falcon account representative')
@@ -532,7 +532,7 @@ describe('Ax agent engine', () => {
     expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:2' })])
     expect(result.executionLimit).toBeUndefined()
     expect(fixture.providerCalls).toHaveLength(2)
-    expect(countContextTokens).not.toHaveBeenCalled()
+    expect(countContextTokens).toHaveBeenCalledTimes(1)
     expect(fixture.event.mock.calls.some(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
   })
 

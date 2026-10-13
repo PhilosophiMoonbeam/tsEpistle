@@ -94,7 +94,7 @@ const synthesisField = (input: string, title: string): unknown => {
 
 type TextRef = number | [poolKey: number, start: number, endExclusive: number]
 type SourceRow = [
-  context: TextRef, kind: string, complete: boolean, selectedText: TextRef,
+  context: TextRef, kind: string, complete: boolean, selectedText: string,
   literalStatement: TextRef | null, authoredTexts: TextRef[] | null,
   structuralLabel: TextRef | null, labels: TextRef[], opaquePacket?: TextRef
 ]
@@ -154,8 +154,9 @@ const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevisio
       throw new Error('Missing supplied synthesis owner')
     const tuple = structures.sources[scopeKey]
     if (tuple === undefined) throw new Error('Missing supplied synthesis source row')
+    if (typeof tuple[3] !== 'string') throw new Error('Supplied synthesis selected text must be an inline string')
     const row: ReadableSourceRow = {
-      context: text(tuple[0]), kind: tuple[1], complete: tuple[2], text: text(tuple[3]),
+      context: text(tuple[0]), kind: tuple[1], complete: tuple[2], text: tuple[3],
       literalStatement: tuple[4] === null ? null : text(tuple[4]),
       ...(tuple[5] === null ? { packet: text(tuple[8]!) } : { authoredTexts: tuple[5].map(text) }),
       structuralLabel: tuple[6] === null ? null : text(tuple[6]), labels: tuple[7].map(text)

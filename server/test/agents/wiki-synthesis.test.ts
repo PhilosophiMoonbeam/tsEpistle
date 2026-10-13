@@ -938,6 +938,19 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     const sibling = { ...repeated, evidenceId: 'page:43:revision:7', unitId: 'unit:nondecimal', text: 'A different selected field retains the same complete original quotation.', packet: opaque.packet }
     const nullable = { ...repeated, evidenceId: 'page:44:revision:7', unitId: 'unit:null', literalStatement: null }
     const supplied = [repeated, sibling, nullable]
+    const encoded = encodeWikiSynthesisSources(supplied)
+    const { sources: rows, texts, owners } = JSON.parse(encoded.sourceStructures) as {
+      sources: Record<number, unknown[]>
+      texts: Record<number, string>
+      owners: Record<number, [string, string]>
+    }
+    const bindings = JSON.parse(encoded.sourceBindings) as Record<string, [number, number]>
+    for (const native of supplied) {
+      const [scopeKey, ownerKey] = bindings[wikiSynthesisSourceRef(native)]!
+      expect(rows[scopeKey]![3]).toBe(native.text)
+      expect(owners[ownerKey]).toEqual([native.evidenceId, native.sourceRevision])
+    }
+    expect(Object.values(texts)).not.toContain(sibling.text)
     const transported = request(supplied, [])
     expect(synthesisSourcesFromRequest(transported)).toEqual(supplied.map(({ evidenceId, sourceRevision, unitId, ...row }) => ({
       ...row, evidenceId, sourceRevision, sourceRef: wikiSynthesisSourceRef({ evidenceId, sourceRevision, unitId })
@@ -1003,10 +1016,6 @@ Additional notes: ${notes}Exception: Do not use the estimate for an unrefrigerat
     // Equal-length authored peers cannot share distinct text. Retain each once,
     // while every alias still resolves to that exact complete original record.
     for (const record of records) expect(pool.filter(text => text === record)).toHaveLength(1)
-    // A late selected field fits its authored parent, but fallback preserves it
-    // as a whole entry rather than continuing unbounded long-prefix searches.
-    expect(pool).toContain(records.at(-1)!.slice(0, -1))
-    expect(pool.filter(text => text === records.at(-1)!.slice(0, -1))).toHaveLength(1)
     expect(Buffer.byteLength(encoded.sourceStructures, 'utf8')).toBeGreaterThan(prefix.length * records.length)
   })
 
