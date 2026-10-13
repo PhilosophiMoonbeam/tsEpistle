@@ -9,7 +9,7 @@ import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/pro
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import type { AgentDispatchBudget, AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, rejectFixtureStatements, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 
 const evidenceId = 'page:42:revision:1'
 
@@ -209,15 +209,21 @@ describe('source-local grounding', () => {
   })
 
   it.each([
-    ['changed quantity', quantityFact.replace('300 g', '350 g')],
-    ['changed serving count', quantityFact.replace('4 servings', '6 servings')],
-    ['dropped draining restriction', quantityFact.replace(' before draining', '')],
-    ['changed timing operator', quantityFact.replace('before draining', 'after draining')],
-    ['changed ingredient identity', quantityFact.replace('300 g orzo', '300 g chickpeas')],
-    ['unrelated added assertion', `${quantityFact}; dragons guarantee free delivery.`],
-    ['sibling assertion under the wrong unit', 'The chickpeas are simmered after draining.']
-  ])('rejects %s without pooling source fragments or sibling units', async (_case, rejected) => {
-    await expectPublication(groundingFixture(quantitySource, '300 g', quantityFact, rejected), quantityFact, 2)
+    ['changed quantity', quantityFact.replace('300 g', '350 g'), false],
+    ['changed serving count', quantityFact.replace('4 servings', '6 servings'), false],
+    ['dropped draining restriction', quantityFact.replace(' before draining', ''), true],
+    ['changed timing operator', quantityFact.replace('before draining', 'after draining'), true],
+    ['changed ingredient identity', quantityFact.replace('300 g orzo', '300 g chickpeas'), false],
+    ['unrelated added assertion', `${quantityFact}; dragons guarantee free delivery.`, true],
+    ['sibling assertion under the wrong unit', 'The chickpeas are simmered after draining.', true]
+  ] as const)('rejects %s without pooling source fragments or sibling units', async (_case, rejected, semanticRejection) => {
+    const fixture = groundingFixture(quantitySource, '300 g', quantityFact, rejected, 'native', {
+      decisionProviders: semanticRejection ? rejectFixtureStatements([rejected]) : fixtureDecisionProviders
+    })
+    await expectPublication(fixture, quantityFact, 2)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(rejected)
+    if (semanticRejection)
+      expect(fixture.events).toContainEqual(expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed' }))
   })
 
   it('accepts a faithfully attached safety continuation', async () => {
@@ -229,7 +235,12 @@ describe('source-local grounding', () => {
     ['dropped safety continuation', 'The soup may be served.'],
     ['changed negation', 'The soup may not be served; only after it is safely chilled.']
   ])('rejects %s on a semicolon-attached condition', async (_case, rejected) => {
-    await expectPublication(groundingFixture(chilledSource, 'safely chilled', chilledFact, rejected), chilledFact, 2)
+    const fixture = groundingFixture(chilledSource, 'safely chilled', chilledFact, rejected, 'native', {
+      decisionProviders: rejectFixtureStatements([rejected])
+    })
+    await expectPublication(fixture, chilledFact, 2)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(rejected)
+    expect(fixture.events).toContainEqual(expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed' }))
   })
 
   it.each([
@@ -287,7 +298,9 @@ describe('native source-owned claim boundaries', () => {
     const statement = 'The orzo recipe uses chickpeas, spinach, garlic, broth, and lemon.'
     const rejected = `${statement} It cures cancer.`
     const source = `# Source Guide\n\n## Recipes\n\n${statement}`
-    const fixture = groundingFixture(source, 'orzo recipe', statement, rejected)
+    const fixture = groundingFixture(source, 'orzo recipe', statement, rejected, 'native', {
+      decisionProviders: rejectFixtureStatements([rejected])
+    })
     await expectPublication(fixture, statement, 2)
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(rejected)
   })
@@ -304,7 +317,12 @@ describe('record and continuation restriction boundaries', () => {
   it('keeps a negated coordinating continuation attached to its permission', async () => {
     const statement = 'The soup may be served; but not before it is safely chilled.'
     const source = `# Source Guide\n\n## Safety\n\n${statement}`
-    await expectPublication(groundingFixture(source, 'safely chilled', statement, 'The soup may be served.'), statement, 2)
+    const rejected = 'The soup may be served.'
+    const fixture = groundingFixture(source, 'safely chilled', statement, rejected, 'native', {
+      decisionProviders: rejectFixtureStatements([rejected])
+    })
+    await expectPublication(fixture, statement, 2)
+    expect(fixture.events).toContainEqual(expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed' }))
   })
 
   it('requires exclusivity from the owned identifying cell', async () => {
@@ -322,7 +340,12 @@ describe('record and continuation restriction boundaries', () => {
   it('retains a never-negated safety continuation', async () => {
     const statement = 'The soup may be served; but never before it is safely chilled.'
     const source = `# Source Guide\n\n## Safety\n\n${statement}`
-    await expectPublication(groundingFixture(source, 'safely chilled', statement, 'The soup may be served.'), statement, 2)
+    const rejected = 'The soup may be served.'
+    const fixture = groundingFixture(source, 'safely chilled', statement, rejected, 'native', {
+      decisionProviders: rejectFixtureStatements([rejected])
+    })
+    await expectPublication(fixture, statement, 2)
+    expect(fixture.events).toContainEqual(expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed' }))
   })
 
   it('requires temporal qualification from the owned identifying value', async () => {

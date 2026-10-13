@@ -275,6 +275,7 @@ For requested concise summaries, select representative facts from each requested
 Return only claims, unresolvedFacets, observations and optional recommendations. Return at most 64 claims, each with one exact sourceRef copied directly from a sourceReferences.units object key or one space-separated ref token in that unit's aliases[scope] string, and a statement. The primary key is the default; select an alias token when its own original citation scope is appropriate. Alias object keys identify scopes, not source refs. Every token is individually selectable. Never construct or rewrite a sourceRef.
 Emit an explicit nonempty statement containing only the requested facts of one owned record or one atomic assertion and necessary governing qualifications. Combine a record's requested fields with its applicable Scope/Exception in the same source-bound statement, not separate bare-value and qualification claims. Preserve subject, meaning-bearing labels, values, measurement stage, serving basis and conditions together. Keep independent records separately bound; do not assume one identity field per record. Name-only assertions use <identity field label>: <identity field value>; structural membership uses <container label>: <member label>; titles use The page is titled "<exact title>".
 For requested faithful quotations, emit the exact complete source-bound wording explicitly. A concise summary is not a request for a section-wide native-list quotation; use such a quotation only when its exact complete wording is requested. A requested subset remains a subset; never add unrequested record attributes or list items. Empty or whitespace-only statements are invalid and never select source content.
+For a requested complete original comparison table, select its one complete native-table binding and emit the exact authored header, separator and all rows, preserving column associations. You may include its own governing qualifications as one inline prefix followed by a blank line; the host adds only that existing prefix and required owned reference definitions when the explicitly emitted body equals the complete original table. Never construct a whole-table binding from independently selected rows or expand a requested subset into the full table.
 Return unique zero-based unresolvedFacets indices for unsupported or unanswered requestFacets. If no complete binding exists, return claims: []. Select observations only as unique exact lines from availableObservations. Give recommendations only when requested, as standalone imperative or modal suggestions or questions; put supported factual premises in claims.
 
 # Warnings
@@ -322,14 +323,14 @@ const markdownFactory = (module: unknown): MarkdownFactory => {
   throw new TypeError('markdown-it does not export a callable parser')
 }
 const markdown = markdownFactory(markdownItModule)({ html: false, breaks: true, linkify: true, typographer: false })
-const tableStatement = (value: string): boolean => {
+const tableStatement = (value: string, native = false): boolean => {
   if (unsafeText(value)) return false
   const lines = value.trim().replaceAll('\r\n', '\n').split('\n')
-  if (lines.length < 3 || lines.some(line => !/^[ \t]{0,3}\|.*\|[ \t]*$/u.test(line))) return false
+  if (lines.length < 3 || !native && lines.some(line => !/^[ \t]{0,3}\|.*\|[ \t]*$/u.test(line))) return false
   const tokens = markdown.parse(lines.join('\n'), {})
   if (tokens[0]?.type !== 'table_open' || tokens.at(-1)?.type !== 'table_close' || tokens[0].map?.[1] !== lines.length) return false
   const cells = tokens.filter(token => token.type === 'inline')
-  if (cells.some(cell => !inlineStatement(cell.content))) return false
+  if (cells.some(cell => !(native && cell.content.trim() === '') && !inlineStatement(cell.content))) return false
   const columns = tokens.filter(token => token.type === 'th_open').length
   if (columns === 0 || tokens.filter(token => token.type === 'tr_open').length !== lines.length - 1) return false
   // Markdown silently pads short rows and discards surplus cells. Parse every
@@ -348,6 +349,71 @@ const safeStatement = (value: string): boolean => inlineStatement(value) || tabl
 const safeQuotedListStatement = (value: string): boolean =>
   value.trim().length > 0 && /[\r\n]/u.test(value) && !unsafeText(value)
 
+// Resolve each native table in its own Markdown environment. Definitions must
+// contain no rendered blocks and every label must be used by this table. Inline
+// serialization prevents a later table's same reference label from rebinding it.
+interface TableReferenceEnvironment extends Record<PropertyKey, unknown> {
+  references?: Record<string, { href: string; title: string }>
+  edits: { start: number; end: number; replacement: string }[]
+  used: Set<string>
+}
+const referenceMarkdown = markdownFactory(markdownItModule)({ html: false, breaks: true, linkify: true, typographer: false })
+const referenceLinkRule = referenceMarkdown.inline.ruler.getRules('').find(rule => rule.name === 'link')
+if (!referenceLinkRule) throw new TypeError('markdown-it link rule is unavailable')
+referenceMarkdown.inline.ruler.at('link', (state, silent) => {
+  const start = state.pos
+  const before = state.tokens.length
+  const labelEnd = state.src[start] === '[' ? referenceMarkdown.helpers.parseLinkLabel(state, start, false) : -1
+  const result = referenceLinkRule(state, silent)
+  if (result && !silent && labelEnd >= 0 && state.src[labelEnd + 1] !== '(') {
+    const environment = state.env as TableReferenceEnvironment
+    const explicit = /^\[([^\]]*)\]/u.exec(state.src.slice(labelEnd + 1, state.pos))?.[1]
+    const key = referenceMarkdown.utils.normalizeReference(explicit || state.src.slice(start + 1, labelEnd))
+    const opening = state.tokens.slice(before).find(token => token.type === 'link_open')
+    if (opening && environment.edits) {
+      const href = String(opening.attrGet('href') ?? '').replaceAll('&', '&amp;').replaceAll('<', '%3C').replaceAll('>', '%3E').replaceAll('\\', '%5C').replaceAll('|', '%7C')
+      const title = opening.attrGet('title')
+      const quotedTitle = title === null ? '' : ` "${String(title).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('\\', '&#92;').replaceAll('\n', '&#10;').replaceAll('\r', '&#13;').replaceAll('|', '&#124;')}"`
+      environment.used.add(key)
+      environment.edits.push({ start, end: state.pos, replacement: `${state.src.slice(start, labelEnd + 1)}(<${href}>${quotedTitle})` })
+    }
+  }
+  return result
+})
+
+const quotedTableBody = (value: string): { authored: string; rendered: string } | null => {
+  if (hasUnsafeControlCharacters(value) || /\[\[\s*cite\s*:/iu.test(value)) return null
+  const lines = value.trim().replaceAll('\r\n', '\n').split('\n')
+  const environment: TableReferenceEnvironment = { edits: [], used: new Set() }
+  const tokens = referenceMarkdown.parse(lines.join('\n'), environment)
+  const end = tokens[0]?.map?.[1]
+  if (tokens[0]?.type !== 'table_open' || tokens.at(-1)?.type !== 'table_close' || end === undefined) return null
+  const authored = lines.slice(0, end).join('\n')
+  if (!tableStatement(authored, true)) return null
+  const rendered = lines.slice(0, end).map(line => {
+    environment.edits = []
+    referenceMarkdown.parseInline(line, environment)
+    let result = line
+    for (const edit of environment.edits.reverse()) result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end)
+    return result
+  }).join('\n')
+  if (Object.keys(environment.references ?? {}).some(key => !environment.used.has(key)) ||
+    /\[[^\]\n]+\]\[[^\]\n]*\]/u.test(rendered)) return null
+  return { authored, rendered }
+}
+
+// Complete native tables may carry one governing inline scope and only the
+// exact host-owned reference dependencies after their unchanged author block.
+const quotedTableParts = (value: string): { prefix: string; table: string; authored: string } | null => {
+  const body = quotedTableBody(value)
+  if (body !== null) return { prefix: '', table: body.rendered, authored: body.authored }
+  const boundary = value.indexOf('\n\n')
+  if (boundary < 0) return null
+  const prefix = value.slice(0, boundary)
+  const table = inlineStatement(prefix) ? quotedTableBody(value.slice(boundary + 2)) : null
+  return table === null ? null : { prefix, table: table.rendered, authored: table.authored }
+}
+
 const safeObservation = (value: string): boolean =>
   inlineStatement(value) && !/^\s{4}/u.test(value)
 
@@ -355,8 +421,8 @@ const safeObservation = (value: string): boolean =>
 export const validateWikiSynthesisShape = (answer: WikiSynthesisAnswer, literalListStatements?: ReadonlyMap<string, string>): true | string => {
   if (answer.claims.length > MAX_CLAIMS) return 'Answers may contain at most 64 claims and citation markers.'
   if (answer.claims.some(claim => !evidenceIdSchema.safeParse(claim.evidenceId).success ||
-    !safeStatement(claim.statement) && !(literalListStatements?.get(bindingKey(claim)) === claim.statement && safeQuotedListStatement(claim.statement))))
-    return 'Each claim must have a safe evidence ID and one nonempty inline source-local statement, strict self-contained table or exact host-admitted list quotation, without markers or rendering control syntax.'
+    !safeStatement(claim.statement) && !(literalListStatements?.get(bindingKey(claim)) === claim.statement && (safeQuotedListStatement(claim.statement) || quotedTableParts(claim.statement) !== null))))
+    return 'Each claim must have a safe evidence ID and one nonempty inline source-local statement, strict self-contained table or exact host-admitted native block quotation, without markers or rendering control syntax.'
   if (answer.observations.some(observation => !safeObservation(observation))) return 'Observations must be safe complete single lines without citation or rendering control syntax.'
   const recommendations = answer.recommendations ?? ''
   if (unsafeText(recommendations) || /^\s*#{1,6}\s/mu.test(recommendations)) return 'Recommendations must not inject citations, headings, HTML, reference definitions or control syntax.'
@@ -378,6 +444,16 @@ export const validateWikiSynthesisShape = (answer: WikiSynthesisAnswer, literalL
 /** Preserve normalized author-source text without activating its Markdown punctuation. */
 export const escapeWikiSourceText = (text: string): string => text.replace(/[!-/:-@\[-`{-~]/g, '\\$&')
 
+/** Serialize one source-bound statement exactly as it appears before its citation. */
+export const renderWikiSynthesisClaimStatement = (claim: WikiSynthesisClaim, literalStatements: ReadonlySet<string>, literalListStatements?: ReadonlyMap<string, string>): string => {
+  const text = claim.statement.trim()
+  const nativeBlock = literalListStatements?.get(bindingKey(claim)) === claim.statement
+  const nativeTable = nativeBlock ? quotedTableParts(claim.statement) : null
+  return nativeTable !== null
+    ? `${nativeTable.prefix ? `${escapeWikiSourceText(nativeTable.prefix)}\n\n` : ''}${nativeTable.table}`
+    : literalStatements.has(claim.statement) || nativeBlock ? escapeWikiSourceText(text) : text
+}
+
 export const renderWikiSynthesisAnswer = (answer: WikiSynthesisAnswer, literalStatements: ReadonlySet<string>, literalListStatements?: ReadonlyMap<string, string>): string => {
   const safe = validateWikiSynthesisShape(answer, literalListStatements)
   if (safe !== true) throw new Error(safe)
@@ -386,9 +462,7 @@ export const renderWikiSynthesisAnswer = (answer: WikiSynthesisAnswer, literalSt
   const sections: string[] = []
   let previousInlineEvidenceId: string | undefined
   for (const claim of answer.claims) {
-    const text = claim.statement.trim()
-    const statement = literalStatements.has(claim.statement) || literalListStatements?.get(bindingKey(claim)) === claim.statement
-      ? escapeWikiSourceText(text) : text
+    const statement = renderWikiSynthesisClaimStatement(claim, literalStatements, literalListStatements)
     const block = /[\r\n]/u.test(statement)
     const rendered = `${statement}${block ? '\n\n' : ' '}[[cite:${claim.evidenceId}]]`
     if (!block && previousInlineEvidenceId === claim.evidenceId) sections[sections.length - 1] += ` ${rendered}`
@@ -443,15 +517,23 @@ const resolvedClaimSchema = (
     context.addIssue({ code: 'custom', message: 'Claims must reference the exact original binding of a complete admitted source unit.' })
     return z.NEVER
   }
-  // Only an explicitly selected exact native body may acquire its own existing
-  // canonical context prefix. Never expand blank, partial or changed content.
-  const statement = source.kind === 'list' && source.literalStatement !== null &&
-    claim.statement === source.text && source.literalStatement.endsWith(source.text) &&
-    safeQuotedListStatement(source.text) && safeQuotedListStatement(source.literalStatement)
-    ? source.literalStatement : claim.statement
+  // Only an explicitly emitted exact complete body may acquire its existing
+  // governing prefix. Equality never fills omitted fields or expands a subset.
+  const exactBody = source.literalStatement !== null &&
+    (source.literalStatement === `${source.context}: ${claim.statement}` ||
+      source.kind === 'list' && claim.statement === source.text && source.literalStatement.endsWith(source.text) ||
+      source.kind === 'table' && claim.statement === source.text &&
+        quotedTableParts(source.literalStatement)?.authored === source.text.trim().replaceAll('\r\n', '\n'))
+  const statement = exactBody &&
+    (safeStatement(claim.statement) && safeStatement(source.literalStatement!) ||
+      source.kind === 'list' && safeQuotedListStatement(claim.statement) && safeQuotedListStatement(source.literalStatement!) ||
+      source.kind === 'table' && tableStatement(claim.statement, true) && quotedTableParts(source.literalStatement!) !== null)
+    ? source.literalStatement! : claim.statement
   if (Buffer.byteLength(statement, 'utf8') > contentBytes() ||
-    !safeStatement(statement) && !(statement === source.literalStatement && source.kind === 'list' && safeQuotedListStatement(statement))) {
-    context.addIssue({ code: 'custom', message: 'Each statement must be explicit, nonempty, bounded and rendering-safe; native lists require an exact own complete source quotation.' })
+    !safeStatement(statement) && !(statement === source.literalStatement &&
+      (source.kind === 'list' && safeQuotedListStatement(statement) ||
+        source.kind === 'table' && quotedTableParts(statement) !== null))) {
+    context.addIssue({ code: 'custom', message: 'Each statement must be explicit, nonempty, bounded and rendering-safe; native blocks require an exact own complete source quotation.' })
     return z.NEVER
   }
   const canonical = Object.freeze({
@@ -629,9 +711,10 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
   const literalListStatements = new Map<string, string>()
   for (const source of completeSources) {
     if (source.literalStatement !== null && (safeStatement(source.literalStatement) ||
-      source.kind === 'list' && safeQuotedListStatement(source.literalStatement))) {
+      source.kind === 'list' && safeQuotedListStatement(source.literalStatement) ||
+      source.kind === 'table' && quotedTableParts(source.literalStatement) !== null)) {
       literalStatements.add(source.literalStatement)
-      if (source.kind === 'list') literalListStatements.set(bindingKey(source), source.literalStatement)
+      if (source.kind === 'list' || source.kind === 'table') literalListStatements.set(bindingKey(source), source.literalStatement)
     }
   }
   const normalizedClaims = new WeakSet<WikiSynthesisClaim>()

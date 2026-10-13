@@ -1,0 +1,69 @@
+# Meridian dense QA policies — fictional and non-operative
+
+Every entry is a fictional benchmark policy, not an operative offer or instruction for real orders. Prices use USD. Working days exclude weekends and the local public holidays. Source-stated restrictions remain attached to the affected policy.
+
+## Shipping
+
+- Standard stocked-item lead time: 3 working days; Scope: in-stock mainland orders only; Exception: remote islands require a separate quote.
+- Free-delivery threshold: USD 500; Below-threshold delivery fee: USD 12; Scope: mainland orders only.
+- Order cutoff: 14:00 local time; Consequence: orders accepted after the cutoff enter processing on the next working day.
+- Tracking notification: emailed after dispatch; Qualification: a label-created notification does not prove carrier collection.
+- Hazardous goods: unavailable through standard delivery; Requirement: do not apply the ordinary lead time to hazardous goods.
+
+## Billing
+
+- Standard invoice term: 30 calendar days; Scope: approved business accounts only; Exception: first-time customers prepay.
+- Accepted payment methods: bank transfer and corporate card; Card surcharge: none; Qualification: personal cards are not supported.
+- Currency: USD; Tax handling: listed prices exclude tax; Requirement: tax is calculated for the delivery jurisdiction.
+- Disputed invoice notification: within 10 calendar days of invoice date; Requirement: include invoice number and disputed line items.
+
+## Pilot plans
+
+Both plans are fictional pilot offers for one organization. Monthly fees exclude tax. Ticket allowances reset monthly and do not roll over. Response targets measure the first human response during supported hours, not resolution time.
+
+| Field | Atlas | Boreal |
+| --- | --- | --- |
+| Monthly fee | USD 120 | USD 180 |
+| Included tickets | 30 | 80 |
+| First-response target | 48 supported hours | 24 supported hours |
+| Named operators | 2 | 5 |
+| Status | Pilot only | Pilot only |
+
+- Additional ticket fee: USD 4; Scope: tickets exceeding the selected plan's allowance; Qualification: no unused-ticket credit.
+- Plan changes: effective at the next monthly renewal; Exception: mid-cycle upgrades require a separate agreement.
+- Pilot eligibility: one organization with one billing owner; Exclusion: reseller and multi-tenant deployments.
+
+## Account contacts
+
+- Name: Morgan Vale; Role: account representative; Email: morgan.vale@example.invalid; Phone: +1 202-555-0142; Qualification: fictional and non-operative.
+- Name: Avery Moss; Role: support desk coordinator; Email: avery.moss@example.invalid; Phone: +1 202-555-0178; Qualification: fictional and non-operative.
+- Account ownership: Morgan handles commercial account questions; Scope: Morgan is not the operational support escalation contact.
+- Support ownership: Avery handles ticket coordination; Scope: Avery cannot approve invoice-term exceptions.
+
+## Support
+
+- Supported hours: weekdays 09:00–17:00 local time; Exception: local public holidays are excluded.
+- Urgent escalation channel: the owned support email; Requirement: include the ticket number and impact description.
+- Maintenance window: Sunday 02:00–04:00 local time; Qualification: the window is a notice period, not a guaranteed outage.
+- Ticket closure: after 7 calendar days without a requester response; Exception: unresolved confirmed defects remain open.
+
+## Returns
+
+- Returns window: 21 calendar days after delivery; Requirement: unused goods in original packaging; Exception: custom orders cannot be returned.
+- Return authorization: required before sending goods; Scope: obtain authorization from the support desk, not the account representative.
+- Shipping damage notification: within 2 working days after delivery; Requirement: preserve packaging and provide photographs.
+- Refund timing: 5 working days after acceptance of the return; Qualification: carrier receipt alone does not establish return acceptance.
+
+## Data and access
+
+- Ticket attachment retention: 60 calendar days after closure; Exception: retained audit items follow their own documented retention requirement.
+- Supported attachment formats: PDF, PNG and plain text; Maximum attachment size: 10 MB per file; Exclusion: executable files.
+- Account administrators: may invite operators within the selected plan's named-operator allowance; Qualification: an invitation is not an active access grant.
+- Operator access removal: effective immediately after administrator confirmation; Requirement: outstanding ticket ownership must be reassigned.
+
+## Linked annex and unavailable facts
+
+- Remote-island quote details: see the [Meridian remote delivery annex](/en/agent-bench-meridian-remote-54c2a3bf); Qualification: the annex owns its own minimum-order amount and quote requirements.
+- International freight prices: not specified in this benchmark; Requirement: do not infer them from mainland fees.
+- Service uptime commitment: not specified in this benchmark; Qualification: first-response targets are not uptime commitments.
+- Real-world availability: not established by this fictional source; Scope: do not portray these entries as operative vendor offers.

@@ -110,7 +110,7 @@ import {
   createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
   renderWikiSynthesisAnswer,
-  escapeWikiSourceText,
+  renderWikiSynthesisClaimStatement,
   type WikiSynthesisAnswer,
   type WikiSynthesisSource,
   type WikiSynthesisRead
@@ -615,7 +615,7 @@ const linkLookingCodeLiterals = (value: string): readonly string[] =>
     .filter(token => token.type === 'code_inline' && renderedLinkSignatures(token.content).length > 0)
     .map(token => token.content)
 
-const semanticInlineText = (tokens: readonly Token[]): string => {
+const semanticInlineText = (tokens: readonly Token[], ignoredLinkSignatures?: ReadonlySet<string>): string => {
   let text = ''
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]!
@@ -624,7 +624,9 @@ const semanticInlineText = (tokens: readonly Token[]): string => {
       index = label.end
       // Autolink and linkify labels are the destination itself. They establish a
       // reference but must never contribute factual vocabulary.
-      if (token.markup !== 'autolink' && token.info !== 'auto' && label.text) text += ` ${label.text}`
+      if (token.markup !== 'autolink' && token.info !== 'auto' && label.text &&
+        !ignoredLinkSignatures?.has(sourceLinkSignature(label.text, String(token.attrGet('href')))))
+        text += ` ${label.text}`
       continue
     }
     if (token.type === 'text') text += ` ${token.content}`
@@ -2028,6 +2030,8 @@ const orderedSubset = (required: readonly string[], available: readonly string[]
 interface SourceClauseAssessment {
   readonly integrity: boolean
   readonly constraints: boolean
+  /** Exact protected literals/identifiers, without prose entailment heuristics. */
+  readonly protectedConstraints: boolean
   /** Record ownership without lexical entailment, for bound typed verification only. */
   readonly semanticConstraints?: boolean
   readonly alignment: { readonly matchedTerms: readonly string[]; readonly score: number; readonly supported: boolean }
@@ -2110,6 +2114,10 @@ const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericCla
   const requiredRestrictions = [...inheritedRestrictionTexts, ...(unit.text.match(SOURCE_RESTRICTION_PATTERN) ?? [])].map(value => significantTokens(value, true))
   const inheritedRestrictions = requiredRestrictions.every(restriction => orderedSubset(restriction, claimedConstraintTokens))
   const exactIdentifiers = !hasIdentifierSubstitution(clause, unit)
+  const claimedIdentifiers = new Set(identifierTerms(clause))
+  const exactClaimedIdentifiers = constraintTerms(clause)
+    .filter(term => claimedIdentifiers.has(term))
+    .every(term => unit.terms.has(term))
   const identifyingColon = semanticClause.search(/:(?=\s|$)/u)
   const identifyingTerms = identifyingColon < 0 ? [] : normalizedTerms(semanticClause.slice(0, identifyingColon))
   const identifyingSupport = identifyingTerms.length === 0 || identifyingTerms.filter(term => unit.terms.has(term)).length / identifyingTerms.length >= 0.6
@@ -2130,6 +2138,7 @@ const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericCla
   return {
     integrity,
     constraints: exactPolarity && exactNumbers && exactQualifiers && exactConstraints && exactIdentifiers && inheritedRestrictions,
+    protectedConstraints: exactNumbers && exactIdentifiers && exactClaimedIdentifiers,
     alignment: {
       matchedTerms: matches,
       score,
@@ -2154,18 +2163,28 @@ const explicitRelationshipCompatible = (claim: string, unit: CitationSourceUnit)
 
 const identityAddressPattern = /[\w.+-]+@[\w.-]+\.[\p{L}]+/gu
 
-const assessRecordClause = (claim: string, unit: CitationSourceUnit): readonly SourceClauseAssessment[] | null => {
+const exactIdentityToken = (token: string): string => token.normalize('NFKC').toLowerCase()
+
+const assessRecordClause = (claim: string, unit: CitationSourceUnit, semanticAdmission = false): readonly SourceClauseAssessment[] | null => {
   const record = unit.closure.record
   if (record === null || record.fields.length < 2) return null
   const labels = record.fields.map(field => normalizedHeading(field.label))
   if (labels.some(label => !label) || new Set(labels).size !== labels.length) return []
   const first = record.fields[0]!
+  // Name-like identifying values remain exact, but a policy predicate in the
+  // first field is prose, not a row identity that must be copied word for word.
+  const firstIdentifiers = semanticAdmission ? identifierTerms(first.value, true) : []
+  const firstTerms = semanticAdmission ? significantTokens(first.value, true) : []
+  const literalIdentity = !semanticAdmission || firstTerms.length > 0 && firstTerms.every(term => firstIdentifiers.includes(term))
   // A two-column key/value record can be stated as "Key: value". Resolve only
   // this exact owned key, then validate its value as the second explicit field.
+  // Keep link destinations attached to their original field. Wording projection
+  // belongs in assessSourceClause, after the field-local ownership check.
   let sourceClaim = claim
   if (record.fields.length === 2 && /\p{L}/u.test(first.value) && !/@|:\/\//u.test(first.value)) {
     const key = first.value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-    const shorthand = sourceClaim.match(new RegExp(`^(?:(.*?)\\s*:\\s*)?${key}\\s*:\\s*([\\s\\S]+)$`, 'iu'))
+    const keyMarkup = semanticAdmission ? '[*_~]*' : ''
+    const shorthand = sourceClaim.match(new RegExp(`^(?:(.*?)\\s*:\\s*)?${keyMarkup}${key}${keyMarkup}\\s*:${keyMarkup}\\s*([\\s\\S]+)$`, 'iu'))
     if (shorthand !== null) {
       const explicitLabel = semanticMarkdownText(shorthand[2]!).match(/^([^:\n]+):(?=\s|$)/u)?.[1]
       if (explicitLabel === undefined || !labels.includes(normalizedHeading(explicitLabel))) {
@@ -2176,7 +2195,9 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit): readonly S
   const mentions = record.fields
     .flatMap((field, fieldIndex) => {
       const escaped = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-      return [...sourceClaim.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu'))].map(match => ({
+      const label = semanticAdmission ? `[*_~]*${escaped}[*_~]*` : escaped
+      const delimiter = semanticAdmission ? '(?=\\s*:[*_~]*(?=\\s|$))' : ''
+      return [...sourceClaim.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])${delimiter}`, 'giu'))].map(match => ({
         field,
         fieldIndex,
         start: match.index ?? 0,
@@ -2194,7 +2215,10 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit): readonly S
     .slice(0, mentions[0]!.start)
     .replace(/[,:;|*_]\s*$/u, '')
     .trim()
-  if (normalizedTerms(prefix).some(term => !ownerTerms.has(term))) return []
+  const prefixIdentifiers = semanticAdmission ? identifierTerms(prefix) : null
+  if (normalizedTerms(prefix).some(term => !ownerTerms.has(term)) &&
+    (!semanticAdmission || constraintTerms(prefix).some(term => prefixIdentifiers!.includes(term) && !ownerTerms.has(term))))
+    return []
   const identityIndex = mentions.findIndex(mention => mention.fieldIndex === 0)
   const statedIdentity = identityIndex < 0 ? '' : sourceClaim
     .slice(mentions[identityIndex]!.start, mentions[identityIndex + 1]?.start ?? sourceClaim.length)
@@ -2254,8 +2278,14 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit): readonly S
         terms.some((_, start) => value.every((term, offset) => terms[start + offset] === term))
       return contains(claimedValue) && !contains(lexicalTokens(mention.field.value, true).map(normalizedToken))
     })
+    const identityTokens = semanticAdmission && literalIdentity && mention.fieldIndex === 0
+      ? lexicalTokens(first.value, true).map(exactIdentityToken) : null
+    const claimedIdentityTokens = identityTokens === null ? null
+      : lexicalTokens(part).map(exactIdentityToken)
     const association =
-      (mention.fieldIndex !== 0 || lexicalAssociation) &&
+      (mention.fieldIndex !== 0 || !literalIdentity || lexicalAssociation &&
+        (identityTokens === null || claimedIdentityTokens!.some((_, start) =>
+          identityTokens.every((token, offset) => claimedIdentityTokens![start + offset] === token)))) &&
       !foreignValue &&
       claimedAddresses.every(value => sourceAddresses.includes(value)) &&
       (sourceAddresses.length === 0 || claimedAddresses.length > 0)
@@ -2268,7 +2298,7 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit): readonly S
       constraints: assessment.constraints && lexicalAssociation &&
         claimedAddresses.every(value => sourceAddresses.includes(value)) &&
         (sourceAddresses.length === 0 || claimedAddresses.length > 0),
-      semanticConstraints: assessment.constraints && association
+      semanticConstraints: assessment.protectedConstraints && association
     })
   }
   const claimedLinks = renderedLinkSignatures(claim)
@@ -2554,7 +2584,18 @@ const assessTableClaim = (claim: string, evidence: CitationEvidence): readonly C
   const document = parseSourceDocument(claim, { representation: 'markdown', truncated: false })
   const records = document.records.filter(record => record.kind === 'table-row')
   if (records.length === 0) return null
-  if (document.units.some(unit => unit.recordId === null))
+  const foreignNarrative = document.units.some(unit => {
+    if (unit.recordId !== null) return false
+    if (unit.kind !== 'table' || !unit.complete || unit.sourceSpans.length !== 1) return true
+    const tableSpan = unit.sourceSpans[0]!
+    return !records.some(record => record.complete && record.unitIds.length > 0 &&
+      record.unitIds.every(id => {
+        const row = document.units.find(candidate => candidate.id === id)
+        return row !== undefined && row.sourceSpans.length > 0 &&
+          row.sourceSpans.every(span => span.start >= tableSpan.start && span.end <= tableSpan.end)
+      }))
+  })
+  if (foreignNarrative)
     return [{ text: claim, terms: normalizedTerms(claim), matchedTerms: [], supported: false, kind: 'fact', bodyFact: false }]
   return records.map(record => {
     const text = record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
@@ -2665,6 +2706,166 @@ const assessClaimClauses = (
   })
 }
 
+const completeListOriginalRecords = (
+  list: CitationSourceUnit,
+  evidence: CitationEvidence
+): readonly CitationSourceUnit[] => {
+  const belongsToList = (span: SourceSpan): boolean =>
+    list.closure.unit.sourceSpans.some(owner => span.start >= owner.start && span.end <= owner.end)
+  const seenRecords = new Set<string>()
+  // Resolve original records by native containment, not by overlapping words or
+  // by taking the union of other selectable packets in the evidence scope.
+  return evidence.documentUnits.filter(candidate => {
+    const record = candidate.closure.record
+    if (!candidate.complete || record === null || !record.complete || record.kind === 'table-row' ||
+      !candidate.closure.units.every(owned => owned.sourceSpans.length > 0 && owned.sourceSpans.every(belongsToList)) ||
+      !record.fields.every(field => field.complete && field.sourceSpans.length > 0 && field.sourceSpans.every(belongsToList)))
+      return false
+    if (record.fields.length < 2) return true
+    if (seenRecords.has(record.id)) return false
+    seenRecords.add(record.id)
+    return true
+  })
+}
+
+const completeListProtectedAssociationsMatch = (
+  claim: string,
+  list: CitationSourceUnit,
+  records: readonly CitationSourceUnit[]
+): boolean => {
+  const values = records.flatMap(candidate => candidate.closure.record!.fields.map(field => lexicalTokens(field.value, true).map(normalizedToken)))
+  const containsValue = (tokens: readonly string[], value: readonly string[]): boolean =>
+    value.length > 0 && tokens.some((_, start) => value.every((token, offset) => tokens[start + offset] === token))
+  const contextIdentifiers = new Set(identifierTerms(list.context, true))
+  const valueIdentifiers = new Set(records.flatMap(candidate =>
+    candidate.closure.record!.fields.length === 0 ? candidate.identifiers :
+      candidate.closure.record!.fields.flatMap(field => identifierTerms(field.value, true))
+  ).filter(identifier => !contextIdentifiers.has(identifier)))
+  // Keep the protected statement connected, including omitted/pronominal
+  // owners. Separate sentence or field witnesses could reassign a sibling's
+  // address to the name stated elsewhere in the same claim.
+  const tokens = lexicalTokens(claim).map(normalizedToken)
+  const identifiers = tokens.filter(token => valueIdentifiers.has(token))
+  const addresses = claim.match(identityAddressPattern) ?? []
+  const links = renderedLinkSignatures(claim)
+  const literals = markdownInlineTokens(claim).filter(token => token.type === 'code_inline' || token.type === 'image')
+  const claimedValues = values.filter(value => containsValue(tokens, value))
+  if (identifiers.length === 0 && addresses.length === 0 && links.length === 0 && literals.length === 0 &&
+    numericSegments(claim).length === 0 && claimedValues.length === 0)
+    return true
+  return records.some(original => {
+    const record = original.closure.record!
+    const text = record.fields.length >= 2
+      ? record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
+      : original.text
+    const textTerms = normalizedTerms(text, true)
+    const recordLabels = new Set(record.fields.flatMap(field => identifierTerms(field.label, true)))
+    const owned: CitationSourceUnit = {
+      ...original,
+      text,
+      textTerms: new Set(textTerms),
+      terms: new Set([...normalizedTerms(original.context, true), ...textTerms]),
+      identifiers: identifierTerms(text, true).filter(identifier => !recordLabels.has(identifier)),
+      qualifiers: exactQualifierTerms(text, true)
+    }
+    const ownedIdentifiers = new Set([...owned.identifiers, ...identifierTerms(owned.context, true)])
+    const ownedAddresses: readonly string[] = `${owned.context}\n${owned.text}`.match(identityAddressPattern) ?? []
+    const ownedValueTokens = lexicalTokens(text, true).map(normalizedToken)
+    const assessment = assessSourceClause(claim, owned)
+    if (!assessment.integrity || !assessment.protectedConstraints ||
+      !identifiers.every(identifier => ownedIdentifiers.has(identifier)) ||
+      !addresses.every(address => ownedAddresses.includes(address)) ||
+      !claimedValues.every(value => containsValue(ownedValueTokens, value)))
+      return false
+    if (literals.length > 0) {
+      const sourceLiterals = original.closure.dependencies.flatMap(dependency => markdownInlineTokens(dependency.text))
+      if (!literals.every(token => sourceLiterals.some(source =>
+        source.type === token.type && source.content === token.content && source.attrGet('src') === token.attrGet('src')
+      ))) return false
+    }
+    const explicitFields = record.fields.length >= 2 && record.fields.some(field => {
+      const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
+      return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim))
+    })
+    if (!explicitFields) return true
+    const fields = assessRecordClause(claim, original, true)
+    return fields !== null && fields.length > 0 && fields.every(field => field.integrity && field.semanticConstraints === true)
+  })
+}
+
+const exactTypedIdentifiersMatch = (claim: string, unit: CitationSourceUnit): boolean => {
+  const sourceWords = lexicalTokens(unit.text)
+  const contextWords = lexicalTokens(unit.context, true)
+  const sourceIdentifiers = new Set(unit.identifiers)
+  const lowercaseWords = new Set<string>()
+  for (const word of sourceWords) {
+    if (word === word.toLowerCase()) lowercaseWords.add(exactIdentityToken(word))
+  }
+  const exactBodyIdentifiers = new Set<string>()
+  for (const word of sourceWords) {
+    const normalized = normalizedToken(word)
+    if ((/^\p{Lu}/u.test(word) || isShortIdentifier(word)) && sourceIdentifiers.has(normalized) &&
+      !insignificantTerms.has(normalized) && qualifierTerms[normalized] !== true && negativeTerms[normalized] !== true &&
+      !lowercaseWords.has(exactIdentityToken(word)))
+      exactBodyIdentifiers.add(exactIdentityToken(word))
+  }
+  const exactIdentifiers = new Set(exactBodyIdentifiers)
+  for (const word of contextWords) {
+    const normalized = normalizedToken(word)
+    if ((/^\p{Lu}/u.test(word) || isShortIdentifier(word)) && !insignificantTerms.has(normalized) &&
+      genericIdentifierTerms[normalized] !== true && qualifierTerms[normalized] !== true && negativeTerms[normalized] !== true)
+      exactIdentifiers.add(exactIdentityToken(word))
+  }
+  if (exactIdentifiers.size === 0) return true
+  const identityStems = new Set<string>()
+  for (const identifier of exactIdentifiers) identityStems.add(normalizedToken(identifier))
+  const semanticClaim = semanticMarkdownText(claim)
+  // Original schema labels and exact rendered links are not renamed context
+  // identities: "Recipe" under "Recipes", or [manual] under "Manuals".
+  // Remove only their structural occurrences from this comparison view; value
+  // identities, ordinary prose and the original protected proof stay unchanged.
+  const fields = unit.closure.record?.fields ?? []
+  const fieldLabels = new Set(fields.map(field => normalizedHeading(field.label)))
+  const fieldPatterns = fields.map(field => {
+    const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
+    return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'giu')
+  })
+  const ownedLinks = new Set(unit.closure.links.map(link => sourceLinkSignature(link.label, link.destination)))
+  const markdown = evidenceMarkdown.parse(claim.replace(citationMarker, ' '), {})
+  const identityClaim = markdown.flatMap((token, index) => {
+    if (token.type === 'inline' && token.children) {
+      if (markdown[index - 1]?.type === 'th_open' && fieldLabels.has(normalizedHeading(token.content))) return []
+      let text = semanticInlineText(token.children, ownedLinks)
+      for (const pattern of fieldPatterns) text = text.replace(pattern, ':')
+      return [text]
+    }
+    return token.type === 'fence' || token.type === 'code_block' ? [token.content] : []
+  }).join(' ')
+  for (const token of lexicalTokens(identityClaim, true)) {
+    const word = exactIdentityToken(token)
+    // Stemming aligns prose, but cannot turn Adams into Adam or rename a key.
+    if (identityStems.has(normalizedToken(word)) && !exactIdentifiers.has(word)) return false
+  }
+  if (exactBodyIdentifiers.size === 0) return true
+  // A qualified introduction and normal grammatical starts are not identities.
+  // An unknown capitalized subject cannot replace the original named owner;
+  // a role word already present in the source remains semantic wording.
+  const subjectText = semanticClaim
+    .replace(/^(?:(?:in|according\s+to|under|within|per)\b[^,:;.!?]*[,;:]\s*)+/iu, '')
+    .replace(/^(?:(?:however|nonetheless|nevertheless|conversely|instead|additionally|moreover|therefore|consequently|thus|otherwise)\s*,\s*)+/iu, '')
+    .replace(/^(?:(?:the|this|that|these|those|a|an)\s+)+/iu, '')
+  const subject = subjectText.match(/^(\p{Lu}[\p{L}\p{N}'’-]*)/u)?.[1]
+  if (subject === undefined) return true
+  const subjectTerm = normalizedToken(subject)
+  if (fieldLabels.has(normalizedHeading(subject)) ||
+    insignificantTerms.has(subjectTerm) || qualifierTerms[subjectTerm] === true ||
+    negativeTerms[subjectTerm] === true || genericIdentifierTerms[subjectTerm] === true ||
+    /^(?:in|per|at|on|to|as|by|of|for|i|we|you|he|she|it|they|his|her|its|their|our|your)$/iu.test(subject)) return true
+  const identity = exactIdentityToken(subject)
+  return sourceWords.some(word => exactIdentityToken(word) === identity) ||
+    contextWords.some(word => exactIdentityToken(word) === identity)
+}
+
 // This is admission to semantic verification, not proof of entailment. Only an
 // exact original typed binding can use it; ordinary prose keeps the lexical gate.
 const assessTypedClaimEligibility = (
@@ -2682,28 +2883,23 @@ const assessTypedClaimEligibility = (
     return { eligible: false, unit }
   }
   if (isLiteralSourceClaim(claim, source)) return { eligible: true, unit }
-  const existingClauses = assessClaimClauses(claim.statement, { ...evidence, sourceUnits: [unit] }, claim)
-  if (existingClauses.length > 0 && existingClauses.every(clause => clause.supported))
-    return { eligible: true, unit }
-  // Extend admission only for selected fields of one complete owned labeled
-  // record. Matrix table rows can contain several column owners; keep their
-  // original column-association guards rather than pooling those values.
+  const listRecords = unit.kind === 'list' ? completeListOriginalRecords(unit, evidence) : null
   const record = unit.closure.record
-  if (record === null || record.kind === 'table-row' || record.fields.length < 2) return { eligible: false, unit }
-  // Record labels are schema, not named entities. A prose paraphrase must not
-  // be treated as replacing "Name" merely because it precedes the owned name.
-  const recordLabels = new Set(record.fields.flatMap(field => identifierTerms(field.label, true)))
-  // A bound field retains its complete owned record. Assess selected-field
-  // summaries against those exact values without changing the verifier binding.
-  const recordText = record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
-  const recordTerms = normalizedTerms(recordText, true)
+  // A selected field's exact closure owns its entire record, not other records.
+  // Schema labels need not be repeated as though they were named entities.
+  const recordLabels = new Set((listRecords === null ? record?.fields ?? [] :
+    listRecords.flatMap(original => original.closure.record!.fields)).flatMap(field => identifierTerms(field.label, true)))
+  const ownedText = record !== null && record.fields.length >= 2
+    ? record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
+    : unit.text
+  const ownedTerms = normalizedTerms(ownedText, true)
   const assessmentUnit: CitationSourceUnit = {
     ...unit,
-    text: recordText,
-    textTerms: new Set(recordTerms),
-    terms: new Set([...normalizedTerms(unit.context, true), ...recordTerms]),
-    identifiers: identifierTerms(recordText, true).filter(identifier => !recordLabels.has(identifier)),
-    qualifiers: exactQualifierTerms(recordText, true)
+    text: ownedText,
+    textTerms: new Set(ownedTerms),
+    terms: new Set([...normalizedTerms(unit.context, true), ...ownedTerms]),
+    identifiers: identifierTerms(ownedText, true).filter(identifier => !recordLabels.has(identifier)),
+    qualifiers: exactQualifierTerms(ownedText, true)
   }
   const ownedIdentifiers = new Set([...assessmentUnit.identifiers, ...identifierTerms(assessmentUnit.context, true)])
   const protectedText = [
@@ -2726,31 +2922,36 @@ const assessTypedClaimEligibility = (
       ownedIdentifiers.has(normalizedToken(identifier)) && !protectedText.some(text => text.includes(possessive))
         ? identifier : possessive
   )
+  if (!exactTypedIdentifiersMatch(assessmentClaim, assessmentUnit)) return { eligible: false, unit }
+  const existingClauses = assessClaimClauses(claim.statement, { ...evidence, sourceUnits: [unit] }, claim)
+  if (existingClauses.length > 0 && existingClauses.every(clause => clause.supported) &&
+    (listRecords === null || completeListProtectedAssociationsMatch(claim.statement, unit, listRecords)))
+    return { eligible: true, unit }
+  // Only complete prose/list scopes can extend lexical admission. A table row
+  // can contain several column owners, so its association guards stay unchanged.
+  if (record?.kind === 'table-row' ||
+    unit.kind !== 'paragraph' && unit.kind !== 'list' && unit.kind !== 'list-item')
+    return { eligible: false, unit }
   const assessment = assessSourceClause(assessmentClaim, assessmentUnit)
   const originalText = `${assessmentUnit.context}\n${assessmentUnit.text}`
   const sourceAddresses: readonly string[] = originalText.match(identityAddressPattern) ?? []
+  const claimedInlineLiterals = markdownInlineTokens(claim.statement).filter(token => token.type === 'code_inline' || token.type === 'image')
+  const sourceInlineLiterals = claimedInlineLiterals.length === 0 ? [] :
+    unit.closure.dependencies.flatMap(dependency => markdownInlineTokens(dependency.text))
+  const exactInlineLiterals = claimedInlineLiterals.every(token => sourceInlineLiterals.some(original =>
+    original.type === token.type && original.content === token.content && original.attrGet('src') === token.attrGet('src')
+  ))
   const exactAddresses = (claim.statement.match(identityAddressPattern) ?? []).every(address => sourceAddresses.includes(address))
-  // These source-status limitations qualify selected fields too; omitting other
-  // contact fields must not turn fictional/untested author data into live facts.
-  const statusPattern = /\b(?:fictional|hypothetical|illustrative|untested|unverified|non[\p{Pd}\s]*(?:operative|operational))\b/giu
-  // This class establishes eligibility only. Jev receives the unmodified
-  // wording and must still prove the negative operational qualification.
-  const statusKey = (status: string): string => status.toLowerCase().replace(/[\p{Pd}\s]/gu, '').replace(/^nonoperational$/u, 'nonoperative')
-  const sourceStatuses = new Set((originalText.match(statusPattern) ?? []).map(statusKey))
-  const claimedStatuses = new Set((claim.statement.match(statusPattern) ?? []).map(statusKey))
-  const exactStatuses = [...sourceStatuses].every(status => claimedStatuses.has(status)) &&
-    [...claimedStatuses].every(status => sourceStatuses.has(status))
-  const selectedFields = record.fields.filter(field => {
+  const explicitFields = record !== null && record.fields.some(field => {
     const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
     return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim.statement))
   })
-  if (selectedFields.length === record.fields.length) return { eligible: false, unit }
-  const explicitFields = selectedFields.length > 0
-  const fields = explicitFields ? assessRecordClause(assessmentClaim, unit) : null
+  const fields = explicitFields ? assessRecordClause(assessmentClaim, unit, true) : null
   const exactRecordFields = !explicitFields || fields !== null && fields.length > 0 &&
-    fields.every(field => field.integrity && (field.semanticConstraints ?? field.constraints))
+    fields.every(field => field.integrity && field.semanticConstraints === true)
+  const exactListRecords = listRecords === null || completeListProtectedAssociationsMatch(assessmentClaim, unit, listRecords)
   return {
-    eligible: assessment.integrity && assessment.constraints && exactAddresses && exactStatuses && exactRecordFields,
+    eligible: assessment.integrity && assessment.protectedConstraints && exactAddresses && exactInlineLiterals && exactRecordFields && exactListRecords,
     requiresSemanticSupport: true,
     unit
   }
@@ -2777,7 +2978,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     const evidenceId = match[1] ?? ''
     const boundClaim = nativeDraft?.answer.claims[claims.length]
     const renderedStatement = boundClaim === undefined ? undefined
-      : nativeDraft!.literalStatements.has(boundClaim.statement) ? escapeWikiSourceText(boundClaim.statement.trim()) : boundClaim.statement
+      : renderWikiSynthesisClaimStatement(boundClaim, nativeDraft!.literalStatements, nativeDraft!.literalListStatements)
     const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement, renderedStatement)
     if (nativeDraft !== undefined && (boundClaim === undefined || boundClaim.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
       issues.push('Typed source claims must retain their exact host-rendered statement and citation.')
@@ -3299,6 +3500,7 @@ interface NativeDraft {
   readonly evidence: ReadonlyMap<string, CitationEvidence>
   readonly content: string
   readonly literalStatements: ReadonlySet<string>
+  readonly literalListStatements: ReadonlyMap<string, string>
   readonly contentByteLimit: number
   readonly trustedObservations: ReadonlySet<string>
   /** Populated only after the original source-local Jev plan accepts every check. */
@@ -6349,7 +6551,7 @@ export class AxAgentEngine implements AgentEngine {
         rendered = content
         // The program calls this only after exact binding and mechanical
         // eligibility pass. Nonliteral support still requires source-local Jev.
-        nativeDraft = { answer, evidence: unitEvidence, content, literalStatements, contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes, trustedObservations: new Set(input.observations) }
+        nativeDraft = { answer, evidence: unitEvidence, content, literalStatements, literalListStatements, contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes, trustedObservations: new Set(input.observations) }
         if (answer.claims.length === 0 && answer.observations.length === 0 && answer.unresolvedFacets.length !== input.requestFacets.length) {
           rejection = 'An inability must disclose every unresolved requested facet.'
           return rejection
