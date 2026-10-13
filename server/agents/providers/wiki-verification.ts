@@ -81,7 +81,7 @@ const uniqueById = <T extends { readonly id: string }>(entries: readonly T[]): M
   return result
 }
 
-const validateClosure = (source: WikiVerificationSource): void => {
+export const validateWikiVerificationSource = (source: WikiVerificationSource): void => {
   if (source.kind === 'page-title') {
     if (!source.complete || !source.text.trim() || source.unitId !== 'metadata:page-title' || source.closure !== null)
       invalid('title metadata must retain its exact literal binding, without a body closure')
@@ -189,7 +189,7 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
   })
   for (const source of input.sources) {
     if (!evidence.has(evidenceKey(source))) invalid('original selected source lacks its registered read')
-    validateClosure(source)
+    validateWikiVerificationSource(source)
   }
   // Snapshot every selected source and read even when no native predicate is needed.
   const originalSources = json(input.sources) as unknown as readonly WikiVerificationSource[]

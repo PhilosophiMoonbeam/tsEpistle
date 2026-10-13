@@ -19,6 +19,7 @@ import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/pr
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
 import { parseSourceDocument } from '../../agents/providers/source-document.ts'
+import { unpackWikiReadTexts } from '../../agents/providers/wiki-read-transport.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
 import { PdfFixtureDocument } from './pdf-fixture.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
@@ -305,7 +306,8 @@ const questionFixture = (
     readonly maxOutputTokens?: number
     readonly countContextTokens?: (input: Readonly<AxChatRequest>, signal: AbortSignal) => Promise<number>
   } = {},
-  requestOptions: Partial<AgentEngineRequest> = {}
+  requestOptions: Partial<AgentEngineRequest> = {},
+  decisionProviders: typeof fixtureDecisionProviders = fixtureDecisionProviders
 ) => {
   const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
   const responses = questionResponses(mode, steps)
@@ -345,7 +347,7 @@ const questionFixture = (
   }
   const text = vi.fn(async (_message: string) => {})
   const event = vi.fn(async (_type: string, _data: unknown) => {})
-  const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
+  const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders })
   const execute = (userMessage: string, limits?: AgentEngineRequest['limits'], dispatchBudget?: AgentEngineRequest['dispatchBudget']) =>
     engine.execute(
       {
@@ -585,6 +587,114 @@ describe('Ax agent engine', () => {
       expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
     }
   )
+
+  it.each([
+    ['accepted', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon.', undefined],
+    ['accepted short foreign field', 'In this fictional, non-operative routing example, Name: Morgan Vale; Role: documentation writer.',
+      '- Name: Morgan Vale; Role: documentation author; Department: IT; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147.'],
+    ['negative', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon.', undefined],
+    ['missing', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon.', undefined],
+    ['mutated email', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon; Email: other@example.invalid.', undefined],
+    ['mutated phone', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon; Phone: +1 202 555 0199.', undefined],
+    ['stripped qualification', 'Morgan Vale serves as the account liaison for Falcon.', undefined]
+  ] as const)('publishes a qualified role-only native paraphrase only after source-local acceptance: %s', async (verdict, statement, contactOverride) => {
+    const heading = 'Fictional, non-operative routing example'
+    const contact = contactOverride ?? '- Name: Morgan Vale; Role: Falcon account representative; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147.'
+    const page = questionReadPage(76, '1', 'Supplier routing', 'suppliers', heading, 'fictional-routing', contact)
+    const frames: SynthesisFixtureSource[][] = []
+    const supportRequests: DecisionBatchRequest[] = []
+    const answer = (input: Readonly<AxChatRequest>) => {
+      const sources = synthesisSourcesFromRequest(input)
+      frames.push(sources)
+      const source = sources.find(candidate =>
+        candidate.evidenceId === 'page:76:revision:1' && candidate.sourceRevision === '1' &&
+        candidate.complete && candidate.literalStatement?.includes('Morgan Vale') &&
+        candidate.literalStatement.includes('morgan.vale@example.invalid') &&
+        candidate.literalStatement.includes('+1 202 555 0147')
+      )!
+      expect(source).toBeDefined()
+      expect(source.literalStatement).toContain(heading)
+      return synthesisFixtureAnswer(input, {
+        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement }]
+      })
+    }
+    const decisionProviders = {
+      ...fixtureDecisionProviders,
+      async decideBatch(input: DecisionBatchRequest): Promise<DecisionBatchResult> {
+        const decision = await fixtureDecisionProviders.decideBatch(input)
+        const supportIds = Object.entries(input.questions)
+          .filter(([, question]) => Object.hasOwn(question.criteria, 'supports')).map(([id]) => id)
+        if (supportIds.length === 0) return decision
+        // The public text sink must remain empty until the independent source
+        // decision accepts, even though the provider authored a valid typed ref.
+        expect(fixture.text.mock.calls).toHaveLength(0)
+        supportRequests.push(input)
+        const state = JSON.parse(input.state as string)
+        expect(state.candidate).toEqual([expect.objectContaining({
+          evidenceId: 'page:76:revision:1', sourceRevision: '1', statement
+        })])
+        expect(state.sources).toHaveLength(1)
+        const source = state.sources[0]
+        expect(source.evidenceId).toBe('page:76:revision:1')
+        expect(source.sourceRevision).toBe('1')
+        expect(source.complete).toBe(true)
+        expect(source.closure.unit.complete).toBe(true)
+        expect(source.unitId).toBe(state.candidate[0].unitId)
+        // Selecting only Role for publication must not trim its immutable
+        // source assertion or the governing heading from the judge's packet.
+        const dependencies = source.closure.dependencies.map((entry: { text: string }) => entry.text).join('\n')
+        expect(dependencies).toContain(contact.slice(2))
+        expect(dependencies).toContain(heading)
+        expect(source.closure.units.every((unit: { complete: boolean }) => unit.complete)).toBe(true)
+        expect(source.closure.units).toContainEqual(source.closure.unit)
+        for (const dependency of source.closure.dependencies) {
+          expect(dependency.text).toBe(page.content.slice(dependency.span.start, dependency.span.end))
+        }
+        expect(unpackWikiReadTexts({ texts: state.readTexts, sources: state.evidence.map((read: { source: Parameters<typeof unpackWikiReadTexts>[0]['sources'][number] }) => read.source) }))
+          .toEqual([page.content])
+        const answers = { ...decision.answers }
+        for (const id of supportIds) {
+          if (verdict === 'missing') delete answers[id]
+          else if (verdict === 'negative') {
+            answers[id] = { choice: 'not_supported', probabilities: { supports: 0, contradicts: 0, not_supported: 1 }, confidence: 1 }
+          }
+        }
+        return { ...decision, answers }
+      }
+    }
+    const fixture = questionFixture('native', [
+      { calls: [
+        { id: 'qualified-role-read', name: 'pages.get', arguments: { id: 76 } },
+        { id: 'qualified-role-finish', name: 'wiki_finish_collection', arguments: {} }
+      ] },
+      { answer },
+      { answer }
+    ], () => page, [], {}, {}, decisionProviders)
+    const result = await fixture.execute('What role does Morgan Vale have in the fictional, non-operative Falcon routing example? Give only the role, not email or phone.')
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    if (verdict.startsWith('accepted')) {
+      expect(published).toContain(statement)
+      expect(published).not.toContain('morgan.vale@example.invalid')
+      expect(published).not.toContain('+1 202 555 0147')
+      expect(published).not.toContain('Email:')
+      expect(published).not.toContain('Phone:')
+      expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:76:revision:1' })])
+      expect(result.executionLimit).toBeUndefined()
+      expect(frames).toHaveLength(1)
+      expect(supportRequests).toHaveLength(1)
+      expect(fixture.event.mock.calls.some(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
+    } else {
+      expect(published).not.toContain(statement)
+      expect(published).not.toContain('Morgan Vale')
+      expect(result.citations ?? []).toEqual([])
+      expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
+      expect(frames).toHaveLength(2)
+      expect(frames[1]).toEqual(frames[0])
+      if (verdict === 'negative' || verdict === 'missing') expect(supportRequests).toHaveLength(2)
+      else expect(supportRequests).toHaveLength(0)
+    }
+    expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
+  })
 
   it.each([119_808, 128_000])('uses the full generated frame native input boundary %s without another paid collection turn', async nativeInputTokens => {
     const contact = 'Morgan Vale is the Falcon account representative.'
