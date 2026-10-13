@@ -2847,8 +2847,12 @@ const exactTypedIdentifiersMatch = (claim: string, unit: CitationSourceUnit): bo
   const contextWords = lexicalTokens(unit.context, true)
   const sourceIdentifiers = new Set(unit.identifiers)
   const lowercaseWords = new Set<string>()
+  const lowercaseStems = new Set<string>()
   for (const word of sourceWords) {
-    if (word === word.toLowerCase()) lowercaseWords.add(exactIdentityToken(word))
+    if (word === word.toLowerCase()) {
+      lowercaseWords.add(exactIdentityToken(word))
+      lowercaseStems.add(normalizedToken(word))
+    }
   }
   const exactBodyIdentifiers = new Set<string>()
   for (const word of sourceWords) {
@@ -2862,7 +2866,8 @@ const exactTypedIdentifiersMatch = (claim: string, unit: CitationSourceUnit): bo
   for (const word of contextWords) {
     const normalized = normalizedToken(word)
     if ((/^\p{Lu}/u.test(word) || isShortIdentifier(word)) && !insignificantTerms.has(normalized) &&
-      genericIdentifierTerms[normalized] !== true && qualifierTerms[normalized] !== true && negativeTerms[normalized] !== true)
+      genericIdentifierTerms[normalized] !== true && qualifierTerms[normalized] !== true && negativeTerms[normalized] !== true &&
+      !lowercaseStems.has(normalized))
       exactIdentifiers.add(exactIdentityToken(word))
   }
   if (exactIdentifiers.size === 0) return true

@@ -698,6 +698,15 @@ describe('Ax agent engine', () => {
     ['complete shipping list numeric summary', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only and remote islands require a separate quote; free-delivery threshold is USD 500 and below-threshold delivery fee is USD 12 for mainland orders only; order cutoff is 14:00 local time and orders accepted after the cutoff enter processing on the next working day; dispatch triggers tracking emails and label creation does not prove carrier collection; hazardous goods are excluded from standard delivery and must not inherit the ordinary lead time.'],
     ['tracking record', 'Tracking notification: emailed after dispatch', 'In this fictional, non-operative benchmark, dispatch triggers the tracking email; creating a label is not evidence of carrier pickup.'],
     ['role record', 'Role: account representative', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison.'],
+    ['role selected by Name', 'Name: Morgan Vale', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison.'],
+    ['labeled role selected by Name', 'Name: Morgan Vale', 'In this fictional, non-operative benchmark, Name: Morgan Vale; Role: account liaison.'],
+    ['emphasized role selected by Role', 'Role: account representative', 'In this fictional, non-operative benchmark, **Name:** Morgan Vale; **Role:** account liaison.'],
+    ['ownership prose', 'Account ownership: Morgan handles commercial account questions', 'In this fictional, non-operative benchmark, Morgan handles questions about commercial accounts, but is not the operational support escalation contact.'],
+    ['ownership introduction', 'Account ownership: Morgan handles commercial account questions', 'In this fictional, non-operative benchmark, Account ownership: Morgan deals with commercial account questions, but is not the contact for operational support escalations.'],
+    ['ownership labeled scope', 'Account ownership: Morgan handles commercial account questions', 'In this fictional, non-operative benchmark, Account ownership: Morgan deals with commercial account questions; Scope: Morgan is not the contact for operational support escalations.'],
+    ['ownership parent introduction', 'Account ownership: Morgan handles commercial account questions', 'Meridian dense QA policies — fictional and non-operative › Account contacts: Account ownership: Morgan deals with commercial account questions; Scope: Morgan is not the contact for operational support escalations.'],
+    ['ownership emphasized labels', 'Account ownership: Morgan handles commercial account questions', 'In this fictional, non-operative benchmark, **Account ownership:** Morgan deals with commercial account questions; **Scope:** Morgan is not the contact for operational support escalations.'],
+    ['ownership selected by Scope', 'Scope: Morgan is not the operational support escalation contact.', 'In this fictional, non-operative benchmark, Account ownership: Morgan deals with commercial account questions; Scope: Morgan is not the contact for operational support escalations.'],
     ['paragraph assertion', 'Response targets measure the first human response during supported hours, not resolution time.', 'In this fictional, non-operative benchmark, response targets concern the initial human reply in supported hours rather than resolving the issue.'],
     ['complete pilot paragraph', 'Both plans are fictional pilot offers for one organization. Monthly fees exclude tax. Ticket allowances reset monthly and do not roll over. Response targets measure the first human response during supported hours, not resolution time.', 'In this fictional, non-operative benchmark, both pilot plans cover one organization, with monthly fees excluding tax and ticket allowances resetting monthly without rollover; response targets concern the initial human reply during supported hours rather than resolution time.']
   ] as const)('admits a concise owned79 %s to independent semantic proof without whole quoting', async (_case, sourceText, statement) => {
@@ -755,6 +764,8 @@ describe('Ax agent engine', () => {
           expect(source.text).toContain(sourceText)
           expect(source.text).toBe(selectedText)
           if (_case.startsWith('complete shipping list')) expect(source.closure?.unit.kind).toBe('list')
+          if (_case.includes('role')) expect(source.closure?.unit.sourceSpans).toEqual([{ start: 2341, end: 2496 }])
+          if (_case.startsWith('ownership')) expect(source.closure?.unit.sourceSpans).toEqual([{ start: 2651, end: 2782 }])
           if (_case === 'complete pilot paragraph') {
             expect(source.unitId).toBe(source.closure?.unit.id)
             expect(source.closure?.unit.sourceSpans).toEqual([{ start: 1480, end: 1715 }])
@@ -784,7 +795,9 @@ describe('Ax agent engine', () => {
         ] },
         { answer }, { answer }
       ], () => page, [], {}, {}, decisionProviders)
-      const execution = fixture.execute('Summarize only this policy briefly, preserving its fictional, non-operative status and restrictions.')
+      const execution = fixture.execute(_case.includes('role') || _case.startsWith('ownership')
+        ? 'According to the fictional Meridian dense QA policies, describe Morgan Vale’s role in one concise paragraph. Preserve the fictional/non-operative qualification; omit email and phone.'
+        : 'Summarize only this policy briefly, preserving its fictional, non-operative status and restrictions.')
       if (verdict === 'unavailable') {
         await expect(execution).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_FAILED' })
         expect(supportRequests).toHaveLength(1)
@@ -792,18 +805,28 @@ describe('Ax agent engine', () => {
         continue
       }
       const result = await execution
-      expect(supportRequests).toHaveLength(verdict === 'supports' ? 1 : 2)
       const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
       if (verdict === 'supports') {
-        expect(published).toContain(statement)
+        expect(published).toContain('fictional')
+        expect(published).toContain('non-operative')
         if (_case !== 'labeled hazardous fields') expect(published).not.toContain('Requirement:')
         expect(published).not.toContain('Email:')
         expect(published).not.toContain('Source quotations')
+        if (_case.includes('role') || _case.startsWith('ownership')) {
+          expect(published).toMatch(/\bMorgan(?: Vale)?\b/u)
+          expect(published).not.toContain('Phone:')
+          expect(published).not.toContain('@')
+          expect(published).not.toContain('202-555')
+          expect(published).not.toContain('Avery')
+          const container = document.createElement('div')
+          container.innerHTML = renderSafeMarkdown(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+          expect(container.querySelectorAll('p')).toHaveLength(1)
+          expect(container.querySelectorAll('h1,h2,h3,h4,h5,h6,ul,ol,table')).toHaveLength(0)
+        }
         expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:79:revision:3'])
         expect(result.executionLimit).toBeUndefined()
         expect(fixture.event.mock.calls.some(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
       } else {
-        expect(published).not.toContain(statement)
         expect(result.citations ?? []).toEqual([])
         expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
       }
@@ -1137,6 +1160,12 @@ describe('Ax agent engine', () => {
   it.each([
     ['retained owner and generic role', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Dispatcher Morgan Vale handles account questions.', true],
     ['generic role without repeated owner', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Dispatcher handles account questions.', true],
+    ['full labeled scalar identity', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Name: Morgan Vale; Role: account liaison.', true],
+    ['related role and scope selected by scalar identity', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Name: Morgan Vale; Role: account liaison; Scope: deals with questions about accounts.', true],
+    ['incomplete labeled scalar identity', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Name: Morgan; Role: account liaison.', false],
+    ['reordered labeled scalar identity', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Name: Vale Morgan; Role: account liaison.', false],
+    ['scalar identity reassigned to role', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Name: account dispatcher; Role: Morgan Vale.', false],
+    ['sentence-valued first field', '- Role: Jordan handles commercial account questions; Scope: Jordan is not the operational support escalation contact.', 'Role: Jordan handles commercial account questions', 'Role: Jordan deals with commercial account questions; Scope: Jordan is not the contact for operational support escalations.', true],
     ['foreign initial owner', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Zephyr handles account questions.', false],
     ['foreign initial subject retaining the owner', '- Name: Morgan Vale; Role: account dispatcher; Scope: handles account questions.', 'Name: Morgan Vale', 'Zephyr works with Morgan Vale.', false],
     ['stemmed member identity', '- [Adams](/adams)', 'Adams', 'Promotions lists Adam.', false]

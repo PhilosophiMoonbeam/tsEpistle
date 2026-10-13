@@ -269,7 +269,7 @@ Answer the literal userRequest at its requested level of detail, not default to 
 Inspect all supplied sources for requested content and applicable qualifications. Read each selected source's complete own authored content, including conditions outside its quotation. Preserve governing authored, testing, fictional, dietary, timing, preparation and safety status. Inspect complete original qualifying paragraphs rather than isolated derived sentences; emit a complete paragraph only when its full wording is needed for the requested assertion and governing qualifications. Bind a qualification outside the selected owned record or atomic source separately; a separate qualification cannot repair an assertion whose own scope is unsupported.
 For requested inventories, include every qualifying member, including narrower categories unless exact labels are requested. Retain requested aliases and identity fields. Distinguish related collections from direct entries and enumerate their named options only when within the requested inventory scope; do not count organizers, ingredients or incidental mentions as entries. Names-only requests do not request other record attributes.
 For requested procedures, include required inputs or materials, quantities, prerequisites and ordered steps with their measurement stages, restrictions, timings and safety checks. For comparisons, cover each requested dimension for each side in consistent order.
-For requested concise summaries, cover each requested substantive section. Select a complete original paragraph or list-item ref when its visible text owns several requested facts; an atomic ref owns only its displayed assertion, not neighboring sentences. Otherwise select the requested facts' own record-field or atomic refs. A complete native-list ref may summarize independently scoped anonymous policy clauses only while preserving their original protected field-label/value associations; use separately bound original records for named owners or ambiguous continuations. Retain fictional/non-operative status and material restrictions. Do not copy every field, enumerate every item or quote a whole section merely to summarize it.
+For requested concise summaries, cover each requested substantive section. Select a complete original paragraph or list-item ref when its visible text owns several requested facts; an atomic ref owns only its displayed assertion, not neighboring sentences. Otherwise select the requested facts' own record-field or atomic refs. Prefer a ref whose displayed assertion or record field directly states the requested fact (for example Role for a requested role), rather than an indirect Name selector; a complete owned record still legally supports its requested fields. A complete native-list ref may summarize independently scoped anonymous policy clauses only while preserving their original protected field-label/value associations; use separately bound original records for named owners or ambiguous continuations. Retain fictional/non-operative status and material restrictions. Do not copy every field, enumerate every item or quote a whole section merely to summarize it.
 
 # Return Format
 Return only claims, unresolvedFacets, observations and optional recommendations. Return at most 64 claims, each with one exact sourceRef copied directly from a sourceReferences.units object key or one space-separated ref token in that unit's aliases[scope] string, and a statement. The primary key is the default; select an alias token when its own original citation scope is appropriate. Alias object keys identify scopes, not source refs. Every token is individually selectable. Never construct or rewrite a sourceRef.
@@ -323,6 +323,29 @@ const markdownFactory = (module: unknown): MarkdownFactory => {
   throw new TypeError('markdown-it does not export a callable parser')
 }
 const markdown = markdownFactory(markdownItModule)({ html: false, breaks: true, linkify: true, typographer: false })
+
+// Soft wrapping is presentation only when Markdown owns exactly one paragraph
+// and every break is outside protected inline syntax. Never flatten blocks.
+const normalizedInlineParagraph = (value: string): string | null => {
+  if (!/[\r\n]/u.test(value)) return inlineStatement(value) ? value : null
+  if (unsafeText(value) || /\r(?!\n)/u.test(value)) return null
+  // Markdown normalizes code-span and link-destination line endings internally;
+  // inspect these delimiters before that normalization can hide a protected break.
+  for (const match of value.matchAll(/(`+)([\s\S]*?)\1/gu))
+    if (/[\r\n]/u.test(match[2]!)) return null
+  if (/\[[^\]]*[\r\n][^\]]*\]|\]\([^)]*[\r\n][^)]*\)/u.test(value)) return null
+  const tokens = markdown.parse(value, {})
+  if (tokens.length !== 3 || tokens[0]?.type !== 'paragraph_open' ||
+    tokens[1]?.type !== 'inline' || tokens[2]?.type !== 'paragraph_close') return null
+  let nesting = 0
+  for (const token of tokens[1].children ?? []) {
+    if (token.type === 'hardbreak' || token.type === 'softbreak' && nesting !== 0 ||
+      /[\r\n]/u.test(token.content) || token.attrs?.some(([, attribute]) => /[\r\n]/u.test(String(attribute)))) return null
+    nesting += token.nesting
+  }
+  const normalized = value.replaceAll('\r\n', '\n').replaceAll('\n', ' ')
+  return inlineStatement(normalized) ? normalized : null
+}
 const tableStatement = (value: string, native = false): boolean => {
   if (unsafeText(value)) return false
   const lines = value.trim().replaceAll('\r\n', '\n').split('\n')
@@ -416,18 +439,25 @@ const quotedTableParts = (value: string): { prefix: string; table: string; autho
 
 // Only line-ending representation may differ; spaces, cells, rows and owned
 // dependencies remain authored bytes. Never parse model definitions as authority.
-const nativeTableLines = (value: string): string =>
+const nativeBodyLines = (value: string): string =>
   value.replaceAll('\r\n', '\n').replace(/^\n+|\n+$/gu, '')
 
 const exactNativeTableStatement = (statement: string, source: WikiSynthesisSource): boolean => {
   if (source.kind !== 'table' || source.literalStatement === null) return false
   const original = quotedTableParts(source.literalStatement)
   if (original === null || original.authored !== source.text.trim().replaceAll('\r\n', '\n')) return false
-  const emitted = nativeTableLines(statement)
-  return emitted === nativeTableLines(source.text) ||
-    emitted === nativeTableLines(source.literalStatement) ||
-    emitted === `${original.prefix ? `${original.prefix}\n\n` : ''}${nativeTableLines(source.text)}`
+  const emitted = nativeBodyLines(statement)
+  return emitted === nativeBodyLines(source.text) ||
+    emitted === nativeBodyLines(source.literalStatement) ||
+    emitted === `${original.prefix ? `${original.prefix}\n\n` : ''}${nativeBodyLines(source.text)}`
 }
+
+const exactNativeListStatement = (statement: string, source: WikiSynthesisSource): boolean =>
+  source.kind === 'list' && source.literalStatement !== null &&
+  source.literalStatement.endsWith(source.text) &&
+  safeQuotedListStatement(source.literalStatement) &&
+  (nativeBodyLines(statement) === nativeBodyLines(source.text) ||
+    nativeBodyLines(statement) === nativeBodyLines(source.literalStatement))
 
 const safeObservation = (value: string): boolean =>
   inlineStatement(value) && !/^\s{4}/u.test(value)
@@ -533,22 +563,26 @@ const resolvedClaimSchema = (
     return z.NEVER
   }
   // Only an explicitly emitted exact complete body may acquire its existing
-  // governing prefix and owned dependencies. Native tables tolerate surrounding
-  // line endings, never omitted fields, changed cells or a foreign prefix.
+  // governing prefix. Native blocks tolerate line-ending representation only,
+  // never omitted items/fields, changed values, indentation or a foreign prefix.
   const exactTable = exactNativeTableStatement(claim.statement, source)
+  const exactList = exactNativeListStatement(claim.statement, source)
   const exactBody = source.literalStatement !== null &&
-    (exactTable || source.literalStatement === `${source.context}: ${claim.statement}` ||
-      source.kind === 'list' && claim.statement === source.text && source.literalStatement.endsWith(source.text))
+    (exactTable || exactList || source.literalStatement === `${source.context}: ${claim.statement}`)
   const statement = exactBody &&
-    (safeStatement(claim.statement) && safeStatement(source.literalStatement!) ||
-      source.kind === 'list' && safeQuotedListStatement(claim.statement) && safeQuotedListStatement(source.literalStatement!) ||
-      exactTable)
-    ? source.literalStatement! : claim.statement
-  if (Buffer.byteLength(statement, 'utf8') > contentBytes() ||
-    !safeStatement(statement) && !(statement === source.literalStatement &&
-      (source.kind === 'list' && safeQuotedListStatement(statement) ||
-        source.kind === 'table' && quotedTableParts(statement) !== null))) {
-    context.addIssue({ code: 'custom', message: 'Each statement must be explicit, nonempty, bounded and rendering-safe; native blocks require an exact own complete source quotation.' })
+    (safeStatement(claim.statement) && safeStatement(source.literalStatement!) || exactList || exactTable)
+    ? source.literalStatement! : normalizedInlineParagraph(claim.statement) ?? claim.statement
+  if (Buffer.byteLength(statement, 'utf8') > contentBytes()) {
+    context.addIssue({ code: 'custom', message: 'Statement exceeds the output content byte limit.' })
+    return z.NEVER
+  }
+  if (!safeStatement(statement) && !(statement === source.literalStatement &&
+    (source.kind === 'list' && safeQuotedListStatement(statement) ||
+      source.kind === 'table' && quotedTableParts(statement) !== null))) {
+    const nativeKind = source.kind === 'list' || source.kind === 'table' ? source.kind : null
+    context.addIssue({ code: 'custom', message: nativeKind === null
+      ? 'Unsupported statement format: use one nonempty rendering-safe inline paragraph.'
+      : `Unsupported statement format or native-body mismatch (${nativeKind}): emit one safe inline paragraph or the exact own complete native body.` })
     return z.NEVER
   }
   const canonical = Object.freeze({
