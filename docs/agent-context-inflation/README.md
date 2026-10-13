@@ -53,14 +53,14 @@ The portable fixture still has 16,426 original UTF-8 bytes, all 259 complete pro
 
 | Quantity | Previous named-row transport | First complete-read iteration | Current complete-read index |
 | --- | ---: | ---: | ---: |
-| Root-only serialized Ax request bytes | 159,534 | 95,519 | 66,829 |
-| Root + sections serialized Ax request bytes | 165,023 | 113,233 | 74,513 |
-| Root + sections input bytes + 8,192 output allowance | 173,215 | 121,425 | 82,705 |
+| Root-only serialized Ax request bytes | 159,534 | 95,519 | 67,837 |
+| Root + sections serialized Ax request bytes | 165,023 | 113,233 | 75,521 |
+| Root + sections input bytes + 8,192 output allowance | 173,215 | 121,425 | 83,713 |
 | Root + sections selector/index JSON bytes | 12,070 bindings + 129,833 structures | 74,562 | 39,284 |
 | Complete original read bytes | 16,426 | 16,426 | 16,426 |
 | Selectable original root/section bindings | 437 | 437 | 437 |
 
-The current request is 58.11% smaller root-only and 54.85% smaller with sections than the previous transport. These are measured byte reductions, **not measured model-token reductions**. The small portable fixture has no long-unit previews and mostly one alias per scope. Grouped alias strings remove the measured admission failure for a separate 74,821-byte pair of complete child reads with 1,748 repeated original aliases: punctuation no longer dominates the unchanged context bound. The engine retains its existing real output resizing; neither source text nor selector identities are dropped to fit. Raw-content bytes, full selected text, previews and selector overhead are reported separately.
+The current request is 57.48% smaller root-only and 54.24% smaller with sections than the previous transport. These are measured byte reductions, **not measured model-token reductions**. The small portable fixture has no long-unit previews and mostly one alias per scope. Grouped alias strings remove the measured admission failure for a separate 74,821-byte pair of complete child reads with 1,748 repeated original aliases: punctuation no longer dominates the unchanged context bound. The engine retains its existing real output resizing; neither source text nor selector identities are dropped to fit. Raw-content bytes, full selected text, previews and selector overhead are reported separately.
 
 Fresh pre-change native measurements on an owned fictional fixture confirmed the follow-up problem independently of the offline capacity specimen. A role-only answer took 34.450 seconds; its typed generation reported 75,759 input tokens. The ordinary same-session delivery follow-up fetched the same page again, made five separate roughly 11,000-input-token verification calls, attempted a repair and ended partial. Those calls were real accounted application requests, not an offline tokenizer estimate.
 
