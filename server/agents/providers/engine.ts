@@ -871,21 +871,21 @@ const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit):
   if (record === null || record.kind === 'table-row' || !record.complete) return null
   const numericFields = record.fields.filter(field => /\p{N}/u.test(field.value))
   if (numericFields.length === 0 || numericFields.some(field => !field.complete || /\p{N}/u.test(field.label))) return null
-  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
+  const escapeQuantityPattern = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
   const quantityPattern = (value: string): RegExp | null => {
     const scalar = value.trim()
     const prefixCurrency = scalar.match(/^([A-Z]{3})\s*(\d+(?:[.,]\d+)*)$/u)
     const suffixCurrency = prefixCurrency === null ? scalar.match(/^(\d+(?:[.,]\d+)*)\s*([A-Z]{3})$/u) : null
     let literal: string
     if (prefixCurrency !== null || suffixCurrency !== null) {
-      const code = escape(prefixCurrency?.[1] ?? suffixCurrency![2]!)
-      const amount = escape(prefixCurrency?.[2] ?? suffixCurrency![1]!)
+      const code = escapeQuantityPattern(prefixCurrency?.[1] ?? suffixCurrency![2]!)
+      const amount = escapeQuantityPattern(prefixCurrency?.[2] ?? suffixCurrency![1]!)
       literal = `(?:${code}\\s*${amount}|${amount}\\s*${code})`
     } else {
       // Clocks retain their punctuation; duration/dimension words come from
       // this field, not a number-set or a unit-conversion dictionary.
       if (!/^\d+(?:[.,]\d+)*(?::\d+)*\s+[\p{L}][\p{L}\s-]*$/u.test(scalar)) return null
-      literal = escape(scalar)
+      literal = escapeQuantityPattern(scalar)
     }
     return new RegExp(`(?<![\\p{L}\\p{N}.+\\-])${literal}(?![\\p{L}\\p{N}])(?!\\s+(?:(?:working|calendar|supported)\\s+)?(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|KB|MB|GB)\\b)`, 'giu')
   }
