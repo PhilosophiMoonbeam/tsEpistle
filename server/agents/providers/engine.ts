@@ -3014,16 +3014,16 @@ const exactTypedIdentifiersMatch = (claim: string, unit: CitationSourceUnit): bo
 const assessTypedClaimEligibility = (
   claim: WikiSynthesisAnswer['claims'][number],
   evidence: CitationEvidence
-): { readonly eligible: boolean; readonly requiresSemanticSupport?: true; readonly unit?: CitationSourceUnit } => {
+): { readonly eligible: boolean; readonly reason?: string; readonly requiresSemanticSupport?: true; readonly unit?: CitationSourceUnit } => {
   if (claim.evidenceId !== evidence.citation.evidenceId || claim.sourceRevision !== evidence.binding.sourceRevision)
-    return { eligible: false }
+    return { eligible: false, reason: 'original-binding' }
   const unit = evidence.sourceUnits.find(candidate => candidate.identity === claim.unitId)
-  if (unit === undefined) return { eligible: false }
+  if (unit === undefined) return { eligible: false, reason: 'original-unit' }
   const source = verificationSourceUnit(claim.evidenceId, claim.sourceRevision, unit)
   try {
     validateWikiVerificationSource(source)
   } catch {
-    return { eligible: false, unit }
+    return { eligible: false, reason: 'complete-owned-closure', unit }
   }
   if ((unit.kind === 'paragraph' || unit.kind === 'list-item') &&
     (unit.closure.record?.fields.length ?? 0) === 0 && unit.text !== unit.closure.unit.normalizedText) {
@@ -3034,7 +3034,7 @@ const assessTypedClaimEligibility = (
     if (sourceSentences(unit.closure.unit.normalizedText).some(assertion =>
       !unit.text.includes(assertion) && statement.includes(normalizedHeading(assertion))
     ))
-      return { eligible: false, unit }
+      return { eligible: false, reason: 'adjacent-assertion', unit }
   }
   if (isLiteralSourceClaim(claim, source)) return { eligible: true, unit }
   const listRecords = unit.kind === 'list' ? completeListOriginalRecords(unit, evidence) : null
@@ -3076,14 +3076,14 @@ const assessTypedClaimEligibility = (
       ownedIdentifiers.has(normalizedToken(identifier)) && !protectedText.some(text => text.includes(possessive))
         ? identifier : possessive
   )
-  if (!exactTypedIdentifiersMatch(assessmentClaim, assessmentUnit)) return { eligible: false, unit }
+  if (!exactTypedIdentifiersMatch(assessmentClaim, assessmentUnit)) return { eligible: false, reason: 'protected-identifiers', unit }
   const explicitFields = record !== null && record.fields.some(field => {
     const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
     return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim.statement))
   })
   if (!explicitFields && record !== null && record.kind !== 'table-row' && record.fields.length >= 2 &&
     !recordNumericProseAssociationsMatch(assessmentClaim, unit))
-    return { eligible: false, unit }
+    return { eligible: false, reason: 'record-quantity-association', unit }
   const existingClauses = assessClaimClauses(claim.statement, { ...evidence, sourceUnits: [unit] }, claim)
   if (existingClauses.length > 0 && existingClauses.every(clause => clause.supported) &&
     (listRecords === null || completeListProtectedAssociationsMatch(claim.statement, unit, listRecords)))
@@ -3092,7 +3092,7 @@ const assessTypedClaimEligibility = (
   // can contain several column owners, so its association guards stay unchanged.
   if (record?.kind === 'table-row' ||
     unit.kind !== 'paragraph' && unit.kind !== 'list' && unit.kind !== 'list-item')
-    return { eligible: false, unit }
+    return { eligible: false, reason: 'original-scope-kind', unit }
   const exactListRecords = listRecords === null || completeListProtectedAssociationsMatch(assessmentClaim, unit, listRecords)
   const scalarNumericProse = listRecords !== null ? exactListRecords :
     !explicitFields && scalarRecordNumericProseMatch(assessmentClaim, unit) === true
@@ -3109,8 +3109,15 @@ const assessTypedClaimEligibility = (
   const fields = explicitFields ? assessRecordClause(assessmentClaim, unit, true) : null
   const exactRecordFields = !explicitFields || fields !== null && fields.length > 0 &&
     fields.every(field => field.integrity && field.semanticConstraints === true)
+  const reason = !exactListRecords ? 'list-record-association' :
+    !assessment.integrity ? 'source-integrity' :
+    !assessment.protectedConstraints ? 'protected-source-association' :
+    !exactAddresses ? 'exact-address' :
+    !exactInlineLiterals ? 'exact-inline-literal' :
+    !exactRecordFields ? 'explicit-record-fields' : undefined
   return {
-    eligible: assessment.integrity && assessment.protectedConstraints && exactAddresses && exactInlineLiterals && exactRecordFields && exactListRecords,
+    eligible: reason === undefined,
+    ...(reason === undefined ? {} : { reason }),
     requiresSemanticSupport: true,
     unit
   }
@@ -6691,7 +6698,7 @@ export class AxAgentEngine implements AgentEngine {
         }
         const eligibility = boundEvidence === undefined ? undefined : assessTypedClaimEligibility(claim, boundEvidence)
         if (eligibility?.eligible !== true) {
-          rejection = `Each claim for ${source.evidenceId} must retain its exact owned binding ${source.unitId}, protected identifiers, values, links and governing qualifications, with a complete original dependency closure. Select requested fields without copying unrelated record fields.`
+          rejection = `Each claim for ${source.evidenceId} must retain its exact owned binding ${source.unitId}, protected identifiers, values, links and governing qualifications, with a complete original dependency closure. Failed host check: ${eligibility?.reason ?? 'original-binding'}. Select requested fields without copying unrelated record fields.`
           return rejection
         }
         return true
