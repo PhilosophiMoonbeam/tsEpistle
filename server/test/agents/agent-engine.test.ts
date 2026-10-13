@@ -590,6 +590,9 @@ describe('Ax agent engine', () => {
 
   it.each([
     ['accepted', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon.', undefined],
+    ['accepted role field', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon.', undefined],
+    ['accepted role field possessive', 'In this fictional, non-operative routing example, Morgan Vale serves as Falcon’s account liaison.', undefined],
+    ['accepted role field status orthography', 'In this fictional, non operational routing example, Morgan Vale serves as the account liaison for Falcon.', undefined],
     ['accepted short foreign field', 'In this fictional, non-operative routing example, Name: Morgan Vale; Role: documentation writer.',
       '- Name: Morgan Vale; Role: documentation author; Department: IT; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147.'],
     ['negative', 'In this fictional, non-operative routing example, Morgan Vale serves as the account liaison for Falcon.', undefined],
@@ -610,7 +613,8 @@ describe('Ax agent engine', () => {
         candidate.evidenceId === 'page:76:revision:1' && candidate.sourceRevision === '1' &&
         candidate.complete && candidate.literalStatement?.includes('Morgan Vale') &&
         candidate.literalStatement.includes('morgan.vale@example.invalid') &&
-        candidate.literalStatement.includes('+1 202 555 0147')
+        candidate.literalStatement.includes('+1 202 555 0147') &&
+        (!verdict.includes('role field') || candidate.text.startsWith('Role:'))
       )!
       expect(source).toBeDefined()
       expect(source.literalStatement).toContain(heading)

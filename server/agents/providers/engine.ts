@@ -2698,24 +2698,48 @@ const assessTypedClaimEligibility = (
     identifiers: identifierTerms(recordText, true).filter(identifier => !recordLabels.has(identifier)),
     qualifiers: exactQualifierTerms(recordText, true)
   }
-  const assessment = assessSourceClause(claim.statement, assessmentUnit)
+  const ownedIdentifiers = new Set([...assessmentUnit.identifiers, ...identifierTerms(assessmentUnit.context, true)])
+  const protectedText = [
+    ...(claim.statement.match(identityAddressPattern) ?? []),
+    ...markdownInlineTokens(claim.statement).flatMap(token => {
+      if (token.type !== 'code_inline' && token.type !== 'image') return []
+      const destination = token.attrGet('src')
+      return destination === null ? [token.content] : [token.content, destination]
+    }),
+    ...renderedLinkSignatures(claim.statement).flatMap(signature => {
+      const link = JSON.parse(signature) as { readonly label: string; readonly destination: string }
+      return [link.label, link.destination]
+    })
+  ]
+  // Possessive punctuation does not rename an owned identifier. This comparison
+  // view never rewrites a protected address, number, code literal or link.
+  const assessmentClaim = claim.statement.replace(
+    /(?<![\p{L}\p{N}'’/@:.+-])([\p{L}][\p{L}'’-]*?)[’']s\b(?![@:.+-])/giu,
+    (possessive: string, identifier: string) =>
+      ownedIdentifiers.has(normalizedToken(identifier)) && !protectedText.some(text => text.includes(possessive))
+        ? identifier : possessive
+  )
+  const assessment = assessSourceClause(assessmentClaim, assessmentUnit)
   const originalText = `${assessmentUnit.context}\n${assessmentUnit.text}`
   const sourceAddresses: readonly string[] = originalText.match(identityAddressPattern) ?? []
   const exactAddresses = (claim.statement.match(identityAddressPattern) ?? []).every(address => sourceAddresses.includes(address))
   // These source-status limitations qualify selected fields too; omitting other
   // contact fields must not turn fictional/untested author data into live facts.
-  const statusPattern = /\b(?:fictional|hypothetical|illustrative|untested|unverified|non[- ]operative|non[- ]operational)\b/giu
-  const sourceStatuses = originalText.match(statusPattern) ?? []
-  const claimedStatuses = new Set((claim.statement.match(statusPattern) ?? []).map(status => status.toLowerCase()))
-  const exactStatuses = sourceStatuses.every(status => claimedStatuses.has(status.toLowerCase())) &&
-    [...claimedStatuses].every(status => sourceStatuses.some(sourceStatus => sourceStatus.toLowerCase() === status))
+  const statusPattern = /\b(?:fictional|hypothetical|illustrative|untested|unverified|non[\p{Pd}\s]*(?:operative|operational))\b/giu
+  // This class establishes eligibility only. Jev receives the unmodified
+  // wording and must still prove the negative operational qualification.
+  const statusKey = (status: string): string => status.toLowerCase().replace(/[\p{Pd}\s]/gu, '').replace(/^nonoperational$/u, 'nonoperative')
+  const sourceStatuses = new Set((originalText.match(statusPattern) ?? []).map(statusKey))
+  const claimedStatuses = new Set((claim.statement.match(statusPattern) ?? []).map(statusKey))
+  const exactStatuses = [...sourceStatuses].every(status => claimedStatuses.has(status)) &&
+    [...claimedStatuses].every(status => sourceStatuses.has(status))
   const selectedFields = record.fields.filter(field => {
     const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
     return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim.statement))
   })
   if (selectedFields.length === record.fields.length) return { eligible: false, unit }
   const explicitFields = selectedFields.length > 0
-  const fields = explicitFields ? assessRecordClause(claim.statement, unit) : null
+  const fields = explicitFields ? assessRecordClause(assessmentClaim, unit) : null
   const exactRecordFields = !explicitFields || fields !== null && fields.length > 0 &&
     fields.every(field => field.integrity && (field.semanticConstraints ?? field.constraints))
   return {
