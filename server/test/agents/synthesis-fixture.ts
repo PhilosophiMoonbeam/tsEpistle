@@ -114,14 +114,16 @@ interface ReadableSourceRow {
 interface ReadableSources {
   readonly texts: Readonly<Record<number, string>>
   readonly sources: Readonly<Record<number, SourceRow>>
+  readonly owners: Readonly<Record<number, [evidenceId: string, sourceRevision: string]>>
 }
 
 const synthesisStructures = (input: string): ReadableSources => {
   const structures = synthesisField(input, 'Source Structures') as ReadableSources
   if (structures === null || typeof structures !== 'object' ||
     structures.texts === null || typeof structures.texts !== 'object' || Array.isArray(structures.texts) ||
-    structures.sources === null || typeof structures.sources !== 'object' || Array.isArray(structures.sources))
-    throw new Error('Supplied synthesis structures must contain text and source dictionaries')
+    structures.sources === null || typeof structures.sources !== 'object' || Array.isArray(structures.sources) ||
+    structures.owners === null || typeof structures.owners !== 'object' || Array.isArray(structures.owners))
+    throw new Error('Supplied synthesis structures must contain text, source and owner dictionaries')
   return structures
 }
 
@@ -140,27 +142,25 @@ const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevisio
   const bindings = synthesisField(input, 'Source Bindings')
   const structures = synthesisStructures(input)
   const text = (reference: TextRef): string => suppliedText(structures, reference)
-  if (!Array.isArray(bindings)) throw new Error('Supplied synthesis bindings are not an array')
-  return bindings.flatMap((binding: unknown) => {
-    if (!Array.isArray(binding) || binding.length !== 3 || typeof binding[0] !== 'string' || typeof binding[1] !== 'string' || !Array.isArray(binding[2]))
-      throw new Error('Invalid supplied synthesis binding group')
-    return binding[2].flatMap((entry: unknown) => {
-      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'number' || !Number.isSafeInteger(entry[0]) || !Array.isArray(entry[1]))
-        throw new Error('Invalid supplied synthesis binding entry')
-      const tuple = structures.sources[entry[0]]
-      if (tuple === undefined) throw new Error('Missing supplied synthesis source row')
-      const row: ReadableSourceRow = {
-        context: text(tuple[0]), kind: tuple[1], complete: tuple[2], text: text(tuple[3]),
-        literalStatement: tuple[4] === null ? null : text(tuple[4]),
-        ...(tuple[5] === null ? { packet: text(tuple[8]!) } : { authoredTexts: tuple[5].map(text) }),
-        structuralLabel: tuple[6] === null ? null : text(tuple[6]), labels: tuple[7].map(text)
-      }
-      return entry[1].map((value: unknown) => {
-        if (!Array.isArray(value) || value.length !== 1 || typeof value[0] !== 'string')
-          throw new Error('Invalid supplied synthesis projection')
-        return { evidenceId: binding[0] as string, sourceRevision: binding[1] as string, sourceRef: value[0], row }
-      })
-    })
+  if (bindings === null || typeof bindings !== 'object' || Array.isArray(bindings))
+    throw new Error('Supplied synthesis bindings are not a dictionary')
+  return Object.entries(bindings).map(([sourceRef, binding]) => {
+    if (!Array.isArray(binding) || binding.length !== 2 ||
+      binding.some(key => typeof key !== 'number' || !Number.isSafeInteger(key) || key < 0))
+      throw new Error('Invalid supplied synthesis scope or owner key')
+    const [scopeKey, ownerKey] = binding as [number, number]
+    const owner = structures.owners[ownerKey]
+    if (!Array.isArray(owner) || owner.length !== 2 || owner.some(value => typeof value !== 'string'))
+      throw new Error('Missing supplied synthesis owner')
+    const tuple = structures.sources[scopeKey]
+    if (tuple === undefined) throw new Error('Missing supplied synthesis source row')
+    const row: ReadableSourceRow = {
+      context: text(tuple[0]), kind: tuple[1], complete: tuple[2], text: text(tuple[3]),
+      literalStatement: tuple[4] === null ? null : text(tuple[4]),
+      ...(tuple[5] === null ? { packet: text(tuple[8]!) } : { authoredTexts: tuple[5].map(text) }),
+      structuralLabel: tuple[6] === null ? null : text(tuple[6]), labels: tuple[7].map(text)
+    }
+    return { evidenceId: owner[0], sourceRevision: owner[1], sourceRef, row }
   })
 }
 
