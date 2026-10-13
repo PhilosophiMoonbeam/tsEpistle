@@ -1,4 +1,4 @@
-import type { SourceContext, SourceSpan, SourceUnit } from './source-document.ts'
+import { parseSourceDocument, type SourceContext, type SourceSpan, type SourceUnit } from './source-document.ts'
 import type { WikiSynthesisAnswer } from './wiki-synthesis.ts'
 import type { WikiVerificationSource } from './wiki-verification.ts'
 
@@ -11,7 +11,7 @@ const closedSource = (source: WikiVerificationSource): boolean => {
   if (closure === null) return false
   const { unit, units, contexts, record, links, dependencies } = closure
   if (!unit.complete || unit.kind !== source.kind || !unit.sourceSpans.length) return false
-  if ((unit.kind === 'list' || unit.kind === 'heading' || unit.kind === 'summary' || unit.kind === 'table-row' || (record?.fields.length ?? 0) > 0) &&
+  if ((unit.kind === 'list' || unit.kind === 'table' || unit.kind === 'heading' || unit.kind === 'summary' || unit.kind === 'table-row' || (record?.fields.length ?? 0) > 0) &&
     source.text !== unit.normalizedText) return false
   const owned = new Map(units.map(entry => [entry.id, entry]))
   const governing = new Map(contexts.map(entry => [entry.id, entry]))
@@ -33,7 +33,8 @@ const closedSource = (source: WikiVerificationSource): boolean => {
     }
   }
   const ownedLinks = units.flatMap(entry => entry.links)
-  if (ownedLinks.some(link => !owned.has(link.unitId)) || links.some(link => !ownedLinks.some(entry => JSON.stringify(entry) === JSON.stringify(link)))) return false
+  if (ownedLinks.some(link => !owned.has(link.unitId)) || links.some(link => !ownedLinks.some(entry => JSON.stringify(entry) === JSON.stringify(link))) ||
+    ownedLinks.some(link => !links.some(entry => JSON.stringify(entry) === JSON.stringify(link)))) return false
   const spans = [...units.flatMap(entry => entry.sourceSpans), ...contexts.flatMap(entry => entry.sourceSpans),
     ...(record?.fields.flatMap(field => field.sourceSpans) ?? []), ...ownedLinks.flatMap(link => [...link.sourceSpans, ...link.dependencySpans])]
   const requiredSpans = new Set(spans.map(spanKey))
@@ -45,12 +46,15 @@ const closedSource = (source: WikiVerificationSource): boolean => {
     supplied.add(key)
   }
   return requiredSpans.size === supplied.size &&
-    (unit.kind !== 'list' || record === null && unit.sourceSpans.length === 1 &&
+    (unit.kind !== 'list' && unit.kind !== 'table' || record === null && unit.sourceSpans.length === 1 &&
       dependencies.some(({ span, text }) => spanKey(span) === spanKey(unit.sourceSpans[0]!) && text === unit.normalizedText))
 }
 
 const ownContext = (source: WikiVerificationSource, unit: SourceUnit = source.closure!.unit): SourceContext | undefined =>
-  source.closure!.contexts.find(context => context.kind === unit.kind && context.normalizedLabel === unit.normalizedText &&
+  source.closure!.contexts.find(context => context.kind === unit.kind &&
+    (context.normalizedLabel === unit.normalizedText ||
+      source.closure!.record?.kind === 'list-item' && unit.kind === 'list-item' &&
+      unit.structuralLabels.includes(context.normalizedLabel)) &&
     context.sourceSpans.some(span => unit.sourceSpans.some(own => spanKey(own) === spanKey(span))))
 
 const governingContexts = (source: WikiVerificationSource, unit: SourceUnit = source.closure!.unit): readonly SourceContext[] => {
@@ -100,7 +104,7 @@ const literalRecordStatement = (source: WikiVerificationSource): string | null =
   }
   // A field-only copy must not omit an assertion or condition owned by the record.
   if (record.unitIds.length !== covered.size || record.unitIds.some(id => !covered.has(id))) return null
-  const statement = record.fields.map(field => `${field.label}: ${field.value}`).join(' | ')
+  const statement = record.fields.map(field => `${field.label}: ${field.value}`).join(record.kind === 'table-row' ? ' | ' : '; ')
   const labels = governingContexts(source).map(context => context.normalizedLabel)
   return labels.length ? `${labels.join(' › ')}: ${statement}` : statement
 }
@@ -121,6 +125,24 @@ export const getLiteralSourceMembershipStatement = (source: WikiVerificationSour
   return labels.length ? `${labels.join(' › ')}: ${statement}` : statement
 }
 
+// Reference definitions are syntax dependencies, not additional assertions.
+// Keep their original bytes and validate them against the selected table's
+// existing links before allowing the renderer to resolve them locally.
+const literalTableBody = (source: WikiVerificationSource): string | null => {
+  const { unit, dependencies } = source.closure!
+  const spans = new Map(unit.links.flatMap(link => link.dependencySpans).map(span => [spanKey(span), span]))
+  if (!spans.size) return source.text
+  const definitions = [...spans.values()].sort((left, right) => left.start - right.start).map(span =>
+    dependencies.find(dependency => spanKey(dependency.span) === spanKey(span))!.text)
+  if (definitions.some(text => /\[\[\s*cite\s*:/iu.test(text) ||
+    parseSourceDocument(text, { representation: 'markdown', truncated: false }).units.length !== 0)) return null
+  const body = `${source.text}${source.text.endsWith('\n') ? '\n' : '\n\n'}${definitions.join('\n')}`
+  const parsed = parseSourceDocument(body, { representation: 'markdown', truncated: false })
+  const table = parsed.units.find(entry => entry.kind === 'table' && entry.normalizedText === source.text)
+  const linkIdentity = (entry: SourceUnit): string => JSON.stringify(entry.links.map(link => [link.label, link.destination, link.kind]))
+  return table?.complete && linkIdentity(table) === linkIdentity(unit) ? body : null
+}
+
 /** Exact selected assertion or owned record with its governing context; not a world-fact inference. */
 export const getLiteralSourceStatement = (source: WikiVerificationSource): string | null => {
   if (!closedSource(source)) return null
@@ -129,8 +151,10 @@ export const getLiteralSourceStatement = (source: WikiVerificationSource): strin
   if (record?.fields.length) return getLiteralSourceMembershipStatement(source) ?? literalRecordStatement(source)
   if (!unit.normalizedText.includes(source.text) ||
     (record && (record.unitIds.length !== 1 || record.unitIds[0] !== unit.id))) return null
+  const body = unit.kind === 'table' ? literalTableBody(source) : source.text
+  if (body === null) return null
   const labels = governingContexts(source).map(context => context.normalizedLabel)
-  return labels.length ? `${labels.join(' › ')}: ${source.text}` : source.text
+  return labels.length ? `${labels.join(' › ')}:${unit.kind === 'table' ? '\n\n' : ' '}${body}` : body
 }
 
 /** Exact linked members and complete quotations are mechanical; other claims need semantic support. */

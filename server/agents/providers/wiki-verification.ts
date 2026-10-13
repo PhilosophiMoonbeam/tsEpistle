@@ -229,6 +229,9 @@ export const validateWikiVerificationSource = (source: WikiVerificationSource): 
     suppliedSpans.add(spanKey(span))
   }
   if (requiredSpans.size !== suppliedSpans.size) invalid('closure is missing original-source dependencies')
+  if (unit.kind === 'table' && (record !== null || unit.sourceSpans.length !== 1 || source.text !== unit.normalizedText ||
+    !dependencies.some(({ span, text }) => spanKey(span) === spanKey(unit.sourceSpans[0]!) && text === unit.normalizedText)))
+    invalid('native table must retain its complete exact original body dependency')
 }
 
 const supportCriteria = {

@@ -11,7 +11,7 @@ import {
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, rejectFixtureStatements, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -529,8 +529,13 @@ describe('Ax agent engine context compaction', () => {
     ])
     const originals = structuredClone(history.messages)
     const contact = 'Morgan Vale is the Falcon account representative.'
-    const content = `# Supplier routing\n\nRequired complete source background: ${'v'.repeat(150_000)}\n\n## Falcon\n\n${contact}`
-    const calls: Readonly<AxChatRequest>[] = []
+    // Keep the complete read admissible to the mandatory independent proof;
+    // the old-history fixture, not an oversized proof request, triggers compaction.
+    const background = 'v'.repeat(110_000)
+    const content = `# Supplier routing\n\nRequired complete source background: ${background}\n\n## Falcon\n\n${contact}`
+    const summaries: Readonly<AxChatRequest>[] = []
+    const deliveries: { readonly input: Readonly<AxChatRequest>; readonly historyCompacted: boolean }[] = []
+    let historyCompacted = false
     const counted: Readonly<AxChatRequest>[] = []
     const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>, signal: AbortSignal) => {
       expect(signal.aborted).toBe(false)
@@ -538,13 +543,15 @@ describe('Ax agent engine context compaction', () => {
       expect(input.responseFormat ?? input.functions).toBeDefined()
       expect(JSON.stringify(input)).toContain('Frozen routing preference')
       expect(JSON.stringify(input)).toContain('Retain source record qualifications')
-      expect(JSON.stringify(input)).toContain('v'.repeat(150_000))
+      expect(JSON.stringify(input)).toContain(background)
       return 10_000
     })
     const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
-      calls.push(input)
-      if (calls.length === 1) return response('Retain the original supplier constraints and the current contact lookup.', 100, 10)
-      if (calls.length === 2) return {
+      if ((input.functions?.length ?? 0) === 0 && synthesisInputFromRequest(input) === undefined) {
+        summaries.push(input)
+        return response('Retain the original supplier constraints and the current contact lookup.', 100, 10)
+      }
+      if (synthesisInputFromRequest(input) === undefined) return {
         ...response('', 100, 10),
         results: [{
           index: 0,
@@ -554,13 +561,15 @@ describe('Ax agent engine context compaction', () => {
           ]
         }]
       }
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.text === contact)!
+      deliveries.push({ input, historyCompacted })
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.text === contact)
+      if (source === undefined) throw new Error('The complete original contact must remain selectable after history compaction')
       return response(synthesisFixtureAnswer(input, {
         claims: [{
           evidenceId: source.evidenceId,
           sourceRevision: source.sourceRevision,
           sourceRef: source.sourceRef,
-          statement: calls.length === 3 ? 'Morgan Vale is the Falcon chief financial officer.' : contact
+          statement: deliveries.length === 1 ? 'Morgan Vale is the Falcon chief financial officer.' : contact
         }],
         unresolvedFacets: []
       }), 100, 10)
@@ -578,12 +587,14 @@ describe('Ax agent engine context compaction', () => {
         invoke, snapshot: async () => ({}), close: () => {}, validateObservation: async () => true
       })
     }
-    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
+    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => { historyCompacted = true })
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (_type: string, _data: unknown) => {})
     const budget = sequencedBudget(1_000_000)
     const base = engineRequest(history.messages)
-    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+    const result = await new AxAgentEngine(factory, actions, undefined, {
+      decisionProviders: rejectFixtureStatements(['Morgan Vale is the Falcon chief financial officer.'])
+    }).execute({
       ...base,
       run: { ...base.run, executionMode: 'agent' },
       memory: { user: ['Frozen routing preference'], agent: [] },
@@ -592,16 +603,21 @@ describe('Ax agent engine context compaction', () => {
       dispatchBudget: budget
     }, { text, event, commitCompaction })
     expect(history.messages).toEqual(originals)
-    expect(commitCompaction).toHaveBeenCalledOnce()
-    expect(calls).toHaveLength(4)
-    expect(countContextTokens).toHaveBeenCalledTimes(2)
+    expect(summaries.some(input => input.chatPrompt.some(message =>
+      message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLDEST_CONTACT_CONSTRAINT:')))).toBe(true)
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries.every(delivery => delivery.historyCompacted)).toBe(true)
+    for (const delivery of deliveries) expect(synthesisReadsFromRequest(delivery.input)).toEqual([
+      expect.objectContaining({ evidenceId: 'page:1:revision:2', complete: true, readText: content })
+    ])
     expect(JSON.stringify(counted[1])).toContain('chief financial officer')
     expect(JSON.stringify(counted[0])).not.toContain('chief financial officer')
     expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_rejected')).toHaveLength(1)
     expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_accepted')).toHaveLength(1)
+    expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })])
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Morgan Vale')
     expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('chief financial officer')
-    expect(result.totalTokens).toBe(440)
+    expect(result.totalTokens).toBe(chat.mock.calls.length * 110)
     expect(budget.consumed()).toBe(result.totalTokens)
   })
   it('folds old constraints with the same model, commits before follow-on, and preserves canonical originals and the newest tail', async () => {
@@ -864,7 +880,9 @@ describe('Ax agent engine context compaction', () => {
     }
     const text = vi.fn(async () => undefined)
     const event = vi.fn(async (_type: string, _data: unknown) => {})
-    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, {
+      decisionProviders: rejectFixtureStatements(['Alpha release does not require a verified staging receipt.'])
+    }).execute(
       {
         ...engineRequest(history.messages),
         run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
@@ -887,6 +905,7 @@ describe('Ax agent engine context compaction', () => {
       { accepted: false },
       { accepted: true }
     ])
+    expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })])
     expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
     expect(validateObservation).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
   })

@@ -1,4 +1,6 @@
 import { Hash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { load } from 'cheerio'
 import { axGlobals, AxMockAIService, type AxAIServiceOptions, type AxChatRequest, type AxChatResponse, type AxGenOut, type AxResultPickerFunction } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
 import * as markdownItModule from 'markdown-it'
@@ -208,6 +210,126 @@ describe('Wiki source-bound typed synthesis', () => {
       expect(claims).toEqual([accepted.claims[0]!, accepted.claims[0]!])
       const forwarded = await program.forward(streamed, { ...input, ...encodeFixtureSources([quoted]) }, { stream: true, structuredOutputMode: mode })
       expect(forwarded.claims).toEqual(claims)
+    }
+  })
+
+  it('publishes the complete owned79 native matrix as one table with its own scope in final and streaming consumers', async () => {
+    const authored = readFileSync(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
+    const raw = authored.slice(authored.indexOf('| Field | Atlas | Boreal |'), authored.indexOf('\n\n- Additional ticket fee:'))
+      + '\n'
+    const literalStatement = `Fictional and non-operative › Pilot plans:\n\n${raw}`
+    const owned = { ...source, kind: 'table', text: raw, literalStatement }
+    const sibling = { ...owned, unitId: 'unit:sibling', literalStatement: `Other scope:\n\n${raw}` }
+    for (const mode of ['native', 'json_object'] as const) {
+      let nativeBlocks: ReadonlyMap<string, string> | undefined
+      const options: WikiSynthesisOptions = {
+        validateClaim: claim => claim.statement === literalStatement,
+        validateAnswer: (_answer, _rendered, _literals, blocks) => { nativeBlocks = blocks; return true }
+      }
+      for (const explicit of [raw, literalStatement]) {
+        const selection = answer({ claims: [{ ...answer().claims[0]!, statement: explicit }] })
+        const accepted = await generate(selection, [owned, sibling], options, mode).result
+        expect(accepted.claims).toEqual([{ ...selection.claims[0]!, statement: literalStatement }])
+        const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement]), nativeBlocks)
+        expect(rendered).toBe(`Fictional and non\\-operative › Pilot plans\\:\n\n${raw.trim()}\n\n[[cite:${owned.evidenceId}]]`)
+        const html = markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Pilot plans', href: null })))
+        expect(html.match(/<table>/gu)).toHaveLength(1)
+        expect(html.match(/<tr>/gu)).toHaveLength(6)
+        expect(html).toContain('<th>Field</th>\n<th>Atlas</th>\n<th>Boreal</th>')
+        expect(html).toContain('<td>Monthly fee</td>\n<td>USD 120</td>\n<td>USD 180</td>')
+        expect(html.match(/Fictional and non-operative/gu)).toHaveLength(1)
+        expect(html.match(/<strong>\[1\]<\/strong>/gu)).toHaveLength(1)
+        const wire = encodeWikiSynthesisAnswer(selection)
+        const guard = createWikiSynthesisStreamGuard([owned, sibling])
+        for (const character of JSON.stringify(wire)) expect(guard(character)).toBeUndefined()
+        const service = new AxMockAIService<string>({
+          features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
+          chatResponse: async () => new ReadableStream<AxChatResponse>({
+            start(controller) {
+              const body = JSON.stringify(wire)
+              controller.enqueue({ results: [{ index: 0, content: body.slice(0, -1) }] })
+              controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
+              controller.close()
+            }
+          })
+        })
+        const streamed: WikiSynthesisAnswer['claims'] = []
+        for await (const chunk of createWikiSynthesisProgram([owned, sibling], { facetCount: 2, ...options }).streamingForward(service, {
+          ...input, ...encodeFixtureSources([owned, sibling])
+        }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
+        expect(streamed).toEqual(accepted.claims)
+      }
+      for (const statement of [
+        '', raw.replace('| Atlas | Boreal |', '| Boreal | Atlas |'),
+        raw.replace('USD 120', 'USD 180'), raw.replace('| Status | Pilot only | Pilot only |\n', ''),
+        `${raw}\nAn unrelated assertion.`, sibling.literalStatement
+      ]) {
+        await expect(generate(answer({ claims: [{ ...answer().claims[0]!, statement }] }), [owned, sibling], options, mode).result).rejects.toThrow()
+      }
+    }
+  })
+
+  it('resolves native header and cell references locally without colliding labels or accepting model-supplied definitions', async () => {
+    const raw = '| Feature | [Atlas][a] |\n| --- | --- |\n| Scope | [mainland][s] |\n'
+    const literalStatement = `Fictional, non-operative:\n\n${raw}\n[a]: /atlas\n\n[s]: /mainland "Scope | only"\n`
+    const owned = { ...source, kind: 'table', text: raw, literalStatement }
+    const otherRaw = raw.replaceAll('Atlas', 'Boreal').replaceAll('mainland', 'islands')
+    const otherLiteral = `Other fictional table:\n\n${otherRaw}\n[a]: /boreal\n\n[s]: /islands\n`
+    const other = { ...source, unitId: 'unit:other-table', kind: 'table', text: otherRaw, literalStatement: otherLiteral }
+    const selection = answer({ claims: [
+      { ...answer().claims[0]!, statement: raw },
+      { ...answer().claims[0]!, unitId: other.unitId, statement: otherRaw }
+    ] })
+    for (const mode of ['native', 'json_object'] as const) {
+      let blocks: ReadonlyMap<string, string> | undefined
+      const options: WikiSynthesisOptions = {
+        validateClaim: claim => claim.statement === (claim.unitId === owned.unitId ? literalStatement : otherLiteral),
+        validateAnswer: (_answer, _rendered, _literals, nativeBlocks) => { blocks = nativeBlocks; return true }
+      }
+      const accepted = await generate(selection, [owned, other], options, mode).result
+      expect(accepted.claims.map(claim => claim.statement)).toEqual([literalStatement, otherLiteral])
+      const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement, otherLiteral]), blocks)
+      const dom = load(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Fictional source', href: '/source/fictional' }))))
+      expect(dom('table')).toHaveLength(2)
+      expect(dom('table').eq(0).find('th a').attr('href')).toBe('/atlas')
+      expect(dom('table').eq(0).find('td a').attr('href')).toBe('/mainland')
+      expect(dom('table').eq(0).find('td a').attr('title')).toBe('Scope | only')
+      expect(dom('table').eq(1).find('th a').attr('href')).toBe('/boreal')
+      expect(dom('table').eq(1).find('td a').attr('href')).toBe('/islands')
+      expect(dom('p a[href="/source/fictional"]')).toHaveLength(2)
+      expect(dom('body').text()).not.toContain('[Atlas][a]')
+      expect(rendered).not.toContain('[a]:')
+      const wire = encodeWikiSynthesisAnswer(selection)
+      const guard = createWikiSynthesisStreamGuard([owned, other])
+      for (const character of JSON.stringify(wire)) expect(guard(character)).toBeUndefined()
+      const service = new AxMockAIService<string>({
+        features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
+        chatResponse: async () => new ReadableStream<AxChatResponse>({
+          start(controller) {
+            const text = JSON.stringify(wire)
+            controller.enqueue({ results: [{ index: 0, content: text.slice(0, -1) }] })
+            controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
+            controller.close()
+          }
+        })
+      })
+      const streamed: WikiSynthesisAnswer['claims'] = []
+      for await (const chunk of createWikiSynthesisProgram([owned, other], { facetCount: 2, ...options }).streamingForward(service, {
+        ...input, ...encodeFixtureSources([owned, other])
+      }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
+      expect(streamed).toEqual(accepted.claims)
+      const streamedDom = load(markdown.render(formatAgentCitationMarkers(renderWikiSynthesisAnswer(
+        { ...accepted, claims: streamed }, new Set([literalStatement, otherLiteral]), blocks
+      ), () => ({ number: 1, label: 'Fictional source', href: '/source/fictional' }))))
+      expect(streamedDom('table').eq(0).find('th a').attr('href')).toBe('/atlas')
+      expect(streamedDom('table').eq(0).find('td a').attr('href')).toBe('/mainland')
+      expect(streamedDom('p a[href="/source/fictional"]')).toHaveLength(2)
+      for (const statement of [
+        raw.replace('mainland', 'islands'), `${raw}\n[a]: /foreign\n`, otherLiteral,
+        literalStatement.replace('/atlas', '/foreign'), literalStatement.replace('[a]: /atlas\n', ''),
+        `${literalStatement}[foreign]: /other\n`, `${literalStatement}Unasked assertion.\n`,
+        `${literalStatement}<script>injected</script>\n`, `${literalStatement}[[cite:foreign]]\n`
+      ]) await expect(generate(answer({ claims: [{ ...answer().claims[0]!, statement }] }), [owned, other], options, mode).result).rejects.toThrow()
     }
   })
 

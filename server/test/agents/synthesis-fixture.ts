@@ -61,6 +61,32 @@ export const fixtureDecisionProviders = {
   }
 } satisfies Pick<DecisionProviderRegistry, 'selectRuntime' | 'decideBatch'>
 
+// Explicit fixture adjudication for unsupported meanings that may be mechanically
+// eligible. Other fixtures retain the canned positive judge so ownership/literal
+// failures cannot pass merely because the semantic dependency rejects everything.
+export const rejectFixtureStatements = (statements: readonly string[]) => ({
+  ...fixtureDecisionProviders,
+  async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> {
+    const decision = await fixtureDecisionProviders.decideBatch(input, options)
+    const supportQuestions = Object.entries(input.questions).filter(([, question]) => Object.hasOwn(question.criteria, 'supports'))
+    if (supportQuestions.length === 0) return decision
+    const state = JSON.parse(input.state as string) as { candidate: readonly { statement: string }[] }
+    const answers = { ...decision.answers }
+    for (const [id, question] of supportQuestions) {
+      const instructions = question.instructions
+      if (typeof instructions !== 'object' || instructions === null || Array.isArray(instructions) ||
+        !('candidate_index' in instructions) ||
+        typeof instructions.candidate_index !== 'number' || !Number.isSafeInteger(instructions.candidate_index))
+        throw new Error(`Fixture support question lacks its independent candidate index: ${id}`)
+      const claim = state.candidate[instructions.candidate_index]
+      if (claim === undefined) throw new Error(`Fixture support question selects a missing candidate: ${id}`)
+      if (statements.includes(claim.statement))
+        answers[id] = { choice: 'not_supported', probabilities: { supports: 0, contradicts: 0, not_supported: 1 }, confidence: 1 }
+    }
+    return { ...decision, answers }
+  }
+})
+
 export const fullAxFixtureService = (
   chat: AxAIService['chat'],
   options: { readonly model?: string; readonly streaming?: boolean; readonly structuredOutput?: boolean } = {}

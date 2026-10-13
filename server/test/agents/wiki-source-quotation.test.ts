@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'bun:test'
+import { load } from 'cheerio'
+import * as markdownItModule from 'markdown-it'
+import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
 import { parseSourceDocument } from '../../agents/providers/source-document.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
 import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
-import type { WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
+import { validateWikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
+import { renderWikiSynthesisAnswer, type WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
 
 const fixture = (
   raw: string,
@@ -115,6 +119,112 @@ describe('complete original source quotations', () => {
     const forged = { ...source, text: altered, closure: { ...source.closure!, unit, units: [unit] } }
     expect(getLiteralSourceStatement(forged)).toBeNull()
   })
+  it('quotes an original comparison matrix with its governing condition, never a union of row bindings', () => {
+    const table = '| Feature | [Atlas][a] | Boreal |\r\n| --- | --- | --- |\r\n| Threshold | USD 500 | USD 750 |\r\n| Basis | [mainland only][m] | remote islands only |\r\n'
+    const raw = `# Fictional, non-operative policies\r\n\r\n## Only after approval\r\n\r\n${table}\r\n[a]: /atlas\r\n[m]: /mainland "Authored scope"\r\n[foreign]: /unrequested\r\n`
+    const sources = fixture(raw)
+    const native = sourceFor(sources, table)
+    const statement = `Fictional, non-operative policies › Only after approval:\n\n${table}\n[a]: /atlas\r\n\n[m]: /mainland "Authored scope"\r\n`
+    expect(native.kind).toBe('table')
+    expect(native.closure!.units).toEqual([native.closure!.unit])
+    expect(native.closure!.record).toBeNull()
+    expect(native.closure!.contexts.map(context => context.kind)).toEqual(['heading', 'heading'])
+    expect(native.closure!.links.map(link => [link.label, link.destination])).toEqual([['mainland only', '/mainland'], ['Atlas', '/atlas']])
+    expect(getLiteralSourceStatement(native)).toBe(statement)
+    expect(() => validateWikiVerificationSource(native)).not.toThrow()
+    expect(isLiteralSourceClaim(claim(native, statement), native)).toBe(true)
+    const blocks = new Map([[JSON.stringify([native.evidenceId, native.sourceRevision, native.unitId]), statement]])
+    const rendered = renderWikiSynthesisAnswer({ claims: [claim(native, statement)], unresolvedFacets: [], observations: [], recommendations: '' }, new Set([statement]), blocks)
+    const MarkdownIt = 'default' in markdownItModule ? markdownItModule.default : markdownItModule
+    const markdown = (MarkdownIt as typeof markdownItModule.default)({ html: false, breaks: true, linkify: true, typographer: false })
+    const dom = load(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Original fictional table', href: '/source/fictional' }))))
+    expect(dom('table')).toHaveLength(1)
+    expect(dom('th a').text()).toBe('Atlas')
+    expect(dom('th a').attr('href')).toBe('/atlas')
+    expect(dom('td a').text()).toBe('mainland only')
+    expect(dom('td a').attr('href')).toBe('/mainland')
+    expect(dom('td a').attr('title')).toBe('Authored scope')
+    expect(dom('p a').text()).toBe('1')
+    expect(dom('p a').attr('href')).toBe('/source/fictional')
+    expect(dom('body').text()).toContain('Fictional, non-operative policies › Only after approval:')
+    expect(dom('body').text()).not.toContain('[Atlas][a]')
+    expect(rendered).not.toContain('[foreign]')
+    for (const changed of [
+      statement.replace(' › Only after approval', ''),
+      statement.replace('Fictional, non-operative policies', 'Policies'),
+      statement.replace('USD 500 | USD 750', 'USD 750 | USD 500'),
+      statement.replace('Threshold |', 'Minimum |'),
+      statement.replace('[Atlas][a]', '[Atlas](/boreal)'),
+      statement.replace('| Basis | [mainland only][m] | remote islands only |\r\n', ''),
+      table
+    ]) expect(isLiteralSourceClaim(claim(native, changed), native)).toBe(false)
+    const row = sourceFor(sources, 'Atlas: USD 500')
+    expect(isLiteralSourceClaim(claim(row, statement), row)).toBe(false)
+    expect(isLiteralSourceClaim({ ...claim(native, statement), evidenceId: 'foreign-page' }, native)).toBe(false)
+    const missing = { ...native, closure: { ...native.closure!, links: [] } }
+    expect(getLiteralSourceStatement(missing)).toBeNull()
+    expect(() => validateWikiVerificationSource(missing)).toThrow()
+    const required = native.closure!.dependencies.find(dependency => dependency.text === '[a]: /atlas\r\n')!
+    const withoutDefinition = { ...native, closure: { ...native.closure!, dependencies: native.closure!.dependencies.filter(dependency => dependency !== required) } }
+    expect(getLiteralSourceStatement(withoutDefinition)).toBeNull()
+    for (const text of ['[a]: /other\r\n', '[x]: /atlas\r\n', '[a]: `fake`\r\n']) {
+      const changedDefinition = { ...native, closure: { ...native.closure!, dependencies: native.closure!.dependencies.map(dependency =>
+        dependency === required ? { ...dependency, text } : dependency) } }
+      expect(getLiteralSourceStatement(changedDefinition)).toBeNull()
+    }
+    for (const changed of [
+      statement.replace('[a]: /atlas', '[a]: /other'),
+      statement.replace('[a]: /atlas\r\n', ''),
+      `${statement}[foreign]: /unrequested\r\n`,
+      `${statement}Injected assertion.\r\n`,
+      `${statement}<script>bad</script>\r\n`,
+      `${statement}[[cite:foreign]]\r\n`
+    ]) expect(isLiteralSourceClaim(claim(native, changed), native)).toBe(false)
+  })
+
+  it.each([
+    'Name | Route\n--- | ---\nAda\n',
+    'Name | Route\n--- | ---\nAda | east | discarded\n',
+    'Name | Name\n--- | ---\nAda | east\n',
+    'Name | Route\n--- | ---\nAda | `hidden 999`\n',
+    'Name | Route\n--- | ---\nAda | <span data-hidden="999">east</span>\n',
+    'Name | Route\n--- | ---\nAda | ![east](/hidden-999)\n',
+    'Name | Route\n--- | ---\nAda | https://example.test/hidden-999\n',
+    'Name | Route\n--- | ---\nAda | east {.hidden}\n',
+    '[Name][missing] | Route\n--- | ---\nAda | east\n',
+    'Name | Route\n--- | ---\n[Guide][missing] | east\n\n[foreign]: /manual\n',
+    '<table><tr><th>Name</th><th>Route</th></tr><tr><td>Ada</td><td>east</td></tr></table>\n'
+  ])('does not quote parser-repaired or masked tables as complete original bodies: %s', raw => {
+    expect(fixture(raw).some(source => source.kind === 'table')).toBe(false)
+  })
+
+  it('rejects truncated table tails and unresolved original reference dependencies', () => {
+    const earlier = 'Name | Route\n--- | ---\nAda | east\n'
+    const sources = fixture(`${earlier}\nAfterward.\n\nName | Route\n--- | ---\nBea | west`, {
+      representation: 'recent-excerpt', truncated: true
+    })
+    expect(getLiteralSourceStatement(sourceFor(sources, earlier))).toBe(earlier)
+    expect(sources.some(source => source.kind === 'table' && source.text.includes('Bea'))).toBe(false)
+    const reference = fixture('Name | Route\n--- | ---\n[Guide][g] | east\n\n[g]: /manual', {
+      representation: 'recent-excerpt', truncated: true
+    })
+    expect(reference.some(source => source.kind === 'table')).toBe(false)
+  })
+
+  it('requires native table text and its own exact body dependency to agree before literal admission', () => {
+    const table = 'Name | Route\n--- | ---\nAda | east\nBea | west\n'
+    const source = sourceFor(fixture(table), table)
+    const changed = table.replace('Ada | east', 'Ada | west')
+    const unit = { ...source.closure!.unit, normalizedText: changed }
+    const forged = { ...source, text: changed, closure: { ...source.closure!, unit, units: [unit] } }
+    expect(getLiteralSourceStatement(forged)).toBeNull()
+    expect(() => validateWikiVerificationSource(forged)).toThrow()
+    const subset = { ...source, text: 'Name | Route\n--- | ---\nAda | east\n' }
+    expect(getLiteralSourceStatement(subset)).toBeNull()
+    expect(() => validateWikiVerificationSource(subset)).toThrow()
+    const foreign = sourceFor(fixture('Name | Route\n--- | ---\nCal | north\n'), 'Name | Route\n--- | ---\nCal | north\n')
+    expect(getLiteralSourceStatement({ ...source, closure: { ...source.closure!, units: foreign.closure!.units } })).toBeNull()
+  })
 
   it('keeps derived assertions within their selected original scope and governing qualifications', () => {
     const body = 'These recipes are authored. They remain untested. Total times are estimates.'
@@ -143,6 +253,21 @@ describe('complete original source quotations', () => {
       expect(isLiteralSourceClaim({ ...claim(source, expected), sourceRevision: '4' }, source)).toBe(false)
     }
     expect(isLiteralSourceClaim(claim(sourceFor(sources, 'Value: 4'), expected), sourceFor(sources, 'Value: 4'))).toBe(false)
+  })
+
+  it('quotes an explicitly complete list record once under its inherited condition, never a sibling record', () => {
+    const sources = fixture('# Fictional non-operative policies\n\n## Only after approval\n\n- Free delivery threshold: USD 500; Scope: mainland orders only.\n- Free delivery threshold: USD 750; Scope: remote-island orders only.\n')
+    const source = sourceFor(sources, 'Free delivery threshold: USD 500')
+    const statement = 'Fictional non-operative policies › Only after approval: Free delivery threshold: USD 500; Scope: mainland orders only.'
+    expect(getLiteralSourceStatement(source)).toBe(statement)
+    expect(isLiteralSourceClaim(claim(source, statement), source)).toBe(true)
+    for (const changed of [
+      statement.replace(' › Only after approval', ''),
+      statement.replace('Scope: mainland orders only.', 'Scope: remote-island orders only.'),
+      statement.replace('USD 500', 'USD 750'),
+      statement.replace('; Scope: mainland orders only.', '')
+    ]) expect(isLiteralSourceClaim(claim(source, changed), source)).toBe(false)
+    expect(isLiteralSourceClaim(claim(sourceFor(sources, 'Free delivery threshold: USD 750'), statement), sourceFor(sources, 'Free delivery threshold: USD 750'))).toBe(false)
   })
 
 

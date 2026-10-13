@@ -43,7 +43,7 @@ export interface SourceRecord {
 }
 export interface SourceUnit {
   readonly id: string
-  readonly kind: 'paragraph' | 'list' | 'list-item' | 'table-row' | 'heading' | 'summary' | 'code' | 'opaque'
+  readonly kind: 'paragraph' | 'list' | 'list-item' | 'table' | 'table-row' | 'heading' | 'summary' | 'code' | 'opaque'
   readonly sourceSpans: readonly SourceSpan[]
   readonly normalizedText: string
   readonly contextIds: readonly string[]
@@ -612,6 +612,7 @@ export const parseSourceDocument = (
   const contextIndex = new Map<string, { context: SourceContext; order: number }>()
   const records: MutableRecord[] = []
   const lists: Array<{ block: Block; contextIds: string[]; start: number; end: number }> = []
+  const tables: Array<{ block: Block; rows: Block[]; contextIds: string[]; start: number; end: number }> = []
   const headings: Array<{ level: number; context: SourceContext }> = []
   let headingFloor = 0
   let scope: string[] = []
@@ -797,6 +798,8 @@ export const parseSourceDocument = (
         })
         const previous = [...scope]
         scope.push(headerContext.id)
+        const candidate = { block, rows, contextIds: contextIds().filter(key => key !== headerContext.id), start: units.length, end: 0 }
+        tables.push(candidate)
         for (const row of rows.slice(1)) {
           const values = row.children.map(cell => whitespace(visible(cell)))
           const own = record(row, 'table-row')
@@ -816,6 +819,7 @@ export const parseSourceDocument = (
           } else unit({ ...row, text: '', inline: undefined }, 'opaque', own)
         }
         scope = previous
+        candidate.end = units.length
       } else visit(block.children, owner)
     }
   }
@@ -833,8 +837,14 @@ export const parseSourceDocument = (
       value.complete = false
     }
   }
+  const displayedEmailLink = (tokens: readonly Token[], index: number): boolean => {
+    const label = tokens[index + 1]
+    return label?.type === 'text' && tokens[index + 2]?.type === 'link_close' &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(label.content) &&
+      tokens[index]!.attrGet('href') === `mailto:${label.content}`
+  }
   // Containers are issued only after all original identities, including fields,
-  // so adding a selectable list never changes an existing binding or owner.
+  // so adding a selectable container never changes an existing binding or owner.
   const ownedList = (block: Block, parent: SourceSpan = block.span): boolean => {
     if (!block.complete || block.span.start < parent.start || block.span.end > parent.end) return false
     if (block.type === 'bullet_list' || block.type === 'ordered_list') {
@@ -842,9 +852,9 @@ export const parseSourceDocument = (
     } else if (block.type !== 'list_item' && block.type !== 'paragraph') return false
     // Exact raw quotations must not expose text that the visible projection
     // masks: HTML attributes/hidden content, code, images or bare destinations.
-    if (block.syntax === 'html' || block.inline?.some(token =>
+    if (block.syntax === 'html' || block.inline?.some((token, index, tokens) =>
       token.type === 'html_inline' || token.type === 'code_inline' || token.type === 'image' ||
-      token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') ||
+      token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') && !displayedEmailLink(tokens, index) ||
       token.type === 'text' && token.content.search(presentationAttributes) !== -1
     )) return false
     let end = block.span.start
@@ -853,6 +863,43 @@ export const parseSourceDocument = (
       end = child.span.end
     }
     return true
+  }
+  const ownedTable = (block: Block, rows: readonly Block[]): boolean => {
+    const visibleBlock = (item: Block): boolean =>
+      item.complete && item.syntax !== 'html' &&
+      item.span.start >= block.span.start && item.span.end <= block.span.end &&
+      !item.inline?.some((token, index, tokens) =>
+        token.type === 'html_inline' || token.type === 'code_inline' || token.type === 'image' ||
+        token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') && !displayedEmailLink(tokens, index) ||
+        token.type === 'text' && (token.content.search(presentationAttributes) !== -1 || /\[[^\]\n]+\]\[[^\]\n]*\]/u.test(token.content))
+      ) && item.children.every(visibleBlock)
+    if (!visibleBlock(block) || rows.length < 2) return false
+    // Markdown parsers pad missing cells and discard extra cells. The authored
+    // physical rows, not that repaired projection, must form a complete matrix.
+    const cells = (line: string): string[] => {
+      const parts: string[] = []
+      let start = 0
+      let escapes = 0
+      for (let index = 0; index < line.length; index++) {
+        const char = line[index]!
+        if (char === '|' && escapes % 2 === 0) {
+          parts.push(line.slice(start, index).trim())
+          start = index + 1
+        }
+        escapes = char === '\\' ? escapes + 1 : 0
+      }
+      parts.push(line.slice(start).trim())
+      if (parts[0] === '') parts.shift()
+      if (parts.at(-1) === '') parts.pop()
+      return parts
+    }
+    const lines = source.slice(block.span.start, block.span.end).replace(/\r?\n$/u, '').split(/\r?\n/u)
+    if (lines.length !== rows.length + 1) return false
+    const header = cells(lines[0]!)
+    const separator = cells(lines[1]!)
+    return header.length === rows[0]!.children.length && header.every(Boolean) &&
+      separator.length === header.length && separator.every(cell => /^:?-+:?$/u.test(cell)) &&
+      lines.slice(2).every(line => cells(line).length === header.length)
   }
   const selectedSections = sections.map(section => ({ ...section, endOffset: source.length, unitIds: [] as string[] }))
   const openSections: number[] = []
@@ -910,6 +957,46 @@ export const parseSourceDocument = (
       contextIds: parentContextIds,
       recordId: null,
       structuralLabels: [...labels],
+      links,
+      complete: true
+    })
+    for (const section of selectedSections) {
+      if (block.span.start >= section.startOffset && block.span.end <= section.endOffset) section.unitIds.push(unitId)
+    }
+  }
+  for (const { block, rows, contextIds: parentContextIds, start, end } of tables) {
+    if (!ownedTable(block, rows) || start === end ||
+      parentContextIds.some(key => !contextIndex.get(key)!.context.complete) ||
+      referenceDefinitionSpans.some(span => span.start >= block.span.start && span.end <= block.span.end) ||
+      htmlStarts.some(offset => offset >= block.span.start && offset < block.span.end)) continue
+    let complete = true
+    for (let index = start; index < end; index++) {
+      const member = units[index]!
+      if (!member.complete || member.recordId === null || !recordsById.get(member.recordId)?.complete) {
+        complete = false
+        break
+      }
+    }
+    if (!complete) continue
+    const unitId = id('unit', block.span)
+    const links = units.slice(start, end).flatMap(member => member.links.map(link => ({ ...link, unitId })))
+    // Header links belong to the native authored table too, even though column
+    // labels are governing context for the independently selectable row fields.
+    for (const cell of rows[0]!.children) {
+      for (const link of cell.inline ? projection(cell.inline).links : []) {
+        if (!link.dependencySpans.every(bounded)) complete = false
+        links.push({ ...link, unitId, sourceSpans: [cell.span] })
+      }
+    }
+    if (!complete) continue
+    units.push({
+      id: unitId,
+      kind: 'table',
+      sourceSpans: [block.span],
+      normalizedText: source.slice(block.span.start, block.span.end),
+      contextIds: parentContextIds,
+      recordId: null,
+      structuralLabels: [...new Set(links.filter(link => link.kind === 'link').map(link => link.label))],
       links,
       complete: true
     })

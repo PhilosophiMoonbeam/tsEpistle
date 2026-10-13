@@ -16,7 +16,7 @@ import type {
 } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, rejectFixtureStatements, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const visibleWikiText = (content: string): string => {
@@ -787,7 +787,7 @@ describe('Ax orchestration stages', () => {
     expect(response.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
   })
   it('settles rejected tool-free synthesis after a read without another action or an unverified publication', async () => {
-    const budget = new PublicationBudgetLedger(60_000)
+    const budget = new PublicationBudgetLedger(120_000)
     const unsupported = 'The second page confirms an unsupported conclusion.'
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => ({
       results: [
@@ -822,7 +822,9 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
+      decisionProviders: rejectFixtureStatements([unsupported])
+    }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTokens: budget.maximumTokens, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 },
@@ -836,13 +838,14 @@ describe('Ax orchestration stages', () => {
     expect(result).toMatchObject({ totalTokens: 4, costMicros: 6, executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(result.citations).toBeUndefined()
     expect(budget.tools).toBe(1)
-    expect(budget.reconciled).toHaveLength(2)
+    expect(budget.reconciled).toHaveLength(3)
     expect(budget.consumedTokens).toBe(4)
     expect(budget.consumedCostMicros).toBe(6)
     expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
     expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
     expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain(unsupported)
     expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_rejected', turn: 2, totalTokens: 2 })])
+    expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })])
   })
 
 
@@ -3031,20 +3034,26 @@ describe('bounded root publication accounting', () => {
         })
       }
       const text = vi.fn(async () => {})
-      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      const event = vi.fn(async (_type: string, _data: unknown) => {})
+      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
+        decisionProviders: rejectFixtureStatements(['Alpha does not require review.'])
+      }).execute(
         {
           ...baseRequest(new AbortController().signal),
           messages: [{ role: 'user', content: 'What does Alpha require?' }],
           limits: { maxTokens: budget.maximumTokens, maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 },
           dispatchBudget: budget
         },
-        { text, event: async () => {} }
+        { text, event }
       )
       const expectedTurns = outcome === 'first-accepted' || outcome === 'length' ? 2 : 3
       expect(attempts).toBe(expectedTurns - 1)
       expect(invoke).toHaveBeenCalledOnce()
       expect(budget.tools).toBe(1)
       expect(budget.dispatched).toHaveLength(expectedTurns - 1)
+      const semanticChecks = outcome === 'repaired' ? 1 : outcome === 'exhausted' ? 2 : 0
+      expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'purpose' in data && data.purpose === 'verification')).toHaveLength(semanticChecks)
+      expect(budget.reconciled).toHaveLength(expectedTurns + semanticChecks)
       expect(budget.consumedTokens).toBe(expectedTurns * 5)
       expect(budget.consumedCostMicros).toBe(expectedTurns * 7)
       expect(result.totalTokens).toBe(budget.consumedTokens)

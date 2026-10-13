@@ -250,6 +250,17 @@ describe('source document explicit ownership', () => {
     expect(slices(document, primary.sourceSpans)).toEqual([source.split('\n')[2]! + '\n'])
     const header = document.contexts.find(context => context.kind === 'table-header')!
     expect(slices(document, header.sourceSpans)).toEqual([source.split('\n').slice(0, 2).join('\n') + '\n'])
+    const container = document.units.find(unit => unit.kind === 'table')!
+    expect(container.normalizedText).toBe(source)
+    expect(slices(document, container.sourceSpans)).toEqual([source])
+    expect(container.recordId).toBeNull()
+    expect(container.contextIds).toEqual([])
+    expect(container.links.map(link => [link.label, link.destination, link.unitId])).toEqual([
+      ['desk', '/east', container.id],
+      ['desk', '/west', container.id]
+    ])
+    expect(record.unitIds).not.toContain(container.id)
+    expect(document.units.indexOf(container)).toBeGreaterThan(document.units.indexOf(secondary))
   })
 
   it('retains bare email identity values without borrowing their destination vocabulary', () => {
