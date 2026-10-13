@@ -1306,6 +1306,50 @@ describe('Wiki synthesis complete registered read transport', () => {
     }
   })
 
+  it('previews medium selections through original native spans without clipping authored reads or Unicode', () => {
+    const text = 'Role: ' + 'a'.repeat(121) + '🥣 e\u0301 & safely chilled. '.repeat(12)
+    const raw = `  <p>${text.replaceAll('&', '&amp;')}</p>\r\nUnrequested tail: exact.\r\n`
+    const spans = [{ start: 2, end: raw.indexOf('</p>') + 4 }]
+    const selected = { ...root, text, literalStatement: text, sourceSpans: spans }
+    const delivered = request([selected], [{ ...read, source: raw, representation: 'html' }])
+    expect(synthesisSourcesFromRequest(delivered)[0]!.sourceRef).toBe(wikiSynthesisSourceRef(selected))
+    expect(synthesisSourcesFromRequest(delivered)[0]!.readText).toBe(raw)
+    const unit = (JSON.parse(encodeWikiSynthesisSources([selected], [{ ...read, source: raw, representation: 'html' }]).sourceReferences) as WikiSynthesisReferenceIndex).units[wikiSynthesisSourceRef(selected)]!
+    expect(unit.preview).toBe(true)
+    expect(text.startsWith(unit.text)).toBe(true)
+    expect(unit.text).not.toMatch(/[\uD800-\uDBFF]$/u)
+    expect(unit.rawSpans).toEqual(spans)
+    const deliveredRaw = synthesisReadsFromRequest(delivered)[0]!.readText
+    expect(deliveredRaw).toBe(raw)
+    expect(deliveredRaw.slice(spans[0]!.start, spans[0]!.end)).toBe(raw.slice(2, raw.indexOf('</p>') + 4))
+    expect(selected.text).toBe(text)
+    expect(selected.literalStatement).toBe(text)
+    const exact = { ...root, text, literalStatement: text }
+    const exactIndex = JSON.parse(encodeWikiSynthesisSources([exact], [{ ...read, source: text }]).sourceReferences) as WikiSynthesisReferenceIndex
+    expect(exactIndex.units[wikiSynthesisSourceRef(exact)]).toMatchObject({ preview: true, rawSpans: [{ start: 0, end: text.length }] })
+  })
+
+  it('keeps medium selections inline when original spans are unavailable or unsafe', () => {
+    const text = 'a'.repeat(127) + '🥣 e\u0301 & safely chilled. '.repeat(12)
+    const html = `<p>${text.replaceAll('&', '&amp;')}</p>`
+    const selected = { ...root, text, literalStatement: text }
+    const cases = [
+      { selected, raw: html },
+      { selected, raw: `${text}\n${text}` },
+      ...[[], [{ start: 0, end: text.length + 1 }], [{ start: 0, end: 128 }]]
+        .map(sourceSpans => ({ selected: { ...selected, sourceSpans }, raw: text }))
+    ]
+    for (const entry of cases) {
+      const reads = [{ ...read, source: entry.raw }]
+      const index = JSON.parse(encodeWikiSynthesisSources([entry.selected], reads).sourceReferences) as WikiSynthesisReferenceIndex
+      const unit = index.units[wikiSynthesisSourceRef(entry.selected)]!
+      expect(unit.text).toBe(text)
+      expect(unit.preview).toBeUndefined()
+      expect(unit.rawSpans).toBeUndefined()
+      expect(synthesisReadsFromRequest(request([entry.selected], reads))[0]!.readText).toBe(entry.raw)
+    }
+  })
+
   it('uses declared original native spans for normalized long text and never splits Unicode previews or reconstructs raw content', async () => {
     const text = 'a'.repeat(255) + '🥣 e\u0301 & safely chilled. '.repeat(80)
     const raw = `  <p>${text.replaceAll('&', '&amp;')}</p>\r\nUnrequested tail: exact.\r\n`
