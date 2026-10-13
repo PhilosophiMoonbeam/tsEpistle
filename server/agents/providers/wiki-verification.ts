@@ -246,6 +246,7 @@ const narrationCriteria = {
 }
 const verificationPolicy = `# Goal
 Judge only support for the specified nonliteral assertion from its bound original source.
+Confidence concerns document support for the assertion as written, not the author's real-world reliability. A faithful assertion explicitly retaining fictional/authored/untested status can be strongly supported by its source; do not discount it solely because the source is fictional or untested. An assertion that instead portrays such content as an operative fact or guarantee remains unsupported.
 # Return Format
 Select supports, contradicts or not_supported independently for each assertion.
 # Warnings
