@@ -695,9 +695,11 @@ describe('Ax agent engine', () => {
     ['hazardous record', 'Hazardous goods: unavailable through standard delivery', 'In this fictional, non-operative benchmark, hazardous goods are excluded from standard delivery and must not inherit the ordinary lead time.'],
     ['labeled hazardous fields', 'Hazardous goods: unavailable through standard delivery', 'In this fictional, non-operative benchmark, Hazardous goods: excluded from standard delivery; Requirement: ordinary lead times must not be applied to hazardous goods.'],
     ['complete shipping list', 'Hazardous goods: unavailable through standard delivery', 'In this fictional, non-operative benchmark, hazardous goods are excluded from standard delivery, while dispatch triggers tracking emails; a created label does not establish carrier pickup.'],
+    ['complete shipping list numeric summary', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only and remote islands require a separate quote; free-delivery threshold is USD 500 and below-threshold delivery fee is USD 12 for mainland orders only; order cutoff is 14:00 local time and orders accepted after the cutoff enter processing on the next working day; dispatch triggers tracking emails and label creation does not prove carrier collection; hazardous goods are excluded from standard delivery and must not inherit the ordinary lead time.'],
     ['tracking record', 'Tracking notification: emailed after dispatch', 'In this fictional, non-operative benchmark, dispatch triggers the tracking email; creating a label is not evidence of carrier pickup.'],
     ['role record', 'Role: account representative', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison.'],
-    ['paragraph assertion', 'Response targets measure the first human response during supported hours, not resolution time.', 'In this fictional, non-operative benchmark, response targets concern the initial human reply in supported hours rather than resolving the issue.']
+    ['paragraph assertion', 'Response targets measure the first human response during supported hours, not resolution time.', 'In this fictional, non-operative benchmark, response targets concern the initial human reply in supported hours rather than resolving the issue.'],
+    ['complete pilot paragraph', 'Both plans are fictional pilot offers for one organization. Monthly fees exclude tax. Ticket allowances reset monthly and do not roll over. Response targets measure the first human response during supported hours, not resolution time.', 'In this fictional, non-operative benchmark, both pilot plans cover one organization, with monthly fees excluding tax and ticket allowances resetting monthly without rollover; response targets concern the initial human reply during supported hours rather than resolution time.']
   ] as const)('admits a concise owned79 %s to independent semantic proof without whole quoting', async (_case, sourceText, statement) => {
     const content = await readFile(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
     for (const verdict of ['supports', 'not_supported', 'uncertain probability', 'uncertain confidence', 'missing', 'unavailable'] as const) {
@@ -712,11 +714,27 @@ describe('Ax agent engine', () => {
         const source = synthesisSourcesFromRequest(input).find(candidate =>
           candidate.evidenceId === 'page:79:revision:3' && candidate.complete &&
           originalSynthesisSelectionText(candidate).includes(sourceText) &&
-          synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') === (_case === 'complete shipping list')
+          synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') === _case.startsWith('complete shipping list')
         )!
         expect(source).toBeDefined()
         selectedRef = source.sourceRef
         selectedText = originalSynthesisSelectionText(source)
+        if (_case === 'complete pilot paragraph') {
+          const original = parseSourceDocument(content, { representation: 'markdown', truncated: false }).units.find(unit =>
+            unit.kind === 'paragraph' && unit.normalizedText === sourceText
+          )!
+          expect(source.sourceRef).toBe(wikiSynthesisSourceRef({
+            evidenceId: 'page:79:revision:3', sourceRevision: '3', unitId: original.id
+          }))
+          for (const [index, text] of sourceText.split(/(?<=[.!?])\s+/u).entries()) {
+            expect(synthesisSourcesFromRequest(input)).toContainEqual(expect.objectContaining({
+              text,
+              sourceRef: wikiSynthesisSourceRef({
+                evidenceId: 'page:79:revision:3', sourceRevision: '3', unitId: `${original.id}:assertion:${index}`
+              })
+            }))
+          }
+        }
         return synthesisFixtureAnswer(input, { claims: [{ ...source, statement }] })
       }
       const decisionProviders = {
@@ -736,7 +754,13 @@ describe('Ax agent engine', () => {
           expect(source.complete).toBe(true)
           expect(source.text).toContain(sourceText)
           expect(source.text).toBe(selectedText)
-          if (_case === 'complete shipping list') expect(source.closure?.unit.kind).toBe('list')
+          if (_case.startsWith('complete shipping list')) expect(source.closure?.unit.kind).toBe('list')
+          if (_case === 'complete pilot paragraph') {
+            expect(source.unitId).toBe(source.closure?.unit.id)
+            expect(source.closure?.unit.sourceSpans).toEqual([{ start: 1480, end: 1715 }])
+            expect(source.closure?.units).toEqual([source.closure?.unit])
+            expect(source.text).toBe(source.closure?.unit.normalizedText)
+          }
           expect(source.closure?.unit.complete).toBe(true)
           for (const dependency of source.closure!.dependencies)
             expect(dependency.text).toBe(content.slice(dependency.span.start, dependency.span.end))
@@ -785,6 +809,59 @@ describe('Ax agent engine', () => {
       }
       expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
     }
+  })
+
+  it.each([
+    ['atomic neighboring pilot sentences', 'paragraph', 'In this fictional, non-operative benchmark, both plans cover one organization. Monthly fees exclude tax. Ticket allowances reset monthly and do not roll over.'],
+    ['inter-record numeric swap', 'list', 'In this fictional, non-operative benchmark, standard stocked-item lead time is USD 500 for in-stock mainland orders only; free-delivery threshold is 3 working days for mainland orders only.'],
+    ['same-record numeric swap', 'list', 'In this fictional, non-operative benchmark, free-delivery threshold is USD 12 and below-threshold delivery fee is USD 500 for mainland orders only.'],
+    ['labeled numeric swap', 'list', 'In this fictional, non-operative benchmark, Free-delivery threshold: USD 12; Below-threshold delivery fee: USD 500; Scope: mainland orders only.'],
+    ['numeric reassignment after true clause', 'list', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only; order cutoff is USD 500.'],
+    ['unanchored numeric continuation', 'list', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only; it is USD 500 for mainland orders only.']
+  ] as const)('rejects owned79 %s before maximally positive semantic approval', async (_case, kind, statement) => {
+    const page = questionReadPage(79, '3', 'Meridian dense QA policies — fictional and non-operative', 'owned79', 'Shipping', 'shipping', '')
+    page.content = await readFile(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
+    page.citationSections = []
+    const supportRequests: DecisionBatchRequest[] = []
+    const answer = (input: Readonly<AxChatRequest>) => {
+      const source = synthesisSourcesFromRequest(input).find(candidate =>
+        candidate.evidenceId === 'page:79:revision:3' && candidate.complete &&
+        (kind === 'paragraph'
+          ? candidate.text === 'Both plans are fictional pilot offers for one organization.'
+          : synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') &&
+            originalSynthesisSelectionText(candidate).includes('Standard stocked-item lead time: 3 working days'))
+      )!
+      expect(source).toBeDefined()
+      return synthesisFixtureAnswer(input, { claims: [{ ...source, statement }] })
+    }
+    const decisionProviders = {
+      ...fixtureDecisionProviders,
+      async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> {
+        const decision = await fixtureDecisionProviders.decideBatch(input, options)
+        const supportIds = Object.entries(input.questions).filter(([, question]) => Object.hasOwn(question.criteria, 'supports')).map(([id]) => id)
+        if (supportIds.length === 0) return decision
+        supportRequests.push(input)
+        const answers = { ...decision.answers }
+        for (const id of supportIds) answers[id] = {
+          choice: 'supports', probabilities: { supports: 1, contradicts: 0, not_supported: 0 }, confidence: 1
+        }
+        return { ...decision, answers }
+      }
+    }
+    const fixture = questionFixture('native', [
+      { calls: [
+        { id: 'protected-summary-read', name: 'pages.get', arguments: { id: 79 } },
+        { id: 'protected-summary-finish', name: 'wiki_finish_collection', arguments: {} }
+      ] },
+      { answer }, { answer }
+    ], () => page, [], {}, {}, decisionProviders)
+    const result = await fixture.execute('Briefly summarize the requested original policy without unrelated fields.')
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).not.toContain(statement)
+    expect(result.citations ?? []).toEqual([])
+    expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
+    expect(supportRequests).toHaveLength(0)
+    expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
   })
 
   it('publishes an explicitly complete owned unavailable-fact record with its governing status without a paid semantic retry', async () => {
@@ -1734,6 +1811,65 @@ describe('Ax agent engine', () => {
   const typedFixtureReceipt = (content: string): AxChatResponse => ({
     results: [{ index: 0, content }],
     modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
+  })
+
+  it.each(['paragraph', 'list-item'] as const)('selects only the genuine complete multi-sentence %s while retaining every atomic ref', async kind => {
+    const sentences = ['The deployment ships 20 cases.', 'Release requires an audit.', 'Elapsed times are estimates, not guarantees.']
+    const physical = sentences.join(' ')
+    const content = `# Deployment\n\n## Cases after audit\n\n${kind === 'list-item' ? '- ' : ''}${physical}\n\nThe warehouse holds 90 pallets.`
+    const parsed = parseSourceDocument(content, { representation: 'markdown', truncated: false })
+    const original = parsed.units.find(unit => unit.kind === kind && unit.normalizedText === physical)!
+    expect(original).toBeDefined()
+    const statement = 'The deployment ships 20 cases after audit, with elapsed times stated as estimates rather than guarantees.'
+    let supports = 0
+    const decisionProviders = {
+      ...fixtureDecisionProviders,
+      async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> {
+        const decision = await fixtureDecisionProviders.decideBatch(input, options)
+        const supportIds = Object.entries(input.questions).filter(([, question]) => Object.hasOwn(question.criteria, 'supports')).map(([id]) => id)
+        if (supportIds.length === 0) return decision
+        supports++
+        expect(fixture.text.mock.calls).toHaveLength(0)
+        const state = JSON.parse(input.state as string)
+        const sources = decodeWikiVerificationSources(state.sources, state.readTexts)
+        expect(sources).toEqual([expect.objectContaining({ unitId: original.id, text: physical, kind })])
+        expect(sources[0]!.closure?.unit).toEqual(original)
+        expect(sources[0]!.closure?.units).toEqual([original])
+        expect(sources[0]!.closure?.dependencies.some(dependency => dependency.text.includes('90 pallets'))).toBe(false)
+        const answers = { ...decision.answers }
+        for (const id of supportIds) answers[id] = {
+          choice: 'supports', probabilities: { supports: 1, contradicts: 0, not_supported: 0 }, confidence: 1
+        }
+        return { ...decision, answers }
+      }
+    }
+    const fixture = typedRootFixture(input => {
+      const sources = synthesisSourcesFromRequest(input)
+      for (const [index, text] of sentences.entries()) {
+        expect(sources).toContainEqual(expect.objectContaining({
+          text, sourceRef: wikiSynthesisSourceRef({
+            evidenceId: 'page:42:revision:1', sourceRevision: '1', unitId: `${original.id}:assertion:${index}`
+          })
+        }))
+      }
+      const source = sources.find(candidate => candidate.sourceRef === wikiSynthesisSourceRef({
+        evidenceId: 'page:42:revision:1', sourceRevision: '1', unitId: original.id
+      }))!
+      expect(source).toBeDefined()
+      expect(source.text).toBe(physical)
+      return typedFixtureReceipt(synthesisFixtureAnswer(input, { claims: [{ ...source, statement }] }))
+    }, false, undefined, {
+      title: 'Deployment', content,
+      request: 'Summarize deployment quantity, audit requirement and elapsed-time qualification without warehouse details.'
+    }, decisionProviders)
+    const result = await fixture.execute()
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).toContain(statement)
+    expect(published).not.toContain('90 pallets')
+    expect(result.executionLimit).toBeUndefined()
+    expect(supports).toBe(1)
+    expect(fixture.attempts).toBe(1)
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1'])
   })
   it.each(['explicit requested assertions', 'exact admitted assertion', 'borrowed native siblings'] as const)(
     'retains selected original assertion scope for %s', async mode => {
@@ -3763,6 +3899,7 @@ describe('Ax agent engine', () => {
       [directory, 'Manufacturer contacts are maintained in the directory.', 'The directory maintains manufacturer contacts.'],
       [acme, 'Indiana orders route through the "Midwest" contact.', 'Acme Corporate Office: Indiana orders route through the "Midwest" contact.']
     ] as const
+    const nativeUnitIds = parseSourceDocument(page.content, { representation: 'markdown', truncated: false }).units.map(unit => unit.id)
     const fixture = questionFixture('native', [
       { calls: [{ id: 'read-page-composition', name: 'pages.get', arguments: { id: 42 } }] },
       { answer: input => synthesisFixtureAnswer(input, { claims: [
@@ -3777,7 +3914,8 @@ describe('Ax agent engine', () => {
         return synthesisFixtureAnswer(input, {
           claims: authored.map(([evidenceId, text, statement]) => {
             const owners = sources.filter(source => source.evidenceId === evidenceId && source.sourceRevision === '1' &&
-              source.complete && source.text.includes(text) && !synthesisSourceMatchesMarkdownUnitKind(source, 'list'))
+              source.complete && source.text.includes(text) && !synthesisSourceMatchesMarkdownUnitKind(source, 'list') &&
+              !nativeUnitIds.some(unitId => source.sourceRef === wikiSynthesisSourceRef({ evidenceId, sourceRevision: '1', unitId })))
             if (owners.length !== 1) throw new Error(`Expected one original summary owner for ${evidenceId}: ${text}`)
             return { ...owners[0]!, statement }
           })
