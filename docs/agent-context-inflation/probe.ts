@@ -32,7 +32,7 @@ const result:any={sourceUtf8Bytes:bytes(page.content),sourceCharacters:page.cont
 async function capture(label:string,evidence:Map<any,any>){
  const {sources,sourceReads}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]})
  const wire=encodeWikiSynthesisSources(sources,sourceReads)
- type Reference={scope:number;text:string;quotation?:true;title?:true;aliases?:Record<string,string>;preview?:true;rawSpans?:{start:number;end:number}[]}
+ type Reference={scope:number;text:string;title?:true;aliases?:Record<string,string>;preview?:true;rawSpans?:{start:number;end:number}[]}
  const index:{scopes:Record<string,{readRef:string;evidenceId:string}>;units:Record<string,Reference>}=JSON.parse(wire.sourceReferences)
  const references=Object.values(index.units)
  const physicalReads=new Map<string,string>()

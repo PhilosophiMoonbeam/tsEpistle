@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { parseSourceDocument } from '../../agents/providers/source-document.ts'
-import { getLiteralSourcePresentation, getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
+import { getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
 import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
 import type { WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
 
@@ -48,9 +48,6 @@ describe('complete original source quotations', () => {
     const container = sourceFor(sources, authored)
     const statement = `${heading}: ${authored}`
     expect(getLiteralSourceStatement(container)).toBe(statement)
-    expect(getLiteralSourcePresentation(container)).toMatchObject({
-      text: authored, contexts: [heading], kind: 'quotation', sourceOrder: raw.indexOf(authored)
-    })
     expect(isLiteralSourceClaim(claim(container, statement), container)).toBe(true)
     expect(getLiteralSourceStatement(sourceFor(sources, qualification))).toBe(`${heading}: ${qualification}`)
     const item = sourceFor(sources, first)
@@ -119,16 +116,17 @@ describe('complete original source quotations', () => {
     expect(getLiteralSourceStatement(forged)).toBeNull()
   })
 
-  it('preserves sibling status and prerequisites under each original derived assertion binding', () => {
+  it('keeps derived assertions within their selected original scope and governing qualifications', () => {
     const body = 'These recipes are authored. They remain untested. Total times are estimates.'
     const source = sourceFor(fixture(`# Recipe Collection\n\n## Only after safety review\n\n${body}\n`), body)
-    const expected = `Recipe Collection › Only after safety review: ${body}`
+    const expanded = `Recipe Collection › Only after safety review: ${body}`
     for (const [index, text] of ['These recipes are authored.', 'They remain untested.', 'Total times are estimates.'].entries()) {
       const derived = { ...source, text, unitId: `${source.closure!.unit.id}:assertion:${index}` }
+      const expected = `Recipe Collection › Only after safety review: ${text}`
       expect(getLiteralSourceStatement(derived)).toBe(expected)
-      expect(isLiteralSourceClaim(claim(derived, expected), derived)).toBe(true)
+      expect(isLiteralSourceClaim(claim(derived, expanded), derived)).toBe(false)
       expect(isLiteralSourceClaim(claim(derived, text), derived)).toBe(false)
-      expect(isLiteralSourceClaim(claim(derived, expected.replace('untested', 'tested')), derived)).toBe(false)
+      expect(isLiteralSourceClaim(claim(derived, expected.replace('safety review', 'approval')), derived)).toBe(false)
       expect(isLiteralSourceClaim({ ...claim(derived, expected), evidenceId: 'foreign' }, derived)).toBe(false)
     }
   })
@@ -139,11 +137,6 @@ describe('complete original source quotations', () => {
     for (const text of ['Detail: Elapsed time', 'Value: 30 minutes', 'Condition: Only after approval']) {
       const source = sourceFor(sources, text)
       expect(getLiteralSourceStatement(source)).toBe(expected)
-      expect(getLiteralSourcePresentation(source)).toMatchObject({
-        text: 'Detail: Elapsed time | Value: 30 minutes | Condition: Only after approval',
-        contexts: ['Catalog'],
-        kind: 'quotation'
-      })
       expect(isLiteralSourceClaim(claim(source, expected), source)).toBe(true)
       for (const changed of [expected.replace('30 minutes', '50 minutes'), expected.replace(' | Condition: Only after approval', ''), text])
         expect(isLiteralSourceClaim(claim(source, changed), source)).toBe(false)
@@ -176,81 +169,20 @@ describe('complete original source quotations', () => {
     expect(isLiteralSourceClaim(claim(source, 'Staff may access records.'), source)).toBe(false)
   })
 
-  it('uses original source positions for authored entries and identical prose despite reversed retrieval', () => {
-    const condition = 'Only after review'
-    const body = 'Entry "quoted" [restricted]; only if approved.'
-    const raw = `# Inventory\r\n\r\n## ${condition}\r\n\r\n${body}\r\n\r\n- ${body}\r\n\r\n## ${condition}\r\n\r\n- ${body}\r\n`
-    const sources = fixture(raw).filter(source => source.kind !== 'list').reverse()
-    const presentations = sources.map(source => {
-      const presentation = getLiteralSourcePresentation(source)!
-      return {
-        text: presentation.text, kind: presentation.kind, contexts: presentation.contexts, sourceOrder: presentation.sourceOrder
-      }
-    })
-    expect(presentations).toEqual([
-      { text: body, kind: 'entry', contexts: ['Inventory', condition], sourceOrder: raw.lastIndexOf(`- ${body}`) },
-      { text: condition, kind: 'entry', contexts: ['Inventory'], sourceOrder: raw.lastIndexOf(`## ${condition}`) },
-      { text: body, kind: 'entry', contexts: ['Inventory', condition], sourceOrder: raw.indexOf(`- ${body}`) },
-      { text: body, kind: 'quotation', contexts: ['Inventory', condition], sourceOrder: raw.indexOf(body) },
-      { text: condition, kind: 'entry', contexts: ['Inventory'], sourceOrder: raw.indexOf(`## ${condition}`) },
-      { text: 'Inventory', kind: 'entry', contexts: [], sourceOrder: 0 }
-    ])
-  })
 
-  it('presents exact linked membership under its authored field label with intact punctuation and governing conditions', () => {
+  it('retains exact linked membership punctuation and governing conditions in the explicit statement', () => {
     const label = 'Staff may access records? [only after review]'
     const value = 'Staff may access records "only if approved" [restricted] #1; otherwise wait.'
     const raw = '# Catalog\n\n## Only after review\n\nStaff may access records? \\[only after review\\] | Time | Condition\n--- | --- | ---\n[Staff may access records "only if approved" \\[restricted\\] #1; otherwise wait.](/policy) | 30 minutes | Requires approval\n'
     const source = sourceFor(fixture(raw), `${label}: ${value}`)
     const statement = getLiteralSourceStatement(source)!
-    const presentation = getLiteralSourcePresentation(source)
-    expect(presentation).toEqual({
-      ...claim(source, statement),
-      text: value,
-      contexts: ['Catalog', 'Only after review'],
-      kind: 'membership',
-      label,
-      sourceOrder: raw.indexOf('[Staff may access records "only if approved"')
-    })
-    expect(isLiteralSourceClaim(claim(source, presentation!.text), source)).toBe(false)
-    expect(getLiteralSourceStatement(source)).toBe(statement)
-    expect(getLiteralSourcePresentation(source, statement.replace('Only after review', 'Approved'))).toBeNull()
-    expect(getLiteralSourcePresentation({ ...source, complete: false })).toBeNull()
+    expect(statement).toBe(`Catalog › Only after review › ${label} | Time | Condition: The source links to "${value}" in the "${label}" field.`)
+    expect(isLiteralSourceClaim(claim(source, statement), source)).toBe(true)
+    expect(isLiteralSourceClaim(claim(source, value), source)).toBe(false)
+    expect(isLiteralSourceClaim(claim(source, statement.replace('Only after review', 'Approved')), source)).toBe(false)
+    expect(getLiteralSourceStatement({ ...source, complete: false })).toBeNull()
   })
 
-  it('presents complete qualification paragraphs and structured fields without dropping measurement scope or conditions', () => {
-    const body = 'These entries are authored. They remain untested. Total times are estimates.'
-    const raw = `# Catalog\n\n${body}\n`
-    const source = sourceFor(fixture(raw), body)
-    for (const [index, text] of ['These entries are authored.', 'They remain untested.', 'Total times are estimates.'].entries()) {
-      const derived = { ...source, text, unitId: `${source.closure!.unit.id}:assertion:${index}` }
-      const presentation = getLiteralSourcePresentation(derived)!
-      expect(presentation.text).toBe(body)
-      expect(presentation.contexts).toEqual(['Catalog'])
-      expect(presentation.statement).toBe(`Catalog: ${body}`)
-      expect(presentation.unitId).toBe(derived.unitId)
-      expect(presentation.kind).toBe('quotation')
-      expect(presentation.sourceOrder).toBe(raw.indexOf(body))
-      expect(getLiteralSourcePresentation(derived, text)).toBeNull()
-    }
-    const numericRaw = '# Preparations\n\n## Durations in hours\n\n### Only when cooled inputs are available\n\nDetail | Value\n--- | ---\nElapsed time | 2\n'
-    const numeric = sourceFor(fixture(numericRaw), 'Value: 2')
-    expect(getLiteralSourcePresentation(numeric)).toEqual({
-      ...claim(numeric, getLiteralSourceStatement(numeric)!),
-      text: 'Detail: Elapsed time | Value: 2',
-      contexts: ['Preparations', 'Durations in hours', 'Only when cooled inputs are available'],
-      kind: 'quotation',
-      sourceOrder: numericRaw.indexOf('Elapsed time | 2')
-    })
-    const structuredRaw = '# Catalog\n\n- Entry: Atlas | Condition: Only after review\n'
-    const structured = sourceFor(fixture(structuredRaw), 'Entry: Atlas')
-    expect(getLiteralSourcePresentation(structured)).toMatchObject({
-      text: 'Entry: Atlas | Condition: Only after review',
-      contexts: ['Catalog', 'Entry: Atlas | Condition: Only after review'],
-      kind: 'quotation',
-      sourceOrder: structuredRaw.indexOf('- Entry: Atlas')
-    })
-  })
   it('does not discard nested units or preconditions from a numeric quotation', () => {
     const source = sourceFor(fixture('# Rice preparations\n\n## Durations in hours\n\n### Only when previously cooled rice is available\n\nDetail | Value\n--- | ---\nElapsed time | 2\n'), 'Value: 2')
     const expected = 'Rice preparations › Durations in hours › Only when previously cooled rice is available › Detail | Value: Detail: Elapsed time | Value: 2'
@@ -278,7 +210,6 @@ describe('complete original source quotations', () => {
       const modified = { ...source, closure: { ...source.closure!, record: { ...source.closure!.record!, fields } } }
       expect(getLiteralSourceStatement(modified)).toBeNull()
       expect(isLiteralSourceClaim(claim(modified, statement), modified)).toBe(false)
-      expect(getLiteralSourcePresentation(modified, statement)).toBeNull()
     }
   })
 
@@ -294,7 +225,6 @@ describe('complete original source quotations', () => {
       { ...source, closure: { ...source.closure!, dependencies: source.closure!.dependencies.slice(1) } }
     ]) {
       expect(getLiteralSourceStatement(modified)).toBeNull()
-      expect(getLiteralSourcePresentation(modified, statement)).toBeNull()
     }
     const currentBody = 'Atlas is a named example. It remains untested; only use after review.'
     const current = {
@@ -302,13 +232,10 @@ describe('complete original source quotations', () => {
       evidenceId: 'page:75:revision:4',
       sourceRevision: '4'
     }
-    expect(getLiteralSourcePresentation(current, statement)).toBeNull()
-    expect(getLiteralSourcePresentation(current)).toMatchObject({
-      ...claim(current, `Catalog: ${currentBody}`), text: currentBody, contexts: ['Catalog'], kind: 'quotation'
-    })
+    expect(isLiteralSourceClaim(claim(current, statement), current)).toBe(false)
+    expect(getLiteralSourceStatement(current)).toBe(`Catalog: ${currentBody}`)
     const multi = sourceFor(fixture('# Catalog\n\n- Atlas is a named example.\n\n  It remains untested.\n'), 'Atlas is a named example.')
     expect(getLiteralSourceStatement(multi)).toBeNull()
-    expect(getLiteralSourcePresentation(multi)).toBeNull()
   })
 
   it('accepts only the exact authoritative title template and its bound revision', () => {

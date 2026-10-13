@@ -131,6 +131,39 @@ const consumeSupportRequest = (request: DecisionBatchRequest, decide: (check: {
   })))
 }
 
+it('requires semantic support before publishing an atomic quote that omits the rest of its paragraph', () => {
+  const first = 'The listed price is USD 20.'
+  const body = `${first} This price remains experimental and is not approved for production.`
+  const original = `# Pricing\n\n${body}`
+  const headingSpan = { start: 0, end: '# Pricing'.length }
+  const paragraphSpan = { start: '# Pricing\n\n'.length, end: original.length }
+  const paragraph: SourceUnit = {
+    id: 'price:1', kind: 'paragraph', sourceSpans: [paragraphSpan], normalizedText: body,
+    contextIds: ['pricing'], recordId: null, structuralLabels: [], links: [], complete: true
+  }
+  const selected: WikiVerificationSource = {
+    evidenceId: 'page:42:revision:7', sourceRevision: '7', unitId: 'price:1:assertion:0',
+    context: 'Pricing', text: first, kind: 'paragraph', complete: true,
+    closure: { unit: paragraph, units: [paragraph],
+      contexts: [{ id: 'pricing', kind: 'heading', sourceSpans: [headingSpan],
+        normalizedLabel: 'Pricing', parentId: null, complete: true }],
+      record: null, links: [],
+      dependencies: [headingSpan, paragraphSpan].map(span => ({ span, text: original.slice(span.start, span.end) })) }
+  }
+  const built = plan({
+    userRequest: 'What is the listed price? Preserve its testing and production status.',
+    requestFacets: ['What is the listed price? Preserve its testing and production status.'],
+    sources: [selected],
+    evidence: [{ evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, readId: 'price-read', source: original }],
+    claims: [{ evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision,
+      unitId: selected.unitId, statement: `Pricing: ${first}` }]
+  })
+  const rejected = built.requests.map(request => consumeSupportRequest(request, () => ({
+    choice: 'not_supported', probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97
+  })))
+  expect(assessWikiVerificationResults(built, rejected).valid).toBe(false)
+})
+
 const matrixRaw = '# Fictional, untested recipes\n\nMetric | Moon soup | Sun broth\n--- | --- | ---\nYield | 2 servings | 3 servings\nTiming | Before dawn | After dusk\n'
 const matrixHeaderSpan = { start: matrixRaw.indexOf('Metric |'), end: matrixRaw.indexOf('Yield |') }
 const matrixContexts: readonly SourceContext[] = [

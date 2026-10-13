@@ -3,7 +3,7 @@ import { axGlobals, AxMockAIService, type AxAIServiceOptions, type AxChatRequest
 import { ProxyTracerProvider } from '@opentelemetry/api'
 import * as markdownItModule from 'markdown-it'
 import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
-import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, wikiSynthesisSourceRef, wikiSynthesisPresentationKey, renderReadableWikiSynthesisAnswer, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisRead, type WikiSynthesisSource, type WikiSourceQuotationPresentation } from '../../agents/providers/wiki-synthesis.ts'
+import { createWikiSynthesisProgram, createWikiSynthesisStreamGuard, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, wikiSynthesisSourceRef, renderWikiSynthesisAnswer, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisInput, type WikiSynthesisOptions, type WikiSynthesisRead, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
 import { evaluateWikiSynthesisFixtures, optimizeWikiSynthesis, parseWikiSynthesisFixtures } from '../../agents/providers/wiki-synthesis-evaluation.ts'
 import { synthesisReadsFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
 import type { WikiSynthesisReferenceIndex } from '../../agents/providers/wiki-synthesis.ts'
@@ -78,10 +78,10 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('resolves explicit quotation selections before public results and both host validation boundaries on native and JSON-object wire paths', async () => {
+  it('preserves explicitly emitted faithful quotations through both host validation boundaries', async () => {
     const literalStatement = 'Status: Illustrative and untested | Scope: External publication only | Required approvals: **two**.'
     const quoted = { ...source, literalStatement }
-    const selection = answer({ claims: [{ ...answer().claims[0]!, statement: '' }] })
+    const selection = answer({ claims: [{ ...answer().claims[0]!, statement: literalStatement }] })
     for (const mode of ['native', 'json_object'] as const) {
       const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number]) => claim.statement === literalStatement)
       const validateAnswer = vi.fn((candidate: WikiSynthesisAnswer) => candidate.claims[0]?.statement === literalStatement)
@@ -97,137 +97,56 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('groups protected inventory labels and merges only exact displayed duplicates while retaining every canonical claim and citation', () => {
-    const qualification = { ...answer().claims[0]!, unitId: 'status:0', statement: 'Catalog: Authored and untested. Total times are estimates.' }
-    const qualificationCopy = { ...qualification, unitId: 'status:1', evidenceId: 'page:43:revision:7' }
-    const atlas = { ...qualification, unitId: 'atlas', statement: 'Catalog › Only after review › Entry | Time: The source links to "Atlas" in the "Entry" field.' }
-    const atlasCopy = { ...atlas, unitId: 'atlas:other', evidenceId: 'page:43:revision:7' }
-    const beacon = { ...atlas, unitId: 'beacon', statement: atlas.statement.replace('Atlas', 'Beacon') }
-    const selected = answer({ claims: [qualification, qualificationCopy, atlas, atlasCopy, beacon], observations: [], recommendations: '' })
-    const originals = JSON.stringify(selected)
-    const protectedRows: WikiSourceQuotationPresentation[] = [
-      { ...qualification, text: 'Authored and untested. Total times are estimates.', contexts: ['Catalog'], kind: 'quotation' },
-      { ...qualificationCopy, text: 'Authored and untested. Total times are estimates.', contexts: ['Catalog'], kind: 'quotation' },
-      { ...atlas, text: 'Atlas', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
-      { ...atlasCopy, text: 'Atlas', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
-      { ...beacon, text: 'Beacon', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' }
-    ]
-    const presented = renderReadableWikiSynthesisAnswer(selected, new Set(selected.claims.map(claim => claim.statement)), undefined,
-      new Map(protectedRows.map(row => [wikiSynthesisPresentationKey(row), row])))
-    const html = markdown.render(formatAgentCitationMarkers(presented, evidenceId => ({
-      number: evidenceId === qualification.evidenceId ? 1 : 2, label: 'Catalog', href: null
-    })))
-    expect(html.match(/Authored and untested/gu)).toHaveLength(1)
-    expect(html.match(/Only after review/gu)).toHaveLength(1)
-    expect(html).toContain('<ul>')
-    expect(html.match(/<li>/gu)).toHaveLength(2)
-    expect(html).toContain('Atlas <strong>[1]</strong> <strong>[2]</strong>')
-    expect(html).toContain('Beacon <strong>[1]</strong>')
-    expect(html).not.toContain('source links')
-    expect(JSON.stringify(selected)).toBe(originals)
-    expect(renderWikiSynthesisAnswer(selected, new Set(selected.claims.map(claim => claim.statement)))).toContain('source links')
-  })
 
-  it('keeps different qualifications and fields separate and visibly restores a broader scope after nested items', () => {
-    const member = { ...answer().claims[0]!, statement: 'Catalog: The source links to "Atlas" in the "Entry" field.' }
-    const rows: WikiSourceQuotationPresentation[] = [
-      { ...member, unitId: 'review', text: 'Atlas', contexts: ['Catalog', 'Only after review'], kind: 'membership', label: 'Entry' },
-      { ...member, unitId: 'approval', text: 'Atlas', contexts: ['Catalog', 'Only with approval'], kind: 'membership', label: 'Entry' },
-      { ...member, unitId: 'broad', text: 'Atlas', contexts: ['Catalog'], kind: 'membership', label: 'Entry' },
-      { ...member, unitId: 'alias', text: 'Atlas', contexts: ['Catalog'], kind: 'membership', label: 'Alias' }
-    ]
-    const selected = answer({ claims: rows.map(({ evidenceId, sourceRevision, unitId, statement }) => ({ evidenceId, sourceRevision, unitId, statement })) })
-    const presented = renderReadableWikiSynthesisAnswer(selected, new Set([member.statement]), undefined,
-      new Map(rows.map(row => [wikiSynthesisPresentationKey(row), row])))
-    const html = markdown.render(formatAgentCitationMarkers(presented, () => ({ number: 1, label: 'Catalog', href: null })))
-    expect(html.match(/<li>/gu)).toHaveLength(4)
-    const tokens = markdown.parse(presented, {})
-    const scopes = tokens.flatMap((token, index) => token.type === 'heading_open' ? [tokens[index + 1]!.content] : [])
-    expect(scopes).toEqual([
-      'Catalog — Only after review — Entry',
-      'Catalog — Only with approval — Entry',
-      'Catalog — Entry',
-      'Catalog — Alias'
-    ])
-    expect(tokens.filter(token => token.type === 'bullet_list_open')).toHaveLength(4)
-  })
-
-  it('orders complete protected inventories and notes by source without moving or absorbing intervening model prose', () => {
-    const canonical = answer().claims[0]!
-    const inventory = (evidenceId: string, count: number, kind: 'membership' | 'entry'): WikiSourceQuotationPresentation[] =>
-      Array.from({ length: count }, (_, index) => ({
-        ...canonical, evidenceId, unitId: `${evidenceId}:item:${index}`,
-        statement: `${evidenceId}: authored entry ${index}.`,
-        text: `${evidenceId} recipe ${index}`, contexts: [evidenceId, 'Illustrative and untested'],
-        kind, ...(kind === 'membership' ? { label: 'Recipe name' } : {}), sourceOrder: index * 10
-      }))
-    const catalog = inventory('Catalog', 12, 'membership')
-    const pasta = inventory('Pasta', 4, 'entry')
-    const pizza = inventory('Pizza', 5, 'entry')
-    const note: WikiSourceQuotationPresentation = {
-      ...canonical, evidenceId: 'Catalog', unitId: 'catalog:note', statement: 'Catalog: Timing notes are estimates.',
-      text: 'Timing notes are estimates.', contexts: ['Catalog'], kind: 'quotation', sourceOrder: 125
+  it('rejects blank record proposals without publishing private unrequested fields and keeps explicit requested prose unchanged', async () => {
+    const literalStatement = 'Name: Morgan Vale | Role: Fictional, non-operative logistics reviewer | Email: morgan@example.invalid | Phone: 000-000'
+    const record = { ...source, kind: 'labeled-record', text: literalStatement, literalStatement }
+    const statement = 'Morgan Vale’s Role is a fictional, non-operative logistics reviewer.'
+    for (const mode of ['native', 'json_object'] as const) {
+      for (const blank of ['', ' \t ']) {
+        const proposed = answer({ claims: [{ ...answer().claims[0]!, statement: blank }] })
+        await expect(generate(proposed, [record], {}, mode).result).rejects.toThrow()
+        const guard = createWikiSynthesisStreamGuard([record])
+        expect(guard(JSON.stringify(encodeWikiSynthesisAnswer(proposed)))).toBeDefined()
+        const wire = encodeWikiSynthesisAnswer(proposed)
+        const service = new AxMockAIService<string>({
+          features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
+          chatResponse: async () => new ReadableStream<AxChatResponse>({
+            start(controller) {
+              controller.enqueue({ results: [{ index: 0, content: `{"claims":[${JSON.stringify(wire.claims[0])},{"sourceRef":` }] })
+              controller.enqueue({ results: [{ index: 0, content: `${JSON.stringify(wire.claims[0]!.sourceRef)},"statement":${JSON.stringify(statement)}}],"unresolvedFacets":[1],"observations":[]}`, finishReason: 'stop' }] })
+              controller.close()
+            }
+          })
+        })
+        const published: WikiSynthesisAnswer['claims'] = []
+        const consume = async () => {
+          for await (const chunk of createWikiSynthesisProgram([record], { facetCount: 2 }).streamingForward(service, { ...input, ...encodeFixtureSources([record]) }, { structuredOutputMode: mode }))
+            published.push(...(chunk.delta.claims ?? []))
+        }
+        await expect(consume()).rejects.toThrow()
+        expect(published).toEqual([])
+      }
+      const requested = answer({ claims: [{ ...answer().claims[0]!, statement }] })
+      const accepted = await generate(requested, [record], {
+        validateClaim: claim => claim.statement === statement,
+        validateAnswer: candidate => candidate.claims[0]?.statement === statement
+      }, mode).result
+      expect(accepted.claims).toEqual(requested.claims)
+      const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement]))
+      expect(rendered).toBe(`${statement} [[cite:${record.evidenceId}]]`)
+      const html = markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Benchmark', href: null })))
+      expect(html).not.toContain('Email')
+      expect(html).not.toContain('Phone')
+      expect(html).not.toContain('<h')
     }
-    // Deliberately scramble source positions and interleave first-seen groups.
-    const protectedRows = [catalog[11]!, pizza[4]!, note, pasta[3]!, ...catalog.slice(0, 11).reverse(), ...pasta.slice(0, 3).reverse(), ...pizza.slice(0, 4).reverse()]
-    const prose = { ...canonical, unitId: 'model:prose', statement: 'The source does not establish a tested cooking time.' }
-    const repeated = { ...catalog[0]!, unitId: 'catalog:repeat', sourceOrder: 0 }
-    const selected = answer({
-      claims: [...protectedRows, prose, repeated].map(({ evidenceId, sourceRevision, unitId, statement }) => ({ evidenceId, sourceRevision, unitId, statement })),
-      observations: ['No tested cooking time was available.'], recommendations: 'Consider reviewing the original recipes.'
-    })
-    const originals = JSON.stringify(selected)
-    const presented = renderReadableWikiSynthesisAnswer(selected, noLiteralStatements, undefined,
-      new Map([...protectedRows, repeated].map(row => [wikiSynthesisPresentationKey(row), row])))
-    const tokens = markdown.parse(presented, {})
-    const items = tokens.flatMap((token, index) => token.type === 'list_item_open' ? [tokens[index + 2]!.content] : [])
-    const expected = [...catalog, ...pizza, ...pasta, repeated]
-    expect(items).toEqual(expected.map(row => `${row.text} [[cite:${row.evidenceId}]]`))
-    expect(items).toHaveLength(22)
-    const visible = tokens.filter(token => token.type === 'inline').map(token =>
-      token.children?.map(child => child.content).join('') ?? token.content).join('\n')
-    expect(visible.indexOf(note.text)).toBeGreaterThanOrEqual(0)
-    expect(visible.indexOf('Catalog recipe 11')).toBeLessThan(visible.indexOf(note.text))
-    expect(visible.indexOf(note.text)).toBeLessThan(visible.indexOf('Pizza recipe 0'))
-    expect(visible.indexOf('Pizza recipe 4')).toBeLessThan(visible.indexOf('Pasta recipe 0'))
-    expect(visible.indexOf('Pasta recipe 3')).toBeLessThan(visible.indexOf(prose.statement))
-    expect(visible.lastIndexOf('Catalog recipe 0')).toBeGreaterThan(visible.indexOf(prose.statement))
-    expect(presented).toContain(`${prose.statement} [[cite:${prose.evidenceId}]]`)
-    expect(presented).toContain(selected.observations[0]!)
-    expect(presented).toContain('## Recommendations\n\nConsider reviewing the original recipes.')
-    expect(JSON.stringify(selected)).toBe(originals)
-  })
-
-  it('never rewrites unowned narrative or quantities, or reuses a display mapping across statement, revision or unit boundaries', () => {
-    const canonical = answer().claims[0]!
-    const presented: WikiSourceQuotationPresentation = {
-      ...canonical, text: 'Unrelated shortcut', contexts: ['Catalog'], kind: 'quotation'
-    }
-    for (const changed of [
-      { ...presented, statement: 'Changed statement.' },
-      { ...presented, sourceRevision: '8' },
-      { ...presented, unitId: 'foreign' }
-    ]) {
-      const result = renderReadableWikiSynthesisAnswer(answer(), noLiteralStatements, undefined,
-        new Map([[wikiSynthesisPresentationKey(canonical), changed]]))
-      expect(result).toBe(renderWikiSynthesisAnswer(answer(), noLiteralStatements))
-    }
-    const narrative = answer({ claims: [
-      canonical,
-      { ...canonical, unitId: 'source-link-prose', statement: 'The source links to Atlas in the Entry field.' },
-      { ...canonical, unitId: 'duration', statement: 'Elapsed time: 2 hours, only when cooled inputs are available.' },
-      { ...canonical, unitId: 'duration:copy', statement: 'Elapsed time: 2 hours, only when cooled inputs are available.' }
-    ] })
-    const result = renderReadableWikiSynthesisAnswer(narrative, noLiteralStatements, undefined, new Map())
-    expect(result).toBe(renderWikiSynthesisAnswer(narrative, noLiteralStatements))
-    expect(result.match(/Elapsed time/gu)).toHaveLength(2)
   })
 
   it('admits only exact own complete native-list selections and preserves authored bytes before escaped rendering', async () => {
     const authored = '- 80 g **orzo**\r\n- 1 lemon, including zest\r\n- 400 ml vegetable stock\r\n'
     const literalStatement = `Illustrative and untested › Ingredients: ${authored}`
     const quoted = { ...source, kind: 'list', text: authored, literalStatement }
-    const selection = answer({ claims: [{ ...answer().claims[0]!, statement: '' }] })
+    const selection = answer({ claims: [{ ...answer().claims[0]!, statement: literalStatement }] })
     for (const mode of ['native', 'json_object'] as const) {
       let literalLists: ReadonlyMap<string, string> | undefined
       const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number]) => claim.statement === literalStatement)
@@ -243,17 +162,6 @@ describe('Wiki source-bound typed synthesis', () => {
       expect(rendered.indexOf('80 g')).toBeLessThan(rendered.indexOf('1 lemon'))
       expect(rendered.indexOf('1 lemon')).toBeLessThan(rendered.indexOf('400 ml'))
       expect(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Ingredients', href: null })))).not.toContain('<ul>')
-      const presentation: WikiSourceQuotationPresentation = {
-        ...accepted.claims[0]!, text: authored, contexts: ['Illustrative and untested', 'Ingredients'], kind: 'quotation'
-      }
-      const readable = renderReadableWikiSynthesisAnswer(accepted, new Set([literalStatement]), literalLists,
-        new Map([[wikiSynthesisPresentationKey(presentation), presentation]]))
-      const readableHtml = markdown.render(formatAgentCitationMarkers(readable, () => ({ number: 1, label: 'Ingredients', href: null })))
-      expect(readableHtml).not.toContain('<ul>')
-      expect(readableHtml).not.toContain('<strong>orzo</strong>')
-      expect(readableHtml).toContain('80 g **orzo**')
-      expect(readable.indexOf('80 g')).toBeLessThan(readable.indexOf('1 lemon'))
-      expect(readable.indexOf('1 lemon')).toBeLessThan(readable.indexOf('400 ml'))
       expect(() => renderWikiSynthesisAnswer(accepted, new Set([literalStatement]))).toThrow()
       for (const claim of [
         { ...accepted.claims[0]!, unitId: 'unknown' },
@@ -265,7 +173,7 @@ describe('Wiki source-bound typed synthesis', () => {
         { prediction: selection, source: { ...quoted, complete: false } },
         { prediction: selection, source: { ...quoted, kind: 'prose' } },
         { prediction: answer({ claims: [{ ...selection.claims[0]!, unitId: 'unknown' }] }), source: quoted },
-        { prediction: answer({ claims: [{ ...selection.claims[0]!, statement: literalStatement }] }), source: quoted },
+        { prediction: answer({ claims: [{ ...selection.claims[0]!, statement: '' }] }), source: quoted },
         { prediction: answer({ claims: [{ ...selection.claims[0]!, statement: literalStatement.replace('400 ml', '500 ml') }] }), source: quoted },
         { prediction: selection, source: { ...quoted, literalStatement: 'Ingredients: - <script>forged</script>\n- stock\n' } },
         { prediction: selection, source: { ...quoted, literalStatement: 'Ingredients: - [[cite:other]]\n- stock\n' } }
@@ -282,7 +190,7 @@ describe('Wiki source-bound typed synthesis', () => {
         chatResponse: async () => new ReadableStream<AxChatResponse>({
           start(controller) {
             controller.enqueue({ results: [{ index: 0, content: `{"claims":[${JSON.stringify(wire.claims[0])},{"sourceRef":${' '.repeat(192)}` }] })
-            controller.enqueue({ results: [{ index: 0, content: `${JSON.stringify(wire.claims[0]!.sourceRef)},"statement":""}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`, finishReason: 'stop' }] })
+            controller.enqueue({ results: [{ index: 0, content: `${JSON.stringify(wire.claims[0]!.sourceRef)},"statement":${JSON.stringify(literalStatement)}}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`, finishReason: 'stop' }] })
             controller.close()
           }
         })
@@ -334,38 +242,10 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('fails closed on invalid literal selections without synthesizing defaults or repairing output', async () => {
-    const quoted = { ...source, literalStatement: source.text }
-    const other = { ...quoted, evidenceId: 'page:99:revision:12', sourceRevision: '12', unitId: 'unit:owner' }
-    const selected = { ...answer().claims[0]!, statement: '' }
-    const { statement: _statement, ...missingStatement } = selected
-    const cases = [
-      { claim: selected, sources: [source] },
-      { claim: selected, sources: [{ ...quoted, complete: false }] },
-      { claim: { ...selected, unitId: 'unknown' }, sources: [quoted] },
-      { claim: { ...selected, sourceRevision: '6' }, sources: [quoted] },
-      { claim: { ...selected, unitId: other.unitId }, sources: [quoted, other] },
-      { claim: missingStatement, sources: [quoted] },
-      { claim: { ...selected, statement: ' \t ' }, sources: [quoted] },
-      ...[null, '', ' \t ', '<script>forged</script>', 'Unsafe [[cite:other]]', 'é'.repeat(65_537)].map(literalStatement => ({
-        claim: selected, sources: [{ ...quoted, literalStatement }]
-      }))
-    ]
-    for (const mode of ['native', 'json_object'] as const) {
-      for (const scenario of cases) {
-        const generated = generate(answer({ claims: [scenario.claim] as WikiSynthesisAnswer['claims'] }), scenario.sources, {}, mode)
-        await expect(generated.result).rejects.toThrow()
-        expect(generated.chat).toHaveBeenCalledTimes(1)
-      }
-    }
-    const denied = generate(answer({ claims: [selected] }), [quoted], { validateClaim: () => 'Source qualification is required.' })
-    await expect(denied.result).rejects.toThrow('Source qualification is required')
-    expect(denied.chat).toHaveBeenCalledTimes(1)
-  })
 
-  it('bounds cumulative canonical expansion by the existing provider content budget without clipping quotations', async () => {
+  it('bounds cumulative explicit canonical statements by the existing provider content budget without clipping quotations', async () => {
     const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(200) }
-    const selected = { ...answer().claims[0]!, statement: '' }
+    const selected = { ...answer().claims[0]!, statement: quoted.literalStatement }
     const claims = Array.from({ length: 64 }, () => ({ ...selected }))
     for (const mode of ['native', 'json_object'] as const) {
       const generated = generate(answer({ claims }), [quoted], { maxOutputTokens: 1_024 }, mode)
@@ -379,12 +259,12 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(guard(encodeWikiSynthesisAnswer(answer({ claims: claims.slice(1) })).claims.map(claim => `,${JSON.stringify(claim)}`).join(''))).toContain('content byte limit')
   })
 
-  it('streams only canonical quotation selections through incomplete-array transitions and rejects truncated or failed terminal output', async () => {
+  it('streams only explicit canonical quotations through incomplete-array transitions and rejects truncated or failed terminal output', async () => {
     const quoted = { ...source, literalStatement: 'Status: Illustrative only | External publication requires two approvals.' }
-    const selected = { ...answer().claims[0]!, statement: '' }
+    const selected = { ...answer().claims[0]!, statement: quoted.literalStatement }
     const wire = encodeWikiSynthesisAnswer(answer({ claims: [selected] })).claims[0]!
     const first = `{"claims":[${JSON.stringify(wire)},{"sourceRef":${' '.repeat(192)}`
-    const tail = `${JSON.stringify(wire.sourceRef)},"statement":""}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
+    const tail = `${JSON.stringify(wire.sourceRef)},"statement":${JSON.stringify(wire.statement)}}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
     for (const mode of ['native', 'json_object'] as const) {
       for (const finish of ['stop', 'length', 'error', 'truncated'] as const) {
         const chat = vi.fn(async () => new ReadableStream<AxChatResponse>({
@@ -422,10 +302,10 @@ describe('Wiki source-bound typed synthesis', () => {
 
   it('isolates canonical streaming byte allowances by sample index through repaired partial arrays', async () => {
     const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(1_200) }
-    const selected = { ...answer().claims[0]!, statement: '' }
+    const selected = { ...answer().claims[0]!, statement: quoted.literalStatement }
     const wire = encodeWikiSynthesisAnswer(answer({ claims: [selected] })).claims[0]!
     const first = `{"claims":[${JSON.stringify(wire)},{"sourceRef":${' '.repeat(192)}`
-    const tail = `${JSON.stringify(wire.sourceRef)},"statement":""}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
+    const tail = `${JSON.stringify(wire.sourceRef)},"statement":${JSON.stringify(wire.statement)}}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
     const chat = vi.fn(async () => new ReadableStream<AxChatResponse>({
       start(controller) {
         for (const content of [first, tail]) {
@@ -600,9 +480,9 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('uses the post-admission output allowance for canonical expansion without charging host bytes as vendor output', async () => {
+  it('uses the post-admission output allowance for explicit statements while retaining vendor usage accounting', async () => {
     const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(3_000) }
-    const prediction = answer({ claims: [{ ...answer().claims[0]!, statement: '' }] })
+    const prediction = answer({ claims: [{ ...answer().claims[0]!, statement: quoted.literalStatement }] })
     const validateClaim = vi.fn(() => true)
     let reduceAllowance = true
     let allowance = 4_096
@@ -898,7 +778,7 @@ describe('Wiki synthesis complete registered read transport', () => {
     }
     const sectionScope = Object.entries(index.scopes).find(([, scope]) => scope.evidenceId === section.evidenceId)![0]
     expect(createWikiSynthesisStreamGuard(supplied)(JSON.stringify({
-      claims: [{ sourceRef: primary.aliases![Number(sectionScope)], statement: '' }]
+      claims: [{ sourceRef: primary.aliases![Number(sectionScope)], statement: root.literalStatement }]
     }))).toBeDefined()
     const transported = request(supplied, reads)
     const delivered = synthesisSourcesFromRequest(transported)
@@ -907,7 +787,7 @@ describe('Wiki synthesis complete registered read transport', () => {
     expect(delivered.map(row => row.sourceRef)).toEqual(expect.arrayContaining(supplied.map(wikiSynthesisSourceRef)))
     for (const row of delivered) expect(row.readText).toBe(body)
     for (const selected of supplied) {
-      const prediction = answer({ claims: [{ evidenceId: selected.evidenceId, sourceRevision: '7', unitId: selected.unitId, statement: '' }] })
+      const prediction = answer({ claims: [{ evidenceId: selected.evidenceId, sourceRevision: '7', unitId: selected.unitId, statement: root.literalStatement }] })
       const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number]) => claim.evidenceId === selected.evidenceId && claim.unitId === selected.unitId && claim.statement === root.literalStatement)
       const service = new AxMockAIService<string>({
         features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
@@ -933,7 +813,7 @@ describe('Wiki synthesis complete registered read transport', () => {
       [root, `${qualification} Estimated time: 20 minutes.`],
       [sibling, 'Internal drafts only. Estimated time: 20 minutes.']
     ] as const) {
-      const claim = { evidenceId: selected.evidenceId, sourceRevision: '7', unitId: selected.unitId, statement: '' }
+      const claim = { evidenceId: selected.evidenceId, sourceRevision: '7', unitId: selected.unitId, statement: expected }
       const service = new AxMockAIService<string>({
         features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
         chatResponse: { results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [claim] }))), finishReason: 'stop' }] }
@@ -1060,7 +940,7 @@ describe('Wiki synthesis complete registered read transport', () => {
     expect(Object.keys(entry![1].aliases ?? {})).toEqual([String(entry![1].scope)])
     expect(entry![1].aliases![entry![1].scope]!.split(' ')).toHaveLength(899)
     const selected = sources[899]!
-    const claim = { evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, unitId: selected.unitId, statement: '' }
+    const claim = { evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, unitId: selected.unitId, statement: selected.literalStatement }
     const chat = vi.fn(async (request: Readonly<AxChatRequest>) => {
       expect(Buffer.byteLength(JSON.stringify(request), 'utf8') + 2_500 + 8_192).toBeLessThan(budget)
       return { results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [claim], unresolvedFacets: [] }))), finishReason: 'stop' as const }] }
@@ -1111,7 +991,7 @@ describe('Wiki synthesis complete registered read transport', () => {
     const encoded = encodeWikiSynthesisSources([selected], [{ ...read, source: raw, representation: 'html' }])
     const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex
     const unit = index.units[wikiSynthesisSourceRef(selected)]!
-    expect(unit).toMatchObject({ preview: true, text: 'a'.repeat(255), rawSpans: spans, quotation: true })
+    expect(unit).toMatchObject({ preview: true, text: 'a'.repeat(255), rawSpans: spans })
     expect(encoded.sourceText).toContain(`\n${raw}\nEND SOURCE READ d0`)
     expect(synthesisReadsFromRequest(request([selected], [{ ...read, source: raw, representation: 'html' }]))[0]!.readText).toBe(raw)
     expect(selected.text).toBe(text)
@@ -1132,7 +1012,7 @@ describe('Wiki synthesis complete registered read transport', () => {
     const titleIndex = JSON.parse(encodeWikiSynthesisSources([title], [read]).sourceReferences) as WikiSynthesisReferenceIndex
     expect(titleIndex.units[wikiSynthesisSourceRef(title)]).toMatchObject({ text, title: true })
     expect(titleIndex.units[wikiSynthesisSourceRef(title)]!.rawSpans).toBeUndefined()
-    const claim = { evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, unitId: selected.unitId, statement: '' }
+    const claim = { evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, unitId: selected.unitId, statement: text }
     const validateClaim = vi.fn((canonical: WikiSynthesisAnswer['claims'][number]) => canonical.statement === text)
     const service = new AxMockAIService<string>({
       features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
@@ -1233,32 +1113,6 @@ describe('Wiki synthesis offline correction admission', () => {
 })
 
 describe('Wiki synthesis incremental stable-invariant guard', () => {
-  it('uses the same exact-source quotation authority only when an empty-selection claim completes', () => {
-    const quoted = { ...source, literalStatement: 'Status: Illustrative only | External publication requires two approvals.' }
-    const selected = { ...answer().claims[0]!, statement: '' }
-    const valid = JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [selected] })))
-    for (let boundary = 0; boundary <= valid.length; boundary++) {
-      const guard = createWikiSynthesisStreamGuard([quoted])
-      expect(guard(valid.slice(0, boundary))).toBeUndefined()
-      expect(guard(valid.slice(boundary))).toBeUndefined()
-    }
-    const other = { ...quoted, evidenceId: 'page:99:revision:12', sourceRevision: '12', unitId: 'unit:owner' }
-    for (const scenario of [
-      { claim: selected, sources: [source] },
-      { claim: selected, sources: [{ ...quoted, complete: false }] },
-      { claim: selected, sources: [{ ...quoted, literalStatement: 'Unsafe [[cite:other]]' }] },
-      { claim: selected, sources: [{ ...quoted, literalStatement: 'é'.repeat(65_537) }] },
-      { claim: { ...selected, unitId: 'unknown' }, sources: [quoted] },
-      { claim: { ...selected, sourceRevision: '6' }, sources: [quoted] },
-      { claim: { ...selected, unitId: other.unitId }, sources: [quoted, other] }
-    ]) {
-      const guard = createWikiSynthesisStreamGuard(scenario.sources)
-      const claim = JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [scenario.claim] })).claims[0])
-      expect(guard(`{"claims":[${claim.slice(0, -1)}`)).toBeUndefined()
-      expect(guard('}')).toBeDefined()
-      expect(guard(']}')).toBeDefined()
-    }
-  })
 
   it('accepts valid JSON split at every boundary without treating escaped recommendation text as claims', () => {
     const prediction = answer({
