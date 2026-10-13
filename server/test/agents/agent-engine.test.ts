@@ -696,6 +696,14 @@ describe('Ax agent engine', () => {
     ['labeled hazardous fields', 'Hazardous goods: unavailable through standard delivery', 'In this fictional, non-operative benchmark, Hazardous goods: excluded from standard delivery; Requirement: ordinary lead times must not be applied to hazardous goods.'],
     ['complete shipping list', 'Hazardous goods: unavailable through standard delivery', 'In this fictional, non-operative benchmark, hazardous goods are excluded from standard delivery, while dispatch triggers tracking emails; a created label does not establish carrier pickup.'],
     ['complete shipping list numeric summary', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only and remote islands require a separate quote; free-delivery threshold is USD 500 and below-threshold delivery fee is USD 12 for mainland orders only; order cutoff is 14:00 local time and orders accepted after the cutoff enter processing on the next working day; dispatch triggers tracking emails and label creation does not prove carrier collection; hazardous goods are excluded from standard delivery and must not inherit the ordinary lead time.'],
+    ['scalar short lead time', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, for in-stock mainland orders only, the lead time is 3 working days; remote islands need a separate quote.'],
+    ['scalar reordered lead time', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, 3 working days is the lead time for in-stock mainland orders only; remote islands need a separate quote.'],
+    ['scalar reordered currency', 'Free-delivery threshold: USD 500', 'In this fictional, non-operative benchmark, for mainland orders only, the threshold is 500 USD and the below-threshold fee is 12 USD.'],
+    ['scalar short cutoff', 'Order cutoff: 14:00 local time', 'In this fictional, non-operative benchmark, the cutoff is 14:00 local time; orders accepted after the cutoff enter processing on the next working day.'],
+    ['complete shipping list short numeric fields', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, for in-stock mainland orders only, the lead time is 3 working days and remote islands need a separate quote; the threshold is 500 USD and the fee is 12 USD for mainland orders only; the cutoff is 14:00 local time and orders accepted after the cutoff enter processing on the next working day.'],
+    ['complete shipping list demonstrative orders', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only and remote islands require a separate quote; free-delivery threshold is USD 500 and below-threshold delivery fee is USD 12 for these mainland orders only.'],
+    ['complete shipping list demonstrative policy', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, this policy has standard stocked-item lead time of 3 working days for in-stock mainland orders only and remote islands require a separate quote; free-delivery threshold is USD 500 and below-threshold delivery fee is USD 12 for mainland orders only.'],
+    ['complete shipping list demonstrative tracking', 'Standard stocked-item lead time: 3 working days', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only and remote islands require a separate quote; tracking notification is emailed after dispatch and this label-created notification does not prove carrier collection.'],
     ['tracking record', 'Tracking notification: emailed after dispatch', 'In this fictional, non-operative benchmark, dispatch triggers the tracking email; creating a label is not evidence of carrier pickup.'],
     ['role record', 'Role: account representative', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison.'],
     ['role selected by Name', 'Name: Morgan Vale', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison.'],
@@ -722,7 +730,7 @@ describe('Ax agent engine', () => {
       const answer = (input: Readonly<AxChatRequest>) => {
         const source = synthesisSourcesFromRequest(input).find(candidate =>
           candidate.evidenceId === 'page:79:revision:3' && candidate.complete &&
-          originalSynthesisSelectionText(candidate).includes(sourceText) &&
+          (_case.startsWith('scalar') ? candidate.text === sourceText : originalSynthesisSelectionText(candidate).includes(sourceText)) &&
           synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') === _case.startsWith('complete shipping list')
         )!
         expect(source).toBeDefined()
@@ -809,6 +817,22 @@ describe('Ax agent engine', () => {
       if (verdict === 'supports') {
         expect(published).toContain('fictional')
         expect(published).toContain('non-operative')
+        if (_case.includes('lead time') || _case === 'complete shipping list short numeric fields') {
+          expect(published).toMatch(/\b3 working days\b/u)
+          expect(published).toContain('in-stock mainland orders')
+          expect(published).toContain('remote islands')
+          expect(published).toContain('separate quote')
+        }
+        if (_case === 'scalar reordered currency' || _case === 'complete shipping list short numeric fields') {
+          expect(published).toMatch(/\b500 USD\b/u)
+          expect(published).toMatch(/\b12 USD\b/u)
+          expect(published).toContain('mainland orders only')
+        }
+        if (_case === 'scalar short cutoff' || _case === 'complete shipping list short numeric fields') {
+          expect(published).toContain('14:00 local time')
+          expect(published).toContain('after the cutoff')
+          expect(published).toContain('next working day')
+        }
         if (_case !== 'labeled hazardous fields') expect(published).not.toContain('Requirement:')
         expect(published).not.toContain('Email:')
         expect(published).not.toContain('Source quotations')
@@ -828,6 +852,7 @@ describe('Ax agent engine', () => {
         expect(fixture.event.mock.calls.some(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
       } else {
         expect(result.citations ?? []).toEqual([])
+        expect(published).not.toMatch(/\b(?:3 working days|500 USD|12 USD|14:00 local time)\b/u)
         expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
       }
       expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
@@ -840,7 +865,23 @@ describe('Ax agent engine', () => {
     ['same-record numeric swap', 'list', 'In this fictional, non-operative benchmark, free-delivery threshold is USD 12 and below-threshold delivery fee is USD 500 for mainland orders only.'],
     ['labeled numeric swap', 'list', 'In this fictional, non-operative benchmark, Free-delivery threshold: USD 12; Below-threshold delivery fee: USD 500; Scope: mainland orders only.'],
     ['numeric reassignment after true clause', 'list', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only; order cutoff is USD 500.'],
-    ['unanchored numeric continuation', 'list', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only; it is USD 500 for mainland orders only.']
+    ['unanchored numeric continuation', 'list', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only; it is USD 500 for mainland orders only.'],
+    ['short inter-record numeric swap', 'list', 'In this fictional, non-operative benchmark, the lead time is 500 USD for in-stock mainland orders only; the threshold is 3 working days for mainland orders only.'],
+    ['short same-record numeric swap', 'list', 'In this fictional, non-operative benchmark, the threshold is 12 USD and the fee is 500 USD for mainland orders only.'],
+    ['scalar short same-record numeric swap', 'scalar threshold', 'In this fictional, non-operative benchmark, the threshold is 12 USD and the fee is 500 USD for mainland orders only.'],
+    ['scalar original-order same-record numeric swap', 'scalar threshold', 'In this fictional, non-operative benchmark, the threshold is USD 12 and the fee is USD 500 for mainland orders only.'],
+    ['scalar foreign amount', 'scalar threshold', 'In this fictional, non-operative benchmark, the threshold is 501 USD and the fee is 12 USD for mainland orders only.'],
+    ['scalar foreign currency', 'scalar threshold', 'In this fictional, non-operative benchmark, the threshold is 500 EUR and the fee is 12 USD for mainland orders only.'],
+    ['scalar currency duration dimension', 'scalar threshold', 'In this fictional, non-operative benchmark, the threshold is 500 USD hours and the fee is 12 USD for mainland orders only.'],
+    ['scalar wrong duration unit', 'scalar lead', 'In this fictional, non-operative benchmark, for in-stock mainland orders only, the lead time is 3 working hours; remote islands need a separate quote.'],
+    ['scalar wrong duration qualification', 'scalar lead', 'In this fictional, non-operative benchmark, for in-stock mainland orders only, the lead time is 3 calendar days; remote islands need a separate quote.'],
+    ['scalar changed clock dimension', 'scalar cutoff', 'In this fictional, non-operative benchmark, the cutoff is 14 minutes; orders accepted after the cutoff enter processing on the next working day.'],
+    ['scalar changed clock literal', 'scalar cutoff', 'In this fictional, non-operative benchmark, the cutoff is 14:30 local time; orders accepted after the cutoff enter processing on the next working day.'],
+    ['scalar clock punctuation substitution', 'scalar cutoff', 'In this fictional, non-operative benchmark, order cutoff is 14.00 local time; orders accepted after the cutoff enter processing on the next working day.'],
+    ['scalar additional duration dimension', 'scalar lead', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days hours for in-stock mainland orders only; remote islands need a separate quote.'],
+    ['demonstrative same-record numeric swap', 'list', 'In this fictional, non-operative benchmark, free-delivery threshold is USD 12 and below-threshold delivery fee is USD 500 for these mainland orders only.'],
+    ['demonstrative inter-record numeric swap', 'list', 'In this fictional, non-operative benchmark, this policy has standard stocked-item lead time of USD 500 for in-stock mainland orders only; free-delivery threshold is 3 working days for mainland orders only.'],
+    ['ambiguous source-local pronoun', 'list', 'In this fictional, non-operative benchmark, standard stocked-item lead time is 3 working days for in-stock mainland orders only and remote islands require a separate quote; it has free-delivery threshold of USD 500 and below-threshold delivery fee of USD 12 for mainland orders only.']
   ] as const)('rejects owned79 %s before maximally positive semantic approval', async (_case, kind, statement) => {
     const page = questionReadPage(79, '3', 'Meridian dense QA policies — fictional and non-operative', 'owned79', 'Shipping', 'shipping', '')
     page.content = await readFile(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
@@ -851,8 +892,13 @@ describe('Ax agent engine', () => {
         candidate.evidenceId === 'page:79:revision:3' && candidate.complete &&
         (kind === 'paragraph'
           ? candidate.text === 'Both plans are fictional pilot offers for one organization.'
-          : synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') &&
-            originalSynthesisSelectionText(candidate).includes('Standard stocked-item lead time: 3 working days'))
+          : kind === 'list'
+            ? synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') &&
+              originalSynthesisSelectionText(candidate).includes('Standard stocked-item lead time: 3 working days')
+            : !synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') &&
+              candidate.text === (kind === 'scalar threshold'
+                ? 'Free-delivery threshold: USD 500'
+                : kind === 'scalar cutoff' ? 'Order cutoff: 14:00 local time' : 'Standard stocked-item lead time: 3 working days'))
       )!
       expect(source).toBeDefined()
       return synthesisFixtureAnswer(input, { claims: [{ ...source, statement }] })
@@ -1000,7 +1046,11 @@ describe('Ax agent engine', () => {
     ['foreign declared role', 'In this fictional, non-operative benchmark, Morgan Vale serves as the support desk coordinator.', false],
     ['foreign pronominal email', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison. His email address is avery.moss@example.invalid.', false],
     ['foreign independently lexical email', 'Morgan Vale. His email is avery.moss@example.invalid.', false],
-    ['foreign identity', 'In this fictional, non-operative benchmark, Avery Moss’s email address is morgan.vale@example.invalid.', false]
+    ['foreign identity', 'In this fictional, non-operative benchmark, Avery Moss’s email address is morgan.vale@example.invalid.', false],
+    ['foreign demonstrative email', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison. This contact has email address avery.moss@example.invalid.', false],
+    ['foreign demonstrative phone', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison. This contact has phone number +1 202-555-0178.', false],
+    ['foreign demonstrative role', 'In this fictional, non-operative benchmark, Morgan Vale serves as the account liaison. This contact serves as the support desk coordinator.', false],
+    ['owner omitted sibling contact values', 'In this fictional, non-operative benchmark, email address is morgan.vale@example.invalid; phone number is +1 202-555-0178.', false]
   ] as const)('keeps protected associations record-local within an original complete contacts list: %s', async (_case, statement, eligible) => {
     const content = await readFile(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
     const verdicts = eligible ? ['supports', 'uncertain probability', 'uncertain confidence'] as const : ['supports'] as const
@@ -1155,6 +1205,58 @@ describe('Ax agent engine', () => {
       expect(supportRequests).toBe(0)
     }
     expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
+  })
+
+  it.each([
+    ['lowercase Name', '- Name: morgan vale; Limit: 10 tickets.\n- Name: avery moss; Limit: 20 tickets.', 'Name: morgan vale; Limit: 10 tickets. This contact has Limit: 20 tickets.'],
+    ['lowercase ID', '- ID: mv; Limit: 10 tickets.\n- ID: am; Limit: 20 tickets.', 'ID: mv; Limit: 10 tickets. This contact has Limit: 20 tickets.'],
+    ['lowercase mixed contact', '- Name: morgan vale; Limit: 10 tickets; Email: morgan.vale@example.invalid; Primary: [Desk](/primary).\n- Name: avery moss; Limit: 20 tickets; Email: avery.moss@example.invalid; Primary: [Desk](/backup).', 'morgan vale has limit of 10 tickets. This contact has limit of 20 tickets.'],
+    ['lowercase mixed link', '- Name: morgan vale; Limit: 10 tickets; Primary: [Desk](/primary).\n- Name: avery moss; Limit: 20 tickets; Primary: [Desk](/backup).', 'morgan vale has limit of 10 tickets. This contact uses [Desk](/backup).']
+  ] as const)('keeps demonstrative assertions connected to their original %s owner before positive semantic approval', async (_case, records, facts) => {
+    const content = `# Fictional, non-operative directory\n\n## Records\n\n${records}`
+    const page = questionReadPage(81, '2', 'Fictional, non-operative directory', 'directory', 'Records', 'records', '')
+    page.content = content
+    page.citationSections = []
+    const statement = `In this fictional, non-operative directory, ${facts}`
+    const supportRequests: DecisionBatchRequest[] = []
+    const answer = (input: Readonly<AxChatRequest>) => {
+      const source = synthesisSourcesFromRequest(input).find(candidate =>
+        candidate.evidenceId === 'page:81:revision:2' && candidate.complete &&
+        synthesisSourceMatchesMarkdownUnitKind(candidate, 'list') &&
+        originalSynthesisSelectionText(candidate).includes('Limit: 10 tickets') &&
+        originalSynthesisSelectionText(candidate).includes('Limit: 20 tickets')
+      )!
+      expect(source).toBeDefined()
+      return synthesisFixtureAnswer(input, { claims: [{ ...source, statement }] })
+    }
+    const decisionProviders = {
+      ...fixtureDecisionProviders,
+      async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> {
+        const decision = await fixtureDecisionProviders.decideBatch(input, options)
+        const supportIds = Object.entries(input.questions).filter(([, question]) => Object.hasOwn(question.criteria, 'supports')).map(([id]) => id)
+        if (supportIds.length === 0) return decision
+        supportRequests.push(input)
+        const answers = { ...decision.answers }
+        for (const id of supportIds) answers[id] = {
+          choice: 'supports', probabilities: { supports: 1, contradicts: 0, not_supported: 0 }, confidence: 1
+        }
+        return { ...decision, answers }
+      }
+    }
+    const fixture = questionFixture('native', [
+      { calls: [
+        { id: 'lowercase-owner-read', name: 'pages.get', arguments: { id: 81 } },
+        { id: 'lowercase-owner-finish', name: 'wiki_finish_collection', arguments: {} }
+      ] },
+      { answer }, { answer }
+    ], () => page, [], {}, {}, decisionProviders)
+    const result = await fixture.execute('Summarize the requested contact record with its fictional, non-operative qualification.')
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).not.toContain('20 tickets')
+    expect(published).not.toContain('/backup')
+    expect(result.citations ?? []).toEqual([])
+    expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
+    expect(supportRequests).toEqual([])
   })
 
   it.each([

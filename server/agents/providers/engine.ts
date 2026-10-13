@@ -863,6 +863,68 @@ const numericSegments = (value: string, projection = false): readonly string[] =
     .filter(tokens => tokens.some(token => /^\p{N}/u.test(token)))
     .map(tokens => tokens.join(' '))
 
+// Only complete scalar values in one original non-table record can relax
+// numeric prose ordering. This is protected-literal admission, not entailment:
+// field ownership and the full source-stated dimension remain mandatory.
+const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit): boolean | null => {
+  const record = unit.closure.record
+  if (record === null || record.kind === 'table-row' || !record.complete) return null
+  const numericFields = record.fields.filter(field => /\p{N}/u.test(field.value))
+  if (numericFields.length === 0 || numericFields.some(field => !field.complete || /\p{N}/u.test(field.label))) return null
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
+  const quantityPattern = (value: string): RegExp | null => {
+    const scalar = value.trim()
+    const prefixCurrency = scalar.match(/^([A-Z]{3})\s*(\d+(?:[.,]\d+)*)$/u)
+    const suffixCurrency = prefixCurrency === null ? scalar.match(/^(\d+(?:[.,]\d+)*)\s*([A-Z]{3})$/u) : null
+    let literal: string
+    if (prefixCurrency !== null || suffixCurrency !== null) {
+      const code = escape(prefixCurrency?.[1] ?? suffixCurrency![2]!)
+      const amount = escape(prefixCurrency?.[2] ?? suffixCurrency![1]!)
+      literal = `(?:${code}\\s*${amount}|${amount}\\s*${code})`
+    } else {
+      // Clocks retain their punctuation; duration/dimension words come from
+      // this field, not a number-set or a unit-conversion dictionary.
+      if (!/^\d+(?:[.,]\d+)*(?::\d+)*\s+[\p{L}][\p{L}\s-]*$/u.test(scalar)) return null
+      literal = escape(scalar)
+    }
+    return new RegExp(`(?<![\\p{L}\\p{N}.+\\-])${literal}(?![\\p{L}\\p{N}])(?!\\s+(?:(?:working|calendar|supported)\\s+)?(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|KB|MB|GB)\\b)`, 'giu')
+  }
+  const fields = numericFields.map(field => ({ field, pattern: quantityPattern(field.value) }))
+  // Unsupported numeric shapes keep the pre-existing admission path; supported
+  // scalar shapes must not fall back to punctuation-losing lexical matching.
+  if (fields.some(candidate => candidate.pattern === null)) return null
+  const parts = semanticMarkdownText(claim).split(/[,;|]|\s+\band\b\s+|\n/iu)
+  return parts.every(part => {
+    const numbers = [...part.matchAll(/[-+]?\d+(?:[.,]\d+)*(?::\d+)*/gu)]
+    if (numbers.length === 0) return true
+    const terms = normalizedTerms(part, true)
+    const owners = fields.filter(candidate => normalizedTerms(candidate.field.label, true).some(term => terms.includes(term)))
+    // An explicit original field association is still required, even when
+    // this record has just one scalar. Ambiguous multi-field prose stays shut.
+    if (owners.length !== 1) return false
+    const quantities = [...part.matchAll(owners[0]!.pattern!)]
+    return quantities.length > 0 && numbers.every(number => quantities.some(quantity => {
+      const start = number.index ?? 0
+      const quantityStart = quantity.index ?? 0
+      return start >= quantityStart && start + number[0].length <= quantityStart + quantity[0].length
+    }))
+  })
+}
+
+const recordNumericProseAssociationsMatch = (claim: string, unit: CitationSourceUnit): boolean => {
+  const record = unit.closure.record
+  if (record === null || record.fields.length === 0) return true
+  const scalar = scalarRecordNumericProseMatch(claim, unit)
+  if (scalar !== null) return scalar
+  return numericSegments(claim).every(part => {
+    const terms = normalizedTerms(part)
+    return record.fields.some(field =>
+      normalizedTerms(field.label, true).every(term => terms.includes(term)) &&
+      numericSegments(field.value, true).some(value => part.includes(value) || value.includes(part))
+    )
+  })
+}
+
 const copulaTerms: Readonly<Record<string, true>> = {
   is: true,
   are: true,
@@ -2045,7 +2107,7 @@ interface SourceClauseAssessment {
 const SOURCE_RESTRICTION_PATTERN =
   /\b(?:only|after|before|if|unless|when|because|during|within|except|without|subject\s+to|provided\s+that|conditional\s+on|as\s+long\s+as|in\s+case)\b[^.!?;]*/giu
 
-const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericClause = clause): SourceClauseAssessment => {
+const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericClause = clause, semanticNumericIntegrity = false): SourceClauseAssessment => {
   const terms = normalizedTerms(clause)
   const matches = terms.filter(term => unit.terms.has(term))
   const minimumMatches = terms.length <= 2 ? 1 : 2
@@ -2151,7 +2213,7 @@ const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericCla
   return {
     integrity,
     constraints: exactPolarity && exactNumbers && exactQualifiers && exactConstraints && exactIdentifiers && inheritedRestrictions,
-    protectedConstraints: exactNumbers && exactIdentifiers && exactClaimedIdentifiers,
+    protectedConstraints: (exactNumbers || semanticNumericIntegrity) && exactIdentifiers && exactClaimedIdentifiers,
     alignment: {
       matchedTerms: matches,
       score,
@@ -2784,7 +2846,11 @@ const completeListSingleRecordProtectedAssociationsMatch = (
     const ownedIdentifiers = new Set([...owned.identifiers, ...identifierTerms(owned.context, true)])
     const ownedAddresses: readonly string[] = `${owned.context}\n${owned.text}`.match(identityAddressPattern) ?? []
     const ownedValueTokens = lexicalTokens(text, true).map(normalizedToken)
-    const assessment = assessSourceClause(claim, owned)
+    const scalarNumericProse = !record.fields.some(field => {
+      const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
+      return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim))
+    }) && scalarRecordNumericProseMatch(claim, original) === true
+    const assessment = assessSourceClause(claim, owned, claim, scalarNumericProse)
     if (!assessment.integrity || !assessment.protectedConstraints ||
       !identifiers.every(identifier => ownedIdentifiers.has(identifier)) ||
       !addresses.every(address => ownedAddresses.includes(address)) ||
@@ -2802,15 +2868,7 @@ const completeListSingleRecordProtectedAssociationsMatch = (
     })
     if (!explicitFields) {
       if (record.fields.length === 0) return true
-      // Numeric prose keeps each original field label and value connected.
-      // One record witness alone would still allow its own values to be swapped.
-      return numericSegments(claim).every(part => {
-        const partTerms = normalizedTerms(part)
-        return record.fields.some(field =>
-          normalizedTerms(field.label, true).every(term => partTerms.includes(term)) &&
-          numericSegments(field.value, true).some(value => part.includes(value) || value.includes(part))
-        )
-      })
+      return recordNumericProseAssociationsMatch(claim, original)
     }
     const fields = assessRecordClause(claim, original, true)
     return fields !== null && fields.length > 0 && fields.every(field => field.integrity && field.semanticConstraints === true)
@@ -2823,14 +2881,21 @@ const completeListProtectedAssociationsMatch = (
   records: readonly CitationSourceUnit[]
 ): boolean => {
   if (completeListSingleRecordProtectedAssociationsMatch(claim, list, records)) return true
-  // A named owner, including an omitted/pronominal owner, must retain one
-  // connected record witness. Only anonymous policy records can be summarized
-  // independently; neither their values nor their fields are pooled.
+  // Named/contact records retain one connected witness, including lowercase
+  // schema identities and omitted owners. Demonstratives alone do not turn an
+  // anonymous policy statement into a named-owner assertion.
   const prose = semanticMarkdownText(claim).replace(/^(?:(?:in|according\s+to|under|within|per)\b[^,:;.!?]*[,;:]\s*)+/iu, '')
-  if (/\b(?:he|she|his|her|hers|they|their|theirs|them|it|its|this|that|these|those|former|latter)\b/iu.test(prose) ||
+  if (/\b(?:he|she|his|her|hers|they|their|theirs|them|it|its|former|latter)\b/iu.test(prose) ||
     records.some(original => {
-      const first = original.closure.record!.fields[0]
+      const record = original.closure.record!
+      const first = record.fields[0]
       if (first === undefined) return true
+      // Original identity/contact schema, not claim wording, fences missing
+      // owners as well as lowercase names before any independent splitting.
+      if (original.closure.links.length > 0 || record.fields.some(field =>
+        /^(?:name|id|identifier|contact|e[- ]?mail|phone(?: number)?|telephone|url|link)$/iu.test(field.label.trim()) ||
+        (field.value.match(identityAddressPattern)?.length ?? 0) > 0
+      )) return true
       const tokens = significantTokens(first.value, true)
       const identifiers = identifierTerms(first.value, true)
       return tokens.length > 0 && tokens.every(token => identifiers.includes(token))
@@ -2988,6 +3053,13 @@ const assessTypedClaimEligibility = (
         ? identifier : possessive
   )
   if (!exactTypedIdentifiersMatch(assessmentClaim, assessmentUnit)) return { eligible: false, unit }
+  const explicitFields = record !== null && record.fields.some(field => {
+    const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
+    return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim.statement))
+  })
+  if (!explicitFields && record !== null && record.kind !== 'table-row' && record.fields.length >= 2 &&
+    !recordNumericProseAssociationsMatch(assessmentClaim, unit))
+    return { eligible: false, unit }
   const existingClauses = assessClaimClauses(claim.statement, { ...evidence, sourceUnits: [unit] }, claim)
   if (existingClauses.length > 0 && existingClauses.every(clause => clause.supported) &&
     (listRecords === null || completeListProtectedAssociationsMatch(claim.statement, unit, listRecords)))
@@ -2997,7 +3069,10 @@ const assessTypedClaimEligibility = (
   if (record?.kind === 'table-row' ||
     unit.kind !== 'paragraph' && unit.kind !== 'list' && unit.kind !== 'list-item')
     return { eligible: false, unit }
-  const assessment = assessSourceClause(assessmentClaim, assessmentUnit)
+  const exactListRecords = listRecords === null || completeListProtectedAssociationsMatch(assessmentClaim, unit, listRecords)
+  const scalarNumericProse = listRecords !== null ? exactListRecords :
+    !explicitFields && scalarRecordNumericProseMatch(assessmentClaim, unit) === true
+  const assessment = assessSourceClause(assessmentClaim, assessmentUnit, assessmentClaim, scalarNumericProse)
   const originalText = `${assessmentUnit.context}\n${assessmentUnit.text}`
   const sourceAddresses: readonly string[] = originalText.match(identityAddressPattern) ?? []
   const claimedInlineLiterals = markdownInlineTokens(claim.statement).filter(token => token.type === 'code_inline' || token.type === 'image')
@@ -3007,14 +3082,9 @@ const assessTypedClaimEligibility = (
     original.type === token.type && original.content === token.content && original.attrGet('src') === token.attrGet('src')
   ))
   const exactAddresses = (claim.statement.match(identityAddressPattern) ?? []).every(address => sourceAddresses.includes(address))
-  const explicitFields = record !== null && record.fields.some(field => {
-    const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-    return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim.statement))
-  })
   const fields = explicitFields ? assessRecordClause(assessmentClaim, unit, true) : null
   const exactRecordFields = !explicitFields || fields !== null && fields.length > 0 &&
     fields.every(field => field.integrity && field.semanticConstraints === true)
-  const exactListRecords = listRecords === null || completeListProtectedAssociationsMatch(assessmentClaim, unit, listRecords)
   return {
     eligible: assessment.integrity && assessment.protectedConstraints && exactAddresses && exactInlineLiterals && exactRecordFields && exactListRecords,
     requiresSemanticSupport: true,
