@@ -910,7 +910,7 @@ const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit):
     terms: normalizedTerms(field.label.replace(/\p{Pd}/gu, ' '), true),
     originalTerms: normalizedTerms(field.label, true)
   }))
-  const parts = semanticMarkdownText(claim).split(/[,;|]|\s+\band\b\s+|\n/iu)
+  const parts = semanticMarkdownText(claim).split(/[,;|]|\s+\b(?:and|with|while)\b\s+|\n/iu)
   return parts.every(part => {
     const numbers = [...part.matchAll(/[-+]?\d+(?:[.,]\d+)*(?::\d+)*/gu)]
     if (numbers.length === 0) return true
@@ -2918,11 +2918,9 @@ const completeListProtectedAssociationsMatch = (
   const prose = semanticMarkdownText(claim).replace(/^(?:(?:in|according\s+to|under|within|per)\b[^,:;.!?]*[,;:]\s*)+/iu, '')
   if (/\b(?:he|she|his|her|hers|they|their|theirs|them|it|its|former|latter)\b/iu.test(prose))
     return false
-  const segments = sourceLocalSegments(claim, true)
-  return segments.length > 1 && segments.every(segment => records.some(original => {
+  const witnesses = records.filter(original => original.closure.record!.fields.length > 0).map(original => {
     const record = original.closure.record!
-    const first = record.fields[0]
-    if (first === undefined) return false
+    const first = record.fields[0]!
     const identityFields = record.fields.filter(field => /^(?:name|id|identifier)$/iu.test(field.label.trim()))
     const firstTerms = significantTokens(first.value, true)
     const firstIdentifiers = identifierTerms(first.value, true)
@@ -2932,6 +2930,15 @@ const completeListProtectedAssociationsMatch = (
       (field.value.match(identityAddressPattern)?.length ?? 0) > 0
     )
     const owners = identityFields.length > 0 ? identityFields : scalarIdentity || protectedOwner ? [first] : []
+    return { original, record, owners }
+  })
+  const originalSegments = sourceLocalSegments(claim, true)
+  const anonymous = witnesses.every(witness => witness.owners.length === 0) &&
+    !markdownInlineTokens(claim).some(token => token.type === 'code_inline' || token.type === 'image')
+  const segments = anonymous
+    ? originalSegments.flatMap(segment => segment.split(/,(?!\d)|\s+\b(?:and|with|while)\b\s+/iu)).filter(segment => segment.trim().length > 0)
+    : originalSegments
+  return segments.length > 1 && segments.every(segment => witnesses.some(({ original, record, owners }) => {
     if (owners.length > 0 && !owners.some(field => {
       const identity = normalizedHeading(field.value)
       // A shared name/scalar alone does not select a row. A separately retained
