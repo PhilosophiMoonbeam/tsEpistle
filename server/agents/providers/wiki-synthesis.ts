@@ -21,6 +21,8 @@ export interface WikiSynthesisSource {
   readonly complete: boolean
   readonly packet: string
   readonly literalStatement: string | null
+  /** Complete non-table record identity; association only, never additional authority. */
+  readonly ownedRecordId?: string | undefined
   /** Original parser-native spans in the registered raw read, not normalized text offsets. */
   readonly sourceSpans?: readonly SourceSpan[] | undefined
 }
@@ -47,6 +49,7 @@ export interface WikiSynthesisReferenceIndex {
   readonly units: Readonly<Record<string, {
     readonly scope: number
     readonly text: string
+    readonly record?: number
     readonly preview?: true
     readonly rawSpans?: readonly SourceSpan[]
     readonly title?: true
@@ -126,7 +129,7 @@ export const encodeWikiSynthesisSources = (
     if (!source.complete || source.kind === 'opaque') continue
     // Only projections of the same native unit may share bytes, never unrelated records.
     const nativeUnitId = source.unitId.replace(/:assertion:\d+$/u, '')
-    const key = JSON.stringify([read.readId, nativeUnitId, source.context, source.text, source.kind, source.packet, source.literalStatement, source.sourceSpans])
+    const key = JSON.stringify([read.readId, nativeUnitId, source.context, source.text, source.kind, source.packet, source.literalStatement, source.ownedRecordId, source.sourceSpans])
     const previous = selected.get(key)
     if (previous === undefined) selected.set(key, { source, sourceRef, aliases: [] })
     else if (previous.source.evidenceId.includes(':section:') && !source.evidenceId.includes(':section:')) {
@@ -148,8 +151,21 @@ export const encodeWikiSynthesisSources = (
     return key
   }
   const units: Record<string, WikiSynthesisReferenceIndex['units'][string]> = {}
+  const recordKeys = new Map<string, number>()
+  const recordKey = (source: WikiSynthesisSource): number | undefined => {
+    if (source.ownedRecordId === undefined) return undefined
+    const read = owners.get(JSON.stringify([source.evidenceId, source.sourceRevision]))!
+    const owner = JSON.stringify([read.readId, source.ownedRecordId])
+    let key = recordKeys.get(owner)
+    if (key === undefined) {
+      key = recordKeys.size
+      recordKeys.set(owner, key)
+    }
+    return key
+  }
   for (const { source, sourceRef, aliases } of selected.values()) {
     const scope = scopeKey(source)
+    const record = recordKey(source)
     const aliasGroups: Record<number, string[]> | undefined = aliases.length === 0 ? undefined : {}
     if (aliasGroups !== undefined) for (const alias of aliases) {
       const aliasScope = scopeKey(alias.source)
@@ -161,6 +177,7 @@ export const encodeWikiSynthesisSources = (
     units[sourceRef] = {
       scope,
       ...sourceDisplay(source, owners.get(JSON.stringify([source.evidenceId, source.sourceRevision]))!),
+      ...(record === undefined ? {} : { record }),
       ...(source.kind === 'page-title' ? { title: true as const } : {}),
       ...(aliasScopes === undefined ? {} : { aliases: aliasScopes })
     }
@@ -236,6 +253,7 @@ const sourceSchema = z.object({
   complete: z.boolean(),
   packet: z.string(),
   literalStatement: z.string().nullable(),
+  ownedRecordId: z.string().min(1).optional(),
   sourceSpans: z.array(z.object({
     start: z.number().int().nonnegative(),
     end: z.number().int().nonnegative()
@@ -248,13 +266,13 @@ const claimSchema = z.object({
 
 const instructions = `# Goal
 Answer the literal userRequest, not summarize the retrieved material. Cover every requested facet at the requested level of detail using complete bound sources and exact host-admitted observations. Include only requested facts and the source-written qualifications necessary to interpret those facts; do not inventory unrequested pages, records or background.
-Inspect all supplied sources for requested content and applicable qualifications. Read each selected source's complete own authored content, including conditions outside its quotation. Preserve governing authored, testing, fictional, dietary, timing, preparation and safety status. Prefer complete original qualifying paragraphs over isolated derived sentences. Bind a qualification outside the selected unit separately; a separate qualification cannot repair an assertion whose own scope is unsupported.
+Inspect all supplied sources for requested content and applicable qualifications. Read each selected source's complete own authored content, including conditions outside its quotation. Preserve governing authored, testing, fictional, dietary, timing, preparation and safety status. Prefer complete original qualifying paragraphs over isolated derived sentences. Bind a qualification outside the selected owned record or atomic source separately; a separate qualification cannot repair an assertion whose own scope is unsupported.
 For requested inventories, include every qualifying member, including narrower categories unless exact labels are requested. Retain requested aliases and identity fields. Distinguish related collections from direct entries and enumerate their named options only when within the requested inventory scope; do not count organizers, ingredients or incidental mentions as entries. Names-only requests do not request other record attributes.
 For requested procedures, include required inputs or materials, quantities, prerequisites and ordered steps with their measurement stages, restrictions, timings and safety checks. For comparisons, cover each requested dimension for each side in consistent order.
 
 # Return Format
 Return only claims, unresolvedFacets, observations and optional recommendations. Return at most 64 claims, each with one exact sourceRef copied directly from a sourceReferences.units object key or one space-separated ref token in that unit's aliases[scope] string, and a statement. The primary key is the default; select an alias token when its own original citation scope is appropriate. Alias object keys identify scopes, not source refs. Every token is individually selectable. Never construct or rewrite a sourceRef.
-Emit an explicit nonempty statement containing only the requested facts of one owned record or one atomic assertion and necessary governing qualifications. Preserve subject, meaning-bearing labels, values, measurement stage, serving basis and conditions together. Keep independent records separately bound; do not assume one identity field per record. Name-only assertions use <identity field label>: <identity field value>; structural membership uses <container label>: <member label>; titles use The page is titled "<exact title>".
+Emit an explicit nonempty statement containing only the requested facts of one owned record or one atomic assertion and necessary governing qualifications. Combine a record's requested fields with its applicable Scope/Exception in the same source-bound statement, not separate bare-value and qualification claims. Preserve subject, meaning-bearing labels, values, measurement stage, serving basis and conditions together. Keep independent records separately bound; do not assume one identity field per record. Name-only assertions use <identity field label>: <identity field value>; structural membership uses <container label>: <member label>; titles use The page is titled "<exact title>".
 When a faithful quotation is requested or appropriate, emit its exact complete source-bound wording explicitly. A requested subset remains a subset; never add unrequested record attributes or list items. Empty or whitespace-only statements are invalid and never select source content.
 Return unique zero-based unresolvedFacets indices for unsupported or unanswered requestFacets. If no complete binding exists, return claims: []. Select observations only as unique exact lines from availableObservations. Give recommendations only when requested, as standalone imperative or modal suggestions or questions; put supported factual premises in claims.
 
@@ -264,7 +282,7 @@ Do not invent calculations, world facts, comparative relationships, Wiki-wide ab
 Nonliteral statements use one inline Markdown paragraph or one source-owned complete table, without surrounding prose, headings, lists, HTML, fences or reference definitions. Do not emit citations, answer prose, inability text, verification claims or declarative factual advice; the host renders citations and disclosures.
 
 # Context Dump
-sourceText supplies every registered physical read's unchanged authored content, including Markdown, links, code and applicable qualifications. A full read is not necessarily a complete or supported assertion. sourceReferences.units supplies complete selectable original bindings beside exact sourceRef keys and optional aliases grouped by original scope. Short text is exact and directly readable. When preview:true, text is only an exact short preview, NOT the whole selection or quotation: rawSpans gives original UTF-16 start-inclusive/end-exclusive ranges in the corresponding SOURCE READ, including native markup where applicable. Inspect that whole unchanged read for the selected facts and their governing conditions; never treat a preview as a complete quotation or infer omitted content. Each unit's scope selects sourceReferences.scopes[scope]. Each aliases object key is an original scope key and its string value contains space-separated exact original sourceRef tokens, all individually selectable under that scope. scopes[scope] identifies the own evidenceId and readRef. Shared native text/read storage never merges authority or citation scope. quotation:true permits an empty statement to select that exact binding's own complete host quotation; absence means false. title:true supports only the exact page title. Bind independently selected qualifications separately. The host retains all original bindings, full selected text, quotations and proof closures. Source order is neither a relevance decision nor factual authority. Incomplete, truncated or opaque read content never licenses invented facts. The host validates original provenance, each claim and the whole answer before publication.`
+sourceText supplies every registered physical read's unchanged authored content, including Markdown, links, code and applicable qualifications. A full read is not necessarily a complete or supported assertion. sourceReferences.units supplies complete selectable original bindings beside exact sourceRef keys and optional aliases grouped by original scope. Short text is exact and directly readable. When preview:true, text is only an exact short preview, NOT the whole selection or quotation: rawSpans gives original UTF-16 start-inclusive/end-exclusive ranges in the corresponding SOURCE READ, including native markup where applicable. Inspect that whole unchanged read for the selected facts and their governing conditions; never treat a preview as a complete quotation or infer omitted content. Each unit's scope selects sourceReferences.scopes[scope]. Each aliases object key is an original scope key and its string value contains space-separated exact original sourceRef tokens, all individually selectable under that scope. scopes[scope] identifies the own evidenceId and readRef. Equal record numbers associate fields of the same complete non-table owned record in one physical read; any of those bindings retains that own record's fields for a requested statement and its necessary qualifications. Different records never share authority, even when names or values match. Shared native text/read storage never merges authority or citation scope. title:true supports only the exact page title. Bind independently selected qualifications separately. The host retains all original bindings, full selected text, quotations and proof closures. Source order is neither a relevance decision nor factual authority. Incomplete, truncated or opaque read content never licenses invented facts. The host validates original provenance, each claim and the whole answer before publication.`
 
 const bindingKey = (source: Pick<WikiSynthesisSource, 'evidenceId' | 'sourceRevision' | 'unitId'>): string =>
   JSON.stringify([source.evidenceId, source.sourceRevision, source.unitId])
@@ -364,12 +382,18 @@ export const renderWikiSynthesisAnswer = (answer: WikiSynthesisAnswer, literalSt
   if (safe !== true) throw new Error(safe)
   // A citation appended to the last table row can be swallowed as a spare cell.
   // An immediate separate paragraph stays visible in the client citation parser.
-  const sections = answer.claims.map(claim => {
+  const sections: string[] = []
+  let previousInlineEvidenceId: string | undefined
+  for (const claim of answer.claims) {
     const text = claim.statement.trim()
     const statement = literalStatements.has(claim.statement) || literalListStatements?.get(bindingKey(claim)) === claim.statement
       ? escapeWikiSourceText(text) : text
-    return `${statement}${/[\r\n]/u.test(statement) ? '\n\n' : ' '}[[cite:${claim.evidenceId}]]`
-  })
+    const block = /[\r\n]/u.test(statement)
+    const rendered = `${statement}${block ? '\n\n' : ' '}[[cite:${claim.evidenceId}]]`
+    if (!block && previousInlineEvidenceId === claim.evidenceId) sections[sections.length - 1] += ` ${rendered}`
+    else sections.push(rendered)
+    previousInlineEvidenceId = block ? undefined : claim.evidenceId
+  }
   sections.push(...answer.observations)
   if (sections.length === 0) sections.push('I cannot establish a sourced answer from the available evidence.')
   const recommendations = answer.recommendations?.trim()
@@ -390,7 +414,7 @@ const sourceRegistry = (sources: readonly WikiSynthesisSource[]): Map<string, Wi
     const existing = registry.get(key)
     if (existing !== undefined) {
       if (bindingKey(existing) !== bindingKey(source)) throw new Error('Distinct source bindings collided on a source reference.')
-      if (existing.context !== source.context || existing.text !== source.text || existing.kind !== source.kind || existing.complete !== source.complete || existing.packet !== source.packet || existing.literalStatement !== source.literalStatement ||
+      if (existing.context !== source.context || existing.text !== source.text || existing.kind !== source.kind || existing.complete !== source.complete || existing.packet !== source.packet || existing.literalStatement !== source.literalStatement || existing.ownedRecordId !== source.ownedRecordId ||
         existing.sourceSpans?.length !== source.sourceSpans?.length ||
         existing.sourceSpans?.some((span, index) => span.start !== source.sourceSpans?.[index]?.start || span.end !== source.sourceSpans?.[index]?.end))
         throw new Error('Conflicting source unit binding.')
@@ -418,7 +442,12 @@ const resolvedClaimSchema = (
     context.addIssue({ code: 'custom', message: 'Claims must reference the exact original binding of a complete admitted source unit.' })
     return z.NEVER
   }
-  const statement = claim.statement
+  // Only an explicitly selected exact native body may acquire its own existing
+  // canonical context prefix. Never expand blank, partial or changed content.
+  const statement = source.kind === 'list' && source.literalStatement !== null &&
+    claim.statement === source.text && source.literalStatement.endsWith(source.text) &&
+    safeQuotedListStatement(source.text) && safeQuotedListStatement(source.literalStatement)
+    ? source.literalStatement : claim.statement
   if (Buffer.byteLength(statement, 'utf8') > contentBytes() ||
     !safeStatement(statement) && !(statement === source.literalStatement && source.kind === 'list' && safeQuotedListStatement(statement))) {
     context.addIssue({ code: 'custom', message: 'Each statement must be explicit, nonempty, bounded and rendering-safe; native lists require an exact own complete source quotation.' })

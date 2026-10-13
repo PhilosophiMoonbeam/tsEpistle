@@ -116,6 +116,7 @@ export interface SynthesisFixtureSource extends SynthesisFixtureRead {
   readonly text: string
   readonly kind: string
   readonly preview: boolean
+  readonly record?: number
   readonly rawSpans?: readonly SourceSpan[]
 }
 
@@ -165,7 +166,8 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): S
     const source = row as Record<string, unknown>
     if (typeof source.text !== 'string' || typeof source.scope !== 'number' || !Number.isSafeInteger(source.scope) ||
       source.title !== undefined && source.title !== true ||
-      source.preview !== undefined && source.preview !== true)
+      source.preview !== undefined && source.preview !== true ||
+      source.record !== undefined && (typeof source.record !== 'number' || !Number.isSafeInteger(source.record) || source.record < 0))
       throw new Error('Invalid supplied synthesis selector')
     const rawSpans = source.rawSpans
     if (source.preview === true && (!Array.isArray(rawSpans) || rawSpans.length === 0) ||
@@ -205,6 +207,7 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): S
         ...read, sourceRef: ref, evidenceId: owner.evidenceId,
         text: source.text as string, kind: source.title === true ? 'page-title' : 'source',
         complete: true, preview: source.preview === true,
+        ...(source.record === undefined ? {} : { record: source.record as number }),
         ...(rawSpans === undefined ? {} : { rawSpans: rawSpans as readonly SourceSpan[] })
       }
     })

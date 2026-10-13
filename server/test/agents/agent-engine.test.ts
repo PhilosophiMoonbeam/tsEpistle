@@ -1317,7 +1317,7 @@ describe('Ax agent engine', () => {
         content: `# Shipping\n\n${authored}`,
         request: mode === 'explicit complete list'
           ? 'Quote the complete shipping list, including its returns clause.'
-          : 'Give standard lead time and free-delivery threshold with mainland/in-stock restrictions and the remote-island exception. Exclude returns.'
+          : 'In one paragraph, give standard lead time and free-delivery threshold with mainland/in-stock restrictions and the remote-island exception. Exclude returns.'
       })
       const result = await fixture.execute()
       const rendered = fixture.text.mock.calls.map(([delta]) => delta).join('')
@@ -1330,6 +1330,7 @@ describe('Ax agent engine', () => {
       const container = document.createElement('div')
       container.innerHTML = renderSafeMarkdown(rendered)
       expect(container.querySelectorAll('h1,h2,h3,h4,h5,h6')).toHaveLength(0)
+      if (mode === 'requested shipping clauses') expect(container.querySelectorAll('p')).toHaveLength(1)
       expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1'])
       expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data))
         .toMatchObject([{ accepted: true }])

@@ -6199,6 +6199,9 @@ export class AxAgentEngine implements AgentEngine {
           sourceSpans: unit.closure.unit.sourceSpans,
           kind: unit.kind,
           complete: unit.complete,
+          ...(unit.closure.record !== null && unit.closure.record.complete &&
+            unit.closure.record.kind !== 'table-row' && unit.closure.record.fields.length >= 2
+            ? { ownedRecordId: unit.closure.record.id } : {}),
           literalStatement: getLiteralSourceStatement(protectedOriginalWikiVerificationSource),
           // Proof closure remains host-side; this packet distinguishes exact
           // original unit metadata without a model-facing closure catalogue.

@@ -38,6 +38,7 @@ The synthesis input is now `sourceText` plus `sourceReferences`. `sourceText` co
     [originalSourceRef]: {
       scope, text,
       preview?: true,
+      record?: recordKey,
       rawSpans?: [{ start, end }],
       title?: true,
       aliases?: { [originalScopeKey]: "originalAliasRef originalAliasRef" }
@@ -52,14 +53,14 @@ The portable fixture still has 16,426 original UTF-8 bytes, all 259 complete pro
 
 | Quantity | Previous named-row transport | First complete-read iteration | Current complete-read index |
 | --- | ---: | ---: | ---: |
-| Root-only serialized Ax request bytes | 159,534 | 95,519 | 65,908 |
-| Root + sections serialized Ax request bytes | 165,023 | 113,233 | 73,592 |
-| Root + sections input bytes + 8,192 output allowance | 173,215 | 121,425 | 81,784 |
-| Root + sections selector/index JSON bytes | 12,070 bindings + 129,833 structures | 74,562 | 38,802 |
+| Root-only serialized Ax request bytes | 159,534 | 95,519 | 66,829 |
+| Root + sections serialized Ax request bytes | 165,023 | 113,233 | 74,513 |
+| Root + sections input bytes + 8,192 output allowance | 173,215 | 121,425 | 82,705 |
+| Root + sections selector/index JSON bytes | 12,070 bindings + 129,833 structures | 74,562 | 39,284 |
 | Complete original read bytes | 16,426 | 16,426 | 16,426 |
 | Selectable original root/section bindings | 437 | 437 | 437 |
 
-The current request is 58.69% smaller root-only and 55.41% smaller with sections than the previous transport. These are measured byte reductions, **not measured model-token reductions**. The small portable fixture has no long-unit previews and mostly one alias per scope. Grouped alias strings remove the measured admission failure for a separate 74,821-byte pair of complete child reads with 1,748 repeated original aliases: punctuation no longer dominates the unchanged context bound. The engine retains its existing real output resizing; neither source text nor selector identities are dropped to fit. Raw-content bytes, full selected text, previews and selector overhead are reported separately.
+The current request is 58.11% smaller root-only and 54.85% smaller with sections than the previous transport. These are measured byte reductions, **not measured model-token reductions**. The small portable fixture has no long-unit previews and mostly one alias per scope. Grouped alias strings remove the measured admission failure for a separate 74,821-byte pair of complete child reads with 1,748 repeated original aliases: punctuation no longer dominates the unchanged context bound. The engine retains its existing real output resizing; neither source text nor selector identities are dropped to fit. Raw-content bytes, full selected text, previews and selector overhead are reported separately.
 
 Fresh pre-change native measurements on an owned fictional fixture confirmed the follow-up problem independently of the offline capacity specimen. A role-only answer took 34.450 seconds; its typed generation reported 75,759 input tokens. The ordinary same-session delivery follow-up fetched the same page again, made five separate roughly 11,000-input-token verification calls, attempted a repair and ended partial. Those calls were real accounted application requests, not an offline tokenizer estimate.
 
@@ -70,6 +71,10 @@ Selected-field mechanical eligibility remains separate from semantic proof. A co
 The first deployed complete-read iteration exposed a second defect independently of context size. Its role-only query fell from 34.450 to 13.055 seconds and from 75,759 to 32,832 typed input tokens, but a native-quotation shortcut published a full contact record despite explicit email/phone exclusions. Its follow-up reused all 17,212 original bytes with zero retrieval calls, yet still ended partial because a host-expanded whole-list quotation failed final scope assessment. Those performance results are not quality successes.
 
 The current contract removes that shortcut: every model statement is explicit and nonempty, with no empty-to-full-record expansion or automatic `Source quotations` presentation. Literal wording stays private validation data. A selected atomic statement never acquires neighboring paragraph assertions. Canonical alignment grants structural eligibility, not a semantic exemption: paragraph subsets still require the existing independent check against the complete original read, including qualifications outside the selected sentence. Explicit complete owned record/list quotations remain supported.
+
+The live follow-up also exposed missing model orientation: field selectors did not say which fields belong to one complete owned record. The index now adds only a compact `record` number for complete non-table multi-field records. It costs 482 index bytes on the portable fixture and communicates existing field ownership, not new authority. Requested values and their own Scope/Exception belong in the same source-bound statement; separate qualifying claims do not repair bare values. Equal-valued records and matrix columns do not merge. An explicitly emitted exact complete native list may acquire only its existing governing prefix; its raw body is never expanded, changed or reordered.
+
+Adjacent inline claims under the exact same original citation scope share a prose paragraph, retaining every immediate per-claim citation and statement boundary. Different scopes and block/table/list statements remain separate. This removes field-per-paragraph output structure without introducing model layout metadata or pooling evidence.
 
 Native Jev checks share the complete original read and common policy within a bounded batch. Long duplicate textual leaves in selected-source/closure records refer to whole strings in the request's `readTexts`; short structural ownership remains explicit. Host expansion validates every original source/claim index and immutable closure before publication. Every required verdict still has to pass independently; an oversized native batch splits rather than pruning claims or weakening thresholds.
 
