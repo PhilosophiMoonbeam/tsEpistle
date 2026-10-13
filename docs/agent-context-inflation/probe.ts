@@ -32,14 +32,22 @@ const result:any={sourceUtf8Bytes:bytes(page.content),sourceCharacters:page.cont
 async function capture(label:string,evidence:Map<any,any>){
  const {sources,sourceStructures}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]});const wire=encodeWikiSynthesisSources(sources,sourceStructures)
  type TextRef=number|[number,number,number]
- type LocatorMetricsStructures={texts:string[];sources:Array<{3:TextRef;4:TextRef|null;5?:TextRef[]|null}>}
+ type SourceRow=[unknown,unknown,unknown,TextRef,TextRef|null,TextRef[]|null,unknown,unknown,unknown?]
+ type LocatorMetricsStructures={texts:Record<number,string>;sources:Record<number,SourceRow>}
  const structures:LocatorMetricsStructures=JSON.parse(wire.sourceStructures);const bindings=JSON.parse(wire.sourceBindings)
+ if(!structures.texts||!structures.sources||Array.isArray(structures.texts)||Array.isArray(structures.sources)||typeof structures.texts!=='object'||typeof structures.sources!=='object')throw Error('Expected explicit numeric-key source dictionaries')
  const decode=(ref:TextRef):string=>typeof ref==='number'?structures.texts[ref]:structures.texts[ref[0]].slice(ref[1],ref[2])
  // These exact-use categories overlap each other and the physical pool; never add them.
- const selectedTexts=new Set<string>(structures.sources.map(row=>decode(row[3])))
- const quotations=new Set<string>(structures.sources.flatMap(row=>row[4]===null?[]:[decode(row[4])]))
- const authoredDependencies=new Set<string>(structures.sources.flatMap(row=>(row[5]??[]).map(decode)))
- const uniqueTextBytes=(texts:Set<string>)=>[...texts].reduce((sum,text)=>sum+bytes(text),0)
+ const selectedTexts=new Set<string>();const quotations=new Set<string>();const authoredDependencies=new Set<string>()
+ let structureScopeCount=0;let pooledTextCount=0;let pooledTextUtf8Bytes=0
+ for(const key in structures.sources){
+  const row=structures.sources[Number(key)];structureScopeCount++
+  selectedTexts.add(decode(row[3]))
+  if(row[4]!==null)quotations.add(decode(row[4]))
+  for(const ref of row[5]??[])authoredDependencies.add(decode(ref))
+ }
+ for(const key in structures.texts){pooledTextCount++;pooledTextUtf8Bytes+=bytes(structures.texts[Number(key)])}
+ const uniqueTextBytes=(texts:Set<string>)=>{let sum=0;for(const text of texts)sum+=bytes(text);return sum}
  let captured:any
  const ai=new AxMockAIService({features:{functions:false,streaming:false,structuredOutputs:true,structuredOutputModes:['native']},chatResponse:async(request:any)=>{captured=request;return {results:[{index:0,content:JSON.stringify({claims:[],unresolvedFacets:[0],observations:[]}),finishReason:'stop'}]}}})
  const program=createWikiSynthesisProgram(sources,{facetCount:1,structured:true,maxOutputTokens:8192})
@@ -49,7 +57,7 @@ async function capture(label:string,evidence:Map<any,any>){
  const final={...captured,model,chatPrompt,modelConfig:{...captured.modelConfig,maxTokens:8192}}
  const serialized=engine.serializedProviderRequestBytes({model},null,chatPrompt,8192,final)
  const projections=bindings.flatMap((g:any)=>g[2].flatMap((e:any)=>e[1]))
- result[label]={evidenceCount:evidence.size,synthesisSources:sources.length,uniqueNativeUnits:new Set(sources.map(s=>s.unitId)).size,structureInputEntries:sourceStructures.length,bindingGroups:bindings.length,projectionCount:projections.length,projectedTextBytes:sources.reduce((sum,s)=>sum+bytes(s.text),0),uniqueProjectedTextBytes:[...new Set(sources.map(s=>s.text))].reduce((sum,s)=>sum+bytes(s),0),sourceBindingsBytes:bytes(wire.sourceBindings),sourceStructuresBytes:bytes(wire.sourceStructures),structureScopeCount:structures.sources.length,scopeJsonBytes:bytes(structures.sources),pooledTextCount:structures.texts.length,pooledTextUtf8Bytes:structures.texts.reduce((sum:number,text:string)=>sum+bytes(text),0),pooledTextJsonBytes:bytes(structures.texts),uniqueSelectedTextCount:selectedTexts.size,uniqueSelectedTextUtf8Bytes:uniqueTextBytes(selectedTexts),uniqueQuotationCount:quotations.size,uniqueQuotationUtf8Bytes:uniqueTextBytes(quotations),uniqueAuthoredDependencyCount:authoredDependencies.size,uniqueAuthoredDependencyUtf8Bytes:uniqueTextBytes(authoredDependencies),axChatPromptBytes:bytes(captured.chatPrompt),axSystemContentBytes:bytes(captured.chatPrompt[0].content),axUserContentBytes:captured.chatPrompt.filter((m:any)=>m.role==='user').reduce((n,m)=>n+bytes(m.content),0),responseFormatBytes:bytes(captured.responseFormat),outputSchemaBytes:bytes(captured.responseFormat?.schema?.schema??captured.responseFormat),productionPrefixBytes:bytes(prefix),finalSerializedAxRequestBytes:serialized,contextOutputAllowance:128000-serialized,requestedInputPlusOutput:serialized+8192,passesRequestedContext:serialized+8192<=128000,topLevelComponentJsonBytes:Object.fromEntries(Object.entries(final).map(([k,v])=>[k,bytes(v)]))}
+ result[label]={evidenceCount:evidence.size,synthesisSources:sources.length,uniqueNativeUnits:new Set(sources.map(s=>s.unitId)).size,structureInputEntries:sourceStructures.length,bindingGroups:bindings.length,projectionCount:projections.length,projectedTextBytes:sources.reduce((sum,s)=>sum+bytes(s.text),0),uniqueProjectedTextBytes:[...new Set(sources.map(s=>s.text))].reduce((sum,s)=>sum+bytes(s),0),sourceBindingsBytes:bytes(wire.sourceBindings),sourceStructuresBytes:bytes(wire.sourceStructures),structureScopeCount,scopeJsonBytes:bytes(structures.sources),pooledTextCount,pooledTextUtf8Bytes,pooledTextJsonBytes:bytes(structures.texts),uniqueSelectedTextCount:selectedTexts.size,uniqueSelectedTextUtf8Bytes:uniqueTextBytes(selectedTexts),uniqueQuotationCount:quotations.size,uniqueQuotationUtf8Bytes:uniqueTextBytes(quotations),uniqueAuthoredDependencyCount:authoredDependencies.size,uniqueAuthoredDependencyUtf8Bytes:uniqueTextBytes(authoredDependencies),axChatPromptBytes:bytes(captured.chatPrompt),axSystemContentBytes:bytes(captured.chatPrompt[0].content),axUserContentBytes:captured.chatPrompt.filter((m:any)=>m.role==='user').reduce((n,m)=>n+bytes(m.content),0),responseFormatBytes:bytes(captured.responseFormat),outputSchemaBytes:bytes(captured.responseFormat?.schema?.schema??captured.responseFormat),productionPrefixBytes:bytes(prefix),finalSerializedAxRequestBytes:serialized,contextOutputAllowance:128000-serialized,requestedInputPlusOutput:serialized+8192,passesRequestedContext:serialized+8192<=128000,topLevelComponentJsonBytes:Object.fromEntries(Object.entries(final).map(([k,v])=>[k,bytes(v)]))}
 }
 await capture('rootOnly',new Map([[evidenceId,all.get(evidenceId)]]));await capture('rootAndSections',all);await capture('noSourceBaseline',new Map())
 writeFileSync(root+'/'+(process.env.PROBE_METRICS_FILE??'metrics.json'),JSON.stringify(result,null,2),{mode:0o600})

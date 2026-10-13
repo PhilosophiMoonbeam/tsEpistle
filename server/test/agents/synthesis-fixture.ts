@@ -92,7 +92,7 @@ const synthesisField = (input: string, title: string): unknown => {
   return JSON.parse(end < 0 ? value : value.slice(0, end))
 }
 
-type TextRef = number | [index: number, start: number, end: number]
+type TextRef = number | [poolKey: number, start: number, endExclusive: number]
 type SourceRow = [
   context: TextRef, kind: string, complete: boolean, selectedText: TextRef,
   literalStatement: TextRef | null, authoredTexts: TextRef[] | null,
@@ -112,16 +112,22 @@ interface ReadableSourceRow {
 }
 
 interface ReadableSources {
-  readonly texts: readonly string[]
-  readonly sources: readonly SourceRow[]
+  readonly texts: Readonly<Record<number, string>>
+  readonly sources: Readonly<Record<number, SourceRow>>
 }
 
-const synthesisStructures = (input: string): ReadableSources =>
-  synthesisField(input, 'Source Structures') as ReadableSources
+const synthesisStructures = (input: string): ReadableSources => {
+  const structures = synthesisField(input, 'Source Structures') as ReadableSources
+  if (structures === null || typeof structures !== 'object' ||
+    structures.texts === null || typeof structures.texts !== 'object' || Array.isArray(structures.texts) ||
+    structures.sources === null || typeof structures.sources !== 'object' || Array.isArray(structures.sources))
+    throw new Error('Supplied synthesis structures must contain text and source dictionaries')
+  return structures
+}
 
 const suppliedText = (structures: ReadableSources, reference: TextRef): string => {
-  const index = typeof reference === 'number' ? reference : reference[0]
-  const text = structures.texts[index]
+  const key = typeof reference === 'number' ? reference : reference[0]
+  const text = structures.texts[key]
   if (text === undefined) throw new Error('Missing supplied synthesis text')
   if (typeof reference === 'number') return text
   const [, start, end] = reference
