@@ -1,7 +1,8 @@
 import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
-import { wikiSynthesisSourceRef, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+import { wikiSynthesisSourceRef } from '../../agents/providers/wiki-synthesis.ts'
+import { parseSourceDocument, type SourceSpan, type SourceUnit } from '../../agents/providers/source-document.ts'
 
 /**
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
@@ -30,8 +31,12 @@ export const fixtureDecisionProviders = {
       }
     }
   },
-  async decideBatch(request: DecisionBatchRequest): Promise<DecisionBatchResult> {
+  async decideBatch(
+    request: DecisionBatchRequest,
+    options: NonNullable<Parameters<DecisionProviderRegistry['decideBatch']>[1]> = {}
+  ): Promise<DecisionBatchResult> {
     const provider = await fixtureDecisionProviders.selectRuntime()
+    await options.onPreDispatch?.()
     const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
     for (const [id, question] of Object.entries(request.questions)) {
       const label = Object.keys(question.criteria).find(label => label === 'other' || label === 'supports' || label === 'bounded')
@@ -79,142 +84,152 @@ export const synthesisInputFromRequest = (request: Readonly<AxChatRequest>): str
     const content = typeof message.content === 'string'
       ? message.content
       : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-    if (/^User Request: /u.test(content) && content.includes('\n\nSource Structures: ') && content.includes('\n\nSource Bindings: ')) return content
+    if (/^User Request: /u.test(content) && content.includes('\n\nSource Text: ') && content.includes('\n\nSource References: ')) return content
   }
   return undefined
 }
 
-const synthesisField = (input: string, title: string): unknown => {
+const synthesisFieldText = (input: string, title: string): string => {
   const start = input.lastIndexOf(`\n\n${title}: `)
   if (start < 0) throw new Error(`Missing supplied synthesis ${title} field`)
   const value = input.slice(start + title.length + 4)
-  const end = value.search(/\n\n(?:Source Bindings|Request Facets|Available Observations|Repair Feedback): /u)
-  return JSON.parse(end < 0 ? value : value.slice(0, end))
+  const end = title === 'Source Text'
+    ? value.lastIndexOf('\n\nSource References: ')
+    : value.search(/\n\n(?:Request Facets|Available Observations|Repair Feedback): /u)
+  return end < 0 ? value : value.slice(0, end)
 }
 
-type TextRef = number | [poolKey: number, start: number, endExclusive: number]
-type SourceRow = {
-  ref: string
-  context: TextRef
-  kind: string
-  complete: boolean
-  text: string
-  literalStatement: TextRef | null
-  authoredTexts: TextRef[] | null
-  structuralLabel: TextRef | null
-  labels: TextRef[]
-  opaquePacket?: TextRef
-}
+const synthesisField = (input: string, title: string): unknown => JSON.parse(synthesisFieldText(input, title))
 
-interface ReadableSourceRow {
-  readonly context: string
-  readonly kind: string
+export interface SynthesisFixtureRead {
+  readonly readRef: string
+  readonly evidenceId: string
+  readonly sourceRevision: string
+  readonly title: string | null
+  readonly representation: string
   readonly complete: boolean
+  readonly readText: string
+}
+
+export interface SynthesisFixtureSource extends SynthesisFixtureRead {
+  readonly sourceRef: string
   readonly text: string
-  readonly literalStatement: string | null
-  readonly packet?: string
-  readonly authoredTexts?: readonly string[]
-  readonly structuralLabel: string | null
-  readonly labels: readonly string[]
+  readonly kind: string
+  readonly quotation: boolean
+  readonly preview: boolean
+  readonly rawSpans?: readonly SourceSpan[]
 }
 
-interface ReadableSources {
-  readonly texts: Readonly<Record<number, string>>
-  readonly sources: Readonly<Record<number, SourceRow>>
-  readonly owners: Readonly<Record<number, [evidenceId: string, sourceRevision: string]>>
-}
-
-const synthesisStructures = (input: string): ReadableSources => {
-  const structures = synthesisField(input, 'Source Structures') as ReadableSources
-  if (structures === null || typeof structures !== 'object' ||
-    structures.texts === null || typeof structures.texts !== 'object' || Array.isArray(structures.texts) ||
-    structures.sources === null || typeof structures.sources !== 'object' || Array.isArray(structures.sources) ||
-    structures.owners === null || typeof structures.owners !== 'object' || Array.isArray(structures.owners))
-    throw new Error('Supplied synthesis structures must contain text, source and owner dictionaries')
-  return structures
-}
-
-const suppliedText = (structures: ReadableSources, reference: TextRef): string => {
-  const key = typeof reference === 'number' ? reference : reference[0]
-  const text = structures.texts[key]
-  if (text === undefined) throw new Error('Missing supplied synthesis text')
-  if (typeof reference === 'number') return text
-  const [, start, end] = reference
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > text.length)
-    throw new Error('Invalid supplied synthesis text span')
-  return text.slice(start, end)
-}
-
-const synthesisSourceRows = (input: string): { evidenceId: string; sourceRevision: string; sourceRef: string; row: ReadableSourceRow }[] => {
-  const bindings = synthesisField(input, 'Source Bindings')
-  const structures = synthesisStructures(input)
-  const text = (reference: TextRef): string => suppliedText(structures, reference)
-  if (bindings === null || typeof bindings !== 'object' || Array.isArray(bindings))
-    throw new Error('Supplied synthesis bindings are not a dictionary')
-  return Object.entries(bindings).map(([sourceRef, binding]) => {
-    if (!Array.isArray(binding) || binding.length !== 2 ||
-      binding.some(key => typeof key !== 'number' || !Number.isSafeInteger(key) || key < 0))
-      throw new Error('Invalid supplied synthesis scope or owner key')
-    const [scopeKey, ownerKey] = binding as [number, number]
-    const owner = structures.owners[ownerKey]
-    if (!Array.isArray(owner) || owner.length !== 2 || owner.some(value => typeof value !== 'string'))
-      throw new Error('Missing supplied synthesis owner')
-    const supplied = structures.sources[scopeKey]
-    if (supplied === undefined || supplied === null || typeof supplied !== 'object' || Array.isArray(supplied))
-      throw new Error('Missing supplied synthesis source row')
-    if (typeof supplied.text !== 'string') throw new Error('Supplied synthesis selected text must be an inline string')
-    const canonicalBinding = (bindings as Record<string, unknown>)[supplied.ref]
-    if (typeof supplied.ref !== 'string' || !Array.isArray(canonicalBinding) || canonicalBinding[0] !== scopeKey)
-      throw new Error('Supplied synthesis canonical ref must bind its exact source scope')
-    const row: ReadableSourceRow = {
-      context: text(supplied.context), kind: supplied.kind, complete: supplied.complete, text: supplied.text,
-      literalStatement: supplied.literalStatement === null ? null : text(supplied.literalStatement),
-      ...(supplied.authoredTexts === null ? { packet: text(supplied.opaquePacket!) } : { authoredTexts: supplied.authoredTexts.map(text) }),
-      structuralLabel: supplied.structuralLabel === null ? null : text(supplied.structuralLabel), labels: supplied.labels.map(text)
+export const synthesisReadsFromRequest = (request: Readonly<AxChatRequest>): SynthesisFixtureRead[] => {
+  const input = synthesisInputFromRequest(request)
+  if (input === undefined) return []
+  const sourceText = synthesisFieldText(input, 'Source Text')
+  const headers = [...sourceText.matchAll(/(?:^|\n\n)SOURCE READ (d\d+) ([^\n]+)\n/gu)]
+  return headers.map((header, index) => {
+    const metadata: unknown = JSON.parse(header[2]!)
+    if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata))
+      throw new Error('Invalid supplied synthesis read metadata')
+    const row = metadata as Record<string, unknown>
+    if (typeof row.evidenceId !== 'string' || typeof row.revision !== 'string' ||
+      row.title !== null && typeof row.title !== 'string' || typeof row.representation !== 'string' ||
+      row.status !== 'full' && row.status !== 'truncated')
+      throw new Error('Invalid supplied synthesis read identity')
+    const bodyStart = header.index! + header[0].length
+    const nextStart = headers[index + 1]?.index ?? sourceText.length
+    const footer = `\nEND SOURCE READ ${header[1]}`
+    const bodyEnd = sourceText.lastIndexOf(footer, nextStart)
+    if (bodyEnd < bodyStart || bodyEnd + footer.length > nextStart)
+      throw new Error('Missing supplied synthesis read footer')
+    return {
+      readRef: header[1]!, evidenceId: row.evidenceId, sourceRevision: row.revision,
+      title: row.title, representation: row.representation, complete: row.status === 'full',
+      readText: sourceText.slice(bodyStart, bodyEnd)
     }
-    return { evidenceId: owner[0], sourceRevision: owner[1], sourceRef, row }
   })
 }
-
-export type SynthesisFixtureSource = Omit<WikiSynthesisSource, 'unitId'> & { readonly sourceRef: string }
 
 export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): SynthesisFixtureSource[] => {
   const input = synthesisInputFromRequest(request)
   if (input === undefined) return []
-  return synthesisSourceRows(input).map(({ evidenceId, sourceRevision, sourceRef, row }) => {
-    const packet = row.authoredTexts === undefined ? row.packet! : JSON.stringify({
-      structuralLabel: row.structuralLabel, labels: row.labels, authoredContent: row.authoredTexts
+  const reads = new Map(synthesisReadsFromRequest(request).map(read => [read.readRef, read]))
+  const references = synthesisField(input, 'Source References')
+  if (references === null || typeof references !== 'object' || Array.isArray(references))
+    throw new Error('Supplied synthesis references are not an index')
+  const index = references as Record<string, unknown>
+  if (index.scopes === null || typeof index.scopes !== 'object' || Array.isArray(index.scopes) ||
+    index.units === null || typeof index.units !== 'object' || Array.isArray(index.units))
+    throw new Error('Supplied synthesis references require scope and unit dictionaries')
+  const scopes = index.scopes as Record<string, unknown>
+  return Object.entries(index.units).flatMap(([sourceRef, row]) => {
+    if (row === null || typeof row !== 'object' || Array.isArray(row))
+      throw new Error('Invalid supplied synthesis reference')
+    const source = row as Record<string, unknown>
+    if (typeof source.text !== 'string' || typeof source.scope !== 'number' || !Number.isSafeInteger(source.scope) ||
+      source.quotation !== undefined && source.quotation !== true ||
+      source.title !== undefined && source.title !== true ||
+      source.preview !== undefined && source.preview !== true)
+      throw new Error('Invalid supplied synthesis selector')
+    const rawSpans = source.rawSpans
+    if (source.preview === true && (!Array.isArray(rawSpans) || rawSpans.length === 0) ||
+      source.preview !== true && rawSpans !== undefined ||
+      Array.isArray(rawSpans) && rawSpans.some(span =>
+        span === null || typeof span !== 'object' || Array.isArray(span) ||
+        typeof span.start !== 'number' || typeof span.end !== 'number' ||
+        !Number.isSafeInteger(span.start) || !Number.isSafeInteger(span.end) ||
+        span.start < 0 || span.end <= span.start))
+      throw new Error('Invalid supplied synthesis raw spans')
+    const aliases = source.aliases ?? {}
+    if (aliases === null || typeof aliases !== 'object' || Array.isArray(aliases))
+      throw new Error('Invalid supplied synthesis aliases')
+    const aliasBindings = Object.entries(aliases).flatMap(([scopeKey, refs]) => {
+      const scope = Number(scopeKey)
+      if (!/^\d+$/u.test(scopeKey) || !Number.isSafeInteger(scope) || typeof refs !== 'string' || refs.length === 0)
+        throw new Error('Invalid supplied synthesis alias scope list')
+      return refs.split(' ').map(ref => {
+        if (!/^s[A-Za-z0-9_-]{16}$/u.test(ref)) throw new Error('Invalid supplied synthesis alias reference')
+        return [ref, scope] as const
+      })
     })
-    return {
-      evidenceId, sourceRevision, sourceRef,
-      context: row.context, text: row.text, kind: row.kind, complete: row.complete,
-      packet, literalStatement: row.literalStatement
-    }
+    return [[sourceRef, source.scope], ...aliasBindings].map(([ref, scopeKey]) => {
+      if (typeof ref !== 'string' || typeof scopeKey !== 'number' || !Number.isSafeInteger(scopeKey))
+        throw new Error('Invalid supplied synthesis alias identity')
+      const scope = scopes[String(scopeKey)]
+      if (scope === null || typeof scope !== 'object' || Array.isArray(scope))
+        throw new Error('Missing supplied synthesis scope')
+      const owner = scope as Record<string, unknown>
+      if (typeof owner.readRef !== 'string' || typeof owner.evidenceId !== 'string')
+        throw new Error('Invalid supplied synthesis scope identity')
+      const read = reads.get(owner.readRef)
+      if (read === undefined) throw new Error('Missing supplied synthesis read')
+      if (Array.isArray(rawSpans) && rawSpans.some(span => span.end > read.readText.length))
+        throw new Error('Supplied synthesis raw spans exceed their physical read')
+      return {
+        ...read, sourceRef: ref, evidenceId: owner.evidenceId,
+        text: source.text as string, kind: source.title === true ? 'page-title' : 'source',
+        complete: true, quotation: source.quotation === true, preview: source.preview === true,
+        ...(rawSpans === undefined ? {} : { rawSpans: rawSpans as readonly SourceSpan[] })
+      }
+    })
   })
 }
 
-export const synthesisAuthoredContentFromRequest = (
-  request: Readonly<AxChatRequest>,
-  source: WikiSynthesisSource | SynthesisFixtureSource
-): string[] => {
-  const input = synthesisInputFromRequest(request)
-  if (input === undefined) return []
-  const selected = synthesisSourceRows(input).find(entry =>
-    entry.evidenceId === source.evidenceId && entry.sourceRevision === source.sourceRevision &&
-    entry.sourceRef === ('sourceRef' in source ? source.sourceRef : wikiSynthesisSourceRef(source))
-  )
-  if (selected === undefined) return []
-  return [...(selected.row.authoredTexts ?? [])]
+let lastParsedFixtureRead: { readonly text: string; readonly units: readonly SourceUnit[] } | undefined
+
+// Derive expected Markdown input-unit refs from the raw bytes the model sees.
+// This is a selector predicate, not reconstructed host proof or wire metadata.
+export const synthesisSourceMatchesMarkdownUnitKind = (
+  source: SynthesisFixtureSource,
+  kind: SourceUnit['kind']
+): boolean => {
+  if (lastParsedFixtureRead?.text !== source.readText) lastParsedFixtureRead = {
+    text: source.readText,
+    units: parseSourceDocument(source.readText, { representation: 'markdown', truncated: false }).units
+  }
+  return lastParsedFixtureRead.units.some(unit => unit.kind === kind && wikiSynthesisSourceRef({
+    evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: `${unit.id}:assertion:0`
+  }) === source.sourceRef)
 }
 
-export const synthesisOwnedPacketIncludes = (
-  request: Readonly<AxChatRequest>,
-  source: WikiSynthesisSource | SynthesisFixtureSource,
-  literal: string
-): boolean => [
-  source.context, source.text, ...(source.literalStatement === null ? [] : [source.literalStatement]),
-  ...synthesisAuthoredContentFromRequest(request, source)
-].some(text => text.includes(literal))
 
 export const synthesisObservationsFromRequest = (request: Readonly<AxChatRequest>): readonly string[] => {
   const input = synthesisInputFromRequest(request)
@@ -266,7 +281,7 @@ export interface SynthesisFixtureAnswer {
   readonly recommendations?: string
 }
 
-export type SynthesisFixtureBindings = Readonly<Record<string, number | { readonly text?: string; readonly context?: string }>>
+export type SynthesisFixtureBindings = Readonly<Record<string, number | { readonly text?: string; readonly readText?: string; readonly sourceRef?: string }>>
 
 export interface SynthesisFixtureOptions {
   readonly bindings?: SynthesisFixtureBindings
@@ -310,13 +325,15 @@ export const synthesisFixtureAnswer = (
       const titleAssertion = /^(?:(?:The\s+)?(?:(?:current|this)\s+)?page(?:'s)?\s+(?:is\s+(?:titled|named|called)|(?:title|name)\s+is)|(?:Title|Page\s+title)\s*:)/iu.test(claim.statement)
       candidates = candidates.filter(source => (source.kind === 'page-title') === titleAssertion)
       if (!titleAssertion && (options.bindings?.[claim.evidenceId] === undefined || typeof options.bindings[claim.evidenceId] === 'number'))
-        candidates = candidates.filter(source => source.kind !== 'heading')
+        candidates = candidates.filter(source => !synthesisSourceMatchesMarkdownUnitKind(source, 'heading'))
     }
     const binding = options.bindings?.[claim.evidenceId]
     if (explicitRef === undefined && binding !== undefined) {
       candidates = typeof binding === 'number'
         ? candidates.slice(binding, binding + 1)
-        : candidates.filter(source => (binding.text === undefined || source.text === binding.text) && (binding.context === undefined || source.context === binding.context))
+        : candidates.filter(source => (binding.text === undefined || source.text === binding.text) &&
+          (binding.readText === undefined || source.readText === binding.readText) &&
+          (binding.sourceRef === undefined || source.sourceRef === binding.sourceRef))
     }
     if (candidates.length > 1 && explicitRef === undefined)
       throw new Error(`Select an explicit source unit for fixture citation ${claim.evidenceId}`)

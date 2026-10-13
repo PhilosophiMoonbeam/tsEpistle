@@ -624,6 +624,60 @@ describe('native decision batches', () => {
     })
   })
 
+  it('redacts a rejected final source guard without posting raw state or manufacturing a paid receipt', async () => {
+    const outgoing: RequestInit[] = []
+    let dnsAdmitted = false
+    const client = new DecisionProviderClient({
+      resolve: (async () => {
+        dnsAdmitted = true
+        return [{ address: '93.184.216.34', family: 4 }]
+      }) as unknown as typeof lookup,
+      fetch: fakeFetch((_url, init) => {
+        outgoing.push(init)
+        return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+      })
+    })
+    const failure = await client.executeBatch(
+      { ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest,
+      { onPreDispatch: async () => {
+        expect(dnsAdmitted).toBe(true)
+        throw new Error('private-source-guard-detail')
+      } }
+    ).catch((value: unknown) => value)
+    expect(failure).toMatchObject({ code: 'DECISION_PRE_DISPATCH_REJECTED' })
+    expect(failure).not.toBeInstanceOf(DecisionProviderFailure)
+    expect(String(failure)).not.toContain('private-source-guard-detail')
+    expect(JSON.stringify(failure)).not.toContain('fixture-secret')
+    expect(outgoing).toEqual([])
+  })
+
+  it('cancels a stalled final source guard before any credential-bearing POST', async () => {
+    const entered = Promise.withResolvers<void>()
+    const outgoing: RequestInit[] = []
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch((_url, init) => {
+        outgoing.push(init)
+        return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+      })
+    })
+    const controller = new AbortController()
+    const pending = client.executeBatch(
+      { ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest,
+      { signal: controller.signal, onPreDispatch: async () => {
+        entered.resolve()
+        await Promise.withResolvers<never>().promise
+      } }
+    )
+    await entered.promise
+    controller.abort('private-cancellation-detail')
+    const failure = await pending.catch((value: unknown) => value)
+    expect(failure).toMatchObject({ code: 'DECISION_ABORTED', status: 499 })
+    expect(failure).not.toBeInstanceOf(DecisionProviderFailure)
+    expect(String(failure)).not.toContain('private-cancellation-detail')
+    expect(outgoing).toEqual([])
+  })
+
   it('cancels an in-flight batch without retrying or fabricating usage when its transport stalls', async () => {
     const started = Promise.withResolvers<void>()
     let calls = 0

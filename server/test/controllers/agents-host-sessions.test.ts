@@ -2665,6 +2665,203 @@ describe('ordinary-origin agent session API', () => {
       })
     )
   })
+
+  it('retains complete owned reads once across cached followups, preserves historical versions, and rejects corrupt receipts', async () => {
+    const ownedSession = randomUUID()
+    const foreignSession = randomUUID()
+    await insertAccountingSession(ownedSession)
+    await insertAccountingSession(foreignSession)
+    const completeContent = `${'Unrelated first-question material.\n'.repeat(600)}Second-topic answer: RETAINED-TAIL.`
+    const page = (id: number, revision: string, content = completeContent) => ({
+      id,
+      locale: 'en',
+      path: `page-${id}`,
+      title: `Page ${id}`,
+      contentType: 'markdown',
+      sourceRevision: revision,
+      updatedAt: '2026-08-17T00:00:00.000Z',
+      content,
+      citation: { evidenceId: `page:${id}:revision:${revision}`, label: `Page ${id}`, href: `/en/page-${id}` }
+    })
+    let engineCalls = 0
+    let ownInitialRun: string | undefined
+    const observations: Array<NonNullable<AgentEngineRequest['retainedPageReads']>> = []
+    const activities: Array<AgentEngineRequest['priorActivity']> = []
+    const followupRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute(request, sink) {
+          engineCalls += 1
+          observations.push(request.retainedPageReads ?? [])
+          activities.push(request.priorActivity)
+          const emitRead = async (
+            actionCallId: string,
+            output: Readonly<Record<string, unknown>>,
+            actionName: 'pages.get' | 'pages.getVersion' = 'pages.get',
+            extra: Readonly<Record<string, unknown>> = {}
+          ) => {
+            const input = actionName === 'pages.getVersion' ? { pageId: output.id, versionId: output.versionId } : { id: output.id }
+            await sink.event('tool.started', { actionCallId, actionName, input: JSON.stringify(input) })
+            await sink.event('tool.completed', { actionCallId, actionName, result: JSON.stringify(output), ...extra })
+          }
+          if (request.run.sessionId === foreignSession) {
+            await emitRead('foreign-receipt', page(99, '1', 'Foreign source must never enter the owned thread.'))
+          } else if (ownInitialRun === undefined) {
+            ownInitialRun = request.run.id
+            await emitRead('superseded-current', page(42, '1', 'Old revision.'))
+            await emitRead('original-current', page(42, '2'))
+            for (const versionId of [1, 2]) {
+              await emitRead(
+                `historical-${versionId}`,
+                {
+                  ...page(42, String(versionId)),
+                  versionId,
+                  citation: { evidenceId: `page:42:version:${versionId}:revision:${versionId}`, label: 'Page 42', href: `/en/page-42?v=${versionId}` }
+                },
+                'pages.getVersion'
+              )
+            }
+            await emitRead('omitted-source', page(43, '1'), 'pages.get', {
+              contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+            })
+            await emitRead('truncated-source', { ...page(44, '1'), contentTruncated: true })
+            await emitRead('incomplete-source', { ...page(45, '1'), complete: false })
+            await emitRead('expired-source', { ...page(46, '1'), groundedExpiresAt: '2000-01-01T00:00:00.000Z' })
+            // Cross both the telemetry window and the metadata scan page boundary.
+            for (let index = 0; index < 132; index += 1) {
+              await emitRead(`cached-${index}`, page(42, '2'), 'pages.get', { cacheHit: true, reusedActionCallId: 'original-current' })
+            }
+            // An odd final event deliberately leaves the bounded telemetry tail
+            // starting at a completed action whose real start is just outside it.
+            await sink.event('model.turn', {
+              usageVersion: 2,
+              outcome: 'tool_calls',
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              costMicros: 0,
+              content: '',
+              contentTruncated: false,
+              actionCallIds: [],
+              finishReason: 'stop'
+            })
+          } else {
+            const current = request.retainedPageReads?.find(read => read.actionName === 'pages.get')
+            await sink.text(typeof current?.output.content === 'string' && current.output.content.includes('RETAINED-TAIL') ? 'RETAINED-TAIL' : 'Missing source')
+          }
+          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 0 }
+        }
+      },
+      1_000
+    )
+    const submit = async (sessionId: string) => {
+      const session = await db('agentSessions').where({ id: sessionId }).first('version')
+      return followupRuntime.submit({
+        ownerId: 7,
+        sessionId,
+        expectedSessionVersion: Number(session.version),
+        profileResolutionToken: 'accounting-test',
+        clientRequestId: randomUUID(),
+        content: 'Answer the second topic from the complete prior source.'
+      })
+    }
+    const foreign = await submit(foreignSession)
+    expect(await followupRuntime.runOnce()).toBe(true)
+    await db('agentEvents').where({ runId: foreign.run.id, type: 'tool.completed' }).update({ dataSha256: '0'.repeat(64) })
+    await submit(ownedSession)
+    expect(await followupRuntime.runOnce()).toBe(true)
+    const followup = await submit(ownedSession)
+    expect(await followupRuntime.runOnce()).toBe(true)
+    expect(await db('agentRuns').where({ id: followup.run.id }).first('status', 'errorCode')).toEqual({ status: 'succeeded', errorCode: null })
+    expect(observations[1]).toEqual([])
+    expect(activities[2]?.flatMap(activity => activity.tools).find(tool => tool.cacheHit)).toMatchObject({
+      state: 'complete',
+      input: { id: 42 },
+      cacheHit: true,
+      duplicateOfActionCallId: 'original-current'
+    })
+    const retained = observations[2]!
+    expect(retained).toHaveLength(3)
+    expect(retained.find(read => read.actionName === 'pages.get')).toEqual({
+      actionCallId: 'original-current',
+      actionName: 'pages.get',
+      output: page(42, '2')
+    })
+    expect(retained.filter(read => read.actionName === 'pages.getVersion').map(read => read.output.versionId).sort()).toEqual([1, 2])
+    expect(await db('agentMessages').where({ id: followup.run.assistantMessageId }).first('content')).toEqual({ content: 'RETAINED-TAIL' })
+    const events = await db('agentEvents').where({ runId: ownInitialRun!, type: 'tool.completed' }).orderBy('sequence', 'desc').select('id', 'data')
+    const corrupt = events.find(event => JSON.parse(String(event.data)).actionName === 'pages.get')
+    if (!corrupt) throw new Error('Missing retained source receipt')
+    await db('agentEvents').where({ id: corrupt.id }).update({ dataSha256: '0'.repeat(64) })
+    const rejected = await submit(ownedSession)
+    expect(await followupRuntime.runOnce()).toBe(true)
+    expect(engineCalls).toBe(3)
+    expect(await db('agentRuns').where({ id: rejected.run.id }).first('status', 'errorCode')).toMatchObject({
+      status: 'failed',
+      errorCode: 'AGENT_EVENT_CORRUPT'
+    })
+  }, 10_000)
+
+  it.each(['missing', 'corrupt'] as const)('fails closed when an earlier telemetry start boundary is %s', async corruption => {
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    let engineCalls = 0
+    const boundaryRuntime = makeAccountingRuntime(
+      {
+        preflight: preflightAgentRequest,
+        async execute(_request, sink) {
+          engineCalls += 1
+          for (let index = 0; index < 129; index += 1) {
+            await sink.event('tool.started', { actionCallId: `prior-${index}`, actionName: 'pages.search', input: JSON.stringify({ query: `Query ${index}` }) })
+            await sink.event('tool.completed', { actionCallId: `prior-${index}`, actionName: 'pages.search', result: JSON.stringify({ results: [] }) })
+          }
+          await sink.event('model.turn', {
+            usageVersion: 2,
+            outcome: 'tool_calls',
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            costMicros: 0,
+            content: '',
+            contentTruncated: false,
+            actionCallIds: [],
+            finishReason: 'stop'
+          })
+          await sink.text('Initial retrieval completed.')
+          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 0 }
+        }
+      },
+      1_000
+    )
+    const submit = async () => {
+      const session = await db('agentSessions').where({ id: sessionId }).first('version')
+      return boundaryRuntime.submit({
+        ownerId: 7,
+        sessionId,
+        expectedSessionVersion: Number(session.version),
+        profileResolutionToken: 'accounting-test',
+        clientRequestId: randomUUID(),
+        content: 'Continue after the prior retrieval.'
+      })
+    }
+    const initial = await submit()
+    expect(await boundaryRuntime.runOnce()).toBe(true)
+    expect(await db('agentRuns').where({ id: initial.run.id }).first('status', 'errorCode')).toEqual({ status: 'succeeded', errorCode: null })
+    const starts = await db('agentEvents').where({ runId: initial.run.id, type: 'tool.started' }).select('id', 'data')
+    const boundary = starts.find(event => JSON.parse(String(event.data)).actionCallId === 'prior-1')
+    if (!boundary) throw new Error('Missing real prior action boundary')
+    if (corruption === 'missing') await db('agentEvents').where({ id: boundary.id }).delete()
+    else await db('agentEvents').where({ id: boundary.id }).update({ dataSha256: '0'.repeat(64) })
+    const rejected = await submit()
+    expect(await boundaryRuntime.runOnce()).toBe(true)
+    expect(engineCalls).toBe(1)
+    expect(await db('agentRuns').where({ id: rejected.run.id }).first('status')).toEqual({ status: 'failed' })
+    expect(await db('agentMessages').where({ id: rejected.run.assistantMessageId }).first('content')).toEqual({ content: '' })
+    expect(
+      normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: rejected.run.id }).first('consumedTokens', 'consumedCostMicros'))
+    ).toEqual({ consumedTokens: 0, consumedCostMicros: 0 })
+  })
+
   it('forwards retained provider state only across an exact origin at the engine boundary', async () => {
     type Origin = Readonly<{
       providerProfileVersionId: string

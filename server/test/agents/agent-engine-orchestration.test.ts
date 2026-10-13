@@ -11,11 +11,12 @@ import type {
   AgentDispatchBudgetReservation,
   AgentDispatchBudgetSequence,
   AgentDispatchUsage,
-  AgentEngineRequest
+  AgentEngineRequest,
+  AgentRetainedPageRead
 } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisOwnedPacketIncludes, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const visibleWikiText = (content: string): string => {
@@ -179,6 +180,117 @@ const responseStream = (responses: readonly AxChatResponse[], cancel?: (reason: 
 }
 
 describe('Ax orchestration stages', () => {
+  it.each(['fresh', 'stale', 'revoked', 'outside scope'] as const)(
+    'reuses the complete prior read for a new topic only while current authority remains valid: %s',
+    async authority => {
+      const evidenceId = 'page:42:revision:1'
+      const firstFact = 'Falcon dispatch requires a signed manifest.'
+      const followupFact = 'Cedar warehouse closes at 18:30 on Fridays.'
+      const content = [
+        '# Supplier operations',
+        '## Falcon dispatch',
+        firstFact,
+        ...Array.from({ length: 18 }, (_, index) => `## Independent rule ${index + 1}\n\nStorage zone ${index + 1} requires its own receipt.`),
+        '## Cedar warehouse',
+        followupFact
+      ].join('\n\n')
+      const page = {
+        id: 42, locale: 'en', path: 'suppliers', title: 'Supplier operations',
+        contentType: 'markdown', sourceRevision: '1', content,
+        citation: { evidenceId, label: 'Supplier operations', href: '/en/suppliers' },
+        citationSections: []
+      }
+      let followup = false
+      let requestedRead = false
+      let currentRevision = '1'
+      let readable = true
+      let allowedPageId = 42
+      const synthesisRequests: Readonly<AxChatRequest>[] = []
+      const retained: { read?: AgentRetainedPageRead } = {}
+      const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        if (synthesisInputFromRequest(input) !== undefined) {
+          synthesisRequests.push(input)
+          const fact = followup ? followupFact : firstFact
+          const source = synthesisSourcesFromRequest(input).find(unit => unit.text === fact)
+          return { results: [{ index: 0, content: synthesisFixtureAnswer(input, {
+            claims: source === undefined ? [] : [{ ...source, statement: fact }],
+            unresolvedFacets: source === undefined ? [0] : []
+          }) }] }
+        }
+        if (requestedRead || followup && authority !== 'fresh') return finishCollectionResponse
+        requestedRead = true
+        return { results: [{ index: 0, functionCalls: [{
+          id: followup ? 'followup-page-read' : 'initial-page-read', type: 'function',
+          function: { name: 'wiki_get_page', params: { id: 42 } }
+        }] }] }
+      })
+      const invoke = vi.fn(async () => page)
+      const validateObservation = vi.fn(async (action: string, output: unknown) =>
+        action === 'pages.get' && typeof output === 'object' && output !== null &&
+        'sourceRevision' in output && output.sourceRevision === currentRevision &&
+        'id' in output && output.id === allowedPageId && readable)
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read authorized page',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' }],
+          invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+        })
+      }
+      const engine = new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders })
+      const initialText = vi.fn(async (_delta: string) => {})
+      await engine.execute({
+        ...baseRequest(new AbortController().signal), memory: { user: [], agent: [] }, currentPage: null,
+        messages: [{ role: 'user', content: 'What does Falcon dispatch require?' }]
+      }, {
+        text: initialText,
+        event: async (type, data) => {
+          if (type !== 'tool.completed' || typeof data !== 'object' || data === null ||
+            !('actionName' in data) || data.actionName !== 'pages.get' ||
+            !('actionCallId' in data) || typeof data.actionCallId !== 'string' ||
+            !('result' in data) || typeof data.result !== 'string') return
+          retained.read = { actionCallId: data.actionCallId, actionName: 'pages.get', output: JSON.parse(data.result) }
+        }
+      })
+      expect(visibleWikiText(initialText.mock.calls.flat().join(''))).toContain(firstFact)
+      expect(invoke).toHaveBeenCalledTimes(1)
+      const retainedRead = retained.read
+      if (retainedRead === undefined) throw new Error('The initial run must record its complete canonical page read')
+      expect(retainedRead.output.content).toBe(content)
+      followup = true
+      requestedRead = false
+      if (authority === 'stale') currentRevision = '2'
+      if (authority === 'revoked') readable = false
+      if (authority === 'outside scope') allowedPageId = 43
+      const followupText = vi.fn(async (_delta: string) => {})
+      const result = await engine.execute({
+        ...baseRequest(new AbortController().signal), memory: { user: [], agent: [] }, currentPage: null,
+        messages: [
+          { role: 'user', content: 'What does Falcon dispatch require?' },
+          { role: 'assistant', content: `${firstFact} [[cite:${evidenceId}]]` },
+          { role: 'user', content: 'And when does Cedar warehouse close on Fridays?' }
+        ],
+        retainedPageReads: [retainedRead]
+      }, { text: followupText, event: async () => {} })
+      // The followup may request the read, but a fresh retained read satisfies it
+      // without another pages.get invocation.
+      expect(invoke).toHaveBeenCalledTimes(1)
+      expect(validateObservation).toHaveBeenCalledWith('pages.get', page, expect.any(AbortSignal))
+      const published = visibleWikiText(followupText.mock.calls.flat().join(''))
+      const delivered = synthesisReadsFromRequest(synthesisRequests.at(-1)!)
+      if (authority === 'fresh') {
+        expect(published).toContain(followupFact)
+        expect(published).not.toContain(firstFact)
+        expect(result.citations).toEqual([expect.objectContaining({ evidenceId })])
+        expect(delivered).toEqual([expect.objectContaining({ readText: content, complete: true })])
+      } else {
+        expect(published).not.toContain(followupFact)
+        expect(result.citations).toBeUndefined()
+        expect(delivered).toEqual([])
+        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+      }
+    }
+  )
+
   it('uses the same bounded root output exposure for preflight and actual generation on large provider profiles', async () => {
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => ({
       results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }]
@@ -1089,8 +1201,19 @@ describe('Ax orchestration stages', () => {
     const answer = `${fact} [[cite:${citation}]]`
     const independentFact = 'The contact office opens at 09:00.'
     const independentAnswer = `${independentFact} [[cite:${citation}]]`
-    for (const complete of [true, false]) {
-      const content = `# Contacts\n\n${independentFact}\n\n${template.replace('{{padding}}', complete ? '' : ` <!--${'presentational padding '.repeat(700)}-->`).replace('{{title}}', complete ? 'Contact' : 'presentational padding '.repeat(700))}\n\n${'Neutral office background. '.repeat(900)}`
+    for (const delivery of ['complete', 'padded', 'missing'] as const) {
+      const complete = delivery !== 'missing'
+      const missingDependency: Readonly<Record<string, string>> = {
+        'parent identity': '- Name: Maya Quinn',
+        'required condition': '- Maya Quinn may approve release.',
+        'sibling field': '- Name: Maya Quinn\n  - Phone: 555-0100 x42',
+        'table header': 'Name | Contact code\n--- | ---\nMaya Quinn | 555-0100 x42',
+        'reference definition': '- Name: Maya Quinn\n  - Email: [maya@example.test][maya]'
+      }
+      const record = delivery === 'missing' ? missingDependency[_dependency]! :
+        template.replace('{{padding}}', delivery === 'padded' ? ` <!--${'presentational padding '.repeat(700)}-->` : '')
+          .replace('{{title}}', delivery === 'padded' ? 'presentational padding '.repeat(700) : 'Contact')
+      const content = `# Contacts\n\n${independentFact}\n\n${record}\n\n${'Neutral office background. '.repeat(900)}`
       const evidence = {
         id: 1,
         locale: 'en',
@@ -1109,7 +1232,7 @@ describe('Ax orchestration stages', () => {
         if (offersCollectionFinish(input)) return finishCollectionResponse
         const statement = ++turn === 1 ? fact : independentFact
         const sources = synthesisSourcesFromRequest(input)
-        const source = sources.find(unit => unit.evidenceId === citation && (turn === 1 ? synthesisOwnedPacketIncludes(input, unit, 'Maya Quinn') : unit.text.includes(independentFact)))
+        const source = sources.find(unit => unit.evidenceId === citation && (turn === 1 ? unit.text.includes('Maya Quinn') : unit.text.includes(independentFact)))
         return {
           results: [{ index: 0, content: synthesisFixtureAnswer(input, {
             claims: [{ evidenceId: citation, sourceRevision: 'rev-1', sourceRef: source?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement }],
@@ -1140,21 +1263,25 @@ describe('Ax orchestration stages', () => {
       )
       const published = text.mock.calls.map(([delta]) => delta).join('')
       if (complete) {
-        expect(published).toBe(answer)
+        expect(synthesisReadsFromRequest(chat.mock.calls.at(-1)![0])).toEqual([
+          expect.objectContaining({ readText: content, complete: true })
+        ])
+        expect(visibleWikiText(published)).toBe(visibleWikiText(answer))
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
       } else {
-        expect(published).not.toContain(`${fact} [[cite:${citation}]]`)
-        expect(published).toContain(independentAnswer)
+        expect(visibleWikiText(published)).not.toContain(visibleWikiText(`${fact} [[cite:${citation}]]`))
+        expect(visibleWikiText(published)).toContain(visibleWikiText(independentAnswer))
         expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
       }
+      expect(published).toContain(`[[cite:${citation}]]`)
     }
   })
 
-  it('adaptable child transfer cannot summarize undelivered facts from a partial section', async () => {
+  it.each(['own unit', 'neighboring unit'] as const)('delivers complete child reads without widening selected original-unit authority: %s', async ownership => {
     const citation = 'page:42:revision:1:section:1'
     const visibleFact = 'Maya Quinn handles northern orders.'
     const unseenFact = 'Noah Bell handles southern orders.'
@@ -1165,7 +1292,10 @@ describe('Ax orchestration stages', () => {
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       if (offersCollectionFinish(input)) return finishCollectionResponse
       const statement = ++turn === 1 ? unseenFact : visibleFact
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === citation && unit.text.includes(visibleFact))
+      const sources = synthesisSourcesFromRequest(input)
+      expect(synthesisReadsFromRequest(input)).toEqual([expect.objectContaining({ readText: content, complete: true })])
+      const selectedFact = ownership === 'own unit' && turn === 1 ? unseenFact : visibleFact
+      const source = sources.find(unit => unit.evidenceId === citation && unit.text.includes(selectedFact))
       return {
         results: [{ index: 0, content: synthesisFixtureAnswer(input, {
           claims: [{ evidenceId: citation, sourceRevision: '1', sourceRef: source?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement }],
@@ -1206,11 +1336,20 @@ describe('Ax orchestration stages', () => {
       { text, event }
     )
     const published = text.mock.calls.map(([delta]) => delta).join('')
-    expect(visibleWikiText(published)).not.toContain(unseenFact)
-    expect(visibleWikiText(published)).toContain(visibleFact)
+    if (ownership === 'own unit') {
+      // Previously filtered out by a per-unit transfer cap; genuine complete
+      // new delivery now makes this own bound assertion available.
+      expect(visibleWikiText(published)).toContain(unseenFact)
+      expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: true })
+      expect(turn).toBe(1)
+    } else {
+      expect(visibleWikiText(published)).not.toContain(unseenFact)
+      expect(visibleWikiText(published)).toContain(visibleFact)
+      expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
+      expect(turn).toBe(2)
+    }
     expect(published).toContain(`[[cite:${citation}]]`)
     expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
-    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
   })
   it('does not trust child evidence seeds without a host page validator', async () => {
     const evidence = {

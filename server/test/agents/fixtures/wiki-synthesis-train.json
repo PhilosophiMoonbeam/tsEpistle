@@ -32,6 +32,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Scratch logs are retained for 7 days without approval.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "readId": "fixture:train-retention:train-retention-archive", "title": "train-retention", "representation": "markdown", "complete": true, "source": "Archive logs are retained for 30 days. Deletion requires manager approval."}, {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "readId": "fixture:train-retention:train-retention-scratch", "title": "train-retention", "representation": "markdown", "complete": true, "source": "Scratch logs are retained for 7 days without approval."}],
     "requestFacets": [
       "archive",
       "scratch"
@@ -363,6 +364,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Exports are permitted only for administrators.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "readId": "fixture:train-threshold:train-threshold-alert", "title": "train-threshold", "representation": "markdown", "complete": true, "source": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."}, {"evidenceId": "train-threshold-export", "sourceRevision": "train-threshold-r1", "readId": "fixture:train-threshold:train-threshold-export", "title": "train-threshold", "representation": "markdown", "complete": true, "source": "Exports are permitted only for administrators."}],
     "requestFacets": [
       "latency alert threshold",
       "export restriction"
@@ -671,6 +673,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Cancellation uses https://example.org/cancel.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "train-links-enroll", "sourceRevision": "train-links-r1", "readId": "fixture:train-links:train-links-enroll", "title": "train-links", "representation": "markdown", "complete": true, "source": "Enrollment uses https://example.org/enroll; cancellation is not handled here."}, {"evidenceId": "train-links-cancel", "sourceRevision": "train-links-r1", "readId": "fixture:train-links:train-links-cancel", "title": "train-links", "representation": "markdown", "complete": true, "source": "Cancellation uses https://example.org/cancel."}],
     "requestFacets": [
       "enrollment",
       "cancellation"
@@ -962,6 +965,7 @@
         "packet": "{\"kind\":\"paragraph\",\"text\":\"Guests may not deploy, even with reviewer approval.\"}"
       }
     ],
+    "sourceReads": [{"evidenceId": "train-access-approval", "sourceRevision": "train-access-r1", "readId": "fixture:train-access:train-access-approval", "title": "train-access", "representation": "markdown", "complete": true, "source": "Deployment requires approval from 2 reviewers."}, {"evidenceId": "train-access-guest", "sourceRevision": "train-access-r1", "readId": "fixture:train-access:train-access-guest", "title": "train-access", "representation": "markdown", "complete": true, "source": "Guests may not deploy, even with reviewer approval."}],
     "requestFacets": [
       "approval",
       "guest restrictions"
@@ -1230,6 +1234,7 @@
     "provenance": {"kind": "synthetic", "adjudication": "Manual: a truncated source cannot substantiate a complete requested retention policy; abstention is correct, not false rejection."},
     "userRequest": "State the complete telemetry retention policy.",
     "sourceUnits": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "unitId": "partial", "context": "Telemetry policy", "text": "Telemetry is retained for 21", "kind": "paragraph", "complete": false, "literalStatement": null, "packet": "{\"kind\":\"paragraph\",\"text\":\"Telemetry is retained for 21\",\"truncated\":true}"}],
+    "sourceReads": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "readId": "fixture:train-truncated:train-truncated-partial", "title": "Telemetry policy", "representation": "markdown", "complete": false, "source": "Telemetry is retained for 21"}],
     "requestFacets": ["complete telemetry retention policy"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
     "variants": [
       {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},

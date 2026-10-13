@@ -362,7 +362,7 @@ export class DecisionProviderClient {
     snapshot: DecisionProviderRuntime,
     key: string,
     request: DecisionBatchRequest,
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; onPreDispatch?: () => Promise<void> } = {}
   ): Promise<DecisionBatchResult> {
     validateDecisionBatchRequest(request)
     const { availableModels: _models, ...result } = await this.#execute(snapshot, key, request, options)
@@ -373,7 +373,7 @@ export class DecisionProviderClient {
     snapshot: DecisionProviderRuntime,
     key: string,
     request: DecisionRequest | DecisionBatchRequest,
-    options: { signal?: AbortSignal; check?: boolean }
+    options: { signal?: AbortSignal; check?: boolean; onPreDispatch?: () => Promise<void> }
   ): Promise<DecisionBatchResult & { availableModels: readonly string[] }> {
     const config = validateDecisionProviderConfig(snapshot.config)
     if (config.kind !== 'typesafe' && 'questions' in request)
@@ -385,6 +385,9 @@ export class DecisionProviderClient {
     let usage: DecisionResult['usage'] | null = null
     let responseModel: string | undefined
     let answers: DecisionBatchResult['answers'] | undefined
+    let payloadDispatched = false
+    let preDispatchRejected = false
+    let preDispatchFailure: unknown
     // These identifiers cross the server boundary in checks/results. A custom
     // service must not turn a write-only bearer token into a public model name.
     const safeModelId = (value: unknown): value is string =>
@@ -415,6 +418,17 @@ export class DecisionProviderClient {
       if (typeof init.body !== 'string' && init.body !== undefined && init.body !== null) throw invalid('INVALID_DECISION_REQUEST', 400)
       if (typeof init.body === 'string' && Buffer.byteLength(init.body) > MAX_REQUEST_BYTES) throw invalid('INVALID_DECISION_REQUEST', 400)
       assertPublic(await abortable(resolve(url.hostname, { all: true, verbatim: true }), signal))
+      if (!isModels && options.onPreDispatch !== undefined) {
+        try {
+          await abortable(options.onPreDispatch(), signal)
+          signal.throwIfAborted()
+        } catch (error) {
+          preDispatchRejected = true
+          preDispatchFailure = error
+          throw error
+        }
+      }
+      if (!isModels) payloadDispatched = true
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${key}` }
       const response = await abortable(
         (implementation as unknown as typeof undiciFetch)(url, {
@@ -636,6 +650,13 @@ export class DecisionProviderClient {
         availableModels
       }
     } catch (error: unknown) {
+      if (preDispatchRejected && !payloadDispatched) {
+        // No source POST left the server. Keep typed host failure codes without
+        // manufacturing a provider usage/cost receipt; redact unknown failures.
+        if (preDispatchFailure instanceof AgentRepositoryError) throw preDispatchFailure
+        const code = options.signal?.aborted ? 'DECISION_ABORTED' : timeout.aborted ? 'DECISION_TIMEOUT' : 'DECISION_PRE_DISPATCH_REJECTED'
+        throw new AgentRepositoryError(code, 'Decision provider dispatch was not authorized', code === 'DECISION_ABORTED' ? 499 : 502)
+      }
       // Ax wraps fetch rejections, including our own egress/body guards.
       // Recover only typed application errors; provider errors stay redacted.
       const failure = error instanceof AxAIServiceNetworkError ? error.originalError : error
@@ -905,13 +926,13 @@ export class DecisionProviderRegistry {
 
   async decideBatch(
     request: DecisionBatchRequest,
-    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal } = {}
+    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal; onPreDispatch?: () => Promise<void> } = {}
   ): Promise<DecisionBatchResult> {
     return this.#dispatchRuntime(options, (snapshot, key) => this.#client.executeBatch(snapshot, key, request, options))
   }
 
   async #dispatchRuntime<Result extends Pick<DecisionBatchResult, 'usage' | 'latencyMs'>>(
-    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal },
+    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal; onPreDispatch?: () => Promise<void> },
     dispatch: (snapshot: DecisionProviderRuntime, key: string) => Promise<Result>
   ): Promise<Result> {
     const snapshot = await this.selectRuntime(options.providerId)

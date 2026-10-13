@@ -20,12 +20,14 @@ import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
 import { parseSourceDocument } from '../../agents/providers/source-document.ts'
 import { unpackWikiReadTexts } from '../../agents/providers/wiki-read-transport.ts'
+import { wikiSynthesisSourceRef } from '../../agents/providers/wiki-synthesis.ts'
+import { decodeWikiVerificationSources } from '../../agents/providers/wiki-verification.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
 import { PdfFixtureDocument } from './pdf-fixture.ts'
 import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisSourcesFromRequest, synthesisObservationsFromRequest, type SynthesisFixtureBindings, type SynthesisFixtureSource } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisSourcesFromRequest, synthesisReadsFromRequest, synthesisObservationsFromRequest, synthesisSourceMatchesMarkdownUnitKind, type SynthesisFixtureBindings, type SynthesisFixtureSource } from './synthesis-fixture.ts'
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
@@ -471,7 +473,7 @@ const candidateDiscovery = (returnedCount: number, newCandidateCount: number, re
 })
 
 describe('Ax agent engine', () => {
-  it('finalizes the complete capacity fixture at 128000/8192 using native context admission rather than dropping a contact record', async () => {
+  it('finalizes the complete capacity fixture at 128000/8192 without dropping a contact record or source bytes', async () => {
     const background = await readFile(new URL('../../../docs/agent-context-inflation/falcon-like.md', import.meta.url), 'utf8')
     const contact = '- Name: Morgan Vale; Role: Falcon account representative; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147.'
     const page = questionReadPage(42, '2', 'Supplier routing', 'suppliers', 'Falcon', 'falcon', contact)
@@ -485,11 +487,10 @@ describe('Ax agent engine', () => {
       { answer: input => {
         const source = synthesisSourcesFromRequest(input).find(source =>
           source.evidenceId === 'page:42:revision:2' && source.sourceRevision === '2' &&
-          source.complete && source.literalStatement !== null &&
-          source.literalStatement.includes('Morgan Vale') &&
-          source.literalStatement.includes('Falcon account representative') &&
-          source.literalStatement.includes('morgan.vale@example.invalid') &&
-          source.literalStatement.includes('+1 202 555 0147')
+          source.complete && source.quotation && source.text === 'Name: Morgan Vale' &&
+          source.readText.includes('Falcon account representative') &&
+          source.readText.includes('morgan.vale@example.invalid') &&
+          source.readText.includes('+1 202 555 0147')
         )
         return synthesisFixtureAnswer(input, {
           claims: source === undefined ? [] : [{
@@ -502,30 +503,12 @@ describe('Ax agent engine', () => {
       } }
     ], () => page, [], { maxContextTokens: 128_000, maxOutputTokens: 8_192, countContextTokens })
     const result = await fixture.execute('Who is our Falcon contact?', { maxOutputTokens: 8_192 })
-    const synthesisRequest = fixture.providerCalls[1]!
-    const sources = synthesisSourcesFromRequest(synthesisRequest)
-    const ownedSources = sources.filter(source => source.evidenceId === 'page:42:revision:2' && source.sourceRevision === '2')
-    const contactSources = ownedSources.filter(source => source.complete && source.literalStatement !== null &&
-      source.literalStatement.includes('Morgan Vale') &&
-      source.literalStatement.includes('Falcon account representative') &&
-      source.literalStatement.includes('morgan.vale@example.invalid') &&
-      source.literalStatement.includes('+1 202 555 0147'))
-    expect(sources.length).toBeGreaterThan(250)
-    expect(contactSources.length).toBeGreaterThan(0)
-    const retainedAuthoredText = ownedSources.flatMap(source => {
-      const authoredContent = questionRecord(JSON.parse(source.packet)).authoredContent
-      return Array.isArray(authoredContent) ? authoredContent.filter((text): text is string => typeof text === 'string') : []
-    })
-    const backgroundUnits = parseSourceDocument(background, { representation: 'markdown', truncated: false }).units
-      .filter(unit => unit.complete && unit.kind !== 'opaque' && unit.normalizedText.trim().length > 0)
-    for (const unit of backgroundUnits) {
-      for (const span of unit.sourceSpans) {
-        const original = background.slice(span.start, span.end)
-        expect(retainedAuthoredText.some(text => text.includes(original))).toBe(true)
-      }
-    }
+    const synthesisRequest = fixture.providerCalls.find(input => synthesisInputFromRequest(input) !== undefined)!
+    // Every byte of the read survives admission, including unrequested Markdown.
+    expect(synthesisReadsFromRequest(synthesisRequest)).toEqual([
+      expect.objectContaining({ evidenceId: 'page:42:revision:2', complete: true, readText: page.content })
+    ])
     expect(synthesisRequest.modelConfig?.maxTokens).toBe(8_192)
-    expect(Buffer.byteLength(JSON.stringify(synthesisRequest), 'utf8') + 8_192).toBeGreaterThan(128_000)
     const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
     expect(published).toContain('Morgan Vale')
     expect(published).toContain('Falcon account representative')
@@ -533,13 +516,11 @@ describe('Ax agent engine', () => {
     expect(published).toContain('+1 202 555 0147')
     expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:2' })])
     expect(result.executionLimit).toBeUndefined()
-    expect(fixture.providerCalls).toHaveLength(2)
-    expect(countContextTokens).toHaveBeenCalledTimes(1)
     expect(fixture.event.mock.calls.some(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toBe(false)
   })
 
   it.each(['Who is our Falcon contact?', 'Compare all Falcon contacts and warehouse rules, including every qualification.'])(
-    'keeps complete owned records and every alias selectable across corrected frames for %s',
+    'keeps complete physical reads and canonical output scope across corrected frames for %s',
     async question => {
       const background = 'Warehouse parcels remain sealed until dispatch.'
       const record = '- Name: Morgan Vale; Role: Falcon account representative; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147; Qualification: fictional routing specimen only.'
@@ -549,11 +530,9 @@ describe('Ax agent engine', () => {
       const answer = (input: Readonly<AxChatRequest>) => {
         const sources = synthesisSourcesFromRequest(input)
         frames.push(sources)
-        // Exercise first-occurrence selection at the provider boundary, rather
-        // than searching past unrelated complete body quotations.
-        const source = sources.find(candidate => candidate.kind !== 'page-title' && candidate.kind !== 'heading' && candidate.literalStatement !== null)!
-        expect(source.literalStatement).toContain('Morgan Vale')
-        expect(source.literalStatement).toContain('fictional routing specimen only')
+        const source = sources.find(candidate => candidate.evidenceId === 'page:42:revision:2' &&
+          candidate.quotation && candidate.text === 'Name: Morgan Vale')!
+        expect(source.readText).toContain('fictional routing specimen only')
         return synthesisFixtureAnswer(input, {
           claims: [{
             ...source,
@@ -571,19 +550,18 @@ describe('Ax agent engine', () => {
         { answer }
       ], () => page, [], { maxContextTokens: 128_000, maxOutputTokens: 8_192 })
       const result = await fixture.execute(question, { maxOutputTokens: 8_192 })
-      expect(frames).toHaveLength(2)
-      // Correction must retain the same complete universe, protected original
-      // closures and stable refs, not merely the selected record.
-      expect(frames[1]).toEqual(frames[0])
-      expect(new Set(frames[0]!.map(source => source.evidenceId))).toEqual(new Set([
-        'page:42:revision:2', 'page:42:revision:2:section:1'
-      ]))
-      expect(frames[0]!.some(source => source.text.includes(background))).toBe(true)
+      // Correction must preserve complete source context and original scope.
+      expect(frames.every(sources => sources.every(source => source.readText === page.content))).toBe(true)
+      expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
+        { accepted: false },
+        { accepted: true }
+      ])
       const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
       for (const value of ['Morgan Vale', 'Falcon account representative', 'morgan.vale@example.invalid', '+1 202 555 0147', 'fictional routing specimen only']) {
         expect(published).toContain(value)
       }
       expect(result.executionLimit).toBeUndefined()
+      expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:42:revision:2' })])
       expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
     }
   )
@@ -611,21 +589,22 @@ describe('Ax agent engine', () => {
       frames.push(sources)
       const source = sources.find(candidate =>
         candidate.evidenceId === 'page:76:revision:1' && candidate.sourceRevision === '1' &&
-        candidate.complete && candidate.literalStatement?.includes('Morgan Vale') &&
-        candidate.literalStatement.includes('morgan.vale@example.invalid') &&
-        candidate.literalStatement.includes('+1 202 555 0147') &&
-        (!verdict.includes('role field') || candidate.text.startsWith('Role:'))
+        candidate.complete && candidate.quotation && candidate.kind !== 'page-title' &&
+        candidate.readText.includes('Morgan Vale') &&
+        candidate.readText.includes('morgan.vale@example.invalid') &&
+        candidate.readText.includes('+1 202 555 0147') &&
+        (verdict.includes('role field') ? candidate.text.startsWith('Role:') : candidate.text.includes('Morgan Vale'))
       )!
       expect(source).toBeDefined()
-      expect(source.literalStatement).toContain(heading)
+      expect(source.readText).toContain(heading)
       return synthesisFixtureAnswer(input, {
         claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement }]
       })
     }
     const decisionProviders = {
       ...fixtureDecisionProviders,
-      async decideBatch(input: DecisionBatchRequest): Promise<DecisionBatchResult> {
-        const decision = await fixtureDecisionProviders.decideBatch(input)
+      async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> {
+        const decision = await fixtureDecisionProviders.decideBatch(input, options)
         const supportIds = Object.entries(input.questions)
           .filter(([, question]) => Object.hasOwn(question.criteria, 'supports')).map(([id]) => id)
         if (supportIds.length === 0) return decision
@@ -637,11 +616,14 @@ describe('Ax agent engine', () => {
         expect(state.candidate).toEqual([expect.objectContaining({
           evidenceId: 'page:76:revision:1', sourceRevision: '1', statement
         })])
-        expect(state.sources).toHaveLength(1)
-        const source = state.sources[0]
+        const decodedSources = decodeWikiVerificationSources(state.sources, state.readTexts)
+        expect(decodedSources).toHaveLength(1)
+        const source = decodedSources[0]!
         expect(source.evidenceId).toBe('page:76:revision:1')
         expect(source.sourceRevision).toBe('1')
         expect(source.complete).toBe(true)
+        if (source.closure === null || source.closure === undefined)
+          throw new Error('The owned role assertion must retain its original proof closure')
         expect(source.closure.unit.complete).toBe(true)
         expect(source.unitId).toBe(state.candidate[0].unitId)
         // Selecting only Role for publication must not trim its immutable
@@ -1275,7 +1257,7 @@ describe('Ax agent engine', () => {
       const physical = 'The deployment ships 20 cases. Release requires an audit. Elapsed times are estimates, not guarantees.'
       const fixture = typedRootFixture((input, attempt) => {
         const source = synthesisSourcesFromRequest(input).find(unit => unit.text === 'The deployment ships 20 cases.')!
-        if (!source.literalStatement) throw new Error('The original physical unit must retain its complete canonical quotation')
+        expect(source.quotation).toBe(true)
         const statement = mode === 'changed physical quantity' && attempt === 1
           ? physical.replace('20 cases', '21 cases') : mode === 'exact admitted assertion' ? source.text : physical
         return typedFixtureReceipt(synthesisFixtureAnswer(input, {
@@ -1301,7 +1283,7 @@ describe('Ax agent engine', () => {
   it('publishes an owned table after rejecting a sibling-row field substitution', async () => {
     const fixture = typedRootFixture((input, attempt) => {
       const source = synthesisSourcesFromRequest(input).find(unit =>
-        unit.evidenceId === 'page:42:revision:1' && unit.kind === 'table-row' && unit.text.includes('API')
+        unit.evidenceId === 'page:42:revision:1' && unit.text.includes('API') && synthesisSourceMatchesMarkdownUnitKind(unit, 'table-row')
       )!
       return typedFixtureReceipt(synthesisFixtureAnswer(input, {
         claims: [{
@@ -1329,20 +1311,19 @@ describe('Ax agent engine', () => {
   it.each(['wrong owned row', 'foreign governing heading', 'changed quantity', 'omitted governing condition'] as const)(
     'publishes an intact numeric-field record quotation only after rejecting %s',
     async mutation => {
-      let statement = ''
+      const statement = 'Components › Quantities in cases › Only after audit › Component | Quantity | Scope: Component: API | Quantity: 20 | Scope: External only'
       let rejectedStatement = ''
       const fixture = typedRootFixture((input, attempt) => {
         const sources = synthesisSourcesFromRequest(input)
         const original = sources.find(unit =>
-          unit.evidenceId === 'page:42:revision:1' && unit.kind === 'table-row' && unit.text === 'Quantity: 20'
+          unit.evidenceId === 'page:42:revision:1' && unit.text === 'Quantity: 20' && synthesisSourceMatchesMarkdownUnitKind(unit, 'table-row')
         )
         const sibling = sources.find(unit =>
-          unit.evidenceId === 'page:42:revision:1' && unit.kind === 'table-row' && unit.text === 'Quantity: 99'
+          unit.evidenceId === 'page:42:revision:1' && unit.text === 'Quantity: 99' && synthesisSourceMatchesMarkdownUnitKind(unit, 'table-row')
         )
         if (original === undefined || sibling === undefined)
           throw new Error('The original complete numeric field and sibling binding must remain available.')
-        if (!original.literalStatement) throw new Error('The intact original record must retain its complete protected literal hint.')
-        statement = original.literalStatement
+        expect(original.quotation).toBe(true)
         rejectedStatement = mutation === 'foreign governing heading'
           ? statement.replace('Components', 'Foreign Components')
           : mutation === 'changed quantity'
@@ -1560,9 +1541,9 @@ describe('Ax agent engine', () => {
     const content = [`# ${title}`, ...sections.map(section => `## ${section.heading}\n\n${paragraphs.join('\n\n')}`)].join('\n\n')
     const fixture = typedRootFixture(input => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === evidenceId && unit.kind === 'page-title')!
-      if (!source.literalStatement) throw new Error('An authoritative page title requires its exact original literal hint')
+      expect(source.quotation).toBe(true)
       return typedFixtureReceipt(synthesisFixtureAnswer(input, {
-        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement: source.literalStatement }]
+        claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, sourceRef: source.sourceRef, statement: `The page is titled "${title}".` }]
       }))
     }, false, undefined, {
       content,
@@ -2353,8 +2334,9 @@ describe('Ax agent engine', () => {
     const result = await fixture.execute('What does the recent Guide excerpt say?')
     expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    expect(published).toContain(corrected)
-    expect(published).not.toContain(rejected)
+    expect(visibleWikiText(published)).toContain(visibleWikiText(corrected))
+    expect(visibleWikiText(published)).not.toContain(visibleWikiText(rejected))
+    expect(published).toContain(`[[cite:${citation}]]`)
     expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
   })
 
@@ -3157,7 +3139,7 @@ describe('Ax agent engine', () => {
         return synthesisFixtureAnswer(input, {
           claims: authored.map(([text, statement]) => {
             const owners = sources.filter(unit => unit.evidenceId === evidenceId && unit.sourceRevision === '1' &&
-              unit.complete && unit.kind !== 'list' && unit.text.includes(text))
+              unit.complete && unit.text.includes(text) && !synthesisSourceMatchesMarkdownUnitKind(unit, 'list'))
             if (owners.length !== 1) throw new Error(`Expected one original membership owner for ${evidenceId}: ${text}`)
             return { ...owners[0]!, statement }
           })
@@ -3246,7 +3228,7 @@ describe('Ax agent engine', () => {
         return synthesisFixtureAnswer(input, {
           claims: authored.map(([evidenceId, text, statement]) => {
             const owners = sources.filter(source => source.evidenceId === evidenceId && source.sourceRevision === '1' &&
-              source.complete && source.kind !== 'list' && source.text.includes(text))
+              source.complete && source.text.includes(text) && !synthesisSourceMatchesMarkdownUnitKind(source, 'list'))
             if (owners.length !== 1) throw new Error(`Expected one original summary owner for ${evidenceId}: ${text}`)
             return { ...owners[0]!, statement }
           })
@@ -3672,22 +3654,22 @@ describe('Ax agent engine', () => {
       'unsupported long prefix': { text: 'Terms remain valid for 30 days.' },
       'date assignment swapped': { text: 'Acme pricing starts Jan. 1, 2026.' },
       'wrong structural container member': { text: 'Cedar' },
-      'invented member attachment': { text: 'Acme', context: 'Promotions' },
-      'temporal membership strengthening': { text: 'Acme', context: 'Promotions' },
-      'universal membership overclaim': { text: 'Acme', context: 'Promotions' },
-      'membership cannot invent temporal order': { text: 'Acme', context: 'Promotions' },
-      'membership cannot invent causal relation': { text: 'Acme', context: 'Promotions' },
+      'invented member attachment': { text: 'Acme' },
+      'temporal membership strengthening': { text: 'Acme' },
+      'universal membership overclaim': { text: 'Acme' },
+      'membership cannot invent temporal order': { text: 'Acme' },
+      'membership cannot invent causal relation': { text: 'Acme' },
       'membership does not stem supplier identities': { text: 'Adams' },
       'fence-like code cannot create structural members': { text: '``` # Phantom - [Acme](/phantom-acme)' },
       'table facts cannot become independent members': { text: 'Manufacturer: Acme' },
       'table polarity stays with its row': { text: 'Maker: Aster' },
       'embedded link labels are not containers': { text: 'Harbor' },
-      'same-name containers cannot pool members': { text: 'Acme', context: 'Promotions Archive' },
+      'same-name containers cannot pool members': { text: 'Acme' },
       'separate entity-to-date assignment overclaim': { text: 'Acme pricing starts Jan. 1, 2026.' },
       'ambiguous repeated heading': { text: 'Beta catalog only.' }
     }
     const evidenceId = /\[\[cite:([^\]]+)\]\]/u.exec(answer)![1]!
-    const selector = selectors[caseName]!
+    let selector = selectors[caseName]!
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
       { results: [{ index: 0, content: answer }] }
@@ -3710,7 +3692,7 @@ describe('Ax agent engine', () => {
       pricingRevision: 'price-1',
       pricing })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 1,
       locale: 'en',
       path: 'home',
@@ -3800,7 +3782,29 @@ describe('Ax agent engine', () => {
         { evidenceId: 'page:1:revision:9:section:3', label: 'Homepage › Directory', href: '/en/home#directory' },
         { evidenceId: 'page:1:revision:9:section:4', label: 'Homepage › Directory › Outdoor', href: '/en/home#outdoor-1' }
       ]
-    }))
+    }
+    const containerByCase: Readonly<Record<string, string>> = {
+      'invented member attachment': 'Promotions',
+      'temporal membership strengthening': 'Promotions',
+      'universal membership overclaim': 'Promotions',
+      'membership cannot invent temporal order': 'Promotions',
+      'membership cannot invent causal relation': 'Promotions',
+      'same-name containers cannot pool members': 'Promotions Archive'
+    }
+    const container = containerByCase[caseName]
+    if (container !== undefined && typeof selector !== 'number') {
+      // Independently select the declared original input unit for repeated
+      // names. The model facade itself contains no host context or unit IDs.
+      const declared = parseSourceDocument(page.content, { representation: 'markdown', truncated: false })
+      const selectedText = selector.text
+      const unit = declared.units.find(unit => unit.normalizedText === selectedText &&
+        unit.contextIds.some(id => declared.contexts.some(context => context.id === id && context.normalizedLabel === container)))
+      if (unit === undefined) throw new Error(`Missing declared ${container} fixture member`)
+      selector = { ...selector, sourceRef: wikiSynthesisSourceRef({
+        evidenceId, sourceRevision: '9', unitId: `${unit.id}:assertion:0`
+      }) }
+    }
+    const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
@@ -7360,7 +7364,7 @@ describe('Ax agent engine', () => {
       } catch (caught) {
         error = caught
       }
-      return { calls, event, error, result, text }
+      return { calls, event, error, invoke, result, text }
     }
 
     const historicalEvidenceId = 'page:42:version:9:revision:10'
@@ -7634,7 +7638,7 @@ describe('Ax agent engine', () => {
         { callId: 'cached-first', actionName: 'pages.get', params: '{"id":42}' },
         { callId: 'cached-again', actionName: 'pages.get', params: '{"id":42}' }
       ],
-      outputs: [fullPage],
+      outputs: [fullPage, fullPage],
       drafts: [
         `The protected rollout begins after audit.[[cite:${currentEvidenceId}]]`,
         input => synthesisFixtureAnswer(input, {
@@ -7650,6 +7654,7 @@ describe('Ax agent engine', () => {
     expect(visibleWikiText(staleCachedRead.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('The protected rollout begins after audit.')
     expect(staleCachedRead.result?.citations).toBeUndefined()
     expect(staleCacheValidator).toHaveBeenCalled()
+    expect(staleCachedRead.invoke).toHaveBeenCalledTimes(2)
     expect(staleCachedRead.calls.flatMap(synthesisSourcesFromRequest).some(source => source.evidenceId === currentEvidenceId)).toBe(false)
     const refreshedEvidenceId = 'page:42:revision:31'
     const refreshedSectionId = `${refreshedEvidenceId}:section:1`
@@ -8768,7 +8773,8 @@ describe('request-derived evidence coverage', () => {
     }
     const decisionProviders = {
       selectRuntime: runtime,
-      decideBatch: async (nativeRequest: DecisionBatchRequest): Promise<DecisionBatchResult> => {
+      decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> => {
+        await options?.onPreDispatch?.()
         metadataStates.push(questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state))
         const answers = Object.fromEntries(Object.entries(nativeRequest.questions).map(([id, question]) => {
           if (!Object.hasOwn(question.criteria, 'bounded')) throw new Error(`Unexpected metadata predicate ${id}`)
@@ -8785,9 +8791,9 @@ describe('request-derived evidence coverage', () => {
     const generate = (input: Readonly<AxChatRequest>): AxChatResponse => {
       const selected = narration ? [] : synthesisSourcesFromRequest(input).filter(source => source.kind === 'page-title')
       const claims = selected.map(source => {
-        if (!source.literalStatement) throw new Error('Authoritative metadata must retain its exact original title hint')
+        if (!source.quotation) throw new Error('Authoritative metadata must have an observed quotation selector')
         return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
-          sourceRef: source.sourceRef, statement: source.literalStatement }
+          sourceRef: source.sourceRef, statement: '' }
       })
       if (mode === 'provider mutation') providerRevision++
       return { results: [{ index: 0, content: synthesisFixtureAnswer(input, {
@@ -8980,13 +8986,22 @@ describe('request-derived evidence coverage', () => {
         return { ...provider, revision: providerRevision, config: { ...provider.config,
           pricing: { ...provider.config.pricing!, inputPerMillion: 1, outputPerMillion: 0, perRequest: 0.25 } } }
       },
-      decideBatch: async (nativeRequest: DecisionBatchRequest): Promise<DecisionBatchResult> => {
+      decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> => {
+        await options?.onPreDispatch?.()
         const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
         const semantic = true
-        const sources = state.sources as readonly { readonly evidenceId: string; readonly text: string }[]
+        const sources = decodeWikiVerificationSources(
+          state.sources as Parameters<typeof decodeWikiVerificationSources>[0],
+          state.readTexts as readonly string[]
+        )
+        const evidenceReads = state.evidence as readonly {
+          readonly readId: string
+          readonly source: Parameters<typeof unpackWikiReadTexts>[0]['sources'][number]
+        }[]
+        const physicalReadSources = [...new Map(evidenceReads.map(read => [read.readId, read.source] as const)).values()]
         nativeCalls.push({
           owners: [...new Set(sources.map(source => source.evidenceId))],
-          originalReads: state.readTexts as readonly string[],
+          originalReads: unpackWikiReadTexts({ texts: state.readTexts as readonly string[], sources: physicalReadSources }),
           projectionTexts: sources.map(source => source.text)
         })
         const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
@@ -9026,12 +9041,12 @@ describe('request-derived evidence coverage', () => {
       ]
       const claims = required.map(binding => {
         const source = sources.find(entry => entry.evidenceId === binding.evidenceId && entry.text === binding.text)
-        if (!source?.literalStatement) throw new Error('The original numeric-field binding must retain its whole protected record')
-        return { ...source, statement: source.literalStatement }
+        if (!source?.quotation) throw new Error('The original numeric-field binding must offer its own quotation selector')
+        return { ...source, statement: '' }
       })
       const statusSource = sources.find(source => source.evidenceId === 'page:42:revision:1' && source.text === status)
-      if (!statusSource?.literalStatement) throw new Error('The original authored-status statement must retain its complete original quotation')
-      claims.push({ ...statusSource, statement: statusSource.literalStatement })
+      if (!statusSource?.quotation) throw new Error('The original authored-status statement must offer its own quotation selector')
+      claims.push({ ...statusSource, statement: '' })
       if (mode !== 'complete quotations') {
         claims.push({ ...statusSource, statement: 'These recipes are untested and their total times are estimates.' })
       }
@@ -9242,12 +9257,12 @@ describe('request-derived evidence coverage', () => {
       providerInput => {
         draftRounds++
         const source = synthesisSourcesFromRequest(providerInput).find(unit => unit.text === fact)!
-        if (!source.literalStatement) throw new Error('A complete own unit must retain its original quotation')
+        if (!source.quotation) throw new Error('A complete own unit must offer its original quotation selector')
         if (mode === 'changed source bytes') unusedPage.content += '\n\nAn additional warehouse rule was added.'
         if (mode === 'changed companion before publication') revision = 2
         if (mode === 'revoked dispatch authorization before publication') authorized = false
         return { results: [{ index: 0, content: synthesisFixtureAnswer(providerInput, {
-          claims: [{ ...source, statement: source.literalStatement }]
+          claims: [{ ...source, statement: '' }]
         }) }] }
       }
     ]
@@ -9368,7 +9383,7 @@ describe('request-derived evidence coverage', () => {
       (providerInput: Readonly<AxChatRequest>) => {
         const source = synthesisSourcesFromRequest(providerInput).find(unit => unit.text === fact)!
         return { results: [{ index: 0, content: synthesisFixtureAnswer(providerInput, {
-          claims: [{ ...source, statement: source.literalStatement! }]
+          claims: [{ ...source, statement: '' }]
         }) }] }
       }
     ]

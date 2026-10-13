@@ -80,6 +80,7 @@ const groundingFixture = (
   options: {
     readonly decisionProviders?: Pick<DecisionProviderRegistry, 'selectRuntime' | 'decideBatch'>
     readonly dispatchBudget?: AgentDispatchBudget
+    readonly validateObservation?: (actionName: string, output: unknown, signal: AbortSignal) => Promise<boolean>
   } = {}
 ): GroundingFixture => {
   let sourceReadRequested = false
@@ -144,7 +145,7 @@ const groundingFixture = (
       authoritySha256: 'a'.repeat(64),
       functions: [{ name: 'pages.get', title: 'Read page', description: 'Read an authorized page.', parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' }],
       invoke,
-      validateObservation: async () => true,
+      validateObservation: options.validateObservation ?? (async () => true),
       snapshot: async () => ({}),
       close: async () => {}
     })
@@ -338,13 +339,88 @@ describe('record and continuation restriction boundaries', () => {
 })
 
 describe('mandatory Wiki verification publication and accounting', () => {
+  it.each(['verification reserve', 'registry admission'] as const)(
+    'releases unspent verification exposure when original page authority changes during %s',
+    async boundary => {
+      let readable = true
+      let nextId = 0
+      let nativeReservationId: number | undefined
+      let posts = 0
+      const held = new Map<number, { readonly tokens: number; readonly costMicros: number }>()
+      const released: number[] = []
+      const reconciled: { readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number; readonly costMicros: number }[] = []
+      const budget: AgentDispatchBudget = {
+        reserve: async maximum => {
+          const id = ++nextId
+          held.set(id, maximum)
+          if (maximum.tokens === 64_000) {
+            nativeReservationId = id
+            await Promise.resolve()
+            if (boundary === 'verification reserve') readable = false
+          }
+          return { id, ...maximum }
+        },
+        reconcile: async (reservation, actual) => {
+          held.delete(reservation.id)
+          reconciled.push(actual)
+        },
+        release: async reservation => {
+          held.delete(reservation.id)
+          released.push(reservation.id)
+        },
+        consumeTool: async () => {},
+        get unsettledExposure() {
+          return [...held.values()].reduce((sum, entry) => ({
+            tokens: sum.tokens + entry.tokens, costMicros: sum.costMicros + entry.costMicros
+          }), { tokens: 0, costMicros: 0 })
+        }
+      }
+      const snapshot = await fixtureDecisionProviders.selectRuntime()
+      snapshot.config.pricing = { ...snapshot.config.pricing!, inputPerMillion: 1, outputPerMillion: 2 }
+      const decisionProviders = {
+        selectRuntime: async () => snapshot,
+        decideBatch: async (input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) => {
+          // Model registry/credential/DNS admission is asynchronous and precedes
+          // the real source fence; reaching the mock POST requires that fence.
+          await Promise.resolve()
+          if (boundary === 'registry admission') readable = false
+          expect(options?.onPreDispatch).toBeDefined()
+          const result = await fixtureDecisionProviders.decideBatch(input, options)
+          posts++
+          return result
+        }
+      }
+      const validations: boolean[] = []
+      const fixture = groundingFixture(verificationSource, 'These recipes', verificationFact, undefined, 'native', {
+        decisionProviders, dispatchBudget: budget,
+        validateObservation: async () => {
+          validations.push(readable)
+          return readable
+        }
+      })
+      await expect(fixture.execute()).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+      expect(fixture.attempts).toBe(1)
+      expect(posts).toBe(0)
+      expect(validations).toContain(true)
+      expect(validations).toContain(false)
+      expect(nativeReservationId).toBeDefined()
+      expect(released).toContain(nativeReservationId!)
+      expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+      expect(reconciled.some(usage => usage.totalTokens > 0)).toBe(true)
+      expect(fixture.text.mock.calls).toEqual([])
+      const failed = fixture.events.find(event => event.purpose === 'verification' && event.outcome === 'verification_failed')
+      expect(failed).toMatchObject({ usageSource: 'not-dispatched', unknownExposure: null })
+      expect(readAgentUsageEvent(failed!)).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 })
+    }
+  )
+
   it('withholds an uncertain candidate until the existing single repair passes independent verification', async () => {
     let checks = 0
     const decisionProviders = {
       ...fixtureDecisionProviders,
-      async decideBatch(input: DecisionBatchRequest) {
+      async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) {
         expect(fixture.text.mock.calls).toHaveLength(0)
-        const result = await fixtureDecisionProviders.decideBatch(input)
+        const result = await fixtureDecisionProviders.decideBatch(input, options)
         if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports'))) throw new Error('Expected a narrow source-support decision')
         checks++
         if (checks === 1) return { ...result, answers: Object.fromEntries(Object.entries(result.answers).map(([key, answer]) => [key, { ...answer, confidence: 0.8 }])) }

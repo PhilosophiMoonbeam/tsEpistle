@@ -82,6 +82,10 @@ const presentationAttributes = /\{(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'
 const labelField = (text: string): { label: string; value: string } | null => {
   const match = /^([^:\n]{1,80}):\s*(\S[\s\S]*)$/u.exec(text)
   if (!match || /[.!?]|:\/\//u.test(match[1]!)) return null
+  // An adjacent clock's colon belongs to its numeric token, not a field label.
+  // Keep spaced numeric labels and identifiers (e.g. Batch18) as labels.
+  const separator = match[1]!.length
+  if (/(?:^|\s)(?:[01]?\d|2[0-3])$/u.test(match[1]!) && /^[0-5]\d\b/u.test(text.slice(separator + 1))) return null
   return { label: whitespace(match[1]!), value: whitespace(match[2]!) }
 }
 const sentenceAbbreviations: Readonly<Record<string, true>> = {

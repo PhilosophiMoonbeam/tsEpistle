@@ -1,7 +1,8 @@
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { SourceContext, SourceLink, SourceRecord, SourceUnit } from '../../agents/providers/source-document.ts'
-import { assessWikiVerificationResults, buildWikiVerificationPlan } from '../../agents/providers/wiki-verification.ts'
-import type { WikiVerificationInput, WikiVerificationPlan, WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
+import { validateDecisionBatchRequest } from '../../agents/decision-providers.ts'
+import { assessWikiVerificationResults, buildWikiVerificationPlan, decodeWikiVerificationSources } from '../../agents/providers/wiki-verification.ts'
+import type { WikiVerificationDecodedSource, WikiVerificationEvidence, WikiVerificationInput, WikiVerificationPlan, WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
 import type { WikiReadTextReference } from '../../agents/providers/wiki-read-transport.ts'
 import { unpackWikiReadTexts } from '../../agents/providers/wiki-read-transport.ts'
 import { describe, expect, it } from '../bun-test.mts'
@@ -47,7 +48,7 @@ const input = (changes: Partial<WikiVerificationInput> = {}): WikiVerificationIn
   requestFacets: ['List each fictional recipe and its serving yield.', 'Include its complete method.'],
   claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId,
     statement: 'The fictional, untested Moon soup yields 2 servings and is simmered before dawn.' }],
-  sources: [source], evidence: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, source: raw }], ...changes
+  sources: [source], evidence: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, readId: 'read:42:revision:7', source: raw }], ...changes
 })
 const plan = (changes: Partial<WikiVerificationInput> = {}): WikiVerificationPlan => {
   const built = buildWikiVerificationPlan(input(changes))
@@ -67,14 +68,18 @@ const result = (answers: DecisionBatchResult['answers']): DecisionBatchResult =>
 const batchResults = (built: WikiVerificationPlan, answers = acceptedAnswers(built)): DecisionBatchResult[] =>
   built.requests.map(request => result(Object.fromEntries(Object.keys(request.questions)
     .filter(id => Object.hasOwn(answers, id)).map(id => [id, answers[id]!]))))
-const state = (request: DecisionBatchRequest) => JSON.parse(request.state as string) as {
-  sources: (Omit<WikiVerificationSource, 'closure'> & { closure?: WikiVerificationSource['closure'] })[]
-  sourceIndexes: number[]
-  candidate: WikiVerificationInput['claims']
-  claimIndexes: number[]
-  candidateExtras?: WikiVerificationInput['candidateExtras']
-  readTexts: string[]
-  evidence: { evidenceId: string; sourceRevision: string; source: WikiReadTextReference }[]
+const state = (request: DecisionBatchRequest) => {
+  const decoded = JSON.parse(request.state as string) as {
+    sources: unknown[]
+    sourceIndexes: number[]
+    candidate: WikiVerificationInput['claims']
+    claimIndexes: number[]
+    candidateExtras?: WikiVerificationInput['candidateExtras']
+    verificationPolicy?: string
+    readTexts: string[]
+    evidence: (Omit<WikiVerificationEvidence, 'source'> & { source: WikiReadTextReference })[]
+  }
+  return { ...decoded, sources: decodeWikiVerificationSources(decoded.sources, decoded.readTexts) }
 }
 const readsFrom = (request: DecisionBatchRequest) => {
   const decoded = state(request)
@@ -98,6 +103,93 @@ const quotedInput = (): WikiVerificationInput => input({
   sources: [recordSource], claims: [{ ...input().claims[0]!, statement: recordQuote }]
 })
 
+const consumeSupportRequest = (request: DecisionBatchRequest, decide: (check: {
+  readonly id: string
+  readonly claimIndex: number
+  readonly originalSourceIndex: number
+  readonly claim: WikiVerificationInput['claims'][number]
+  readonly source: WikiVerificationDecodedSource
+  readonly registeredRead: string
+}) => Verdict | undefined): DecisionBatchResult => {
+  const decoded = state(request)
+  const reads = readsFrom(request)
+  if (!decoded.verificationPolicy?.trim()) throw new Error('Consumer cannot resolve the shared verification policy')
+  return result(Object.fromEntries(Object.entries(request.questions).flatMap(([id, question]) => {
+    const instructions = question.instructions as {
+      candidate_index: number
+      claim_index: number
+      bound_source: { sourceIndex: number }
+    }
+    const claim = decoded.candidate[instructions.candidate_index]
+    const bound = decoded.sources[decoded.sourceIndexes.indexOf(instructions.bound_source.sourceIndex)]
+    const read = bound && reads.find(entry => entry.evidenceId === bound.evidenceId && entry.sourceRevision === bound.sourceRevision)
+    if (!claim || !bound || read?.source === undefined || decoded.claimIndexes[instructions.candidate_index] !== instructions.claim_index)
+      throw new Error('Consumer cannot resolve the original claim, selected source and registered read')
+    const verdict = decide({ id, claimIndex: instructions.claim_index, originalSourceIndex: instructions.bound_source.sourceIndex,
+      claim, source: bound, registeredRead: read.source })
+    return verdict ? [[id, verdict]] : []
+  })))
+}
+
+const matrixRaw = '# Fictional, untested recipes\n\nMetric | Moon soup | Sun broth\n--- | --- | ---\nYield | 2 servings | 3 servings\nTiming | Before dawn | After dusk\n'
+const matrixHeaderSpan = { start: matrixRaw.indexOf('Metric |'), end: matrixRaw.indexOf('Yield |') }
+const matrixContexts: readonly SourceContext[] = [
+  { ...contexts[0]!, id: 'heading:matrix' },
+  { ...contexts[1]!, id: 'header:matrix', sourceSpans: [matrixHeaderSpan], normalizedLabel: 'Metric | Moon soup | Sun broth', parentId: 'heading:matrix' }
+]
+const matrixSources: readonly WikiVerificationSource[] = [
+  { key: 'yield', text: 'Yield | 2 servings | 3 servings', values: ['Yield', '2 servings', '3 servings'] },
+  { key: 'timing', text: 'Timing | Before dawn | After dusk', values: ['Timing', 'Before dawn', 'After dusk'] }
+].map(row => {
+  const span = { start: matrixRaw.indexOf(row.text), end: matrixRaw.indexOf(row.text) + row.text.length + 1 }
+  const nativeId = `row:${row.key}`
+  const recordId = `record:${row.key}`
+  const owned: SourceUnit = { id: nativeId, kind: 'table-row', sourceSpans: [span], normalizedText: row.text,
+    contextIds: ['heading:matrix', 'header:matrix'], recordId, structuralLabels: [row.values[0]!], links: [], complete: true }
+  const ownedRecord: SourceRecord = { id: recordId, kind: 'table-row', contextIds: owned.contextIds, unitIds: [nativeId], complete: true,
+    fields: ['Metric', 'Moon soup', 'Sun broth'].map((label, order) => ({
+      id: `field:${row.key}:${order}`, label, value: row.values[order]!, unitIds: [nativeId], sourceSpans: [span], order, complete: true
+    })) }
+  return { ...source, unitId: `${nativeId}:assertion:0`, text: row.text,
+    closure: { unit: owned, units: [owned], contexts: matrixContexts, record: ownedRecord, links: [],
+      dependencies: [span, headingSpan, matrixHeaderSpan].map(span => ({ span, text: matrixRaw.slice(span.start, span.end) })) } }
+})
+const matrixInput = (): WikiVerificationInput => input({
+  userRequest: 'Give the fictional recipes’ yields and timing without changing their owners.',
+  requestFacets: ['Give each recipe’s yield and timing.'],
+  sources: matrixSources,
+  evidence: [{ ...input().evidence[0]!, readId: 'read:matrix:revision:7', source: matrixRaw }],
+  claims: [
+    { ...input().claims[0]!, unitId: matrixSources[0]!.unitId, statement: 'The fictional, untested Moon soup yields 2 servings.' },
+    { ...input().claims[0]!, unitId: matrixSources[1]!.unitId, statement: 'The fictional, untested Sun broth is prepared after dusk.' }
+  ]
+})
+
+const shipmentInput = (): WikiVerificationInput => {
+  const heading = '# Shipment rules\n'
+  const paragraphs = Array.from({ length: 64 }, (_, index) =>
+    `Shipment ${index + 1} may ship 2 crates only after approval. ${'x'.repeat(1_000)}.`)
+  const registeredSource = heading + '\n' + paragraphs.join('\n\n')
+  const governingSpan = { start: 0, end: heading.length }
+  const governing: SourceContext = { id: 'h', kind: 'heading', sourceSpans: [governingSpan],
+    normalizedLabel: 'Shipment rules', parentId: null, complete: true }
+  let start = heading.length + 1
+  const selected: WikiVerificationSource[] = paragraphs.map((text, index) => {
+    const span = { start, end: start + text.length }
+    start = span.end + 2
+    const owned: SourceUnit = { id: `u${index}`, kind: 'paragraph', sourceSpans: [span], normalizedText: text,
+      contextIds: ['h'], recordId: null, structuralLabels: [], links: [], complete: true }
+    return { evidenceId: 'shipments', sourceRevision: '7', unitId: `s${index}`, context: 'Shipment rules',
+      text, kind: 'paragraph', complete: true, closure: { unit: owned, units: [owned], contexts: [governing], record: null, links: [],
+        dependencies: [span, governingSpan].map(span => ({ span, text: registeredSource.slice(span.start, span.end) })) } }
+  })
+  return input({ userRequest: 'List every shipment’s permitted quantity and approval condition.',
+    requestFacets: ['Give each shipment’s quantity and approval condition.'], sources: selected,
+    evidence: [{ evidenceId: 'shipments', sourceRevision: '7', readId: 'read:shipments:large-owned-closures', source: registeredSource }],
+    claims: selected.map((bound, index) => ({ evidenceId: bound.evidenceId, sourceRevision: bound.sourceRevision, unitId: bound.unitId,
+      statement: `Shipment ${index + 1} is permitted to ship 2 crates only after approval.` })) })
+}
+
 // Pure admission and provider-result composition; synthetic verdicts do not
 // establish the native model's semantic accuracy.
 describe('Wiki verification source-local admission', () => {
@@ -114,8 +206,16 @@ describe('Wiki verification source-local admission', () => {
     }
     expect(() => plan({ sources: [source, source] })).toThrow('ambiguous exact source binding')
     expect(() => plan({ evidence: [] })).toThrow('registered read')
-    expect(() => plan({ evidence: [{ evidenceId: source.evidenceId, sourceRevision: '8', source: raw }] })).toThrow('registered read')
+    expect(() => plan({ evidence: [{ evidenceId: source.evidenceId, sourceRevision: '8', readId: 'read:42:revision:8', source: raw }] })).toThrow('registered read')
     expect(() => plan({ evidence: [...input().evidence, ...input().evidence] })).toThrow('ambiguous registered read')
+  })
+
+  it('requires a physical read identity and rejects aliases that disagree about its original content or revision', () => {
+    const original = input().evidence[0]!
+    expect(() => plan({ evidence: [{ ...original, readId: '' }] })).toThrow('registered read representation')
+    const alias = { ...original, evidenceId: 'page:42:revision:7:section:2' }
+    for (const conflicting of [{ ...alias, source: raw + 'A different original read.' }, { ...alias, sourceRevision: '8' }])
+      expect(() => plan({ evidence: [original, conflicting] })).toThrow('physical read identity has inconsistent original content or revision')
   })
 
   it('rejects incomplete closures, missing links and dependencies and foreign record ownership', () => {
@@ -151,44 +251,212 @@ describe('Wiki verification source-local admission', () => {
     expect(assessWikiVerificationResults(built).valid).toBe(true)
   })
 
-  it('retains exact selected closures and complete own reads without an irrelevant record bank', () => {
+  it('resolves the claimed original binding and complete own read despite unrelated inventory', () => {
     const other: WikiVerificationSource = { ...source, evidenceId: 'page:99:revision:8:section:1', sourceRevision: '8', text: 'Foreign recipe' }
-    const request = input({ sources: [other, source], evidence: [
-      ...input().evidence, { evidenceId: other.evidenceId, sourceRevision: '8', source: 'Foreign recipe and unrelated inventory.' },
-      { evidenceId: 'uncited:related', sourceRevision: '1', source: 'An unrelated collection, not direct membership.' }
+    const candidate = input({ sources: [other, source], evidence: [
+      ...input().evidence, { evidenceId: other.evidenceId, sourceRevision: '8', readId: 'read:99:revision:8', source: 'Foreign recipe and unrelated inventory.' },
+      { evidenceId: 'uncited:related', sourceRevision: '1', readId: 'read:uncited:related:revision:1', source: 'An unrelated collection, not direct membership.' }
     ] })
-    const built = buildWikiVerificationPlan(request)!
-    expect(built.originalSources).toEqual(request.sources)
-    expect(built.originalEvidence).toEqual(request.evidence)
-    expect(built.originalSources).not.toBe(request.sources)
-    expect(built.originalEvidence).not.toBe(request.evidence)
-    expect(built.requests).toHaveLength(1)
-    expect(state(built.requests[0]!).sources).toEqual([source])
-    expect(state(built.requests[0]!).sourceIndexes).toEqual([1])
-    expect(state(built.requests[0]!).candidate).toEqual(request.claims)
-    expect(readsFrom(built.requests[0]!)).toEqual(input().evidence)
-    expect(Object.values(built.checks).map(check => check.kind)).toEqual(['support'])
+    const built = buildWikiVerificationPlan(candidate)!
+    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+      expect(check.claim).toEqual(candidate.claims[0])
+      expect(check.originalSourceIndex).toBe(1)
+      expect(check.source).toEqual(source)
+      expect(check.registeredRead).toBe(raw)
+      return supports
+    }))
+    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [] })
   })
 
-  it('keeps identical text under distinct revisions and dispatches each own binding independently', () => {
-    const other = { ...source, evidenceId: 'page:42:revision:8:section:1', sourceRevision: '8' }
+  it.each([
+    ['distinct revisions', { evidenceId: 'page:42:revision:8:section:1', sourceRevision: '8' }],
+    ['distinct read scopes', { evidenceId: 'page:42:revision:7:section:2', sourceRevision: '7' }]
+  ] as const)('keeps identical read text under %s independently bound at the decision boundary', (_case, identity) => {
+    const other = { ...source, ...identity }
     const candidate = input({ sources: [other, source], claims: [input().claims[0]!, {
-      ...input().claims[0]!, evidenceId: other.evidenceId, sourceRevision: '8'
-    }], evidence: [...input().evidence, { evidenceId: other.evidenceId, sourceRevision: '8', source: raw }] })
+      ...input().claims[0]!, ...identity
+    }], evidence: [...input().evidence, { ...identity, readId: `read:${identity.evidenceId}`, source: raw }] })
     const built = buildWikiVerificationPlan(candidate)!
-    expect(built.requests).toHaveLength(2)
-    for (const [index, request] of built.requests.entries()) {
-      const decoded = state(request)
-      expect(decoded.candidate).toEqual([candidate.claims[index]!])
-      expect(decoded.claimIndexes).toEqual([index])
-      expect(decoded.sources[0]!.evidenceId).toBe(candidate.claims[index]!.evidenceId)
-      expect(decoded.sources[0]!.sourceRevision).toBe(candidate.claims[index]!.sourceRevision)
-      expect(decoded.sources[0]!.closure).toEqual(source.closure)
+    const evaluatedScopes = new Set<string>()
+    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+      const expected = check.claimIndex === 0 ? source : other
+      evaluatedScopes.add(JSON.stringify([check.source.evidenceId, check.source.sourceRevision]))
+      expect(check.claim).toEqual(candidate.claims[check.claimIndex])
+      expect(check.source).toEqual(expected)
+      expect(check.registeredRead).toBe(raw)
+      return supports
+    }))
+    expect(evaluatedScopes).toEqual(new Set([source, other].map(bound => JSON.stringify([bound.evidenceId, bound.sourceRevision]))))
+    expect(assessWikiVerificationResults(built, decisions).valid).toBe(true)
+    const negative: Verdict = { choice: 'not_supported',
+      probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
+    const denied = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === 1 ? negative : supports))
+    expect(assessWikiVerificationResults(built, denied).valid).toBe(false)
+  })
+
+  it('requires every independent verdict for same-read nonliteral claims', () => {
+    const candidate = { ...matrixInput(), sources: [...matrixSources].reverse() }
+    const built = buildWikiVerificationPlan(candidate)!
+    const evaluatedClaims = new Set<number>()
+    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+      evaluatedClaims.add(check.claimIndex)
+      expect(check.claim).toEqual(candidate.claims[check.claimIndex])
+      expect(check.originalSourceIndex).toBe(1 - check.claimIndex)
+      expect(check.source).toEqual(matrixSources[check.claimIndex])
+      expect(check.registeredRead).toBe(matrixRaw)
+      return supports
+    }))
+    expect(evaluatedClaims).toEqual(new Set([0, 1]))
+    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [] })
+    const notSupported: Verdict = { choice: 'not_supported',
+      probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
+    for (const rejectedClaim of [0, 1]) {
+      for (const verdict of [notSupported, undefined]) {
+        const partial = built.requests.map(request => consumeSupportRequest(request, check =>
+          check.claimIndex === rejectedClaim ? verdict : supports))
+        const assessment = assessWikiVerificationResults(built, partial)
+        expect(assessment.valid).toBe(false)
+        expect(assessment.issues.some(issue => issue.includes(`Claim ${rejectedClaim + 1}`))).toBe(true)
+      }
     }
-    const correct = batchResults(built)
-    expect(assessWikiVerificationResults(built, correct).valid).toBe(true)
-    expect(assessWikiVerificationResults(built, [...correct].reverse()).valid).toBe(false)
-    expect(assessWikiVerificationResults(built, [correct[0]!, correct[0]!]).valid).toBe(false)
+  })
+
+  it('preserves separate claim authority for evidence aliases of one physical read', () => {
+    const original = matrixInput()
+    const alias = { ...matrixSources[1]!, evidenceId: 'page:42:revision:7:section:2' }
+    const candidate = { ...original, sources: [alias, matrixSources[0]!],
+      claims: [original.claims[0]!, { ...original.claims[1]!, evidenceId: alias.evidenceId }],
+      evidence: [...original.evidence, { ...original.evidence[0]!, evidenceId: alias.evidenceId }] }
+    const built = buildWikiVerificationPlan(candidate)!
+    const evaluatedClaims = new Set<number>()
+    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+      evaluatedClaims.add(check.claimIndex)
+      expect(check.claim).toEqual(candidate.claims[check.claimIndex])
+      expect(check.originalSourceIndex).toBe(1 - check.claimIndex)
+      expect(check.source).toEqual(check.claimIndex === 0 ? matrixSources[0] : alias)
+      expect(check.registeredRead).toBe(matrixRaw)
+      return supports
+    }))
+    expect(evaluatedClaims).toEqual(new Set([0, 1]))
+    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [] })
+    const missingAlias = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === 1 ? undefined : supports))
+    expect(assessWikiVerificationResults(built, missingAlias).valid).toBe(false)
+  })
+
+  it.each([
+    ['wrong matrix column owner', 0, 'The fictional, untested Moon soup yields 3 servings.'],
+    ['cross-record borrowing', 1, 'The fictional, untested Moon soup yields 2 servings.']
+  ] as const)('rejects %s using its independent negative verdict without merging same-read closures', (_case, rejectedClaim, statement) => {
+    const original = matrixInput()
+    const candidate = { ...original, claims: original.claims.map((claim, index) => index === rejectedClaim ? { ...claim, statement } : claim) }
+    const built = buildWikiVerificationPlan(candidate)!
+    const negative: Verdict = { choice: 'not_supported',
+      probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
+    const evaluatedClaims = new Set<number>()
+    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+      evaluatedClaims.add(check.claimIndex)
+      expect(check.claim).toEqual(candidate.claims[check.claimIndex])
+      expect(check.source.closure).toEqual(matrixSources[check.claimIndex]!.closure)
+      expect(check.registeredRead).toBe(matrixRaw)
+      return check.claimIndex === rejectedClaim ? negative : supports
+    }))
+    expect(evaluatedClaims).toEqual(new Set([0, 1]))
+    const assessment = assessWikiVerificationResults(built, decisions)
+    expect(assessment.valid).toBe(false)
+    expect(assessment.issues).toHaveLength(1)
+    expect(assessment.issues[0]).toContain(`Claim ${rejectedClaim + 1}`)
+    expect(assessment.issues[0]).toContain('not_supported')
+  })
+
+  it('rejects a same-read closure that imports another selected record before requesting decisions', () => {
+    const candidate = matrixInput()
+    const yieldSource = matrixSources[0]!
+    const timingSource = matrixSources[1]!
+    const merged: WikiVerificationSource = { ...yieldSource, closure: { ...yieldSource.closure!,
+      units: [...yieldSource.closure!.units, ...timingSource.closure!.units],
+      record: { ...yieldSource.closure!.record!, unitIds: [...yieldSource.closure!.record!.unitIds, ...timingSource.closure!.record!.unitIds],
+        fields: [...yieldSource.closure!.record!.fields, ...timingSource.closure!.record!.fields] } } }
+    expect(() => buildWikiVerificationPlan({ ...candidate, sources: [merged, timingSource] })).toThrow('foreign or ambiguous ownership')
+  })
+
+  it('admits all 64 independently bound claims with large owned closures and rejects missing or uncertain verdicts', () => {
+    const candidate = shipmentInput()
+    const built = buildWikiVerificationPlan(candidate)!
+    const evaluatedClaims = new Set<number>()
+    const decisions = built.requests.map(request => {
+      expect(() => validateDecisionBatchRequest(request)).not.toThrow()
+      return consumeSupportRequest(request, check => {
+        evaluatedClaims.add(check.claimIndex)
+        expect(check.originalSourceIndex).toBe(check.claimIndex)
+        expect(check.claim).toEqual(candidate.claims[check.claimIndex])
+        expect(check.source).toEqual(candidate.sources[check.claimIndex])
+        expect(check.registeredRead).toBe(candidate.evidence[0]!.source)
+        return supports
+      })
+    })
+    expect(evaluatedClaims).toEqual(new Set(Array.from({ length: 64 }, (_, index) => index)))
+    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [] })
+    for (const verdict of [undefined, { ...supports, confidence: 0.8 }]) {
+      const partial = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === 63 ? verdict : supports))
+      const assessment = assessWikiVerificationResults(built, partial)
+      expect(assessment.valid).toBe(false)
+      expect(assessment.issues.some(issue => issue.includes('Claim 64'))).toBe(true)
+    }
+  })
+
+  it('admits one long normalized source while preserving exact authored dependencies, links and host authority', () => {
+    const heading = '# Shipment rules\n'
+    const normalized = 'Shipment may ship 2 crates only after approval. Details: ' + 'x'.repeat(30_000) + ' µ😀e\u0301.'
+    const authored = normalized.replace('after approval.', 'after [approval](/approval).')
+    const registeredRead = heading + '\n' + authored
+    const span = { start: heading.length + 1, end: registeredRead.length }
+    const governingSpan = { start: 0, end: heading.length }
+    const governing: SourceContext = { id: 'h', kind: 'heading', sourceSpans: [governingSpan],
+      normalizedLabel: 'Shipment rules', parentId: null, complete: true }
+    const approval: SourceLink = { label: 'approval', destination: '/approval', unitId: 'u',
+      sourceSpans: [span], dependencySpans: [], kind: 'link' }
+    const owned: SourceUnit = { id: 'u', kind: 'paragraph', sourceSpans: [span], normalizedText: normalized,
+      contextIds: ['h'], recordId: null, structuralLabels: ['Shipment'], links: [approval], complete: true }
+    const bound: WikiVerificationSource = { evidenceId: 'long-shipment', sourceRevision: '7', unitId: 's',
+      context: 'Shipment rules', text: normalized, kind: 'paragraph', complete: true,
+      closure: { unit: owned, units: [owned], contexts: [governing], record: null, links: [approval],
+        dependencies: [span, governingSpan].map(span => ({ span, text: registeredRead.slice(span.start, span.end) })) } }
+    const candidate = input({ sources: [bound],
+      userRequest: 'Describe the shipment’s permission and approval condition.',
+      requestFacets: ['Give the permitted quantity and approval condition.'],
+      evidence: [{ evidenceId: bound.evidenceId, sourceRevision: '7', readId: 'read:long-shipment', source: registeredRead }],
+      claims: [{ evidenceId: bound.evidenceId, sourceRevision: '7', unitId: bound.unitId,
+        statement: 'Shipment is permitted to ship 2 crates only after approval.' }] })
+    const built = buildWikiVerificationPlan(candidate)!
+    const evaluatedClaims = new Set<number>()
+    const decisions = built.requests.map(request => {
+      expect(() => validateDecisionBatchRequest(request)).not.toThrow()
+      return consumeSupportRequest(request, check => {
+        evaluatedClaims.add(check.claimIndex)
+        expect(check.source).toEqual(bound)
+        expect(check.claim).toEqual(candidate.claims[0])
+        expect(check.originalSourceIndex).toBe(0)
+        expect(check.registeredRead).toBe(registeredRead)
+        return supports
+      })
+    })
+    expect(evaluatedClaims).toEqual(new Set([0]))
+    expect(built.originalSources[0]!.text).toBe(normalized)
+    expect(built.originalSources[0]!.closure!.unit.normalizedText).toBe(normalized)
+    expect(built.originalSources[0]!.closure!.dependencies[0]!.text).toBe(authored)
+    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [] })
+    const denied = built.requests.map(request => consumeSupportRequest(request, () => ({
+      choice: 'not_supported', probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97
+    })))
+    expect(assessWikiVerificationResults(built, denied).valid).toBe(false)
+  })
+
+  it('rejects malformed native whole-string references without coercing or clamping indices', () => {
+    expect(decodeWikiVerificationSources([{ ...source, text: { readText: 0 } }], [source.text])[0]!.text).toBe(source.text)
+    for (const readText of [-1, 0.5, 1, NaN, Infinity, '0', null])
+      expect(() => decodeWikiVerificationSources([{ ...source, text: { readText } }], [source.text])).toThrow('native source text reference')
+    expect(() => decodeWikiVerificationSources([{ ...source, text: { readText: 0, foreign: true } }], [source.text]))
+      .toThrow('native source text reference')
   })
 
   it('fails rather than pruning required read context to satisfy unchanged native bounds', () => {
@@ -201,13 +469,38 @@ describe('Wiki verification complete quotation boundaries', () => {
     const sources = Array.from({ length: 9 }, (_, index) => ({ ...recordSource, evidenceId: `page:${index}:revision:7:section:1` }))
     const candidate = input({ sources, claims: sources.map(bound => ({
       evidenceId: bound.evidenceId, sourceRevision: bound.sourceRevision, unitId: bound.unitId, statement: recordQuote
-    })), evidence: sources.map(bound => ({ evidenceId: bound.evidenceId, sourceRevision: bound.sourceRevision, source: raw })) })
+    })), evidence: sources.map(bound => ({ evidenceId: bound.evidenceId, sourceRevision: bound.sourceRevision, readId: `read:${bound.evidenceId}`, source: raw })) })
     const built = buildWikiVerificationPlan(candidate)!
     expect(built.literalSupportCount).toBe(9)
     expect(built.requests).toEqual([])
     expect(built.checks).toEqual({})
     expect(assessWikiVerificationResults(built)).toEqual({ valid: true, issues: [] })
     expect(assessWikiVerificationResults(built, [result({})]).valid).toBe(false)
+  })
+
+  it('skips a complete literal quote without collapsing two nonliteral checks for the same original selected unit', () => {
+    const original = input().claims[0]!
+    const candidate = input({ sources: [recordSource], claims: [
+      { ...original, statement: recordQuote },
+      original,
+      { ...original, statement: 'The fictional, untested Moon soup has a yield of 2 servings and a before-dawn simmering method.' }
+    ] })
+    const built = buildWikiVerificationPlan(candidate)!
+    const evaluatedClaims = new Set<number>()
+    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+      evaluatedClaims.add(check.claimIndex)
+      expect(check.claim).toEqual(candidate.claims[check.claimIndex])
+      expect(check.originalSourceIndex).toBe(0)
+      expect(check.source).toEqual(recordSource)
+      expect(check.registeredRead).toBe(raw)
+      return supports
+    }))
+    expect(built.literalSupportCount).toBe(1)
+    expect(evaluatedClaims).toEqual(new Set([1, 2]))
+    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [] })
+    const missingRepeatedBinding = built.requests.map(request => consumeSupportRequest(request, check =>
+      check.claimIndex === 2 ? undefined : supports))
+    expect(assessWikiVerificationResults(built, missingRepeatedBinding).valid).toBe(false)
   })
 
   it('does not infer literal status from changed quantity, condition, status, fragment or foreign-source text', () => {
@@ -240,12 +533,18 @@ describe('Wiki verification complete quotation boundaries', () => {
           ({ ...field, value: field.value.replace('Moon soup', foreignName) })) } } }
     const built = buildWikiVerificationPlan(input({ sources: [recordSource, foreign],
       claims: [{ ...input().claims[0]!, statement: recordQuote.replace('Moon soup', foreignName) }],
-      evidence: [...input().evidence, { evidenceId: foreign.evidenceId, sourceRevision: '7', source: raw }]
+      evidence: [...input().evidence, { evidenceId: foreign.evidenceId, sourceRevision: '7', readId: 'read:foreign:revision:7', source: raw }]
     }))!
     expect(built.literalSupportCount).toBe(0)
-    expect(state(built.requests[0]!).sources).toEqual([recordSource])
-    expect(built.checks.support_0).toEqual({ kind: 'support', claimIndex: 0,
-      binding: { evidenceId: source.evidenceId, sourceRevision: '7', unitId: source.unitId } })
+    const negative: Verdict = { choice: 'not_supported',
+      probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
+    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+      expect(check.source).toEqual(recordSource)
+      expect(check.claim.evidenceId).toBe(recordSource.evidenceId)
+      expect(check.registeredRead).toBe(raw)
+      return negative
+    }))
+    expect(assessWikiVerificationResults(built, decisions).valid).toBe(false)
   })
 
   it('mechanically accepts a complete own physical unit with its original conditional context', () => {
@@ -276,7 +575,7 @@ describe('Wiki verification complete quotation boundaries', () => {
       kind: 'page-title', context: 'Authoritative read page title; literal metadata only', text: 'Fictional Recipes', complete: true, closure: null }
     const candidate = input({ sources: [title], claims: [{ evidenceId: title.evidenceId, sourceRevision: title.sourceRevision,
       unitId: title.unitId, statement: 'The page is titled "Fictional Recipes".' }], evidence: [{
-      evidenceId: title.evidenceId, sourceRevision: title.sourceRevision, source: raw
+      evidenceId: title.evidenceId, sourceRevision: title.sourceRevision, readId: 'read:42:revision:7', source: raw
     }] })
     const built = buildWikiVerificationPlan(candidate)!
     expect(built.literalSupportCount).toBe(1)
