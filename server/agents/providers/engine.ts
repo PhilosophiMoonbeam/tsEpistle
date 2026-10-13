@@ -4189,7 +4189,7 @@ const withSynthesisControl = (tools: ProviderTools | null): ProviderTools | null
       {
         name: SYNTHESIS_CONTROL_NAME,
         description: `# Goal
-Finish source collection and required actions for host typed synthesis.
+Finish source collection and required actions. This phase collects evidence; a separate source-bound synthesis pass writes the answer. Once cached or newly read sources establish the requested facts and qualifications, call this control instead of drafting answer prose, a summary or a comparison.
 # Return Format
 Empty arguments, alone or last after independent admitted read-only Wiki source reads.
 # Warnings
