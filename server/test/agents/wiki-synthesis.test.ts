@@ -226,7 +226,11 @@ describe('Wiki source-bound typed synthesis', () => {
         validateClaim: claim => claim.statement === literalStatement,
         validateAnswer: (_answer, _rendered, _literals, blocks) => { nativeBlocks = blocks; return true }
       }
-      for (const explicit of [raw, literalStatement]) {
+      for (const explicit of [
+        raw, literalStatement, raw.slice(0, -1), literalStatement.slice(0, -1),
+        `\r\n${raw.replaceAll('\n', '\r\n')}\r\n`,
+        literalStatement.replaceAll('\n', '\r\n').slice(0, -2)
+      ]) {
         const selection = answer({ claims: [{ ...answer().claims[0]!, statement: explicit }] })
         const accepted = await generate(selection, [owned, sibling], options, mode).result
         expect(accepted.claims).toEqual([{ ...selection.claims[0]!, statement: literalStatement }])
@@ -258,18 +262,32 @@ describe('Wiki source-bound typed synthesis', () => {
           ...input, ...encodeFixtureSources([owned, sibling])
         }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
         expect(streamed).toEqual(accepted.claims)
+        const streamedRendered = renderWikiSynthesisAnswer({ ...accepted, claims: streamed }, new Set([literalStatement]), nativeBlocks)
+        expect(streamedRendered).toBe(rendered)
+        const streamedHtml = markdown.render(formatAgentCitationMarkers(streamedRendered, () => ({ number: 1, label: 'Pilot plans', href: null })))
+        expect(streamedHtml.match(/<table>/gu)).toHaveLength(1)
+        expect(streamedHtml).toContain('<td>Monthly fee</td>\n<td>USD 120</td>\n<td>USD 180</td>')
+        expect(streamedHtml.match(/<strong>\[1\]<\/strong>/gu)).toHaveLength(1)
       }
       for (const statement of [
         '', raw.replace('| Atlas | Boreal |', '| Boreal | Atlas |'),
         raw.replace('USD 120', 'USD 180'), raw.replace('| Status | Pilot only | Pilot only |\n', ''),
-        `${raw}\nAn unrelated assertion.`, sibling.literalStatement
+        `${raw}\nAn unrelated assertion.`, sibling.literalStatement, sibling.literalStatement.slice(0, -1),
+        raw.replace('| Field |', '|  Field |'), `${raw.trimEnd()}\n[a]: /foreign\n`,
+        literalStatement.replace('USD 120', 'USD 180').slice(0, -1)
       ]) {
         await expect(generate(answer({ claims: [{ ...answer().claims[0]!, statement }] }), [owned, sibling], options, mode).result).rejects.toThrow()
       }
+      for (const statement of [
+        sibling.literalStatement.slice(0, -1), `${raw.trimEnd()}\n[a]: /foreign\n`,
+        literalStatement.replace('USD 120', 'USD 180').slice(0, -1)
+      ]) expect(createWikiSynthesisStreamGuard([owned, sibling])(JSON.stringify(encodeWikiSynthesisAnswer(
+        answer({ claims: [{ ...answer().claims[0]!, statement }] })
+      )))).toBeDefined()
     }
   })
 
-  it('resolves native header and cell references locally without colliding labels or accepting model-supplied definitions', async () => {
+  it.each(['raw', 'bare-no-LF', 'prefixed-no-LF'] as const)('resolves native header and cell references locally from %s without colliding labels or accepting model-supplied definitions', async representation => {
     const raw = '| Feature | [Atlas][a] |\n| --- | --- |\n| Scope | [mainland][s] |\n'
     const literalStatement = `Fictional, non-operative:\n\n${raw}\n[a]: /atlas\n\n[s]: /mainland "Scope | only"\n`
     const owned = { ...source, kind: 'table', text: raw, literalStatement }
@@ -277,8 +295,8 @@ describe('Wiki source-bound typed synthesis', () => {
     const otherLiteral = `Other fictional table:\n\n${otherRaw}\n[a]: /boreal\n\n[s]: /islands\n`
     const other = { ...source, unitId: 'unit:other-table', kind: 'table', text: otherRaw, literalStatement: otherLiteral }
     const selection = answer({ claims: [
-      { ...answer().claims[0]!, statement: raw },
-      { ...answer().claims[0]!, unitId: other.unitId, statement: otherRaw }
+      { ...answer().claims[0]!, statement: representation === 'raw' ? raw : `${representation === 'prefixed-no-LF' ? 'Fictional, non-operative:\n\n' : ''}${raw.slice(0, -1)}` },
+      { ...answer().claims[0]!, unitId: other.unitId, statement: representation === 'raw' ? otherRaw : `${representation === 'prefixed-no-LF' ? 'Other fictional table:\n\n' : ''}${otherRaw.slice(0, -1)}` }
     ] })
     for (const mode of ['native', 'json_object'] as const) {
       let blocks: ReadonlyMap<string, string> | undefined
@@ -323,9 +341,14 @@ describe('Wiki source-bound typed synthesis', () => {
       ), () => ({ number: 1, label: 'Fictional source', href: '/source/fictional' }))))
       expect(streamedDom('table').eq(0).find('th a').attr('href')).toBe('/atlas')
       expect(streamedDom('table').eq(0).find('td a').attr('href')).toBe('/mainland')
+      expect(streamedDom('table')).toHaveLength(2)
+      expect(streamedDom('table').eq(1).find('th a').attr('href')).toBe('/boreal')
+      expect(streamedDom('table').eq(1).find('td a').attr('href')).toBe('/islands')
       expect(streamedDom('p a[href="/source/fictional"]')).toHaveLength(2)
       for (const statement of [
         raw.replace('mainland', 'islands'), `${raw}\n[a]: /foreign\n`, otherLiteral,
+        `Other fictional table:\n\n${raw.slice(0, -1)}`,
+        `Fictional, non-operative:\n\n${raw.slice(0, -1)}\n\n[a]: /foreign\n[s]: /mainland`,
         literalStatement.replace('/atlas', '/foreign'), literalStatement.replace('[a]: /atlas\n', ''),
         `${literalStatement}[foreign]: /other\n`, `${literalStatement}Unasked assertion.\n`,
         `${literalStatement}<script>injected</script>\n`, `${literalStatement}[[cite:foreign]]\n`

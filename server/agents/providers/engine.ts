@@ -813,7 +813,7 @@ const presentationLanguage: Readonly<Record<string, true>> = {
   provide: true,
   provided: true
 }
-const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit): boolean => {
+const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit, bodyAssertions: readonly string[] | null = null): boolean => {
   const presentationSource = unit.kind === 'heading' || unit.kind === 'summary' || unit.kind === 'list-item' || unit.kind === 'table-row'
   const claimedWords = lexicalTokens(clause).map(normalizedToken)
   const claimed = claimedWords.filter(token => !insignificantTerms.has(token))
@@ -847,7 +847,7 @@ const hasIdentifierSubstitution = (clause: string, unit: CitationSourceUnit): bo
   // Adjacent context labels and the body are separate assertions. Their
   // concatenation must not invent an identifier's replacement neighborhood.
   return (
-    substitutes(unit.text, unit.identifiers) ||
+    (bodyAssertions === null ? substitutes(unit.text, unit.identifiers) : bodyAssertions.some(text => substitutes(text, unit.identifiers))) ||
     unit.closure.contexts
       .filter(context => unit.containerIds.includes(context.id))
       .some(context => substitutes(context.normalizedLabel, identifierTerms(context.normalizedLabel, true), true))
@@ -1077,10 +1077,15 @@ const projectedSourceUnits = (document: ParsedSourceDocument): readonly Citation
       (record === null || record.fields.length === 0) && (unit.kind === 'paragraph' || unit.kind === 'list-item')
         ? sourceSentences(assertionUnits.map(owned => owned.normalizedText).join(' '))
         : [unit.normalizedText]
-    return assertions.map((text, index) => {
+    // Preserve every issued atomic identity. A genuine original multi-sentence
+    // unit is independently selectable, never a reconstruction of neighbors.
+    const selections = assertions.map((text, index) => ({ text, identity: `${unit.id}:assertion:${index}`, original: false }))
+    if (assertions.length > 1 && assertionUnits.length === 1)
+      selections.push({ text: unit.normalizedText, identity: unit.id, original: true })
+    return selections.map(({ text, identity, original }) => {
       const textTerms = new Set(normalizedTerms(text, true))
       return {
-        identity: `${unit.id}:assertion:${index}`,
+        identity,
         context,
         text,
         kind: unit.kind,
@@ -1092,7 +1097,7 @@ const projectedSourceUnits = (document: ParsedSourceDocument): readonly Citation
           contexts.every(node => node.complete) &&
           (unit.recordId === null || (record !== null && record.complete && record.fields.every(field => field.complete))),
         closure:
-          assertions.length === 1
+          original || assertions.length === 1
             ? closure
             : {
                 ...closure,
@@ -1101,7 +1106,7 @@ const projectedSourceUnits = (document: ParsedSourceDocument): readonly Citation
         containerIds: contextIds.filter(id => id !== structural?.id),
         structuralId: structural?.id ?? null,
         structuralLabel: structural?.normalizedLabel ?? null,
-        labels: [...new Set(assertionUnits.flatMap(owned => owned.structuralLabels))].filter(label => assertions.length === 1 || text.includes(label)),
+        labels: [...new Set(assertionUnits.flatMap(owned => owned.structuralLabels))].filter(label => original || assertions.length === 1 || text.includes(label)),
         terms: new Set([...normalizedTerms(context, true), ...textTerms]),
         textTerms,
         identifiers: identifierTerms(text, true),
@@ -1973,7 +1978,7 @@ const deliveredPageSummaryCoverage = (
   registry: ReadonlyMap<string, CitationEvidence>,
   currentPage: AgentCurrentPageHint | undefined
 ): DeliveredPageSummaryCoverage | null => {
-  if (currentPage === undefined) return null
+  if (currentPage === undefined || currentPage === null) return null
   const currentPageEvidence = [...registry.values()].filter(
     evidence =>
       evidence.sourceActionName === 'pages.get' &&
@@ -2057,7 +2062,15 @@ const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericCla
   const inheritedRestrictionTexts = applicableContexts.flatMap(context => context.normalizedLabel.match(SOURCE_RESTRICTION_PATTERN) ?? [])
   if (recordRestrictions) inheritedRestrictionTexts.push(...recordRestrictions)
   const inheritedRestrictionTokens = inheritedRestrictionTexts.map(value => significantTokens(value, true))
-  const sourceNumericSegments = numericSegments(unit.text, true)
+  // A complete original prose unit can own several sentences. Keep a numeric
+  // assertion attached to its own source sentence instead of requiring the
+  // summary to repeat unrelated later prose in the same native body.
+  const originalProse = (unit.kind === 'paragraph' || unit.kind === 'list-item') &&
+    (unit.closure.record?.fields.length ?? 0) === 0 && unit.text === unit.closure.unit.normalizedText
+  const originalProseAssertions = originalProse ? sourceSentences(unit.text) : null
+  const sourceNumericSegments = originalProseAssertions === null
+    ? numericSegments(unit.text, true)
+    : originalProseAssertions.flatMap(text => numericSegments(text, true))
   const inheritedNumericSegments = inheritedRestrictionTexts.flatMap(value => numericSegments(value, true))
   const numericFactsMatch = (value: string): boolean => {
     const factual = value.replace(SOURCE_RESTRICTION_PATTERN, restriction => {
@@ -2113,7 +2126,7 @@ const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericCla
   const claimedConstraintTokens = significantTokens(clause)
   const requiredRestrictions = [...inheritedRestrictionTexts, ...(unit.text.match(SOURCE_RESTRICTION_PATTERN) ?? [])].map(value => significantTokens(value, true))
   const inheritedRestrictions = requiredRestrictions.every(restriction => orderedSubset(restriction, claimedConstraintTokens))
-  const exactIdentifiers = !hasIdentifierSubstitution(clause, unit)
+  const exactIdentifiers = !hasIdentifierSubstitution(clause, unit, originalProseAssertions)
   const claimedIdentifiers = new Set(identifierTerms(clause))
   const exactClaimedIdentifiers = constraintTerms(clause)
     .filter(term => claimedIdentifiers.has(term))
@@ -2728,7 +2741,7 @@ const completeListOriginalRecords = (
   })
 }
 
-const completeListProtectedAssociationsMatch = (
+const completeListSingleRecordProtectedAssociationsMatch = (
   claim: string,
   list: CitationSourceUnit,
   records: readonly CitationSourceUnit[]
@@ -2787,10 +2800,46 @@ const completeListProtectedAssociationsMatch = (
       const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
       return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim))
     })
-    if (!explicitFields) return true
+    if (!explicitFields) {
+      if (record.fields.length === 0) return true
+      // Numeric prose keeps each original field label and value connected.
+      // One record witness alone would still allow its own values to be swapped.
+      return numericSegments(claim).every(part => {
+        const partTerms = normalizedTerms(part)
+        return record.fields.some(field =>
+          normalizedTerms(field.label, true).every(term => partTerms.includes(term)) &&
+          numericSegments(field.value, true).some(value => part.includes(value) || value.includes(part))
+        )
+      })
+    }
     const fields = assessRecordClause(claim, original, true)
     return fields !== null && fields.length > 0 && fields.every(field => field.integrity && field.semanticConstraints === true)
   })
+}
+
+const completeListProtectedAssociationsMatch = (
+  claim: string,
+  list: CitationSourceUnit,
+  records: readonly CitationSourceUnit[]
+): boolean => {
+  if (completeListSingleRecordProtectedAssociationsMatch(claim, list, records)) return true
+  // A named owner, including an omitted/pronominal owner, must retain one
+  // connected record witness. Only anonymous policy records can be summarized
+  // independently; neither their values nor their fields are pooled.
+  const prose = semanticMarkdownText(claim).replace(/^(?:(?:in|according\s+to|under|within|per)\b[^,:;.!?]*[,;:]\s*)+/iu, '')
+  if (/\b(?:he|she|his|her|hers|they|their|theirs|them|it|its|this|that|these|those|former|latter)\b/iu.test(prose) ||
+    records.some(original => {
+      const first = original.closure.record!.fields[0]
+      if (first === undefined) return true
+      const tokens = significantTokens(first.value, true)
+      const identifiers = identifierTerms(first.value, true)
+      return tokens.length > 0 && tokens.every(token => identifiers.includes(token))
+    }))
+    return false
+  const segments = sourceLocalSegments(claim, true)
+  return segments.length > 1 && segments.every(segment => records.some(original =>
+    completeListSingleRecordProtectedAssociationsMatch(segment, list, [original])
+  ))
 }
 
 const exactTypedIdentifiersMatch = (claim: string, unit: CitationSourceUnit): boolean => {
@@ -2881,6 +2930,17 @@ const assessTypedClaimEligibility = (
     validateWikiVerificationSource(source)
   } catch {
     return { eligible: false, unit }
+  }
+  if ((unit.kind === 'paragraph' || unit.kind === 'list-item') &&
+    (unit.closure.record?.fields.length ?? 0) === 0 && unit.text !== unit.closure.unit.normalizedText) {
+    const statement = normalizedHeading(claim.statement)
+    // Retained native bytes are dependencies, not authority to append another
+    // original assertion to an atomic selector. Paraphrases are independently
+    // judged against source.text by the native verification policy.
+    if (sourceSentences(unit.closure.unit.normalizedText).some(assertion =>
+      !unit.text.includes(assertion) && statement.includes(normalizedHeading(assertion))
+    ))
+      return { eligible: false, unit }
   }
   if (isLiteralSourceClaim(claim, source)) return { eligible: true, unit }
   const listRecords = unit.kind === 'list' ? completeListOriginalRecords(unit, evidence) : null
