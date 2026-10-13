@@ -6480,6 +6480,7 @@ export class AxAgentEngine implements AgentEngine {
     evidence: ReadonlyMap<string, CitationEvidence>,
     input: {
       readonly userRequest: string
+      readonly conversation: readonly ChatPromptMessage[]
       readonly requestFacets: readonly string[]
       readonly observations: readonly string[]
       readonly repairFeedback: string
@@ -6700,6 +6701,18 @@ export class AxAgentEngine implements AgentEngine {
       }
     })
     const encodedSources = encodeWikiSynthesisSources(sources, sourceReads)
+    const currentUserIndex = input.conversation.findLastIndex(message => message.role === 'user')
+    const previousConversation = input.conversation.slice(0, currentUserIndex < 0 ? input.conversation.length : currentUserIndex)
+      .flatMap(message => {
+        if (message.role !== 'user' && message.role !== 'assistant') return []
+        const content = typeof message.content === 'string'
+          ? message.content
+          : message.role === 'user'
+            ? message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+            : ''
+        return content.trim() ? [{ role: message.role, content }] : []
+      })
+    const conversationContext = previousConversation.length > 0 ? JSON.stringify(previousConversation) : undefined
     const preflightComplete = new Error('Typed synthesis preflight complete')
     let preflightPlan: PublicationSequencePlan | undefined
     let dispatched: TurnResult | undefined
@@ -6847,6 +6860,7 @@ export class AxAgentEngine implements AgentEngine {
         admittedAI,
         {
           userRequest: input.userRequest,
+          ...(conversationContext === undefined ? {} : { conversationContext }),
           ...encodedSources,
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
@@ -8328,6 +8342,7 @@ export class AxAgentEngine implements AgentEngine {
               dispatchEvidence,
               {
                 userRequest: contextPlan.intent,
+                conversation,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [],
                 observations,
                 repairFeedback,
@@ -8895,6 +8910,7 @@ export class AxAgentEngine implements AgentEngine {
             try {
               const plan = await this.#synthesisTurn(provider, request, finalizationMaxOutputTokens, undefined, prospectiveEvidence, {
                 userRequest: contextPlan.intent,
+                conversation,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
                 observations: activePrompt.flatMap(message => [
                   ...(trackedAttributedMessages.get(message) ?? []),
@@ -9562,6 +9578,7 @@ export class AxAgentEngine implements AgentEngine {
             const remaining = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
             const plan = await this.#synthesisTurn(synthesisProvider, request, finalizationMaxOutputTokens, remaining, preflightEvidence, {
               userRequest: contextPlan.intent,
+              conversation,
               requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
               observations: [...attributedLines, ...browserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))],
               repairFeedback,
