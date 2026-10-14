@@ -8,31 +8,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Summarize archive and scratch retention and deletion approval.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "train-retention-archive",
         "sourceRevision": "train-retention-r1",
-        "unitId": "archive",
-        "context": "train-retention",
-        "text": "Archive logs are retained for 30 days. Deletion requires manager approval.",
-        "kind": "paragraph",
+        "readId": "fixture:train-retention:train-retention-archive",
+        "title": "train-retention",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Archive logs are retained for 30 days. Deletion requires manager approval.\"}"
+        "source": "Archive logs are retained for 30 days. Deletion requires manager approval."
       },
       {
         "evidenceId": "train-retention-scratch",
         "sourceRevision": "train-retention-r1",
-        "unitId": "scratch",
-        "context": "train-retention",
-        "text": "Scratch logs are retained for 7 days without approval.",
-        "kind": "paragraph",
+        "readId": "fixture:train-retention:train-retention-scratch",
+        "title": "train-retention",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Scratch logs are retained for 7 days without approval.\"}"
+        "source": "Scratch logs are retained for 7 days without approval."
       }
     ],
-    "sourceReads": [{"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "readId": "fixture:train-retention:train-retention-archive", "title": "train-retention", "representation": "markdown", "complete": true, "source": "Archive logs are retained for 30 days. Deletion requires manager approval."}, {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "readId": "fixture:train-retention:train-retention-scratch", "title": "train-retention", "representation": "markdown", "complete": true, "source": "Scratch logs are retained for 7 days without approval."}],
     "requestFacets": [
       "archive",
       "scratch"
@@ -44,7 +39,7 @@
         "id": "archive",
         "evidenceId": "train-retention-archive",
         "sourceRevision": "train-retention-r1",
-        "unitId": "archive",
+        "unitId": "read:fixture:train-retention:train-retention-archive",
         "facet": 0,
         "allOf": [
           "(?:archive)",
@@ -62,7 +57,7 @@
         "id": "scratch",
         "evidenceId": "train-retention-scratch",
         "sourceRevision": "train-retention-r1",
-        "unitId": "scratch",
+        "unitId": "read:fixture:train-retention:train-retention-scratch",
         "facet": 1,
         "allOf": [
           "(?:scratch)",
@@ -85,10 +80,21 @@
         "expected": "accept",
         "answer": {
           "claims": [
-            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."},
-            {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "unitId": "scratch", "statement": "Scratch logs are retained for 7 days without approval."}
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
           ],
-          "unresolvedFacets": [], "observations": [],
+          "unresolvedFacets": [],
+          "observations": [],
           "recommendations": "Consider keeping a personal checklist before requesting deletion."
         }
       },
@@ -98,10 +104,21 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."},
-            {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "unitId": "scratch", "statement": "Scratch logs are retained for 7 days without approval."}
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
           ],
-          "unresolvedFacets": [], "observations": [],
+          "unresolvedFacets": [],
+          "observations": [],
           "recommendations": "Deletion requests are automatically processed overnight. Consider keeping a personal checklist before requesting deletion."
         }
       },
@@ -111,10 +128,21 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."},
-            {"evidenceId": "train-retention-scratch", "sourceRevision": "train-retention-r1", "unitId": "scratch", "statement": "Scratch logs are retained for 7 days without approval."}
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
+              "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
+            },
+            {
+              "evidenceId": "train-retention-scratch",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
+              "statement": "Scratch logs are retained for 7 days without approval."
+            }
           ],
-          "unresolvedFacets": [], "observations": [],
+          "unresolvedFacets": [],
+          "observations": [],
           "recommendations": "Consider keeping a personal checklist because deletion requests are automatically processed overnight."
         }
       },
@@ -124,9 +152,16 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "train-retention-archive", "sourceRevision": "train-retention-r1", "unitId": "archive", "statement": "Archive logs are retained for 7 days without approval."}
+            {
+              "evidenceId": "train-retention-archive",
+              "sourceRevision": "train-retention-r1",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
+              "statement": "Archive logs are retained for 7 days without approval."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -138,13 +173,13 @@
             {
               "evidenceId": "train-retention-archive",
               "sourceRevision": "train-retention-r1",
-              "unitId": "archive",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
               "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
             },
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Scratch logs are retained for 7 days without approval."
             }
           ],
@@ -162,13 +197,13 @@
             {
               "evidenceId": "train-retention-archive",
               "sourceRevision": "train-retention-r1",
-              "unitId": "archive",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
               "statement": "Archive logs stay for 30 days; a manager must approve deletion."
             },
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Scratch logs stay for 7 days and need no approval."
             }
           ],
@@ -186,13 +221,13 @@
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
             },
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Scratch logs are retained for 7 days without approval."
             }
           ],
@@ -216,7 +251,7 @@
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Scratch logs are retained for 7 days without approval."
             }
           ],
@@ -234,13 +269,13 @@
             {
               "evidenceId": "train-retention-archive",
               "sourceRevision": "train-retention-r0",
-              "unitId": "archive",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
               "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
             },
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Scratch logs are retained for 7 days without approval."
             }
           ],
@@ -258,13 +293,13 @@
             {
               "evidenceId": "train-retention-archive",
               "sourceRevision": "train-retention-r1",
-              "unitId": "archive",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
               "statement": "Archive logs are retained for 30 days. Deletion requires manager approval. [[source:fake]]"
             },
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Scratch logs are retained for 7 days without approval."
             }
           ],
@@ -282,7 +317,7 @@
             {
               "evidenceId": "train-retention-archive",
               "sourceRevision": "train-retention-r1",
-              "unitId": "archive",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
               "statement": "Archive logs are retained for 30 days. Deletion requires manager approval."
             }
           ],
@@ -314,13 +349,13 @@
             {
               "evidenceId": "train-retention-archive",
               "sourceRevision": "train-retention-r1",
-              "unitId": "archive",
+              "unitId": "read:fixture:train-retention:train-retention-archive",
               "statement": "Archive logs are retained for 309 days. Deletion requires manager approval."
             },
             {
               "evidenceId": "train-retention-scratch",
               "sourceRevision": "train-retention-r1",
-              "unitId": "scratch",
+              "unitId": "read:fixture:train-retention:train-retention-scratch",
               "statement": "Scratch logs are retained for 7 days without approval."
             }
           ],
@@ -328,6 +363,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "train-retention-archive",
+        "sourceRevision": "train-retention-r1",
+        "unitId": "read:fixture:train-retention:train-retention-archive",
+        "readId": "fixture:train-retention:train-retention-archive",
+        "context": "train-retention",
+        "text": "Archive logs are retained for 30 days. Deletion requires manager approval.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "train-retention-scratch",
+        "sourceRevision": "train-retention-r1",
+        "unitId": "read:fixture:train-retention:train-retention-scratch",
+        "readId": "fixture:train-retention:train-retention-scratch",
+        "context": "train-retention",
+        "text": "Scratch logs are retained for 7 days without approval.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -340,31 +397,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "State the latency alert threshold and export restriction.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "train-threshold-alert",
         "sourceRevision": "train-threshold-r1",
-        "unitId": "alert",
-        "context": "train-threshold",
-        "text": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows.",
-        "kind": "paragraph",
+        "readId": "fixture:train-threshold:train-threshold-alert",
+        "title": "train-threshold",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Latency alerts fire only when p95 > 250 ms for 3 consecutive windows.\"}"
+        "source": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
       },
       {
         "evidenceId": "train-threshold-export",
         "sourceRevision": "train-threshold-r1",
-        "unitId": "export",
-        "context": "train-threshold",
-        "text": "Exports are permitted only for administrators.",
-        "kind": "paragraph",
+        "readId": "fixture:train-threshold:train-threshold-export",
+        "title": "train-threshold",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Exports are permitted only for administrators.\"}"
+        "source": "Exports are permitted only for administrators."
       }
     ],
-    "sourceReads": [{"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "readId": "fixture:train-threshold:train-threshold-alert", "title": "train-threshold", "representation": "markdown", "complete": true, "source": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."}, {"evidenceId": "train-threshold-export", "sourceRevision": "train-threshold-r1", "readId": "fixture:train-threshold:train-threshold-export", "title": "train-threshold", "representation": "markdown", "complete": true, "source": "Exports are permitted only for administrators."}],
     "requestFacets": [
       "latency alert threshold",
       "export restriction"
@@ -376,7 +428,7 @@
         "id": "alert",
         "evidenceId": "train-threshold-alert",
         "sourceRevision": "train-threshold-r1",
-        "unitId": "alert",
+        "unitId": "read:fixture:train-threshold:train-threshold-alert",
         "facet": 0,
         "allOf": [
           "(?:latency|alert)",
@@ -398,7 +450,7 @@
         "id": "export",
         "evidenceId": "train-threshold-export",
         "sourceRevision": "train-threshold-r1",
-        "unitId": "export",
+        "unitId": "read:fixture:train-threshold:train-threshold-export",
         "facet": 1,
         "allOf": [
           "(?:export)",
@@ -419,11 +471,28 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "unitId": "alert", "statement": "Latency alerts fire when p95 > 250 ms."},
-            {"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "unitId": "alert", "statement": "The latency alert requires 3 consecutive windows."},
-            {"evidenceId": "train-threshold-export", "sourceRevision": "train-threshold-r1", "unitId": "export", "statement": "Exports are permitted only for administrators."}
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
+              "statement": "Latency alerts fire when p95 > 250 ms."
+            },
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
+              "statement": "The latency alert requires 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
+              "statement": "Exports are permitted only for administrators."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -432,10 +501,22 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "train-threshold-alert", "sourceRevision": "train-threshold-r1", "unitId": "alert", "statement": "Latency alerts fire only when p95 >= 250 ms for 3 consecutive windows."},
-            {"evidenceId": "train-threshold-export", "sourceRevision": "train-threshold-r1", "unitId": "export", "statement": "Exports are permitted only for administrators."}
+            {
+              "evidenceId": "train-threshold-alert",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
+              "statement": "Latency alerts fire only when p95 >= 250 ms for 3 consecutive windows."
+            },
+            {
+              "evidenceId": "train-threshold-export",
+              "sourceRevision": "train-threshold-r1",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
+              "statement": "Exports are permitted only for administrators."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -447,13 +528,13 @@
             {
               "evidenceId": "train-threshold-alert",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "alert",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
               "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
             },
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Exports are permitted only for administrators."
             }
           ],
@@ -471,13 +552,13 @@
             {
               "evidenceId": "train-threshold-alert",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "alert",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
               "statement": "The latency alert fires only after p95 > 250 ms in 3 consecutive windows."
             },
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Only administrators may export."
             }
           ],
@@ -495,13 +576,13 @@
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
             },
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Exports are permitted only for administrators."
             }
           ],
@@ -525,7 +606,7 @@
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Exports are permitted only for administrators."
             }
           ],
@@ -543,13 +624,13 @@
             {
               "evidenceId": "train-threshold-alert",
               "sourceRevision": "train-threshold-r0",
-              "unitId": "alert",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
               "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
             },
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Exports are permitted only for administrators."
             }
           ],
@@ -567,13 +648,13 @@
             {
               "evidenceId": "train-threshold-alert",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "alert",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
               "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows. [[source:fake]]"
             },
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Exports are permitted only for administrators."
             }
           ],
@@ -591,7 +672,7 @@
             {
               "evidenceId": "train-threshold-alert",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "alert",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
               "statement": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows."
             }
           ],
@@ -623,13 +704,13 @@
             {
               "evidenceId": "train-threshold-alert",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "alert",
+              "unitId": "read:fixture:train-threshold:train-threshold-alert",
               "statement": "Latency alerts fire only when p959 > 250 ms for 3 consecutive windows."
             },
             {
               "evidenceId": "train-threshold-export",
               "sourceRevision": "train-threshold-r1",
-              "unitId": "export",
+              "unitId": "read:fixture:train-threshold:train-threshold-export",
               "statement": "Exports are permitted only for administrators."
             }
           ],
@@ -637,6 +718,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "train-threshold-alert",
+        "sourceRevision": "train-threshold-r1",
+        "unitId": "read:fixture:train-threshold:train-threshold-alert",
+        "readId": "fixture:train-threshold:train-threshold-alert",
+        "context": "train-threshold",
+        "text": "Latency alerts fire only when p95 > 250 ms for 3 consecutive windows.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "train-threshold-export",
+        "sourceRevision": "train-threshold-r1",
+        "unitId": "read:fixture:train-threshold:train-threshold-export",
+        "readId": "fixture:train-threshold:train-threshold-export",
+        "context": "train-threshold",
+        "text": "Exports are permitted only for administrators.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -649,31 +752,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Give the links for enrollment and cancellation.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "train-links-enroll",
         "sourceRevision": "train-links-r1",
-        "unitId": "enroll",
-        "context": "train-links",
-        "text": "Enrollment uses https://example.org/enroll; cancellation is not handled here.",
-        "kind": "paragraph",
+        "readId": "fixture:train-links:train-links-enroll",
+        "title": "train-links",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Enrollment uses https://example.org/enroll; cancellation is not handled here.\"}"
+        "source": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
       },
       {
         "evidenceId": "train-links-cancel",
         "sourceRevision": "train-links-r1",
-        "unitId": "cancel",
-        "context": "train-links",
-        "text": "Cancellation uses https://example.org/cancel.",
-        "kind": "paragraph",
+        "readId": "fixture:train-links:train-links-cancel",
+        "title": "train-links",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Cancellation uses https://example.org/cancel.\"}"
+        "source": "Cancellation uses https://example.org/cancel."
       }
     ],
-    "sourceReads": [{"evidenceId": "train-links-enroll", "sourceRevision": "train-links-r1", "readId": "fixture:train-links:train-links-enroll", "title": "train-links", "representation": "markdown", "complete": true, "source": "Enrollment uses https://example.org/enroll; cancellation is not handled here."}, {"evidenceId": "train-links-cancel", "sourceRevision": "train-links-r1", "readId": "fixture:train-links:train-links-cancel", "title": "train-links", "representation": "markdown", "complete": true, "source": "Cancellation uses https://example.org/cancel."}],
     "requestFacets": [
       "enrollment",
       "cancellation"
@@ -685,7 +783,7 @@
         "id": "enroll",
         "evidenceId": "train-links-enroll",
         "sourceRevision": "train-links-r1",
-        "unitId": "enroll",
+        "unitId": "read:fixture:train-links:train-links-enroll",
         "facet": 0,
         "allOf": [
           "(?:enrollment|enroll)",
@@ -702,7 +800,7 @@
         "id": "cancel",
         "evidenceId": "train-links-cancel",
         "sourceRevision": "train-links-r1",
-        "unitId": "cancel",
+        "unitId": "read:fixture:train-links:train-links-cancel",
         "facet": 1,
         "allOf": [
           "(?:cancellation|cancel)",
@@ -724,10 +822,22 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "train-links-enroll", "sourceRevision": "train-links-r1", "unitId": "enroll", "statement": "Enrollment uses https://example.org/cancel."},
-            {"evidenceId": "train-links-cancel", "sourceRevision": "train-links-r1", "unitId": "cancel", "statement": "Cancellation uses https://example.org/cancel."}
+            {
+              "evidenceId": "train-links-enroll",
+              "sourceRevision": "train-links-r1",
+              "unitId": "read:fixture:train-links:train-links-enroll",
+              "statement": "Enrollment uses https://example.org/cancel."
+            },
+            {
+              "evidenceId": "train-links-cancel",
+              "sourceRevision": "train-links-r1",
+              "unitId": "read:fixture:train-links:train-links-cancel",
+              "statement": "Cancellation uses https://example.org/cancel."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -739,13 +849,13 @@
             {
               "evidenceId": "train-links-enroll",
               "sourceRevision": "train-links-r1",
-              "unitId": "enroll",
+              "unitId": "read:fixture:train-links:train-links-enroll",
               "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
             },
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "Cancellation uses https://example.org/cancel."
             }
           ],
@@ -763,13 +873,13 @@
             {
               "evidenceId": "train-links-enroll",
               "sourceRevision": "train-links-r1",
-              "unitId": "enroll",
+              "unitId": "read:fixture:train-links:train-links-enroll",
               "statement": "Use https://example.org/enroll for enrollment."
             },
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "To cancel, use https://example.org/cancel."
             }
           ],
@@ -787,13 +897,13 @@
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
             },
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "Cancellation uses https://example.org/cancel."
             }
           ],
@@ -817,7 +927,7 @@
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "Cancellation uses https://example.org/cancel."
             }
           ],
@@ -835,13 +945,13 @@
             {
               "evidenceId": "train-links-enroll",
               "sourceRevision": "train-links-r0",
-              "unitId": "enroll",
+              "unitId": "read:fixture:train-links:train-links-enroll",
               "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
             },
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "Cancellation uses https://example.org/cancel."
             }
           ],
@@ -859,13 +969,13 @@
             {
               "evidenceId": "train-links-enroll",
               "sourceRevision": "train-links-r1",
-              "unitId": "enroll",
+              "unitId": "read:fixture:train-links:train-links-enroll",
               "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here. [[source:fake]]"
             },
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "Cancellation uses https://example.org/cancel."
             }
           ],
@@ -883,7 +993,7 @@
             {
               "evidenceId": "train-links-enroll",
               "sourceRevision": "train-links-r1",
-              "unitId": "enroll",
+              "unitId": "read:fixture:train-links:train-links-enroll",
               "statement": "Enrollment uses https://example.org/enroll; cancellation is not handled here."
             }
           ],
@@ -915,13 +1025,13 @@
             {
               "evidenceId": "train-links-enroll",
               "sourceRevision": "train-links-r1",
-              "unitId": "enroll",
+              "unitId": "read:fixture:train-links:train-links-enroll",
               "statement": "Enrollment uses https://example.org/enroll9; cancellation is not handled here."
             },
             {
               "evidenceId": "train-links-cancel",
               "sourceRevision": "train-links-r1",
-              "unitId": "cancel",
+              "unitId": "read:fixture:train-links:train-links-cancel",
               "statement": "Cancellation uses https://example.org/cancel."
             }
           ],
@@ -929,6 +1039,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "train-links-enroll",
+        "sourceRevision": "train-links-r1",
+        "unitId": "read:fixture:train-links:train-links-enroll",
+        "readId": "fixture:train-links:train-links-enroll",
+        "context": "train-links",
+        "text": "Enrollment uses https://example.org/enroll; cancellation is not handled here.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "train-links-cancel",
+        "sourceRevision": "train-links-r1",
+        "unitId": "read:fixture:train-links:train-links-cancel",
+        "readId": "fixture:train-links:train-links-cancel",
+        "context": "train-links",
+        "text": "Cancellation uses https://example.org/cancel.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -941,31 +1073,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Explain approval and guest restrictions for deployment.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "train-access-approval",
         "sourceRevision": "train-access-r1",
-        "unitId": "approval",
-        "context": "train-access",
-        "text": "Deployment requires approval from 2 reviewers.",
-        "kind": "paragraph",
+        "readId": "fixture:train-access:train-access-approval",
+        "title": "train-access",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Deployment requires approval from 2 reviewers.\"}"
+        "source": "Deployment requires approval from 2 reviewers."
       },
       {
         "evidenceId": "train-access-guest",
         "sourceRevision": "train-access-r1",
-        "unitId": "guest",
-        "context": "train-access",
-        "text": "Guests may not deploy, even with reviewer approval.",
-        "kind": "paragraph",
+        "readId": "fixture:train-access:train-access-guest",
+        "title": "train-access",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Guests may not deploy, even with reviewer approval.\"}"
+        "source": "Guests may not deploy, even with reviewer approval."
       }
     ],
-    "sourceReads": [{"evidenceId": "train-access-approval", "sourceRevision": "train-access-r1", "readId": "fixture:train-access:train-access-approval", "title": "train-access", "representation": "markdown", "complete": true, "source": "Deployment requires approval from 2 reviewers."}, {"evidenceId": "train-access-guest", "sourceRevision": "train-access-r1", "readId": "fixture:train-access:train-access-guest", "title": "train-access", "representation": "markdown", "complete": true, "source": "Guests may not deploy, even with reviewer approval."}],
     "requestFacets": [
       "approval",
       "guest restrictions"
@@ -977,7 +1104,7 @@
         "id": "approval",
         "evidenceId": "train-access-approval",
         "sourceRevision": "train-access-r1",
-        "unitId": "approval",
+        "unitId": "read:fixture:train-access:train-access-approval",
         "facet": 0,
         "allOf": [
           "(?:deploy)",
@@ -995,7 +1122,7 @@
         "id": "guest",
         "evidenceId": "train-access-guest",
         "sourceRevision": "train-access-r1",
-        "unitId": "guest",
+        "unitId": "read:fixture:train-access:train-access-guest",
         "facet": 1,
         "allOf": [
           "(?:guests|guest)",
@@ -1008,7 +1135,7 @@
         "allowedParaphrases": [
           "Guests cannot deploy, even with reviewer approval."
         ],
-        "allowedAtomicAssertions": [
+        "allowedAssertions": [
           "Guests may not deploy."
         ]
       }
@@ -1021,10 +1148,22 @@
         "expected": "incomplete",
         "answer": {
           "claims": [
-            {"evidenceId": "train-access-approval", "sourceRevision": "train-access-r1", "unitId": "approval", "statement": "Deployment requires approval from 2 reviewers."},
-            {"evidenceId": "train-access-guest", "sourceRevision": "train-access-r1", "unitId": "guest", "statement": "Guests may not deploy."}
+            {
+              "evidenceId": "train-access-approval",
+              "sourceRevision": "train-access-r1",
+              "unitId": "read:fixture:train-access:train-access-approval",
+              "statement": "Deployment requires approval from 2 reviewers."
+            },
+            {
+              "evidenceId": "train-access-guest",
+              "sourceRevision": "train-access-r1",
+              "unitId": "read:fixture:train-access:train-access-guest",
+              "statement": "Guests may not deploy."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -1036,13 +1175,13 @@
             {
               "evidenceId": "train-access-approval",
               "sourceRevision": "train-access-r1",
-              "unitId": "approval",
+              "unitId": "read:fixture:train-access:train-access-approval",
               "statement": "Deployment requires approval from 2 reviewers."
             },
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Guests may not deploy, even with reviewer approval."
             }
           ],
@@ -1060,13 +1199,13 @@
             {
               "evidenceId": "train-access-approval",
               "sourceRevision": "train-access-r1",
-              "unitId": "approval",
+              "unitId": "read:fixture:train-access:train-access-approval",
               "statement": "Deployment needs approval from 2 reviewers."
             },
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Guests cannot deploy, even with reviewer approval."
             }
           ],
@@ -1084,13 +1223,13 @@
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Deployment requires approval from 2 reviewers."
             },
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Guests may not deploy, even with reviewer approval."
             }
           ],
@@ -1114,7 +1253,7 @@
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Guests may not deploy, even with reviewer approval."
             }
           ],
@@ -1132,13 +1271,13 @@
             {
               "evidenceId": "train-access-approval",
               "sourceRevision": "train-access-r0",
-              "unitId": "approval",
+              "unitId": "read:fixture:train-access:train-access-approval",
               "statement": "Deployment requires approval from 2 reviewers."
             },
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Guests may not deploy, even with reviewer approval."
             }
           ],
@@ -1156,13 +1295,13 @@
             {
               "evidenceId": "train-access-approval",
               "sourceRevision": "train-access-r1",
-              "unitId": "approval",
+              "unitId": "read:fixture:train-access:train-access-approval",
               "statement": "Deployment requires approval from 2 reviewers. [[source:fake]]"
             },
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Guests may not deploy, even with reviewer approval."
             }
           ],
@@ -1180,7 +1319,7 @@
             {
               "evidenceId": "train-access-approval",
               "sourceRevision": "train-access-r1",
-              "unitId": "approval",
+              "unitId": "read:fixture:train-access:train-access-approval",
               "statement": "Deployment requires approval from 2 reviewers."
             }
           ],
@@ -1212,13 +1351,13 @@
             {
               "evidenceId": "train-access-approval",
               "sourceRevision": "train-access-r1",
-              "unitId": "approval",
+              "unitId": "read:fixture:train-access:train-access-approval",
               "statement": "Deployment requires approval from 29 reviewers."
             },
             {
               "evidenceId": "train-access-guest",
               "sourceRevision": "train-access-r1",
-              "unitId": "guest",
+              "unitId": "read:fixture:train-access:train-access-guest",
               "statement": "Guests may not deploy, even with reviewer approval."
             }
           ],
@@ -1227,19 +1366,311 @@
           "recommendations": ""
         }
       }
+    ],
+    "sources": [
+      {
+        "evidenceId": "train-access-approval",
+        "sourceRevision": "train-access-r1",
+        "unitId": "read:fixture:train-access:train-access-approval",
+        "readId": "fixture:train-access:train-access-approval",
+        "context": "train-access",
+        "text": "Deployment requires approval from 2 reviewers.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "train-access-guest",
+        "sourceRevision": "train-access-r1",
+        "unitId": "read:fixture:train-access:train-access-guest",
+        "readId": "fixture:train-access:train-access-guest",
+        "context": "train-access",
+        "text": "Guests may not deploy, even with reviewer approval.",
+        "kind": "source-read",
+        "complete": true
+      }
     ]
   },
   {
-    "id": "train-truncated", "family": "train-truncated", "split": "train",
-    "provenance": {"kind": "synthetic", "adjudication": "Manual: a truncated source cannot substantiate a complete requested retention policy; abstention is correct, not false rejection."},
+    "id": "train-truncated",
+    "family": "train-truncated",
+    "split": "train",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manual: a truncated source cannot substantiate a complete requested retention policy; abstention is correct, not false rejection."
+    },
     "userRequest": "State the complete telemetry retention policy.",
-    "sourceUnits": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "unitId": "partial", "context": "Telemetry policy", "text": "Telemetry is retained for 21", "kind": "paragraph", "complete": false, "literalStatement": null, "packet": "{\"kind\":\"paragraph\",\"text\":\"Telemetry is retained for 21\",\"truncated\":true}"}],
-    "sourceReads": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "readId": "fixture:train-truncated:train-truncated-partial", "title": "Telemetry policy", "representation": "markdown", "complete": false, "source": "Telemetry is retained for 21"}],
-    "requestFacets": ["complete telemetry retention policy"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
+    "sourceReads": [
+      {
+        "evidenceId": "train-truncated-partial",
+        "sourceRevision": "train-truncated-r1",
+        "readId": "fixture:train-truncated:train-truncated-partial",
+        "title": "Telemetry policy",
+        "representation": "markdown",
+        "complete": false,
+        "source": "Telemetry is retained for 21"
+      }
+    ],
+    "requestFacets": [
+      "complete telemetry retention policy"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [],
+    "expectedUnresolvedFacets": [
+      0
+    ],
     "variants": [
-      {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},
-      {"id": "invented-completion", "category": "incomplete source", "expected": "reject", "answer": {"claims": [{"evidenceId": "train-truncated-partial", "sourceRevision": "train-truncated-r1", "unitId": "partial", "statement": "Telemetry is retained for 21 days."}], "unresolvedFacets": [], "observations": [], "recommendations": ""}},
-      {"id": "silent-omission", "category": "unresolved coverage omission", "expected": "incomplete", "answer": {"claims": [], "unresolvedFacets": [], "observations": [], "recommendations": ""}}
+      {
+        "id": "reference",
+        "category": "success: legitimate abstention",
+        "expected": "accept",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "invented-completion",
+        "category": "incomplete source",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-truncated-partial",
+              "sourceRevision": "train-truncated-r1",
+              "unitId": "read:fixture:train-truncated:train-truncated-partial",
+              "statement": "Telemetry is retained for 21 days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "silent-omission",
+        "category": "unresolved coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "train-truncated-partial",
+        "sourceRevision": "train-truncated-r1",
+        "unitId": "read:fixture:train-truncated:train-truncated-partial",
+        "readId": "fixture:train-truncated:train-truncated-partial",
+        "context": "Telemetry policy",
+        "text": "Telemetry is retained for 21",
+        "kind": "source-read",
+        "complete": false
+      }
+    ]
+  },
+  {
+    "id": "train-whole-read-comparison",
+    "family": "train-whole-read-comparison",
+    "split": "train",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Independently authored complete-page source and adjudicated concise selected-field comparison; adjacent original Both plans refers to named native table columns. Contacts are explicitly unrequested."
+    },
+    "userRequest": "Compare the monthly fees and approval conditions for both pilot plans.",
+    "sources": [
+      {
+        "evidenceId": "train-whole-read-comparison-page",
+        "sourceRevision": "train-whole-read-comparison-r1",
+        "unitId": "read:fixture:train-whole-read-comparison",
+        "readId": "fixture:train-whole-read-comparison",
+        "context": "Pilot plans",
+        "text": "# Pilot plans\n\nFictional and non-operative. Both plans require manager approval.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Status | Pilot only | Pilot only |\n\n## Internal contact\n\nName: Keeper\nEmail: keeper@train.example.invalid\n",
+        "kind": "source-read",
+        "complete": true
+      }
+    ],
+    "sourceReads": [
+      {
+        "evidenceId": "train-whole-read-comparison-page",
+        "sourceRevision": "train-whole-read-comparison-r1",
+        "readId": "fixture:train-whole-read-comparison",
+        "title": "Pilot plans",
+        "representation": "markdown",
+        "complete": true,
+        "source": "# Pilot plans\n\nFictional and non-operative. Both plans require manager approval.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Status | Pilot only | Pilot only |\n\n## Internal contact\n\nName: Keeper\nEmail: keeper@train.example.invalid\n"
+      }
+    ],
+    "requestFacets": [
+      "monthly fees",
+      "approval conditions"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "fees",
+        "evidenceId": "train-whole-read-comparison-page",
+        "sourceRevision": "train-whole-read-comparison-r1",
+        "unitId": "read:fixture:train-whole-read-comparison",
+        "facet": 0,
+        "allOf": [
+          "Atlas",
+          "Boreal",
+          "fictional",
+          "non-operative",
+          "pilot"
+        ],
+        "exact": [
+          "USD 120",
+          "USD 180"
+        ],
+        "allowedParaphrases": [
+          "Atlas costs USD 120 monthly and Boreal costs USD 180 monthly; both fictional, non-operative pilot plans require manager approval."
+        ],
+        "allowedAssertions": [
+          "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 120 |\n| Boreal | USD 180 |",
+          "Fictional, non-operative pilot plans require manager approval.\n\n- Atlas: USD 120 monthly.\n- Boreal: USD 180 monthly."
+        ]
+      },
+      {
+        "id": "approval",
+        "evidenceId": "train-whole-read-comparison-page",
+        "sourceRevision": "train-whole-read-comparison-r1",
+        "unitId": "read:fixture:train-whole-read-comparison",
+        "facet": 1,
+        "allOf": [
+          "manager approval",
+          "fictional",
+          "non-operative"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Atlas costs USD 120 monthly and Boreal costs USD 180 monthly; both fictional, non-operative pilot plans require manager approval."
+        ],
+        "allowedAssertions": [
+          "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 120 |\n| Boreal | USD 180 |",
+          "Fictional, non-operative pilot plans require manager approval.\n\n- Atlas: USD 120 monthly.\n- Boreal: USD 180 monthly."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "selected table with original anaphora resolved in same complete read",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-whole-read-comparison-page",
+              "sourceRevision": "train-whole-read-comparison-r1",
+              "unitId": "read:fixture:train-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 120 |\n| Boreal | USD 180 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "selected-list",
+        "category": "concise list without copying source contacts",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-whole-read-comparison-page",
+              "sourceRevision": "train-whole-read-comparison-r1",
+              "unitId": "read:fixture:train-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n- Atlas: USD 120 monthly.\n- Boreal: USD 180 monthly."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "natural-prose",
+        "category": "natural whole-read reference resolution without field grammar",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-whole-read-comparison-page",
+              "sourceRevision": "train-whole-read-comparison-r1",
+              "unitId": "read:fixture:train-whole-read-comparison",
+              "statement": "Atlas costs USD 120 monthly and Boreal costs USD 180 monthly; both fictional, non-operative pilot plans require manager approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "swapped-values",
+        "category": "correct literals but false column associations",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-whole-read-comparison-page",
+              "sourceRevision": "train-whole-read-comparison-r1",
+              "unitId": "read:fixture:train-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 180 |\n| Boreal | USD 120 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "lost-qualification",
+        "category": "bare values omit governing original status and approval",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-whole-read-comparison-page",
+              "sourceRevision": "train-whole-read-comparison-r1",
+              "unitId": "read:fixture:train-whole-read-comparison",
+              "statement": "| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 120 |\n| Boreal | USD 180 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "whole-source-expansion",
+        "category": "unrequested private contact and whole-source copying",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "train-whole-read-comparison-page",
+              "sourceRevision": "train-whole-read-comparison-r1",
+              "unitId": "read:fixture:train-whole-read-comparison",
+              "statement": "Fictional and non-operative. Both plans require manager approval.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Status | Pilot only | Pilot only |\n\nName: Keeper; Email: keeper@train.example.invalid."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
     ]
   }
 ]

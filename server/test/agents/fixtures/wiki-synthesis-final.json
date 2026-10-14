@@ -8,31 +8,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Describe lab checkout duration and training requirements.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "final-lab-checkout",
         "sourceRevision": "final-lab-r1",
-        "unitId": "checkout",
-        "context": "final-lab",
-        "text": "Lab equipment checkout lasts 48 hours and requires supervisor consent.",
-        "kind": "paragraph",
+        "readId": "fixture:final-lab:final-lab-checkout",
+        "title": "final-lab",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Lab equipment checkout lasts 48 hours and requires supervisor consent.\"}"
+        "source": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
       },
       {
         "evidenceId": "final-lab-training",
         "sourceRevision": "final-lab-r1",
-        "unitId": "training",
-        "context": "final-lab",
-        "text": "Laser equipment requires certified training before checkout.",
-        "kind": "paragraph",
+        "readId": "fixture:final-lab:final-lab-training",
+        "title": "final-lab",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Laser equipment requires certified training before checkout.\"}"
+        "source": "Laser equipment requires certified training before checkout."
       }
     ],
-    "sourceReads": [{"evidenceId": "final-lab-checkout", "sourceRevision": "final-lab-r1", "readId": "fixture:final-lab:final-lab-checkout", "title": "final-lab", "representation": "markdown", "complete": true, "source": "Lab equipment checkout lasts 48 hours and requires supervisor consent."}, {"evidenceId": "final-lab-training", "sourceRevision": "final-lab-r1", "readId": "fixture:final-lab:final-lab-training", "title": "final-lab", "representation": "markdown", "complete": true, "source": "Laser equipment requires certified training before checkout."}],
     "requestFacets": [
       "checkout duration",
       "training requirements"
@@ -44,7 +39,7 @@
         "id": "checkout",
         "evidenceId": "final-lab-checkout",
         "sourceRevision": "final-lab-r1",
-        "unitId": "checkout",
+        "unitId": "read:fixture:final-lab:final-lab-checkout",
         "facet": 0,
         "allOf": [
           "(?:lab|equipment)",
@@ -62,7 +57,7 @@
         "id": "training",
         "evidenceId": "final-lab-training",
         "sourceRevision": "final-lab-r1",
-        "unitId": "training",
+        "unitId": "read:fixture:final-lab:final-lab-training",
         "facet": 1,
         "allOf": [
           "(?:laser)",
@@ -86,13 +81,13 @@
             {
               "evidenceId": "final-lab-checkout",
               "sourceRevision": "final-lab-r1",
-              "unitId": "checkout",
+              "unitId": "read:fixture:final-lab:final-lab-checkout",
               "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
             },
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Laser equipment requires certified training before checkout."
             }
           ],
@@ -110,13 +105,13 @@
             {
               "evidenceId": "final-lab-checkout",
               "sourceRevision": "final-lab-r1",
-              "unitId": "checkout",
+              "unitId": "read:fixture:final-lab:final-lab-checkout",
               "statement": "Lab equipment may be checked out for 48 hours with supervisor consent."
             },
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Before checking out laser equipment, certified training is required."
             }
           ],
@@ -134,13 +129,13 @@
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
             },
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Laser equipment requires certified training before checkout."
             }
           ],
@@ -164,7 +159,7 @@
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Laser equipment requires certified training before checkout."
             }
           ],
@@ -182,13 +177,13 @@
             {
               "evidenceId": "final-lab-checkout",
               "sourceRevision": "final-lab-r0",
-              "unitId": "checkout",
+              "unitId": "read:fixture:final-lab:final-lab-checkout",
               "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
             },
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Laser equipment requires certified training before checkout."
             }
           ],
@@ -206,13 +201,13 @@
             {
               "evidenceId": "final-lab-checkout",
               "sourceRevision": "final-lab-r1",
-              "unitId": "checkout",
+              "unitId": "read:fixture:final-lab:final-lab-checkout",
               "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent. [[source:fake]]"
             },
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Laser equipment requires certified training before checkout."
             }
           ],
@@ -230,7 +225,7 @@
             {
               "evidenceId": "final-lab-checkout",
               "sourceRevision": "final-lab-r1",
-              "unitId": "checkout",
+              "unitId": "read:fixture:final-lab:final-lab-checkout",
               "statement": "Lab equipment checkout lasts 48 hours and requires supervisor consent."
             }
           ],
@@ -262,13 +257,13 @@
             {
               "evidenceId": "final-lab-checkout",
               "sourceRevision": "final-lab-r1",
-              "unitId": "checkout",
+              "unitId": "read:fixture:final-lab:final-lab-checkout",
               "statement": "Lab equipment checkout lasts 489 hours and requires supervisor consent."
             },
             {
               "evidenceId": "final-lab-training",
               "sourceRevision": "final-lab-r1",
-              "unitId": "training",
+              "unitId": "read:fixture:final-lab:final-lab-training",
               "statement": "Laser equipment requires certified training before checkout."
             }
           ],
@@ -276,6 +271,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "final-lab-checkout",
+        "sourceRevision": "final-lab-r1",
+        "unitId": "read:fixture:final-lab:final-lab-checkout",
+        "readId": "fixture:final-lab:final-lab-checkout",
+        "context": "final-lab",
+        "text": "Lab equipment checkout lasts 48 hours and requires supervisor consent.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "final-lab-training",
+        "sourceRevision": "final-lab-r1",
+        "unitId": "read:fixture:final-lab:final-lab-training",
+        "readId": "fixture:final-lab:final-lab-training",
+        "context": "final-lab",
+        "text": "Laser equipment requires certified training before checkout.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -288,31 +305,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "State cold-room thresholds and access policy.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "final-temperature-temperature",
         "sourceRevision": "final-temperature-r1",
-        "unitId": "temperature",
-        "context": "final-temperature",
-        "text": "Cold-room alarms activate when temperature >= 6 C for 12 minutes.",
-        "kind": "paragraph",
+        "readId": "fixture:final-temperature:final-temperature-temperature",
+        "title": "final-temperature",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Cold-room alarms activate when temperature >= 6 C for 12 minutes.\"}"
+        "source": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
       },
       {
         "evidenceId": "final-temperature-access",
         "sourceRevision": "final-temperature-r1",
-        "unitId": "access",
-        "context": "final-temperature",
-        "text": "Cold-room entry is limited to trained staff; visitors cannot enter.",
-        "kind": "paragraph",
+        "readId": "fixture:final-temperature:final-temperature-access",
+        "title": "final-temperature",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Cold-room entry is limited to trained staff; visitors cannot enter.\"}"
+        "source": "Cold-room entry is limited to trained staff; visitors cannot enter."
       }
     ],
-    "sourceReads": [{"evidenceId": "final-temperature-temperature", "sourceRevision": "final-temperature-r1", "readId": "fixture:final-temperature:final-temperature-temperature", "title": "final-temperature", "representation": "markdown", "complete": true, "source": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."}, {"evidenceId": "final-temperature-access", "sourceRevision": "final-temperature-r1", "readId": "fixture:final-temperature:final-temperature-access", "title": "final-temperature", "representation": "markdown", "complete": true, "source": "Cold-room entry is limited to trained staff; visitors cannot enter."}],
     "requestFacets": [
       "thresholds",
       "access policy"
@@ -324,7 +336,7 @@
         "id": "temperature",
         "evidenceId": "final-temperature-temperature",
         "sourceRevision": "final-temperature-r1",
-        "unitId": "temperature",
+        "unitId": "read:fixture:final-temperature:final-temperature-temperature",
         "facet": 0,
         "allOf": [
           "(?:cold.room|alarm)",
@@ -346,7 +358,7 @@
         "id": "access",
         "evidenceId": "final-temperature-access",
         "sourceRevision": "final-temperature-r1",
-        "unitId": "access",
+        "unitId": "read:fixture:final-temperature:final-temperature-access",
         "facet": 1,
         "allOf": [
           "(?:cold.room|entry)",
@@ -368,10 +380,22 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "final-temperature-temperature", "sourceRevision": "final-temperature-r1", "unitId": "temperature", "statement": "Cold-room alarms activate when temperature > 6 C for 12 minutes."},
-            {"evidenceId": "final-temperature-access", "sourceRevision": "final-temperature-r1", "unitId": "access", "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."}
+            {
+              "evidenceId": "final-temperature-temperature",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "read:fixture:final-temperature:final-temperature-temperature",
+              "statement": "Cold-room alarms activate when temperature > 6 C for 12 minutes."
+            },
+            {
+              "evidenceId": "final-temperature-access",
+              "sourceRevision": "final-temperature-r1",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
+              "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -383,13 +407,13 @@
             {
               "evidenceId": "final-temperature-temperature",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "temperature",
+              "unitId": "read:fixture:final-temperature:final-temperature-temperature",
               "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
             },
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
             }
           ],
@@ -407,13 +431,13 @@
             {
               "evidenceId": "final-temperature-temperature",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "temperature",
+              "unitId": "read:fixture:final-temperature:final-temperature-temperature",
               "statement": "Cold-room alarms fire after temperature >= 6 C for 12 minutes."
             },
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Only trained staff may enter the cold-room; visitors cannot enter."
             }
           ],
@@ -431,13 +455,13 @@
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
             },
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
             }
           ],
@@ -461,7 +485,7 @@
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
             }
           ],
@@ -479,13 +503,13 @@
             {
               "evidenceId": "final-temperature-temperature",
               "sourceRevision": "final-temperature-r0",
-              "unitId": "temperature",
+              "unitId": "read:fixture:final-temperature:final-temperature-temperature",
               "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
             },
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
             }
           ],
@@ -503,13 +527,13 @@
             {
               "evidenceId": "final-temperature-temperature",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "temperature",
+              "unitId": "read:fixture:final-temperature:final-temperature-temperature",
               "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes. [[source:fake]]"
             },
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
             }
           ],
@@ -527,7 +551,7 @@
             {
               "evidenceId": "final-temperature-temperature",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "temperature",
+              "unitId": "read:fixture:final-temperature:final-temperature-temperature",
               "statement": "Cold-room alarms activate when temperature >= 6 C for 12 minutes."
             }
           ],
@@ -559,13 +583,13 @@
             {
               "evidenceId": "final-temperature-temperature",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "temperature",
+              "unitId": "read:fixture:final-temperature:final-temperature-temperature",
               "statement": "Cold-room alarms activate when temperature > 6 C for 12 minutes."
             },
             {
               "evidenceId": "final-temperature-access",
               "sourceRevision": "final-temperature-r1",
-              "unitId": "access",
+              "unitId": "read:fixture:final-temperature:final-temperature-access",
               "statement": "Cold-room entry is limited to trained staff; visitors cannot enter."
             }
           ],
@@ -573,6 +597,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "final-temperature-temperature",
+        "sourceRevision": "final-temperature-r1",
+        "unitId": "read:fixture:final-temperature:final-temperature-temperature",
+        "readId": "fixture:final-temperature:final-temperature-temperature",
+        "context": "final-temperature",
+        "text": "Cold-room alarms activate when temperature >= 6 C for 12 minutes.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "final-temperature-access",
+        "sourceRevision": "final-temperature-r1",
+        "unitId": "read:fixture:final-temperature:final-temperature-access",
+        "readId": "fixture:final-temperature:final-temperature-access",
+        "context": "final-temperature",
+        "text": "Cold-room entry is limited to trained staff; visitors cannot enter.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -585,31 +631,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Provide travel request and reimbursement form locations.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "final-forms-travel",
         "sourceRevision": "final-forms-r1",
-        "unitId": "travel",
-        "context": "final-forms",
-        "text": "Travel requests use https://example.edu/travel.",
-        "kind": "paragraph",
+        "readId": "fixture:final-forms:final-forms-travel",
+        "title": "final-forms",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Travel requests use https://example.edu/travel.\"}"
+        "source": "Travel requests use https://example.edu/travel."
       },
       {
         "evidenceId": "final-forms-expense",
         "sourceRevision": "final-forms-r1",
-        "unitId": "expense",
-        "context": "final-forms",
-        "text": "Reimbursement uses https://example.edu/expense.",
-        "kind": "paragraph",
+        "readId": "fixture:final-forms:final-forms-expense",
+        "title": "final-forms",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Reimbursement uses https://example.edu/expense.\"}"
+        "source": "Reimbursement uses https://example.edu/expense."
       }
     ],
-    "sourceReads": [{"evidenceId": "final-forms-travel", "sourceRevision": "final-forms-r1", "readId": "fixture:final-forms:final-forms-travel", "title": "final-forms", "representation": "markdown", "complete": true, "source": "Travel requests use https://example.edu/travel."}, {"evidenceId": "final-forms-expense", "sourceRevision": "final-forms-r1", "readId": "fixture:final-forms:final-forms-expense", "title": "final-forms", "representation": "markdown", "complete": true, "source": "Reimbursement uses https://example.edu/expense."}],
     "requestFacets": [
       "travel request",
       "reimbursement"
@@ -621,7 +662,7 @@
         "id": "travel",
         "evidenceId": "final-forms-travel",
         "sourceRevision": "final-forms-r1",
-        "unitId": "travel",
+        "unitId": "read:fixture:final-forms:final-forms-travel",
         "facet": 0,
         "allOf": [
           "(?:travel)",
@@ -638,7 +679,7 @@
         "id": "expense",
         "evidenceId": "final-forms-expense",
         "sourceRevision": "final-forms-r1",
-        "unitId": "expense",
+        "unitId": "read:fixture:final-forms:final-forms-expense",
         "facet": 1,
         "allOf": [
           "(?:reimbursement|reimburse)",
@@ -663,13 +704,13 @@
             {
               "evidenceId": "final-forms-travel",
               "sourceRevision": "final-forms-r1",
-              "unitId": "travel",
+              "unitId": "read:fixture:final-forms:final-forms-travel",
               "statement": "Travel requests use https://example.edu/travel."
             },
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Reimbursement uses https://example.edu/expense."
             }
           ],
@@ -687,13 +728,13 @@
             {
               "evidenceId": "final-forms-travel",
               "sourceRevision": "final-forms-r1",
-              "unitId": "travel",
+              "unitId": "read:fixture:final-forms:final-forms-travel",
               "statement": "Submit travel requests at https://example.edu/travel."
             },
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Use https://example.edu/expense for reimbursement."
             }
           ],
@@ -711,13 +752,13 @@
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Travel requests use https://example.edu/travel."
             },
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Reimbursement uses https://example.edu/expense."
             }
           ],
@@ -741,7 +782,7 @@
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Reimbursement uses https://example.edu/expense."
             }
           ],
@@ -759,13 +800,13 @@
             {
               "evidenceId": "final-forms-travel",
               "sourceRevision": "final-forms-r0",
-              "unitId": "travel",
+              "unitId": "read:fixture:final-forms:final-forms-travel",
               "statement": "Travel requests use https://example.edu/travel."
             },
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Reimbursement uses https://example.edu/expense."
             }
           ],
@@ -783,13 +824,13 @@
             {
               "evidenceId": "final-forms-travel",
               "sourceRevision": "final-forms-r1",
-              "unitId": "travel",
+              "unitId": "read:fixture:final-forms:final-forms-travel",
               "statement": "Travel requests use https://example.edu/travel. [[source:fake]]"
             },
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Reimbursement uses https://example.edu/expense."
             }
           ],
@@ -807,7 +848,7 @@
             {
               "evidenceId": "final-forms-travel",
               "sourceRevision": "final-forms-r1",
-              "unitId": "travel",
+              "unitId": "read:fixture:final-forms:final-forms-travel",
               "statement": "Travel requests use https://example.edu/travel."
             }
           ],
@@ -839,13 +880,13 @@
             {
               "evidenceId": "final-forms-travel",
               "sourceRevision": "final-forms-r1",
-              "unitId": "travel",
+              "unitId": "read:fixture:final-forms:final-forms-travel",
               "statement": "Travel requests use https://example.edu/travel9."
             },
             {
               "evidenceId": "final-forms-expense",
               "sourceRevision": "final-forms-r1",
-              "unitId": "expense",
+              "unitId": "read:fixture:final-forms:final-forms-expense",
               "statement": "Reimbursement uses https://example.edu/expense."
             }
           ],
@@ -853,6 +894,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "final-forms-travel",
+        "sourceRevision": "final-forms-r1",
+        "unitId": "read:fixture:final-forms:final-forms-travel",
+        "readId": "fixture:final-forms:final-forms-travel",
+        "context": "final-forms",
+        "text": "Travel requests use https://example.edu/travel.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "final-forms-expense",
+        "sourceRevision": "final-forms-r1",
+        "unitId": "read:fixture:final-forms:final-forms-expense",
+        "readId": "fixture:final-forms:final-forms-expense",
+        "context": "final-forms",
+        "text": "Reimbursement uses https://example.edu/expense.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -865,31 +928,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Report support response promises for urgent and routine requests.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "final-support-urgent",
         "sourceRevision": "final-support-r1",
-        "unitId": "urgent",
-        "context": "final-support",
-        "text": "Urgent support responds within 2 hours during business hours only.",
-        "kind": "paragraph",
+        "readId": "fixture:final-support:final-support-urgent",
+        "title": "final-support",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Urgent support responds within 2 hours during business hours only.\"}"
+        "source": "Urgent support responds within 2 hours during business hours only."
       },
       {
         "evidenceId": "final-support-routine",
         "sourceRevision": "final-support-r1",
-        "unitId": "routine",
-        "context": "final-support",
-        "text": "Routine support responds within 3 business days.",
-        "kind": "paragraph",
+        "readId": "fixture:final-support:final-support-routine",
+        "title": "final-support",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Routine support responds within 3 business days.\"}"
+        "source": "Routine support responds within 3 business days."
       }
     ],
-    "sourceReads": [{"evidenceId": "final-support-urgent", "sourceRevision": "final-support-r1", "readId": "fixture:final-support:final-support-urgent", "title": "final-support", "representation": "markdown", "complete": true, "source": "Urgent support responds within 2 hours during business hours only."}, {"evidenceId": "final-support-routine", "sourceRevision": "final-support-r1", "readId": "fixture:final-support:final-support-routine", "title": "final-support", "representation": "markdown", "complete": true, "source": "Routine support responds within 3 business days."}],
     "requestFacets": [
       "urgent",
       "routine"
@@ -901,7 +959,7 @@
         "id": "urgent",
         "evidenceId": "final-support-urgent",
         "sourceRevision": "final-support-r1",
-        "unitId": "urgent",
+        "unitId": "read:fixture:final-support:final-support-urgent",
         "facet": 0,
         "allOf": [
           "(?:urgent)",
@@ -920,7 +978,7 @@
         "id": "routine",
         "evidenceId": "final-support-routine",
         "sourceRevision": "final-support-r1",
-        "unitId": "routine",
+        "unitId": "read:fixture:final-support:final-support-routine",
         "facet": 1,
         "allOf": [
           "(?:routine)",
@@ -945,13 +1003,13 @@
             {
               "evidenceId": "final-support-urgent",
               "sourceRevision": "final-support-r1",
-              "unitId": "urgent",
+              "unitId": "read:fixture:final-support:final-support-urgent",
               "statement": "Urgent support responds within 2 hours during business hours only."
             },
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Routine support responds within 3 business days."
             }
           ],
@@ -969,13 +1027,13 @@
             {
               "evidenceId": "final-support-urgent",
               "sourceRevision": "final-support-r1",
-              "unitId": "urgent",
+              "unitId": "read:fixture:final-support:final-support-urgent",
               "statement": "Urgent support replies within 2 hours, but only during business hours."
             },
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Routine support replies within 3 business days."
             }
           ],
@@ -993,13 +1051,13 @@
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Urgent support responds within 2 hours during business hours only."
             },
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Routine support responds within 3 business days."
             }
           ],
@@ -1023,7 +1081,7 @@
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Routine support responds within 3 business days."
             }
           ],
@@ -1041,13 +1099,13 @@
             {
               "evidenceId": "final-support-urgent",
               "sourceRevision": "final-support-r0",
-              "unitId": "urgent",
+              "unitId": "read:fixture:final-support:final-support-urgent",
               "statement": "Urgent support responds within 2 hours during business hours only."
             },
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Routine support responds within 3 business days."
             }
           ],
@@ -1065,13 +1123,13 @@
             {
               "evidenceId": "final-support-urgent",
               "sourceRevision": "final-support-r1",
-              "unitId": "urgent",
+              "unitId": "read:fixture:final-support:final-support-urgent",
               "statement": "Urgent support responds within 2 hours during business hours only. [[source:fake]]"
             },
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Routine support responds within 3 business days."
             }
           ],
@@ -1089,7 +1147,7 @@
             {
               "evidenceId": "final-support-urgent",
               "sourceRevision": "final-support-r1",
-              "unitId": "urgent",
+              "unitId": "read:fixture:final-support:final-support-urgent",
               "statement": "Urgent support responds within 2 hours during business hours only."
             }
           ],
@@ -1121,13 +1179,13 @@
             {
               "evidenceId": "final-support-urgent",
               "sourceRevision": "final-support-r1",
-              "unitId": "urgent",
+              "unitId": "read:fixture:final-support:final-support-urgent",
               "statement": "Urgent support responds within 29 hours during business hours only."
             },
             {
               "evidenceId": "final-support-routine",
               "sourceRevision": "final-support-r1",
-              "unitId": "routine",
+              "unitId": "read:fixture:final-support:final-support-routine",
               "statement": "Routine support responds within 3 business days."
             }
           ],
@@ -1136,19 +1194,311 @@
           "recommendations": ""
         }
       }
+    ],
+    "sources": [
+      {
+        "evidenceId": "final-support-urgent",
+        "sourceRevision": "final-support-r1",
+        "unitId": "read:fixture:final-support:final-support-urgent",
+        "readId": "fixture:final-support:final-support-urgent",
+        "context": "final-support",
+        "text": "Urgent support responds within 2 hours during business hours only.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "final-support-routine",
+        "sourceRevision": "final-support-r1",
+        "unitId": "read:fixture:final-support:final-support-routine",
+        "readId": "fixture:final-support:final-support-routine",
+        "context": "final-support",
+        "text": "Routine support responds within 3 business days.",
+        "kind": "source-read",
+        "complete": true
+      }
     ]
   },
   {
-    "id": "final-incomplete", "family": "final-incomplete", "split": "final",
-    "provenance": {"kind": "synthetic", "adjudication": "Manual: a partial chemical-storage clause has no complete answerable statement; preserve unresolved scope and do not complete it."},
+    "id": "final-incomplete",
+    "family": "final-incomplete",
+    "split": "final",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manual: a partial chemical-storage clause has no complete answerable statement; preserve unresolved scope and do not complete it."
+    },
     "userRequest": "Describe the chemical storage restriction.",
-    "sourceUnits": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "unitId": "clause", "context": "Chemical storage", "text": "Chemical storage is forbidden unless", "kind": "paragraph", "complete": false, "literalStatement": null, "packet": "{\"kind\":\"paragraph\",\"text\":\"Chemical storage is forbidden unless\",\"truncated\":true}"}],
-    "sourceReads": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "readId": "fixture:final-incomplete:final-incomplete-clause", "title": "Chemical storage", "representation": "markdown", "complete": false, "source": "Chemical storage is forbidden unless"}],
-    "requestFacets": ["chemical storage restriction"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
+    "sourceReads": [
+      {
+        "evidenceId": "final-incomplete-clause",
+        "sourceRevision": "final-incomplete-r1",
+        "readId": "fixture:final-incomplete:final-incomplete-clause",
+        "title": "Chemical storage",
+        "representation": "markdown",
+        "complete": false,
+        "source": "Chemical storage is forbidden unless"
+      }
+    ],
+    "requestFacets": [
+      "chemical storage restriction"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [],
+    "expectedUnresolvedFacets": [
+      0
+    ],
     "variants": [
-      {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},
-      {"id": "invented-exception", "category": "incomplete source", "expected": "reject", "answer": {"claims": [{"evidenceId": "final-incomplete-clause", "sourceRevision": "final-incomplete-r1", "unitId": "clause", "statement": "Chemical storage is forbidden unless approved."}], "unresolvedFacets": [], "observations": [], "recommendations": ""}},
-      {"id": "silent-omission", "category": "unresolved coverage omission", "expected": "incomplete", "answer": {"claims": [], "unresolvedFacets": [], "observations": [], "recommendations": ""}}
+      {
+        "id": "reference",
+        "category": "success: legitimate abstention",
+        "expected": "accept",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "invented-exception",
+        "category": "incomplete source",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-incomplete-clause",
+              "sourceRevision": "final-incomplete-r1",
+              "unitId": "read:fixture:final-incomplete:final-incomplete-clause",
+              "statement": "Chemical storage is forbidden unless approved."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "silent-omission",
+        "category": "unresolved coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "final-incomplete-clause",
+        "sourceRevision": "final-incomplete-r1",
+        "unitId": "read:fixture:final-incomplete:final-incomplete-clause",
+        "readId": "fixture:final-incomplete:final-incomplete-clause",
+        "context": "Chemical storage",
+        "text": "Chemical storage is forbidden unless",
+        "kind": "source-read",
+        "complete": false
+      }
+    ]
+  },
+  {
+    "id": "final-whole-read-comparison",
+    "family": "final-whole-read-comparison",
+    "split": "final",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Independently authored complete-page source and adjudicated concise selected-field comparison; adjacent original Both plans refers to named native table columns. Contacts are explicitly unrequested."
+    },
+    "userRequest": "Compare the monthly fees and approval conditions for both pilot plans.",
+    "sources": [
+      {
+        "evidenceId": "final-whole-read-comparison-page",
+        "sourceRevision": "final-whole-read-comparison-r1",
+        "unitId": "read:fixture:final-whole-read-comparison",
+        "readId": "fixture:final-whole-read-comparison",
+        "context": "Pilot plans",
+        "text": "# Pilot plans\n\nFictional and non-operative. Both plans require manager approval.\n\n| Field | Elm | Fjord |\n| --- | --- | --- |\n| Monthly fee | USD 75 | USD 210 |\n| Status | Pilot only | Pilot only |\n\n## Internal contact\n\nName: Keeper\nEmail: keeper@final.example.invalid\n",
+        "kind": "source-read",
+        "complete": true
+      }
+    ],
+    "sourceReads": [
+      {
+        "evidenceId": "final-whole-read-comparison-page",
+        "sourceRevision": "final-whole-read-comparison-r1",
+        "readId": "fixture:final-whole-read-comparison",
+        "title": "Pilot plans",
+        "representation": "markdown",
+        "complete": true,
+        "source": "# Pilot plans\n\nFictional and non-operative. Both plans require manager approval.\n\n| Field | Elm | Fjord |\n| --- | --- | --- |\n| Monthly fee | USD 75 | USD 210 |\n| Status | Pilot only | Pilot only |\n\n## Internal contact\n\nName: Keeper\nEmail: keeper@final.example.invalid\n"
+      }
+    ],
+    "requestFacets": [
+      "monthly fees",
+      "approval conditions"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "fees",
+        "evidenceId": "final-whole-read-comparison-page",
+        "sourceRevision": "final-whole-read-comparison-r1",
+        "unitId": "read:fixture:final-whole-read-comparison",
+        "facet": 0,
+        "allOf": [
+          "Elm",
+          "Fjord",
+          "fictional",
+          "non-operative",
+          "pilot"
+        ],
+        "exact": [
+          "USD 75",
+          "USD 210"
+        ],
+        "allowedParaphrases": [
+          "Elm costs USD 75 monthly and Fjord costs USD 210 monthly; both fictional, non-operative pilot plans require manager approval."
+        ],
+        "allowedAssertions": [
+          "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Elm | USD 75 |\n| Fjord | USD 210 |",
+          "Fictional, non-operative pilot plans require manager approval.\n\n- Elm: USD 75 monthly.\n- Fjord: USD 210 monthly."
+        ]
+      },
+      {
+        "id": "approval",
+        "evidenceId": "final-whole-read-comparison-page",
+        "sourceRevision": "final-whole-read-comparison-r1",
+        "unitId": "read:fixture:final-whole-read-comparison",
+        "facet": 1,
+        "allOf": [
+          "manager approval",
+          "fictional",
+          "non-operative"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Elm costs USD 75 monthly and Fjord costs USD 210 monthly; both fictional, non-operative pilot plans require manager approval."
+        ],
+        "allowedAssertions": [
+          "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Elm | USD 75 |\n| Fjord | USD 210 |",
+          "Fictional, non-operative pilot plans require manager approval.\n\n- Elm: USD 75 monthly.\n- Fjord: USD 210 monthly."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "selected table with original anaphora resolved in same complete read",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-whole-read-comparison-page",
+              "sourceRevision": "final-whole-read-comparison-r1",
+              "unitId": "read:fixture:final-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Elm | USD 75 |\n| Fjord | USD 210 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "selected-list",
+        "category": "concise list without copying source contacts",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-whole-read-comparison-page",
+              "sourceRevision": "final-whole-read-comparison-r1",
+              "unitId": "read:fixture:final-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n- Elm: USD 75 monthly.\n- Fjord: USD 210 monthly."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "natural-prose",
+        "category": "natural whole-read reference resolution without field grammar",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-whole-read-comparison-page",
+              "sourceRevision": "final-whole-read-comparison-r1",
+              "unitId": "read:fixture:final-whole-read-comparison",
+              "statement": "Elm costs USD 75 monthly and Fjord costs USD 210 monthly; both fictional, non-operative pilot plans require manager approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "swapped-values",
+        "category": "correct literals but false column associations",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-whole-read-comparison-page",
+              "sourceRevision": "final-whole-read-comparison-r1",
+              "unitId": "read:fixture:final-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Elm | USD 210 |\n| Fjord | USD 75 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "lost-qualification",
+        "category": "bare values omit governing original status and approval",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-whole-read-comparison-page",
+              "sourceRevision": "final-whole-read-comparison-r1",
+              "unitId": "read:fixture:final-whole-read-comparison",
+              "statement": "| Plan | Monthly fee |\n| --- | --- |\n| Elm | USD 75 |\n| Fjord | USD 210 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "whole-source-expansion",
+        "category": "unrequested private contact and whole-source copying",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "final-whole-read-comparison-page",
+              "sourceRevision": "final-whole-read-comparison-r1",
+              "unitId": "read:fixture:final-whole-read-comparison",
+              "statement": "Fictional and non-operative. Both plans require manager approval.\n\n| Field | Elm | Fjord |\n| --- | --- | --- |\n| Monthly fee | USD 75 | USD 210 |\n| Status | Pilot only | Pilot only |\n\nName: Keeper; Email: keeper@final.example.invalid."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
     ]
   }
 ]

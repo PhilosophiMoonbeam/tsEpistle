@@ -1,5 +1,4 @@
 import { Hash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { load } from 'cheerio'
 import { axGlobals, AxMockAIService, type AxAIServiceOptions, type AxChatRequest, type AxChatResponse, type AxGenOut, type AxResultPickerFunction } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
@@ -13,34 +12,25 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 
 const MarkdownIt = 'default' in markdownItModule ? markdownItModule.default : markdownItModule
 const markdown = (MarkdownIt as typeof markdownItModule.default)({ html: false, breaks: true, linkify: true, typographer: false })
-const noLiteralStatements: ReadonlySet<string> = new Set()
 
 const source: WikiSynthesisSource = {
   evidenceId: 'page:42:revision:7:section:1',
   sourceRevision: '7',
-  unitId: 'unit:approval',
+  unitId: 'read:physical:approval:7',
+  readId: 'physical:approval:7',
   context: 'External publication only',
   text: 'External publication requires two approvals.',
-  kind: 'prose',
-  complete: true,
-  literalStatement: null,
-  packet: '{"statement":"External publication requires two approvals.","context":"External publication only"}'
+  kind: 'source-read',
+  complete: true
 }
 
 // These direct fixtures declare synthetic author content, not retrieved pages.
-const fixtureReads = (sources: readonly WikiSynthesisSource[]): WikiSynthesisRead[] => {
-  const owners = new Map<string, WikiSynthesisSource[]>()
-  for (const row of sources) {
-    const key = JSON.stringify([row.evidenceId, row.sourceRevision])
-    owners.set(key, [...(owners.get(key) ?? []), row])
-  }
-  return [...owners].map(([readId, rows]) => ({
-    evidenceId: rows[0]!.evidenceId, sourceRevision: rows[0]!.sourceRevision,
-    readId, title: rows[0]!.context || null, representation: 'markdown',
-    complete: rows.every(row => row.complete),
-    source: [...new Set(rows.flatMap(row => [row.context, row.text, ...(row.literalStatement === null ? [] : [row.literalStatement])]))].filter(Boolean).join('\n')
+const fixtureReads = (sources: readonly WikiSynthesisSource[]): WikiSynthesisRead[] =>
+  sources.map(source => ({
+    evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
+    readId: source.readId, title: source.context || null, representation: 'markdown',
+    complete: source.complete, source: source.text
   }))
-}
 const encodeFixtureSources = (sources: readonly WikiSynthesisSource[]) => encodeWikiSynthesisSources(sources, fixtureReads(sources))
 const input: WikiSynthesisInput = {
   userRequest: 'What approvals are required, and who approves?',
@@ -82,7 +72,7 @@ describe('Wiki source-bound typed synthesis', () => {
 
   it('preserves explicitly emitted faithful quotations through both host validation boundaries', async () => {
     const literalStatement = 'Status: Illustrative and untested | Scope: External publication only | Required approvals: **two**.'
-    const quoted = { ...source, literalStatement }
+    const quoted = { ...source, text: `${literalStatement}\n${source.text}` }
     const selection = answer({ claims: [{ ...answer().claims[0]!, statement: literalStatement }] })
     for (const mode of ['native', 'json_object'] as const) {
       const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number]) => claim.statement === literalStatement)
@@ -92,7 +82,7 @@ describe('Wiki source-bound typed synthesis', () => {
       expect(accepted.claims).toEqual([{ ...selection.claims[0]!, statement: literalStatement }])
       expect(validateClaim).toHaveBeenCalledTimes(1)
       expect(validateAnswer).toHaveBeenCalledTimes(1)
-      expect(renderWikiSynthesisAnswer(accepted, new Set([literalStatement]))).toContain('Illustrative and untested')
+      expect(renderWikiSynthesisAnswer(accepted)).toContain('Illustrative and untested')
       expect(generated.chat).toHaveBeenCalledTimes(1)
       const authored = generate(answer(), [quoted], { validateClaim: claim => claim.statement === source.text }, mode)
       expect((await authored.result).claims[0]?.statement).toBe(source.text)
@@ -102,7 +92,7 @@ describe('Wiki source-bound typed synthesis', () => {
 
   it('rejects blank record proposals without publishing private unrequested fields and keeps explicit requested prose unchanged', async () => {
     const literalStatement = 'Name: Morgan Vale | Role: Fictional, non-operative logistics reviewer | Email: morgan@example.invalid | Phone: 000-000'
-    const record = { ...source, kind: 'labeled-record', text: literalStatement, literalStatement }
+    const record = { ...source, text: literalStatement }
     const statement = 'Morgan Vale’s Role is a fictional, non-operative logistics reviewer.'
     for (const mode of ['native', 'json_object'] as const) {
       for (const blank of ['', ' \t ']) {
@@ -135,7 +125,7 @@ describe('Wiki source-bound typed synthesis', () => {
         validateAnswer: candidate => candidate.claims[0]?.statement === statement
       }, mode).result
       expect(accepted.claims).toEqual(requested.claims)
-      const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement]))
+      const rendered = renderWikiSynthesisAnswer(accepted)
       expect(rendered).toBe(`${statement} [[cite:${record.evidenceId}]]`)
       const html = markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Benchmark', href: null })))
       expect(html).not.toContain('Email')
@@ -144,289 +134,55 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('admits only exact own complete native-list selections and preserves authored bytes before escaped rendering', async () => {
-    const authored = '- 80 g **orzo**\r\n- 1 lemon, including zest\r\n- 400 ml vegetable stock\r\n'
-    const literalStatement = `Illustrative and untested › Ingredients: ${authored}`
-    const quoted = { ...source, kind: 'list', text: authored, literalStatement }
-    const selection = answer({ claims: [{ ...answer().claims[0]!, statement: literalStatement }] })
-    for (const mode of ['native', 'json_object'] as const) {
-      let literalLists: ReadonlyMap<string, string> | undefined
-      const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number]) => claim.statement === literalStatement)
-      const generated = generate(selection, [quoted], {
-        validateClaim,
-        validateAnswer: (_answer, _rendered, _literals, lists) => { literalLists = lists; return true }
-      }, mode)
-      const accepted = await generated.result
-      expect(accepted.claims).toEqual([{ ...selection.claims[0]!, statement: literalStatement }])
+  it('renders independently validated selected-field comparisons and lists without native-whole-body expansion in final and streaming consumers', async () => {
+    const readText = 'Fictional and non-operative. Both plans require manager approval.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Status | Pilot only | Pilot only |\n\nPrivate contact: keeper@example.test.'
+    const bound = { ...source, text: readText }
+    const statements = [
+      'Both Atlas and Boreal require manager approval; the plans are fictional and non-operative.',
+      'Fictional, non-operative pilot plans:\n\n| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 120 |\n| Boreal | USD 180 |',
+      'Fictional, non-operative pilot plans:\n\n- Atlas: USD 120 monthly.\n- Boreal: USD 180 monthly.'
+    ]
+    for (const mode of ['native', 'json_object'] as const) for (const statement of statements) {
+      const predicted = answer({ claims: [{ ...answer().claims[0]!, statement }] })
+      const validateClaim = vi.fn((_claim: WikiSynthesisAnswer['claims'][number], selected: WikiSynthesisSource) => selected.text === readText)
+      const validateAnswer = vi.fn((_answer: WikiSynthesisAnswer, _rendered: string) => true)
+      const options = { validateClaim, validateAnswer }
+      const accepted = await generate(predicted, [bound], options, mode).result
+      expect(accepted.claims).toEqual(predicted.claims)
       expect(validateClaim).toHaveBeenCalledTimes(1)
-      expect(validateWikiSynthesisShape(accepted, literalLists)).toBe(true)
-      const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement]), literalLists)
-      expect(rendered.indexOf('80 g')).toBeLessThan(rendered.indexOf('1 lemon'))
-      expect(rendered.indexOf('1 lemon')).toBeLessThan(rendered.indexOf('400 ml'))
-      expect(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Ingredients', href: null })))).not.toContain('<ul>')
-      expect(() => renderWikiSynthesisAnswer(accepted, new Set([literalStatement]))).toThrow()
-      for (const claim of [
-        { ...accepted.claims[0]!, unitId: 'unknown' },
-        { ...accepted.claims[0]!, evidenceId: 'page:99:revision:7' },
-        { ...accepted.claims[0]!, sourceRevision: 'stale' },
-        { ...accepted.claims[0]!, statement: literalStatement + '\n' }
-      ]) expect(validateWikiSynthesisShape(answer({ claims: [claim] }), literalLists)).not.toBe(true)
-      for (const scenario of [
-        { prediction: selection, source: { ...quoted, complete: false } },
-        { prediction: selection, source: { ...quoted, kind: 'prose' } },
-        { prediction: answer({ claims: [{ ...selection.claims[0]!, unitId: 'unknown' }] }), source: quoted },
-        { prediction: answer({ claims: [{ ...selection.claims[0]!, statement: '' }] }), source: quoted },
-        { prediction: answer({ claims: [{ ...selection.claims[0]!, statement: literalStatement.replace('400 ml', '500 ml') }] }), source: quoted },
-        { prediction: selection, source: { ...quoted, literalStatement: 'Ingredients: - <script>forged</script>\n- stock\n' } },
-        { prediction: selection, source: { ...quoted, literalStatement: 'Ingredients: - [[cite:other]]\n- stock\n' } }
-      ]) {
-        const rejected = generate(scenario.prediction, [scenario.source], {}, mode)
-        await expect(rejected.result).rejects.toThrow()
-        expect(rejected.chat).toHaveBeenCalledTimes(1)
-      }
-      const wire = encodeWikiSynthesisAnswer(selection)
-      const guard = createWikiSynthesisStreamGuard([quoted])
-      for (const character of JSON.stringify(wire)) expect(guard(character)).toBeUndefined()
-      const streamed = new AxMockAIService<string>({
+      expect(validateAnswer).toHaveBeenCalledTimes(1)
+      const rendered = renderWikiSynthesisAnswer(accepted)
+      expect(rendered).toBe(`${statement}${statement.includes('\n') ? '\n\n' : ' '}[[cite:${source.evidenceId}]]`)
+      expect(rendered).not.toContain('keeper@example.test')
+      expect(rendered).not.toContain('Status')
+      const html = markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Plans', href: null })))
+      expect(html.match(/<strong>\[1\]<\/strong>/gu)).toHaveLength(1)
+      if (statement.includes('| Plan |')) expect(html.match(/<table>/gu)).toHaveLength(1)
+      if (statement.includes('- Atlas:')) expect(html.match(/<ul>/gu)).toHaveLength(1)
+      const wire = JSON.stringify(encodeWikiSynthesisAnswer(predicted))
+      const guard = createWikiSynthesisStreamGuard([bound])
+      for (const character of wire) expect(guard(character)).toBeUndefined()
+      const streaming = new AxMockAIService<string>({
         features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
         chatResponse: async () => new ReadableStream<AxChatResponse>({
           start(controller) {
-            controller.enqueue({ results: [{ index: 0, content: `{"claims":[${JSON.stringify(wire.claims[0])},{"sourceRef":${' '.repeat(192)}` }] })
-            controller.enqueue({ results: [{ index: 0, content: `${JSON.stringify(wire.claims[0]!.sourceRef)},"statement":${JSON.stringify(literalStatement)}}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`, finishReason: 'stop' }] })
+            controller.enqueue({ results: [{ index: 0, content: wire.slice(0, -1) }] })
+            controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
             controller.close()
           }
         })
       })
-      const program = createWikiSynthesisProgram([quoted], { facetCount: 2 })
       const claims: WikiSynthesisAnswer['claims'] = []
-      const deltaSizes: number[] = []
-      for await (const chunk of program.streamingForward(streamed, { ...input, ...encodeFixtureSources([quoted]) }, { structuredOutputMode: mode })) {
-        if (chunk.delta.claims !== undefined) {
-          deltaSizes.push(chunk.delta.claims.length)
-          claims.push(...chunk.delta.claims)
-        }
-      }
-      expect(deltaSizes).toEqual([1, 1])
-      expect(claims).toEqual([accepted.claims[0]!, accepted.claims[0]!])
-      const forwarded = await program.forward(streamed, { ...input, ...encodeFixtureSources([quoted]) }, { stream: true, structuredOutputMode: mode })
-      expect(forwarded.claims).toEqual(claims)
+      for await (const chunk of createWikiSynthesisProgram([bound], { facetCount: 2, ...options }).streamingForward(
+        streaming, { ...input, ...encodeFixtureSources([bound]) }, { structuredOutputMode: mode }
+      )) claims.push(...(chunk.delta.claims ?? []))
+      expect(claims).toEqual(predicted.claims)
+      expect(renderWikiSynthesisAnswer({ ...accepted, claims })).toBe(rendered)
+      await expect(generate(predicted, [bound], { ...options, validateClaim: () => 'Independent proof rejected this assertion.' }, mode).result)
+        .rejects.toThrow('Independent proof rejected')
     }
   })
 
-  it('publishes the complete owned79 native matrix as one table with its own scope in final and streaming consumers', async () => {
-    const authored = readFileSync(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
-    const raw = authored.slice(authored.indexOf('| Field | Atlas | Boreal |'), authored.indexOf('\n\n- Additional ticket fee:'))
-      + '\n'
-    const literalStatement = `Fictional and non-operative › Pilot plans:\n\n${raw}`
-    const owned = { ...source, kind: 'table', text: raw, literalStatement }
-    const sibling = { ...owned, unitId: 'unit:sibling', literalStatement: `Other scope:\n\n${raw}` }
-    for (const mode of ['native', 'json_object'] as const) {
-      let nativeBlocks: ReadonlyMap<string, string> | undefined
-      const options: WikiSynthesisOptions = {
-        validateClaim: claim => claim.statement === literalStatement,
-        validateAnswer: (_answer, _rendered, _literals, blocks) => { nativeBlocks = blocks; return true }
-      }
-      for (const explicit of [
-        raw, literalStatement, raw.slice(0, -1), literalStatement.slice(0, -1),
-        `\r\n${raw.replaceAll('\n', '\r\n')}\r\n`,
-        literalStatement.replaceAll('\n', '\r\n').slice(0, -2)
-      ]) {
-        const selection = answer({ claims: [{ ...answer().claims[0]!, statement: explicit }] })
-        const accepted = await generate(selection, [owned, sibling], options, mode).result
-        expect(accepted.claims).toEqual([{ ...selection.claims[0]!, statement: literalStatement }])
-        const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement]), nativeBlocks)
-        expect(rendered).toBe(`Fictional and non\\-operative › Pilot plans\\:\n\n${raw.trim()}\n\n[[cite:${owned.evidenceId}]]`)
-        const html = markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Pilot plans', href: null })))
-        expect(html.match(/<table>/gu)).toHaveLength(1)
-        expect(html.match(/<tr>/gu)).toHaveLength(6)
-        expect(html).toContain('<th>Field</th>\n<th>Atlas</th>\n<th>Boreal</th>')
-        expect(html).toContain('<td>Monthly fee</td>\n<td>USD 120</td>\n<td>USD 180</td>')
-        expect(html.match(/Fictional and non-operative/gu)).toHaveLength(1)
-        expect(html.match(/<strong>\[1\]<\/strong>/gu)).toHaveLength(1)
-        const wire = encodeWikiSynthesisAnswer(selection)
-        const guard = createWikiSynthesisStreamGuard([owned, sibling])
-        for (const character of JSON.stringify(wire)) expect(guard(character)).toBeUndefined()
-        const service = new AxMockAIService<string>({
-          features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
-          chatResponse: async () => new ReadableStream<AxChatResponse>({
-            start(controller) {
-              const body = JSON.stringify(wire)
-              controller.enqueue({ results: [{ index: 0, content: body.slice(0, -1) }] })
-              controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
-              controller.close()
-            }
-          })
-        })
-        const streamed: WikiSynthesisAnswer['claims'] = []
-        for await (const chunk of createWikiSynthesisProgram([owned, sibling], { facetCount: 2, ...options }).streamingForward(service, {
-          ...input, ...encodeFixtureSources([owned, sibling])
-        }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
-        expect(streamed).toEqual(accepted.claims)
-        const streamedRendered = renderWikiSynthesisAnswer({ ...accepted, claims: streamed }, new Set([literalStatement]), nativeBlocks)
-        expect(streamedRendered).toBe(rendered)
-        const streamedHtml = markdown.render(formatAgentCitationMarkers(streamedRendered, () => ({ number: 1, label: 'Pilot plans', href: null })))
-        expect(streamedHtml.match(/<table>/gu)).toHaveLength(1)
-        expect(streamedHtml).toContain('<td>Monthly fee</td>\n<td>USD 120</td>\n<td>USD 180</td>')
-        expect(streamedHtml.match(/<strong>\[1\]<\/strong>/gu)).toHaveLength(1)
-      }
-      for (const statement of [
-        '', raw.replace('| Atlas | Boreal |', '| Boreal | Atlas |'),
-        raw.replace('USD 120', 'USD 180'), raw.replace('| Status | Pilot only | Pilot only |\n', ''),
-        `${raw}\nAn unrelated assertion.`, sibling.literalStatement, sibling.literalStatement.slice(0, -1),
-        raw.replace('| Field |', '|  Field |'), `${raw.trimEnd()}\n[a]: /foreign\n`,
-        literalStatement.replace('USD 120', 'USD 180').slice(0, -1)
-      ]) {
-        await expect(generate(answer({ claims: [{ ...answer().claims[0]!, statement }] }), [owned, sibling], options, mode).result).rejects.toThrow()
-      }
-      for (const statement of [
-        sibling.literalStatement.slice(0, -1), `${raw.trimEnd()}\n[a]: /foreign\n`,
-        literalStatement.replace('USD 120', 'USD 180').slice(0, -1)
-      ]) expect(createWikiSynthesisStreamGuard([owned, sibling])(JSON.stringify(encodeWikiSynthesisAnswer(
-        answer({ claims: [{ ...answer().claims[0]!, statement }] })
-      )))).toBeDefined()
-    }
-  })
-
-  it.each(['raw', 'bare-no-LF', 'prefixed-no-LF'] as const)('resolves native header and cell references locally from %s without colliding labels or accepting model-supplied definitions', async representation => {
-    const raw = '| Feature | [Atlas][a] |\n| --- | --- |\n| Scope | [mainland][s] |\n'
-    const literalStatement = `Fictional, non-operative:\n\n${raw}\n[a]: /atlas\n\n[s]: /mainland "Scope | only"\n`
-    const owned = { ...source, kind: 'table', text: raw, literalStatement }
-    const otherRaw = raw.replaceAll('Atlas', 'Boreal').replaceAll('mainland', 'islands')
-    const otherLiteral = `Other fictional table:\n\n${otherRaw}\n[a]: /boreal\n\n[s]: /islands\n`
-    const other = { ...source, unitId: 'unit:other-table', kind: 'table', text: otherRaw, literalStatement: otherLiteral }
-    const selection = answer({ claims: [
-      { ...answer().claims[0]!, statement: representation === 'raw' ? raw : `${representation === 'prefixed-no-LF' ? 'Fictional, non-operative:\n\n' : ''}${raw.slice(0, -1)}` },
-      { ...answer().claims[0]!, unitId: other.unitId, statement: representation === 'raw' ? otherRaw : `${representation === 'prefixed-no-LF' ? 'Other fictional table:\n\n' : ''}${otherRaw.slice(0, -1)}` }
-    ] })
-    for (const mode of ['native', 'json_object'] as const) {
-      let blocks: ReadonlyMap<string, string> | undefined
-      const options: WikiSynthesisOptions = {
-        validateClaim: claim => claim.statement === (claim.unitId === owned.unitId ? literalStatement : otherLiteral),
-        validateAnswer: (_answer, _rendered, _literals, nativeBlocks) => { blocks = nativeBlocks; return true }
-      }
-      const accepted = await generate(selection, [owned, other], options, mode).result
-      expect(accepted.claims.map(claim => claim.statement)).toEqual([literalStatement, otherLiteral])
-      const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement, otherLiteral]), blocks)
-      const dom = load(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Fictional source', href: '/source/fictional' }))))
-      expect(dom('table')).toHaveLength(2)
-      expect(dom('table').eq(0).find('th a').attr('href')).toBe('/atlas')
-      expect(dom('table').eq(0).find('td a').attr('href')).toBe('/mainland')
-      expect(dom('table').eq(0).find('td a').attr('title')).toBe('Scope | only')
-      expect(dom('table').eq(1).find('th a').attr('href')).toBe('/boreal')
-      expect(dom('table').eq(1).find('td a').attr('href')).toBe('/islands')
-      expect(dom('p a[href="/source/fictional"]')).toHaveLength(2)
-      expect(dom('body').text()).not.toContain('[Atlas][a]')
-      expect(rendered).not.toContain('[a]:')
-      const wire = encodeWikiSynthesisAnswer(selection)
-      const guard = createWikiSynthesisStreamGuard([owned, other])
-      for (const character of JSON.stringify(wire)) expect(guard(character)).toBeUndefined()
-      const service = new AxMockAIService<string>({
-        features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
-        chatResponse: async () => new ReadableStream<AxChatResponse>({
-          start(controller) {
-            const text = JSON.stringify(wire)
-            controller.enqueue({ results: [{ index: 0, content: text.slice(0, -1) }] })
-            controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
-            controller.close()
-          }
-        })
-      })
-      const streamed: WikiSynthesisAnswer['claims'] = []
-      for await (const chunk of createWikiSynthesisProgram([owned, other], { facetCount: 2, ...options }).streamingForward(service, {
-        ...input, ...encodeFixtureSources([owned, other])
-      }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
-      expect(streamed).toEqual(accepted.claims)
-      const streamedDom = load(markdown.render(formatAgentCitationMarkers(renderWikiSynthesisAnswer(
-        { ...accepted, claims: streamed }, new Set([literalStatement, otherLiteral]), blocks
-      ), () => ({ number: 1, label: 'Fictional source', href: '/source/fictional' }))))
-      expect(streamedDom('table').eq(0).find('th a').attr('href')).toBe('/atlas')
-      expect(streamedDom('table').eq(0).find('td a').attr('href')).toBe('/mainland')
-      expect(streamedDom('table')).toHaveLength(2)
-      expect(streamedDom('table').eq(1).find('th a').attr('href')).toBe('/boreal')
-      expect(streamedDom('table').eq(1).find('td a').attr('href')).toBe('/islands')
-      expect(streamedDom('p a[href="/source/fictional"]')).toHaveLength(2)
-      for (const statement of [
-        raw.replace('mainland', 'islands'), `${raw}\n[a]: /foreign\n`, otherLiteral,
-        `Other fictional table:\n\n${raw.slice(0, -1)}`,
-        `Fictional, non-operative:\n\n${raw.slice(0, -1)}\n\n[a]: /foreign\n[s]: /mainland`,
-        literalStatement.replace('/atlas', '/foreign'), literalStatement.replace('[a]: /atlas\n', ''),
-        `${literalStatement}[foreign]: /other\n`, `${literalStatement}Unasked assertion.\n`,
-        `${literalStatement}<script>injected</script>\n`, `${literalStatement}[[cite:foreign]]\n`
-      ]) await expect(generate(answer({ claims: [{ ...answer().claims[0]!, statement }] }), [owned, other], options, mode).result).rejects.toThrow()
-    }
-  })
-
-  it('canonicalizes only complete owned79 Shipping list line endings in final and streaming Markdown consumers', async () => {
-    const authored = readFileSync(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
-    const raw = authored.slice(authored.indexOf('- Standard stocked-item lead time:'), authored.indexOf('## Billing'))
-    const literalStatement = `Fictional and non-operative › Shipping: ${raw}`
-    const owned = { ...source, kind: 'list', text: raw, literalStatement }
-    const sibling = { ...owned, unitId: 'unit:sibling', literalStatement: `Internal draft › Shipping: ${raw}` }
-    for (const explicit of [
-      raw, raw.replace(/\n+$/u, ''), raw.replace(/\n+$/u, '\n'),
-      literalStatement.replace(/\n+$/u, ''), literalStatement,
-      raw.replaceAll('\n', '\r\n'), literalStatement.replaceAll('\n', '\r\n')
-    ]) for (const mode of ['native', 'json_object'] as const) {
-      const selected = answer({ claims: [{ ...answer().claims[0]!, statement: explicit }] })
-      let blocks: ReadonlyMap<string, string> | undefined
-      const options: WikiSynthesisOptions = {
-        validateClaim: claim => claim.statement === literalStatement,
-        validateAnswer: (_answer, _rendered, _literals, nativeBlocks) => { blocks = nativeBlocks; return true }
-      }
-      const accepted = await generate(selected, [owned, sibling], options, mode).result
-      expect(accepted.claims).toEqual([{ ...selected.claims[0]!, statement: literalStatement }])
-      expect(accepted.claims[0]!.statement.slice(0, -raw.length)).toBe('Fictional and non-operative › Shipping: ')
-      expect(accepted.claims[0]!.statement.slice(-raw.length)).toBe(raw)
-      const rendered = renderWikiSynthesisAnswer(accepted, new Set([literalStatement]), blocks)
-      const html = markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Shipping', href: null })))
-      const visible = load(html).text()
-      expect(visible).toContain('Fictional and non-operative › Shipping:')
-      expect(visible).toContain('3 working days')
-      expect(visible).toContain('USD 500')
-      expect(visible).toContain('14:00 local time')
-      expect(visible.indexOf('Standard stocked-item')).toBeLessThan(visible.indexOf('Free-delivery threshold'))
-      expect(html).not.toContain('<ul>')
-      const wire = encodeWikiSynthesisAnswer(selected)
-      const guard = createWikiSynthesisStreamGuard([owned, sibling])
-      for (const character of JSON.stringify(wire)) expect(guard(character)).toBeUndefined()
-      const service = new AxMockAIService<string>({
-        features: { functions: false, streaming: true, structuredOutputs: mode === 'native', structuredOutputModes: [mode] },
-        chatResponse: async () => new ReadableStream<AxChatResponse>({
-          start(controller) {
-            const body = JSON.stringify(wire)
-            controller.enqueue({ results: [{ index: 0, content: body.slice(0, body.length - 1) }] })
-            controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
-            controller.close()
-          }
-        })
-      })
-      const streamed: WikiSynthesisAnswer['claims'] = []
-      for await (const chunk of createWikiSynthesisProgram([owned, sibling], { facetCount: 2, ...options }).streamingForward(service, {
-        ...input, ...encodeFixtureSources([owned, sibling])
-      }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
-      expect(streamed).toEqual(accepted.claims)
-      expect(renderWikiSynthesisAnswer({ ...accepted, claims: streamed }, new Set([literalStatement]), blocks)).toBe(rendered)
-      for (const scenario of [
-        { row: owned, statement: raw.split('\n').slice(0, 2).join('\n') },
-        { row: owned, statement: raw.split('\n').reverse().join('\n') },
-        { row: owned, statement: raw.replace('USD 500', 'USD 600') },
-        { row: owned, statement: raw.replace('- Order cutoff:', '  - Order cutoff:') },
-        { row: owned, statement: sibling.literalStatement },
-        { row: owned, statement: '' },
-        { row: { ...owned, complete: false }, statement: raw },
-        { row: { ...owned, literalStatement: null }, statement: raw },
-        { row: { ...owned, kind: 'prose' }, statement: raw },
-        { row: { ...owned, literalStatement: 'Invented body\r\n' }, statement: raw }
-      ]) {
-        const proposal = answer({ claims: [{ ...selected.claims[0]!, statement: scenario.statement }] })
-        await expect(generate(proposal, [scenario.row], {}, mode).result).rejects.toThrow()
-        expect(createWikiSynthesisStreamGuard([scenario.row])(JSON.stringify(encodeWikiSynthesisAnswer(proposal)))).toBeDefined()
-      }
-      const unknown = answer({ claims: [{ ...selected.claims[0]!, unitId: 'unknown' }] })
-      await expect(generate(unknown, [owned], {}, mode).result).rejects.toThrow()
-      expect(createWikiSynthesisStreamGuard([owned])(JSON.stringify(encodeWikiSynthesisAnswer(unknown)))).toBeDefined()
-    }
-  })
 
   it('normalizes only harmless one-paragraph soft wraps before native semantic validation and final/stream Markdown rendering', async () => {
     const normalized = 'Morgan Vale’s fictional, non-operative Role is reviewer; the limit is USD 120. See [annex](/annex) and use `scope_id`.'
@@ -439,7 +195,7 @@ describe('Wiki source-bound typed synthesis', () => {
       const accepted = await generate(proposed, [owned], options, mode).result
       expect(accepted.claims[0]!.statement).toBe(normalized)
       expect(validateClaim.mock.calls[0]?.[0]).toEqual(accepted.claims[0])
-      const rendered = renderWikiSynthesisAnswer(accepted, noLiteralStatements)
+      const rendered = renderWikiSynthesisAnswer(accepted)
       const html = markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Role', href: null })))
       expect(html.match(/<p>/gu)).toHaveLength(1)
       expect(html).not.toContain('<br>')
@@ -463,18 +219,17 @@ describe('Wiki source-bound typed synthesis', () => {
         ...input, ...encodeFixtureSources([owned])
       }, { structuredOutputMode: mode })) streamed.push(...(chunk.delta.claims ?? []))
       expect(streamed).toEqual(accepted.claims)
-      expect(renderWikiSynthesisAnswer({ ...accepted, claims: streamed }, noLiteralStatements)).toBe(rendered)
+      expect(renderWikiSynthesisAnswer({ ...accepted, claims: streamed })).toBe(rendered)
       await expect(generate(proposed, [owned], { validateClaim: () => false }, mode).result).rejects.toThrow()
     }
     for (const statement of [
-      'Morgan Vale\n\nRole is reviewer.', '# Morgan Vale\nRole is reviewer.',
-      'Morgan Vale\n---', '- Morgan Vale\n- Role: reviewer.',
+      '# Morgan Vale\nRole is reviewer.', 'Morgan Vale\n---',
       '> Morgan Vale\n> Role: reviewer.', '    Morgan Vale\n    Role: reviewer.',
       '```\nMorgan Vale\n```', '<p>Morgan Vale\nRole is reviewer.</p>',
       'Morgan Vale\n[role]: /role', 'Morgan Vale  \nRole is reviewer.',
       'Morgan Vale\\\nRole is reviewer.', 'Morgan **Vale\nRole** is reviewer.',
       'Morgan `scope_\nid` is reviewer.', 'Morgan [Vale\nRole](/role) is reviewer.',
-      'Morgan [Vale](/ro\nle) is reviewer.', '| Name | Role |\n| --- | --- |\n| Morgan | reviewer |\n\nOther paragraph.'
+      'Morgan [Vale](/ro\nle) is reviewer.'
     ]) {
       const proposed = answer({ claims: [{ ...answer().claims[0]!, statement }] })
       await expect(generate(proposed).result).rejects.toThrow()
@@ -482,25 +237,6 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
-  it('keeps native-list inline links literal and rejects reference dependencies unsupported by the existing escaped-list renderer', async () => {
-    const raw = '- Name: Morgan Vale; Amount: USD 120; Link: [annex](/annex); Code: `scope_id`.\n- Qualification: fictional and non-operative.\n'
-    const literalStatement = `Shipping: ${raw}`
-    const owned = { ...source, kind: 'list', text: raw, literalStatement }
-    let blocks: ReadonlyMap<string, string> | undefined
-    const proposed = answer({ claims: [{ ...answer().claims[0]!, statement: raw.replace(/\n$/u, '') }] })
-    const accepted = await generate(proposed, [owned], {
-      validateAnswer: (_answer, _rendered, _literals, nativeBlocks) => { blocks = nativeBlocks; return true }
-    }).result
-    const html = markdown.render(formatAgentCitationMarkers(renderWikiSynthesisAnswer(accepted, noLiteralStatements, blocks),
-      () => ({ number: 1, label: 'Shipping', href: null })))
-    expect(load(html).text()).toContain('[annex](/annex); Code: `scope_id`.')
-    expect(html).not.toContain('href="/annex"')
-    const linkedRaw = raw.replace('[annex](/annex)', '[annex][a]')
-    const linked = { ...owned, text: linkedRaw, literalStatement: `Shipping: ${linkedRaw}\n[a]: /annex\n` }
-    const selection = answer({ claims: [{ ...proposed.claims[0]!, statement: linkedRaw }] })
-    await expect(generate(selection, [linked]).result).rejects.toThrow()
-    expect(createWikiSynthesisStreamGuard([linked])(JSON.stringify(encodeWikiSynthesisAnswer(selection)))).toContain('native-body mismatch (list)')
-  })
 
   it('reports claim output bounds separately from format mismatch without disclosing statement text', () => {
     const statement = `Private wording ${'x'.repeat(70_000)}`
@@ -511,7 +247,7 @@ describe('Wiki source-bound typed synthesis', () => {
   })
 
   it('retains trusted canonical host replacements without accepting replacement provenance outside the original registry', async () => {
-    const quoted = { ...source, literalStatement: `Illustrative only: ${source.text}` }
+    const quoted = { ...source, text: `Illustrative only: ${source.text}` }
     const wire = encodeWikiSynthesisAnswer(answer())
     for (const mode of ['native', 'json_object'] as const) {
       const service = new AxMockAIService<string>({
@@ -521,11 +257,11 @@ describe('Wiki source-bound typed synthesis', () => {
       const program = createWikiSynthesisProgram([quoted], {
         facetCount: 2,
         validateAnswer: candidate => {
-          candidate.claims[0] = { ...candidate.claims[0]!, statement: quoted.literalStatement }
+          candidate.claims[0] = { ...candidate.claims[0]!, statement: quoted.text }
           return true
         }
       })
-      const expected = [{ ...answer().claims[0]!, statement: quoted.literalStatement }]
+      const expected = [{ ...answer().claims[0]!, statement: quoted.text }]
       expect((await program.forward(service, { ...input, ...encodeFixtureSources([quoted]) }, { structuredOutputMode: mode })).claims).toEqual(expected)
       const claims: WikiSynthesisAnswer['claims'] = []
       for await (const chunk of program.streamingForward(service, { ...input, ...encodeFixtureSources([quoted]) }, { structuredOutputMode: mode }))
@@ -543,15 +279,15 @@ describe('Wiki source-bound typed synthesis', () => {
 
 
   it('bounds cumulative explicit canonical statements by the existing provider content budget without clipping quotations', async () => {
-    const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(200) }
-    const selected = { ...answer().claims[0]!, statement: quoted.literalStatement }
+    const quoted = { ...source, text: 'Exact authored assertion. '.repeat(200) }
+    const selected = { ...answer().claims[0]!, statement: quoted.text }
     const claims = Array.from({ length: 64 }, () => ({ ...selected }))
     for (const mode of ['native', 'json_object'] as const) {
       const generated = generate(answer({ claims }), [quoted], { maxOutputTokens: 1_024 }, mode)
       await expect(generated.result).rejects.toThrow('content byte limit')
       expect(generated.chat).toHaveBeenCalledTimes(1)
       const accepted = await generate(answer({ claims: [selected] }), [quoted], { maxOutputTokens: 1_024 }, mode).result
-      expect(accepted.claims[0]?.statement).toBe(quoted.literalStatement)
+      expect(accepted.claims[0]?.statement).toBe(quoted.text)
     }
     const guard = createWikiSynthesisStreamGuard([quoted], { maxOutputTokens: 1_024 })
     expect(guard(`{"claims":[${JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [selected] })).claims[0])}`)).toBeUndefined()
@@ -559,8 +295,8 @@ describe('Wiki source-bound typed synthesis', () => {
   })
 
   it('streams only explicit canonical quotations through incomplete-array transitions and rejects truncated or failed terminal output', async () => {
-    const quoted = { ...source, literalStatement: 'Status: Illustrative only | External publication requires two approvals.' }
-    const selected = { ...answer().claims[0]!, statement: quoted.literalStatement }
+    const quoted = { ...source, text: 'Status: Illustrative only | External publication requires two approvals.' }
+    const selected = { ...answer().claims[0]!, statement: quoted.text }
     const wire = encodeWikiSynthesisAnswer(answer({ claims: [selected] })).claims[0]!
     const first = `{"claims":[${JSON.stringify(wire)},{"sourceRef":${' '.repeat(192)}`
     const tail = `${JSON.stringify(wire.sourceRef)},"statement":${JSON.stringify(wire.statement)}}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
@@ -583,14 +319,14 @@ describe('Wiki source-bound typed synthesis', () => {
         const consume = async () => {
           for await (const chunk of program.streamingForward(service, { ...input, ...encodeFixtureSources([quoted]) }, { structuredOutputMode: mode })) {
             for (const claim of chunk.delta.claims ?? []) {
-              expect(claim.statement).toBe(quoted.literalStatement)
+              expect(claim.statement).toBe(quoted.text)
               claims.push(claim)
             }
           }
         }
         if (finish === 'stop') {
           await consume()
-          expect(claims).toEqual([{ ...selected, statement: quoted.literalStatement }, { ...selected, statement: quoted.literalStatement }])
+          expect(claims).toEqual([{ ...selected, statement: quoted.text }, { ...selected, statement: quoted.text }])
         } else {
           await expect(consume()).rejects.toThrow()
         }
@@ -600,8 +336,8 @@ describe('Wiki source-bound typed synthesis', () => {
   })
 
   it('isolates canonical streaming byte allowances by sample index through repaired partial arrays', async () => {
-    const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(1_200) }
-    const selected = { ...answer().claims[0]!, statement: quoted.literalStatement }
+    const quoted = { ...source, text: 'Exact authored assertion. '.repeat(1_200) }
+    const selected = { ...answer().claims[0]!, statement: quoted.text }
     const wire = encodeWikiSynthesisAnswer(answer({ claims: [selected] })).claims[0]!
     const first = `{"claims":[${JSON.stringify(wire)},{"sourceRef":${' '.repeat(192)}`
     const tail = `${JSON.stringify(wire.sourceRef)},"statement":${JSON.stringify(wire.statement)}}],"unresolvedFacets":[1],"observations":[],"recommendations":""}`
@@ -628,7 +364,7 @@ describe('Wiki source-bound typed synthesis', () => {
     }
     expect([...samples.keys()].sort()).toEqual([0, 1])
     for (const claims of samples.values()) {
-      expect(claims).toEqual([{ ...selected, statement: quoted.literalStatement }, { ...selected, statement: quoted.literalStatement }])
+      expect(claims).toEqual([{ ...selected, statement: quoted.text }, { ...selected, statement: quoted.text }])
     }
     expect(chat).toHaveBeenCalledTimes(1)
     const picker: AxResultPickerFunction<AxGenOut> = selection => {
@@ -636,7 +372,7 @@ describe('Wiki source-bound typed synthesis', () => {
       if (selection.type !== 'fields') throw new Error('Synthesis must not produce function samples')
       expect(selection.results).toHaveLength(2)
       for (const result of selection.results)
-        expect(result.sample.claims).toEqual([{ ...selected, statement: quoted.literalStatement }, { ...selected, statement: quoted.literalStatement }])
+        expect(result.sample.claims).toEqual([{ ...selected, statement: quoted.text }, { ...selected, statement: quoted.text }])
       return 1
     }
     const options = { stream: true, structuredOutputMode: 'native' as const, sampleCount: 2, resultPicker: picker }
@@ -652,7 +388,7 @@ describe('Wiki source-bound typed synthesis', () => {
     const linkedSource = { ...source, text: 'Approval guide: <https://docs.company.test/approvals>.' }
     const prediction = answer({ claims: [{ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: linkedSource.text }] })
     const accepted = await generate(prediction, [linkedSource]).result
-    expect(renderWikiSynthesisAnswer(accepted, noLiteralStatements)).toContain('<https://docs.company.test/approvals>')
+    expect(renderWikiSynthesisAnswer(accepted)).toContain('<https://docs.company.test/approvals>')
     for (const html of ['<a href="https://docs.company.test/approvals">Approval guide</a>.', '<svg:path>Approval guide</svg:path>.', '<script>Approval guide</script>.']) {
       const rejected = generate(answer({ claims: [{ ...prediction.claims[0]!, statement: html }] }), [linkedSource])
       await expect(rejected.result).rejects.toThrow()
@@ -729,15 +465,12 @@ describe('Wiki source-bound typed synthesis', () => {
 
   it('rejects conflicting unit bindings rather than letting the last source win', () => {
     expect(() => createWikiSynthesisProgram([source, { ...source, text: 'Publication requires no approval.' }])).toThrow()
-    expect(() => createWikiSynthesisProgram([source, { ...source, literalStatement: 'Publication requires no approval.' }])).toThrow()
     expect(() => createWikiSynthesisProgram([source, { ...source, sourceRevision: '8' }])).toThrow()
-    const ranged = { ...source, sourceSpans: [{ start: 0, end: source.text.length }] }
-    expect(() => createWikiSynthesisProgram([ranged, { ...ranged, sourceSpans: [{ start: 1, end: source.text.length }] }])).toThrow()
   })
 
   it('rejects distinct original bindings that collide on a short reference instead of rebinding either source', () => {
     const digest = vi.spyOn(Hash.prototype, 'digest').mockReturnValue('AAAAAAAAAAAAAAAA' as never)
-    const other = { ...source, unitId: 'unit:other' }
+    const other = { ...source, readId: 'physical:other:7', unitId: 'read:physical:other:7' }
     try {
       expect(() => createWikiSynthesisProgram([source, other])).toThrow('collided')
       expect(() => encodeFixtureSources([source, other])).toThrow('collided')
@@ -749,7 +482,7 @@ describe('Wiki source-bound typed synthesis', () => {
 
   it('rejects legacy triples and malformed wire selectors before either public validation boundary', async () => {
     const selected = { sourceRef: wikiSynthesisSourceRef(source), statement: source.text }
-    const foreign = { ...source, evidenceId: 'page:99:revision:12', sourceRevision: '12', unitId: 'unit:owner' }
+    const foreign = { ...source, evidenceId: 'page:99:revision:12', sourceRevision: '12', readId: 'physical:owner:12', unitId: 'read:physical:owner:12' }
     for (const mode of ['native', 'json_object'] as const) {
       for (const claim of [
         answer().claims[0]!,
@@ -780,8 +513,8 @@ describe('Wiki source-bound typed synthesis', () => {
   })
 
   it('uses the post-admission output allowance for explicit statements while retaining vendor usage accounting', async () => {
-    const quoted = { ...source, literalStatement: 'Exact authored assertion. '.repeat(3_000) }
-    const prediction = answer({ claims: [{ ...answer().claims[0]!, statement: quoted.literalStatement }] })
+    const quoted = { ...source, text: 'Exact authored assertion. '.repeat(3_000) }
+    const prediction = answer({ claims: [{ ...answer().claims[0]!, statement: quoted.text }] })
     const validateClaim = vi.fn(() => true)
     let reduceAllowance = true
     let allowance = 4_096
@@ -800,7 +533,7 @@ describe('Wiki source-bound typed synthesis', () => {
     allowance = 4_096
     program.resetUsage()
     const accepted = await program.forward(service, { ...input, ...encodeFixtureSources([quoted]) })
-    expect(accepted.claims[0]?.statement).toBe(quoted.literalStatement)
+    expect(accepted.claims[0]?.statement).toBe(quoted.text)
     expect(program.getUsage()[0]?.tokens?.completionTokens).toBe(8)
   })
 
@@ -809,7 +542,7 @@ describe('Wiki source-bound typed synthesis', () => {
       validateClaim: claim => claim.statement.startsWith('External publication requires ') || 'The external-publication restriction must qualify the approval requirement.',
       validateAnswer: candidate => candidate.unresolvedFacets.includes(1) || 'The requested approver facet must remain unresolved.'
     }
-    const unqualified = generate(answer({ claims: [{ ...answer().claims[0]!, statement: 'Publication requires two approvals.' }] }), [{ ...source, literalStatement: 'Publication requires two approvals.' }], policyBoundary)
+    const unqualified = generate(answer({ claims: [{ ...answer().claims[0]!, statement: 'Publication requires two approvals.' }] }), [source], policyBoundary)
     await expect(unqualified.result).rejects.toThrow('external-publication restriction')
     expect(unqualified.chat).toHaveBeenCalledTimes(1)
     const omitted = generate(answer({ unresolvedFacets: [] }), [source], policyBoundary)
@@ -843,7 +576,7 @@ describe('Wiki source-bound typed synthesis', () => {
   })
 
   it('rejects a unit owned by another complete binding without autonomous repair', async () => {
-    const other = { ...source, evidenceId: 'page:99:revision:12', sourceRevision: '12', unitId: 'unit:owner', text: 'The owner is Rowan.' }
+    const other = { ...source, evidenceId: 'page:99:revision:12', sourceRevision: '12', readId: 'physical:owner:12', unitId: 'read:physical:owner:12', text: 'The owner is Rowan.' }
     const crossed = generate(answer({ claims: [{ ...answer().claims[0]!, unitId: other.unitId }] }), [source, other])
     await expect(crossed.result).rejects.toThrow('complete admitted source unit')
     expect(crossed.chat).toHaveBeenCalledTimes(1)
@@ -859,7 +592,6 @@ describe('Wiki source-bound typed synthesis', () => {
       answer({ observations: ['<!-- hide citations'] }),
       answer({ recommendations: `Use this unrelated premise [[cite:${source.evidenceId}]]` }),
       answer({ recommendations: '[policy]: /wrong-target' }),
-      answer({ claims: [{ ...answer().claims[0]!, statement: `${source.text}\n\nAn unrelated invented assertion.` }] })
     ]
     for (const prediction of unsafe) {
       const generated = generate(prediction, [source], { observations: [observation, `${observation} [[cite:${source.evidenceId}]]`, '<!-- hide citations'] })
@@ -887,8 +619,8 @@ describe('Wiki source-bound typed synthesis', () => {
 
 
   it('keeps source-owned record tables independent with visible citations rather than swallowing citations as extra cells', async () => {
-    const aurora: WikiSynthesisSource = { ...source, unitId: 'unit:aurora-record', kind: 'labeled-record', text: 'Record: Aurora | Owner: Rowan | Scope: External only', packet: '{"ownedFields":["Record","Owner","Scope"]}' }
-    const boreal: WikiSynthesisSource = { ...source, evidenceId: 'page:43:revision:8', sourceRevision: '8', unitId: 'unit:boreal-record', kind: 'labeled-record', text: 'Record: Boreal | Owner: Sable | Scope: Internal only', packet: '{"ownedFields":["Record","Owner","Scope"]}' }
+    const aurora: WikiSynthesisSource = { ...source, readId: 'physical:aurora:7', unitId: 'read:physical:aurora:7', text: 'Record: Aurora | Owner: Rowan | Scope: External only' }
+    const boreal: WikiSynthesisSource = { ...source, evidenceId: 'page:43:revision:8', sourceRevision: '8', readId: 'physical:boreal:8', unitId: 'read:physical:boreal:8', text: 'Record: Boreal | Owner: Sable | Scope: Internal only' }
     const table = '| Record | Owner | Scope |\n| --- | --- | --- |\n| Aurora | Rowan | External only |'
     const otherTable = '| Record | Owner | Scope |\n| --- | --- | --- |\n| Boreal | Sable | Internal only |'
     const prediction = answer({ claims: [
@@ -897,7 +629,7 @@ describe('Wiki source-bound typed synthesis', () => {
     ] })
     const policyBoundary: WikiSynthesisOptions = {
       validateClaim: (claim, bound) => {
-        const expected = bound.unitId === 'unit:aurora-record'
+        const expected = bound.readId === aurora.readId
           ? ['Record', 'Owner', 'Scope', 'Aurora', 'Rowan', 'External only']
           : ['Record', 'Owner', 'Scope', 'Boreal', 'Sable', 'Internal only']
         const cells = markdown.parse(claim.statement, {}).filter(token => token.type === 'inline').map(token => token.content)
@@ -906,7 +638,7 @@ describe('Wiki source-bound typed synthesis', () => {
       validateAnswer: candidate => candidate.unresolvedFacets.includes(1) || 'The requested approver facet must remain unresolved.'
     }
     const accepted = await generate(prediction, [aurora, boreal], policyBoundary).result
-    const rendered = renderWikiSynthesisAnswer(accepted, noLiteralStatements)
+    const rendered = renderWikiSynthesisAnswer(accepted)
     const clientMarkdown = formatAgentCitationMarkers(rendered, evidenceId => ({ number: evidenceId === aurora.evidenceId ? 1 : 2, label: 'Bound record', href: null }))
     const html = markdown.render(clientMarkdown)
     expect(html).toContain('</table>\n<p><strong>[1]</strong></p>\n<table>')
@@ -925,17 +657,20 @@ describe('Wiki source-bound typed synthesis', () => {
     await expect(missingDisclosure.result).rejects.toThrow('requested approver facet')
     for (const options of [{}, { validateClaim: policyBoundary.validateClaim }, { validateAnswer: policyBoundary.validateAnswer }]) {
       const unvalidated = generate(prediction, [aurora, boreal], options)
-      await expect(unvalidated.result).rejects.toThrow('both source-local and whole-answer')
+      await expect(unvalidated.result).rejects.toThrow('both source and whole-answer')
     }
   })
 
   it('permits escaped pipes and closed inline code in strict tables but never arbitrary Markdown blocks or lossy rows', () => {
     const table = '| Record | Literal |\n| --- | --- |\n| Aurora\\|Boreal | `a\\|b` |'
     expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }))).toBe(true)
-    const rendered = renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }), noLiteralStatements)
+    const rendered = renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }))
     expect(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Record', href: null })))).toContain('<code>a|b</code>')
     for (const statement of [
-      `${table}\n\nAn uncited premise.`,
+      '| Record | Owner |\n| --- | --- |\n| Aurora | |',
+      'Requested record:\n\n| Record | Owner |\n| --- | --- |\n| Aurora | |'
+    ]) expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).toBe(true)
+    for (const statement of [
       `## Records\n${table}`,
       `- ${table}`,
       '<table><tr><td>Aurora</td></tr></table>',
@@ -947,7 +682,7 @@ describe('Wiki source-bound typed synthesis', () => {
       `${table}\n[[cite:injected]]`
     ]) {
       expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).not.toBe(true)
-      expect(() => renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement }] }), noLiteralStatements)).toThrow()
+      expect(() => renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).toThrow()
     }
     expect(validateWikiSynthesisShape(answer({ observations: [table] }))).not.toBe(true)
     expect(validateWikiSynthesisShape(answer({ observations: ['First line.\nSecond line.'] }))).not.toBe(true)
@@ -1031,364 +766,97 @@ describe('Wiki source-bound typed synthesis', () => {
 })
 
 describe('Wiki synthesis complete registered read transport', () => {
-  const qualification = 'Illustrative and untested; use only after safe chilling below 5 °C for at least 2 hours.'
-  const body = `  # Aurora 🥣 e\u0301\r\n${qualification}\r\nEstimated time: 20 minutes.\r\nUnrequested equipment: covered container and thermometer.\r\n<aside data-id="007">Do not use for unrefrigerated batches.</aside>\r\n\`\`\`ts\r\nconst authored = "s1";\r\n\`\`\`\r\n[safety]: /safe?batch=7#冷却\r\n  `
-  const root = { ...source, evidenceId: 'page:42:revision:7', unitId: 'unit:time', text: 'Estimated time: 20 minutes.', literalStatement: `${qualification} Estimated time: 20 minutes.` }
-  const section = { ...root, evidenceId: 'page:42:revision:7:section:1' }
-  const read: WikiSynthesisRead = { evidenceId: root.evidenceId, sourceRevision: '7', readId: 'physical:42:7', title: 'Aurora', representation: 'markdown', complete: true, source: body }
+  const body = '  # Aurora 🥣 e\u0301\r\nIllustrative only.\r\nEstimated time: 20 minutes.\r\nPrivate contact: keeper@example.test.\r\n<!-- not factual authority -->\r\n```ts\r\nconst authored = 7;\r\n```\r\n  ';
+  const root: WikiSynthesisSource = { ...source, evidenceId: 'page:42:revision:7', readId: 'physical:42:7', unitId: 'read:physical:42:7', context: 'Aurora', text: body };
+  const read: WikiSynthesisRead = { evidenceId: root.evidenceId, sourceRevision: '7', readId: root.readId, title: 'Aurora', representation: 'markdown', complete: true, source: body };
   const request = (sources: readonly WikiSynthesisSource[], reads: readonly WikiSynthesisRead[]): Readonly<AxChatRequest> => {
-    const encoded = encodeWikiSynthesisSources(sources, reads)
-    return { chatPrompt: [{ role: 'user', content: `User Request: Preserve the source facts.\n\nSource Text: ${encoded.sourceText}\n\nSource References: ${encoded.sourceReferences}\n\nRequest Facets: []` }] }
-  }
+    const encoded = encodeWikiSynthesisSources(sources, reads);
+    return { chatPrompt: [{ role: 'user', content: `User Request: Preserve requested facts.\n\nSource Text: ${encoded.sourceText}\n\nSource References: ${encoded.sourceReferences}\n\nRequest Facets: []` }] };
+  };
 
-  it('delivers the exact full authored read, including unrequested facts, Unicode, whitespace and markup, through the program consumer', async () => {
-    const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({
-      results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [], recommendations: '' }), finishReason: 'stop' as const }]
-    }))
-    const service = new AxMockAIService<string>({
-      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat
-    })
-    await createWikiSynthesisProgram([root]).forward(service, {
-      ...input, ...encodeWikiSynthesisSources([root], [read]), userRequest: 'What is the estimated time?', requestFacets: []
-    }, { structuredOutputMode: 'native' })
-    const delivered = synthesisSourcesFromRequest(chat.mock.calls[0]![0])
-    expect(delivered).toHaveLength(1)
-    expect(delivered[0]!.readText).toBe(body)
-    expect(delivered[0]!.text).toBe('Estimated time: 20 minutes.')
-  })
+  it('delivers unchanged full author bytes once and a text-free read locator through the real program consumer', async () => {
+    const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({ results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [] }), finishReason: 'stop' as const }] }));
+    const service = new AxMockAIService<string>({ features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat });
+    const encoded = encodeWikiSynthesisSources([root], [read]);
+    await createWikiSynthesisProgram([root]).forward(service, { ...input, ...encoded, requestFacets: [] });
+    const delivered = synthesisSourcesFromRequest(chat.mock.calls[0]![0]);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toBe(body);
+    expect(delivered[0]!.readText).toBe(body);
+    expect(encoded.sourceText.split(body)).toHaveLength(2);
+    expect(JSON.parse(encoded.sourceReferences)).toEqual({ reads: { [wikiSynthesisSourceRef(root)]: { readRef: 'd0', evidenceId: root.evidenceId, sourceRevision: '7' } } });
+    expect(encoded.sourceReferences).not.toContain('keeper@example.test');
+  });
 
-  it('deduplicates physical aliases while retaining each original host authority and its own quotation', async () => {
-    const supplied = [
-      { ...section, unitId: 'paragraph:scope:assertion:0' },
-      { ...section, unitId: 'paragraph:scope:assertion:1' },
-      { ...root, unitId: 'paragraph:scope:assertion:0' },
-      { ...root, unitId: 'paragraph:scope:assertion:1' }
-    ]
-    const reads = [{ ...read, evidenceId: section.evidenceId }, read]
-    const index = JSON.parse(encodeWikiSynthesisSources(supplied, reads).sourceReferences) as WikiSynthesisReferenceIndex
-    const primary = index.units[wikiSynthesisSourceRef(supplied[2]!)]!
-    expect(Object.keys(index.units)).toHaveLength(1)
-    expect(Object.keys(primary.aliases ?? {})).toHaveLength(2)
-    for (const [scope, refs] of Object.entries(primary.aliases!)) {
-      const owner = index.scopes[Number(scope)]!
-      const expected = supplied.filter(row => row.evidenceId === owner.evidenceId && wikiSynthesisSourceRef(row) !== wikiSynthesisSourceRef(supplied[2]!))
-      expect(refs.split(' ').sort()).toEqual(expected.map(wikiSynthesisSourceRef).sort())
-      for (const ref of refs.split(' ')) expect(ref).toMatch(/^s[A-Za-z0-9_-]{16}$/u)
-    }
-    const sectionScope = Object.entries(index.scopes).find(([, scope]) => scope.evidenceId === section.evidenceId)![0]
-    expect(createWikiSynthesisStreamGuard(supplied)(JSON.stringify({
-      claims: [{ sourceRef: primary.aliases![Number(sectionScope)], statement: root.literalStatement }]
-    }))).toBeDefined()
-    const transported = request(supplied, reads)
-    const delivered = synthesisSourcesFromRequest(transported)
-    expect(synthesisReadsFromRequest(transported)).toHaveLength(1)
-    expect(delivered).toHaveLength(4)
-    expect(delivered.map(row => row.sourceRef)).toEqual(expect.arrayContaining(supplied.map(wikiSynthesisSourceRef)))
-    for (const row of delivered) expect(row.readText).toBe(body)
-    for (const selected of supplied) {
-      const prediction = answer({ claims: [{ evidenceId: selected.evidenceId, sourceRevision: '7', unitId: selected.unitId, statement: root.literalStatement }] })
-      const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number]) => claim.evidenceId === selected.evidenceId && claim.unitId === selected.unitId && claim.statement === root.literalStatement)
-      const service = new AxMockAIService<string>({
-        features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
-        chatResponse: { results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(prediction)), finishReason: 'stop' }] }
-      })
-      const accepted = await createWikiSynthesisProgram(supplied, { facetCount: 2, validateClaim }).forward(service, {
-        ...input, ...encodeWikiSynthesisSources(supplied, reads)
-      })
-      expect(accepted.claims).toEqual([{ ...prediction.claims[0]!, statement: root.literalStatement }])
-      expect(validateClaim).toHaveBeenCalledTimes(1)
-    }
-  })
+  it('shares body bytes only across compatible physical read aliases while every ref decodes to its original owner', () => {
+    const section = { ...root, evidenceId: `${root.evidenceId}:section:1` };
+    const reads = [read, { ...read, evidenceId: section.evidenceId }];
+    const encoded = encodeWikiSynthesisSources([root, section], reads);
+    const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex;
+    expect(Object.keys(index.reads)).toHaveLength(2);
+    expect(index.reads[wikiSynthesisSourceRef(root)]!.readRef).toBe(index.reads[wikiSynthesisSourceRef(section)]!.readRef);
+    expect(encoded.sourceText.split(body)).toHaveLength(2);
+    const delivered = synthesisSourcesFromRequest(request([root, section], reads));
+    expect(delivered.map(row => row.evidenceId)).toEqual([root.evidenceId, section.evidenceId]);
+    for (const row of delivered) expect(row.text).toBe(body);
+    expect(synthesisReadsFromRequest(request([root, section], reads))).toHaveLength(1);
+  });
 
-  it('associates only fields of the same owned record across exact scope aliases and keeps equal-valued records separate', () => {
-    const lead = { ...root, unitId: 'field:lead', ownedRecordId: 'record:delivery', text: 'Lead time: 3 working days', literalStatement: null }
-    const scope = { ...lead, unitId: 'field:scope', text: 'Scope: mainland only' }
-    const exception = { ...lead, unitId: 'field:exception', text: 'Exception: islands require separate quote' }
-    const equalValue = { ...lead, unitId: 'field:other-lead', ownedRecordId: 'record:other' }
-    const otherRead = { ...lead, evidenceId: 'page:99:revision:7' }
-    const alias = { ...lead, evidenceId: section.evidenceId }
-    const supplied = [lead, scope, exception, equalValue, otherRead, alias, { ...root, unitId: 'field:unowned' }]
-    const reads = [read, { ...read, evidenceId: section.evidenceId }, { ...read, evidenceId: otherRead.evidenceId, readId: 'physical:99:7' }]
-    const delivered = synthesisSourcesFromRequest(request(supplied, reads))
-    const byRef = new Map(delivered.map(row => [row.sourceRef, row]))
-    const marker = byRef.get(wikiSynthesisSourceRef(lead))!.record
-    expect(marker).toBeDefined()
-    for (const field of [scope, exception, alias])
-      expect(byRef.get(wikiSynthesisSourceRef(field))!.record).toBe(marker)
-    for (const unrelated of [equalValue, otherRead])
-      expect(byRef.get(wikiSynthesisSourceRef(unrelated))!.record).not.toBe(marker)
-    expect(byRef.get(wikiSynthesisSourceRef(supplied[6]!))!.record).toBeUndefined()
-    expect(delivered.map(row => row.sourceRef).sort()).toEqual(supplied.map(wikiSynthesisSourceRef).sort())
-    for (const row of delivered) expect(row.readText).toBe(body)
-    expect(() => encodeWikiSynthesisSources([lead, { ...lead, ownedRecordId: 'record:other' }], reads)).toThrow('Conflicting source unit binding')
-    expect(() => encodeWikiSynthesisSources([{ ...lead, ownedRecordId: '' }], reads)).toThrow()
-  })
+  it('keeps separately equal reads and repeated authored records distinct without a derived record catalog', () => {
+    const repeated = 'Name: Aurora | Value: 20 minutes\nName: Aurora | Value: 20 minutes\n';
+    const first = { ...root, text: repeated };
+    const second = { ...first, evidenceId: 'page:99:revision:7', readId: 'physical:99:7', unitId: 'read:physical:99:7' };
+    const encoded = encodeWikiSynthesisSources([first, second], [{ ...read, source: repeated }, { ...read, evidenceId: second.evidenceId, readId: second.readId, source: repeated }]);
+    const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex;
+    expect(index.reads[wikiSynthesisSourceRef(first)]!.readRef).not.toBe(index.reads[wikiSynthesisSourceRef(second)]!.readRef);
+    expect(encoded.sourceText.split(repeated)).toHaveLength(3);
+    expect(Object.keys(index.reads)).toHaveLength(2);
+    expect(encoded.sourceReferences).not.toContain('record');
+  });
 
-  it('keeps identical selected text attached to different physical reads and rejects foreign or expired owner reads', async () => {
-    const sibling = { ...root, evidenceId: 'page:99:revision:7', literalStatement: 'Internal drafts only. Estimated time: 20 minutes.' }
-    const siblingRead = { ...read, evidenceId: sibling.evidenceId, readId: 'physical:99:7', source: 'Internal drafts only.\nEstimated time: 20 minutes.' }
-    const rows = synthesisSourcesFromRequest(request([root, sibling], [read, siblingRead]))
-    expect(rows).toHaveLength(2)
-    expect(rows[0]!.readRef).not.toBe(rows[1]!.readRef)
-    expect(rows.find(row => row.sourceRef === wikiSynthesisSourceRef(root))!.readText).toBe(body)
-    expect(rows.find(row => row.sourceRef === wikiSynthesisSourceRef(sibling))!.readText).toBe(siblingRead.source)
-    for (const [selected, expected] of [
-      [root, `${qualification} Estimated time: 20 minutes.`],
-      [sibling, 'Internal drafts only. Estimated time: 20 minutes.']
-    ] as const) {
-      const claim = { evidenceId: selected.evidenceId, sourceRevision: '7', unitId: selected.unitId, statement: expected }
-      const service = new AxMockAIService<string>({
-        features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
-        chatResponse: { results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [claim] }))), finishReason: 'stop' }] }
-      })
-      const accepted = await createWikiSynthesisProgram([root, sibling], { facetCount: 2 }).forward(service, {
-        ...input, ...encodeWikiSynthesisSources([root, sibling], [read, siblingRead])
-      })
-      expect(accepted.claims).toEqual([{ ...claim, statement: expected }])
-    }
-    for (const invalid of [{ ...read, evidenceId: sibling.evidenceId }, { ...read, sourceRevision: '6' }])
-      expect(() => encodeWikiSynthesisSources([root], [invalid])).toThrow()
-    expect(() => encodeWikiSynthesisSources([root, sibling], [read, { ...siblingRead, readId: read.readId }])).toThrow()
-  })
+  it('rejects mismatched, expired, foreign or incompatible physical read bindings instead of reconstructing content', () => {
+    for (const invalid of [{ ...read, source: body.trim() }, { ...read, sourceRevision: '6' }, { ...read, evidenceId: 'page:99:revision:7' }, { ...read, readId: 'physical:foreign:7' }, { ...read, complete: false }])
+      expect(() => encodeWikiSynthesisSources([root], [invalid])).toThrow();
+    expect(() => createWikiSynthesisProgram([{ ...root, unitId: 'paragraph:derived' }])).toThrow();
+    expect(() => encodeWikiSynthesisSources([root], [read, { ...read, representation: 'html' }])).toThrow();
+    expect(() => encodeWikiSynthesisSources([root], [read, { ...read, title: 'Conflicting title' }])).toThrow();
+    expect(() => encodeWikiSynthesisSources([root], [read, { ...read, readId: 'physical:other:7' }])).toThrow();
+  });
 
-  it('does not promote incomplete or opaque units merely because a full read supplies surrounding text', async () => {
-    const incomplete = { ...root, complete: false, packet: '{"opaque":9007199254740993,"truncated":true}', literalStatement: null }
-    const transported = request([incomplete], [read])
-    expect(synthesisSourcesFromRequest(transported)).toHaveLength(0)
-    expect(synthesisReadsFromRequest(transported)[0]!.readText).toBe(body)
-    const opaqueText = '{"integer":9007199254740993,"nullable":null,"escaped":"\\u51b7\\u5374"}\r\n'
-    const opaque = { ...root, kind: 'opaque', text: opaqueText, packet: opaqueText, literalStatement: null }
-    const opaqueRead = { ...read, representation: 'json', source: opaqueText }
-    const opaqueTransport = request([opaque], [opaqueRead])
-    expect(synthesisSourcesFromRequest(opaqueTransport)).toHaveLength(0)
-    expect(synthesisReadsFromRequest(opaqueTransport)[0]!.readText).toBe(opaqueText)
-    for (const [selected, statement, sourceRead] of [[incomplete, incomplete.text, read], [opaque, '', opaqueRead]] as const) {
-      const claim = { evidenceId: selected.evidenceId, sourceRevision: '7', unitId: selected.unitId, statement }
-      const chat = vi.fn(async () => ({
-        results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [claim] }))), finishReason: 'stop' as const }]
-      }))
-      const service = new AxMockAIService<string>({
-        features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat
-      })
-      await expect(createWikiSynthesisProgram([selected], { facetCount: 2 }).forward(service, {
-        ...input, ...encodeWikiSynthesisSources([selected], [sourceRead])
-      })).rejects.toThrow()
-      expect(chat).toHaveBeenCalledTimes(1)
-    }
-  })
+  it('preserves truncated original data without making an incomplete read selectable', () => {
+    const incomplete = { ...root, complete: false };
+    const encoded = encodeWikiSynthesisSources([incomplete], [{ ...read, complete: false }]);
+    expect(encoded.sourceText).toContain(body);
+    expect(JSON.parse(encoded.sourceReferences)).toEqual({ reads: {} });
+    expect(synthesisSourcesFromRequest(request([incomplete], [{ ...read, complete: false }]))).toEqual([]);
+    expect(createWikiSynthesisStreamGuard([incomplete])(JSON.stringify({ claims: [{ sourceRef: wikiSynthesisSourceRef(incomplete), statement: 'Estimated time: 20 minutes.' }] }))).toBeDefined();
+  });
 
-  it('admits twelve full physical records with aliases inside a conservative consumer context capacity', async () => {
-    const sources: WikiSynthesisSource[] = []
-    const reads: WikiSynthesisRead[] = []
-    const bodies: string[] = []
+  it.each([100_000, 128_000])('keeps twelve complete long reads inside the unchanged %i-byte consumer budget with no body copy in the index', async budget => {
+    const sources: WikiSynthesisSource[] = [];
+    const reads: WikiSynthesisRead[] = [];
+    const bodies: string[] = [];
     for (let index = 0; index < 12; index++) {
-      const line = `Item: **Aurora ${index} 🥣 e\u0301** | Prerequisite: Safely chill below 5 °C for at least 2 hours | Guide: [safety][safe${index}]\n`
-      const record = `# Record ${index}: Illustrative and untested\n${line.repeat(32)}[safe${index}]: /safe?record=${index}#冷却\n`
-      bodies.push(record)
-      for (let alias = 0; alias < 5; alias++) {
-        const evidenceId = `page:capacity:${index}:revision:7${alias === 0 ? '' : `:section:${alias}`}`
-        sources.push({ ...root, evidenceId, unitId: `unit:record:${index}`, text: line, literalStatement: record })
-        reads.push({ ...read, evidenceId, readId: `physical:capacity:${index}`, title: `Record ${index}`, source: record })
-      }
+      const authored = `# Record ${index} 🥣\r\n` + 'Safely chill below 5 °C for at least two hours before service. '.repeat(72) + `\r\nPrivate contact: keeper${index}@example.test.\r\n`;
+      const readId = `physical:capacity:${index}`;
+      const evidenceId = `page:capacity:${index}:revision:7`;
+      bodies.push(authored);
+      sources.push({ ...root, evidenceId, readId, unitId: `read:${readId}`, text: authored });
+      reads.push({ ...read, evidenceId, readId, source: authored });
     }
-    const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({
-      results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [], recommendations: '' }), finishReason: 'stop' as const }]
-    }))
-    const service = new AxMockAIService<string>({
-      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat
-    })
-    await createWikiSynthesisProgram(sources).forward(service, {
-      ...input, ...encodeWikiSynthesisSources(sources, reads), requestFacets: []
-    }, { structuredOutputMode: 'native' })
-    const delivered = synthesisReadsFromRequest(chat.mock.calls[0]![0])
-    expect(delivered).toHaveLength(12)
-    expect(delivered.map(row => row.readText)).toEqual(bodies)
-    expect(synthesisSourcesFromRequest(chat.mock.calls[0]![0])).toHaveLength(60)
-    expect(chat).toHaveBeenCalledTimes(1)
-    expect(Buffer.byteLength(JSON.stringify(chat.mock.calls[0]![0]), 'utf8') + 2_500 + 8_192).toBeLessThan(128_000)
-  })
-
-  it.each([100_000, 128_000])('fits full long paragraphs in the unchanged %i-byte typed consumer budget without duplicating selected bodies', async budget => {
-    const sources: WikiSynthesisSource[] = []
-    const reads: WikiSynthesisRead[] = []
-    const bodies: string[] = []
-    for (let index = 0; index < 12; index++) {
-      const text = `Record ${index} is illustrative and untested. ` + 'Safely chill below 5 °C for at least two hours before service. '.repeat(72)
-      const authored = `# Record ${index} 🥣\r\n\r\n${text}\r\n\r\nUnrequested contact: keeper${index}@example.test.\r\n`
-      bodies.push(authored)
-      for (const evidenceId of [`page:paragraph:${index}:revision:7`, `page:paragraph:${index}:revision:7:section:1`]) {
-        sources.push({ ...root, evidenceId, unitId: `paragraph:${index}:assertion:0`, text, literalStatement: text })
-        reads.push({ ...read, evidenceId, readId: `physical:paragraph:${index}`, source: authored })
-      }
-    }
-    const encoded = encodeWikiSynthesisSources(sources, reads)
-    const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex
-    expect(Object.keys(index.units)).toHaveLength(12)
-    for (const unit of Object.values(index.units)) {
-      expect(unit.preview).toBe(true)
-      expect(unit.text.length).toBeLessThanOrEqual(256)
-      expect(unit.rawSpans).toHaveLength(1)
-      expect(Object.keys(unit.aliases ?? {})).toHaveLength(1)
-    }
+    const encoded = encodeWikiSynthesisSources(sources, reads);
+    expect(Object.keys((JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex).reads)).toHaveLength(12);
+    expect(Buffer.byteLength(encoded.sourceReferences)).toBeLessThan(3_000);
     const chat = vi.fn(async (request: Readonly<AxChatRequest>) => {
-      expect(Buffer.byteLength(JSON.stringify(request), 'utf8') + 2_500 + 8_192).toBeLessThan(budget)
-      return { results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [], recommendations: '' }), finishReason: 'stop' as const }] }
-    })
-    const service = new AxMockAIService<string>({
-      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat
-    })
-    await createWikiSynthesisProgram(sources).forward(service, { ...input, ...encoded, requestFacets: [] })
-    const received = chat.mock.calls[0]![0]
-    expect(synthesisReadsFromRequest(received).map(row => row.readText)).toEqual(bodies)
-    expect(synthesisSourcesFromRequest(received).map(row => row.sourceRef).sort()).toEqual(sources.map(wikiSynthesisSourceRef).sort())
-    expect(chat).toHaveBeenCalledTimes(1)
-  })
-
-  it.each([100_000, 128_000])('keeps all 900 same-native assertion refs selectable within the unchanged %i-byte typed consumer budget', async budget => {
-    const text = 'Warehouse closes at 18:30 on Fridays.'
-    const authored = `${text} `.repeat(900) + '\r\nUnrequested condition: illustrative only.\r\n'
-    const sources = Array.from({ length: 900 }, (_, assertion) => ({
-      ...root, unitId: `paragraph:warehouse:assertion:${assertion}`, context: 'Illustrative only', text,
-      literalStatement: `Illustrative only: ${text}`, packet: '{"nativeUnit":"paragraph:warehouse","closedContext":"Illustrative only"}',
-      sourceSpans: [{ start: 0, end: authored.length }]
-    }))
-    const reads = [{ ...read, source: authored }]
-    const encoded = encodeWikiSynthesisSources(sources, reads)
-    const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex
-    const [entry] = Object.entries(index.units)
-    expect(Object.keys(index.units)).toHaveLength(1)
-    expect(entry![1].text).toBe(text)
-    expect(entry![1].preview).toBeUndefined()
-    expect([entry![0], ...Object.values(entry![1].aliases ?? {}).flatMap(refs => refs.split(' '))].sort()).toEqual(sources.map(wikiSynthesisSourceRef).sort())
-    expect(Object.keys(entry![1].aliases ?? {})).toEqual([String(entry![1].scope)])
-    expect(entry![1].aliases![entry![1].scope]!.split(' ')).toHaveLength(899)
-    const selected = sources[899]!
-    const claim = { evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, unitId: selected.unitId, statement: selected.literalStatement }
-    const chat = vi.fn(async (request: Readonly<AxChatRequest>) => {
-      expect(Buffer.byteLength(JSON.stringify(request), 'utf8') + 2_500 + 8_192).toBeLessThan(budget)
-      return { results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [claim], unresolvedFacets: [] }))), finishReason: 'stop' as const }] }
-    })
-    const service = new AxMockAIService<string>({
-      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat
-    })
-    const accepted = await createWikiSynthesisProgram(sources).forward(service, { ...input, ...encoded, requestFacets: [] })
-    expect(accepted.claims).toEqual([{ ...claim, statement: selected.literalStatement }])
-    expect(synthesisReadsFromRequest(chat.mock.calls[0]![0])[0]!.readText).toBe(authored)
-    expect(synthesisSourcesFromRequest(chat.mock.calls[0]![0])).toHaveLength(900)
-    const invented = { ...selected, unitId: 'paragraph:warehouse:assertion:900' }
-    expect(createWikiSynthesisStreamGuard(sources)(JSON.stringify(encodeWikiSynthesisAnswer(answer({
-      claims: [{ ...claim, unitId: invented.unitId }]
-    }))))).toContain('complete admitted source unit')
-  })
-
-  it('shares only identical closed same-native projections, keeping table, owner, time and polarity distinctions', () => {
-    const original = { ...root, unitId: 'paragraph:shared:assertion:0' }
-    const duplicate = { ...original, unitId: 'paragraph:shared:assertion:1' }
-    const distinct = [
-      { ...original, unitId: 'paragraph:unrelated:assertion:0' },
-      { ...original, unitId: 'table-row:record-a:assertion:0', kind: 'table-row' },
-      { ...original, unitId: 'table-row:record-b:assertion:0', kind: 'table-row' },
-      { ...original, unitId: 'paragraph:shared:assertion:2', context: 'Internal drafts only' },
-      { ...original, unitId: 'paragraph:shared:assertion:3', literalStatement: 'Internal drafts only. Estimated time: 20 minutes.' },
-      { ...original, unitId: 'paragraph:shared:assertion:4', packet: '{"closedOwner":"other"}' },
-      { ...original, unitId: 'paragraph:shared:assertion:5', text: 'Estimated time: 30 minutes.' },
-      { ...original, unitId: 'paragraph:shared:assertion:6', text: 'Estimated time is not 20 minutes.' },
-      { ...original, evidenceId: 'page:other:revision:7' }
-    ]
-    const sources = [original, duplicate, ...distinct]
-    const reads = [read, { ...read, evidenceId: 'page:other:revision:7', readId: 'physical:other:7' }]
-    const index = JSON.parse(encodeWikiSynthesisSources(sources, reads).sourceReferences) as WikiSynthesisReferenceIndex
-    expect(Object.keys(index.units)).toHaveLength(sources.length - 1)
-    expect(index.units[wikiSynthesisSourceRef(original)]!.aliases).toEqual({ [index.units[wikiSynthesisSourceRef(original)]!.scope]: wikiSynthesisSourceRef(duplicate) })
-    for (const separate of distinct) {
-      expect(index.units[wikiSynthesisSourceRef(separate)]!.text).toBe(separate.text)
-      expect(index.units[wikiSynthesisSourceRef(separate)]!.aliases).toBeUndefined()
-    }
-  })
-
-  it('previews medium selections through original native spans without clipping authored reads or Unicode', () => {
-    const text = 'Role: ' + 'a'.repeat(121) + '🥣 e\u0301 & safely chilled. '.repeat(12)
-    const raw = `  <p>${text.replaceAll('&', '&amp;')}</p>\r\nUnrequested tail: exact.\r\n`
-    const spans = [{ start: 2, end: raw.indexOf('</p>') + 4 }]
-    const selected = { ...root, text, literalStatement: text, sourceSpans: spans }
-    const delivered = request([selected], [{ ...read, source: raw, representation: 'html' }])
-    expect(synthesisSourcesFromRequest(delivered)[0]!.sourceRef).toBe(wikiSynthesisSourceRef(selected))
-    expect(synthesisSourcesFromRequest(delivered)[0]!.readText).toBe(raw)
-    const unit = (JSON.parse(encodeWikiSynthesisSources([selected], [{ ...read, source: raw, representation: 'html' }]).sourceReferences) as WikiSynthesisReferenceIndex).units[wikiSynthesisSourceRef(selected)]!
-    expect(unit.preview).toBe(true)
-    expect(text.startsWith(unit.text)).toBe(true)
-    expect(unit.text).not.toMatch(/[\uD800-\uDBFF]$/u)
-    expect(unit.rawSpans).toEqual(spans)
-    const deliveredRaw = synthesisReadsFromRequest(delivered)[0]!.readText
-    expect(deliveredRaw).toBe(raw)
-    expect(deliveredRaw.slice(spans[0]!.start, spans[0]!.end)).toBe(raw.slice(2, raw.indexOf('</p>') + 4))
-    expect(selected.text).toBe(text)
-    expect(selected.literalStatement).toBe(text)
-    const exact = { ...root, text, literalStatement: text }
-    const exactIndex = JSON.parse(encodeWikiSynthesisSources([exact], [{ ...read, source: text }]).sourceReferences) as WikiSynthesisReferenceIndex
-    expect(exactIndex.units[wikiSynthesisSourceRef(exact)]).toMatchObject({ preview: true, rawSpans: [{ start: 0, end: text.length }] })
-  })
-
-  it('keeps medium selections inline when original spans are unavailable or unsafe', () => {
-    const text = 'a'.repeat(127) + '🥣 e\u0301 & safely chilled. '.repeat(12)
-    const html = `<p>${text.replaceAll('&', '&amp;')}</p>`
-    const selected = { ...root, text, literalStatement: text }
-    const cases = [
-      { selected, raw: html },
-      { selected, raw: `${text}\n${text}` },
-      ...[[], [{ start: 0, end: text.length + 1 }], [{ start: 0, end: 128 }]]
-        .map(sourceSpans => ({ selected: { ...selected, sourceSpans }, raw: text }))
-    ]
-    for (const entry of cases) {
-      const reads = [{ ...read, source: entry.raw }]
-      const index = JSON.parse(encodeWikiSynthesisSources([entry.selected], reads).sourceReferences) as WikiSynthesisReferenceIndex
-      const unit = index.units[wikiSynthesisSourceRef(entry.selected)]!
-      expect(unit.text).toBe(text)
-      expect(unit.preview).toBeUndefined()
-      expect(unit.rawSpans).toBeUndefined()
-      expect(synthesisReadsFromRequest(request([entry.selected], reads))[0]!.readText).toBe(entry.raw)
-    }
-  })
-
-  it('uses declared original native spans for normalized long text and never splits Unicode previews or reconstructs raw content', async () => {
-    const text = 'a'.repeat(255) + '🥣 e\u0301 & safely chilled. '.repeat(80)
-    const raw = `  <p>${text.replaceAll('&', '&amp;')}</p>\r\nUnrequested tail: exact.\r\n`
-    const spans = [{ start: 2, end: raw.indexOf('</p>') + 4 }]
-    const selected = { ...root, text, literalStatement: text, sourceSpans: spans }
-    const encoded = encodeWikiSynthesisSources([selected], [{ ...read, source: raw, representation: 'html' }])
-    const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex
-    const unit = index.units[wikiSynthesisSourceRef(selected)]!
-    expect(unit).toMatchObject({ preview: true, text: 'a'.repeat(255), rawSpans: spans })
-    expect(encoded.sourceText).toContain(`\n${raw}\nEND SOURCE READ d0`)
-    expect(synthesisReadsFromRequest(request([selected], [{ ...read, source: raw, representation: 'html' }]))[0]!.readText).toBe(raw)
-    expect(selected.text).toBe(text)
-    expect(selected.literalStatement).toBe(text)
-    const { sourceSpans: _spans, ...undeclared } = selected
-    expect(() => encodeWikiSynthesisSources([undeclared], [{ ...read, source: raw }])).toThrow()
-    const repeated = `${text}\n${text}`
-    expect(() => encodeWikiSynthesisSources([undeclared], [{ ...read, source: repeated }])).toThrow()
-    const explicit = JSON.parse(encodeWikiSynthesisSources([{ ...undeclared, sourceSpans: [{ start: 0, end: text.length }] }], [{ ...read, source: repeated }]).sourceReferences) as WikiSynthesisReferenceIndex
-    expect(explicit.units[wikiSynthesisSourceRef(undeclared)]!.rawSpans).toEqual([{ start: 0, end: text.length }])
-    for (const invalidSpans of [[], [{ start: -1, end: 2 }], [{ start: 0, end: raw.length + 1 }], [{ start: 0, end: 261 }]]) {
-      expect(() => encodeWikiSynthesisSources([{ ...selected, sourceSpans: invalidSpans }], [{ ...read, source: raw }])).toThrow()
-    }
-    const truncated = JSON.parse(encodeWikiSynthesisSources([undeclared], [{ ...read, source: text, complete: false }]).sourceReferences) as WikiSynthesisReferenceIndex
-    expect(truncated.units[wikiSynthesisSourceRef(undeclared)]!.text).toBe(text)
-    expect(truncated.units[wikiSynthesisSourceRef(undeclared)]!.preview).toBeUndefined()
-    const title = { ...undeclared, kind: 'page-title' }
-    const titleIndex = JSON.parse(encodeWikiSynthesisSources([title], [read]).sourceReferences) as WikiSynthesisReferenceIndex
-    expect(titleIndex.units[wikiSynthesisSourceRef(title)]).toMatchObject({ text, title: true })
-    expect(titleIndex.units[wikiSynthesisSourceRef(title)]!.rawSpans).toBeUndefined()
-    const claim = { evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision, unitId: selected.unitId, statement: text }
-    const validateClaim = vi.fn((canonical: WikiSynthesisAnswer['claims'][number]) => canonical.statement === text)
-    const service = new AxMockAIService<string>({
-      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
-      chatResponse: { results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [claim], unresolvedFacets: [] }))), finishReason: 'stop' }] }
-    })
-    const accepted = await createWikiSynthesisProgram([selected], { validateClaim }).forward(service, { ...input, ...encoded, requestFacets: [] })
-    expect(accepted.claims).toEqual([{ ...claim, statement: text }])
-    expect(validateClaim).toHaveBeenCalledTimes(1)
-  })
+      expect(Buffer.byteLength(JSON.stringify(request), 'utf8') + 2_500 + 8_192).toBeLessThan(budget);
+      return { results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [] }), finishReason: 'stop' as const }] };
+    });
+    const service = new AxMockAIService<string>({ features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat });
+    await createWikiSynthesisProgram(sources).forward(service, { ...input, ...encoded, requestFacets: [] });
+    expect(synthesisReadsFromRequest(chat.mock.calls[0]![0]).map(row => row.readText)).toEqual(bodies);
+    expect(synthesisSourcesFromRequest(chat.mock.calls[0]![0]).map(row => row.text)).toEqual(bodies);
+    expect(chat).toHaveBeenCalledTimes(1);
+  });
 })
 
 describe('Wiki synthesis offline correction admission', () => {
@@ -1396,8 +864,8 @@ describe('Wiki synthesis offline correction admission', () => {
   const fixtures = parseWikiSynthesisFixtures([{
     id: 'offline-correction', family: 'offline-correction', split: 'selection',
     provenance: { kind: 'synthetic', adjudication: 'Exact synthetic statement and explicitly unanswered approver facet.' },
-    userRequest: input.userRequest, sourceUnits: [source], sourceReads: [{ ...fixtureReads([source])[0]!, source: correctionRead }], requestFacets: ['who approves?'],
-    observations: [], repairFeedback: '', details: [], expectedUnresolvedFacets: [0], variants: []
+    userRequest: input.userRequest, sources: [{ ...source, text: correctionRead }], sourceReads: [{ ...fixtureReads([source])[0]!, source: correctionRead }], requestFacets: ['who approves?'],
+    observations: [], repairFeedback: '', details: [], expectedUnresolvedFacets: [0], variants: [{ id: 'reference', category: 'adjudicated explicit assertion', expected: 'accept', answer: answer({ unresolvedFacets: [0] }) }]
   }], 'selection')
   const acceptedReceipt: AxChatResponse = { results: [{ index: 0, content: JSON.stringify(encodeWikiSynthesisAnswer(answer({ unresolvedFacets: [0] }))), finishReason: 'stop' }] }
 
@@ -1456,7 +924,7 @@ describe('Wiki synthesis offline correction admission', () => {
     })
     const train = parseWikiSynthesisFixtures(['offline-private-train-a', 'offline-private-train-b'].map(evidenceId => ({
       ...fixtures[0]!, id: evidenceId, family: evidenceId, split: 'train',
-      sourceUnits: [{ ...source, evidenceId }], sourceReads: fixtureReads([{ ...source, evidenceId }]),
+      sources: [{ ...source, evidenceId }], sourceReads: fixtureReads([{ ...source, evidenceId }]),
       variants: [{ id: 'reference', category: 'reference', expected: 'accept', answer: answer({ claims: [{ ...answer().claims[0]!, evidenceId }], unresolvedFacets: [0] }) }]
     })), 'train')
     const selection = parseWikiSynthesisFixtures([{ ...fixtures[0]!, variants: [{ id: 'reference', category: 'reference', expected: 'accept', answer: answer({ unresolvedFacets: [0] }) }] }], 'selection')
@@ -1504,7 +972,7 @@ describe('Wiki synthesis incremental stable-invariant guard', () => {
     const guard = createWikiSynthesisStreamGuard([source])
     for (const character of json) expect(guard(character)).toBeUndefined()
     for (const claims of [
-      [{ ...answer().claims[0]!, statement: `${statement}\n\nInvented explanation.` }],
+      [{ ...answer().claims[0]!, statement: `${statement}\n\n<script>Invented explanation.</script>` }],
       [{ ...answer().claims[0]!, statement, sourceRevision: 'stale' }]
     ]) {
       const rejected = createWikiSynthesisStreamGuard([source])
@@ -1520,7 +988,7 @@ describe('Wiki synthesis incremental stable-invariant guard', () => {
       { ...answer().claims[0]!, unitId: 'unknown-unit' },
       { ...answer().claims[0]!, sourceRevision: 'stale-revision' },
       { ...answer().claims[0]!, statement: 'A forged claim [[cite:page:other]].' },
-      { ...answer().claims[0]!, statement: 'First paragraph.\n\nInvented second paragraph.' }
+      { ...answer().claims[0]!, statement: 'First paragraph.\n\n# Injected heading' }
     ]) {
       const guard = createWikiSynthesisStreamGuard([source])
       const serialized = JSON.stringify(encodeWikiSynthesisAnswer(answer({ claims: [claim] })).claims[0])

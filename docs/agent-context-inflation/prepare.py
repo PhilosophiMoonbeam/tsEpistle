@@ -13,7 +13,7 @@ source=repo/'server/agents/providers/engine.ts';text=source.read_text()
 turn_start=text.index('  async #synthesisTurn(')
 turn_end=text.find('\n  async #',turn_start+1)
 if turn_end<0:turn_end=len(text)
-start=text.index('    const units = new Map<string, CitationSourceUnit>()',turn_start,turn_end)
+start=text.index('    const sourceEvidence = new Map<string, CitationEvidence>()',turn_start,turn_end)
 end=text.index('    let rejection: string | undefined',start,turn_end)
 block=text[start:end]
 rewritten=re.sub(r"(from\s+['\"])(\.[^'\"]+)(['\"])",lambda m:m[1]+str((source.parent/m[2]).resolve())+m[3],text)

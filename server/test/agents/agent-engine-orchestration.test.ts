@@ -211,7 +211,7 @@ describe('Ax orchestration stages', () => {
         if (synthesisInputFromRequest(input) !== undefined) {
           synthesisRequests.push(input)
           const fact = followup ? followupFact : firstFact
-          const source = synthesisSourcesFromRequest(input).find(unit => unit.text === fact)
+          const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(fact))
           return { results: [{ index: 0, content: synthesisFixtureAnswer(input, {
             claims: source === undefined ? [] : [{ ...source, statement: fact }],
             unresolvedFacets: source === undefined ? [0] : []
@@ -1243,7 +1243,9 @@ describe('Ax orchestration stages', () => {
           }) }]
         } satisfies AxChatResponse
       })
-      const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, {
+        decisionProviders: delivery === 'missing' ? rejectFixtureStatements([fact]) : fixtureDecisionProviders
+      }).execute(
         {
           ...baseRequest(new AbortController().signal),
           messages: [{ role: 'user', content: `Contact office lookup: what does the contact record establish about ${fact}?` }],
@@ -1284,8 +1286,8 @@ describe('Ax orchestration stages', () => {
     }
   })
 
-  it.each(['own unit', 'neighboring unit'] as const)('delivers complete child reads without widening selected original-unit authority: %s', async ownership => {
-    const citation = 'page:42:revision:1:section:1'
+  it('delivers adjacent paragraph assertions from the complete child read under canonical physical-read authority', async () => {
+    const citation = 'page:42:revision:1'
     const visibleFact = 'Maya Quinn handles northern orders.'
     const unseenFact = 'Noah Bell handles southern orders.'
     const content = `# Contacts\n\n${visibleFact}\n\n${unseenFact} ${'Operational background remains unchanged. '.repeat(900)}`
@@ -1294,14 +1296,14 @@ describe('Ax orchestration stages', () => {
     let turn = 0
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       if (offersCollectionFinish(input)) return finishCollectionResponse
-      const statement = ++turn === 1 ? unseenFact : visibleFact
+      const statement = ++turn === 1 ? `${visibleFact} ${unseenFact}` : visibleFact
       const sources = synthesisSourcesFromRequest(input)
       expect(synthesisReadsFromRequest(input)).toEqual([expect.objectContaining({ readText: content, complete: true })])
-      const selectedFact = ownership === 'own unit' && turn === 1 ? unseenFact : visibleFact
-      const source = sources.find(unit => unit.evidenceId === citation && unit.text.includes(selectedFact))
+      const source = sources.find(read => read.evidenceId === citation && read.text.includes(unseenFact))
+      if (source === undefined) throw new Error('The complete canonical child read must remain selectable')
       return {
         results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-          claims: [{ evidenceId: citation, sourceRevision: '1', sourceRef: source?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement }],
+          claims: [{ ...source, statement }],
           unresolvedFacets: turn > 1 ? [0] : []
         }) }]
       } satisfies AxChatResponse
@@ -1330,7 +1332,7 @@ describe('Ax orchestration stages', () => {
                 sourceRevision: '1',
                 content,
                 citation: { evidenceId: 'page:42:revision:1', label: 'Contacts', href: '/en/contacts' },
-                citationSections: [{ evidenceId: citation, label: 'Contacts', href: '/en/contacts#contacts' }]
+                citationSections: [{ evidenceId: `${citation}:section:1`, label: 'Contacts', href: '/en/contacts#contacts' }]
               }
             }
           ]
@@ -1339,18 +1341,11 @@ describe('Ax orchestration stages', () => {
       { text, event }
     )
     const published = text.mock.calls.map(([delta]) => delta).join('')
-    if (ownership === 'own unit') {
-      // Previously filtered out by a per-unit transfer cap; genuine complete
-      // new delivery now makes this own bound assertion available.
-      expect(visibleWikiText(published)).toContain(unseenFact)
-      expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: true })
-      expect(turn).toBe(1)
-    } else {
-      expect(visibleWikiText(published)).not.toContain(unseenFact)
-      expect(visibleWikiText(published)).toContain(visibleFact)
-      expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
-      expect(turn).toBe(2)
-    }
+    expect(visibleWikiText(published)).toContain(unseenFact)
+    expect(visibleWikiText(published)).toContain(visibleFact)
+    expect(visibleWikiText(published)).not.toContain('Operational background remains unchanged.')
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: true })
+    expect(turn).toBe(1)
     expect(published).toContain(`[[cite:${citation}]]`)
     expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
   })
@@ -2823,13 +2818,9 @@ describe('bounded root publication accounting', () => {
             final
               ? {
                   index: 0,
-                  content: synthesisFixtureAnswer(
-                    input,
-                    {
-                      claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }]
-                    },
-                    { bindings: { 'page:1:revision:rev-1': { text: 'Alpha requires review.' } } }
-                  )
+                  content: synthesisFixtureAnswer(input, {
+                    claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }]
+                  })
                 }
               : { index: 0, functionCalls }
           ],
@@ -2900,7 +2891,7 @@ describe('bounded root publication accounting', () => {
         results: [final
           ? { index: 0, content: synthesisFixtureAnswer(input, {
               claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }]
-            }, { bindings: { 'page:1:revision:rev-1': { text: 'Alpha requires review.' } } }) }
+            }) }
           : { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
       } satisfies AxChatResponse
@@ -2990,6 +2981,22 @@ describe('bounded root publication accounting', () => {
       const budget = new PublicationBudgetLedger(120_000)
       const accepted = { claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }] } satisfies SynthesisFixtureAnswer
       const rejected = { claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha does not require review.' }] } satisfies SynthesisFixtureAnswer
+      const nativeUsage = { inputTokens: 2, outputTokens: 1, totalTokens: 3, totalTokensSource: 'reported' as const }
+      const nativeCostMicros = 11
+      const nativeRuntime = await fixtureDecisionProviders.selectRuntime()
+      nativeRuntime.config.pricing = { ...nativeRuntime.config.pricing!, perRequest: nativeCostMicros / 1_000_000 }
+      const semanticVerdicts = rejectFixtureStatements(['Alpha does not require review.'])
+      const decisionProviders = {
+        selectRuntime: async () => nativeRuntime,
+        decideBatch: async (...args: Parameters<typeof semanticVerdicts.decideBatch>) => {
+          const decision = await semanticVerdicts.decideBatch(...args)
+          return {
+            ...decision, usage: nativeUsage,
+            estimatedCost: { ...decision.estimatedCost!, amount: nativeCostMicros / 1_000_000 },
+            estimatedCostMicros: nativeCostMicros
+          }
+        }
+      }
       let attempts = 0
       const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
         expect(input.modelConfig?.maxTokens).toBeLessThanOrEqual(512)
@@ -3036,7 +3043,7 @@ describe('bounded root publication accounting', () => {
       const text = vi.fn(async () => {})
       const event = vi.fn(async (_type: string, _data: unknown) => {})
       const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
-        decisionProviders: rejectFixtureStatements(['Alpha does not require review.'])
+        decisionProviders
       }).execute(
         {
           ...baseRequest(new AbortController().signal),
@@ -3051,12 +3058,15 @@ describe('bounded root publication accounting', () => {
       expect(invoke).toHaveBeenCalledOnce()
       expect(budget.tools).toBe(1)
       expect(budget.dispatched).toHaveLength(expectedTurns - 1)
-      const semanticChecks = outcome === 'repaired' ? 1 : outcome === 'exhausted' ? 2 : 0
+      const semanticChecks = outcome === 'length' ? 0 : outcome === 'first-accepted' ? 1 : 2
       expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'purpose' in data && data.purpose === 'verification')).toHaveLength(semanticChecks)
       expect(budget.reconciled).toHaveLength(expectedTurns + semanticChecks)
-      expect(budget.consumedTokens).toBe(expectedTurns * 5)
-      expect(budget.consumedCostMicros).toBe(expectedTurns * 7)
+      expect(budget.consumedTokens).toBe(expectedTurns * 5 + semanticChecks * nativeUsage.totalTokens)
+      expect(budget.consumedCostMicros).toBe(expectedTurns * 7 + semanticChecks * nativeCostMicros)
+      expect(result.inputTokens).toBe(expectedTurns * 3 + semanticChecks * nativeUsage.inputTokens)
+      expect(result.outputTokens).toBe(expectedTurns * 2 + semanticChecks * nativeUsage.outputTokens)
       expect(result.totalTokens).toBe(budget.consumedTokens)
+      expect(result.costMicros).toBe(budget.consumedCostMicros)
       expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
       expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
       expect(budget.closedUnused).toHaveLength(1)

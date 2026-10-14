@@ -21,6 +21,7 @@ export interface SourceContext {
   readonly kind: 'heading' | 'summary' | 'list-item' | 'table-header'
   readonly sourceSpans: readonly SourceSpan[]
   readonly normalizedLabel: string
+  readonly visibleLabel: string
   readonly parentId: string | null
   readonly complete: boolean
 }
@@ -46,6 +47,8 @@ export interface SourceUnit {
   readonly kind: 'paragraph' | 'list' | 'list-item' | 'table' | 'table-row' | 'heading' | 'summary' | 'code' | 'opaque'
   readonly sourceSpans: readonly SourceSpan[]
   readonly normalizedText: string
+  /** Exact parser-admitted text; native quotation containers are not projections. */
+  readonly visibleText: string | null
   readonly contextIds: readonly string[]
   readonly recordId: string | null
   readonly structuralLabels: readonly string[]
@@ -63,6 +66,7 @@ export interface SourceSection {
 }
 export interface ParsedSourceDocument {
   readonly source: string
+  readonly requiresVisibilityProjection: boolean
   readonly units: readonly SourceUnit[]
   readonly contexts: readonly SourceContext[]
   readonly records: readonly SourceRecord[]
@@ -374,9 +378,10 @@ export const parseSourceDocument = (
   markdown.block.ruler.disable(['html_block'])
 
   const parseInline = (text: string): Token[] => markdown.parseInline(text, environment)[0]?.children ?? []
+  let requiresVisibilityProjection = options.representation === 'okf'
   const htmlProjection = (raw: string): string => {
     const $ = load(raw, {}, false)
-    $('script,style,template').remove()
+    $('script,style,template,[hidden]').remove()
     $('br').replaceWith('\n')
     return $.root().text()
   }
@@ -392,23 +397,41 @@ export const parseSourceDocument = (
         const child: Token[] = []
         index += 1
         for (; index < tokens.length && tokens[index]!.type !== 'link_close'; index += 1) child.push(tokens[index]!)
-        const label = whitespace(projection(child).text)
+        const visibleLabel = projection(child).text
+        const label = whitespace(visibleLabel)
         const destination = String(token.attrGet('href') ?? '')
         const kind = token.info === 'auto' || token.markup === 'linkify' ? 'autolink' : 'link'
         // References are syntactic dependencies, never factual vocabulary.
         const key = (token.meta as { sourceReference?: string } | null)?.sourceReference
         const dependencies = key ? (references.get(key) ?? []) : []
         links.push({ label, destination, kind, dependencySpans: dependencies })
-        if (kind !== 'autolink') text += label
-        else if (/^mailto:/iu.test(destination)) text += label.replace(/^mailto:/iu, '')
+        if (kind !== 'autolink') text += visibleLabel
+        else if (/^mailto:/iu.test(destination)) text += visibleLabel.replace(/^mailto:/iu, '')
       } else if (token.type === 'code_inline') text += `${token.markup}${token.content}${token.markup}`
-      else if (token.type === 'text') text += token.content.replace(presentationAttributes, '')
+      else if (token.type === 'text') {
+        const visibleText = token.content.replace(presentationAttributes, '')
+        if (visibleText !== token.content) requiresVisibilityProjection = true
+        text += visibleText
+      }
       else if (token.type === 'softbreak' || token.type === 'hardbreak') text += '\n'
       else if (token.type === 'image') text += token.content
       else if (token.type === 'html_inline') {
-        const opening = /^<(script|style|template)\b/iu.exec(token.content)
-        if (opening) {
-          while (index + 1 < tokens.length && !new RegExp(`^<\\/${opening[1]}\\s*>`, 'iu').test(tokens[index]!.content)) index += 1
+        requiresVisibilityProjection = true
+        const opening = /^<([a-z][\w:-]*)\b/iu.exec(token.content)
+        const name = opening?.[1]?.toLowerCase()
+        const suppressed = name !== undefined && (
+          ['script', 'style', 'template'].includes(name) ||
+          /hidden/iu.test(token.content) && load(token.content, {}, false).root().children().first().attr('hidden') !== undefined)
+        if (suppressed) {
+          let depth = 1
+          const sameTag = new RegExp(`^<(\\/?)${name}(?:\\s|>)`, 'iu')
+          while (index + 1 < tokens.length && depth > 0) {
+            index += 1
+            const child = tokens[index]!
+            if (child.type !== 'html_inline') continue
+            const tag = sameTag.exec(child.content)
+            if (tag !== null) depth += tag[1] ? -1 : 1
+          }
           continue
         }
         if (/^<(?:pre|code)\b/iu.test(token.content)) {
@@ -524,6 +547,10 @@ export const parseSourceDocument = (
       }
       for (const node of children) {
         const location = node.sourceCodeLocation
+        if (node.attribs?.hidden !== undefined) {
+          flush()
+          continue
+        }
         const inline = node.type === 'text' || ['a', 'b', 'strong', 'em', 'i', 'span', 'br', 's', 'u'].includes(node.name ?? '')
         if (inline && location && (node.type === 'text' || node.name === 'br' || location.endTag)) {
           if (run && run.end !== location.startOffset) flush()
@@ -645,6 +672,7 @@ export const parseSourceDocument = (
       id: id('context', block.span),
       kind,
       normalizedLabel: whitespace(label),
+      visibleLabel: label,
       sourceSpans,
       parentId: parent,
       complete: block.complete && sourceSpans.every(bounded)
@@ -673,6 +701,7 @@ export const parseSourceDocument = (
       kind,
       sourceSpans: [block.span],
       normalizedText,
+      visibleText: kind === 'table-row' ? text ?? value.text : value.text,
       contextIds: activeContextIds,
       recordId: owner?.id ?? null,
       structuralLabels: [...new Set([localLabel, ...declarationLabels, ...localLinkLabels].filter(Boolean))],
@@ -791,8 +820,9 @@ export const parseSourceDocument = (
           for (const row of rows) unit({ ...row, text: '', inline: undefined }, 'opaque')
           continue
         }
-        const labels = header.children.map(cell => whitespace(visible(cell)))
-        const headerContext = context('table-header', labels.join(' | '), {
+        const visibleLabels = header.children.map(visible)
+        const labels = visibleLabels.map(whitespace)
+        const headerContext = context('table-header', visibleLabels.join(' | '), {
           ...header,
           span: { start: header.span.start, end: rows[1]?.span.start ?? block.span.end }
         })
@@ -801,7 +831,8 @@ export const parseSourceDocument = (
         const candidate = { block, rows, contextIds: contextIds().filter(key => key !== headerContext.id), start: units.length, end: 0 }
         tables.push(candidate)
         for (const row of rows.slice(1)) {
-          const values = row.children.map(cell => whitespace(visible(cell)))
+          const visibleValues = row.children.map(visible)
+          const values = visibleValues.map(whitespace)
           const own = record(row, 'table-row')
           const valid =
             labels.length === values.length &&
@@ -813,7 +844,7 @@ export const parseSourceDocument = (
           if (valid) {
             for (let column = 0; column < labels.length; column += 1) {
               const cell = row.children[column]!
-              const member = unit(cell, 'table-row', own, `${labels[column]}: ${values[column]}`)
+              const member = unit(cell, 'table-row', own, `${visibleLabels[column]}: ${visibleValues[column]}`)
               field(own, { label: labels[column]!, value: values[column]! }, member)
             }
           } else unit({ ...row, text: '', inline: undefined }, 'opaque', own)
@@ -954,6 +985,7 @@ export const parseSourceDocument = (
       kind: 'list',
       sourceSpans: [block.span],
       normalizedText: source.slice(block.span.start, block.span.end),
+      visibleText: null,
       contextIds: parentContextIds,
       recordId: null,
       structuralLabels: [...labels],
@@ -994,6 +1026,7 @@ export const parseSourceDocument = (
       kind: 'table',
       sourceSpans: [block.span],
       normalizedText: source.slice(block.span.start, block.span.end),
+      visibleText: null,
       contextIds: parentContextIds,
       recordId: null,
       structuralLabels: [...new Set(links.filter(link => link.kind === 'link').map(link => link.label))],
@@ -1004,5 +1037,7 @@ export const parseSourceDocument = (
       if (block.span.start >= section.startOffset && block.span.end <= section.endOffset) section.unitIds.push(unitId)
     }
   }
-  return { source, units, contexts, records, sections: selectedSections }
+  return { source, units, contexts, records, sections: selectedSections,
+    requiresVisibilityProjection: requiresVisibilityProjection || htmlStarts.length > 0 ||
+      referenceDefinitionSpans.length > 0 || units.some(unit => !unit.complete || unit.kind === 'opaque') }
 }

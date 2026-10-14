@@ -109,7 +109,6 @@ import {
   createWikiSynthesisProgram,
   createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
-  renderWikiSynthesisAnswer,
   renderWikiSynthesisClaimStatement,
   type WikiSynthesisAnswer,
   type WikiSynthesisSource,
@@ -117,9 +116,9 @@ import {
   wikiSynthesisSourceRef
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
-import { assessWikiVerificationResults, buildWikiVerificationPlan, validateWikiVerificationSource } from './wiki-verification.ts'
+import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
 import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verification.ts'
-import { getLiteralSourceMembershipStatement, getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
+import { getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -864,96 +863,7 @@ const numericSegments = (value: string, projection = false): readonly string[] =
     .filter(tokens => tokens.some(token => /^\p{N}/u.test(token)))
     .map(tokens => tokens.join(' '))
 
-// Only complete scalar values in one original non-table record can relax
-// numeric prose ordering. This is protected-literal admission, not entailment:
-// field ownership and the full source-stated dimension remain mandatory.
-const scalarRecordNumericProseMatch = (claim: string, unit: CitationSourceUnit): boolean | null => {
-  const record = unit.closure.record
-  if (record === null || record.kind === 'table-row' || !record.complete) return null
-  const numericFields = record.fields.filter(field => /\p{N}/u.test(field.value))
-  if (numericFields.length === 0 || numericFields.some(field => !field.complete || /\p{N}/u.test(field.label))) return null
-  const escapeQuantityPattern = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-  const quantityPattern = (value: string): RegExp | null => {
-    const scalar = value.trim()
-    const prefixCurrency = scalar.match(/^([A-Z]{3})\s*(\d+(?:[.,]\d+)*)$/u)
-    const suffixCurrency = prefixCurrency === null ? scalar.match(/^(\d+(?:[.,]\d+)*)\s*([A-Z]{3})$/u) : null
-    let literal: string
-    if (prefixCurrency !== null || suffixCurrency !== null) {
-      const code = escapeQuantityPattern(prefixCurrency?.[1] ?? suffixCurrency![2]!)
-      const amount = escapeQuantityPattern(prefixCurrency?.[2] ?? suffixCurrency![1]!)
-      literal = `(?:${code}\\s*${amount}|${amount}\\s*${code})`
-    } else {
-      // Clocks retain their punctuation. Only source-stated human duration
-      // nouns inflect; every qualifier and dimension word stays attached.
-      const duration = scalar.match(/^(\d+(?:[.,]\d+)*)\s+((?:[\p{L}]+[\s-]+)*)(seconds?|minutes?|hours?|days?|weeks?|months?|years?)$/u)
-      if (duration !== null) {
-        const count = escapeQuantityPattern(duration[1]!)
-        const qualifiers = duration[2]!.trim().split(/[\s-]+/u).filter(Boolean).map(escapeQuantityPattern)
-        const dimension = escapeQuantityPattern(duration[3]!.replace(/s$/u, ''))
-        literal = [count, ...qualifiers, `${dimension}s?`].join('(?:\\s+|-)')
-      } else {
-        if (!/^\d+(?:[.,]\d+)*(?::\d+)*\s+[\p{L}][\p{L}\s-]*$/u.test(scalar)) return null
-        literal = escapeQuantityPattern(scalar)
-      }
-    }
-    return new RegExp(`(?<![\\p{L}\\p{N}.+\\-])${literal}(?![\\p{L}\\p{N}])(?![\\s-]+(?:(?:working|calendar|supported)[\\s-]+)?(?:days?|hours?|minutes?|seconds?|weeks?|months?|years?|KB|MB|GB)\\b)`, 'giu')
-  }
-  const labelCounts = new Map<string, number>()
-  const fields = numericFields.map(field => {
-    const labelTerms = normalizedTerms(field.label.replace(/\p{Pd}/gu, ' '), true)
-    for (const term of labelTerms) labelCounts.set(term, (labelCounts.get(term) ?? 0) + 1)
-    return { field, labelTerms, originalLabelTerms: normalizedTerms(field.label, true), pattern: quantityPattern(field.value) }
-  })
-  // Unsupported numeric shapes keep the pre-existing admission path; supported
-  // scalar shapes must not fall back to punctuation-losing lexical matching.
-  if (fields.some(candidate => candidate.pattern === null)) return null
-  const nonnumericLabels = record.fields.filter(field => !/\p{N}/u.test(field.value)).map(field => ({
-    terms: normalizedTerms(field.label.replace(/\p{Pd}/gu, ' '), true),
-    originalTerms: normalizedTerms(field.label, true)
-  }))
-  const parts = semanticMarkdownText(claim).split(/[,;|]|\s+\b(?:and|with|while)\b\s+|\n/iu)
-  return parts.every(part => {
-    const numbers = [...part.matchAll(/[-+]?\d+(?:[.,]\d+)*(?::\d+)*/gu)]
-    if (numbers.length === 0) return true
-    const terms = normalizedTerms(part.replace(/\p{Pd}/gu, ' '), true)
-    const originalTerms = normalizedTerms(part, true)
-    const distinguishingOwners = fields.filter(candidate =>
-      candidate.labelTerms.some(term => labelCounts.get(term) === 1 && terms.includes(term)))
-    const owners = distinguishingOwners.length > 0 ? distinguishingOwners :
-      fields.filter(candidate => candidate.originalLabelTerms.some(term => originalTerms.includes(term)))
-    // Explicit labels cannot borrow another field's quantity. Without a label,
-    // each numeric token needs exactly one complete quantity witness in this
-    // same original record; native semantic proof still owns its meaning.
-    if (owners.length > 1) return false
-    if (owners.length === 0 && nonnumericLabels.some(label =>
-      label.terms.some(term => terms.includes(term)) || label.originalTerms.some(term => originalTerms.includes(term))))
-      return false
-    const candidates = owners.length === 1 ? owners : fields
-    const quantities = candidates.map(candidate => [...part.matchAll(candidate.pattern!)])
-    return numbers.every(number => {
-      const start = number.index ?? 0
-      const witnesses = quantities.filter(matches => matches.some(quantity => {
-        const quantityStart = quantity.index ?? 0
-        return start >= quantityStart && start + number[0].length <= quantityStart + quantity[0].length
-      }))
-      return witnesses.length === 1
-    })
-  })
-}
 
-const recordNumericProseAssociationsMatch = (claim: string, unit: CitationSourceUnit): boolean => {
-  const record = unit.closure.record
-  if (record === null || record.fields.length === 0) return true
-  const scalar = scalarRecordNumericProseMatch(claim, unit)
-  if (scalar !== null) return scalar
-  return numericSegments(claim).every(part => {
-    const terms = normalizedTerms(part)
-    return record.fields.some(field =>
-      normalizedTerms(field.label, true).every(term => terms.includes(term)) &&
-      numericSegments(field.value, true).some(value => part.includes(value) || value.includes(part))
-    )
-  })
-}
 
 const copulaTerms: Readonly<Record<string, true>> = {
   is: true,
@@ -2053,10 +1963,6 @@ const sourceUnitPacket = (unit: CitationSourceUnit) => ({
   closure: unit.closure
 })
 
-const verificationSourceUnit = (evidenceId: string, sourceRevision: string, unit: CitationSourceUnit): WikiVerificationSource => ({
-  evidenceId, sourceRevision, unitId: unit.identity,
-  context: unit.context, text: unit.text, kind: unit.kind, complete: unit.complete, closure: unit.closure
-})
 
 const sameSourceUnits = (left: readonly CitationSourceUnit[], right: readonly CitationSourceUnit[]): boolean =>
   left.length === right.length &&
@@ -2812,344 +2718,7 @@ const assessClaimClauses = (
   })
 }
 
-const completeListOriginalRecords = (
-  list: CitationSourceUnit,
-  evidence: CitationEvidence
-): readonly CitationSourceUnit[] => {
-  const belongsToList = (span: SourceSpan): boolean =>
-    list.closure.unit.sourceSpans.some(owner => span.start >= owner.start && span.end <= owner.end)
-  const seenRecords = new Set<string>()
-  // Resolve original records by native containment, not by overlapping words or
-  // by taking the union of other selectable packets in the evidence scope.
-  return evidence.documentUnits.filter(candidate => {
-    const record = candidate.closure.record
-    if (!candidate.complete || record === null || !record.complete || record.kind === 'table-row' ||
-      !candidate.closure.units.every(owned => owned.sourceSpans.length > 0 && owned.sourceSpans.every(belongsToList)) ||
-      !record.fields.every(field => field.complete && field.sourceSpans.length > 0 && field.sourceSpans.every(belongsToList)))
-      return false
-    if (record.fields.length < 2) return true
-    if (seenRecords.has(record.id)) return false
-    seenRecords.add(record.id)
-    return true
-  })
-}
 
-const completeListSingleRecordProtectedAssociationsMatch = (
-  claim: string,
-  list: CitationSourceUnit,
-  records: readonly CitationSourceUnit[],
-  witnesses: readonly CitationSourceUnit[] = records
-): boolean => {
-  const values = records.flatMap(candidate => candidate.closure.record!.fields.map(field => lexicalTokens(field.value, true).map(normalizedToken)))
-  const containsValue = (tokens: readonly string[], value: readonly string[]): boolean =>
-    value.length > 0 && tokens.some((_, start) => value.every((token, offset) => tokens[start + offset] === token))
-  const contextIdentifiers = new Set(identifierTerms(list.context, true))
-  const valueIdentifiers = new Set(records.flatMap(candidate =>
-    candidate.closure.record!.fields.length === 0 ? candidate.identifiers :
-      candidate.closure.record!.fields.flatMap(field => identifierTerms(field.value, true))
-  ).filter(identifier => !contextIdentifiers.has(identifier)))
-  // Keep the protected statement connected, including omitted/pronominal
-  // owners. Separate sentence or field witnesses could reassign a sibling's
-  // address to the name stated elsewhere in the same claim.
-  const tokens = lexicalTokens(claim).map(normalizedToken)
-  const identifiers = tokens.filter(token => valueIdentifiers.has(token))
-  const addresses = claim.match(identityAddressPattern) ?? []
-  const links = renderedLinkSignatures(claim)
-  const literals = markdownInlineTokens(claim).filter(token => token.type === 'code_inline' || token.type === 'image')
-  const claimedValues = values.filter(value => containsValue(tokens, value))
-  if (identifiers.length === 0 && addresses.length === 0 && links.length === 0 && literals.length === 0 &&
-    numericSegments(claim).length === 0 && claimedValues.length === 0)
-    return witnesses.length > 0
-  return witnesses.some(original => {
-    const record = original.closure.record!
-    const text = record.fields.length >= 2
-      ? record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
-      : original.text
-    const textTerms = normalizedTerms(text, true)
-    const recordLabels = new Set(record.fields.flatMap(field => identifierTerms(field.label, true)))
-    const owned: CitationSourceUnit = {
-      ...original,
-      text,
-      textTerms: new Set(textTerms),
-      terms: new Set([...normalizedTerms(original.context, true), ...textTerms]),
-      identifiers: identifierTerms(text, true).filter(identifier => !recordLabels.has(identifier)),
-      qualifiers: exactQualifierTerms(text, true)
-    }
-    const ownedIdentifiers = new Set([...owned.identifiers, ...identifierTerms(owned.context, true)])
-    const ownedAddresses: readonly string[] = `${owned.context}\n${owned.text}`.match(identityAddressPattern) ?? []
-    const ownedValueTokens = lexicalTokens(text, true).map(normalizedToken)
-    const scalarNumericProse = !record.fields.some(field => {
-      const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-      return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim))
-    }) && scalarRecordNumericProseMatch(claim, original) === true
-    const assessment = assessSourceClause(claim, owned, claim, scalarNumericProse)
-    if (!assessment.integrity || !assessment.protectedConstraints ||
-      !identifiers.every(identifier => ownedIdentifiers.has(identifier)) ||
-      !addresses.every(address => ownedAddresses.includes(address)) ||
-      !claimedValues.every(value => containsValue(ownedValueTokens, value)))
-      return false
-    if (literals.length > 0) {
-      const sourceLiterals = original.closure.dependencies.flatMap(dependency => markdownInlineTokens(dependency.text))
-      if (!literals.every(token => sourceLiterals.some(source =>
-        source.type === token.type && source.content === token.content && source.attrGet('src') === token.attrGet('src')
-      ))) return false
-    }
-    const explicitFields = record.fields.length >= 2 && record.fields.some(field => {
-      const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-      return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim))
-    })
-    if (!explicitFields) {
-      if (record.fields.length === 0) return true
-      return recordNumericProseAssociationsMatch(claim, original)
-    }
-    const fields = assessRecordClause(claim, original, true)
-    return fields !== null && fields.length > 0 && fields.every(field => field.integrity && field.semanticConstraints === true)
-  })
-}
-
-const completeListProtectedAssociationsMatch = (
-  claim: string,
-  list: CitationSourceUnit,
-  records: readonly CitationSourceUnit[]
-): boolean => {
-  if (completeListSingleRecordProtectedAssociationsMatch(claim, list, records)) return true
-  // Whole-claim witnesses above retain the existing single-record path. Only
-  // independently bound clauses may use sibling records; an omitted owner or
-  // personal pronoun cannot inherit an identity from an adjacent segment.
-  const prose = semanticMarkdownText(claim).replace(/^(?:(?:in|according\s+to|under|within|per)\b[^,:;.!?]*[,;:]\s*)+/iu, '')
-  if (/\b(?:he|she|his|her|hers|they|their|theirs|them|it|its|former|latter)\b/iu.test(prose))
-    return false
-  const witnesses = records.filter(original => original.closure.record!.fields.length > 0).map(original => {
-    const record = original.closure.record!
-    const first = record.fields[0]!
-    const identityFields = record.fields.filter(field => /^(?:name|id|identifier)$/iu.test(field.label.trim()))
-    const firstTerms = significantTokens(first.value, true)
-    const firstIdentifiers = identifierTerms(first.value, true)
-    const scalarIdentity = firstTerms.length > 0 && firstTerms.every(term => firstIdentifiers.includes(term))
-    const protectedOwner = original.closure.links.length > 0 || record.fields.some(field =>
-      /^(?:contact|e[- ]?mail|phone(?: number)?|telephone|url|link)$/iu.test(field.label.trim()) ||
-      (field.value.match(identityAddressPattern)?.length ?? 0) > 0
-    )
-    const owners = identityFields.length > 0 ? identityFields : scalarIdentity || protectedOwner ? [first] : []
-    return { original, record, owners }
-  })
-  const originalSegments = sourceLocalSegments(claim, true)
-  const anonymous = witnesses.every(witness => witness.owners.length === 0) &&
-    !markdownInlineTokens(claim).some(token => token.type === 'code_inline' || token.type === 'image')
-  const segments = anonymous
-    ? originalSegments.flatMap(segment => segment.split(/,(?!\d)|\s+\b(?:and|with|while)\b\s+/iu)).filter(segment => segment.trim().length > 0)
-    : originalSegments
-  return segments.length > 1 && segments.every(segment => witnesses.some(({ original, record, owners }) => {
-    if (owners.length > 0 && !owners.some(field => {
-      const identity = normalizedHeading(field.value)
-      // A shared name/scalar alone does not select a row. A separately retained
-      // unique original ID can still connect records that share the same name.
-      if (records.some(other => other.closure.record!.id !== record.id &&
-        other.closure.record!.fields.some((candidate, index) =>
-          (index === 0 || /^(?:name|id|identifier)$/iu.test(candidate.label.trim())) &&
-          normalizedHeading(candidate.value) === identity
-        ))) return false
-      const value = field.value.trim().replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-      return value.length > 0 && new RegExp(`(?<![\\p{L}\\p{N}'’])${value}(?![\\p{L}\\p{N}'’])`, 'iu').test(semanticMarkdownText(segment))
-    })) return false
-    // Keep every original value in the protected comparison, while allowing
-    // only this record to witness the clause. Filtering the source values down
-    // to the candidate would hide lowercase sibling identities and role swaps.
-    return completeListSingleRecordProtectedAssociationsMatch(segment, list, records, [original])
-  }))
-}
-
-const exactTypedIdentifiersMatch = (claim: string, unit: CitationSourceUnit): boolean => {
-  const sourceWords = lexicalTokens(unit.text)
-  const contextWords = lexicalTokens(unit.context, true)
-  const sourceIdentifiers = new Set(unit.identifiers)
-  const lowercaseWords = new Set<string>()
-  const lowercaseStems = new Set<string>()
-  for (const word of sourceWords) {
-    if (word === word.toLowerCase()) {
-      lowercaseWords.add(exactIdentityToken(word))
-      lowercaseStems.add(normalizedToken(word))
-    }
-  }
-  const exactBodyIdentifiers = new Set<string>()
-  for (const word of sourceWords) {
-    const normalized = normalizedToken(word)
-    if ((/^\p{Lu}/u.test(word) || isShortIdentifier(word)) && sourceIdentifiers.has(normalized) &&
-      !insignificantTerms.has(normalized) && qualifierTerms[normalized] !== true && negativeTerms[normalized] !== true &&
-      !lowercaseWords.has(exactIdentityToken(word)))
-      exactBodyIdentifiers.add(exactIdentityToken(word))
-  }
-  const exactIdentifiers = new Set(exactBodyIdentifiers)
-  for (const word of contextWords) {
-    const normalized = normalizedToken(word)
-    if ((/^\p{Lu}/u.test(word) || isShortIdentifier(word)) && !insignificantTerms.has(normalized) &&
-      genericIdentifierTerms[normalized] !== true && qualifierTerms[normalized] !== true && negativeTerms[normalized] !== true &&
-      !lowercaseStems.has(normalized))
-      exactIdentifiers.add(exactIdentityToken(word))
-  }
-  if (exactIdentifiers.size === 0) return true
-  const identityStems = new Set<string>()
-  for (const identifier of exactIdentifiers) identityStems.add(normalizedToken(identifier))
-  const semanticClaim = semanticMarkdownText(claim)
-  // Original schema labels and exact rendered links are not renamed context
-  // identities: "Recipe" under "Recipes", or [manual] under "Manuals".
-  // Remove only their structural occurrences from this comparison view; value
-  // identities, ordinary prose and the original protected proof stay unchanged.
-  const fields = unit.closure.record?.fields ?? []
-  const fieldLabels = new Set(fields.map(field => normalizedHeading(field.label)))
-  const fieldPatterns = fields.map(field => {
-    const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-    return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'giu')
-  })
-  const ownedLinks = new Set(unit.closure.links.map(link => sourceLinkSignature(link.label, link.destination)))
-  const markdown = evidenceMarkdown.parse(claim.replace(citationMarker, ' '), {})
-  const identityClaim = markdown.flatMap((token, index) => {
-    if (token.type === 'inline' && token.children) {
-      if (markdown[index - 1]?.type === 'th_open' && fieldLabels.has(normalizedHeading(token.content))) return []
-      let text = semanticInlineText(token.children, ownedLinks)
-      for (const pattern of fieldPatterns) text = text.replace(pattern, ':')
-      return [text]
-    }
-    return token.type === 'fence' || token.type === 'code_block' ? [token.content] : []
-  }).join(' ')
-  for (const token of lexicalTokens(identityClaim, true)) {
-    const word = exactIdentityToken(token)
-    // Stemming aligns prose, but cannot turn Adams into Adam or rename a key.
-    if (identityStems.has(normalizedToken(word)) && !exactIdentifiers.has(word)) return false
-  }
-  if (exactBodyIdentifiers.size === 0) return true
-  // A qualified introduction and normal grammatical starts are not identities.
-  // An unknown capitalized subject cannot replace the original named owner;
-  // a role word already present in the source remains semantic wording.
-  const subjectText = semanticClaim
-    .replace(/^(?:(?:in|according\s+to|under|within|per)\b[^,:;.!?]*[,;:]\s*)+/iu, '')
-    .replace(/^(?:(?:however|nonetheless|nevertheless|conversely|instead|additionally|moreover|therefore|consequently|thus|otherwise)\s*,\s*)+/iu, '')
-    .replace(/^(?:(?:the|this|that|these|those|a|an)\s+)+/iu, '')
-  const subject = subjectText.match(/^(\p{Lu}[\p{L}\p{N}'’-]*)/u)?.[1]
-  if (subject === undefined) return true
-  const subjectTerm = normalizedToken(subject)
-  if (fieldLabels.has(normalizedHeading(subject)) ||
-    insignificantTerms.has(subjectTerm) || qualifierTerms[subjectTerm] === true ||
-    negativeTerms[subjectTerm] === true || genericIdentifierTerms[subjectTerm] === true ||
-    /^(?:in|per|at|on|to|as|by|of|for|i|we|you|he|she|it|they|his|her|its|their|our|your)$/iu.test(subject)) return true
-  const identity = exactIdentityToken(subject)
-  return sourceWords.some(word => exactIdentityToken(word) === identity) ||
-    contextWords.some(word => exactIdentityToken(word) === identity)
-}
-
-// This is admission to semantic verification, not proof of entailment. Only an
-// exact original typed binding can use it; ordinary prose keeps the lexical gate.
-const assessTypedClaimEligibility = (
-  claim: WikiSynthesisAnswer['claims'][number],
-  evidence: CitationEvidence
-): { readonly eligible: boolean; readonly reason?: string; readonly requiresSemanticSupport?: true; readonly unit?: CitationSourceUnit } => {
-  if (claim.evidenceId !== evidence.citation.evidenceId || claim.sourceRevision !== evidence.binding.sourceRevision)
-    return { eligible: false, reason: 'original-binding' }
-  const unit = evidence.sourceUnits.find(candidate => candidate.identity === claim.unitId)
-  if (unit === undefined) return { eligible: false, reason: 'original-unit' }
-  const source = verificationSourceUnit(claim.evidenceId, claim.sourceRevision, unit)
-  try {
-    validateWikiVerificationSource(source)
-  } catch {
-    return { eligible: false, reason: 'complete-owned-closure', unit }
-  }
-  if ((unit.kind === 'paragraph' || unit.kind === 'list-item') &&
-    (unit.closure.record?.fields.length ?? 0) === 0 && unit.text !== unit.closure.unit.normalizedText) {
-    const statement = normalizedHeading(claim.statement)
-    // Retained native bytes are dependencies, not authority to append another
-    // original assertion to an atomic selector. Paraphrases are independently
-    // judged against source.text by the native verification policy.
-    if (sourceSentences(unit.closure.unit.normalizedText).some(assertion =>
-      !unit.text.includes(assertion) && statement.includes(normalizedHeading(assertion))
-    ))
-      return { eligible: false, reason: 'adjacent-assertion', unit }
-  }
-  if (isLiteralSourceClaim(claim, source)) return { eligible: true, unit }
-  const listRecords = unit.kind === 'list' ? completeListOriginalRecords(unit, evidence) : null
-  const record = unit.closure.record
-  // A selected field's exact closure owns its entire record, not other records.
-  // Schema labels need not be repeated as though they were named entities.
-  const recordLabels = new Set((listRecords === null ? record?.fields ?? [] :
-    listRecords.flatMap(original => original.closure.record!.fields)).flatMap(field => identifierTerms(field.label, true)))
-  const ownedText = record !== null && record.fields.length >= 2
-    ? record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
-    : unit.text
-  const ownedTerms = normalizedTerms(ownedText, true)
-  const assessmentUnit: CitationSourceUnit = {
-    ...unit,
-    text: ownedText,
-    textTerms: new Set(ownedTerms),
-    terms: new Set([...normalizedTerms(unit.context, true), ...ownedTerms]),
-    identifiers: identifierTerms(ownedText, true).filter(identifier => !recordLabels.has(identifier)),
-    qualifiers: exactQualifierTerms(ownedText, true)
-  }
-  const ownedIdentifiers = new Set([...assessmentUnit.identifiers, ...identifierTerms(assessmentUnit.context, true)])
-  const protectedText = [
-    ...(claim.statement.match(identityAddressPattern) ?? []),
-    ...markdownInlineTokens(claim.statement).flatMap(token => {
-      if (token.type !== 'code_inline' && token.type !== 'image') return []
-      const destination = token.attrGet('src')
-      return destination === null ? [token.content] : [token.content, String(destination)]
-    }),
-    ...renderedLinkSignatures(claim.statement).flatMap(signature => {
-      const link = JSON.parse(signature) as { readonly label: string; readonly destination: string }
-      return [link.label, link.destination]
-    })
-  ]
-  // Possessive punctuation does not rename an owned identifier. This comparison
-  // view never rewrites a protected address, number, code literal or link.
-  const assessmentClaim = claim.statement.replace(
-    /(?<![\p{L}\p{N}'’/@:.+-])([\p{L}][\p{L}'’-]*?)[’']s\b(?![@:.+-])/giu,
-    (possessive: string, identifier: string) =>
-      ownedIdentifiers.has(normalizedToken(identifier)) && !protectedText.some(text => text.includes(possessive))
-        ? identifier : possessive
-  )
-  if (!exactTypedIdentifiersMatch(assessmentClaim, assessmentUnit)) return { eligible: false, reason: 'protected-identifiers', unit }
-  const explicitFields = record !== null && record.fields.some(field => {
-    const label = field.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+')
-    return new RegExp(`(?<![\\p{L}\\p{N}])${label}(?![\\p{L}\\p{N}])\\s*:(?=\\s|$)`, 'iu').test(semanticMarkdownText(claim.statement))
-  })
-  if (!explicitFields && record !== null && record.kind !== 'table-row' && record.fields.length >= 2 &&
-    !recordNumericProseAssociationsMatch(assessmentClaim, unit))
-    return { eligible: false, reason: 'record-quantity-association', unit }
-  const existingClauses = assessClaimClauses(claim.statement, { ...evidence, sourceUnits: [unit] }, claim)
-  if (existingClauses.length > 0 && existingClauses.every(clause => clause.supported) &&
-    (listRecords === null || completeListProtectedAssociationsMatch(claim.statement, unit, listRecords)))
-    return { eligible: true, unit }
-  // Only complete prose/list scopes can extend lexical admission. A table row
-  // can contain several column owners, so its association guards stay unchanged.
-  if (record?.kind === 'table-row' ||
-    unit.kind !== 'paragraph' && unit.kind !== 'list' && unit.kind !== 'list-item')
-    return { eligible: false, reason: 'original-scope-kind', unit }
-  const exactListRecords = listRecords === null || completeListProtectedAssociationsMatch(assessmentClaim, unit, listRecords)
-  const scalarNumericProse = listRecords !== null ? exactListRecords :
-    !explicitFields && scalarRecordNumericProseMatch(assessmentClaim, unit) === true
-  const assessment = assessSourceClause(assessmentClaim, assessmentUnit, assessmentClaim, scalarNumericProse)
-  const originalText = `${assessmentUnit.context}\n${assessmentUnit.text}`
-  const sourceAddresses: readonly string[] = originalText.match(identityAddressPattern) ?? []
-  const claimedInlineLiterals = markdownInlineTokens(claim.statement).filter(token => token.type === 'code_inline' || token.type === 'image')
-  const sourceInlineLiterals = claimedInlineLiterals.length === 0 ? [] :
-    unit.closure.dependencies.flatMap(dependency => markdownInlineTokens(dependency.text))
-  const exactInlineLiterals = claimedInlineLiterals.every(token => sourceInlineLiterals.some(original =>
-    original.type === token.type && original.content === token.content && original.attrGet('src') === token.attrGet('src')
-  ))
-  const exactAddresses = (claim.statement.match(identityAddressPattern) ?? []).every(address => sourceAddresses.includes(address))
-  const fields = explicitFields ? assessRecordClause(assessmentClaim, unit, true) : null
-  const exactRecordFields = !explicitFields || fields !== null && fields.length > 0 &&
-    fields.every(field => field.integrity && field.semanticConstraints === true)
-  const reason = !exactListRecords ? 'list-record-association' :
-    !assessment.integrity ? 'source-integrity' :
-    !assessment.protectedConstraints ? 'protected-source-association' :
-    !exactAddresses ? 'exact-address' :
-    !exactInlineLiterals ? 'exact-inline-literal' :
-    !exactRecordFields ? 'explicit-record-fields' : undefined
-  return {
-    eligible: reason === undefined,
-    ...(reason === undefined ? {} : { reason }),
-    requiresSemanticSupport: true,
-    unit
-  }
-}
 
 const incrementCounts = (counts: Map<string, number>, values: readonly string[]): void => {
   for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1)
@@ -3157,6 +2726,83 @@ const incrementCounts = (counts: Map<string, number>, values: readonly string[])
 
 const UNCITED_FINAL_FACT_ISSUE =
   'Substantive prose after the final citation must be cited in the body or limited to original advice in a terminal top-level ## Recommendations section.'
+
+interface ReadLiteralSnapshot {
+  readonly authorText: string
+  readonly texts: readonly string[]
+  readonly numbers: ReadonlySet<string>
+  readonly addresses: ReadonlySet<string>
+  readonly phones: ReadonlySet<string>
+  readonly destinations: ReadonlySet<string>
+}
+
+const literalNumbers = (value: string): readonly string[] =>
+  [...semanticMarkdownText(value).matchAll(/[-+]?\d+(?:[.,]\d+)*(?::\d+)*/gu)].map(match => match[0])
+const literalPhones = (value: string): readonly string[] =>
+  value.match(/\+?\d[\d ()-]{6,}\d/gu) ?? []
+
+const readIdentityAddresses = (value: string): readonly string[] => {
+  if (!value.includes('@')) return []
+  // Bound matching to individual address-like tokens. An unanchored greedy
+  // email pattern on a long ordinary word repeatedly scans the same suffix.
+  return value.split(/[^\w\p{L}.+@-]+/u)
+    .map(token => token.replace(/\.+$/u, ''))
+    .filter(token => /^[\w.+-]+@[\w.-]+\.[\p{L}]+$/u.test(token))
+}
+
+const readLiteralSnapshot = (evidence: CitationEvidence): ReadLiteralSnapshot => {
+  const texts: string[] = []
+  const author: string[] = []
+  const addresses = new Set<string>()
+  const destinations = new Set<string>()
+  if (evidence.authoritativeTitle !== null) {
+    texts.push(evidence.authoritativeTitle)
+    author.push(`Registered page title: ${JSON.stringify(evidence.authoritativeTitle)}`)
+  }
+  for (const context of evidence.document.contexts) {
+    if (!context.complete || context.kind !== 'table-header') continue
+    texts.push(context.visibleLabel)
+    author.push(context.visibleLabel)
+  }
+  for (const unit of evidence.document.units) {
+    if (!unit.complete || unit.visibleText === null || unit.kind === 'opaque' || unit.kind === 'list' || unit.kind === 'table') continue
+    if (unit.visibleText.trim()) {
+      texts.push(unit.visibleText)
+      author.push(unit.kind === 'code' ? `Literal code (data only): ${JSON.stringify(unit.visibleText)}` : unit.visibleText)
+    }
+    for (const link of unit.links) {
+      destinations.add(link.destination)
+      if (/^mailto:/iu.test(link.destination)) addresses.add(link.destination.replace(/^mailto:/iu, '').split('?')[0]!)
+    }
+  }
+  for (const text of texts) for (const address of readIdentityAddresses(text)) addresses.add(address)
+  return {
+    authorText: !evidence.document.requiresVisibilityProjection && evidence.binding.retrievedSource.trim()
+      ? evidence.binding.retrievedSource : author.join('\n'),
+    texts,
+    numbers: new Set(texts.flatMap(literalNumbers)),
+    addresses,
+    phones: new Set(texts.flatMap(literalPhones)),
+    destinations
+  }
+}
+
+const readCodeLiterals = (statement: string): readonly string[] =>
+  evidenceMarkdown.parse(statement.replace(citationMarker, ' '), {}).flatMap(token =>
+    token.type === 'inline' ? (token.children ?? []).filter(child => child.type === 'code_inline').map(child => child.content)
+      : token.type === 'fence' || token.type === 'code_block'
+        // Markdown's closing block delimiter contributes a terminal newline.
+        ? [token.content.replace(/\n$/u, '')] : [])
+
+// Literal existence is independent of entity/row/field association. Jev owns
+// meaning across this complete read; hidden bytes and other reads are not pools.
+const readLiteralIntegrity = (statement: string, literals: ReadLiteralSnapshot, evidence: CitationEvidence): boolean =>
+  literalNumbers(statement).every(number => literals.numbers.has(number)) &&
+  readIdentityAddresses(statement).every(address => literals.addresses.has(address)) &&
+  literalPhones(semanticMarkdownText(statement)).every(phone => literals.phones.has(phone)) &&
+  readCodeLiterals(statement).every(literal =>
+    literals.texts.some(text => text.includes(literal)) || literals.destinations.has(literal)) &&
+  renderedLinkSignatures(statement).every(link => evidence.renderedLinks.has(link))
 
 const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage, nativeDraft?: NativeDraft): DraftAssessment => {
   const issues: string[] = []
@@ -3172,7 +2818,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     const evidenceId = match[1] ?? ''
     const boundClaim = nativeDraft?.answer.claims[claims.length]
     const renderedStatement = boundClaim === undefined ? undefined
-      : renderWikiSynthesisClaimStatement(boundClaim, nativeDraft!.literalStatements, nativeDraft!.literalListStatements)
+      : renderWikiSynthesisClaimStatement(boundClaim)
     const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement, renderedStatement)
     if (nativeDraft !== undefined && (boundClaim === undefined || boundClaim.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
       issues.push('Typed source claims must retain their exact host-rendered statement and citation.')
@@ -3187,17 +2833,20 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     const titleAssertionRecognized = extractedClaim.titleClaim !== null || extractedClaim.titleClaimTooLong
     previousMarkerEnd = (match.index ?? 0) + match[0].length
     const registeredEvidence = registry.get(evidenceId)
-    // Exact-unit validation and full-scope structural validation are both
-    // required. A cached unit cannot revive a removed or superseded receipt.
-    const boundEvidence = boundClaim === undefined ? undefined
-      : nativeDraft?.evidence.get(canonicalJson([boundClaim.evidenceId, boundClaim.sourceRevision, boundClaim.unitId]))
-    const originalUnit = registeredEvidence?.sourceUnits.find(unit => unit.identity === boundClaim?.unitId)
-    const boundUnit = boundEvidence?.sourceUnits.find(unit => unit.identity === boundClaim?.unitId)
+    // A draft cannot revive a removed, superseded or unauthorized original read.
+    const bindingKey = boundClaim === undefined ? undefined
+      : canonicalJson([boundClaim.evidenceId, boundClaim.sourceRevision, boundClaim.unitId])
+    const boundEvidence = bindingKey === undefined ? undefined : nativeDraft?.evidence.get(bindingKey)
+    const readSource = bindingKey === undefined ? undefined : nativeDraft?.readSources.get(bindingKey)
+    const literals = bindingKey === undefined ? undefined : nativeDraft?.readLiterals.get(bindingKey)
     const evidence = nativeDraft === undefined || (
-      boundClaim?.evidenceId === evidenceId &&
+      boundClaim?.evidenceId === evidenceId && readSource?.kind === 'source-read' &&
+      boundClaim.unitId === `read:${readSource.readId}` &&
       registeredEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
       boundEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
-      (boundClaim.unitId === 'metadata:page-title' || originalUnit !== undefined && originalUnit === boundUnit)
+      registeredEvidence.binding.retrievedSource === readSource.text &&
+      boundEvidence.binding.retrievedSource === readSource.text &&
+      registeredEvidence.document === boundEvidence.document
     ) ? registeredEvidence : undefined
     if (!evidence) {
       issues.push(`Citation ${evidenceId || '(empty)'} was not produced by a successful page read in this run.`)
@@ -3221,22 +2870,24 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     const claimLinks = renderedLinkSignatures(extractedClaim.renderedClaim)
     incrementCounts(citationBoundLinks, claimLinks)
     const exactLinks = claimLinks.every(link => evidence.renderedLinks.has(link))
-    const exactCodeLinkLiterals = linkLookingCodeLiterals(extractedClaim.renderedClaim).every(literal => evidence.source.includes(literal))
-    const typedEligibility = boundClaim === undefined || boundClaim.unitId === 'metadata:page-title' ? undefined
-      : assessTypedClaimEligibility(boundClaim, evidence)
-    const clauseAssessments = typedEligibility?.requiresSemanticSupport === true ? [] : assessClaimClauses(assessmentClaim, evidence, boundClaim)
+    const exactCodeLinkLiterals = nativeDraft !== undefined ? literals !== undefined &&
+      readLiteralIntegrity(boundClaim!.statement, literals, evidence)
+      : linkLookingCodeLiterals(extractedClaim.renderedClaim).every(literal => evidence.source.includes(literal))
+    const clauseAssessments = nativeDraft === undefined ? assessClaimClauses(assessmentClaim, evidence) : []
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
-    const sourceLocalSupported = typedEligibility?.requiresSemanticSupport === true
-      ? typedEligibility.eligible && boundClaim !== undefined && nativeDraft?.semanticSupport?.has(canonicalJson(boundClaim)) === true
+    const sourceLocalSupported = nativeDraft !== undefined
+      ? nativeDraft.semanticSupport?.has(canonicalJson(boundClaim)) === true
       : clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
-    const bodyFact = typedEligibility?.requiresSemanticSupport === true && typedEligibility.unit !== undefined
-      ? isBodyFactUnit(typedEligibility.unit) : clauseAssessments.some(clause => clause.bodyFact === true)
+    const bodyFact = nativeDraft !== undefined
+      ? !titleAssertionRecognized && evidence.document.units.some(unit => unit.complete && unit.kind !== 'heading' && unit.kind !== 'summary' && unit.kind !== 'opaque')
+      : clauseAssessments.some(clause => clause.bodyFact === true)
     if (sourceLocalSupported && bodyFact) hasCitedBodyFact = true
     const lexicalSupported = sourceLocalSupported && exactLinks && exactCodeLinkLiterals
-    const integritySupported = titleAssertionRecognized
-      ? titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
-      : (typedEligibility?.eligible ?? sourceLocalSupported) && exactLinks && exactCodeLinkLiterals
-    const supported = titleAssertionRecognized ? integritySupported : lexicalSupported
+    const exactTitle = !titleAssertionRecognized ||
+      titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
+    const integritySupported = nativeDraft !== undefined ? exactTitle && exactLinks && exactCodeLinkLiterals
+      : titleAssertionRecognized ? exactTitle : sourceLocalSupported && exactLinks && exactCodeLinkLiterals
+    const supported = nativeDraft === undefined && titleAssertionRecognized ? integritySupported : lexicalSupported && integritySupported
     const claimProvenance: ClaimProvenance = {
       claim,
       repairClaim: assessmentClaim,
@@ -3267,9 +2918,11 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
           : `Citation ${evidenceId} changes an exact link, code literal, or numeric value from its immediately preceding claim.`
       )
     // A weakly aligned cited fact is a publication failure, not an advisory warning.
-    if (!titleAssertionRecognized && !sourceLocalSupported &&
-      (typedEligibility?.eligible !== true || nativeDraft?.semanticSupport !== undefined))
-      issues.push(`Citation ${evidenceId} does not support every factual clause from a single source unit in its cited scope.`)
+    if ((nativeDraft !== undefined || !titleAssertionRecognized) && !sourceLocalSupported &&
+      (nativeDraft === undefined || nativeDraft.semanticSupport !== undefined))
+      issues.push(nativeDraft !== undefined
+        ? `Citation ${evidenceId} lacks complete-source semantic support.`
+        : `Citation ${evidenceId} does not support every factual clause from a single source unit in its cited scope.`)
     if (!seenCitationIds.has(evidenceId)) {
       seenCitationIds.add(evidenceId)
       citationIds.push(evidenceId)
@@ -3304,7 +2957,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     }
   }
   let missingPageSummaryEvidenceIds: readonly string[] | undefined
-  if (!pendingSemanticSupport && coverage?.pageSummary && claims.length > 0) {
+  if (nativeDraft === undefined && !pendingSemanticSupport && coverage?.pageSummary && claims.length > 0) {
     const currentPage = coverage.currentPage
     const pageSummaryCoverage = deliveredPageSummaryCoverage(registry, currentPage)
     if (
@@ -3692,9 +3345,9 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
 interface NativeDraft {
   readonly answer: WikiSynthesisAnswer
   readonly evidence: ReadonlyMap<string, CitationEvidence>
+  readonly readSources: ReadonlyMap<string, WikiVerificationSource>
+  readonly readLiterals: ReadonlyMap<string, ReadLiteralSnapshot>
   readonly content: string
-  readonly literalStatements: ReadonlySet<string>
-  readonly literalListStatements: ReadonlyMap<string, string>
   readonly contentByteLimit: number
   readonly trustedObservations: ReadonlySet<string>
   /** Populated only after the original source-local Jev plan accepts every check. */
@@ -6553,11 +6206,12 @@ export class AxAgentEngine implements AgentEngine {
     diagnosticSink?: AgentEngineSink,
     preflight = false
   ): Promise<TurnResult | PublicationSequencePlan> {
-    const units = new Map<string, CitationSourceUnit>()
-    const unitEvidence = new Map<string, CitationEvidence>()
-    const titleEvidence = new Map<string, CitationEvidence>()
+    const sourceEvidence = new Map<string, CitationEvidence>()
+    const readSources = new Map<string, WikiVerificationSource>()
+    const readLiterals = new Map<string, ReadLiteralSnapshot>()
     const sources: WikiSynthesisSource[] = []
     const sourceReads: WikiSynthesisRead[] = []
+    const physicalReads = new Map<string, { evidenceId: string; representation: CitationEvidence }>()
     const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
     for (const [evidenceId, representation] of evidence) {
       let readId = physicalReadIds.get(representation.document)
@@ -6565,112 +6219,36 @@ export class AxAgentEngine implements AgentEngine {
         readId = citationPhysicalReadId(representation)
         physicalReadIds.set(representation.document, readId)
       }
+      const previous = physicalReads.get(readId)
+      if (previous !== undefined &&
+        (previous.representation.binding.sourceRevision !== representation.binding.sourceRevision ||
+          previous.representation.binding.retrievedSource !== representation.binding.retrievedSource))
+        throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Physical read aliases changed original content or revision', 409)
+      if (previous === undefined || previous.evidenceId.includes(':section:') && !evidenceId.includes(':section:'))
+        physicalReads.set(readId, { evidenceId, representation })
+    }
+    for (const [readId, { evidenceId, representation }] of physicalReads) {
+      const complete = representation.binding.representation !== 'recent-excerpt' ||
+        metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false
+      if (!complete) continue
+      const source: WikiSynthesisSource = {
+        evidenceId, sourceRevision: representation.binding.sourceRevision,
+        unitId: `read:${readId}`, readId,
+        context: representation.authoritativeTitle ?? '',
+        text: representation.binding.retrievedSource,
+        kind: 'source-read', complete: true
+      }
+      const key = canonicalJson([source.evidenceId, source.sourceRevision, source.unitId])
+      const literals = readLiteralSnapshot(representation)
+      sourceEvidence.set(key, representation)
+      readLiterals.set(key, literals)
+      readSources.set(key, { ...source, closure: null, authorText: literals.authorText })
+      sources.push(source)
       sourceReads.push({
-        evidenceId,
-        sourceRevision: representation.binding.sourceRevision,
-        readId,
+        evidenceId, sourceRevision: source.sourceRevision, readId,
         title: representation.authoritativeTitle,
         representation: representation.binding.representation,
-        complete: representation.binding.representation !== 'recent-excerpt' ||
-          metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false,
-        source: representation.binding.retrievedSource
-      })
-      for (const unit of representation.sourceUnits) {
-        if (!unit.complete || unit.kind === 'opaque') continue
-        const protectedOriginalWikiVerificationSource: WikiVerificationSource = {
-          evidenceId,
-          sourceRevision: representation.binding.sourceRevision,
-          unitId: unit.identity,
-          context: unit.context,
-          text: unit.text,
-          kind: unit.kind,
-          complete: unit.complete,
-          closure: unit.closure
-        }
-        const source: WikiSynthesisSource = {
-          evidenceId,
-          sourceRevision: representation.binding.sourceRevision,
-          unitId: unit.identity,
-          context: unit.context,
-          text: unit.text,
-          sourceSpans: unit.closure.unit.sourceSpans,
-          kind: unit.kind,
-          complete: unit.complete,
-          ...(unit.closure.record !== null && unit.closure.record.complete &&
-            unit.closure.record.kind !== 'table-row' && unit.closure.record.fields.length >= 2
-            ? { ownedRecordId: unit.closure.record.id } : {}),
-          ...((unit.kind === 'paragraph' || unit.kind === 'list-item') &&
-            (unit.closure.record?.fields.length ?? 0) === 0 && unit.text !== unit.closure.unit.normalizedText
-            ? { atomic: true as const } : {}),
-          literalStatement: getLiteralSourceStatement(protectedOriginalWikiVerificationSource),
-          // Proof closure remains host-side; this packet distinguishes exact
-          // original unit metadata without a model-facing closure catalogue.
-          packet: canonicalJson([unit.structuralId, unit.structuralLabel, unit.containerIds, unit.labels, unit.closure.unit.id])
-        }
-        units.set(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]), unit)
-        sources.push(source)
-      }
-      if (hasAuthoritativePageTitle(representation)) {
-        const protectedOriginalWikiVerificationSource: WikiVerificationSource = {
-          evidenceId,
-          sourceRevision: representation.binding.sourceRevision,
-          unitId: 'metadata:page-title',
-          context: `Read page title (${representation.sourceActionName}, ${representation.locale}/${representation.path})`,
-          text: representation.authoritativeTitle,
-          kind: 'page-title',
-          complete: true,
-          closure: null
-        }
-        const source: WikiSynthesisSource = {
-          evidenceId,
-          sourceRevision: representation.binding.sourceRevision,
-          unitId: 'metadata:page-title',
-          context: `Read page title (${representation.sourceActionName}, ${representation.locale}/${representation.path})`,
-          text: representation.authoritativeTitle,
-          kind: 'page-title',
-          complete: true,
-          literalStatement: getLiteralSourceStatement(protectedOriginalWikiVerificationSource),
-          packet: canonicalJson({ sourceActionName: representation.sourceActionName, locale: representation.locale, path: representation.path })
-        }
-        titleEvidence.set(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]), representation)
-        sources.push(source)
-      }
-    }
-    // Orientation only: all exact native bindings stay in the host registry,
-    // while physical read aliases share only their model-facing selected text.
-    const sourceUnits = new Map<WikiSynthesisSource, CitationSourceUnit>()
-    const orientationUnits: CitationSourceUnit[] = []
-    const quotationTerms = new Map<string, readonly string[]>()
-    for (const source of sources) {
-      const unit = units.get(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]))
-      if (unit === undefined) continue
-      sourceUnits.set(source, unit)
-      const quotation = source.literalStatement ?? ''
-      let terms = quotationTerms.get(quotation)
-      if (terms === undefined) {
-        terms = normalizedTerms(quotation, true)
-        quotationTerms.set(quotation, terms)
-      }
-      const textTerms = new Set(unit.textTerms)
-      for (const term of terms) textTerms.add(term)
-      const allTerms = new Set(unit.terms)
-      for (const term of textTerms) allTerms.add(term)
-      orientationUnits.push({ ...unit, textTerms, terms: allTerms })
-    }
-    const orientationEvidence = evidence.values().next().value as CitationEvidence | undefined
-    if (orientationEvidence !== undefined) {
-      const ranked = relevantSourceUnits(
-        [input.userRequest, ...input.requestFacets].join('\n'),
-        { ...orientationEvidence, sourceUnits: orientationUnits },
-        true
-      )
-      const priority = new Map<CitationSourceUnit['closure'], number>()
-      for (const unit of ranked) if (!priority.has(unit.closure)) priority.set(unit.closure, priority.size)
-      sources.sort((left, right) => {
-        const leftUnit = sourceUnits.get(left)
-        const rightUnit = sourceUnits.get(right)
-        return (leftUnit === undefined ? Infinity : priority.get(leftUnit.closure) ?? Infinity) -
-          (rightUnit === undefined ? Infinity : priority.get(rightUnit.closure) ?? Infinity)
+        complete: true, source: source.text
       })
     }
     let rejection: string | undefined
@@ -6678,7 +6256,7 @@ export class AxAgentEngine implements AgentEngine {
     const rejectClaim = (source: WikiSynthesisSource, reason: string): string => {
       const issue = `SourceRef ${wikiSynthesisSourceRef(source)} failed host check: ${reason}.`
       rejectedClaims.add(issue)
-      rejection = `${[...rejectedClaims].join('\n')}\nSelect matching original body/record refs for each fact. Preserve the selected binding's own subject, identifiers, full quantities and governing qualifications; do not import names or facts from neighboring bindings. Omit unrequested record fields.`
+      rejection = `${[...rejectedClaims].join('\n')}\nRetain exact literals from the admitted complete source and its current read identity. Preserve qualifications and factual relationships; Jev judges their meaning across that source. Omit unrequested attributes.`
       return issue
     }
     let rendered: string | undefined
@@ -6687,7 +6265,6 @@ export class AxAgentEngine implements AgentEngine {
     const structured = features.structuredOutputModes === undefined
       ? features.structuredOutputs === true || features.functions
       : features.structuredOutputModes.length > 0
-    let normalizedClaims: WeakMap<WikiSynthesisAnswer['claims'][number], WikiSynthesisAnswer['claims'][number]> | undefined
     const program = createWikiSynthesisProgram(sources, {
       structured,
       maxOutputTokens: () => maxOutputTokens,
@@ -6695,67 +6272,25 @@ export class AxAgentEngine implements AgentEngine {
       facetCount: input.requestFacets.length,
       validateClaim: (claim, source) => {
         const key = canonicalJson([source.evidenceId, source.sourceRevision, source.unitId])
-        const titleSource = titleEvidence.get(key)
-        if (titleSource !== undefined) {
-          const assertion = parseTitleAssertion(claim.statement)
-          if (assertion !== null && supportsTitleAssertion(assertion, titleSource, input.coverage?.currentPage)) {
-            unitEvidence.set(key, titleSource)
-            return true
-          }
-          return rejectClaim(source, titleAssertionIssue(source.evidenceId))
-        }
-        let boundEvidence = unitEvidence.get(key)
-        if (boundEvidence === undefined) {
-          const unit = units.get(key)
-          const representation = evidence.get(source.evidenceId)
-          if (unit !== undefined && representation !== undefined) {
-            boundEvidence = { ...representation, sourceUnits: [unit] }
-            unitEvidence.set(key, boundEvidence)
-          }
-        }
-        if (boundEvidence !== undefined) {
-          const unit = boundEvidence.sourceUnits.find(entry => entry.identity === source.unitId)
-          const closure = unit?.closure
-          // Add governing context to an explicitly selected assertion or linked
-          // member; never expand an atomic binding to its native unit's siblings.
-          if (unit?.complete && closure?.unit.complete &&
-            claim.statement === unit.text) {
-            const original = verificationSourceUnit(source.evidenceId, source.sourceRevision, unit)
-            const statement = !closure.record || closure.record.fields.length === 0 && closure.record.unitIds.length === 1 &&
-              closure.record.unitIds[0] === closure.unit.id
-              ? getLiteralSourceStatement(original)
-              : getLiteralSourceMembershipStatement(original)
-            if (statement !== null && statement !== claim.statement) {
-              const normalized = { ...claim, statement }
-              normalizedClaims ??= new WeakMap()
-              normalizedClaims.set(claim, normalized)
-              const eligibility = assessTypedClaimEligibility(normalized, boundEvidence)
-              return eligibility.eligible ? true : rejectClaim(source, eligibility.reason ?? 'original-binding')
-            }
-          }
-        }
-        const eligibility = boundEvidence === undefined ? undefined : assessTypedClaimEligibility(claim, boundEvidence)
-        if (eligibility?.eligible !== true) {
-          return rejectClaim(source, eligibility?.reason ?? 'original-binding')
-        }
-        return true
+        const bound = sourceEvidence.get(key)
+        const literals = readLiterals.get(key)
+        if (bound === undefined || literals === undefined || !source.complete ||
+          source.unitId !== `read:${source.readId}` || source.sourceRevision !== bound.binding.sourceRevision ||
+          source.text !== bound.binding.retrievedSource)
+          return rejectClaim(source, 'original-read-binding')
+        return readLiteralIntegrity(claim.statement, literals, bound) ? true : rejectClaim(source, 'exact-literals')
       },
-      validateAnswer: (answer, content, literalStatements, literalListStatements) => {
-        if (normalizedClaims !== undefined) {
-          for (let index = 0; index < answer.claims.length; index++) {
-            const normalized = normalizedClaims.get(answer.claims[index]!)
-            if (normalized !== undefined) answer.claims[index] = normalized
-          }
-          content = renderWikiSynthesisAnswer(answer, literalStatements, literalListStatements)
-        }
+      validateAnswer: (answer, content) => {
         if (Buffer.byteLength(JSON.stringify(answer), 'utf8') > deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes) {
           rejection = 'Canonical synthesis output exceeded its provider content byte limit.'
           return rejection
         }
         rendered = content
-        // The program calls this only after exact binding and mechanical
-        // eligibility pass. Nonliteral support still requires source-local Jev.
-        nativeDraft = { answer, evidence: unitEvidence, content, literalStatements, literalListStatements, contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes, trustedObservations: new Set(input.observations) }
+        // Read identity and exact literal admission are mechanical; every claim
+        // still requires independent complete-source Jev proof before publication.
+        nativeDraft = { answer, evidence: sourceEvidence, readSources, readLiterals, content,
+          contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes,
+          trustedObservations: new Set(input.observations) }
         if (answer.claims.length === 0 && answer.observations.length === 0 && answer.unresolvedFacets.length !== input.requestFacets.length) {
           rejection = 'An inability must disclose every unresolved requested facet.'
           return rejection
@@ -6769,6 +6304,7 @@ export class AxAgentEngine implements AgentEngine {
       }
     })
     const encodedSources = encodeWikiSynthesisSources(sources, sourceReads)
+    const originalSourceBytes = sourceReads.reduce((sum, read) => sum + Buffer.byteLength(read.source, 'utf8'), 0)
     const currentUserIndex = input.conversation.findLastIndex(message => message.role === 'user')
     const previousConversation = input.conversation.slice(0, currentUserIndex < 0 ? input.conversation.length : currentUserIndex)
       .flatMap(message => {
@@ -6803,14 +6339,14 @@ export class AxAgentEngine implements AgentEngine {
         const serializedBytes = serializedProviderRequestBytes(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
         const prefixBytes = Buffer.byteLength(prompt(request, null, undefined, false, true, 'final-synthesis'), 'utf8')
         const frameDiagnostics = {
-          sourceCount: evidence.size,
+          sourceCount: sourceReads.length,
           bindingCount: sources.length,
-          uniqueUnitCount: new Set(sources.map(source => canonicalJson([source.evidenceId.split(':section:')[0], source.sourceRevision, source.unitId]))).size,
-          sourceBytes: [...new Map(sourceReads.map(read => [read.readId, read.source])).values()].reduce((sum, source) => sum + Buffer.byteLength(source, 'utf8'), 0),
+          uniqueReadCount: sourceReads.length,
+          sourceBytes: originalSourceBytes,
           bindingBytes: Buffer.byteLength(encodedSources.sourceReferences, 'utf8'),
-          structureBytes: Buffer.byteLength(encodedSources.sourceText, 'utf8'),
+          structureBytes: Buffer.byteLength(encodedSources.sourceText, 'utf8') - originalSourceBytes,
           sharedTextBytes: Buffer.byteLength(encodedSources.sourceText, 'utf8'),
-          authoredBytes: [...new Set([...units.values()].flatMap(unit => unit.closure.dependencies.map(dependency => dependency.text)))].reduce((sum, text) => sum + Buffer.byteLength(text, 'utf8'), 0),
+          authoredBytes: originalSourceBytes,
           schemaBytes: Buffer.byteLength(JSON.stringify(asRecord(asRecord(generation.responseFormat)?.schema)?.schema ?? generation.functions?.find(fn => fn.name === '__axOutput')?.parameters ?? generation.responseFormat ?? null), 'utf8'),
           prefixBytes,
           serializedRequestBytes: serializedBytes,
@@ -7304,13 +6840,19 @@ export class AxAgentEngine implements AgentEngine {
           throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'A Jev decision provider is required before publishing Wiki facts', 503)
         const verificationEvidence = new Map([...citationRegistry].filter(([evidenceId]) => !excludedEvidenceIds.has(evidenceId)))
         const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
-        const registeredReads = [...verificationEvidence].map(([evidenceId, source]) => {
-          let readId = physicalReadIds.get(source.document)
-          if (readId === undefined) {
-            readId = citationPhysicalReadId(source)
-            physicalReadIds.set(source.document, readId)
-          }
-          return { evidenceId, sourceRevision: source.binding.sourceRevision, readId, source: source.binding.retrievedSource }
+        // Natural-language authority has one canonical binding per complete
+        // physical read. Private section aliases are not another native catalog.
+        const registeredReads = [...draft.readSources.entries()].map(([key, source]) => {
+          const bound = draft.evidence.get(key)
+          const current = verificationEvidence.get(source.evidenceId)
+          if (source.kind !== 'source-read' || bound === undefined || current === undefined ||
+            current.document !== bound.document || current.binding.sourceRevision !== source.sourceRevision ||
+            current.binding.retrievedSource !== source.text)
+            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the current authorized complete read', 409)
+          physicalReadIds.set(current.document, source.readId)
+          return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
+            readId: source.readId, source: source.text, context: current.authoritativeTitle ?? '',
+            authorText: source.authorText }
         })
         const requestFacets = contextPlan.requestFacets?.length ? contextPlan.requestFacets.map(facet => facet.quote) : [contextPlan.intent]
         const pricing = runtime.config.pricing!
@@ -7421,15 +6963,11 @@ export class AxAgentEngine implements AgentEngine {
             const bound = draft.evidence.get(key)
             if (!bound || bound.binding.sourceRevision !== claim.sourceRevision)
               throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the original validated claim binding', 409)
-            if (claim.unitId === 'metadata:page-title' && hasAuthoritativePageTitle(bound)) {
-              selected.set(key, { evidenceId: claim.evidenceId, sourceRevision: claim.sourceRevision, unitId: claim.unitId,
-                context: 'Authoritative read page title; literal metadata only', text: bound.authoritativeTitle,
-                kind: 'page-title', complete: true, closure: null })
-            } else {
-              const unit = bound.sourceUnits.find(entry => entry.identity === claim.unitId)
-              if (!unit) throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the exact owned source unit', 409)
-              selected.set(key, verificationSourceUnit(claim.evidenceId, claim.sourceRevision, unit))
-            }
+            const source = draft.readSources.get(key)
+            if (source?.kind !== 'source-read' || source.unitId !== `read:${source.readId}` ||
+              source.text !== bound.binding.retrievedSource || source.sourceRevision !== claim.sourceRevision)
+              throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the exact complete original read', 409)
+            selected.set(key, source)
           }
           let preparedPlan: WikiVerificationPlan | null
           try {
@@ -7442,7 +6980,8 @@ export class AxAgentEngine implements AgentEngine {
               },
               unresolvedFacets: draft.answer.unresolvedFacets, evidence: registeredReads
             })
-          } catch {
+          } catch (error) {
+            if (error instanceof AgentRepositoryError && error.code === 'AGENT_CONTEXT_TOO_LARGE') throw error
             throw new AgentRepositoryError('WIKI_VERIFICATION_PLAN_INVALID', 'Wiki verification cannot retain its complete evidence within the safe request bounds', 500)
           }
           return preparedPlan
@@ -8617,26 +8156,28 @@ export class AxAgentEngine implements AgentEngine {
               const semanticResults: DecisionBatchResult[] = []
               for (const nativeRequest of plan?.requests ?? [])
                 semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
-              const semantic = plan === null ? { valid: true, issues: [] } : assessWikiVerificationResults(plan, semanticResults)
+              const semantic = plan === null
+                ? { valid: true, issues: [], nativeSupportedClaimIndexes: [] }
+                : assessWikiVerificationResults(plan, semanticResults)
               if (plan !== null) publicationVerificationEvidence = evidence
+              const verifiedDraft: NativeDraft = {
+                ...nativeDraft,
+                semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index =>
+                  canonicalJson(nativeDraft.answer.claims[index]!)))
+              }
+              result = { ...result, rootNativeDraft: verifiedDraft }
+              // Factual truth and answer coverage are independent verdicts.
+              // A truthful but incomplete answer remains entirely unpublished.
+              assessment = assessDraft(assessableContent, assessmentEvidence, {
+                ...coverage,
+                partialCoverage: {
+                  omittedCount: executedOmittedCount(),
+                  notExecutedCount: notExecutedActionCallIds.size
+                }
+              }, verifiedDraft)
               if (!semantic.valid) {
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
-              } else if (assessment.claims.some(claim => claim.integritySupported && !claim.supported)) {
-                const verifiedDraft: NativeDraft = {
-                  ...nativeDraft,
-                  semanticSupport: new Set(nativeDraft.answer.claims.map(claim => canonicalJson(claim)))
-                }
-                result = { ...result, rootNativeDraft: verifiedDraft }
-                // Coverage and final support use accepted verdicts, never mere
-                // admission or a lexical overlap score for a typed paraphrase.
-                assessment = assessDraft(assessableContent, assessmentEvidence, {
-                  ...coverage,
-                  partialCoverage: {
-                    omittedCount: executedOmittedCount(),
-                    notExecutedCount: notExecutedActionCallIds.size
-                  }
-                }, verifiedDraft)
               }
             } catch (error) {
               // Preserve the already billed generating response when the
@@ -8645,11 +8186,14 @@ export class AxAgentEngine implements AgentEngine {
                 ...modelTurnData(turn + 1, { ...result, content: '' }, 'answer_rejected'),
                 verificationFailure: { code: error instanceof AgentRepositoryError ? error.code : 'WIKI_VERIFICATION_FAILED' }
               })
+              if (error instanceof AgentRepositoryError && error.code === 'AGENT_CONTEXT_TOO_LARGE')
+                return publishExecutionLimit('evidence')
               throw classifyAgentExecutionFailure(error, 'provider_response')
             }
           }
           const sourceLocalFailures = assessment.issues.filter(issue =>
-            issue.includes('does not support every factual clause from a single source unit')
+            issue.includes('does not support every factual clause from a single source unit') ||
+            issue.includes('lacks complete-source semantic support')
           ).length
           const exactIntegrityFailures = assessment.claims.filter(claim => claim.sourceActionCallId !== null && !claim.integritySupported).length
           const unreadFailures = assessment.claims.filter(claim => claim.sourceActionCallId === null).length
@@ -8658,7 +8202,9 @@ export class AxAgentEngine implements AgentEngine {
               facet.state !== 'unavailable' &&
               (facet.evidenceIds.length === 0
                 ? (request.research?.packets.length ?? 0) === 0 && assessment.claims.some(claim => claim.supported)
-                : facet.evidenceIds.some(evidenceId => assessment.claims.some(claim => claim.supported && claim.evidenceId === evidenceId)))
+                : facet.evidenceIds.some(evidenceId => assessment.claims.some(claim => claim.supported &&
+                  (claim.evidenceId === evidenceId ||
+                    claim.pageEvidenceId === assessmentEvidence.get(evidenceId)?.pageEvidenceId))))
           ).length
           if (!assessment.valid) rejectedDraftCount++
           const assertAssessmentPublicationFresh = async (): Promise<void> => {

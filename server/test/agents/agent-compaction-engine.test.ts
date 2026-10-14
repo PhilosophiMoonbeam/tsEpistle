@@ -243,7 +243,7 @@ describe('Ax agent engine context compaction', () => {
       const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
         dispatched.push({ input, readable })
         if (synthesisInputFromRequest(input) !== undefined) {
-          const source = synthesisSourcesFromRequest(input).find(unit => unit.text === fact)!
+          const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(fact))!
           return response(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }), 100, 10)
         }
         if (boundary === 'ordinary generation' && !directReadReturned) return {
@@ -341,7 +341,7 @@ describe('Ax agent engine context compaction', () => {
     const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
       dispatched.push({ input, readable })
       if (synthesisInputFromRequest(input) !== undefined) {
-        const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text === fact)
+        const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text.includes(fact))
         return response(synthesisFixtureAnswer(input, {
           claims: source === undefined ? [] : [{ ...source, statement: fact }],
           unresolvedFacets: source === undefined ? [0] : []
@@ -425,7 +425,7 @@ describe('Ax agent engine context compaction', () => {
 
   it.each([
     [40_000, 10_000, 'real soft history compaction'],
-    [150_000, 10_000, 'direct typed native admission'],
+    [150_000, 10_000, 'mandatory verification capacity refusal'],
     [150_000, 128_000, 'native capacity refusal']
   ] as const)('retains a complete prior read under ordinary history pressure (%s chars, %s native tokens, %s)', async (sourceCharacters, nativeInputTokens, route) => {
     const fact = 'Cedar warehouse closes at 18:30 on Fridays.'
@@ -459,7 +459,7 @@ describe('Ax agent engine context compaction', () => {
         ] }]
       }
       typedDeliveries.push({ input, historyCompacted })
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text === fact)
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text.includes(fact))
       if (source === undefined) throw new Error('The complete retained original must remain eligible for fresh typed delivery')
       return response(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }), 100, 10)
     })
@@ -481,11 +481,12 @@ describe('Ax agent engine context compaction', () => {
     }
     const text = vi.fn(async (_delta: string) => {})
     const base = engineRequest(history.messages)
+    const budget = sequencedBudget(1_000_000)
     const execution = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
       ...base, run: { ...base.run, executionMode: 'agent' },
       retainedPageReads: [{ actionCallId: 'prior-supplier-read', actionName: 'pages.get', output: page }],
       compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
-      dispatchBudget: sequencedBudget(1_000_000)
+      dispatchBudget: budget
     }, {
       text, event: async () => {},
       commitCompaction: async () => { historyCompacted = true }
@@ -496,6 +497,8 @@ describe('Ax agent engine context compaction', () => {
       expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
       expect(invoke).not.toHaveBeenCalled()
       expect(text.mock.calls).toEqual([])
+      expect(budget.consumed()).toBe(chat.mock.calls.length * 110)
+      expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
       return
     }
     const result = await execution
@@ -504,13 +507,22 @@ describe('Ax agent engine context compaction', () => {
     for (const delivery of typedDeliveries) expect(synthesisReadsFromRequest(delivery.input)).toEqual([
       expect.objectContaining({ evidenceId: page.citation.evidenceId, complete: true, readText: content })
     ])
-    if (route === 'real soft history compaction') {
-      expect(summaries.some(input => input.chatPrompt.some(message =>
-        message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLD_FALCON_LOOKUP:')))).toBe(true)
-      expect(typedDeliveries.every(delivery => delivery.historyCompacted)).toBe(true)
-    } else {
+    if (route === 'mandatory verification capacity refusal') {
       expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
+      const published = text.mock.calls.flat().join('')
+      expect(visibleWikiText(published)).not.toContain(fact)
+      expect(visibleWikiText(published)).not.toContain(unaskedFact)
+      expect(published).not.toContain('[[cite:')
+      expect(result.citations).toBeUndefined()
+      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+      expect(result.totalTokens).toBe(chat.mock.calls.length * 110)
+      expect(budget.consumed()).toBe(result.totalTokens)
+      expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+      return
     }
+    expect(summaries.some(input => input.chatPrompt.some(message =>
+      message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLD_FALCON_LOOKUP:')))).toBe(true)
+    expect(typedDeliveries.every(delivery => delivery.historyCompacted)).toBe(true)
     const published = text.mock.calls.flat().join('')
     expect(visibleWikiText(published)).toContain(fact)
     expect(visibleWikiText(published)).not.toContain(unaskedFact)
@@ -562,7 +574,7 @@ describe('Ax agent engine context compaction', () => {
         }]
       }
       deliveries.push({ input, historyCompacted })
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.text === contact)
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(contact))
       if (source === undefined) throw new Error('The complete original contact must remain selectable after history compaction')
       return response(synthesisFixtureAnswer(input, {
         claims: [{
@@ -853,7 +865,7 @@ describe('Ax agent engine context compaction', () => {
       const firstDraft = ++typedDrafts === 1
       return response(synthesisFixtureAnswer(input, firstDraft
         ? `Alpha release does not require a verified staging receipt. [[cite:${alphaEvidenceId}]]`
-        : `${sourceUnit} [[cite:${alphaEvidenceId}]]`, { bindings: { [alphaEvidenceId]: { text: sourceUnit } } }), firstDraft ? 200 : 300, firstDraft ? 20 : 30)
+        : `${sourceUnit} [[cite:${alphaEvidenceId}]]`), firstDraft ? 200 : 300, firstDraft ? 20 : 30)
     })
     const { factory } = factoryFor(chat)
     const validateObservation = vi.fn(async () => true)
@@ -964,7 +976,7 @@ describe('Ax agent engine context compaction', () => {
         const units = synthesisSourcesFromRequest(input)
         const draft = calls.length === 3
           ? { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text.includes('Maya Quinn'))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: fact }
-          : { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text === independentFact)?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: independentFact }
+          : { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text.includes(independentFact))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: independentFact }
         return response(synthesisFixtureAnswer(input, { claims: [draft], unresolvedFacets: calls.length === 3 ? [] : [0] }), 100, 10)
       })
       const { factory } = factoryFor(chat)
@@ -992,7 +1004,9 @@ describe('Ax agent engine context compaction', () => {
       const event = vi.fn(async (..._args: [string, unknown]) => {})
       const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
       const base = engineRequest(history.messages)
-      const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      const result = await new AxAgentEngine(factory, actions, undefined, {
+        decisionProviders: delivery === 'missing' ? rejectFixtureStatements([fact]) : fixtureDecisionProviders
+      }).execute(
         {
           ...base,
           run: { ...base.run, executionMode: 'agent' },
@@ -1076,9 +1090,7 @@ ${sourceUnit}`,
       }
       if (calls.length === 2) {
         invalidDraftReturned = true
-        return response(synthesisFixtureAnswer(input, `Alpha release does not require a staging receipt. [[cite:${evidenceId}]]`, {
-          bindings: { [evidenceId]: { text: sourceUnit } }
-        }), 200, 20)
+        return response(synthesisFixtureAnswer(input, `Alpha release does not require a staging receipt. [[cite:${evidenceId}]]`), 200, 20)
       }
       return response('I cannot verify Alpha’s release requirement now.', 300, 30)
     })
@@ -1106,7 +1118,9 @@ ${sourceUnit}`,
       })
     }
     const text = vi.fn(async () => undefined)
-    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, {
+      decisionProviders: rejectFixtureStatements(['Alpha release does not require a staging receipt.'])
+    }).execute(
       {
         ...engineRequest(history.messages),
         run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
@@ -1115,7 +1129,7 @@ ${sourceUnit}`,
       { text, event: async () => undefined }
     )
 
-    expect(synthesisSourcesFromRequest(calls[1]!)).toEqual(expect.arrayContaining([expect.objectContaining({ evidenceId, text: sourceUnit })]))
+    expect(synthesisSourcesFromRequest(calls[1]!)).toEqual(expect.arrayContaining([expect.objectContaining({ evidenceId, text: seed.output.content })]))
     expect(calls.at(-1)?.chatPrompt.every(message => typeof message.content !== 'string' || !message.content.includes(sourceUnit))).toBe(true)
     expect(text.mock.calls.flat().join('')).not.toContain('Alpha release does not require a staging receipt.')
     expect(result.citations).toBeUndefined()
