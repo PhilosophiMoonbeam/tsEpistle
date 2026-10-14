@@ -5,12 +5,15 @@ import {
   AgentProviderAttemptError,
   AgentProviderFactory,
   agentProviderCostMicros,
+  agentProviderMeasuredCostMicros,
   createGuardedProviderFetch,
   decodeAgentProviderContinuation,
   deriveAgentProviderResourceLimits,
-  encodeAgentProviderContinuation
+  encodeAgentProviderContinuation,
+  parseAgentProviderPricing
 } from '../../agents/providers/factory.ts'
-import { readAgentProviderUsage, readAgentUsageEvent } from '../../agents/providers/usage.ts'
+import { readAgentProviderUsage, readAgentUsageEvent, type AgentProviderUsage } from '../../agents/providers/usage.ts'
+import { createWikiSynthesisProgram, encodeWikiSynthesisSources } from '../../agents/providers/wiki-synthesis.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
@@ -397,6 +400,83 @@ describe('provider usage accounting', () => {
     )
   })
 
+  it('uses only immutable declared cache rates and preserves historical flat pricing', () => {
+    const historical = parseAgentProviderPricing('old-v1|0002000000|5000000')
+    expect(historical).toEqual({ revision: 'old-v1', inputMicrosPerMillionTokens: 2_000_000, outputMicrosPerMillionTokens: 5_000_000 })
+    const cached = { inputTokens: 10, outputTokens: 2, totalTokens: 13, cachedInputTokens: 6, cacheCreationInputTokens: 2 }
+    expect(agentProviderMeasuredCostMicros(historical, cached)).toBe(35)
+    expect(agentProviderMeasuredCostMicros({ ...historical, cacheWritePremium: true }, cached)).toBe(40)
+    const pricing = parseAgentProviderPricing('cache-v2|2000000|5000000|100000|3000000')
+    expect(pricing).toEqual({
+      revision: 'cache-v2',
+      inputMicrosPerMillionTokens: 2_000_000,
+      outputMicrosPerMillionTokens: 5_000_000,
+      cacheReadMicrosPerMillionTokens: 100_000,
+      cacheWriteMicrosPerMillionTokens: 3_000_000
+    })
+    // Six reads, two writes, two fresh inputs, two outputs and one residual: ceil(25.6).
+    expect(agentProviderMeasuredCostMicros(pricing, cached)).toBe(26)
+    expect(agentProviderMeasuredCostMicros(pricing, { inputTokens: 10, outputTokens: 0, totalTokens: 10, cachedInputTokens: 10, cacheCreationInputTokens: 0 })).toBe(1)
+    expect(agentProviderMeasuredCostMicros(pricing, { inputTokens: 10, outputTokens: 0, totalTokens: 10, cachedInputTokens: 0, cacheCreationInputTokens: 10 })).toBe(30)
+    expect(agentProviderMeasuredCostMicros(pricing, { inputTokens: 10, outputTokens: 0, totalTokens: 10, cachedInputTokens: 0, cacheCreationInputTokens: 0 })).toBe(20)
+    expect(agentProviderMeasuredCostMicros(pricing, { inputTokens: 0, outputTokens: 0, totalTokens: 1, cachedInputTokens: 0, cacheCreationInputTokens: 0 })).toBe(5)
+    expect(agentProviderCostMicros(pricing, 10, 2, 13)).toBe(45)
+    expect(agentProviderCostMicros(pricing, 0, 0, 13)).toBe(65)
+  })
+
+  it('distinguishes absent cache counters from proven zero without inventing discounts', () => {
+    const pricing = parseAgentProviderPricing('cache-v2|2000000|5000000|100000|3000000')
+    const receipt = { inputTokens: 10, outputTokens: 0, totalTokens: 10 }
+    expect(agentProviderMeasuredCostMicros(pricing, receipt)).toBe(30)
+    expect(agentProviderMeasuredCostMicros(pricing, { ...receipt, cachedInputTokens: 6 })).toBe(13)
+    expect(agentProviderMeasuredCostMicros(pricing, { ...receipt, cachedInputTokens: 6, cacheCreationInputTokens: 0 })).toBe(9)
+    expect(agentProviderMeasuredCostMicros(pricing, { ...receipt, cacheCreationInputTokens: 2 })).toBe(22)
+    const expensiveRead = parseAgentProviderPricing('premium-read|2000000|1000000|6000000|3000000')
+    expect(agentProviderMeasuredCostMicros(expensiveRead, { ...receipt, cacheCreationInputTokens: 0 })).toBe(60)
+    expect(agentProviderMeasuredCostMicros(expensiveRead, { ...receipt, cachedInputTokens: 0, cacheCreationInputTokens: 0 })).toBe(20)
+    expect(agentProviderCostMicros(expensiveRead, 0, 0, 10)).toBe(60)
+    const freeCache = parseAgentProviderPricing('free-cache|2000000|5000000|0|0')
+    expect(agentProviderMeasuredCostMicros(freeCache, { ...receipt, cachedInputTokens: 10, cacheCreationInputTokens: 0 })).toBe(0)
+    expect(agentProviderMeasuredCostMicros(freeCache, receipt)).toBe(20)
+    expect(agentProviderCostMicros(freeCache, 10, 0, 10)).toBe(20)
+  })
+
+  it('rounds all measured categories once and rejects unsafe final costs', () => {
+    const pricing = parseAgentProviderPricing('tiny|1|1|1|1')
+    expect(agentProviderMeasuredCostMicros(pricing, { inputTokens: 2, outputTokens: 1, totalTokens: 4, cachedInputTokens: 1, cacheCreationInputTokens: 1 })).toBe(1)
+    const exact = parseAgentProviderPricing('exact|1|1|0|1')
+    expect(agentProviderMeasuredCostMicros(exact, { inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000, cachedInputTokens: 0, cacheCreationInputTokens: 0 })).toBe(1)
+    expect(agentProviderMeasuredCostMicros({ ...exact, cacheWritePremium: true }, { inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000, cachedInputTokens: 0, cacheCreationInputTokens: 1_000_000 })).toBe(1)
+    expect(() => agentProviderMeasuredCostMicros(parseAgentProviderPricing('unsafe|999999999999999|1|0|0'), {
+      inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 0, totalTokens: Number.MAX_SAFE_INTEGER
+    })).toThrow(expect.objectContaining({ code: 'PROVIDER_USAGE_INVALID', status: 502 }))
+  })
+
+  it('rejects malformed rates, overlapping cache subsets and mismatched measured totals', () => {
+    for (const revision of ['missing|1|1|0', 'extra|1|1|0|0|0', 'zero|0|1|0|0', 'negative|1|1|-1|0', 'fraction|1|1|0.5|0', 'unsafe|9007199254740992|1|0|0'])
+      expect(() => parseAgentProviderPricing(revision)).toThrow(expect.objectContaining({ code: 'PROVIDER_PRICING_INVALID' }))
+    const pricing = parseAgentProviderPricing('valid|2000000|5000000|100000|3000000')
+    for (const receipt of [
+      { inputTokens: 10, outputTokens: 2, totalTokens: 12, cachedInputTokens: 8, cacheCreationInputTokens: 3 },
+      { inputTokens: 10, outputTokens: 2, totalTokens: 11 },
+      { inputTokens: 10, outputTokens: 0, totalTokens: 10, cachedInputTokens: 11 },
+      { inputTokens: 10, outputTokens: 0, totalTokens: 10, cacheCreationInputTokens: -1 },
+      { inputTokens: 10, outputTokens: 0, totalTokens: 10, cachedInputTokens: NaN },
+      { inputTokens: 10, outputTokens: 0, totalTokens: 10, cacheCreationInputTokens: Infinity },
+      { inputTokens: 10, outputTokens: 0, totalTokens: 10, cachedInputTokens: Number.MAX_SAFE_INTEGER + 1 },
+      { inputTokens: 10, outputTokens: 0, totalTokens: 10, cachedInputTokens: 0.5 }
+    ] satisfies AgentProviderUsage[])
+      expect(() => agentProviderMeasuredCostMicros(pricing, receipt)).toThrow(expect.objectContaining({ code: 'PROVIDER_USAGE_INVALID', status: 502 }))
+    for (const invalid of [
+      { ...pricing, inputMicrosPerMillionTokens: 0 },
+      { ...pricing, outputMicrosPerMillionTokens: Infinity },
+      { ...pricing, cacheReadMicrosPerMillionTokens: NaN },
+      { ...pricing, cacheWriteMicrosPerMillionTokens: -1 },
+      { ...pricing, cacheWriteMicrosPerMillionTokens: undefined }
+    ])
+      expect(() => agentProviderMeasuredCostMicros(invalid, { inputTokens: 0, outputTokens: 0, totalTokens: 0 })).toThrow(expect.objectContaining({ code: 'PROVIDER_USAGE_INVALID', status: 502 }))
+  })
+
   it('rejects totals below a safe directional sum and unsafe accounting', () => {
     expect(() =>
       readAgentProviderUsage('legacy-completions', {
@@ -725,6 +805,71 @@ const seedInputProvider = async (db: Knex): Promise<string> => {
 describe('Ax provider factory', () => {
   let db: Knex | undefined
   afterEach(async () => db?.destroy())
+
+  it.each([
+    { transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key', model: 'claude-test' },
+    { transportKind: 'openai-responses', baseUrl: 'https://api.openai.com/v1', authMode: 'bearer', model: 'gpt-5.6-terra' }
+  ] as const)('keeps immutable explicit rates authoritative over official premium derivation for $transportKind', async settings => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const id = await seedInputProvider(db)
+    await db('agentProviderProfileVersions').where({ id }).update({ ...settings,
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} }) })
+    const factory = new AgentProviderFactory(db, { get: () => 'unpaid-fixture-key' }, undefined, publicResolver as never)
+    const historical = await factory.create(id)
+    expect(historical.pricing).toEqual({ revision: 'price-v1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000, cacheWritePremium: true })
+    await db('agentProviderProfileVersions').where({ id }).update({ pricingRevision: 'explicit-v2|1000000|2000000|0|0' })
+    const explicit = await factory.create(id)
+    expect(explicit.pricing).toEqual({ revision: 'explicit-v2', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000,
+      cacheReadMicrosPerMillionTokens: 0, cacheWriteMicrosPerMillionTokens: 0 })
+    expect(agentProviderCostMicros(historical.pricing, 4, 0, 4)).toBe(5)
+    expect(agentProviderCostMicros(explicit.pricing, 4, 0, 4)).toBe(4)
+    expect(agentProviderMeasuredCostMicros(explicit.pricing, { inputTokens: 4, outputTokens: 0, totalTokens: 4, cachedInputTokens: 0, cacheCreationInputTokens: 4 })).toBe(0)
+  })
+
+  it.each([
+    { transportKind: 'openai-responses', model: 'gpt-6.1-sol' },
+    { transportKind: 'openai-responses', model: 'gpt-5.6-terra' },
+    { transportKind: 'openai-chat', model: 'gpt-6.1-sol' }
+  ] as const)('retains a reusable source boundary on official $transportKind/$model outside the SDK cache catalog', async settings => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const id = await seedInputProvider(db)
+    await db('agentProviderProfileVersions').where({ id }).update({ ...settings, baseUrl: 'https://api.openai.com/v1', authMode: 'bearer' })
+    const requests: Record<string, unknown>[] = []
+    const implementation = (async (_input: unknown, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)))
+      return Response.json({ error: { message: 'Fixture unavailable' } }, { status: 503 })
+    }) as typeof fetch
+    const provider = await new AgentProviderFactory(db, { get: () => 'unpaid-fixture-key' }, implementation, publicResolver as never).create(id)
+    const source = { evidenceId: 'page:1:revision:1', sourceRevision: '1', unitId: 'read:fixture', readId: 'fixture',
+      context: 'Owned fixture', text: 'The fictional returns window is 21 days. Custom orders cannot be returned.',
+      kind: 'source-read' as const, complete: true }
+    const encoded = encodeWikiSynthesisSources([source], [{ evidenceId: source.evidenceId, sourceRevision: '1', readId: 'fixture',
+      title: 'Owned fixture', representation: 'markdown', complete: true, source: source.text }])
+    for (const [index, question] of ['What is the returns window?', 'Does that include custom orders?', 'Repeat the returns window.'].entries()) {
+      await expect(createWikiSynthesisProgram([source], { facetCount: 1, maxOutputTokens: 512 }).forward(provider.service,
+        { ...encoded, userRequest: question, requestFacets: [question], availableObservations: [], repairFeedback: '',
+          ...(index === 0 ? {} : { conversationContext: 'Prior user/assistant context, not source authority.' }) },
+        { model: provider.model, contextCache: { cacheBreakpoint: 'after-examples' }, promptCacheKey: 'a'.repeat(64),
+          maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1, modelConfig: { maxTokens: 512 } }
+      )).rejects.toThrow()
+    }
+    // A provider failure must still reach the native protocol once, not fail earlier on stale SDK metadata.
+    expect(requests).toHaveLength(3)
+    const cachedSources = requests.map(request => {
+      const messages = (request.messages ?? request.input) as { role?: string; content?: string | { text?: string; prompt_cache_breakpoint?: unknown }[] }[]
+      const sourceMessage = messages.find(message => message.role === 'user' && Array.isArray(message.content) &&
+        message.content.some(part => part.prompt_cache_breakpoint !== undefined && part.text?.includes(source.text)))
+      expect(sourceMessage).toBeDefined()
+      const questionMessage = messages[messages.length - 1]!
+      if (Array.isArray(questionMessage.content))
+        expect(questionMessage.content.every(part => part.prompt_cache_breakpoint === undefined)).toBe(true)
+      expect(JSON.stringify(request).match(/prompt_cache_breakpoint/gu)?.length).toBeLessThanOrEqual(4)
+      expect(request.prompt_cache_options).toMatchObject({ mode: 'explicit' })
+      return sourceMessage
+    })
+    expect(cachedSources[1]).toEqual(cachedSources[0])
+    expect(cachedSources[2]).toEqual(cachedSources[0])
+  })
 
   it.each(['generation', 'counting'] as const)('honors shortened setOptions timeout for $0 with locked private transport options', async operation => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })

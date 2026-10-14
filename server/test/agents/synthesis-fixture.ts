@@ -128,14 +128,14 @@ export const fullAxFixtureService = (
 
 export const synthesisInputFromRequest = (request: Readonly<AxChatRequest>): string | undefined => {
   if ((request.functions?.length ?? 0) > 0) return undefined
-  for (const message of [...request.chatPrompt].reverse()) {
-    if (message.role !== 'user') continue
-    if (typeof message.content !== 'string' && !Array.isArray(message.content)) continue
-    const content = typeof message.content === 'string'
+  const content = request.chatPrompt.filter(message => message.role === 'user' &&
+    (typeof message.content === 'string' || Array.isArray(message.content))).map(message =>
+    typeof message.content === 'string'
       ? message.content
       : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-    if (/^User Request: /u.test(content) && content.includes('\n\nSource Text: ') && content.includes('\n\nSource References: ')) return content
-  }
+  ).join('\n\n')
+  if (/^Source Text: /u.test(content) && content.includes('\n\nSource References: ') && content.includes('\n\nUser Request: '))
+    return `\n\n${content}`
   return undefined
 }
 
@@ -145,7 +145,7 @@ const synthesisFieldText = (input: string, title: string): string => {
   const value = input.slice(start + title.length + 4)
   const end = title === 'Source Text'
     ? value.lastIndexOf('\n\nSource References: ')
-    : value.search(/\n\n(?:Request Facets|Available Observations|Repair Feedback): /u)
+    : value.search(/\n\n(?:Conversation Context|User Request|Request Facets|Available Observations|Repair Feedback): /u)
   return end < 0 ? value : value.slice(0, end)
 }
 

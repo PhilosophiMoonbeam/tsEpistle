@@ -65,6 +65,49 @@ describe('agent utility model', () => {
     const prompt = chat.mock.calls[0]?.[0] as { chatPrompt: Array<{ role: string; content: string }> }
     expect(JSON.parse(prompt.chatPrompt.at(-1)?.content ?? '')).toEqual({ transcript: request.messages })
   })
+
+  it.each(['title', 'classification'] as const)('settles measured cache categories for %s without lowering full-token admission', async purpose => {
+    const chat = vi.fn(async () => ({
+      results: [{ index: 0, content: purpose === 'title' ? 'Deployment rollover investigation' : 'standard' }],
+      modelUsage: { ai: 'test', model: 'model-mini', tokens: {
+        promptTokens: 2, completionTokens: 2, totalTokens: 13, cacheReadTokens: 6, cacheCreationTokens: 2
+      } }
+    }))
+    const create = vi.fn(async () => ({
+      service: { chat }, model: 'model-mini', transportKind: 'openai-responses',
+      capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+      pricing: { revision: 'cache-v2', inputMicrosPerMillionTokens: 2_000_000, outputMicrosPerMillionTokens: 5_000_000,
+        cacheReadMicrosPerMillionTokens: 100_000, cacheWriteMicrosPerMillionTokens: 3_000_000 }
+    }))
+    const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
+    const reservation = { id: 1, tokens: 10_000, costMicros: 50_000 }
+    const reserve = vi.fn(async (_maximum: { tokens: number; costMicros: number }) => reservation)
+    const reconcile = vi.fn(async () => {})
+    const dispatchBudget = { reserve, reconcile, release: vi.fn(async () => {}), consumeTool: vi.fn(async () => {}),
+      unsettledExposure: { tokens: 0, costMicros: 0 } }
+    const result = purpose === 'title'
+      ? await utility.generateConversationTitle({ ...request, dispatchBudget })
+      : await utility.classifyGoalBudget({ profileVersionId: request.profileVersionId, objective: 'Investigate the deployment rollover', signal: request.signal, dispatchBudget })
+    expect(result).toMatchObject({ inputTokens: 10, outputTokens: 2, totalTokens: 13, costMicros: 26 })
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 10, outputTokens: 2, totalTokens: 13, costMicros: 26 })
+    const maximum = reserve.mock.calls[0]?.[0]
+    expect(maximum?.tokens).toBeGreaterThan(13)
+    expect(maximum?.costMicros).toBe(maximum!.tokens * 5)
+  })
+
+  it('retains unknown cache-write premiums for title receipts when write counters are absent', async () => {
+    const chat = vi.fn(async () => ({
+      results: [{ index: 0, content: 'Deployment rollover investigation' }],
+      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 4, completionTokens: 0, totalTokens: 10, cacheReadTokens: 6 } }
+    }))
+    const utility = new AgentUtilityModel({ create: vi.fn(async () => ({
+      service: { chat }, model: 'model-mini', transportKind: 'openai-responses',
+      capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+      pricing: { revision: 'cache-v2', inputMicrosPerMillionTokens: 2_000_000, outputMicrosPerMillionTokens: 5_000_000,
+        cacheReadMicrosPerMillionTokens: 100_000, cacheWriteMicrosPerMillionTokens: 3_000_000 }
+    })) } as unknown as AgentProviderFactory)
+    expect(await utility.generateConversationTitle(request)).toMatchObject({ inputTokens: 10, outputTokens: 0, totalTokens: 10, costMicros: 13 })
+  })
   it('selects small, standard, and extended tiers only for exact utility classifications', async () => {
     const outputs = ['small', 'standard', 'extended', '1000000']
     let outputIndex = 0

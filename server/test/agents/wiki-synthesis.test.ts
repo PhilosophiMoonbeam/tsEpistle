@@ -70,6 +70,70 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
+  it('keeps complete untrusted sources ahead of changing turn data with a stable system prompt and supported cache boundary', async () => {
+    const encoded = encodeFixtureSources([source])
+    const history = 'Earlier user: scope the publication approvals.'
+    const observation = 'Host admitted workflow observation.'
+    for (const contextCache of [undefined, { cacheBreakpoint: 'after-examples' as const }]) {
+      const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({
+        results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [] }), finishReason: 'stop' as const }]
+      }))
+      const service = new AxMockAIService<string>({
+        features: {
+          functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'],
+          caching: { supported: true, types: ['ephemeral'], cacheBreakpoints: true }
+        },
+        chatResponse: chat
+      })
+      const turns: WikiSynthesisInput[] = [
+        { ...input, ...encoded, requestFacets: [] },
+        { ...input, ...encoded, requestFacets: [], conversationContext: '' },
+        {
+          ...input, ...encoded, conversationContext: history,
+          userRequest: 'Who approves this publication now?',
+          requestFacets: ['Who approves?', 'this publication now?'],
+          availableObservations: [observation], repairFeedback: 'Restore the requested approval condition.'
+        }
+      ]
+      for (const turn of turns) {
+        const program = createWikiSynthesisProgram([source], { facetCount: turn.requestFacets.length, observations: [observation] })
+        await program.forward(service, turn, { structuredOutputMode: 'native', contextCache })
+      }
+      const requests = chat.mock.calls.map(([request]) => request)
+      const userText = (request: Readonly<AxChatRequest>): string => request.chatPrompt
+        .filter(message => message.role === 'user')
+        .map(message => typeof message.content === 'string' ? message.content : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n'))
+        .join('\n')
+      const prefix = (request: Readonly<AxChatRequest>): string => {
+        const text = userText(request)
+        const sourceStart = text.indexOf(encoded.sourceText)
+        const referenceStart = text.indexOf(encoded.sourceReferences)
+        expect(sourceStart).toBeGreaterThanOrEqual(0)
+        expect(referenceStart).toBeGreaterThan(sourceStart + encoded.sourceText.length)
+        expect(text.indexOf('User Request:')).toBeGreaterThan(referenceStart + encoded.sourceReferences.length)
+        return text.slice(0, referenceStart + encoded.sourceReferences.length)
+      }
+      for (const request of requests) {
+        expect(request.chatPrompt[0]).toEqual(requests[0]!.chatPrompt[0])
+        expect(request.responseFormat).toEqual(requests[0]!.responseFormat)
+        expect(request.chatPrompt[0]!.content).not.toContain(source.text)
+        expect(prefix(request)).toBe(prefix(requests[0]!))
+        if (contextCache !== undefined) {
+          const cached = request.chatPrompt.find(message => message.role === 'user' && message.cache)
+          expect(cached?.content).toContain(encoded.sourceText)
+          expect(cached?.content).toContain(encoded.sourceReferences)
+          expect(cached?.content).not.toContain('User Request:')
+          expect(cached?.content).not.toContain(history)
+          expect(cached?.content).not.toContain(observation)
+          expect(cached?.content).not.toContain('Repair Feedback:')
+        }
+      }
+      expect(userText(requests[2]!)).toContain(history)
+      expect(userText(requests[2]!)).toContain(turns[2]!.userRequest)
+      expect(userText(requests[2]!)).toContain(turns[2]!.repairFeedback)
+    }
+  })
+
   it('preserves explicitly emitted faithful quotations through both host validation boundaries', async () => {
     const literalStatement = 'Status: Illustrative and untested | Scope: External publication only | Required approvals: **two**.'
     const quoted = { ...source, text: `${literalStatement}\n${source.text}` }
@@ -771,7 +835,7 @@ describe('Wiki synthesis complete registered read transport', () => {
   const read: WikiSynthesisRead = { evidenceId: root.evidenceId, sourceRevision: '7', readId: root.readId, title: 'Aurora', representation: 'markdown', complete: true, source: body };
   const request = (sources: readonly WikiSynthesisSource[], reads: readonly WikiSynthesisRead[]): Readonly<AxChatRequest> => {
     const encoded = encodeWikiSynthesisSources(sources, reads);
-    return { chatPrompt: [{ role: 'user', content: `User Request: Preserve requested facts.\n\nSource Text: ${encoded.sourceText}\n\nSource References: ${encoded.sourceReferences}\n\nRequest Facets: []` }] };
+    return { chatPrompt: [{ role: 'user', content: `Source Text: ${encoded.sourceText}\n\nSource References: ${encoded.sourceReferences}\n\nUser Request: Preserve requested facts.\n\nRequest Facets: []` }] };
   };
 
   it('delivers unchanged full author bytes once and a text-free read locator through the real program consumer', async () => {
@@ -801,6 +865,35 @@ describe('Wiki synthesis complete registered read transport', () => {
     for (const row of delivered) expect(row.text).toBe(body);
     expect(synthesisReadsFromRequest(request([root, section], reads))).toHaveLength(1);
   });
+
+  it('canonicalizes physical-read and alias arrival order without changing locator authority or sorting by body content', () => {
+    const section = { ...root, evidenceId: `${root.evidenceId}:section:1` }
+    const other = { ...root, evidenceId: 'page:99:revision:7', readId: 'physical:99:7', unitId: 'read:physical:99:7', text: 'AAA independently authored body.\r\n' }
+    const otherRead = { ...read, evidenceId: other.evidenceId, readId: other.readId, source: other.text }
+    const sources = [other, section, root]
+    const reads = [otherRead, { ...read, evidenceId: section.evidenceId }, read]
+    const encoded = encodeWikiSynthesisSources(sources, reads)
+    expect(encodeWikiSynthesisSources([...sources].reverse(), [...reads].reverse())).toEqual(encoded)
+    const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex
+    expect(index.reads[wikiSynthesisSourceRef(root)]).toEqual({ readRef: 'd0', evidenceId: root.evidenceId, sourceRevision: root.sourceRevision })
+    expect(index.reads[wikiSynthesisSourceRef(section)]).toEqual({ readRef: 'd0', evidenceId: section.evidenceId, sourceRevision: section.sourceRevision })
+    expect(index.reads[wikiSynthesisSourceRef(other)]).toEqual({ readRef: 'd1', evidenceId: other.evidenceId, sourceRevision: other.sourceRevision })
+    const changed = encodeWikiSynthesisSources(
+      [root, section, { ...other, text: 'ZZZ changed independently authored body.\r\n' }],
+      [read, { ...read, evidenceId: section.evidenceId }, { ...otherRead, source: 'ZZZ changed independently authored body.\r\n' }]
+    )
+    expect(changed.sourceReferences).toBe(encoded.sourceReferences)
+    expect(changed.sourceText).not.toBe(encoded.sourceText)
+    expect(changed.sourceText.indexOf(body)).toBeLessThan(changed.sourceText.indexOf('ZZZ changed'))
+    expect(encodeWikiSynthesisSources([root], [{ ...read, representation: 'html' }]).sourceText)
+      .not.toBe(encodeWikiSynthesisSources([root], [read]).sourceText)
+    const revised = { ...root, evidenceId: 'page:42:revision:8', sourceRevision: '8', readId: 'physical:42:8', unitId: 'read:physical:42:8' }
+    const revisedRead = { ...read, evidenceId: revised.evidenceId, sourceRevision: '8', readId: revised.readId }
+    const revisedEncoded = encodeWikiSynthesisSources([revised], [revisedRead])
+    expect(revisedEncoded.sourceText).not.toBe(encodeWikiSynthesisSources([root], [read]).sourceText)
+    expect(revisedEncoded.sourceReferences).not.toContain(wikiSynthesisSourceRef(root))
+    expect((JSON.parse(revisedEncoded.sourceReferences) as WikiSynthesisReferenceIndex).reads[wikiSynthesisSourceRef(revised)]?.sourceRevision).toBe('8')
+  })
 
   it('keeps separately equal reads and repeated authored records distinct without a derived record catalog', () => {
     const repeated = 'Name: Aurora | Value: 20 minutes\nName: Aurora | Value: 20 minutes\n';
@@ -853,8 +946,12 @@ describe('Wiki synthesis complete registered read transport', () => {
     });
     const service = new AxMockAIService<string>({ features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] }, chatResponse: chat });
     await createWikiSynthesisProgram(sources).forward(service, { ...input, ...encoded, requestFacets: [] });
-    expect(synthesisReadsFromRequest(chat.mock.calls[0]![0]).map(row => row.readText)).toEqual(bodies);
-    expect(synthesisSourcesFromRequest(chat.mock.calls[0]![0]).map(row => row.text)).toEqual(bodies);
+    const deliveredReads = synthesisReadsFromRequest(chat.mock.calls[0]![0])
+    const deliveredSources = synthesisSourcesFromRequest(chat.mock.calls[0]![0])
+    expect(deliveredReads.map(row => row.readText)).toEqual(expect.arrayContaining(bodies))
+    expect(deliveredSources.map(row => row.text)).toEqual(expect.arrayContaining(bodies))
+    expect(deliveredReads).toHaveLength(bodies.length)
+    expect(deliveredSources).toHaveLength(bodies.length)
     expect(chat).toHaveBeenCalledTimes(1);
   });
 })

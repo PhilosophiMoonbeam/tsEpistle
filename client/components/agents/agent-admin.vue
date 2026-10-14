@@ -483,6 +483,12 @@
                 <div class="form-grid"><v-text-field v-model.number="profileDraft.maxContextTokens" type="number" min="1024" max="10000000" step="1" :rules="profileRules.maxContextTokens" :label="t('maximumContextTokens')" /><v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" min="1" max="1000000" step="1" :rules="profileRules.maxOutputTokens" :label="t('maximumOutputTokens')" /></div>
               </div>
               <div class="limit-group">
+                <h4>{{ t('pricing', { defaultValue: 'Pricing' }) }}</h4>
+                <v-text-field v-model="profileDraft.pricingRevision" :rules="profilePricingRules" :label="t('pricingRevisionAdvanced', { defaultValue: 'Pricing revision (advanced)' })" :hint="t('pricingRateUnits', { defaultValue: 'USD micros per million tokens (1 USD = 1,000,000 micros).' })" maxlength="128" counter="128" persistent-hint spellcheck="false" autocapitalize="off" autocomplete="off" required />
+                <p class="text-body-small">{{ t('pricingRevisionFormat', { defaultValue: 'Format:' }) }} <code>revision|input|output</code> {{ t('pricingRevisionFormatOr', { defaultValue: 'or' }) }} <code>revision|input|output|cachedRead|cachedWrite</code>.</p>
+                <p class="text-body-small">{{ t('pricingRevisionMeaning', { defaultValue: 'Legacy pricing charges all input at the input rate; no cache discount is inferred. Explicit cache read/write rates apply only to measured cache usage; reservations remain conservative. Existing pricing is retained unless you edit this field.' }) }}</p>
+              </div>
+              <div class="limit-group">
                 <h4>{{ t('dailyCeilings') }}</h4>
                 <div class="form-grid"><v-text-field v-model.number="profileDraft.dailyTokens" type="number" min="1" max="1000000000" step="1" :rules="profileRules.dailyTokens" :label="t('dailyTokenLimit')" /><v-text-field v-model.number="profileDraft.dailyCostMicros" type="number" min="1" step="1" :rules="profileRules.dailyCostMicros" :label="t('dailyCostReservationMicros')" /></div>
               </div>
@@ -585,6 +591,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowR
 import { useDisplay } from 'vuetify'
 import {
   agentProviderReasoningEfforts,
+  AgentProviderPricingRevisionSchema,
   type AgentProviderTransport,
   type AgentReasoningEffort
 } from '../../../shared/agents/contracts.ts'
@@ -652,10 +659,10 @@ interface RuntimePolicy {
 interface ConnectionCheck { status: 'passed' | 'failed'; errorCode: string | null; message: string | null; completedAt: string }
 interface ConnectionHistoryCheck extends ConnectionCheck { id: string; checks: { name: string; passed: boolean; detail?: string }[] }
 interface Profile { profileVersionId: string }
-interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; mediaInputs?: AgentMediaInputs; media?: { attachments: boolean } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
+interface Profile { id: string; displayName: string; status: 'enabled' | 'disabled'; isGlobalDefault: boolean; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; conformed: boolean; connectionCheck: ConnectionCheck | null; transportKind: AgentProviderTransport; model: string; utilityModel: string | null; baseUrl: string; destinationHost: string; authMode: AgentProviderAuthMode; secretConfigured: boolean; pricingRevision: string; adapterConfig: { timeoutMs: number; maxRetries: number; additionalHeaders: Record<string, string>; agentReasoningEffort?: AgentReasoningEffort; utilityReasoningEffort?: AgentReasoningEffort; mediaInputs?: AgentMediaInputs; media?: { attachments: boolean } }; capabilities: { streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; cancellation: boolean; maxContextTokens: number; maxOutputTokens: number }; policies: { allowedModes: string[]; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; promptVersion: number; maxAttempts: number } }
 interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; policySha256: string }
 interface GroupOption { id: number; name: string; isSystem: boolean }
-interface ProfileDraft { mediaInputs: AgentMediaInputs; displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
+interface ProfileDraft { mediaInputs: AgentMediaInputs; displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; pricingRevision: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
 const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown } = useDisplay()
@@ -748,7 +755,7 @@ const formatConnectionCheckDate = (completedAt: string): string => {
   const completed = new Date(completedAt)
   return Number.isNaN(completed.getTime()) ? t('unknownTime') : connectionDateFormatter.format(completed)
 }
-const defaults = (): ProfileDraft => ({ mediaInputs: { images: false, documents: false, audio: false, video: false }, displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
+const defaults = (): ProfileDraft => ({ mediaInputs: { images: false, documents: false, audio: false, video: false }, displayName: '', transportKind: 'openai-responses', model: '', utilityModel: '', agentReasoningEffort: null, utilityReasoningEffort: null, ...agentProviderProtocolDefaults('openai-responses'), secretValue: '', pricingRevision: AGENT_PROVIDER_PRICING_REVISION, exposureMode: 'all_agent_users', groupIds: [], maxContextTokens: 128000, maxOutputTokens: 8192, dailyTokens: 1000000, dailyCostMicros: 10000000, reservationTokens: 32000, reservationCostMicros: 1000000, reservationMilliseconds: 300000, timeoutMs: 120000, maxRetries: 0, maxAttempts: 3, promptVersion: 1, additionalHeaders: {} })
 const profileDraft = reactive<ProfileDraft>(defaults())
 const inputKinds = ['images', 'documents', 'audio', 'video'] as const
 const inputSupport = computed(() => AGENT_PROVIDER_MEDIA_INPUT_SUPPORT[profileDraft.transportKind])
@@ -918,6 +925,7 @@ const requiredTextRule = (label: string) => (value: unknown): true | string =>
   (typeof value === 'string' && Boolean(value.trim())) || t('required', { label, interpolation: { escapeValue: false } })
 const profileDisplayNameRules = [requiredTextRule(t('displayName'))]
 const profileModelRules = [requiredTextRule(t('agentModel'))]
+const profilePricingRules = [(value: unknown): true | string => AgentProviderPricingRevisionSchema.safeParse(value).success || t('pricingRevisionInvalid', { defaultValue: 'Enter revision|input|output or revision|input|output|cachedRead|cachedWrite (128 characters maximum). Revision: 1–64 letters, digits, dots, underscores or hyphens. Rates: at most 15 digits each; input/output must be positive safe integers and cache rates may be zero.' })]
 const profileSecretRules = computed(() =>
   editingProfile.value?.secretConfigured ? [] : [requiredTextRule(t('apiKey'))]
 )
@@ -962,7 +970,8 @@ const profileStepIsValid = (step: ProfileStep): boolean => {
     integerInRange(profileDraft.reservationTokens, 1, 10_000_000) &&
     integerInRange(profileDraft.reservationCostMicros, 1, Number.MAX_SAFE_INTEGER) &&
     integerInRange(profileDraft.timeoutMs, 1_000, 300_000) &&
-    integerInRange(profileDraft.maxAttempts, 1, 10)
+    integerInRange(profileDraft.maxAttempts, 1, 10) &&
+    profilePricingRules[0](profileDraft.pricingRevision) === true
 }
 const profileStepValid = computed(() => profileStepIsValid(profileStep.value))
 const profileDraftValid = computed(() => profileSteps.value.every(step => profileStepIsValid(step.value)))
@@ -1007,6 +1016,8 @@ const profileSaveState = computed(() => {
         const issue = rules[0](profileDraft[key as keyof typeof profileRules])
         if (issue !== true) { field = issue; break }
       }
+      const pricingIssue = profilePricingRules[0](profileDraft.pricingRevision)
+      if (pricingIssue !== true) field = pricingIssue
     }
     return t('reviewInvalidField', { step: invalid.title, field, interpolation: { escapeValue: false } })
   }
@@ -1127,6 +1138,7 @@ const openProfile = (profile?: Profile) => {
     transportKind: profile.transportKind,
     model: profile.model,
     utilityModel: profile.utilityModel ?? '',
+    pricingRevision: profile.pricingRevision,
     agentReasoningEffort: profile.adapterConfig.agentReasoningEffort ?? null,
     utilityReasoningEffort: profile.adapterConfig.utilityReasoningEffort ?? null,
     mediaInputs: Object.fromEntries(inputKinds.map(kind => [kind, AGENT_PROVIDER_MEDIA_INPUT_SUPPORT[profile.transportKind][kind] && (profile.adapterConfig.mediaInputs?.[kind] ?? ((kind === 'images' || kind === 'documents') && Boolean(profile.adapterConfig.media?.attachments)))])) as unknown as AgentMediaInputs,
@@ -1156,7 +1168,7 @@ const openProfile = (profile?: Profile) => {
   if (!profile) void refreshResources(['groups'])
 }
 const mediaSettingsValid = computed(() => inputKinds.every(kind => !profileDraft.mediaInputs[kind] || inputSupport.value[kind]))
-const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { mediaInputs: { ...profileDraft.mediaInputs }, timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
+const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { mediaInputs: { ...profileDraft.mediaInputs }, timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: profileDraft.pricingRevision })
 const saveProfile = async (): Promise<void> => {
   if (saving.value || !profileDirty.value) return
   if (!profileDraftValid.value) {

@@ -2,7 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { isIP } from 'node:net'
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import { AGENT_REASONING_EFFORTS, agentProviderReasoningEfforts, type AgentExecutionMode } from '../../../shared/agents/contracts.ts'
+import { AGENT_REASONING_EFFORTS, AgentProviderPricingRevisionSchema, agentProviderReasoningEfforts, type AgentExecutionMode } from '../../../shared/agents/contracts.ts'
 import type { RoutingCandidate, RoutingTurnDecision } from '../../../shared/agents/routing.ts'
 import {
   AGENT_PROVIDER_MEDIA_INPUT_SUPPORT,
@@ -53,20 +53,6 @@ const FORBIDDEN_HEADERS = new Set([
   'x-forwarded-host',
   'x-forwarded-proto'
 ])
-export const AgentProviderPricingRevisionSchema = z
-  .string()
-  .regex(/^[A-Za-z0-9._-]{1,64}\|[0-9]{1,15}\|[0-9]{1,15}$/)
-  .refine(
-    value =>
-      value
-        .split('|')
-        .slice(1)
-        .every(rate => {
-          const parsed = Number(rate)
-          return Number.isSafeInteger(parsed) && parsed > 0
-        }),
-    'Provider token rates must be positive safe integers'
-  )
 
 export const AgentProviderMediaConfigSchema = z.strictObject({
   attachments: z.boolean().default(false),
@@ -447,7 +433,7 @@ const validateSettings = (input: AgentProviderSettingsInput, allowManagedReferen
     throw new AgentRepositoryError('INVALID_PROVIDER_CAPABILITIES', 'Agent mode requires cancellation support', 400)
   const pricingRevision = normalizedString(input.pricingRevision, 'Pricing revision', 128)
   if (!AgentProviderPricingRevisionSchema.safeParse(pricingRevision).success) {
-    throw new AgentRepositoryError('INVALID_PROVIDER_PRICING', 'Pricing revision must include immutable positive input and output token rates', 400)
+    throw new AgentRepositoryError('INVALID_PROVIDER_PRICING', 'Pricing revision must be revision|input|output or revision|input|output|cachedRead|cachedWrite, with positive normal rates and nonnegative cache rates', 400)
   }
   return {
     transportKind,

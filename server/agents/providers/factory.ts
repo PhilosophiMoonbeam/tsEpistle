@@ -16,7 +16,7 @@ import {
 import type { Knex } from 'knex'
 // The explicit entry point avoids Bun's built-in shim, which ignores dispatchers.
 import { Agent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from 'undici/index.js'
-import { type AgentReasoningEffort, agentProviderReasoningEfforts } from '../../../shared/agents/contracts.ts'
+import { AgentProviderPricingRevisionSchema, type AgentReasoningEffort, agentProviderReasoningEfforts } from '../../../shared/agents/contracts.ts'
 import { type AgentMediaInputs, type AgentMediaKind, type AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { assertAgentMediaBinding } from '../media-providers.ts'
 import { AgentRepositoryError } from '../repository.ts'
@@ -39,11 +39,10 @@ import {
   agentProviderMediaInputs,
   type AgentProviderCapabilities,
   AgentProviderCapabilitiesSchema,
-  AgentProviderPricingRevisionSchema,
   type AgentProviderTransportKind
 } from './registry.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
-import { assertAgentTokenUsage } from './usage.ts'
+import { acceptCumulativeAgentProviderUsage, assertAgentTokenUsage, type AgentProviderUsage } from './usage.ts'
 
 const MAX_RETRY_AFTER_MS = 300_000
 const MAX_PROVIDER_ERROR_BYTES = 64 * 1_024
@@ -406,50 +405,93 @@ export interface AgentProviderPricing {
   readonly revision: string
   readonly inputMicrosPerMillionTokens: number
   readonly outputMicrosPerMillionTokens: number
+  readonly cacheReadMicrosPerMillionTokens?: number
+  readonly cacheWriteMicrosPerMillionTokens?: number
+  /** Legacy official-endpoint write exposure, exactly 5/4 of the immutable input rate. */
   readonly cacheWritePremium?: boolean
 }
 
 export const parseAgentProviderPricing = (value: string): AgentProviderPricing => {
   if (!AgentProviderPricingRevisionSchema.safeParse(value).success) {
-    throw new AgentRepositoryError('PROVIDER_PRICING_INVALID', 'Provider pricing revision must include immutable positive input and output token rates', 500)
+    throw new AgentRepositoryError('PROVIDER_PRICING_INVALID', 'Provider pricing must declare positive input/output rates and, optionally, nonnegative cache read/write rates', 500)
   }
-  const [revision, inputRate, outputRate] = value.split('|')
+  const [revision, inputRate, outputRate, cacheReadRate, cacheWriteRate] = value.split('|')
   return {
     revision: revision!,
     inputMicrosPerMillionTokens: Number(inputRate),
-    outputMicrosPerMillionTokens: Number(outputRate)
+    outputMicrosPerMillionTokens: Number(outputRate),
+    ...(cacheReadRate === undefined ? {} : {
+      cacheReadMicrosPerMillionTokens: Number(cacheReadRate),
+      cacheWriteMicrosPerMillionTokens: Number(cacheWriteRate)
+    })
   }
 }
 
-export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputTokens: number, outputTokens: number, totalTokens: number): number => {
-  assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
+const providerCostMicros = (
+  pricing: AgentProviderPricing,
+  inputTokens: number,
+  outputTokens: number,
+  totalTokens: number,
+  receipt?: AgentProviderUsage
+): number => {
+  const cacheReadRate = pricing.cacheReadMicrosPerMillionTokens
+  const cacheWriteRate = pricing.cacheWriteMicrosPerMillionTokens
   if (
     !Number.isSafeInteger(pricing.inputMicrosPerMillionTokens) ||
-    pricing.inputMicrosPerMillionTokens < 0 ||
+    pricing.inputMicrosPerMillionTokens <= 0 ||
     !Number.isSafeInteger(pricing.outputMicrosPerMillionTokens) ||
-    pricing.outputMicrosPerMillionTokens < 0 ||
+    pricing.outputMicrosPerMillionTokens <= 0 ||
+    (cacheReadRate === undefined) !== (cacheWriteRate === undefined) ||
+    (cacheReadRate !== undefined && (!Number.isSafeInteger(cacheReadRate) || cacheReadRate < 0)) ||
+    (cacheWriteRate !== undefined && (!Number.isSafeInteger(cacheWriteRate) || cacheWriteRate < 0)) ||
     (pricing.cacheWritePremium !== undefined && typeof pricing.cacheWritePremium !== 'boolean')
   )
     throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider pricing is invalid', 502)
 
-  const inputRate = BigInt(pricing.inputMicrosPerMillionTokens)
-  const outputRate = BigInt(pricing.outputMicrosPerMillionTokens)
-  const input = BigInt(inputTokens)
-  const output = BigInt(outputTokens)
-  const residual = BigInt(totalTokens - inputTokens - outputTokens)
-  let numerator: bigint
-  let denominator: bigint
-  if (pricing.cacheWritePremium === true) {
-    numerator = 5n * input * inputRate + 4n * output * outputRate + residual * (5n * inputRate > 4n * outputRate ? 5n * inputRate : 4n * outputRate)
-    denominator = 4_000_000n
+  // A common denominator preserves the legacy 5/4 premium without intermediate rounding.
+  const inputRate = 4n * BigInt(pricing.inputMicrosPerMillionTokens)
+  const outputRate = 4n * BigInt(pricing.outputMicrosPerMillionTokens)
+  const readRate = cacheReadRate === undefined ? inputRate : 4n * BigInt(cacheReadRate)
+  const writeRate = cacheWriteRate === undefined
+    ? pricing.cacheWritePremium === true ? 5n * BigInt(pricing.inputMicrosPerMillionTokens) : inputRate
+    : 4n * BigInt(cacheWriteRate)
+  const maximumInputRate = inputRate > readRate
+    ? inputRate > writeRate ? inputRate : writeRate
+    : readRate > writeRate ? readRate : writeRate
+  const maximumRate = maximumInputRate > outputRate ? maximumInputRate : outputRate
+  let inputCost: bigint
+  if (receipt !== undefined && cacheReadRate !== undefined) {
+    const cachedRead = receipt.cachedInputTokens ?? 0
+    const cachedWrite = receipt.cacheCreationInputTokens ?? 0
+    // Missing counters do not prove zero. Only the unclassified remainder takes
+    // a worst-case rate; established cache categories are disjoint full-input subsets.
+    let unclassifiedRate = inputRate
+    if (receipt.cachedInputTokens === undefined && readRate > unclassifiedRate) unclassifiedRate = readRate
+    if (receipt.cacheCreationInputTokens === undefined && writeRate > unclassifiedRate) unclassifiedRate = writeRate
+    inputCost = BigInt(cachedRead) * readRate + BigInt(cachedWrite) * writeRate +
+      BigInt(inputTokens - cachedRead - cachedWrite) * unclassifiedRate
   } else {
-    const maximumRate = inputRate > outputRate ? inputRate : outputRate
-    numerator = input * inputRate + output * outputRate + residual * maximumRate
-    denominator = 1_000_000n
+    // Historical three-component revisions never acquire a speculative cache discount.
+    inputCost = BigInt(inputTokens) * maximumInputRate
   }
+  const numerator = inputCost + BigInt(outputTokens) * outputRate +
+    BigInt(totalTokens - inputTokens - outputTokens) * maximumRate
+  const denominator = 4_000_000n
   const cost = (numerator + denominator - 1n) / denominator
   if (cost > BigInt(Number.MAX_SAFE_INTEGER)) throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider usage cost exceeds the supported range', 502)
   return Number(cost)
+}
+
+/** Reservations, estimated usage and unknown dispatch exposure never assume a cache hit. */
+export const agentProviderCostMicros = (pricing: AgentProviderPricing, inputTokens: number, outputTokens: number, totalTokens: number): number => {
+  assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
+  return providerCostMicros(pricing, inputTokens, outputTokens, totalTokens)
+}
+
+/** Price a normalized measured receipt; inputTokens already includes both cache categories. */
+export const agentProviderMeasuredCostMicros = (pricing: AgentProviderPricing, receipt: AgentProviderUsage): number => {
+  acceptCumulativeAgentProviderUsage(null, receipt)
+  return providerCostMicros(pricing, receipt.inputTokens, receipt.outputTokens, receipt.totalTokens, receipt)
 }
 
 export interface AgentProviderService {
@@ -1139,6 +1181,8 @@ interface ProviderRequestScope {
   readonly limits: AgentProviderResourceLimits
   readonly onLimit: (error: AgentRepositoryError) => void
   readonly onError: (error: AgentRepositoryError) => void
+  readonly promptCacheKey?: string | undefined
+  readonly cachePrompt?: AxChatRequest['chatPrompt']
 }
 
 const requestOutputTokens = (request: Readonly<AxChatRequest<unknown>>, ceiling: number): number => {
@@ -1154,7 +1198,8 @@ type ProviderChatService = AxAIService & Pick<AgentProviderService, 'nativeMedia
 const createRequestScopedService = (
   capabilities: AgentProviderCapabilities,
   model: string,
-  build: (scope: ProviderRequestScope) => ProviderChatService
+  build: (scope: ProviderRequestScope) => ProviderChatService,
+  caching?: AxAIFeatures['caching']
 ): ProviderChatService => {
   const ceiling = capabilities.maxOutputTokens
   const featureService = build({ limits: deriveAgentProviderResourceLimits(ceiling), onLimit: () => {}, onError: () => {} })
@@ -1192,6 +1237,7 @@ const createRequestScopedService = (
       const nativeSchema = capabilities.structuredOutput === 'native-json-schema' && features.structuredOutputs === true
       return {
         ...features,
+        ...(caching === undefined ? {} : { caching }),
         functions,
         streaming: capabilities.streaming && features.streaming,
         structuredOutputs: nativeSchema,
@@ -1274,8 +1320,14 @@ const createRequestScopedService = (
         modelConfig: { ...request.modelConfig, maxTokens: Math.min(limits.maxOutputTokens, requestOutputTokens(request, ceiling)) }
       }
       try {
-        const service = build({ limits, onLimit, onError })
+        const service = build({
+          limits, onLimit, onError,
+          promptCacheKey: options?.promptCacheKey ?? defaultsSnapshot.promptCacheKey,
+          cachePrompt: boundedRequest.chatPrompt
+        })
         const scopedOptions = safeOptions({ ...defaultsSnapshot, ...options, abortSignal: signal }, service.getOptions().fetch)
+        // Host-owned native cache controls cover official models newer than this SDK's catalog.
+        if (caching !== undefined && !service.getFeatures(model).caching.supported) delete scopedOptions.contextCache
         const response = await service.chat(boundedRequest, scopedOptions)
         lastService = service
         // Always resolve the exact configured model, never a caller override.
@@ -1521,11 +1573,15 @@ export class AgentProviderFactory {
       (row.transportKind === 'openai-responses' || row.transportKind === 'openai-chat') && exactProviderBase(providerBase, 'https://api.openai.com', '/v1')
     const automaticAnthropicCaching = row.transportKind === 'anthropic-messages' && exactProviderBase(providerBase, 'https://api.anthropic.com', '/v1')
     const officialGemini = row.transportKind === 'gemini-api' && exactProviderBase(providerBase, 'https://generativelanguage.googleapis.com', '/v1beta')
-    const pricing = {
-      ...parseAgentProviderPricing(row.pricingRevision),
-      ...(automaticAnthropicCaching || (officialOpenAIEndpoint && isOpenAIGpt56OrLater(model)) ? { cacheWritePremium: true } : {})
+    const parsedPricing = parseAgentProviderPricing(row.pricingRevision)
+    const pricing: AgentProviderPricing = {
+      ...parsedPricing,
+      ...(parsedPricing.cacheWriteMicrosPerMillionTokens === undefined &&
+        (automaticAnthropicCaching || (officialOpenAIEndpoint && isOpenAIGpt56OrLater(model)))
+        ? { cacheWritePremium: true } : {})
     }
     const preserveCachePrefix = automaticAnthropicCaching || officialGemini || (officialOpenAIEndpoint && isOpenAICacheCapableModel(model))
+    const nativeOpenAIBreakpoints = officialOpenAIEndpoint && isOpenAIGpt56OrLater(model)
     let adapterConfig: ReturnType<typeof AgentProviderAdapterConfigSchema.parse>
     let capabilities: AgentProviderCapabilities
     try {
@@ -1609,6 +1665,33 @@ export class AgentProviderFactory {
               delete body.temperature
               delete body.top_p
             }
+            if (officialOpenAIEndpoint && scope.promptCacheKey !== undefined) body.prompt_cache_key = scope.promptCacheKey
+            if (nativeOpenAIBreakpoints && scope.promptCacheKey !== undefined && scope.cachePrompt !== undefined) {
+              // Stable policy/source boundaries, not a moving marker on the latest question.
+              const messages = row.transportKind === 'openai-chat' ? body.messages : body.input
+              let cachedSource = false
+              for (const [index, message] of messages.entries()) {
+                if (row.transportKind !== 'openai-chat' && message.type !== 'message') continue
+                const content = message.content
+                const text = typeof content === 'string' ? content :
+                  Array.isArray(content) && content.length === 1 && typeof content[0]?.text === 'string' ? content[0].text : undefined
+                if (Array.isArray(content)) for (const part of content) delete part.prompt_cache_breakpoint
+                const source = message.role === 'user' && text !== undefined && scope.cachePrompt.some(original =>
+                  original.role === 'user' && original.cache === true && original.content === text)
+                if (source) cachedSource = true
+                if (!(index === 0 && ['system', 'developer'].includes(message.role)) && !source) continue
+                const parts = typeof content === 'string'
+                  ? [{ type: row.transportKind === 'openai-chat' ? 'text' : 'input_text', text: content }]
+                  : content
+                if (!Array.isArray(parts) || parts.length === 0) continue
+                parts[parts.length - 1].prompt_cache_breakpoint = { mode: 'explicit' }
+                message.content = parts
+              }
+              body.prompt_cache_options = {
+                mode: cachedSource ? 'explicit' : 'implicit',
+                ...(model.startsWith('gpt-6') ? { ttl: '30m' } : {})
+              }
+            }
             return transport(input, { ...init, body: JSON.stringify(body) })
           },
           { preconnect: transport.preconnect }
@@ -1634,7 +1717,7 @@ export class AgentProviderFactory {
               },
               options: createOptions(scope, configuredFetch)
             })
-      })
+      }, nativeOpenAIBreakpoints ? { supported: true, types: ['ephemeral'], cacheBreakpoints: true } : undefined)
     } else if (row.transportKind === 'anthropic-messages') {
       service = createRequestScopedService(capabilities, model, scope => {
         const transportFetch = createTransportFetch(scope)

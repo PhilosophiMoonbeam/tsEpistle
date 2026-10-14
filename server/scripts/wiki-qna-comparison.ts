@@ -28,6 +28,39 @@ export interface WikiQnaRequestMeasurement {
   readonly structureBytes: number | null
   readonly retainedBodyBytes: number | null
 }
+export type WikiQnaCacheReportingCompleteness = 'complete' | 'partial' | 'unknown' | 'invalid' | 'not-applicable'
+export interface WikiQnaCacheInputObservation {
+  readonly scope: 'llm' | 'native-decision'
+  readonly measuredInputTokens: number | null
+  readonly cacheReadInputTokens: number | null
+  readonly cacheCreationInputTokens: number | null
+  /** Full input minus cache reads; cache creations are still freshly processed. */
+  readonly freshlyProcessedInputTokens: number | null
+  /** Full input minus both disjoint cache categories, only when both are known. */
+  readonly ordinaryFreshInputTokens: number | null
+  readonly completeness: WikiQnaCacheReportingCompleteness
+  readonly invalidCounters: boolean
+}
+export interface WikiQnaCacheInputAggregate {
+  readonly observedLlmCalls: number
+  readonly excludedNativeDecisionCalls: number
+  /** Calls reporting full input and both valid cache counters, including explicit zero. */
+  readonly reportingCalls: number
+  readonly nonreportingCalls: number
+  readonly measuredInputReportingCalls: number
+  readonly cacheReadReportingCalls: number
+  readonly cacheCreationReportingCalls: number
+  readonly invalidCounterCalls: number
+  readonly dispatchCompleteness: 'complete' | 'lower-bound'
+  readonly completeness: WikiQnaCacheReportingCompleteness
+  readonly measuredLlmInputTokens: number | null
+  readonly cacheReadInputTokens: number | null
+  readonly cacheCreationInputTokens: number | null
+  readonly freshlyProcessedInputTokens: number | null
+  readonly ordinaryFreshInputTokens: number | null
+  readonly knownLowerBoundCacheReadInputTokens: number | null
+  readonly boundary: string
+}
 export interface WikiQnaComparisonTrialResult {
   readonly runId: string
   readonly status: string
@@ -62,7 +95,7 @@ const modelCallObservation = (turns: readonly Record<string, unknown>[], account
   const unobservedExposureCostMicros = Math.max(0, accounting.unknownExposureCostMicros - observedUnknownCost)
   const observedTokens = sumKnown(turns.map(turn => numeric(turn.totalTokens)))
   const observedCost = sumKnown(turns.map(turn => numeric(turn.costMicros)))
-  const completeness = unobservedExposureTokens > 0 || unobservedExposureCostMicros > 0 ||
+  const completeness: 'lower-bound' | 'complete' = unobservedExposureTokens > 0 || unobservedExposureCostMicros > 0 ||
     observedTokens === null || observedCost === null || accounting.totalTokens > observedTokens || accounting.costMicros > observedCost
     ? 'lower-bound' : 'complete'
   return { observedDispatches: turns.length, lowerBound: turns.length, completeness,
@@ -120,6 +153,65 @@ const phaseFor = (data: Record<string, unknown>): Phase => {
   return 'unclassified'
 }
 
+const cacheInputObservation = (phase: Phase, data: Readonly<Record<string, unknown>>): WikiQnaCacheInputObservation => {
+  const performance = record(data.performance)
+  const nativeDecision = phase === 'readiness' || phase === 'verification'
+  // An explicit unknown receipt must not fall back to an estimated/admitted input.
+  const full = performance.inputTokensReported !== undefined ? performance.inputTokensReported :
+    data.usageSource === 'provider' ? data.inputTokens : null
+  const read = performance.cachedInputTokensReported
+  const creation = performance.cacheCreationInputTokensReported
+  const values = [full, read, creation]
+  const tokens = values.map(value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null)
+  const [inputTokens, readTokens, creationTokens] = tokens as [number | null, number | null, number | null]
+  const invalidCounters = values.some((value, index) => value !== null && value !== undefined && tokens[index] === null) ||
+    inputTokens !== null && (
+      readTokens !== null && readTokens > inputTokens ||
+      creationTokens !== null && creationTokens > inputTokens ||
+      readTokens !== null && creationTokens !== null && readTokens > inputTokens - creationTokens
+    )
+  const applicable = !nativeDecision && !invalidCounters && inputTokens !== null
+  const validatedRead = applicable ? readTokens : null
+  const validatedCreation = applicable ? creationTokens : null
+  const completeness: WikiQnaCacheReportingCompleteness = nativeDecision ? 'not-applicable' :
+    invalidCounters ? 'invalid' : inputTokens !== null && readTokens !== null && creationTokens !== null ? 'complete' :
+      values.some(value => value !== null && value !== undefined) ? 'partial' : 'unknown'
+  return { scope: nativeDecision ? 'native-decision' : 'llm',
+    measuredInputTokens: nativeDecision ? null : inputTokens,
+    cacheReadInputTokens: validatedRead, cacheCreationInputTokens: validatedCreation,
+    freshlyProcessedInputTokens: validatedRead === null ? null : inputTokens! - validatedRead,
+    ordinaryFreshInputTokens: validatedRead === null || validatedCreation === null ? null : inputTokens! - validatedRead - validatedCreation,
+    completeness, invalidCounters: !nativeDecision && invalidCounters }
+}
+
+const cacheInputAggregate = (
+  rows: readonly Record<string, unknown>[], dispatchCompleteness: 'complete' | 'lower-bound'
+): WikiQnaCacheInputAggregate => {
+  const observations = rows.map(row => row.cacheInputObservation as WikiQnaCacheInputObservation)
+  const llm = observations.filter(observation => observation.scope === 'llm')
+  const reportingCalls = llm.filter(observation => observation.completeness === 'complete').length
+  const measuredInputReportingCalls = llm.filter(observation => observation.measuredInputTokens !== null).length
+  const cacheReadReportingCalls = llm.filter(observation => observation.cacheReadInputTokens !== null).length
+  const cacheCreationReportingCalls = llm.filter(observation => observation.cacheCreationInputTokens !== null).length
+  const invalidCounterCalls = llm.filter(observation => observation.invalidCounters).length
+  const total = (key: 'measuredInputTokens' | 'cacheReadInputTokens' | 'cacheCreationInputTokens' | 'freshlyProcessedInputTokens' | 'ordinaryFreshInputTokens'): number | null =>
+    llm.length === 0 || dispatchCompleteness !== 'complete' ? null : sumKnown(llm.map(observation => observation[key]))
+  const knownReads = llm.flatMap(observation => observation.cacheReadInputTokens === null ? [] : [observation.cacheReadInputTokens])
+  const completeness: WikiQnaCacheReportingCompleteness = llm.length === 0 ?
+    dispatchCompleteness === 'complete' ? 'not-applicable' : 'unknown' :
+    invalidCounterCalls > 0 ? 'invalid' :
+      reportingCalls === llm.length && dispatchCompleteness === 'complete' ? 'complete' :
+        measuredInputReportingCalls > 0 || cacheReadReportingCalls > 0 || cacheCreationReportingCalls > 0 ? 'partial' : 'unknown'
+  return { observedLlmCalls: llm.length, excludedNativeDecisionCalls: observations.length - llm.length,
+    reportingCalls, nonreportingCalls: llm.length - reportingCalls,
+    measuredInputReportingCalls, cacheReadReportingCalls, cacheCreationReportingCalls, invalidCounterCalls,
+    dispatchCompleteness, completeness, measuredLlmInputTokens: total('measuredInputTokens'),
+    cacheReadInputTokens: total('cacheReadInputTokens'), cacheCreationInputTokens: total('cacheCreationInputTokens'),
+    freshlyProcessedInputTokens: total('freshlyProcessedInputTokens'), ordinaryFreshInputTokens: total('ordinaryFreshInputTokens'),
+    knownLowerBoundCacheReadInputTokens: knownReads.length === 0 ? null : knownReads.reduce((sum, value) => sum + value, 0),
+    boundary: 'Observed provider input includes fresh input, cache reads and cache creations. Freshly processed input includes cache creations. Missing counters are unknown, not zero; invalid or overlapping subsets yield no cache reduction. Native Jev readiness/final verification are excluded, without assuming cache support. Cache tokens do not establish invoice savings; accounting.costMicros and unknown exposures remain authoritative. Totals require complete observed dispatches; known cache reads are only a lower bound when reporting is partial.' }
+}
+
 const observeTrial = (pages: readonly z.infer<typeof bindingSchema>[], corpus: WikiQnaComparisonCorpus) => {
   const pageById = new Map(pages.map(binding => [binding.id, { ...binding, fixture: corpus.pages.find(page => page.key === binding.key)! }]))
   const turns: Record<string, unknown>[] = []
@@ -162,12 +254,14 @@ const observeTrial = (pages: readonly z.infer<typeof bindingSchema>[], corpus: W
         unknownExposureTokens: numeric(performance.unknownExposureTokens) ?? numeric(exposure.tokens) ?? 0,
         unknownExposureCostMicros: numeric(performance.unknownExposureCostMicros) ?? numeric(exposure.costMicros) ?? 0,
         providerMilliseconds: numeric(performance.providerElapsedMs) ?? numeric(data.latencyMs),
+        dispatchToFirstChunkMilliseconds: numeric(performance.dispatchToFirstChunkMs),
         serializedRequestBytes: numeric(performance.serializedRequestBytes) ?? numeric(verification.requestBytes),
         bodyBytesRetained: numeric(frame.sourceBytes), contentBytes: numeric(frame.authoredBytes), structureBytes: numeric(frame.structureBytes),
         bindingBytes: numeric(frame.bindingBytes), schemaBytes: numeric(frame.schemaBytes), prefixBytes: numeric(frame.prefixBytes),
         repairAttempts: numeric(performance.repairAttempts), cacheHitCount: numeric(performance.cacheHitCount),
         confidenceFloor: numeric(verification.confidenceFloor), verificationChecks: numeric(verification.checks) })
       const row = turns[turns.length - 1]!
+      row.cacheInputObservation = cacheInputObservation(phase, data)
       row.verificationPhase = typeof verification.phase === 'string' ? verification.phase : null
       row.readinessDecision = phase === 'readiness' ? {
         selectedOutcome: typeof record(verification.readiness).selectedOutcome === 'string' ? record(verification.readiness).selectedOutcome : null,
@@ -278,20 +372,35 @@ export const runWikiQnaComparison = async (driver: WikiQnaComparisonDriver, outp
         const callObservation = modelCallObservation(observedResult.turns, accounting)
         const phaseTotals = Object.fromEntries(phases.map(phase => {
           const rows = observedResult.turns.filter(row => row.phase === phase)
-          return [phase, { modelCalls: rows.length, inputTokens: sumKnown(rows.map(row => numeric(row.inputTokens))), outputTokens: sumKnown(rows.map(row => numeric(row.outputTokens))),
+          return [phase, { modelCalls: rows.length, cacheInputObservation: cacheInputAggregate(rows, callObservation.completeness),
+            inputTokens: sumKnown(rows.map(row => numeric(row.inputTokens))), outputTokens: sumKnown(rows.map(row => numeric(row.outputTokens))),
             totalTokens: sumKnown(rows.map(row => numeric(row.totalTokens))), costMicros: sumKnown(rows.map(row => numeric(row.costMicros))),
             providerReceiptTokens: sumKnown(rows.map(row => row.usageSource === 'provider' ? numeric(row.totalTokens) : null)),
-            providerMilliseconds: sumKnown(rows.map(row => numeric(row.providerMilliseconds))), serializedRequestBytes: sumKnown(rows.map(row => numeric(row.serializedRequestBytes))),
+            providerMilliseconds: sumKnown(rows.map(row => numeric(row.providerMilliseconds))),
+            dispatchToFirstChunkMilliseconds: rows.length === 0 ? null : sumKnown(rows.map(row => numeric(row.dispatchToFirstChunkMilliseconds))),
+            serializedRequestBytes: sumKnown(rows.map(row => numeric(row.serializedRequestBytes))),
             contentBytes: sumKnown(rows.map(row => numeric(row.contentBytes))), structureBytes: sumKnown(rows.map(row => numeric(row.structureBytes))),
             retainedBodyBytes: sumKnown(rows.map(row => numeric(row.bodyBytesRetained))),
             requestMeasurements: observedResult.measurements.filter(measurement => measurement.phase === phase),
             boundary: phase === 'readiness' ? 'Utility classifier only; not final answer verification or independent quality.' : phase === 'verification' ? 'Final candidate support/coverage verification, not readiness.' : null }]
         }))
         const reads = new Map(allReads.map(read => [`${read.id}:${read.sourceRevision}:${read.bodySha256}`, read]))
+        const nativeDecisions = observedResult.turns.filter(row => row.phase === 'readiness' || row.phase === 'verification')
+        const llmTurns = observedResult.turns.filter(row => row.phase !== 'readiness' && row.phase !== 'verification')
         const trialId = `${mode}:${scenario.id}:${turn.id}`
         results.push({ trialId, runId: result.runId, status: result.status, mode, scenarioId: scenario.id, turnId: turn.id, elapsedMilliseconds: performance.now() - started,
           accounting, phaseTotals, modelCalls: observedResult.turns.length, modelCallObservation: callObservation, toolCalls: observedResult.tools.length,
           nonDispatchedModelEvents: observedResult.nonDispatchedModelEvents,
+          cacheInputObservation: cacheInputAggregate(observedResult.turns, callObservation.completeness),
+          nativeDecisionObservation: { observedCalls: nativeDecisions.length,
+            inputTokens: nativeDecisions.length === 0 ? null : sumKnown(nativeDecisions.map(row => numeric(row.inputTokens))),
+            outputTokens: nativeDecisions.length === 0 ? null : sumKnown(nativeDecisions.map(row => numeric(row.outputTokens))),
+            totalTokens: nativeDecisions.length === 0 ? null : sumKnown(nativeDecisions.map(row => numeric(row.totalTokens))),
+            costMicros: nativeDecisions.length === 0 ? null : sumKnown(nativeDecisions.map(row => numeric(row.costMicros))),
+            providerMilliseconds: nativeDecisions.length === 0 ? null : sumKnown(nativeDecisions.map(row => numeric(row.providerMilliseconds))),
+            unknownExposureTokens: nativeDecisions.length === 0 ? null : sumKnown(nativeDecisions.map(row => numeric(row.unknownExposureTokens))),
+            unknownExposureCostMicros: nativeDecisions.length === 0 ? null : sumKnown(nativeDecisions.map(row => numeric(row.unknownExposureCostMicros))),
+            boundary: 'Native Jev readiness and final verification are separately accounted, not LLM cache observations or independent quality adjudication. Zero observed calls does not rule out unobserved exposure; consult modelCallObservation.' },
           frameworkStatus: result.status, terminalExecution, measuredExecutionValid,
           frameworkCompleted: result.status === 'completed' || result.status === 'succeeded',
           nativeAnswerAccepted: observedResult.turns.some(row => row.outcome === 'answer_accepted'),
@@ -301,8 +410,10 @@ export const runWikiQnaComparison = async (driver: WikiQnaComparisonDriver, outp
           readinessDecisions: observedReadinessDecisions(observedResult.turns),
           completedToolCalls: observedResult.tools.filter(tool => tool.outcome === 'tool.completed').length,
           providerMilliseconds: sumKnown(observedResult.turns.map(row => numeric(row.providerMilliseconds))),
+          dispatchToFirstChunkMilliseconds: llmTurns.length === 0 ? null : sumKnown(llmTurns.map(row => numeric(row.dispatchToFirstChunkMilliseconds))),
           actualProviderReceiptTokens: sumKnown(observedResult.turns.map(row => row.usageSource === 'provider' ? numeric(row.totalTokens) : null)),
           byteMetricBoundary: 'Turn contentBytes is authored full-body bytes; structureBytes is only the source-text wrapper. Binding, schema and host prefix are separate. Full request content/structure split is reported only by an actual driver requestMeasurement.',
+          latencyMetricBoundary: 'providerMilliseconds retains all observed provider/native decision elapsed time. dispatchToFirstChunkMilliseconds sums only LLM calls; native Jev calls do not emit streaming first-chunk timing. Missing timing is unknown, not zero.',
           rankedSources, requestedK: mode === 'ordinary' ? null : corpus.topK, selectedK: mode === 'ordinary' ? null : rankedSources.length,
           retrievalMissSourceKeys: mode === 'ordinary' ? null : requiredSourceKeys.filter(key => !selectedKeys.includes(key)),
           wholePageIngestion: mode === 'ordinary' ? 'not-applicable' : rankingValid && missingWholePageIds.length === 0 ? 'observed-all-selected-pages' : 'invalid-or-incomplete',
@@ -523,7 +634,7 @@ const main = async (): Promise<void> => {
     process.stdout.write(`${JSON.stringify({ cli: 'bun server/scripts/wiki-qna-comparison.ts --mode request-proof|live|score --output <new-private-file> [--driver <protected-concrete-api-module>] [--report <live-report> --adjudications <independent-grading-file>]',
       setup: 'Live driver exports driver: WikiQnaComparisonDriver. Use the existing protected operator helper without printing credentials. Concrete driver creates only owned fictional pages through normal authenticated page API, obtains existing priced/conformed profile resolution, uses normal session POST/message POST/SSE and actual operations search ranking, and retains authoritative provider/unknown-exposure accounting. No direct provider SDK calls or changes to production config. Ordinary uses all-Wiki scope; ranked source selection uses existing knowledgeContext.sources. Both receive identical user text and unchanged native publication gates.',
       grading: { corpusFingerprint: '<frozen-hash>', adjudicator: '<independent-reviewer>', independentOfNativeVerification: true, trials: [{ trialId: '<arm:scenario:turn>', publishedAnswerSha256: '<sha256>', coveredFactIds: ['<frozen-fact-id>'], unsupportedClaim: false, unavailableBehaviorCorrect: true }] },
-      measurements: 'Readiness is a utility phase separate from final verification; readiness route means observed subsequent pipeline behavior, not an inferred classifier verdict. modelCalls counts observed dispatches only; modelCallObservation identifies lower-bound counts when durable exposure lacks outcomes. Terminal partial/failed runs remain measured; privacy, ranking, ingestion and independent rubric quality are separate.',
+      measurements: 'Readiness is a utility phase separate from final verification; readiness route means observed subsequent pipeline behavior, not an inferred classifier verdict. modelCalls counts observed dispatches only; modelCallObservation identifies lower-bound counts when durable exposure lacks outcomes. cacheInputObservation reports measured full LLM input, validated cache reads/creations, freshly processed input (including cache creations), reporting completeness and known lower-bound cache reads; missing counters are never zero and native Jev readiness/final verification are separate. These token categories do not establish price discounts or invoice savings; authoritative accounting and unknown exposures are unchanged. Provider elapsed and dispatch-to-first-chunk timings remain observed, nullable metrics. Terminal partial/failed runs remain measured; privacy, ranking, ingestion and independent rubric quality are separate.',
       historicalReplay: 'bun server/scripts/wiki-qna-rehydrate.ts --auth-file <protected-auth-file> --report <historical-unadjudicated-report> --output <new-private-file>; owned terminal GET-only same-session replay adds evidence corrections without modifying original elapsed, tokens, cost, prompt, corpus, fingerprint or report. No current authorization or automatic quality is inferred.',
       cleanup: 'Driver owns only pages/sessions created by its invocation; cancel/drain before deletion, never delete or rewrite durable paid accounting. Output/checkpoint files are private and exclusive. Remove operator-owned output/checkpoints after review. No tests, build or provider calls are made by request-proof or score.' })}\n`)
     return
