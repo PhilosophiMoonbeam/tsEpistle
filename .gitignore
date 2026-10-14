@@ -64,5 +64,5 @@ test-results/
 # Localization Resources
 /server/locales/**/*.yml
 
-# graft's local graph cache — regenerable, not committed (run `graft build`).
+# Trail-Code's graft map cache — regenerable, not committed (run `trail build`).
 /graft/
