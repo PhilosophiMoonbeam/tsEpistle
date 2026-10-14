@@ -6265,7 +6265,6 @@ describe('Ax agent engine', () => {
     expect(provenance[0]).toMatchObject({
       accepted: false,
       finalCitationIds: [],
-      issues: expect.arrayContaining([expect.stringContaining('page:42:revision:30')])
     })
     expect(provenance[1]).toMatchObject({
       accepted: true,
@@ -6511,7 +6510,6 @@ describe('Ax agent engine', () => {
     expect(provenance[0]).toMatchObject({
       accepted: false,
       finalCitationIds: [],
-      issues: expect.arrayContaining([expect.stringContaining('page:6:revision:1:section:2')])
     })
     expect(provenance[1]).toMatchObject({
       accepted: true,

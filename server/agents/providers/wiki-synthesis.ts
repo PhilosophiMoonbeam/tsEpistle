@@ -941,14 +941,16 @@ Source-fact requests do not require recommendations.`)
       if (!observations.has(observation) || selectedObservations.has(observation)) return 'Observations must select unique exact safe host-admitted lines.'
       selectedObservations.add(observation)
     }
+    const claimIssues = new Set<string>()
     for (const claim of answer.claims) {
       const source = registry.get(wikiSynthesisSourceRef(claim))
       if (source === undefined || !source.complete || bindingKey(source) !== bindingKey(claim)) return 'Claims must bind the exact evidence ID, source revision and unit ID of a complete admitted source unit.'
       if (tableStatement(claim.statement) && (!options.validateClaim || !options.validateAnswer))
         return 'Table claims require both source-local and whole-answer host validation of every factual segment.'
       const valid = options.validateClaim?.(claim, source)
-      if (valid !== undefined && valid !== true) return typeof valid === 'string' && valid.length > 0 ? valid : 'Claim failed source-local validation.'
+      if (valid !== undefined && valid !== true) claimIssues.add(typeof valid === 'string' && valid.length > 0 ? valid : `SourceRef ${wikiSynthesisSourceRef(claim)} failed source-local validation.`)
     }
+    if (claimIssues.size > 0) return [...claimIssues].join('\n')
     const rendered = renderWikiSynthesisAnswer(answer, literalStatements, literalListStatements)
     const valid = options.validateAnswer?.(answer, rendered, literalStatements, literalListStatements)
     if (valid !== undefined && valid !== true) return typeof valid === 'string' && valid.length > 0 ? valid : 'Answer failed host evidence or requested-facet validation.'
