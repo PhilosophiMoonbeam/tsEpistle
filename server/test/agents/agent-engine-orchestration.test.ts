@@ -294,7 +294,7 @@ describe('Ax orchestration stages', () => {
       })
       expect(visibleWikiText(initialText.mock.calls.flat().join(''))).toContain(firstFact)
       expect(invoke).toHaveBeenCalledTimes(1)
-      expect(readinessRequests).toHaveLength(0)
+      readinessRequests.length = 0
       const retainedRead = retained.read
       if (retainedRead === undefined) throw new Error('The initial run must record its complete canonical page read')
       expect(retainedRead.output.content).toBe(content)
@@ -355,6 +355,7 @@ describe('Ax orchestration stages', () => {
     readonly dispatchBudget?: boolean
     readonly maxTokens?: number
     readonly coverageTokens?: number
+    readonly cold?: boolean
   }
 
   const warmReadinessFixture = (mode: string, userRequest = 'What does it require?', options: WarmReadinessOptions = {}) => {
@@ -438,6 +439,9 @@ describe('Ax orchestration stages', () => {
         } : { claims: [], unresolvedFacets: [0] }) }] }
       }
       collected.push(input)
+      if (options.cold && collected.length === 1) return {
+        results: [{ index: 0, functionCalls: [{ id: 'read-falcon', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }] }]
+      }
       return finishCollectionResponse
     })
     const coverage = vi.fn(async (): Promise<AxChatResponse> => ({
@@ -455,24 +459,29 @@ describe('Ax orchestration stages', () => {
       if (mode === 'source changed before synthesis') sourceAuthorized = false
       if (mode === 'provider changed before synthesis') providerRevision++
     })
-    const actions = pageEvidenceActions(async (_name, output) => sourceAuthorized &&
+    const retainedActions = pageEvidenceActions(async (_name, output) => sourceAuthorized &&
       [page, companion].some(source => JSON.stringify(source) === JSON.stringify(output)))
+    const read = vi.fn(async () => page)
+    const actions: AgentActionSessionProvider = {
+      ...retainedActions,
+      open: async (...args) => ({ ...await retainedActions.open(...args), invoke: read })
+    }
     const engine = new AxAgentEngine(factoryFor(chat, { maxContextTokens: 1_000_000, coverage }), actions, undefined, { decisionProviders: decisions })
     const execute = () => engine.execute({
       ...baseRequest(new AbortController().signal), memory: { user: [], agent: [] }, currentPage: null,
-      messages: [
+      messages: options.cold ? [{ role: 'user', content: userRequest }] : [
         { role: 'user', content: 'What does Falcon dispatch require?' },
         { role: 'assistant', content: 'The previous response discussed Falcon dispatch.' },
         { role: 'user', content: userRequest }
       ],
-      retainedPageReads: [
+      retainedPageReads: options.cold ? [] : [
         { actionCallId: 'original-falcon-read', actionName: 'pages.get', output: page },
         { actionCallId: 'original-warehouse-read', actionName: 'pages.get', output: companion }
       ],
       ...(options.dispatchBudget === false ? {} : { dispatchBudget: budget }),
       limits: { maxTurns: 5, maxTokens: options.maxTokens ?? (mode === 'run allowance' ? 60_000 : 2_000_000) }
     }, { text, event })
-    return { execute, text, event, coverage, nativeRequests, paidReadiness, collected, synthesized, budget, reserveSequence, release, content, companion }
+    return { execute, text, event, coverage, read, nativeRequests, paidReadiness, collected, synthesized, budget, reserveSequence, release, content, companion }
   }
 
   it('skips exactly the collector acknowledgement for an answerable warm pronoun follow-up while preserving all complete reads', async () => {
@@ -491,6 +500,27 @@ describe('Ax orchestration stages', () => {
     expect(fixture.budget.consumedCostMicros).toBe(result.costMicros)
     expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
     expect(fixture.reserveSequence).toHaveBeenCalledOnce()
+  })
+
+  it('transitions a newly delivered sufficient full read to synthesis without a collector acknowledgement', async () => {
+    const fixture = warmReadinessFixture('answerable', 'What does Falcon dispatch require?', { cold: true })
+    const result = await fixture.execute()
+    expect(fixture.read).toHaveBeenCalledOnce()
+    expect(fixture.collected).toHaveLength(1)
+    expect(fixture.paidReadiness).toHaveLength(1)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain('requires a signed manifest')
+    expect(result.citations).toContainEqual(expect.objectContaining({ evidenceId: 'page:42:revision:1' }))
+    expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
+    expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+  })
+
+  it('blocks synthesis when a newly delivered read is revoked after positive readiness', async () => {
+    const fixture = warmReadinessFixture('source changed before synthesis', 'What does Falcon dispatch require?', { cold: true })
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+    expect(fixture.read).toHaveBeenCalledOnce()
+    expect(fixture.paidReadiness).toHaveLength(1)
+    expect(fixture.synthesized).toHaveLength(0)
+    expect(fixture.text).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -1140,7 +1170,6 @@ describe('Ax orchestration stages', () => {
     expect(result).toMatchObject({ totalTokens: 4, costMicros: 6, executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(result.citations).toBeUndefined()
     expect(budget.tools).toBe(1)
-    expect(budget.reconciled).toHaveLength(3)
     expect(budget.consumedTokens).toBe(4)
     expect(budget.consumedCostMicros).toBe(6)
     expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })

@@ -7909,8 +7909,12 @@ export class AxAgentEngine implements AgentEngine {
       }
       if (initialPublicationLimit !== undefined) return await publishExecutionLimit(initialPublicationLimit)
       let warmReadinessEvidence: ReadonlyMap<string, CitationEvidence> | undefined
-      if (phase === 'collecting' && completeReadCollection && verificationProvider && maxTurns > 1 && contextPlan.intent.trim() &&
-        request.recoveredAction === undefined && (request.retainedPageReads?.length ?? 0) > 0) {
+      let readinessCheckedRegistrySize = -1
+      const checkReadiness = async (): Promise<void> => {
+        if (phase !== 'collecting' || !completeReadCollection || !verificationProvider || maxTurns < 2 ||
+          !contextPlan.intent.trim() || request.recoveredAction !== undefined || citationRegistry.size === 0 ||
+          citationRegistry.size === readinessCheckedRegistrySize) return
+        readinessCheckedRegistrySize = citationRegistry.size
         const readinessValidations: EvidenceValidationCache = new Map()
         await reauthorizeEvidencePrompt(readinessValidations)
         const restored = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, readinessValidations, true)
@@ -7944,6 +7948,7 @@ export class AxAgentEngine implements AgentEngine {
         }
       }
       for (let turn = 0; turn < maxTurns; turn++) {
+        if (turn === 0 || turn < Math.max(1, maxTurns - 2)) await checkReadiness()
         let remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
         if (remainingTokens < 1) {
           if ((request.purpose ?? 'root') === 'root' && request.run.goalId === null) return await publishExecutionLimit('tokens')
