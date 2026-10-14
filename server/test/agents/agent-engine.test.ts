@@ -835,6 +835,7 @@ describe('Ax agent engine', () => {
   })
 
   it.each([
+    ['independent numeric table cells', 'Atlas has a monthly fee of USD 120; 30 included tickets; a first-response target of 48 supported hours; and 2 named operators.', '| Plan | Monthly fee | Included tickets | First-response target | Named operators |\n| --- | --- | --- | --- | --- |\n| Atlas | USD 120 | 30 | 48 supported hours | 2 |', true],
     ['clock range in a table', 'Supported hours are 09:00–17:00 local time.', '| Field | Value |\n| --- | --- |\n| Supported hours | 09:00-17:00 local time |', true],
     ['quantity range', 'Preparation takes 3–5 working days.', 'Preparation takes 3-5 working days.', true],
     ['changed range endpoint', 'Preparation takes 3–5 working days.', 'Preparation takes 3-6 working days.', false],
