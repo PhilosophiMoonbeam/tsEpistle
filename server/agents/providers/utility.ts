@@ -3,7 +3,7 @@ import type { AxChatResponse } from '@ax-llm/ax'
 import type { AgentGoalTokenTier } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { KnowledgeUtilityResultSchema, type KnowledgeGap, type KnowledgeUtilityResult } from '../../knowledge/projection.ts'
-import { AgentProviderFactory, agentProviderCostMicros } from './factory.ts'
+import { AgentProviderFactory, agentProviderCostMicros, agentProviderMeasuredCostMicros } from './factory.ts'
 import { acceptCumulativeAgentProviderUsage, readAgentProviderUsage, type AgentProviderUsage } from './usage.ts'
 import type { AgentProviderTransportKind } from './registry.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation } from '../runtime.ts'
@@ -342,7 +342,7 @@ Use small only for narrow, self-contained work with few steps, little context an
       )
       if (consumed.usage.outputTokens > maximumOutputTokens) throw new Error('Utility model goal classification exceeded its token limit')
       accountingAttempted = true
-      const costMicros = agentProviderCostMicros(provider.pricing, consumed.usage.inputTokens, consumed.usage.outputTokens, consumed.usage.totalTokens)
+      const costMicros = agentProviderMeasuredCostMicros(provider.pricing, consumed.usage)
       if (dispatchReservation && request.dispatchBudget) {
         await request.dispatchBudget.reconcile(dispatchReservation, {
           inputTokens: consumed.usage.inputTokens,
@@ -433,7 +433,7 @@ Use small only for narrow, self-contained work with few steps, little context an
       usageValidationAttempted = true
       const consumed = await consumeTitleResponse(response, provider.transportKind)
       accountingAttempted = true
-      const costMicros = agentProviderCostMicros(provider.pricing, consumed.usage.inputTokens, consumed.usage.outputTokens, consumed.usage.totalTokens)
+      const costMicros = agentProviderMeasuredCostMicros(provider.pricing, consumed.usage)
       if (dispatchReservation && dispatchBudget) {
         await dispatchBudget.reconcile(dispatchReservation, {
           inputTokens: consumed.usage.inputTokens,

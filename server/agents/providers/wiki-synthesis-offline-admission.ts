@@ -4,7 +4,7 @@ import { fetch as undiciFetch } from 'undici/index.js'
 import type { AxAIService, AxChatResponse } from '@ax-llm/ax'
 import { acquireAgentCoordinatorAdvisoryLocks, admitAgentRunInTransaction, heartbeatAgentRun, terminalizeAgentRunInTransaction, type AgentRunClaim } from '../coordinator.ts'
 import { AgentRepositoryError, appendAgentEvent, createAgentSession, getOwnedAgentSession } from '../repository.ts'
-import { AgentProviderFactory, agentProviderCostMicros, type AgentProviderFetch } from './factory.ts'
+import { AgentProviderFactory, agentProviderCostMicros, agentProviderMeasuredCostMicros, type AgentProviderFetch } from './factory.ts'
 import { AgentProviderRegistry } from './registry.ts'
 import type { AgentReasoningEffort } from '../../../shared/agents/contracts.ts'
 import type { AgentSecretRegistry } from './secrets.ts'
@@ -282,7 +282,7 @@ export const createWikiOfflineDispatchAdmission = async (
       if (response instanceof ReadableStream || !dispatch.dispatched || !dispatch.exposure) throw offlineFailure()
       const receipt = readAgentProviderUsage(provider.transportKind, response)
       if (!receipt) throw offlineFailure()
-      actual = { inputTokens: receipt.inputTokens, outputTokens: receipt.outputTokens, totalTokens: receipt.totalTokens, costMicros: agentProviderCostMicros(provider.pricing, receipt.inputTokens, receipt.outputTokens, receipt.totalTokens) }
+      actual = { inputTokens: receipt.inputTokens, outputTokens: receipt.outputTokens, totalTokens: receipt.totalTokens, costMicros: agentProviderMeasuredCostMicros(provider.pricing, receipt) }
       usage.inputTokens += actual.inputTokens
       usage.outputTokens += actual.outputTokens
       usage.totalTokens += actual.totalTokens

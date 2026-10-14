@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import { DEFAULT_ROUTING_POLICY } from '../../../shared/agents/routing.ts'
+import { AgentProviderPricingRevisionSchema } from '../../../shared/agents/contracts.ts'
 import { AgentProviderRegistry, type AgentProviderSettingsInput } from '../../agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 
@@ -812,6 +813,27 @@ describe('agent provider profile registry', () => {
     expect(await knex('agentProviderSecrets').select('id')).toEqual([{ id: reference.slice('managed:'.length) }])
     expect(await vault.get(reference)).toBe('retained-key')
     expect(await knex('agentProviderProfileVersions').select('profileId')).toEqual([{ profileId: created.id }])
+  })
+
+  it('stores explicit cache rates verbatim in a new immutable version and accepts the 128-byte boundary', async () => {
+    const historicalRevision = 'historical-v1|0001000000|2000000'
+    const input = { ...profileInput, pricingRevision: historicalRevision, displayName: 'Immutable cache rates', exposureMode: 'all_agent_users' as const, actorId: 1 }
+    const created = await registry.create(input)
+    const historicalVersion = await currentSettingsId(knex, created.id)
+    const pricingRevision = 'cache-v2|1000000|2000000|0|1250000'
+    expect(await registry.update(created.id, { ...input, pricingRevision })).toMatchObject({ pricingRevision })
+    expect(await knex('agentProviderProfileVersions').where({ id: historicalVersion }).first('pricingRevision')).toEqual({ pricingRevision: historicalRevision })
+    expect(await knex('agentProviderProfileVersions').where({ id: await currentSettingsId(knex, created.id) }).first('pricingRevision')).toEqual({ pricingRevision })
+    const longest = `${'r'.repeat(64)}|${Array(4).fill('999999999999999').join('|')}`
+    expect(Buffer.byteLength(longest, 'utf8')).toBe(128)
+    expect(AgentProviderPricingRevisionSchema.safeParse(longest).success).toBe(true)
+    expect(await registry.create({ ...input, displayName: 'Maximum pricing bytes', pricingRevision: longest })).toMatchObject({ pricingRevision: longest })
+    for (const invalid of ['cache-v2|1|1|0', 'cache-v2|1|1|0|0|0', 'cache-v2|1|1|-1|0', 'cache-v2|1|1|0|0.5']) {
+      expect(AgentProviderPricingRevisionSchema.safeParse(invalid).success).toBe(false)
+      await expect(registry.create({ ...input, displayName: 'Invalid cache rates', pricingRevision: invalid })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_PRICING', status: 400 })
+    }
+    expect(AgentProviderPricingRevisionSchema.safeParse(`${longest}0`).success).toBe(false)
+    await expect(registry.create({ ...input, displayName: 'Oversized pricing revision', pricingRevision: `${longest}0` })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_PROFILE', status: 400 })
   })
 
   it('fails closed for private endpoints, forbidden headers, incompatible modes, and invalid credentials', async () => {

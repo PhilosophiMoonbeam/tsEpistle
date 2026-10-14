@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { AgentKnowledgeContext } from './knowledge-context.ts'
 import type { SpecialistInvocationView } from './specialists.ts'
 import type { AgentMediaInputs, AgentMediaKind } from './media-providers.ts'
@@ -298,6 +299,23 @@ export interface AgentProviderCapabilities {
 export const AGENT_PROVIDER_TRANSPORTS = ['openai-responses', 'openresponses', 'openai-chat', 'legacy-completions', 'anthropic-messages', 'gemini-api'] as const
 
 export type AgentProviderTransport = (typeof AGENT_PROVIDER_TRANSPORTS)[number]
+
+/** Immutable USD micros per million tokens: legacy normal rates, or explicit cache read/write rates. */
+export const AgentProviderPricingRevisionSchema = z
+  .string()
+  .max(128)
+  .regex(/^[A-Za-z0-9._-]{1,64}\|[0-9]{1,15}\|[0-9]{1,15}(?:\|[0-9]{1,15}\|[0-9]{1,15})?$/)
+  .refine(
+    value =>
+      value
+        .split('|')
+        .slice(1)
+        .every((rate, index) => {
+          const parsed = Number(rate)
+          return Number.isSafeInteger(parsed) && (index < 2 ? parsed > 0 : parsed >= 0)
+        }),
+    'Provider input and output rates must be positive safe integers; explicit cache read and write rates must be nonnegative safe integers'
+  )
 
 export const AGENT_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
