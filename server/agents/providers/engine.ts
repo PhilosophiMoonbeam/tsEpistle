@@ -2737,7 +2737,7 @@ interface ReadLiteralSnapshot {
 }
 
 const literalNumbers = (value: string): readonly string[] =>
-  [...semanticMarkdownText(value).matchAll(/[-+]?\d+(?:[.,]\d+)*(?::\d+)*/gu)].map(match => match[0])
+  [...semanticMarkdownText(value).matchAll(/(?:(?<![\d:])[-+])?\d+(?:[.,]\d+)*(?::\d+)*/gu)].map(match => match[0])
 const literalPhones = (value: string): readonly string[] =>
   value.match(/\+?\d[\d ()-]{6,}\d/gu) ?? []
 
