@@ -835,6 +835,33 @@ describe('Ax agent engine', () => {
   })
 
   it.each([
+    ['clock range in a table', 'Supported hours are 09:00–17:00 local time.', '| Field | Value |\n| --- | --- |\n| Supported hours | 09:00-17:00 local time |', true],
+    ['quantity range', 'Preparation takes 3–5 working days.', 'Preparation takes 3-5 working days.', true],
+    ['changed range endpoint', 'Preparation takes 3–5 working days.', 'Preparation takes 3-6 working days.', false],
+    ['retained negative value', 'The recorded temperature is -17.5 degrees.', 'The recorded temperature is -17.5 degrees.', true],
+    ['removed negative sign', 'The recorded temperature is -17.5 degrees.', 'The recorded temperature is 17.5 degrees.', false]
+  ] as const)('distinguishes %s from changed numeric literals despite positive native proof', async (_case, authored, statement, accepted) => {
+    const fixture = typedRootFixture(input => {
+      const source = synthesisSourcesFromRequest(input)[0]!
+      return typedFixtureReceipt(synthesisFixtureAnswer(input, { claims: [{ ...source, statement }] }))
+    }, false, undefined, {
+      title: 'Numeric boundary guide', content: `# Numeric boundary guide\n\n${authored}`,
+      request: 'Read page 42 and report its stated timing or temperature, preserving its values and conditions.'
+    })
+    const result = await fixture.execute()
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    if (accepted) {
+      expect(published).toContain(statement)
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:42:revision:1'])
+      expect(result.executionLimit).toBeUndefined()
+    } else {
+      expect(published).not.toContain(statement)
+      expect(result.citations ?? []).toEqual([])
+      expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
+    }
+  })
+
+  it.each([
     ['HTML attribute', '<p data-limit="999">Visible capacity is 20 tickets.</p>', 20, true],
     ['HTML attribute', '<p data-limit="999">Visible capacity is 20 tickets.</p>', 999, false],
     ['script body', 'Visible capacity is 20 tickets.\n\n<script>const capacity = 999;</script>', 20, true],
