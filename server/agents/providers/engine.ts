@@ -113,7 +113,8 @@ import {
   renderWikiSynthesisClaimStatement,
   type WikiSynthesisAnswer,
   type WikiSynthesisSource,
-  type WikiSynthesisRead
+  type WikiSynthesisRead,
+  wikiSynthesisSourceRef
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import { assessWikiVerificationResults, buildWikiVerificationPlan, validateWikiVerificationSource } from './wiki-verification.ts'
@@ -6673,6 +6674,13 @@ export class AxAgentEngine implements AgentEngine {
       })
     }
     let rejection: string | undefined
+    const rejectedClaims = new Set<string>()
+    const rejectClaim = (source: WikiSynthesisSource, reason: string): string => {
+      const issue = `SourceRef ${wikiSynthesisSourceRef(source)} failed host check: ${reason}.`
+      rejectedClaims.add(issue)
+      rejection = `${[...rejectedClaims].join('\n')}\nSelect matching original body/record refs for each fact. Preserve the selected binding's own subject, identifiers, full quantities and governing qualifications; do not import names or facts from neighboring bindings. Omit unrequested record fields.`
+      return issue
+    }
     let rendered: string | undefined
     let nativeDraft: NativeDraft | undefined
     const features = provider.service.getFeatures(provider.model)
@@ -6694,8 +6702,7 @@ export class AxAgentEngine implements AgentEngine {
             unitEvidence.set(key, titleSource)
             return true
           }
-          rejection = titleAssertionIssue(source.evidenceId)
-          return rejection
+          return rejectClaim(source, titleAssertionIssue(source.evidenceId))
         }
         let boundEvidence = unitEvidence.get(key)
         if (boundEvidence === undefined) {
@@ -6722,14 +6729,14 @@ export class AxAgentEngine implements AgentEngine {
               const normalized = { ...claim, statement }
               normalizedClaims ??= new WeakMap()
               normalizedClaims.set(claim, normalized)
-              return assessTypedClaimEligibility(normalized, boundEvidence).eligible
+              const eligibility = assessTypedClaimEligibility(normalized, boundEvidence)
+              return eligibility.eligible ? true : rejectClaim(source, eligibility.reason ?? 'original-binding')
             }
           }
         }
         const eligibility = boundEvidence === undefined ? undefined : assessTypedClaimEligibility(claim, boundEvidence)
         if (eligibility?.eligible !== true) {
-          rejection = `Each claim for ${source.evidenceId} must retain its exact owned binding ${source.unitId}, protected identifiers, values, links and governing qualifications, with a complete original dependency closure. Failed host check: ${eligibility?.reason ?? 'original-binding'}. Select requested fields without copying unrelated record fields.`
-          return rejection
+          return rejectClaim(source, eligibility?.reason ?? 'original-binding')
         }
         return true
       },
