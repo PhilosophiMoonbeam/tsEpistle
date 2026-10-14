@@ -2739,7 +2739,12 @@ interface ReadLiteralSnapshot {
 const literalNumbers = (value: string): readonly string[] =>
   [...semanticMarkdownText(value).matchAll(/(?:(?<![\d:])[-+])?\d+(?:[.,]\d+)*(?::\d+)*/gu)].map(match => match[0])
 const literalPhones = (value: string): readonly string[] =>
-  value.match(/\+?\d[\d ()-]{6,}\d/gu) ?? []
+  evidenceMarkdown.parse(value.replace(citationMarker, ' '), {}).flatMap(token => {
+    // Table cells and independent blocks must not fabricate one phone literal.
+    const text = token.type === 'inline' && token.children ? semanticInlineText(token.children)
+      : token.type === 'fence' || token.type === 'code_block' ? token.content : ''
+    return text.match(/\+?\d[\d ()-]{6,}\d/gu) ?? []
+  })
 
 const readIdentityAddresses = (value: string): readonly string[] => {
   if (!value.includes('@')) return []
@@ -2799,7 +2804,7 @@ const readCodeLiterals = (statement: string): readonly string[] =>
 const readLiteralIntegrity = (statement: string, literals: ReadLiteralSnapshot, evidence: CitationEvidence): boolean =>
   literalNumbers(statement).every(number => literals.numbers.has(number)) &&
   readIdentityAddresses(statement).every(address => literals.addresses.has(address)) &&
-  literalPhones(semanticMarkdownText(statement)).every(phone => literals.phones.has(phone)) &&
+  literalPhones(statement).every(phone => literals.phones.has(phone)) &&
   readCodeLiterals(statement).every(literal =>
     literals.texts.some(text => text.includes(literal)) || literals.destinations.has(literal)) &&
   renderedLinkSignatures(statement).every(link => evidence.renderedLinks.has(link))
