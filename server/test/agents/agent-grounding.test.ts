@@ -381,7 +381,9 @@ describe('mandatory Wiki verification publication and accounting', () => {
         reserve: async maximum => {
           const id = ++nextId
           held.set(id, maximum)
-          if (maximum.tokens === 64_000) {
+          // Readiness uses the same reservation ceiling before generation; this
+          // fixture targets the subsequent source-support publication fence.
+          if (maximum.tokens === 64_000 && fixture.attempts > 0) {
             nativeReservationId = id
             await Promise.resolve()
             if (boundary === 'verification reserve') readable = false
@@ -408,6 +410,8 @@ describe('mandatory Wiki verification publication and accounting', () => {
       const decisionProviders = {
         selectRuntime: async () => snapshot,
         decideBatch: async (input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) => {
+          if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports')))
+            return fixtureDecisionProviders.decideBatch(input, options)
           // Model registry/credential/DNS admission is asynchronous and precedes
           // the real source fence; reaching the mock POST requires that fence.
           await Promise.resolve()
@@ -449,7 +453,7 @@ describe('mandatory Wiki verification publication and accounting', () => {
       async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) {
         expect(fixture.text.mock.calls).toHaveLength(0)
         const result = await fixtureDecisionProviders.decideBatch(input, options)
-        if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports'))) throw new Error('Expected a narrow source-support decision')
+        if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports'))) return result
         checks++
         if (checks === 1) return { ...result, answers: Object.fromEntries(Object.entries(result.answers).map(([key, answer]) => [key, { ...answer, confidence: 0.8 }])) }
         return result
@@ -485,7 +489,9 @@ describe('mandatory Wiki verification publication and accounting', () => {
     snapshot.config.pricing = { ...snapshot.config.pricing!, inputPerMillion: 1, outputPerMillion: 2 }
     const decisionProviders = {
       selectRuntime: async () => snapshot,
-      decideBatch: async () => {
+      decideBatch: async (input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) => {
+        if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports')))
+          return fixtureDecisionProviders.decideBatch(input, options)
         if (mode === 'predispatch-revision') throw new AgentRepositoryError('DECISION_PROVIDER_REVISION_CHANGED', 'Decision provider revision changed', 409)
         throw new DecisionProviderFailure('INVALID_DECISION_RESPONSE', snapshot,
           mode === 'known-paid' ? { inputTokens: 100, outputTokens: 2, totalTokens: 102, totalTokensSource: 'reported' } : null, 7)
