@@ -1,4 +1,4 @@
-# Falcon context inflation: developer handoff
+# Wiki context inflation: findings and complete-read correction
 
 ## Historical finding
 
@@ -12,7 +12,7 @@ The portable anonymized fixture reproduces the same structural problem without t
 
 ## Scope and files
 
-Investigated application revision: `252b8c465a8fabecde430431561e95316225dd65`, Bun 1.4.2, `@ax-llm/ax` 25.2.1, Gemini profile model `gemini-3.8-flash`. All original findings, tables, live observations and source line references below describe that historical revision, not the compact implementation. Historical metric files are retained unchanged.
+Historical investigated revision: `252b8c465a8fabecde430431561e95316225dd65`, Bun 1.4.2, `@ax-llm/ax` 25.2.1, Gemini profile model `gemini-3.8-flash`. The historical reproduction, expansion tables and code walkthrough below describe that revision. Retained historical metric files are unchanged. Current architecture and separately measured results follow.
 
 | File | Purpose |
 | --- | --- |
@@ -25,85 +25,106 @@ Investigated application revision: `252b8c465a8fabecde430431561e95316225dd65`, B
 
 The fixture consistently pseudonymizes words and numbers with a private salted mapping while retaining Markdown/HTML syntax and parsing-sensitive continuation keywords. HTTP and email destinations use `example.invalid`. It contains no original people, contact details, working share URLs, share keys, credentials, cookies, login state or personal memories. The salt is not exported. Some labels are intentionally nonsensical: this is a **capacity/binding topology fixture**, not a semantic-answer benchmark.
 
-## Complete raw reads and a compact citation index
+## Complete reads, minimal locators, native semantic authority
 
-The synthesis input is now `sourceText` plus `sourceReferences`. `sourceText` contains each complete original registered read once, with its title, revision, representation and full/truncated status. It includes facts not requested in the current question, rather than replacing them with a narrow answer-oriented projection. Markdown, HTML, code, links, whitespace and Unicode are unchanged.
-
-`sourceReferences` is a small named index, not a closure/proof packet:
+The correction removes the model-facing unit/field/record/closure catalogs rather than compressing increasingly elaborate proof packets. `sourceText` carries each physical read's **unchanged complete original body once**, including facts not requested in the first question. `sourceReferences` contains only:
 
 ```ts
 {
-  scopes: { [scopeKey]: { readRef, evidenceId } },
-  units: {
-    [originalSourceRef]: {
-      scope, text,
-      preview?: true,
-      record?: recordKey,
-      atomic?: true,
-      block?: "list" | "table",
-      structural?: true,
-      rawSpans?: [{ start, end }],
-      title?: true,
-      aliases?: { [originalScopeKey]: "originalAliasRef originalAliasRef" }
-    }
+  reads: {
+    [sourceRef]: { readRef, evidenceId, sourceRevision }
   }
 }
 ```
 
-Short selected text remains beside its exact original reference. Medium units of 257–1,024 UTF-16 units use an exact Unicode-safe 128-unit preview only when original raw spans safely identify that text; normalized or ambiguous spans remain inline. Larger units retain their existing 256-unit preview and strict span validation. The complete original read is unchanged. Normalized HTML is not reconstructed from guessed raw offsets. Scope metadata appears once; each space-separated alias is an individually selectable original reference under its explicit original scope. Root/section aliases and repeated assertions of the same native unit can share display text without merging authority. Distinct records, rows and matrix columns never merge by equal values. Only complete nonopaque bindings are selectable. Incomplete or opaque read bodies remain present and truthfully labelled. Immutable host units, owned dependencies, quotations and closures remain private validation data.
+One canonical immutable read binding replaces hundreds of overlapping root/section selectors. There are no model-facing previews, atomic selectors, field maps, record numbers, dependency spans or automatic quotation expansion. Root/section citation metadata still exists privately; aliases do not multiply source content or model authority. Every generated statement is explicit and nonempty. The model may emit concise prose, selected-field tables or lists without copying an entire native block.
 
-The portable fixture still has 16,426 original UTF-8 bytes. All 259 earlier complete projected body units remain, alongside two complete-original projections, for 261 body units. All 437 original root/section bindings remain selectable. The current index has 262 primary rows and 178 scope aliases over one physical read, including the three additional complete-original bindings described below. The 11 parsed sections and 12 supplied TOC citations are unchanged. Historical metric files remain unchanged.
+The host and Jev have different responsibilities:
 
-| Quantity | Previous named-row transport | First complete-read iteration | Current complete-read index |
-| --- | ---: | ---: | ---: |
-| Root-only serialized Ax request bytes | 159,534 | 95,519 | 66,950 |
-| Root + sections serialized Ax request bytes | 165,023 | 113,233 | 74,676 |
-| Root + sections input bytes + 8,192 output allowance | 173,215 | 121,425 | 82,868 |
-| Root + sections selector/index JSON bytes | 12,070 bindings + 129,833 structures | 74,562 | 36,615 |
-| Complete original read bytes | 16,426 | 16,426 | 16,426 |
-| Selectable original root/section bindings | 437 | 437 | 440 |
+| Boundary | Authority |
+| --- | --- |
+| Permission, scope, current revision/hash, original read receipt, expiry and cancellation | Host; rechecked before dispatch/publication |
+| Exact numeric values, signed values, addresses, phones, code and rendered links | Host; admitted visible source literals only |
+| Subjects, fields, rows, comparisons, authored references and governing qualifications across one complete read | Native Jev; not a lexical unit/record eligibility grammar |
+| Requested contribution, including summary coverage | Independent native coverage predicate in the same read batch |
+| Usage, reservations, failed paid calls, unknown exposure and quotas | Existing accounting; no relaxation |
 
-The current request is 58.03% smaller root-only and 54.75% smaller with sections than the previous transport. These are measured byte reductions, **not measured model-token reductions**. All 437 earlier references remain selectable; three additional projections expose two genuine original multi-sentence units that artificial atomic splitting had hidden. The index retains 19 safe previews and 243 fully inline selections; unchanged original selected text is 21,163 bytes, versus 15,400 displayed index-text bytes. Selector clarity adds only `atomic:true` for a narrow original assertion, `block:"list"|"table"` for a complete native container and `structural:true` for a heading/disclosure label that cannot prove section-body facts. Six atomic, 50 block and 38 structural markers cost 1,518 index bytes on this fixture, rather than a proof or field catalog. Host authority is unchanged. Grouped aliases also remove the measured admission failure for a separate 74,821-byte pair of complete child reads with 1,748 repeated aliases. Neither author content nor selector identities are dropped to fit. This fixture has no earlier conversation; warm requests separately count admitted user/assistant text and compaction notes, never collected tool traffic or thought blocks.
+Every read-scoped claim requires native proof, including exact-looking quotations. Support and coverage each require both chosen probability and confidence **strictly above 0.8**. Missing, detached, malformed, uncertain, negative or unavailable results do not publish facts. Positive support can be recorded independently when aggregate coverage fails, but does not authorize partial factual publication.
 
-Fresh pre-change native measurements on an owned fictional fixture confirmed the follow-up problem independently of the offline capacity specimen. A role-only answer took 34.450 seconds; its typed generation reported 75,759 input tokens. The ordinary same-session delivery follow-up fetched the same page again, made five separate roughly 11,000-input-token verification calls, attempted a repair and ended partial. Those calls were real accounted application requests, not an offline tokenizer estimate.
+Native verification shares original read text within bounded batches. A physical read receives one coverage predicate, with every same-read candidate and original claim index, even when support predicates must split. Oversized batches split losslessly; they do not prune source content or claims. The unchanged native input ceiling is 122,880 bytes after its output reserve. A required complete source that cannot fit produces an honest evidence-capacity outcome, not a clipped quotation, larger quota or fabricated absence claim. The original 150 KB and 300 KB boundary specimens remain full size.
 
-Prior complete same-owned-session page observations are now available through existing persisted `tool.completed` events. Reuse requires the original receipt and fresh current authorization, scope, revision and expiry validation. A prior run's delivery is not proof of delivery in this run. Full fresh reads enter the new request under real admission; only actual overflow invokes the existing bounded restoration/compaction path. No new store, migration, enlarged provider window or weakened publication checks is introduced.
+The parser retains the exact visible factual boundary separately from raw markup. When no body content is excluded, `authorText` equals the original body and shares its interned string. Otherwise native proof uses the complete admitted projection; raw-only HTML attributes, hidden elements, script/style/template bodies, comments, frontmatter and opaque content are not factual or literal authority. Exact code whitespace remains intact. This does not implement arbitrary CSS visibility analysis.
 
-Complete sources alone do not resolve conversational references. A native diagnostic asked for the support desk coordinator, then “What is their email address?”; source-bound synthesis returned both contacts because its input omitted preceding conversational intent. Synthesis now receives the already-admitted historical user/assistant text, including existing compaction notes, for reference resolution only. Earlier answers and citation labels do not become factual authority or authorize stale reads. Current exact bindings and all publication checks still govern the answer; existing admission and compaction account for the added text without a new store or silent history cap.
+Complete reads survive ordinary same-owned-session follow-ups through existing persisted `tool.completed` receipts. Reuse still requires fresh authorization, scope, revision/hash and expiry validation; an earlier run's delivery is not current delivery authority. Latest valid logical reads replace older ones. Admitted user/assistant history resolves conversational references; it is not factual evidence. Tools, binary output and thought blocks are not duplicated into synthesis conversation context. No new store or migration is introduced.
 
-Mechanical binding eligibility remains separate from semantic proof. Complete own paragraphs, native lists and non-table records can admit paraphrases without requiring copied qualifier words. Exact original binding, revision, dependency closure, protected identifiers, numeric values, destinations and record/column associations remain mandatory; the existing native Jev check decides entailment, polarity and governing qualifications from the complete read. A complete non-table record can make its own Role field eligible even when the selected immutable binding is Name. Every required nonliteral verdict must pass with confidence and probability strictly above 0.8; missing, negative, uncertain or unavailable verdicts never publish.
+Two additional structural false rejections were reproduced and corrected:
 
-Genuine complete multi-sentence paragraph/list-item bodies retain their native identity, text and existing closure alongside every unchanged atomic reference. A full-original selector can summarize multiple facts within that body; an atomic selector remains limited to its displayed assertion, even when its private dependency contains neighboring sentences. Native proof treats that narrow text as factual authority while still checking governing conditions against the full read. Numeric witnesses and identifier neighborhoods for a full-original prose body use its existing sentence boundaries rather than attaching unrelated later sentences to one amount or inventing a replacement across sentences. Independently scoped anonymous list-policy clauses require original protected field-label/value associations; named owners and ambiguous/pronominal continuations retain the connected-record fence. All-Wiki summaries without a current-page hint do not acquire current-page coverage authority or crash on the normal null hint.
+- `09:00-17:00` was scanned as positive `09:00` and negative `-17:00`, unlike the source's en-dash range. Signs are now distinguished from range separators; genuinely changed negative values remain rejected.
+- Flattening independent table cells manufactured phone literals such as `120 30 48` from price, ticket count and response time. Phone extraction now preserves cell/block boundaries rather than requiring a fabricated identifier in the source.
 
-Heading capitalization does not turn a word already used as a lowercase body noun into an immutable proper identifier. This preserves normal inflection such as “commercial accounts” under `Account contacts` without permitting stem changes to actual scalar names, IDs or protected values.
+An unanchored full-body email scan also became quadratic on long ordinary words. Matching is bounded to address-like tokens, with no scan when `@` is absent. These corrections change neither native thresholds nor retry allowances.
 
-Numeric prose retains its original quantity, currency, duration qualification, dimension and clock punctuation. Distinctive original field-label signals disambiguate shared wording; explicit field/value swaps and assigning a quantity to a nonnumeric original field remain rejected even under maximal semantic approval. Without an explicit label, each numeric token requires exactly one complete quantity witness within the same original record; Jev—not a field-keyword grammar—decides the paraphrase's meaning. Duplicate witnesses remain ambiguous. Currency word order and regular human-duration compound/singular notation do not change the count, source-stated qualifier or dimension. Complete-list clauses each require one original record witness, with that record's exact connected owner when named, identified or contact-bearing. Shared names require an original unique identity; unrelated named/scalar siblings do not globally fence anonymous policy clauses. Cross-record ownerless fragments, pronominal reassignment and value/address/link pooling remain fenced. Native confidence measures support from the authored source, not whether fictional or untested content operates in the real world; the assertion must still retain that status.
+### Offline representation measurements
 
-Anonymous scalar-list prose can use ordinary comma and conjunction boundaries instead of artificial semicolon-only formatting. Each part still needs its own original record witness; identified/contact/link-bearing records keep their connected-owner path, and protected inline syntax is not split. The native check assesses the complete statement and its conditions, not independently approved sentence fragments.
+The unchanged portable specimen contains 16,426 UTF-8 bytes, 261 complete private projected units, 11 sections and 12 supplied TOC entries. Six registered root/section evidence identities now produce **one physical read, one synthesis binding and one locator**.
 
-The first deployed complete-read iteration exposed a second defect independently of context size. Its role-only query fell from 34.450 to 13.055 seconds and from 75,759 to 32,832 typed input tokens, but a native-quotation shortcut published a full contact record despite explicit email/phone exclusions. Its follow-up reused all 17,212 original bytes with zero retrieval calls, yet still ended partial because a host-expanded whole-list quotation failed final scope assessment. Those performance results are not quality successes.
+| Quantity | Previous named-row transport | Complete-read correction |
+| --- | ---: | ---: |
+| Root-only serialized Ax request bytes | 159,534 | 29,510 |
+| Root + sections serialized Ax request bytes | 165,023 | 29,510 |
+| Root + sections request + 8,192 output allowance | 173,215 | 37,702 |
+| Complete original source bytes | 16,426 | 16,426 |
+| Current read-locator JSON bytes | — | 103 |
+| Current body plus read wrapper bytes | — | 16,603 |
+| Current output-schema bytes | — | 2,105 |
 
-The current contract removes that shortcut: every model statement is explicit and nonempty, with no empty-to-full-record expansion or automatic `Source quotations` presentation. Literal wording stays private validation data. A selected atomic statement never acquires neighboring paragraph assertions. Canonical alignment grants structural eligibility, not a semantic exemption: paragraph subsets still require the existing independent check against the complete original read, including qualifications outside the selected sentence. Explicit complete owned record/list quotations remain supported.
+Both variants fit the unchanged 128,000/8,192 diagnostic profile. The root/section multiplier is gone; current wrappers add 177 bytes to the original body. These are serialized request **bytes**, not model-token estimates. Fixed policy, schema, prefix and JSON overhead remain; deleting structure does not make the complete request identical to the source file.
 
-The live follow-up also exposed missing model orientation: field selectors did not say which fields belong to one complete owned record. The index now adds only a compact `record` number for complete non-table multi-field records. It costs 482 index bytes on the portable fixture and communicates existing field ownership, not new authority. Requested values and their own Scope/Exception belong in the same source-bound statement; separate qualifying claims do not repair bare values. Equal-valued records and matrix columns do not merge. An explicitly emitted exact complete native list may acquire only its existing governing prefix; its raw body is never expanded, changed or reordered.
+### Accounted live benchmarks and limits
 
-Adjacent inline claims under the exact same original citation scope share a prose paragraph, retaining every immediate per-claim citation and statement boundary. Different scopes and block/table/list statements remain separate. This removes field-per-paragraph output structure without introducing model layout metadata or pooling evidence.
+Native application measurements below use ordinary authenticated requests, owned fictional sources, existing profiles and normal accounting. The eight frozen query shapes were selected-field, new-topic follow-up, factual, broad summary, comparison, linked source, unavailable evidence and explicitly requested Markdown table. Questions and source bodies were not narrowed to get a pass. These are individual samples, not latency percentiles or a universal correctness certificate.
 
-Complete authored Markdown tables have their own conservative parser-native binding, appended without renumbering existing row, field or list identities. Requested complete tables retain original header, separator and all row/column associations. An explicitly emitted exact body can acquire only its existing governing context and required owned reference-definition dependencies; no omitted fields are invented. Harmless LF/CRLF and surrounding line-break differences canonicalize to the private original body; row text, columns, values, prefixes and definitions remain exact. The host renders genuine Markdown tables, locally resolving owned reference links without cross-table label collisions. Missing, malformed, masked, truncated or mixed-scope dependencies decline native whole-table admission; existing exact row/column guards remain. Engine statement matching and streaming/final rendering use the same serialization.
+Deployed code revision: `6e03601297614983f0688f32d96973ee97b4f182`; local image `local/tsepistle:wiki-cell-boundaries-6e0360129`. Only Wiki was replaced. PostgreSQL, secrets, volumes, service/network identity and configuration were preserved; writable cache/uploads were copied after graceful stop and restored before start.
 
-Exact original native-list bodies use the same conservative LF/CRLF and surrounding line-break equivalence, never changed item text, indentation, order, prefix or links. Ordinary single-paragraph soft wraps normalize to spaces after Markdown shape validation; hard breaks, protected-syntax breaks and additional blocks remain rejected. Binding and native semantic validation still follow normalization. Existing repair feedback distinguishes output-byte bounds from unsupported statement/native-body shape without exposing statement text. Directly matching displayed fact/record-field refs are preferred over an indirect identity ref; complete-record authority is unchanged.
+| Final frozen case | Seconds | New body reads | Repairs | Observed outcome |
+| --- | ---: | ---: | ---: | --- |
+| Selected field, first attempt | 11.304 | 1 | — | Native service failure; no facts published |
+| Same-page new-topic follow-up | 5.914 | 0 | 0 | Correct returns, hours and exceptions |
+| Factual | 5.448 | 0 | 0 | Correct lead time, threshold, fee and delivery scope |
+| Broad summary | 12.746 | 0 | 0 | All substantive sections; completeness caveat below |
+| Comparison | 10.195 | 0 | 0 | Correct dimensions and governing qualifications |
+| Linked source | 5.119 | 1 | 0 | Annex-owned values, exception and citation |
+| Unavailable evidence | 5.770 | 0 | 0 | No invented freight price or uptime percentage |
+| Explicit Markdown table | 9.354 | 0 | 0 | Correct table and shared conditions |
+| Selected field, separate new run after provider recovery | 20.697 | 1 | 0 | Correct concise role; contact details excluded |
 
-Local eligibility feedback collects every source-local claim failure before the existing one repair and names each model-visible `sourceRef` with its host category—binding/closure, protected identifiers, quantity/list-record association, source integrity, exact address/inline literal, or explicit record fields. Internal unit IDs alone are not usable locators in the compact model index. Duplicate failures are reported once, without rejected statements or source content. Whole-answer validation and native proof never run when any claim remains invalid. This changes neither eligibility nor native thresholds, and introduces no extra retry.
+Do not discard the failed first attempt. It returned `WIKI_VERIFICATION_FAILED`, with existing unsettled exposure recorded as `tokens: 64000, costMicros: 2688`. Subsequent verification calls succeeded; the later selected-field request was a distinct run, not an added automatic retry. The native dependency remains an availability and accounting risk.
 
-A native completed status is not an independent quality pass. Revision `592006be2` completed all eight owned meaningful-page cases without repairs, but its “concise” summary was 6,366 output bytes for a 5,149-byte source and copied full lists/contact details. The trace also recorded an 888-output-token ordinary summary followed by 1,289 typed output tokens. Collection guidance now directs the model to finish instead of drafting an answer before source-bound synthesis. Concise synthesis treats original bodies as factual authority rather than formatting templates, selects section-appropriate scopes and omits unrequested attributes; no fixed section/claim cap or publication exemption is introduced.
+| Unchanged 17,212-byte dense-page pair | Before correction | Final deployed sample |
+| --- | ---: | ---: |
+| First answer seconds | 34.450 | 18.515 |
+| First typed-generation input tokens, provider reported | 75,759 | 10,609 |
+| First serialized typed-request bytes | 175,513 | 31,222 |
+| Delivery follow-up seconds | 17.486 | 17.206 |
+| Delivery follow-up typed-generation input tokens, provider reported | — | 10,628 |
+| Delivery follow-up new body reads | 1 | 0 |
+| Delivery follow-up repairs | 1 | 0 |
 
-Native Jev checks share the complete original read and common policy within a bounded batch. Long duplicate textual leaves in selected-source/closure records refer to whole strings in the request's `readTexts`; short structural ownership remains explicit. Host expansion validates every original source/claim index and immutable closure before publication. Every required verdict still has to pass independently; an oversized native batch splits rather than pruning claims or weakening thresholds.
+The earlier delivery follow-up ended partial after refetching and repeated native verification. The final pair completed both questions, retaining all 17,212 original bytes and using one native batch per answer. Its follow-up's typed provider call alone took 10.993 seconds: smaller context is proven, uniformly low network/model latency is not. Earlier complete-source samples varied; reporting only the fastest would overstate improvement.
 
-The probe reports `physicalReadCount`, `rawReadUtf8Bytes`, `sourceTextBytes`, `sourceReferencesBytes`, primary/alias counts and the complete generated Ax request. `projectionCount` counts selectable original references; `bindingGroups` counts original host `(evidenceId, sourceRevision)` identities. Selected-text and raw-read metrics overlap and must not be summed as disjoint content buckets. `requestedInputPlusOutput` retains the conservative byte comparison; both current nonempty variants fit 128,000/8,192 without relying on a token estimate.
+The genuine referential pair named Avery Moss, then answered “What is their email address?” with only Avery's address: 13.899 and 5.664 seconds, zero follow-up reads or repairs. The final actual workspace rendered the requested comparison table with citations, then completed the ordinary returns/hours follow-up without a body read. The UI comparison used its existing one repair after uncertain native coverage; the UI follow-up used none.
 
-Default diagnostic output contains only numeric metrics, assumptions and a source hash; it does not fetch or dispatch to a provider. Optional `PROBE_REQUEST_FILE=/private/path/request.json` writes the complete captured request with mode `0600` for a controlled authorized native comparison. That file contains source content; do not publish it.
+Freshness was exercised by changing only the owned policy page's hours from 09:00–17:00 at revision 3 to 10:00–18:00 at revision 4. The existing warm session made a new `pages.get`, answered the new hours and cited revision 4 in 9.377 seconds. Retention does not bypass freshness.
 
-The earlier `ec3d62990` native smoke and exact Gemini `countTokens` result describe the previous named-row transport: 72,090 input tokens for its complete portable root-plus-section frame, not for the new index. Its owned temporary page 76 was deleted, existing pages/users returned to 31/12, and the original checked page remained 1,105 bytes with SHA-256 `113c967750999dac6f7a07dbfb14067cb182b7c7ed0bfd955b4089121f19d84b`. Its literal contact fidelity passed; independent Who relevance was inconclusive, so neither old result establishes current universal QnA reliability.
+**Remaining semantic limit:** native “complete” is not independent proof of exhaustive summary quality. Earlier iterations omitted several material restrictions; targeted generic guidance improved coverage without restoring field catalogs. The final broad summary still omitted the explicit one-billing-owner condition and did not explicitly restate the first-response-versus-resolution non-guarantee. Do not represent the summary sample as exhaustive or universal correctness. Complete sources make those facts available for subsequent questions; they do not make model judgments infallible.
+
+A targeted ordinary follow-up asked for those omitted eligibility and response limits. It returned one organization, one billing owner, reseller/multi-tenant exclusions and first-human-response-not-resolution in 6.707 seconds, with revision-4 authority, zero body reads and no repair. Answer omission no longer discards the underlying source context.
+
+Qualification: 987 changed-surface tests passed across 13 files, server typecheck passed, affected-file lint passed, and the affected-service image built successfully. Full static checks passed on the preceding integration revision; final boundary edits were separately typechecked/linted and exercised in the deployed application. Training/selection classification covered 12 fixtures and 100 variants with zero mismatches; final holdout was not loaded, and this classification result is not native semantic verification.
+
+Owned temporary pages 77, 78 and 79 were deleted through the normal revision-checked API after verification. The application returned to 31 pages, 12 users and zero active runs. Original page 13 remained revision 2, 1,105 bytes, SHA-256 `113c967750999dac6f7a07dbfb14067cb182b7c7ed0bfd955b4089121f19d84b`. Run histories, receipts and accounting records were not erased.
+
+Default offline output is numeric metrics, assumptions and a source hash; it does not dispatch to a provider. Optional `PROBE_REQUEST_FILE=/private/path/request.json` writes the full captured request with mode `0600`; it contains source content and must not be published. Historical metric files and the historical reproduction below remain unchanged.
 
 ## Fresh live reproduction
 
@@ -163,7 +184,7 @@ Metadata can include inline `content` or a relative `contentFile`. A bare `.md` 
 
 Preparation exposes existing lexical engine helpers in a **temporary copy**, extracts the exact synthesis source-construction block retained in `#synthesisTurn`, and extracts the production page-read TOC/citation functions. The production preflight reuses that construction; its dispatch/admission code is not executed by this probe. The probe executes production parsing, sentence/record projection, closures, root/section evidence normalization, source construction, encoding, Ax prompt generation and native output-schema generation. It also prepends the real `final-synthesis` host prompt before calling the production serialization-size helper.
 
-This is a reconstruction, **not a production capture of the rejected full frame**. Assumptions are empty memory/skills, all-Wiki scope, one literal request facet, no observations, no correction feedback and the stated model/output allowance. The measured production host prefix is included (2,140 bytes in the historical reconstruction). Ordinary conversation messages are not appended to this typed generation, matching its production construction. Different live request options can change fixed overhead; the historical failed frame's byte breakdown was not logged. At the investigated revision, even the minimal/root-only case established failure without prior chat history.
+This is a reconstruction, **not a production capture of the rejected full frame**. Assumptions are empty memory/skills and prior admitted conversation, all-Wiki scope, one literal request facet, no observations, no correction feedback and the stated model/output allowance. The measured production host prefix is included (2,140 bytes). Warm production requests separately include admitted user/assistant conversation and compaction notes for continuity; this empty-history fixture measures neither that variable overhead nor the actual full runtime admission path. Different live options change fixed overhead. The historical failed frame's byte breakdown was not logged; even its minimal/root-only reconstruction established failure without prior chat history.
 
 These are serialized **Ax request** bytes. The Gemini adapter subsequently converts Ax fields to Google's native body; that body, its exact tokenization and its treatment of schema instructions were not measured here. The mock does not establish a semantically correct answer, native provider conformance, paid exposure settlement or end-to-end publication.
 
