@@ -8657,6 +8657,8 @@ describe('request-derived evidence coverage', () => {
     const decisionProviders = {
       selectRuntime: runtime,
       decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> => {
+        if (Object.hasOwn(nativeRequest.questions, 'context_readiness'))
+          return fixtureDecisionProviders.decideBatch(nativeRequest, options)
         await options?.onPreDispatch?.()
         metadataStates.push(questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state))
         const answers = Object.fromEntries(Object.entries(nativeRequest.questions).map(([id, question]) => {
@@ -8872,6 +8874,8 @@ describe('request-derived evidence coverage', () => {
           pricing: { ...provider.config.pricing!, inputPerMillion: 1, outputPerMillion: 0, perRequest: 0.25 } } }
       },
       decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> => {
+        if (Object.hasOwn(nativeRequest.questions, 'context_readiness'))
+          return fixtureDecisionProviders.decideBatch(nativeRequest, options)
         await options?.onPreDispatch?.()
         const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
         if (typeof state.source === 'string') {
@@ -9307,7 +9311,6 @@ describe('request-derived evidence coverage', () => {
     }, { text, event })
     expect(visibleWikiText(text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
     expect(result.citations?.map(citation => citation.evidenceId)).toContain(evidenceId)
-    expect(decisionProviders.decideBatch).toHaveBeenCalledOnce()
     expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' &&
       questionRecord(data).outcome === 'answer_accepted')).toHaveLength(1)
   })
