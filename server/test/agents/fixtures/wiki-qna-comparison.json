@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "provenance": "Owned fictional non-operative corpus. Query protocol revision 2, frozen after observing empty verbose-query ranking in revision 1 and before rerun: use the single company lexical anchor Meridian for every scenario and follow-up. Select the existing ranking's first up-to-3 results without rubric-aware filtering or reordering; report retrieval misses honestly. User requests, page bodies and independent rubric remain unchanged. Preserve revision-1 reports under their original corpus fingerprint.",
+  "topK": 3,
+  "pages": [
+    { "key": "policy", "locale": "en", "path": "agent-bench-meridian-policy-54c2a3bf", "title": "Meridian dense QA policies — fictional and non-operative", "bodyFile": "owned79-dense-policy.txt" },
+    { "key": "remote", "locale": "en", "path": "agent-bench-meridian-remote-54c2a3bf", "title": "Meridian remote delivery annex — fictional and non-operative", "body": "# Meridian remote delivery annex — fictional and non-operative\n\nThis annex governs fictional remote-island quotes only. It is not an operative offer. Mainland delivery fees do not apply.\n\n- Remote-island minimum order: USD 750, excluding tax.\n- Quote requirements: destination postal code and packed shipment weight.\n- Lead time: agreed in the individual quote; no standard remote-island lead time is stated.\n- International freight prices are not specified.\n" },
+    { "key": "lumen", "locale": "en", "path": "agent-bench-meridian-lumen-54c2a3bf", "title": "Meridian Lumen service plan — fictional and non-operative", "body": "# Meridian Lumen service plan — fictional and non-operative\n\nLumen is a fictional managed-support plan, not an operative offer. Do not confuse it with Atlas or Boreal pilot plans.\n\n- Monthly fee: USD 210, excluding tax.\n- Included tickets: 40 per month; unused tickets expire at month end.\n- Named operators: 3.\n- First human response target: 36 supported hours, not resolution time.\n- Supported hours: weekdays 09:00–17:00 local time, excluding local public holidays.\n- Eligibility: one organization with one billing owner; reseller and multi-tenant deployments are excluded.\n- Additional tickets: USD 6 each.\n" },
+    { "key": "nacre", "locale": "en", "path": "agent-bench-meridian-nacre-54c2a3bf", "title": "Meridian Nacre service plan — fictional and non-operative", "body": "# Meridian Nacre service plan — fictional and non-operative\n\nNacre is a fictional managed-support plan, not an operative offer. Do not confuse it with Atlas or Boreal pilot plans.\n\n- Monthly fee: USD 330, excluding tax.\n- Included tickets: 95 per month; unused tickets expire at month end.\n- Named operators: 7.\n- First human response target: 12 supported hours, not resolution time.\n- Supported hours: weekdays 09:00–17:00 local time, excluding local public holidays.\n- Eligibility: one organization with one billing owner; reseller and multi-tenant deployments are excluded.\n- Additional tickets: USD 6 each.\n" },
+    { "key": "archive", "locale": "en", "path": "agent-bench-meridian-archive-54c2a3bf", "title": "Meridian archived service plan — fictional and non-operative", "body": "# Meridian archived service plan — fictional and non-operative\n\nThis historical 2020 fictional service plan is withdrawn. It does not describe Lumen, Nacre, Atlas or Boreal.\n\nThe archived monthly fee was USD 99. The archived allowance was 10 tickets per month and one named operator. Never substitute archived figures for a current fictional plan.\n" }
+  ],
+  "scenarios": [
+    { "id": "selected-fields", "kind": "single-page-selected-field", "turns": [
+      { "id": "contacts", "userRequest": "In Meridian dense QA policies, give only Morgan Vale's role and email.", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "role", "sourceKeys": ["policy"], "statement": "Morgan Vale is the account representative." },
+        { "id": "email", "sourceKeys": ["policy"], "statement": "Morgan Vale's email is morgan.vale@example.invalid." }
+      ], "materialRestrictions": [], "expectedUnavailable": false }
+    ] },
+    { "id": "simple-fact", "kind": "single-page-fact", "turns": [
+      { "id": "cutoff", "userRequest": "What is the Meridian order cutoff and what happens after it?", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "cutoff-consequence", "sourceKeys": ["policy"], "statement": "The order cutoff is 14:00 local time; orders accepted later enter processing on the next working day." }
+      ], "materialRestrictions": [], "expectedUnavailable": false }
+    ] },
+    { "id": "two-page-comparison", "kind": "true-multi-page-comparison", "turns": [
+      { "id": "plans", "userRequest": "Compare the Meridian Lumen and Nacre service plans in a table: monthly fee, included tickets, named operators and first-response target. Preserve the material restrictions.", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "lumen", "sourceKeys": ["lumen"], "statement": "Lumen costs USD 210 per month, includes 40 monthly tickets and 3 named operators, and targets a first human response within 36 supported hours." },
+        { "id": "nacre", "sourceKeys": ["nacre"], "statement": "Nacre costs USD 330 per month, includes 95 monthly tickets and 7 named operators, and targets a first human response within 12 supported hours." }
+      ], "materialRestrictions": [
+        { "id": "tax", "sourceKeys": ["lumen", "nacre"], "statement": "Both monthly fees exclude tax." },
+        { "id": "expiry", "sourceKeys": ["lumen", "nacre"], "statement": "Unused tickets expire at month end." },
+        { "id": "response-not-resolution", "sourceKeys": ["lumen", "nacre"], "statement": "Targets are for first human response, not resolution time." },
+        { "id": "supported-hours", "sourceKeys": ["lumen", "nacre"], "statement": "Supported hours are weekdays 09:00–17:00 local time, excluding local public holidays." },
+        { "id": "eligibility", "sourceKeys": ["lumen", "nacre"], "statement": "Eligibility is one organization with one billing owner; reseller and multi-tenant deployments are excluded." },
+        { "id": "fiction", "sourceKeys": ["lumen", "nacre"], "statement": "The plans are fictional, not operative offers." }
+      ], "expectedUnavailable": false }
+    ] },
+    { "id": "broad-summary", "kind": "broad-summary-restrictions", "turns": [
+      { "id": "pilot-summary", "userRequest": "Summarize Meridian Atlas and Boreal pilot plans, including their prices, allowances and material restrictions.", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "atlas", "sourceKeys": ["policy"], "statement": "Atlas is USD 120 monthly, with 30 tickets, 2 named operators, and a 48-supported-hour first-response target." },
+        { "id": "boreal", "sourceKeys": ["policy"], "statement": "Boreal is USD 180 monthly, with 80 tickets, 5 named operators, and a 24-supported-hour first-response target." },
+        { "id": "extra-ticket", "sourceKeys": ["policy"], "statement": "Additional tickets cost USD 4 each beyond the selected allowance, with no unused-ticket credit." }
+      ], "materialRestrictions": [
+        { "id": "one-owner", "sourceKeys": ["policy"], "statement": "Pilot eligibility requires one organization with one billing owner." },
+        { "id": "reseller-multitenant", "sourceKeys": ["policy"], "statement": "Reseller and multi-tenant deployments are excluded." },
+        { "id": "not-resolution", "sourceKeys": ["policy"], "statement": "Targets measure first human response during supported hours, not resolution time." },
+        { "id": "hours", "sourceKeys": ["policy"], "statement": "Supported hours are weekdays 09:00–17:00 local time; local public holidays are excluded." },
+        { "id": "tax", "sourceKeys": ["policy"], "statement": "Monthly fees exclude tax." },
+        { "id": "rollover", "sourceKeys": ["policy"], "statement": "Ticket allowances reset monthly and do not roll over." },
+        { "id": "changes", "sourceKeys": ["policy"], "statement": "Plan changes take effect at the next monthly renewal; mid-cycle upgrades need a separate agreement." },
+        { "id": "pilot-fiction", "sourceKeys": ["policy"], "statement": "Both plans are pilot-only fictional offers, not established real-world availability." }
+      ], "expectedUnavailable": false }
+    ] },
+    { "id": "linked-fact", "kind": "linked-page-fact", "turns": [
+      { "id": "remote-quote", "userRequest": "Follow the remote-delivery annex linked from Meridian dense QA policies. What is the remote-island minimum order and what must a quote request contain?", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "minimum", "sourceKeys": ["remote"], "statement": "The remote-island minimum order is USD 750 excluding tax." },
+        { "id": "quote-inputs", "sourceKeys": ["remote"], "statement": "The quote request must include destination postal code and packed shipment weight." }
+      ], "materialRestrictions": [
+        { "id": "scope", "sourceKeys": ["remote"], "statement": "These are fictional remote-island quotes, not mainland delivery terms or an operative offer." }
+      ], "expectedUnavailable": false }
+    ] },
+    { "id": "unavailable-evidence", "kind": "truthful-abstention", "turns": [
+      { "id": "uptime", "userRequest": "What service uptime percentage does Meridian guarantee?", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "not-stated", "sourceKeys": ["policy"], "statement": "The corpus specifies no service uptime commitment or guaranteed percentage." }
+      ], "materialRestrictions": [
+        { "id": "not-response", "sourceKeys": ["policy"], "statement": "First-response targets must not be presented as uptime commitments." }
+      ], "expectedUnavailable": true }
+    ] },
+    { "id": "conversation", "kind": "pronoun-and-new-topic-follow-ups", "turns": [
+      { "id": "initial", "userRequest": "What is the Meridian Nacre service plan's monthly fee?", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "fee", "sourceKeys": ["nacre"], "statement": "Nacre's monthly fee is USD 330 excluding tax." }
+      ], "materialRestrictions": [], "expectedUnavailable": false },
+      { "id": "pronoun", "userRequest": "How many named operators does it allow?", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "operators", "sourceKeys": ["nacre"], "statement": "Nacre allows 7 named operators." }
+      ], "materialRestrictions": [], "expectedUnavailable": false },
+      { "id": "new-topic", "userRequest": "Now switch to Meridian shipping: what is the mainland free-delivery threshold and fee below it?", "retrievalQuery": "Meridian", "requiredFacts": [
+        { "id": "mainland", "sourceKeys": ["policy"], "statement": "The mainland free-delivery threshold is USD 500; below it the delivery fee is USD 12." }
+      ], "materialRestrictions": [], "expectedUnavailable": false }
+    ] }
+  ],
+  "rubric": {
+    "method": "Independent human semantic adjudication of the published answer against frozen required facts and original full fictional sources; never reuse the native publishability decision as quality evidence.",
+    "requiredFact": "Mark true only when the answer faithfully states the fact with its governing subject, values, units, modality and qualifications. Any omission, reversal, changed literal, wrong-plan association, or false inability is false. Faithful paraphrases count.",
+    "materialRestriction": "Restrictions must remain attached to their governed plan or fact. One-billing-owner eligibility and first-response-not-resolution are individually scored, not inferred from a generic eligibility or SLA sentence.",
+    "unsupportedClaim": "Independently review every natural-language read-scoped assertion, including exact-looking quotes. Mark unsupported if any assertion is not supported by the original visible source or is improperly presented as real-world availability.",
+    "unavailable": "Truthful abstention is required for absent evidence; it is not a fact-coverage failure. Do not infer percentages from response targets or invent external evidence.",
+    "score": "Coverage is covered required facts divided by all frozen required facts, separately for restrictions. Quality score is overall coverage only if independent unsupportedClaim=false and unavailable behavior is correct; otherwise zero. Missing adjudication is null, never success."
+  }
+}

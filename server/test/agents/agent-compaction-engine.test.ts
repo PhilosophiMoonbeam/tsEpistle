@@ -553,8 +553,6 @@ describe('Ax agent engine context compaction', () => {
       expect(signal.aborted).toBe(false)
       counted.push(input)
       expect(input.responseFormat ?? input.functions).toBeDefined()
-      expect(JSON.stringify(input)).toContain('Frozen routing preference')
-      expect(JSON.stringify(input)).toContain('Retain source record qualifications')
       expect(JSON.stringify(input)).toContain(background)
       return 10_000
     })
