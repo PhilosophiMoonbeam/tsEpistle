@@ -61,7 +61,40 @@ The root read-tool projection retains unchanged complete bodies while removing t
 
 One independent compact **collective full-read audit** runs on the existing answer profile, with `complete`, `incomplete` and `not_established` outcomes. It adds a paid call under normal pricing, admission, receipts and freshness checks, not new source obligations or catalogs. Its private feedback is bounded to 2,000 UTF-8 bytes and can use the one existing repair; it grants neither source authority nor extra retries.
 
-### Current sprint measurements and qualification status
+### Cache-effective Sprint cutover
+
+The Wiki service now renders synthesis and collective-audit inputs with a stable policy/schema first, complete authorized source bodies next, and the current question, conversation, facets and repair feedback last. Optional input declarations remain in the system signature even when their values are absent. Read/reference ordering uses immutable identity rather than question ranking; facet-count validation remains in Zod and the host without varying the native provider schema. Current-page/scope hints are dynamic user data, not per-question system-policy changes.
+
+The audit receives each complete visible author projection **once**, rather than raw markup plus a near-identical factual projection. Synthesis and persisted read receipts retain the unchanged original source representation. This removes duplication without narrowing retained content to the current question. Authorization, scope, revision/hash, expiry, context bounds and publication checks still run; a cached prefix grants no source authority.
+
+Cache routing is private to owner, session, immutable provider-profile version, transport/model, capability revision and phase. SDK cache boundaries protect the source segment where supported. Gemini keeps native implicit caching; there is no managed paid cache resource, hidden cache-creation retry, or padding to reach a minimum. The official OpenAI bridge preserves request-scoped cache keys and stable native source boundaries even where Ax 25.2.1's model catalog lacks the configured current model. Custom compatible endpoints do not acquire OpenAI-only controls. Hash-only synthesis-frame diagnostics distinguish stable schema/system/source prefixes from an actual provider-reported cache hit.
+
+Pricing accepts the existing `revision|input|output` form or explicit `revision|input|output|cachedRead|cachedWrite` rates, all in costMicros per million tokens. Measured complete usage charges disjoint cached-read/write input once; token/context quotas still count the **full** input. Unknown cache counters remain unknown and receive conservative pricing, not invented cache credits. Explicit zero is distinct from omission; cumulative stream counters survive a later frame that omits them, while regressions fail closed. Existing profiles, historical receipts and the deployed three-rate pricing configuration are unchanged. The Limits editor preserves explicit cache rates on unrelated edits and validates them before a normal new-version save.
+
+### Cache qualification measurements
+
+The maintained Wiki-only image is `local/tsepistle:wiki-cache-59aa1cf80`, source `59aa1cf80`. The deployed eight-turn cohort compared with `66f8` used the same immutable enabled Gemini profile, original questions, one cold turn plus three follow-ups per owned source, and unchanged full source bodies. The dense fixture is a **17,212-byte anonymized capacity specimen**, not a representative dense English semantic corpus; the short policy is **5,149 bytes** of authored English. Bytes are not token counts.
+
+|Source / turn cohort|Samples|Baseline measured LLM input tokens|Deployed measured LLM input tokens|Baseline mean elapsed seconds|Deployed mean elapsed seconds|
+|---|---:|---:|---:|---:|---:|
+|Dense cold|1|32,466|23,704|15.313|14.548|
+|Dense follow-ups|3|27,471|18,650|11.770|10.964|
+|Short cold|1|11,091|11,230|8.832|8.799|
+|Short follow-ups|3|8,609|8,671|7.784|7.011|
+
+Input is the sum of measured LLM `model.turn.inputTokens`; follow-up values are arithmetic means. Native Jev readiness/support calls are excluded from **this LLM metric**, not from actual settlement, token quotas or exposure. Dense audit input fell from 16,355 to 7,489 on the cold turn and from a 16,580 mean to 7,695 on follow-ups by removing the duplicate source representation. The short path did not establish a token reduction. These are small paired observations, not latency percentiles, a universal speed claim, or vendor invoice savings.
+
+All eight final runs completed with zero unknown exposure. All six follow-ups performed **zero new body reads**. Hosted schema and system digests were identical across all eight synthesis turns; each source-prefix digest stayed identical through its own three follow-ups. That proves prefix stability and source reuse, **not a provider KV-cache hit**: every observed synthesis/audit cache-read and cache-write counter was **null/unknown**, including the dense eligible input. The provider is still best-effort. The short synthesis input was below Gemini 3.8's current 4,096-token implicit-cache minimum; padding it would defeat the lean design.
+
+A separate deployed three-turn freshness smoke read revision 1 once, reused it with zero GETs for a repeat, then changed only the owned support-hours fixture from 09:00–17:00 to 10:00–18:00 using expected-revision PUT. The next answer performed one revision-2 read, returned 10:00–18:00 and cited revision 2. Schema/system digests stayed fixed; the source-prefix digest changed only after the source edit. All three runs succeeded. The owned pages were deleted through normal revision-fenced API operations; PostgreSQL identity, 31 original pages, 12 users, the original sentinel-page hash, environment, mounts and exact administrator profile projection were preserved.
+
+Independent full-source answer grading found all dense requested facts/conditions and all final short numerical/operational restrictions covered. An intermediate candidate omitted the supported-hours definition despite native acceptance; the final repeat included it without a prompt change. Final short follow-ups could still omit standalone fictional/non-operative framing. A native `complete` verdict remains probabilistic and is not independent semantic proof. No claim of universally complete summaries is made.
+
+Qualification: 766 focused tests passed across twelve affected files, shared/server/client typechecks and affected lint passed; the final cumulative-counter/hash refinement passed 589 tests across five files plus server typecheck/lint. The affected-service build succeeded. Unpaid actual-factory wire probes verified single-attempt OpenAI Responses/Chat/cache-boundary compatibility and no added controls on a custom endpoint; the disabled OpenAI backup was not enabled and remote acceptance/cache savings on it remain unverified. The deployed advanced-pricing editor was exercised without saving or changing profile versions, defaults or rates.
+
+Provider eligibility and prices are model-specific: [Gemini caching](https://ai.google.dev/gemini-api/docs/caching), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching). The current Gemini 3.8 Flash Standard cached-read price is $0.075/M versus $0.75/M fresh input (90% discount), not a universal 95%. Configure explicit immutable rates for the actual model rather than deriving a discount from a cache hint or applying cached-input prices to full-input quotas.
+
+### Earlier Sprint measurements and qualification status
 
 Warm ranked follow-ups retained all four complete bodies (**6,729 bytes**) with **zero GETs**; the collector still consumed **10,143 / 10,283 input tokens**. The native source-section coverage experiment consumed **44,478 tokens across eight controls**, versus **26,355** for the lean variant (**+69%**), and still missed the billing-owner condition. That experiment was rejected and is **not shipped**.
 
