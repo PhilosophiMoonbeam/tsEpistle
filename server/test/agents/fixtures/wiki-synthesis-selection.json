@@ -8,31 +8,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Report backup retention and restore permission.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "selection-backups-backup",
         "sourceRevision": "selection-backups-r1",
-        "unitId": "backup",
-        "context": "selection-backups",
-        "text": "Backups expire after 14 days. Only operators can restore backups.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-backups:selection-backups-backup",
+        "title": "selection-backups",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Backups expire after 14 days. Only operators can restore backups.\"}"
+        "source": "Backups expire after 14 days. Only operators can restore backups."
       },
       {
         "evidenceId": "selection-backups-restore",
         "sourceRevision": "selection-backups-r1",
-        "unitId": "restore",
-        "context": "selection-backups",
-        "text": "Restore operations require an incident ticket.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-backups:selection-backups-restore",
+        "title": "selection-backups",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Restore operations require an incident ticket.\"}"
+        "source": "Restore operations require an incident ticket."
       }
     ],
-    "sourceReads": [{"evidenceId": "selection-backups-backup", "sourceRevision": "selection-backups-r1", "readId": "fixture:selection-backups:selection-backups-backup", "title": "selection-backups", "representation": "markdown", "complete": true, "source": "Backups expire after 14 days. Only operators can restore backups."}, {"evidenceId": "selection-backups-restore", "sourceRevision": "selection-backups-r1", "readId": "fixture:selection-backups:selection-backups-restore", "title": "selection-backups", "representation": "markdown", "complete": true, "source": "Restore operations require an incident ticket."}],
     "requestFacets": [
       "backup retention",
       "restore permission"
@@ -44,7 +39,7 @@
         "id": "backup",
         "evidenceId": "selection-backups-backup",
         "sourceRevision": "selection-backups-r1",
-        "unitId": "backup",
+        "unitId": "read:fixture:selection-backups:selection-backups-backup",
         "facet": 0,
         "allOf": [
           "(?:backup)",
@@ -62,7 +57,7 @@
         "id": "restore",
         "evidenceId": "selection-backups-restore",
         "sourceRevision": "selection-backups-r1",
-        "unitId": "restore",
+        "unitId": "read:fixture:selection-backups:selection-backups-restore",
         "facet": 1,
         "allOf": [
           "(?:restore|restoring)",
@@ -85,13 +80,13 @@
             {
               "evidenceId": "selection-backups-backup",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "backup",
+              "unitId": "read:fixture:selection-backups:selection-backups-backup",
               "statement": "Backups expire after 14 days. Only operators can restore backups."
             },
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Restore operations require an incident ticket."
             }
           ],
@@ -109,13 +104,13 @@
             {
               "evidenceId": "selection-backups-backup",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "backup",
+              "unitId": "read:fixture:selection-backups:selection-backups-backup",
               "statement": "Backups last 14 days; only operators may restore them."
             },
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Restoring requires an incident ticket."
             }
           ],
@@ -133,13 +128,13 @@
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Backups expire after 14 days. Only operators can restore backups."
             },
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Restore operations require an incident ticket."
             }
           ],
@@ -163,7 +158,7 @@
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Restore operations require an incident ticket."
             }
           ],
@@ -181,13 +176,13 @@
             {
               "evidenceId": "selection-backups-backup",
               "sourceRevision": "selection-backups-r0",
-              "unitId": "backup",
+              "unitId": "read:fixture:selection-backups:selection-backups-backup",
               "statement": "Backups expire after 14 days. Only operators can restore backups."
             },
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Restore operations require an incident ticket."
             }
           ],
@@ -205,13 +200,13 @@
             {
               "evidenceId": "selection-backups-backup",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "backup",
+              "unitId": "read:fixture:selection-backups:selection-backups-backup",
               "statement": "Backups expire after 14 days. Only operators can restore backups. [[source:fake]]"
             },
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Restore operations require an incident ticket."
             }
           ],
@@ -229,7 +224,7 @@
             {
               "evidenceId": "selection-backups-backup",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "backup",
+              "unitId": "read:fixture:selection-backups:selection-backups-backup",
               "statement": "Backups expire after 14 days. Only operators can restore backups."
             }
           ],
@@ -261,13 +256,13 @@
             {
               "evidenceId": "selection-backups-backup",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "backup",
+              "unitId": "read:fixture:selection-backups:selection-backups-backup",
               "statement": "Backups expire after 149 days. Only operators can restore backups."
             },
             {
               "evidenceId": "selection-backups-restore",
               "sourceRevision": "selection-backups-r1",
-              "unitId": "restore",
+              "unitId": "read:fixture:selection-backups:selection-backups-restore",
               "statement": "Restore operations require an incident ticket."
             }
           ],
@@ -275,6 +270,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "selection-backups-backup",
+        "sourceRevision": "selection-backups-r1",
+        "unitId": "read:fixture:selection-backups:selection-backups-backup",
+        "readId": "fixture:selection-backups:selection-backups-backup",
+        "context": "selection-backups",
+        "text": "Backups expire after 14 days. Only operators can restore backups.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "selection-backups-restore",
+        "sourceRevision": "selection-backups-r1",
+        "unitId": "read:fixture:selection-backups:selection-backups-restore",
+        "readId": "fixture:selection-backups:selection-backups-restore",
+        "context": "selection-backups",
+        "text": "Restore operations require an incident ticket.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -287,31 +304,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "State rollout conditions for canary and stable channels.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "selection-rollout-canary",
         "sourceRevision": "selection-rollout-r1",
-        "unitId": "canary",
-        "context": "selection-rollout",
-        "text": "Canary rollout requires errorRate < 0.5% for 4 hours.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-rollout:selection-rollout-canary",
+        "title": "selection-rollout",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Canary rollout requires errorRate < 0.5% for 4 hours.\"}"
+        "source": "Canary rollout requires errorRate < 0.5% for 4 hours."
       },
       {
         "evidenceId": "selection-rollout-stable",
         "sourceRevision": "selection-rollout-r1",
-        "unitId": "stable",
-        "context": "selection-rollout",
-        "text": "Stable rollout requires operator approval and cannot run on weekends.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-rollout:selection-rollout-stable",
+        "title": "selection-rollout",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Stable rollout requires operator approval and cannot run on weekends.\"}"
+        "source": "Stable rollout requires operator approval and cannot run on weekends."
       }
     ],
-    "sourceReads": [{"evidenceId": "selection-rollout-canary", "sourceRevision": "selection-rollout-r1", "readId": "fixture:selection-rollout:selection-rollout-canary", "title": "selection-rollout", "representation": "markdown", "complete": true, "source": "Canary rollout requires errorRate < 0.5% for 4 hours."}, {"evidenceId": "selection-rollout-stable", "sourceRevision": "selection-rollout-r1", "readId": "fixture:selection-rollout:selection-rollout-stable", "title": "selection-rollout", "representation": "markdown", "complete": true, "source": "Stable rollout requires operator approval and cannot run on weekends."}],
     "requestFacets": [
       "canary",
       "stable"
@@ -323,7 +335,7 @@
         "id": "canary",
         "evidenceId": "selection-rollout-canary",
         "sourceRevision": "selection-rollout-r1",
-        "unitId": "canary",
+        "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
         "facet": 0,
         "allOf": [
           "(?:canary)",
@@ -345,7 +357,7 @@
         "id": "stable",
         "evidenceId": "selection-rollout-stable",
         "sourceRevision": "selection-rollout-r1",
-        "unitId": "stable",
+        "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
         "facet": 1,
         "allOf": [
           "(?:stable)",
@@ -357,7 +369,7 @@
         "allowedParaphrases": [
           "Stable rollout needs operator approval and cannot run on weekends."
         ],
-        "allowedAtomicAssertions": [
+        "allowedAssertions": [
           "Stable rollout requires operator approval."
         ]
       }
@@ -370,10 +382,22 @@
         "expected": "reject",
         "answer": {
           "claims": [
-            {"evidenceId": "selection-rollout-canary", "sourceRevision": "selection-rollout-r1", "unitId": "canary", "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."},
-            {"evidenceId": "selection-rollout-stable", "sourceRevision": "selection-rollout-r1", "unitId": "stable", "statement": "Stable rollout cannot run with operator approval and can run on weekends."}
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
+              "statement": "Stable rollout cannot run with operator approval and can run on weekends."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -382,10 +406,22 @@
         "expected": "incomplete",
         "answer": {
           "claims": [
-            {"evidenceId": "selection-rollout-canary", "sourceRevision": "selection-rollout-r1", "unitId": "canary", "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."},
-            {"evidenceId": "selection-rollout-stable", "sourceRevision": "selection-rollout-r1", "unitId": "stable", "statement": "Stable rollout requires operator approval."}
+            {
+              "evidenceId": "selection-rollout-canary",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
+              "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
+            },
+            {
+              "evidenceId": "selection-rollout-stable",
+              "sourceRevision": "selection-rollout-r1",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
+              "statement": "Stable rollout requires operator approval."
+            }
           ],
-          "unresolvedFacets": [], "observations": [], "recommendations": ""
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
         }
       },
       {
@@ -397,13 +433,13 @@
             {
               "evidenceId": "selection-rollout-canary",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "canary",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
               "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
             },
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Stable rollout requires operator approval and cannot run on weekends."
             }
           ],
@@ -421,13 +457,13 @@
             {
               "evidenceId": "selection-rollout-canary",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "canary",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
               "statement": "Canary rollout needs errorRate < 0.5% over 4 hours."
             },
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Stable rollout needs operator approval and cannot run on weekends."
             }
           ],
@@ -445,13 +481,13 @@
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
             },
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Stable rollout requires operator approval and cannot run on weekends."
             }
           ],
@@ -475,7 +511,7 @@
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Stable rollout requires operator approval and cannot run on weekends."
             }
           ],
@@ -493,13 +529,13 @@
             {
               "evidenceId": "selection-rollout-canary",
               "sourceRevision": "selection-rollout-r0",
-              "unitId": "canary",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
               "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
             },
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Stable rollout requires operator approval and cannot run on weekends."
             }
           ],
@@ -517,13 +553,13 @@
             {
               "evidenceId": "selection-rollout-canary",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "canary",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
               "statement": "Canary rollout requires errorRate < 0.5% for 4 hours. [[source:fake]]"
             },
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Stable rollout requires operator approval and cannot run on weekends."
             }
           ],
@@ -541,7 +577,7 @@
             {
               "evidenceId": "selection-rollout-canary",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "canary",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
               "statement": "Canary rollout requires errorRate < 0.5% for 4 hours."
             }
           ],
@@ -573,13 +609,13 @@
             {
               "evidenceId": "selection-rollout-canary",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "canary",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
               "statement": "Canary rollout requires errorRate9 < 0.5% for 4 hours."
             },
             {
               "evidenceId": "selection-rollout-stable",
               "sourceRevision": "selection-rollout-r1",
-              "unitId": "stable",
+              "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
               "statement": "Stable rollout requires operator approval and cannot run on weekends."
             }
           ],
@@ -587,6 +623,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "selection-rollout-canary",
+        "sourceRevision": "selection-rollout-r1",
+        "unitId": "read:fixture:selection-rollout:selection-rollout-canary",
+        "readId": "fixture:selection-rollout:selection-rollout-canary",
+        "context": "selection-rollout",
+        "text": "Canary rollout requires errorRate < 0.5% for 4 hours.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "selection-rollout-stable",
+        "sourceRevision": "selection-rollout-r1",
+        "unitId": "read:fixture:selection-rollout:selection-rollout-stable",
+        "readId": "fixture:selection-rollout:selection-rollout-stable",
+        "context": "selection-rollout",
+        "text": "Stable rollout requires operator approval and cannot run on weekends.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -599,31 +657,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Identify the audit and policy links.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "selection-guide-audit",
         "sourceRevision": "selection-guide-r1",
-        "unitId": "audit",
-        "context": "selection-guide",
-        "text": "Audit guide: https://example.net/audit.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-guide:selection-guide-audit",
+        "title": "selection-guide",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Audit guide: https://example.net/audit.\"}"
+        "source": "Audit guide: https://example.net/audit."
       },
       {
         "evidenceId": "selection-guide-policy",
         "sourceRevision": "selection-guide-r1",
-        "unitId": "policy",
-        "context": "selection-guide",
-        "text": "Policy guide: https://example.net/policy.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-guide:selection-guide-policy",
+        "title": "selection-guide",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Policy guide: https://example.net/policy.\"}"
+        "source": "Policy guide: https://example.net/policy."
       }
     ],
-    "sourceReads": [{"evidenceId": "selection-guide-audit", "sourceRevision": "selection-guide-r1", "readId": "fixture:selection-guide:selection-guide-audit", "title": "selection-guide", "representation": "markdown", "complete": true, "source": "Audit guide: https://example.net/audit."}, {"evidenceId": "selection-guide-policy", "sourceRevision": "selection-guide-r1", "readId": "fixture:selection-guide:selection-guide-policy", "title": "selection-guide", "representation": "markdown", "complete": true, "source": "Policy guide: https://example.net/policy."}],
     "requestFacets": [
       "audit",
       "policy"
@@ -635,7 +688,7 @@
         "id": "audit",
         "evidenceId": "selection-guide-audit",
         "sourceRevision": "selection-guide-r1",
-        "unitId": "audit",
+        "unitId": "read:fixture:selection-guide:selection-guide-audit",
         "facet": 0,
         "allOf": [
           "(?:audit)",
@@ -652,7 +705,7 @@
         "id": "policy",
         "evidenceId": "selection-guide-policy",
         "sourceRevision": "selection-guide-r1",
-        "unitId": "policy",
+        "unitId": "read:fixture:selection-guide:selection-guide-policy",
         "facet": 1,
         "allOf": [
           "(?:policy)",
@@ -677,13 +730,13 @@
             {
               "evidenceId": "selection-guide-audit",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "audit",
+              "unitId": "read:fixture:selection-guide:selection-guide-audit",
               "statement": "Audit guide: https://example.net/audit."
             },
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Policy guide: https://example.net/policy."
             }
           ],
@@ -701,13 +754,13 @@
             {
               "evidenceId": "selection-guide-audit",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "audit",
+              "unitId": "read:fixture:selection-guide:selection-guide-audit",
               "statement": "The audit guide is at https://example.net/audit."
             },
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Read the policy guide at https://example.net/policy."
             }
           ],
@@ -725,13 +778,13 @@
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Audit guide: https://example.net/audit."
             },
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Policy guide: https://example.net/policy."
             }
           ],
@@ -755,7 +808,7 @@
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Policy guide: https://example.net/policy."
             }
           ],
@@ -773,13 +826,13 @@
             {
               "evidenceId": "selection-guide-audit",
               "sourceRevision": "selection-guide-r0",
-              "unitId": "audit",
+              "unitId": "read:fixture:selection-guide:selection-guide-audit",
               "statement": "Audit guide: https://example.net/audit."
             },
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Policy guide: https://example.net/policy."
             }
           ],
@@ -797,13 +850,13 @@
             {
               "evidenceId": "selection-guide-audit",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "audit",
+              "unitId": "read:fixture:selection-guide:selection-guide-audit",
               "statement": "Audit guide: https://example.net/audit. [[source:fake]]"
             },
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Policy guide: https://example.net/policy."
             }
           ],
@@ -821,7 +874,7 @@
             {
               "evidenceId": "selection-guide-audit",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "audit",
+              "unitId": "read:fixture:selection-guide:selection-guide-audit",
               "statement": "Audit guide: https://example.net/audit."
             }
           ],
@@ -853,13 +906,13 @@
             {
               "evidenceId": "selection-guide-audit",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "audit",
+              "unitId": "read:fixture:selection-guide:selection-guide-audit",
               "statement": "Audit guide: https://example.net/audit9."
             },
             {
               "evidenceId": "selection-guide-policy",
               "sourceRevision": "selection-guide-r1",
-              "unitId": "policy",
+              "unitId": "read:fixture:selection-guide:selection-guide-policy",
               "statement": "Policy guide: https://example.net/policy."
             }
           ],
@@ -867,6 +920,28 @@
           "observations": [],
           "recommendations": ""
         }
+      }
+    ],
+    "sources": [
+      {
+        "evidenceId": "selection-guide-audit",
+        "sourceRevision": "selection-guide-r1",
+        "unitId": "read:fixture:selection-guide:selection-guide-audit",
+        "readId": "fixture:selection-guide:selection-guide-audit",
+        "context": "selection-guide",
+        "text": "Audit guide: https://example.net/audit.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "selection-guide-policy",
+        "sourceRevision": "selection-guide-r1",
+        "unitId": "read:fixture:selection-guide:selection-guide-policy",
+        "readId": "fixture:selection-guide:selection-guide-policy",
+        "context": "selection-guide",
+        "text": "Policy guide: https://example.net/policy.",
+        "kind": "source-read",
+        "complete": true
       }
     ]
   },
@@ -879,31 +954,26 @@
       "adjudication": "Manually authored source text, requested details, valid paraphrase, and invalid mutations; no private diagnostics."
     },
     "userRequest": "Summarize upload limits and restricted content.",
-    "sourceUnits": [
+    "sourceReads": [
       {
         "evidenceId": "selection-limits-size",
         "sourceRevision": "selection-limits-r1",
-        "unitId": "size",
-        "context": "selection-limits",
-        "text": "Uploads must be <= 8 MB per file.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-limits:selection-limits-size",
+        "title": "selection-limits",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Uploads must be <= 8 MB per file.\"}"
+        "source": "Uploads must be <= 8 MB per file."
       },
       {
         "evidenceId": "selection-limits-private",
         "sourceRevision": "selection-limits-r1",
-        "unitId": "private",
-        "context": "selection-limits",
-        "text": "Private keys must never be uploaded.",
-        "kind": "paragraph",
+        "readId": "fixture:selection-limits:selection-limits-private",
+        "title": "selection-limits",
+        "representation": "markdown",
         "complete": true,
-        "literalStatement": null,
-        "packet": "{\"kind\":\"paragraph\",\"text\":\"Private keys must never be uploaded.\"}"
+        "source": "Private keys must never be uploaded."
       }
     ],
-    "sourceReads": [{"evidenceId": "selection-limits-size", "sourceRevision": "selection-limits-r1", "readId": "fixture:selection-limits:selection-limits-size", "title": "selection-limits", "representation": "markdown", "complete": true, "source": "Uploads must be <= 8 MB per file."}, {"evidenceId": "selection-limits-private", "sourceRevision": "selection-limits-r1", "readId": "fixture:selection-limits:selection-limits-private", "title": "selection-limits", "representation": "markdown", "complete": true, "source": "Private keys must never be uploaded."}],
     "requestFacets": [
       "upload limits",
       "restricted content"
@@ -915,7 +985,7 @@
         "id": "size",
         "evidenceId": "selection-limits-size",
         "sourceRevision": "selection-limits-r1",
-        "unitId": "size",
+        "unitId": "read:fixture:selection-limits:selection-limits-size",
         "facet": 0,
         "allOf": [
           "(?:upload)",
@@ -935,7 +1005,7 @@
         "id": "private",
         "evidenceId": "selection-limits-private",
         "sourceRevision": "selection-limits-r1",
-        "unitId": "private",
+        "unitId": "read:fixture:selection-limits:selection-limits-private",
         "facet": 1,
         "allOf": [
           "(?:private keys)",
@@ -959,13 +1029,13 @@
             {
               "evidenceId": "selection-limits-size",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "size",
+              "unitId": "read:fixture:selection-limits:selection-limits-size",
               "statement": "Uploads must be <= 8 MB per file."
             },
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Private keys must never be uploaded."
             }
           ],
@@ -983,13 +1053,13 @@
             {
               "evidenceId": "selection-limits-size",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "size",
+              "unitId": "read:fixture:selection-limits:selection-limits-size",
               "statement": "Each uploaded file must be <= 8 MB."
             },
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Never upload private keys."
             }
           ],
@@ -1007,13 +1077,13 @@
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Uploads must be <= 8 MB per file."
             },
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Private keys must never be uploaded."
             }
           ],
@@ -1037,7 +1107,7 @@
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Private keys must never be uploaded."
             }
           ],
@@ -1055,13 +1125,13 @@
             {
               "evidenceId": "selection-limits-size",
               "sourceRevision": "selection-limits-r0",
-              "unitId": "size",
+              "unitId": "read:fixture:selection-limits:selection-limits-size",
               "statement": "Uploads must be <= 8 MB per file."
             },
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Private keys must never be uploaded."
             }
           ],
@@ -1079,13 +1149,13 @@
             {
               "evidenceId": "selection-limits-size",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "size",
+              "unitId": "read:fixture:selection-limits:selection-limits-size",
               "statement": "Uploads must be <= 8 MB per file. [[source:fake]]"
             },
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Private keys must never be uploaded."
             }
           ],
@@ -1103,7 +1173,7 @@
             {
               "evidenceId": "selection-limits-size",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "size",
+              "unitId": "read:fixture:selection-limits:selection-limits-size",
               "statement": "Uploads must be <= 8 MB per file."
             }
           ],
@@ -1135,13 +1205,13 @@
             {
               "evidenceId": "selection-limits-size",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "size",
+              "unitId": "read:fixture:selection-limits:selection-limits-size",
               "statement": "Uploads must be < 8 MB per file."
             },
             {
               "evidenceId": "selection-limits-private",
               "sourceRevision": "selection-limits-r1",
-              "unitId": "private",
+              "unitId": "read:fixture:selection-limits:selection-limits-private",
               "statement": "Private keys must never be uploaded."
             }
           ],
@@ -1150,18 +1220,290 @@
           "recommendations": ""
         }
       }
+    ],
+    "sources": [
+      {
+        "evidenceId": "selection-limits-size",
+        "sourceRevision": "selection-limits-r1",
+        "unitId": "read:fixture:selection-limits:selection-limits-size",
+        "readId": "fixture:selection-limits:selection-limits-size",
+        "context": "selection-limits",
+        "text": "Uploads must be <= 8 MB per file.",
+        "kind": "source-read",
+        "complete": true
+      },
+      {
+        "evidenceId": "selection-limits-private",
+        "sourceRevision": "selection-limits-r1",
+        "unitId": "read:fixture:selection-limits:selection-limits-private",
+        "readId": "fixture:selection-limits:selection-limits-private",
+        "context": "selection-limits",
+        "text": "Private keys must never be uploaded.",
+        "kind": "source-read",
+        "complete": true
+      }
     ]
   },
   {
-    "id": "selection-missing", "family": "selection-missing", "split": "selection",
-    "provenance": {"kind": "synthetic", "adjudication": "Manual: no source units were admitted for the requested rotation interval; disclose the unresolved facet without inventing an interval."},
+    "id": "selection-missing",
+    "family": "selection-missing",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Manual: no source units were admitted for the requested rotation interval; disclose the unresolved facet without inventing an interval."
+    },
     "userRequest": "Give the certificate rotation interval.",
     "sourceReads": [],
-    "sourceUnits": [], "requestFacets": ["certificate rotation interval"], "observations": [], "repairFeedback": "", "details": [], "expectedUnresolvedFacets": [0],
+    "requestFacets": [
+      "certificate rotation interval"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [],
+    "expectedUnresolvedFacets": [
+      0
+    ],
     "variants": [
-      {"id": "reference", "category": "success: legitimate abstention", "expected": "accept", "answer": {"claims": [], "unresolvedFacets": [0], "observations": [], "recommendations": ""}},
-      {"id": "unknown-evidence", "category": "unknown source", "expected": "reject", "answer": {"claims": [{"evidenceId": "not-admitted", "sourceRevision": "selection-missing-r1", "unitId": "rotation", "statement": "Certificates rotate every 60 days."}], "unresolvedFacets": [], "observations": [], "recommendations": ""}},
-      {"id": "silent-omission", "category": "unresolved coverage omission", "expected": "incomplete", "answer": {"claims": [], "unresolvedFacets": [], "observations": [], "recommendations": ""}}
+      {
+        "id": "reference",
+        "category": "success: legitimate abstention",
+        "expected": "accept",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [
+            0
+          ],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "unknown-evidence",
+        "category": "unknown source",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "not-admitted",
+              "sourceRevision": "selection-missing-r1",
+              "unitId": "rotation",
+              "statement": "Certificates rotate every 60 days."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "silent-omission",
+        "category": "unresolved coverage omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ],
+    "sources": []
+  },
+  {
+    "id": "selection-whole-read-comparison",
+    "family": "selection-whole-read-comparison",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Independently authored complete-page source and adjudicated concise selected-field comparison; adjacent original Both plans refers to named native table columns. Contacts are explicitly unrequested."
+    },
+    "userRequest": "Compare the monthly fees and approval conditions for both pilot plans.",
+    "sources": [
+      {
+        "evidenceId": "selection-whole-read-comparison-page",
+        "sourceRevision": "selection-whole-read-comparison-r1",
+        "unitId": "read:fixture:selection-whole-read-comparison",
+        "readId": "fixture:selection-whole-read-comparison",
+        "context": "Pilot plans",
+        "text": "# Pilot plans\n\nFictional and non-operative. Both plans require manager approval.\n\n| Field | Cedar | Delta |\n| --- | --- | --- |\n| Monthly fee | USD 90 | USD 150 |\n| Status | Pilot only | Pilot only |\n\n## Internal contact\n\nName: Keeper\nEmail: keeper@selection.example.invalid\n",
+        "kind": "source-read",
+        "complete": true
+      }
+    ],
+    "sourceReads": [
+      {
+        "evidenceId": "selection-whole-read-comparison-page",
+        "sourceRevision": "selection-whole-read-comparison-r1",
+        "readId": "fixture:selection-whole-read-comparison",
+        "title": "Pilot plans",
+        "representation": "markdown",
+        "complete": true,
+        "source": "# Pilot plans\n\nFictional and non-operative. Both plans require manager approval.\n\n| Field | Cedar | Delta |\n| --- | --- | --- |\n| Monthly fee | USD 90 | USD 150 |\n| Status | Pilot only | Pilot only |\n\n## Internal contact\n\nName: Keeper\nEmail: keeper@selection.example.invalid\n"
+      }
+    ],
+    "requestFacets": [
+      "monthly fees",
+      "approval conditions"
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "fees",
+        "evidenceId": "selection-whole-read-comparison-page",
+        "sourceRevision": "selection-whole-read-comparison-r1",
+        "unitId": "read:fixture:selection-whole-read-comparison",
+        "facet": 0,
+        "allOf": [
+          "Cedar",
+          "Delta",
+          "fictional",
+          "non-operative",
+          "pilot"
+        ],
+        "exact": [
+          "USD 90",
+          "USD 150"
+        ],
+        "allowedParaphrases": [
+          "Cedar costs USD 90 monthly and Delta costs USD 150 monthly; both fictional, non-operative pilot plans require manager approval."
+        ],
+        "allowedAssertions": [
+          "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Cedar | USD 90 |\n| Delta | USD 150 |",
+          "Fictional, non-operative pilot plans require manager approval.\n\n- Cedar: USD 90 monthly.\n- Delta: USD 150 monthly."
+        ]
+      },
+      {
+        "id": "approval",
+        "evidenceId": "selection-whole-read-comparison-page",
+        "sourceRevision": "selection-whole-read-comparison-r1",
+        "unitId": "read:fixture:selection-whole-read-comparison",
+        "facet": 1,
+        "allOf": [
+          "manager approval",
+          "fictional",
+          "non-operative"
+        ],
+        "exact": [],
+        "allowedParaphrases": [
+          "Cedar costs USD 90 monthly and Delta costs USD 150 monthly; both fictional, non-operative pilot plans require manager approval."
+        ],
+        "allowedAssertions": [
+          "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Cedar | USD 90 |\n| Delta | USD 150 |",
+          "Fictional, non-operative pilot plans require manager approval.\n\n- Cedar: USD 90 monthly.\n- Delta: USD 150 monthly."
+        ]
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "reference",
+        "category": "selected table with original anaphora resolved in same complete read",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-whole-read-comparison-page",
+              "sourceRevision": "selection-whole-read-comparison-r1",
+              "unitId": "read:fixture:selection-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Cedar | USD 90 |\n| Delta | USD 150 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "selected-list",
+        "category": "concise list without copying source contacts",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-whole-read-comparison-page",
+              "sourceRevision": "selection-whole-read-comparison-r1",
+              "unitId": "read:fixture:selection-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n- Cedar: USD 90 monthly.\n- Delta: USD 150 monthly."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "natural-prose",
+        "category": "natural whole-read reference resolution without field grammar",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-whole-read-comparison-page",
+              "sourceRevision": "selection-whole-read-comparison-r1",
+              "unitId": "read:fixture:selection-whole-read-comparison",
+              "statement": "Cedar costs USD 90 monthly and Delta costs USD 150 monthly; both fictional, non-operative pilot plans require manager approval."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "swapped-values",
+        "category": "correct literals but false column associations",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-whole-read-comparison-page",
+              "sourceRevision": "selection-whole-read-comparison-r1",
+              "unitId": "read:fixture:selection-whole-read-comparison",
+              "statement": "Fictional, non-operative pilot plans require manager approval.\n\n| Plan | Monthly fee |\n| --- | --- |\n| Cedar | USD 150 |\n| Delta | USD 90 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "lost-qualification",
+        "category": "bare values omit governing original status and approval",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-whole-read-comparison-page",
+              "sourceRevision": "selection-whole-read-comparison-r1",
+              "unitId": "read:fixture:selection-whole-read-comparison",
+              "statement": "| Plan | Monthly fee |\n| --- | --- |\n| Cedar | USD 90 |\n| Delta | USD 150 |"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "whole-source-expansion",
+        "category": "unrequested private contact and whole-source copying",
+        "expected": "reject",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-whole-read-comparison-page",
+              "sourceRevision": "selection-whole-read-comparison-r1",
+              "unitId": "read:fixture:selection-whole-read-comparison",
+              "statement": "Fictional and non-operative. Both plans require manager approval.\n\n| Field | Cedar | Delta |\n| --- | --- | --- |\n| Monthly fee | USD 90 | USD 150 |\n| Status | Pilot only | Pilot only |\n\nName: Keeper; Email: keeper@selection.example.invalid."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
     ]
   }
 ]

@@ -207,7 +207,7 @@ describe('native specialist engine contexts', () => {
             ...response,
             results: response.results.map(result => ({
               ...result,
-              ...(result.content === undefined || synthesisInput === undefined ? {} : { content: synthesisFixtureAnswer(request, result.content, { bindings: { [evidenceId]: { text: fact } } }) })
+              ...(result.content === undefined || synthesisInput === undefined ? {} : { content: synthesisFixtureAnswer(request, result.content) })
             }))
           }
         }, { model: binding.model }),
@@ -471,7 +471,7 @@ describe('native specialist engine contexts', () => {
     )
 
     expect(publishedText(output)).not.toContain(forged)
-    expect(result.citations).toEqual([expect.objectContaining({ evidenceId, label: 'Alpha › Rules', href: '/en/alpha#rules' })])
+    expect(result.citations).toEqual([expect.objectContaining(page.citation)])
     expect(result.specialistState).toBeUndefined()
     expect(result.specialistAuthoritySha256).toBeUndefined()
     expect(root.read).not.toHaveBeenCalled()

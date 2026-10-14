@@ -32,9 +32,9 @@ const result:any={sourceUtf8Bytes:bytes(page.content),sourceCharacters:page.cont
 async function capture(label:string,evidence:Map<any,any>){
  const {sources,sourceReads}=engine.probeBuildSynthesisSources(evidence,{userRequest,requestFacets:[userRequest]})
  const wire=encodeWikiSynthesisSources(sources,sourceReads)
- type Reference={scope:number;text:string;record?:number;atomic?:true;block?:'list'|'table';structural?:true;title?:true;aliases?:Record<string,string>;preview?:true;rawSpans?:{start:number;end:number}[]}
- const index:{scopes:Record<string,{readRef:string;evidenceId:string}>;units:Record<string,Reference>}=JSON.parse(wire.sourceReferences)
- const references=Object.values(index.units)
+ type Reference={readRef:string;evidenceId:string;sourceRevision:string}
+ const index:{reads:Record<string,Reference>}=JSON.parse(wire.sourceReferences)
+ const references=Object.values(index.reads)
  const physicalReads=new Map<string,string>()
  for(const read of sourceReads){
   const prior=physicalReads.get(read.readId)
@@ -42,8 +42,6 @@ async function capture(label:string,evidence:Map<any,any>){
   physicalReads.set(read.readId,read.source)
   if(!wire.sourceText.includes(read.source))throw Error('Complete original read content was excluded')
  }
- const selectedTexts=new Set(references.map(row=>row.text))
- const projectionCount=references.reduce((sum,row)=>sum+1+Object.values(row.aliases??{}).reduce((count,refs)=>count+refs.split(' ').length,0),0)
  let captured:any
  const ai=new AxMockAIService({features:{functions:false,streaming:false,structuredOutputs:true,structuredOutputModes:['native']},chatResponse:async(request:any)=>{captured=request;return {results:[{index:0,content:JSON.stringify({claims:[],unresolvedFacets:[0],observations:[]}),finishReason:'stop'}]}}})
  const program=createWikiSynthesisProgram(sources,{facetCount:1,structured:true,maxOutputTokens:8192})
@@ -55,17 +53,13 @@ async function capture(label:string,evidence:Map<any,any>){
  if(label==='rootAndSections'&&process.env.PROBE_REQUEST_FILE)writeFileSync(process.env.PROBE_REQUEST_FILE,JSON.stringify(final),{mode:0o600})
  result[label]={
   evidenceCount:evidence.size,synthesisSources:sources.length,
-  uniqueNativeUnits:new Set(sources.map(s=>s.unitId)).size,
+  registeredReadBindings:sources.length,
   physicalReadCount:physicalReads.size,rawReadUtf8Bytes:[...physicalReads.values()].reduce((sum,text)=>sum+bytes(text),0),
   bindingGroups:new Set(sources.map(s=>JSON.stringify([s.evidenceId,s.sourceRevision]))).size,
-  projectionCount,canonicalReferenceCount:references.length,aliasReferenceCount:projectionCount-references.length,
-  projectedTextBytes:sources.reduce((sum,s)=>sum+bytes(s.text),0),
-  uniqueIndexTextCount:selectedTexts.size,uniqueIndexTextUtf8Bytes:[...selectedTexts].reduce((sum,text)=>sum+bytes(text),0),
-  previewReferenceCount:references.filter(row=>row.preview===true).length,
-  atomicReferenceCount:references.filter(row=>row.atomic===true).length,nativeBlockReferenceCount:references.filter(row=>row.block!==undefined).length,structuralReferenceCount:references.filter(row=>row.structural===true).length,
-  previewUtf8Bytes:references.filter(row=>row.preview===true).reduce((sum,row)=>sum+bytes(row.text),0),
-  inlineFullReferenceCount:references.filter(row=>row.preview!==true).length,
-  originalSelectedTextUtf8Bytes:[...new Set(sources.map(source=>source.text))].reduce((sum,text)=>sum+bytes(text),0),
+  readLocatorReferenceCount:references.length,
+  readLocatorPhysicalReadCount:new Set(references.map(row=>row.readRef)).size,
+  originalBoundReadUtf8Bytes:sources.reduce((sum,source)=>sum+bytes(source.text),0),
+  locatorContainsSourceText:Object.values(index.reads).some(row=>'text' in row||'source' in row),
   sourceTextBytes:bytes(wire.sourceText),sourceReferencesBytes:bytes(wire.sourceReferences),
   axChatPromptBytes:bytes(captured.chatPrompt),axSystemContentBytes:bytes(captured.chatPrompt[0].content),
   axUserContentBytes:captured.chatPrompt.filter((m:any)=>m.role==='user').reduce((sum,m)=>sum+bytes(m.content),0),

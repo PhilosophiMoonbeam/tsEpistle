@@ -88,8 +88,8 @@ const groundingFixture = (
   const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
     const sources = synthesisSourcesFromRequest(input)
     if (sources.length > 0) {
-      const source = sources.find(unit => unit.evidenceId === evidenceId && unit.kind !== 'page-title' && unit.text.includes(anchor))
-      if (source === undefined) throw new Error(`The requested source unit was not delivered: ${anchor}`)
+      const source = sources.find(read => read.evidenceId === evidenceId && read.text.includes(anchor))
+      if (source === undefined) throw new Error(`The requested complete source read was not delivered: ${anchor}`)
       attempts++
       return {
         results: [{ index: 0, content: synthesisFixtureAnswer(input, {
@@ -153,7 +153,9 @@ const groundingFixture = (
   const text = vi.fn(async (_delta: string) => {})
   const events: AgentEventData[] = []
   const event = vi.fn(async (_type: string, data: AgentEventData) => { events.push(data) })
-  const execute = () => new AxAgentEngine(factory, actions, undefined, { decisionProviders: options.decisionProviders ?? fixtureDecisionProviders }).execute({
+  const execute = () => new AxAgentEngine(factory, actions, undefined, {
+    decisionProviders: options.decisionProviders ?? (mode === 'native' && rejected !== undefined ? rejectFixtureStatements([rejected]) : fixtureDecisionProviders)
+  }).execute({
     ...request(),
     messages: [{ role: 'user', content: `Read page 42 and report this fact: ${statement}` }],
     ...(options.dispatchBudget === undefined ? {} : { dispatchBudget: options.dispatchBudget }),
@@ -177,7 +179,7 @@ const groundingFixture = (
 const expectPublication = async (fixture: GroundingFixture, statement: string, attempts: number) => {
   const result = await fixture.execute()
   expect(result.executionLimit).toBeUndefined()
-  const expectedText = statement.includes('\n') ? visibleWikiText(statement) : statement
+  const expectedText = visibleWikiText(statement)
   expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join('')).replace(/\s+/g, ' '))
     .toContain(expectedText.replace(/\s+/g, ' ').trim())
   expect(result.citations?.map(citation => citation.evidenceId)).toEqual([evidenceId])
@@ -195,9 +197,9 @@ const elapsedSource = '# Source Guide\n\n## Recipe details\n\n| Detail | Value |
 const recipeRecordSource = '# Source Guide\n\n## Recipes\n\n| Recipe | Servings | Method |\n| --- | --- | --- |\n| Orzo salad | 4 | Drain the chickpeas. Toss the orzo with lemon. |\n| Bean stew | 6 | Simmer beans until tender. |'
 const recipeRecordStatement = 'Recipe: Orzo salad; Servings: 4; Method: Drain the chickpeas. Toss the orzo with lemon.'
 
-// Existing broad engine cases do not cover independent semicolon assertions
-// inside one retained unit or a key-cell label containing a qualifier token.
-describe('source-local grounding', () => {
+// Literal integrity remains mechanical; factual relationships and governing
+// qualifications below use independently supplied native decision verdicts.
+describe('complete-read grounding', () => {
   it.each([quantityFact, 'The 300 g orzo quantity makes 4 servings.', 'The chickpeas are measured before draining.'])('accepts the intact semicolon source and independently faithful assertion: %s', async statement => {
     await expectPublication(groundingFixture(quantitySource, '300 g', statement), statement, 1)
   })
@@ -205,7 +207,12 @@ describe('source-local grounding', () => {
   it('keeps an inline-code semicolon inside its exact source assertion', async () => {
     const statement = 'The diagnostic token is `alpha; before draining`.'
     const source = `# Source Guide\n\n${statement}`
-    await expectPublication(groundingFixture(source, 'diagnostic token', statement), statement, 1)
+    const fixture = groundingFixture(source, 'diagnostic token', statement)
+    await expectPublication(fixture, statement, 1)
+    const rendered = document.createElement('div')
+    rendered.innerHTML = renderSafeMarkdown(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(rendered.querySelectorAll('code')).toHaveLength(1)
+    expect(rendered.querySelector('code')?.textContent).toBe('alpha; before draining')
   })
 
   it.each([
@@ -213,10 +220,9 @@ describe('source-local grounding', () => {
     ['changed serving count', quantityFact.replace('4 servings', '6 servings'), false],
     ['dropped draining restriction', quantityFact.replace(' before draining', ''), true],
     ['changed timing operator', quantityFact.replace('before draining', 'after draining'), true],
-    ['changed ingredient identity', quantityFact.replace('300 g orzo', '300 g chickpeas'), false],
-    ['unrelated added assertion', `${quantityFact}; dragons guarantee free delivery.`, true],
-    ['sibling assertion under the wrong unit', 'The chickpeas are simmered after draining.', true]
-  ] as const)('rejects %s without pooling source fragments or sibling units', async (_case, rejected, semanticRejection) => {
+    ['changed ingredient identity', quantityFact.replace('300 g orzo', '300 g chickpeas'), true],
+    ['unrelated added assertion', `${quantityFact}; dragons guarantee free delivery.`, true]
+  ] as const)('rejects %s through exact-data or independent native support boundaries', async (_case, rejected, semanticRejection) => {
     const fixture = groundingFixture(quantitySource, '300 g', quantityFact, rejected, 'native', {
       decisionProviders: semanticRejection ? rejectFixtureStatements([rejected]) : fixtureDecisionProviders
     })
@@ -254,11 +260,10 @@ describe('source-local grounding', () => {
   it.each([
     ['changed value', 'Total elapsed time: 40 minutes.'],
     ['sibling value', 'Total elapsed time: 20 minutes.'],
-    ['sibling key and value', 'Servings: 4.'],
     ['changed row identity', 'Detail: Cooking; Value: 30 minutes.'],
     ['changed owner identity', 'Other Guide: Total elapsed time: 30 minutes.'],
     ['changed table value', '| Detail | Value |\n| --- | --- |\n| Total elapsed time | 20 minutes |']
-  ])('rejects %s under the exact total-time row binding', async (_case, rejected) => {
+  ])('rejects %s through the independent native row-association verdict', async (_case, rejected) => {
     const statement = 'Total elapsed time: 30 minutes.'
     await expectPublication(groundingFixture(elapsedSource, 'Total elapsed time', statement, rejected), statement, 2)
   })

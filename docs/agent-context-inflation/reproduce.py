@@ -1,4 +1,4 @@
-"""Offline byte-accounting diagnostic; never starts a Wiki or calls an AI provider."""
+"""Offline complete-read synthesis byte accounting; never starts a Wiki or calls an AI provider."""
 import argparse
 import json
 from pathlib import Path
@@ -20,13 +20,13 @@ if bun is None:
 if not (repo / "node_modules/@ax-llm/ax").is_dir():
     raise SystemExit("Run bun install --frozen-lockfile in this checkout first.")
 with tempfile.TemporaryDirectory(prefix="falcon-context-probe-") as temporary:
-    prepared = subprocess.run(
+    subprocess.run(
         [sys.executable, str(folder / "prepare.py"), str(repo), temporary],
-        check=True, capture_output=True, text=True,
+        check=True, stdout=subprocess.PIPE, text=True,
     )
     subprocess.run(
         [bun, str(Path(temporary) / "probe.ts"), str(args.input.resolve()), "13", args.model],
-        check=True, capture_output=True, text=True,
+        check=True, stdout=subprocess.PIPE, text=True,
     )
     metrics = json.loads((Path(temporary) / "metrics.json").read_text())
     encoded = json.dumps(metrics, indent=2) + "\n"

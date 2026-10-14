@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'bun:test'
-import { load } from 'cheerio'
-import * as markdownItModule from 'markdown-it'
-import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
 import { parseSourceDocument } from '../../agents/providers/source-document.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
 import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
 import { validateWikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
-import { renderWikiSynthesisAnswer, type WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
+import type { WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
 
 const fixture = (
   raw: string,
@@ -133,22 +130,6 @@ describe('complete original source quotations', () => {
     expect(getLiteralSourceStatement(native)).toBe(statement)
     expect(() => validateWikiVerificationSource(native)).not.toThrow()
     expect(isLiteralSourceClaim(claim(native, statement), native)).toBe(true)
-    const blocks = new Map([[JSON.stringify([native.evidenceId, native.sourceRevision, native.unitId]), statement]])
-    const rendered = renderWikiSynthesisAnswer({ claims: [claim(native, statement)], unresolvedFacets: [], observations: [], recommendations: '' }, new Set([statement]), blocks)
-    const MarkdownIt = 'default' in markdownItModule ? markdownItModule.default : markdownItModule
-    const markdown = (MarkdownIt as typeof markdownItModule.default)({ html: false, breaks: true, linkify: true, typographer: false })
-    const dom = load(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Original fictional table', href: '/source/fictional' }))))
-    expect(dom('table')).toHaveLength(1)
-    expect(dom('th a').text()).toBe('Atlas')
-    expect(dom('th a').attr('href')).toBe('/atlas')
-    expect(dom('td a').text()).toBe('mainland only')
-    expect(dom('td a').attr('href')).toBe('/mainland')
-    expect(dom('td a').attr('title')).toBe('Authored scope')
-    expect(dom('p a').text()).toBe('1')
-    expect(dom('p a').attr('href')).toBe('/source/fictional')
-    expect(dom('body').text()).toContain('Fictional, non-operative policies › Only after approval:')
-    expect(dom('body').text()).not.toContain('[Atlas][a]')
-    expect(rendered).not.toContain('[foreign]')
     for (const changed of [
       statement.replace(' › Only after approval', ''),
       statement.replace('Fictional, non-operative policies', 'Policies'),

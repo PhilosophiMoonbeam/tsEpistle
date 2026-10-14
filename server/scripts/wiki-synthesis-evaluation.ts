@@ -9,7 +9,7 @@ import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environment
 import { createWikiOfflineDispatchAdmission, type WikiOfflineAdmission } from '../agents/providers/wiki-synthesis-offline-admission.ts'
 import { WIKI_SYNTHESIS_EVALUATION_CONTRACT, assertWikiSynthesisSplitIsolation, classifyWikiSynthesisCorpus, evaluateWikiSynthesisFixtures, optimizeWikiSynthesis, parseWikiSynthesisFixtures, type WikiSynthesisEvaluation, type WikiSynthesisSplit } from '../agents/providers/wiki-synthesis-evaluation.ts'
 
-const artifactSchema = z.object({ version: z.literal(2), corpusFingerprint: z.string().length(64), fingerprint: z.string().length(64),
+const artifactSchema = z.object({ version: z.literal(3), corpusFingerprint: z.string().length(64), fingerprint: z.string().length(64),
   studentProfileVersionId: z.string(), model: z.string(), reasoningSelection: z.enum(['default', 'low']), optimizedProgram: z.record(z.string(), z.unknown()) })
 
 const main = async (): Promise<void> => {
@@ -125,7 +125,7 @@ const main = async (): Promise<void> => {
         maximumMetricCalls: positiveInteger('WIKI_EVAL_MAX_METRIC_CALLS', 32), trials: positiveInteger('WIKI_EVAL_TRIALS', 3),
         ...(compareReasoning ? { selectReasoning: compareSelection } : {}),
         saveArtifact: async (optimizedProgram, fingerprint) => {
-          await writeFile(artifactPath, `${JSON.stringify({ version: 2, corpusFingerprint, fingerprint, studentProfileVersionId, model: student.model, reasoningSelection, optimizedProgram })}\n`, { mode: 0o600, flag: 'wx' })
+          await writeFile(artifactPath, `${JSON.stringify({ version: 3, corpusFingerprint, fingerprint, studentProfileVersionId, model: student.model, reasoningSelection, optimizedProgram })}\n`, { mode: 0o600, flag: 'wx' })
         }, loadFinal: () => loadSplit('final') })
     } else {
       const saved = artifactSchema.parse(JSON.parse(await readFile(artifactPath, 'utf8')))
