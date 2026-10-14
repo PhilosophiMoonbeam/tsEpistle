@@ -5913,8 +5913,8 @@ export class AxAgentEngine implements AgentEngine {
         inputTokens = responseUsage.inputTokens
         outputTokens = responseUsage.outputTokens
         totalTokens = responseUsage.totalTokens
-        reportedCachedInputTokens = responseUsage.cachedInputTokens ?? null
-        reportedCacheCreationInputTokens = responseUsage.cacheCreationInputTokens ?? null
+        reportedCachedInputTokens = observedUsage.cachedInputTokens ?? null
+        reportedCacheCreationInputTokens = observedUsage.cacheCreationInputTokens ?? null
       }
       appendCalls(accumulator, response.results, synthesisNames ?? tools?.actionNames, limits)
       for (const result of response.results) {
@@ -6384,6 +6384,8 @@ export class AxAgentEngine implements AgentEngine {
         const generationRequest: Readonly<AxChatRequest> = { ...generation, model: provider.model, chatPrompt: generatedPrompt }
         const serializedBytes = serializedProviderRequestBytes(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
         const prefixBytes = Buffer.byteLength(prompt(request, null, undefined, false, true, 'final-synthesis'), 'utf8')
+        const schemaText = JSON.stringify(asRecord(asRecord(generation.responseFormat)?.schema)?.schema ?? generation.functions?.find(fn => fn.name === '__axOutput')?.parameters ?? generation.responseFormat ?? null)
+        const cachedSourceMessage = generatedPrompt.find(message => message.role === 'user' && message.cache === true)
         const frameDiagnostics = {
           sourceCount: sourceReads.length,
           bindingCount: sources.length,
@@ -6393,7 +6395,11 @@ export class AxAgentEngine implements AgentEngine {
           structureBytes: Buffer.byteLength(encodedSources.sourceText, 'utf8') - originalSourceBytes,
           sharedTextBytes: Buffer.byteLength(encodedSources.sourceText, 'utf8'),
           authoredBytes: originalSourceBytes,
-          schemaBytes: Buffer.byteLength(JSON.stringify(asRecord(asRecord(generation.responseFormat)?.schema)?.schema ?? generation.functions?.find(fn => fn.name === '__axOutput')?.parameters ?? generation.responseFormat ?? null), 'utf8'),
+          schemaBytes: Buffer.byteLength(schemaText, 'utf8'),
+          schemaSha256: createHash('sha256').update(schemaText).digest('hex'),
+          systemSha256: createHash('sha256').update(generatedPrompt[0]?.content as string).digest('hex'),
+          sourcePrefixSha256: typeof cachedSourceMessage?.content === 'string'
+            ? createHash('sha256').update(cachedSourceMessage.content).digest('hex') : null,
           prefixBytes,
           serializedRequestBytes: serializedBytes,
           requestedOutputTokens: maxOutputTokens,

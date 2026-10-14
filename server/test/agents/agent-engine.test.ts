@@ -1951,43 +1951,25 @@ describe('Ax agent engine', () => {
       )
     }
   )
-  it('uses the last complete cumulative cache snapshot, not a sum or an earlier partial report', async () => {
+  it('retains validated cumulative cache usage through an omitted terminal counter, with matching money and full-token accounting', async () => {
     for (const [snapshots, expected] of [
       [[1, 2], 2],
-      [[1, undefined], null],
+      [[1, undefined], 1],
       [[1, 0], 'invalid']
     ] as const) {
-      let next = 0
-      const native = geminiFixtureService({
-        apiKey: 'test-key',
-        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        model: 'gemini-3.8-flash',
-        timeoutMs: 10_000,
-        fetch: (async () =>
-          Response.json({
-            modelVersion: 'gemini-3.8-flash',
-            usageMetadata: {
-              promptTokenCount: 3,
-              candidatesTokenCount: 2,
-              totalTokenCount: 5,
-              ...(snapshots[next] === undefined ? {} : { cachedContentTokenCount: snapshots[next] })
-            },
-            candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: next++ === 0 ? 'A' : 'B' }] } }]
-          })) as typeof fetch
-      })
       const factory = {
-        create: async () => ({ service: rootFixtureService(async (input: AxChatRequest) => {
-          const first = await native.chat(input, { stream: false })
-          const second = await native.chat(input, { stream: false })
-          if (first instanceof ReadableStream || second instanceof ReadableStream) throw new Error('Expected buffered receipts')
-          return new ReadableStream<AxChatResponse>({
-            start(controller) {
-              controller.enqueue(first)
-              controller.enqueue(second)
-              controller.close()
-            }
-          })
-        }), capabilities: {
+        create: async () => ({ service: rootFixtureService(async () => new ReadableStream<AxChatResponse>({
+          start(controller) {
+            for (const [index, cached] of snapshots.entries()) controller.enqueue({
+              results: [{ index: 0, content: index === 0 ? 'A' : 'B', ...(index === 1 ? { finishReason: 'stop' as const } : {}) }],
+              modelUsage: { ai: 'fixture', model: 'cache-model', tokens: {
+                promptTokens: 3 - (cached ?? 0), completionTokens: 2, totalTokens: 5,
+                ...(cached === undefined ? {} : { cacheReadTokens: cached })
+              } }
+            })
+            controller.close()
+          }
+        })), capabilities: {
           streaming: true,
           toolCalling: 'native',
           parallelToolCalls: true,
@@ -1997,25 +1979,24 @@ describe('Ax agent engine', () => {
           maxContextTokens: 100_000,
           maxOutputTokens: 4_000
         },
-        transportKind: 'gemini-api',
-        model: 'gemini-3.8-flash',
-        continuationDialect: 'gemini-generate-content-v1',
+        transportKind: 'openai-responses',
+        model: 'cache-model',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1',
-        pricing })
+        pricingRevision: 'cache-v2|1000000|2000000|0|1000000',
+        pricing: { ...pricing, cacheReadMicrosPerMillionTokens: 0, cacheWriteMicrosPerMillionTokens: 1_000_000 } })
       } as unknown as AgentProviderFactory
       const event = vi.fn(async () => {})
-      const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...request(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event })
+      const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        { ...request(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event })
       if (expected === 'invalid') {
         await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
         expect(event).not.toHaveBeenCalledWith('model.turn', expect.anything())
       } else {
-        const result = await execution
-        expect(result).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 7 })
-        expect(event).toHaveBeenCalledWith(
-          'model.turn',
-          expect.objectContaining({ performance: expect.objectContaining({ cachedInputTokensReported: expected }) })
-        )
+        expect(await execution).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5, costMicros: 7 - expected })
+        expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({
+          inputTokens: 3, costMicros: 7 - expected,
+          performance: expect.objectContaining({ cachedInputTokensReported: expected })
+        }))
       }
     }
   })
