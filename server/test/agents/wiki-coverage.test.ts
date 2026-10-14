@@ -1,4 +1,5 @@
-import { encodeWikiCoverageInput, type WikiCoverageInput } from '../../agents/providers/wiki-coverage.ts'
+import { AxMockAIService } from '@ax-llm/ax'
+import { createWikiCoverageProgram, encodeWikiCoverageInput, type WikiCoverageInput } from '../../agents/providers/wiki-coverage.ts'
 import { describe, expect, it } from '../bun-test.mts'
 
 const input = (): WikiCoverageInput => ({
@@ -37,5 +38,23 @@ describe('Wiki coverage input binding', () => {
     }
     expect(() => encodeWikiCoverageInput({ ...input(), requestFacets: [], unresolvedFacets: [0] })).toThrow()
     expect(() => encodeWikiCoverageInput({ ...input(), requestFacets: [' '] })).toThrow()
+  })
+})
+
+describe('Wiki coverage native optional feedback protocol', () => {
+  const forward = (verdict: string) => createWikiCoverageProgram().forward(new AxMockAIService({
+    features: { functions: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+    chatResponse: {
+      results: [{ index: 0, content: JSON.stringify({ verdict, feedback: null }), finishReason: 'stop' }],
+      modelUsage: { ai: 'fixture', model: 'fixture', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+    }
+  }), encodeWikiCoverageInput(input()))
+
+  it('accepts native null feedback for a complete verdict', async () => {
+    expect((await forward('complete')).verdict).toBe('complete')
+  })
+
+  it('rejects null feedback for an omission or uncertain verdict', async () => {
+    for (const verdict of ['incomplete', 'not_established']) await expect(forward(verdict)).rejects.toThrow()
   })
 })

@@ -81,9 +81,9 @@ Return complete only when no material requested omission remains and no unresolv
 
 const outputSchema = z.object({
   verdict: z.enum(['complete', 'incomplete', 'not_established']),
-  feedback: z.string().refine(value => Buffer.byteLength(value, 'utf8') <= 2000, 'Feedback exceeds 2000 UTF-8 bytes.').optional()
+  feedback: z.string().refine(value => Buffer.byteLength(value, 'utf8') <= 2000, 'Feedback exceeds 2000 UTF-8 bytes.').nullish()
 }).strict().superRefine((output, context) => {
-  if (output.verdict === 'complete' ? output.feedback !== undefined && output.feedback !== '' : !output.feedback?.trim()) {
+  if (output.verdict === 'complete' ? output.feedback != null && output.feedback !== '' : !output.feedback?.trim()) {
     context.addIssue({ code: 'custom', path: ['feedback'], message: 'Complete requires empty feedback; other verdicts require actionable omissions or uncertainty feedback.' })
   }
 })
