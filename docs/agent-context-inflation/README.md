@@ -25,7 +25,7 @@ Historical investigated revision: `252b8c465a8fabecde430431561e95316225dd65`, Bu
 
 The fixture consistently pseudonymizes words and numbers with a private salted mapping while retaining Markdown/HTML syntax and parsing-sensitive continuation keywords. HTTP and email destinations use `example.invalid`. It contains no original people, contact details, working share URLs, share keys, credentials, cookies, login state or personal memories. The salt is not exported. Some labels are intentionally nonsensical: this is a **capacity/binding topology fixture**, not a semantic-answer benchmark.
 
-## Complete reads, minimal locators, native semantic authority
+## Complete reads, minimal locators and independent audit
 
 The correction removes the model-facing unit/field/record/closure catalogs rather than compressing increasingly elaborate proof packets. `sourceText` carries each physical read's **unchanged complete original body once**, including facts not requested in the first question. `sourceReferences` contains only:
 
@@ -46,16 +46,30 @@ The host and Jev have different responsibilities:
 | Permission, scope, current revision/hash, original read receipt, expiry and cancellation | Host; rechecked before dispatch/publication |
 | Exact numeric values, signed values, addresses, phones, code and rendered links | Host; admitted visible source literals only |
 | Subjects, fields, rows, comparisons, authored references and governing qualifications across one complete read | Native Jev; not a lexical unit/record eligibility grammar |
-| Requested contribution, including summary coverage | Independent native coverage predicate in the same read batch |
+| Requested contribution and collective answer completeness | Independent compact full-read audit on the existing answer profile; not native Jev coverage |
 | Usage, reservations, failed paid calls, unknown exposure and quotas | Existing accounting; no relaxation |
 
-Every read-scoped claim requires native proof, including exact-looking quotations. Support and coverage each require both chosen probability and confidence **strictly above 0.8**. Missing, detached, malformed, uncertain, negative or unavailable results do not publish facts. Positive support can be recorded independently when aggregate coverage fails, but does not authorize partial factual publication.
+Every read-scoped claim requires native support proof, including exact-looking quotations. Native Jev handles support and narration only, **not coverage**; consumed decisions require both chosen probability and confidence **strictly above 0.8**. Missing, detached, malformed, uncertain, negative or unavailable support results do not publish facts. Support alone does not establish collective answer completeness.
 
-Native verification shares original read text within bounded batches. A physical read receives one coverage predicate, with every same-read candidate and original claim index, even when support predicates must split. Oversized batches split losslessly; they do not prune source content or claims. The unchanged native input ceiling is 122,880 bytes after its output reserve. A required complete source that cannot fit produces an honest evidence-capacity outcome, not a clipped quotation, larger quota or fabricated absence claim. The original 150 KB and 300 KB boundary specimens remain full size.
+Native verification shares original read text within bounded support/narration batches. Oversized batches split losslessly; they do not prune source content or claims. The unchanged native input ceiling is 122,880 bytes after its output reserve. A required complete source that cannot fit produces an honest evidence-capacity outcome, not a clipped quotation, larger quota or fabricated absence claim. The original 150 KB and 300 KB boundary specimens remain full size.
 
 The parser retains the exact visible factual boundary separately from raw markup. When no body content is excluded, `authorText` equals the original body and shares its interned string. Otherwise native proof uses the complete admitted projection; raw-only HTML attributes, hidden elements, script/style/template bodies, comments, frontmatter and opaque content are not factual or literal authority. Exact code whitespace remains intact. This does not implement arbitrary CSS visibility analysis.
 
 Complete reads survive ordinary same-owned-session follow-ups through existing persisted `tool.completed` receipts. Reuse still requires fresh authorization, scope, revision/hash and expiry validation; an earlier run's delivery is not current delivery authority. Latest valid logical reads replace older ones. Admitted user/assistant history resolves conversational references; it is not factual evidence. Tools, binary output and thought blocks are not duplicated into synthesis conversation context. No new store or migration is introduced.
+
+The current candidate's root read-tool projection retains unchanged complete bodies while removing the catalog and description; lexical search uses concise anchors rather than verbose discovery instructions. Warm readiness uses Jev probability and confidence gates strictly above 0.8 to bypass a redundant collector acknowledgement only with the normal source/provider fences. Malformed measured readiness can fall back to ordinary collection only after valid settlement. Unknown exposure, timeout and stale-source errors fail closed.
+
+One independent compact **collective full-read audit** runs on the existing answer profile, with `complete`, `incomplete` and `not_established` outcomes. It adds a paid call under normal pricing, admission, receipts and freshness checks, not new source obligations or catalogs. Its private feedback is bounded to 2,000 UTF-8 bytes and can use the one existing repair; it grants neither source authority nor extra retries.
+
+### Current sprint measurements and qualification status
+
+Warm ranked follow-ups retained all four complete bodies (**6,729 bytes**) with **zero GETs**; the collector still consumed **10,143 / 10,283 input tokens**. The native source-section coverage experiment consumed **44,478 tokens across eight controls**, versus **26,355** for the lean variant (**+69%**), and still missed the billing-owner condition. That experiment was rejected and is **not shipped**.
+
+The independent audit used the unchanged frozen eight controls, source-first guidance and the existing low calibration: **18,355 input tokens, 177 output tokens, 19,714 provider-total tokens, 21,073 costMicros, eight real calls and zero unknown exposure**. Provider totals are retained as reported, not reconstructed as input plus output. All four positives passed; the three unambiguous omissions (billing owner, no-proxy restriction and queue-not-availability qualification) were rejected.
+
+The raw result is **7/8**, not a universal correctness claim. The remaining original omit-not-resolution control retains “targets measure first human response during supported hours” while removing the literal “not resolution time”; its semantic interpretation is ambiguous. The corpus was not rewritten to improve the score. The measured additional **1.3–5.85 seconds per candidate** is a real audit tradeoff; end-to-end savings are not yet proven.
+
+**Current qualification and deployment are pending.** These isolated measurements do not establish candidate deployment, integrated runtime success or end-to-end savings. The deployment identity, live measurements and qualification results below are historical evidence for the preceding correction, not evidence that this sprint candidate is running. Final candidate build, deployment and runtime evidence must be recorded separately.
 
 Two additional structural false rejections were reproduced and corrected:
 
@@ -80,11 +94,11 @@ The unchanged portable specimen contains 16,426 UTF-8 bytes, 261 complete privat
 
 Both variants fit the unchanged 128,000/8,192 diagnostic profile. The root/section multiplier is gone; current wrappers add 177 bytes to the original body. These are serialized request **bytes**, not model-token estimates. Fixed policy, schema, prefix and JSON overhead remain; deleting structure does not make the complete request identical to the source file.
 
-### Accounted live benchmarks and limits
+### Historical accounted live benchmarks and limits
 
 Native application measurements below use ordinary authenticated requests, owned fictional sources, existing profiles and normal accounting. The eight frozen query shapes were selected-field, new-topic follow-up, factual, broad summary, comparison, linked source, unavailable evidence and explicitly requested Markdown table. Questions and source bodies were not narrowed to get a pass. These are individual samples, not latency percentiles or a universal correctness certificate.
 
-Deployed code revision: `6e03601297614983f0688f32d96973ee97b4f182`; local image `local/tsepistle:wiki-cell-boundaries-6e0360129`. Only Wiki was replaced. PostgreSQL, secrets, volumes, service/network identity and configuration were preserved; writable cache/uploads were copied after graceful stop and restored before start.
+Historical deployed code revision: `6e03601297614983f0688f32d96973ee97b4f182`; local image `local/tsepistle:wiki-cell-boundaries-6e0360129`. Only Wiki was replaced. PostgreSQL, secrets, volumes, service/network identity and configuration were preserved; writable cache/uploads were copied after graceful stop and restored before start.
 
 | Final frozen case | Seconds | New body reads | Repairs | Observed outcome |
 | --- | ---: | ---: | ---: | --- |
@@ -120,7 +134,7 @@ Freshness was exercised by changing only the owned policy page's hours from 09:0
 
 A targeted ordinary follow-up asked for those omitted eligibility and response limits. It returned one organization, one billing owner, reseller/multi-tenant exclusions and first-human-response-not-resolution in 6.707 seconds, with revision-4 authority, zero body reads and no repair. Answer omission no longer discards the underlying source context.
 
-Qualification: 987 changed-surface tests passed across 13 files, server typecheck passed, affected-file lint passed, and the affected-service image built successfully. Full static checks passed on the preceding integration revision; final boundary edits were separately typechecked/linted and exercised in the deployed application. Training/selection classification covered 12 fixtures and 100 variants with zero mismatches; final holdout was not loaded, and this classification result is not native semantic verification.
+Historical qualification: 987 changed-surface tests passed across 13 files, server typecheck passed, affected-file lint passed, and the affected-service image built successfully. Full static checks passed on the preceding integration revision; final boundary edits were separately typechecked/linted and exercised in the deployed application. Training/selection classification covered 12 fixtures and 100 variants with zero mismatches; final holdout was not loaded, and this classification result is not native semantic verification.
 
 Owned temporary pages 77, 78 and 79 were deleted through the normal revision-checked API after verification. The application returned to 31 pages, 12 users and zero active runs. Original page 13 remained revision 2, 1,105 bytes, SHA-256 `113c967750999dac6f7a07dbfb14067cb182b7c7ed0bfd955b4089121f19d84b`. Run histories, receipts and accounting records were not erased.
 

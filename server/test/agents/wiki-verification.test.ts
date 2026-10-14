@@ -58,10 +58,9 @@ const plan = (changes: Partial<WikiVerificationInput> = {}): WikiVerificationPla
 type Verdict = DecisionBatchResult['answers'][string]
 const supports: Verdict = { choice: 'supports', probabilities: { supports: 0.98, contradicts: 0.01, not_supported: 0.01 }, confidence: 0.97 }
 const bounded: Verdict = { choice: 'bounded', probabilities: { bounded: 0.98, unbound: 0.01, not_established: 0.01 }, confidence: 0.97 }
-const complete: Verdict = { choice: 'complete', probabilities: { complete: 0.98, incomplete: 0.01, not_established: 0.01 }, confidence: 0.97 }
 const acceptedAnswers = (built: WikiVerificationPlan): DecisionBatchResult['answers'] =>
   Object.fromEntries(Object.entries(built.checks).map(([id, check]) => [
-    id, check.kind === 'support' ? supports : check.kind === 'coverage' ? complete : bounded
+    id, check.kind === 'support' ? supports : bounded
   ]))
 const result = (answers: DecisionBatchResult['answers']): DecisionBatchResult => ({
   providerId: '00000000-0000-4000-8000-000000000001', providerRevision: 5, model: 'jev-1.13.0', answers,
@@ -73,12 +72,21 @@ const batchResults = (built: WikiVerificationPlan, answers = acceptedAnswers(bui
     .filter(id => Object.hasOwn(answers, id)).map(id => [id, answers[id]!]))))
 const state = (request: DecisionBatchRequest) => {
   const decoded = JSON.parse(request.state as string) as {
+    userRequest: string
+    requestFacets: string[]
+    unresolvedFacets: number[]
+    source?: string
+    authorText?: string
+    title?: string
     sources: unknown[]
     sourceIndexes: number[]
-    candidate: WikiVerificationInput['claims']
+    candidate: readonly (string | (Omit<WikiVerificationInput['claims'][number], 'statement'> & {
+      statement: string | { readonly readText: number }
+    }))[]
     claimIndexes: number[]
     candidateExtras?: WikiVerificationInput['candidateExtras']
     verificationPolicy?: string
+    visibilityPolicy: string
     contributionReadId?: string
     readTexts: string[]
     evidence: (Omit<WikiVerificationEvidence, 'source' | 'authorText' | 'context'> & {
@@ -87,10 +95,24 @@ const state = (request: DecisionBatchRequest) => {
       context?: string | { readonly readText: number }
     })[]
   }
-  return { ...decoded, sources: decodeWikiVerificationSources(decoded.sources, decoded.readTexts) }
+  if (typeof decoded.source === 'string') return { ...decoded, sources: [] as WikiVerificationDecodedSource[] }
+  return { ...decoded,
+    sources: decodeWikiVerificationSources(decoded.sources, decoded.readTexts),
+    candidate: decoded.candidate.map(claim => {
+      if (typeof claim === 'string') throw new Error('Original-unit candidate lacks its binding')
+      return { ...claim,
+        statement: typeof claim.statement === 'string' ? claim.statement : decoded.readTexts[claim.statement.readText]!
+      }
+    })
+  }
 }
 const readsFrom = (request: DecisionBatchRequest) => {
   const decoded = state(request)
+  if (typeof decoded.source === 'string')
+    return decoded.evidence.map(({ evidenceId, sourceRevision, readId }) => ({
+      evidenceId, sourceRevision, readId, source: decoded.source!,
+      authorText: decoded.authorText ?? decoded.source!, context: decoded.title!
+    }))
   return decoded.evidence.map(read => ({ ...read,
     ...(read.authorText === undefined ? {} : {
       authorText: typeof read.authorText === 'string' ? read.authorText : decoded.readTexts[read.authorText.readText]!
@@ -143,37 +165,45 @@ const readPlan = (changes: Partial<WikiVerificationInput> = {}): WikiVerificatio
   return built
 }
 
-const consumeSupportRequest = (request: DecisionBatchRequest, decide: (check: {
+const consumeSupportRequest = (built: WikiVerificationPlan, request: DecisionBatchRequest, decide: (check: {
   readonly id: string
   readonly claimIndex: number
   readonly originalSourceIndex: number
   readonly claim: WikiVerificationInput['claims'][number]
   readonly source: WikiVerificationDecodedSource
   readonly registeredRead: string
-}) => Verdict | undefined, coverage: (request: DecisionBatchRequest, id: string) => Verdict | undefined = () => complete): DecisionBatchResult => {
+}) => Verdict | undefined): DecisionBatchResult => {
   const decoded = state(request)
   const reads = readsFrom(request)
-  if (!decoded.verificationPolicy?.trim()) throw new Error('Consumer cannot resolve the shared verification policy')
+  if (decoded.source === undefined && !decoded.verificationPolicy?.trim())
+    throw new Error('Consumer cannot resolve the original-unit verification policy')
   return result(Object.fromEntries(Object.entries(request.questions).flatMap(([id, question]) => {
-    if (id.startsWith('coverage_')) {
-      const verdict = coverage(request, id)
-      return verdict ? [[id, verdict]] : []
-    }
     const instructions = question.instructions as {
       candidate_index: number
       claim_index: number
       bound_source: { sourceIndex: number }
     }
-    const claim = decoded.candidate[instructions.candidate_index]
-    const bound = decoded.sources[decoded.sourceIndexes.indexOf(instructions.bound_source.sourceIndex)]
+    const check = built.checks[id]
+    if (check?.kind !== 'support') throw new Error('Consumer lacks its issued independent support check')
+    const originalSourceIndex = built.originalSources.findIndex(source =>
+      source.evidenceId === check.binding.evidenceId && source.sourceRevision === check.binding.sourceRevision &&
+      source.unitId === check.binding.unitId)
+    const original = built.originalSources[originalSourceIndex]
+    const candidate = decoded.candidate[instructions.candidate_index]
+    const claim = typeof candidate === 'string' ? { ...check.binding, statement: candidate } : candidate
+    const bound = decoded.source === undefined
+      ? decoded.sources[decoded.sourceIndexes.indexOf(instructions.bound_source.sourceIndex)]
+      : original && { ...original, text: decoded.source, authorText: decoded.authorText ?? decoded.source, context: decoded.title! }
     const read = bound && reads.find(entry => entry.evidenceId === bound.evidenceId && entry.sourceRevision === bound.sourceRevision)
-    if (!claim || !bound || read?.source === undefined || decoded.claimIndexes[instructions.candidate_index] !== instructions.claim_index)
+    if (!claim || !bound || read?.source === undefined ||
+      (decoded.source === undefined && decoded.claimIndexes[instructions.candidate_index] !== check.claimIndex))
       throw new Error('Consumer cannot resolve the original claim, selected source and registered read')
     if (bound.kind === 'source-read' && (bound.readId !== read.readId || bound.text !== read.source ||
       bound.authorText !== read.authorText || bound.context !== read.context))
       throw new Error('Consumer cannot resolve the same-read authored visibility and trusted context')
-    const verdict = decide({ id, claimIndex: instructions.claim_index, originalSourceIndex: instructions.bound_source.sourceIndex,
-      claim, source: bound, registeredRead: read.source })
+    if (typeof claim.statement !== 'string') throw new Error('Consumer lacks its unchanged candidate text')
+    const verdict = decide({ id, claimIndex: check.claimIndex, originalSourceIndex,
+      claim: { ...claim, statement: claim.statement }, source: bound, registeredRead: read.source })
     return verdict ? [[id, verdict]] : []
   })))
 }
@@ -205,7 +235,7 @@ it('requires semantic support before publishing an atomic quote that omits the r
     claims: [{ evidenceId: selected.evidenceId, sourceRevision: selected.sourceRevision,
       unitId: selected.unitId, statement: `Pricing: ${first}` }]
   })
-  const rejected = built.requests.map(request => consumeSupportRequest(request, () => ({
+  const rejected = built.requests.map(request => consumeSupportRequest(built, request, () => ({
     choice: 'not_supported', probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97
   })))
   expect(assessWikiVerificationResults(built, rejected).valid).toBe(false)
@@ -278,7 +308,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     const built = buildWikiVerificationPlan(candidate)!
     const evaluated = new Set<number>()
     expect(built.requests).toHaveLength(1)
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       evaluated.add(check.claimIndex)
       expect(check.claim).toEqual(candidate.claims[check.claimIndex])
       expect(check.originalSourceIndex).toBe(0)
@@ -290,71 +320,23 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     expect(built.literalSupportCount).toBe(0)
     expect(assessWikiVerificationResults(built).valid).toBe(false)
     expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [], nativeSupportedClaimIndexes: [0, 1] })
-    const encoded = JSON.parse(built.requests[0]!.state as string)
-    expect(encoded.readTexts).toEqual([plansRead])
-    expect(encoded.sources[0].text).toEqual({ readText: 0 })
   })
 
-  it('withholds a truthful but materially incomplete broad summary using an independent same-read coverage verdict', () => {
-    const full = readInput({ userRequest: 'Summarize the fictional plans, including their prices and production conditions.',
-      requestFacets: ['Summarize the plans’ prices and production conditions.'] })
-    const partial = { ...full, claims: [full.claims[0]!] }
-    const built = buildWikiVerificationPlan(partial)!
-    expect(built.requests).toHaveLength(1)
-    const decisions = built.requests.map(request => consumeSupportRequest(request, () => supports, (batch, id) => {
-      expect(id).toBe('coverage_0')
-      expect(state(batch).candidate).toEqual(partial.claims)
-      expect(state(batch).contributionReadId).toBe(readSource.readId)
-      return { choice: 'incomplete', probabilities: { complete: 0.01, incomplete: 0.98, not_established: 0.01 }, confidence: 0.97 }
-    }))
-    const assessment = assessWikiVerificationResults(built, decisions)
-    expect(assessment.valid).toBe(false)
-    expect(assessment.nativeSupportedClaimIndexes).toEqual([0])
-    expect(assessment.issues).toHaveLength(1)
-    expect(assessment.issues[0]).toContain('requested contribution: incomplete')
-    const repaired = buildWikiVerificationPlan(full)!
-    expect(assessWikiVerificationResults(repaired,
-      repaired.requests.map(request => consumeSupportRequest(request, () => supports))).valid).toBe(true)
-  })
 
-  it('accepts independent complete coverage for a selected-field comparison without demanding unrelated conditions or a whole-block copy', () => {
-    const candidate = readInput({ userRequest: 'Compare only the experimental monthly prices of Atlas and Boreal.',
-      requestFacets: ['Compare the experimental monthly prices.'], claims: [readInput().claims[1]!] })
-    const built = buildWikiVerificationPlan(candidate)!
-    expect(built.requests).toHaveLength(1)
-    const decisions = built.requests.map(request => consumeSupportRequest(request, () => supports, batch => {
-      expect(state(batch).candidate).toEqual(candidate.claims)
-      expect(state(batch).claimIndexes).toEqual([0])
-      expect(state(batch).sources[0]!.authorText).toBe(plansAuthorText)
-      return complete
-    }))
-    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [], nativeSupportedClaimIndexes: [0] })
-  })
-
-  it('requires missing, uncertain and not-established coverage independently of every positive truth verdict', () => {
-    const built = readPlan()
-    const unknown: Verdict = { choice: 'not_established',
-      probabilities: { complete: 0.01, incomplete: 0.01, not_established: 0.98 }, confidence: 0.97 }
-    for (const coverage of [undefined, unknown, { ...complete, confidence: 0.8 },
-      { ...complete, probabilities: { complete: 0.8, incomplete: 0.1, not_established: 0.1 } }]) {
-      const decisions = built.requests.map(request => consumeSupportRequest(request, () => supports, () => coverage))
-      const assessment = assessWikiVerificationResults(built, decisions)
-      expect(assessment.valid).toBe(false)
-      expect(assessment.nativeSupportedClaimIndexes).toEqual([0])
-      expect(assessment.issues).toHaveLength(1)
-      expect(assessment.issues[0]).toContain('requested contribution')
-    }
-  })
 
   it('does not mechanically publish even exact-looking full-read or sentence quotations', () => {
-    for (const statement of [plansRead, 'Both plans require independent approval before production.']) {
+    for (const statement of [plansRead, `${plansRead}\n`, 'Both plans require independent approval before production.']) {
       const candidate = readInput({ claims: [{ ...readInput().claims[0]!, statement }] })
       const built = buildWikiVerificationPlan(candidate)!
       expect(built.literalSupportCount).toBe(0)
       expect(assessWikiVerificationResults(built).valid).toBe(false)
-      const denied = built.requests.map(request => consumeSupportRequest(request, () => ({
-        choice: 'not_supported', probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97
-      })))
+      const encoded = JSON.parse(built.requests[0]!.state as string)
+      expect(encoded.candidate[0]).toBe(statement)
+      const denied = built.requests.map(request => consumeSupportRequest(built, request, check => {
+        expect(check.claim).toEqual(candidate.claims[0])
+        return { choice: 'not_supported',
+          probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
+      }))
       expect(assessWikiVerificationResults(built, denied).valid).toBe(false)
       expect(assessWikiVerificationResults(built, batchResults(built)).valid).toBe(true)
     }
@@ -370,7 +352,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
       claims: [{ ...readInput().claims[0]!, statement: 'The secret owner is approved.' }]
     })
     const built = buildWikiVerificationPlan(candidate)!
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       expect(check.source.text).toBe(original)
       expect(check.source.authorText).toBe(authorText)
       expect(check.registeredRead).toBe(original)
@@ -378,10 +360,11 @@ describe('Wiki verification complete-read consumer boundaries', () => {
         probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
     }))
     expect(assessWikiVerificationResults(built, decisions).valid).toBe(false)
-    const encoded = JSON.parse(built.requests[0]!.state as string)
-    expect(encoded.readTexts).toEqual([original, authorText])
-    expect(encoded.sources[0].authorText).toEqual({ readText: 1 })
-    expect(encoded.evidence[0].authorText).toEqual({ readText: 1 })
+    const quotedProjection = buildWikiVerificationPlan({ ...candidate,
+      claims: [{ ...candidate.claims[0]!, statement: authorText }]
+    })!
+    expect(state(quotedProjection.requests[0]!).candidate[0]).toBe(authorText)
+    expect(assessWikiVerificationResults(quotedProjection).valid).toBe(false)
     const narrationOnly = buildWikiVerificationPlan({ ...candidate, sources: [], claims: [],
       candidateExtras: { observations: ['The secret owner is approved.'], recommendations: '' }
     })!
@@ -391,30 +374,6 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     })).valid).toBe(false)
   })
 
-  it('interns a complete admitted raw body once while retaining separately registered title context', () => {
-    const original = '# Supplier routing\n\nRequired complete source background: ' + 'v'.repeat(110_000) +
-      '\n\n## Falcon\n\nMorgan Vale is the Falcon account representative.'
-    const bound = { ...readSource, context: 'Supplier routing', text: original, authorText: original }
-    const candidate = readInput({ sources: [bound],
-      userRequest: 'Who is the Falcon account representative?', requestFacets: ['Identify the Falcon account representative.'],
-      evidence: [{ ...readInput().evidence[0]!, source: original, authorText: original, context: bound.context }],
-      claims: [{ ...readInput().claims[0]!, statement: 'Morgan Vale is the Falcon account representative.' }]
-    })
-    const built = buildWikiVerificationPlan(candidate)!
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
-      expect(check.source.text).toBe(original)
-      expect(check.source.authorText).toBe(original)
-      expect(check.source.context).toBe('Supplier routing')
-      expect(check.registeredRead).toBe(original)
-      return supports
-    }))
-    const encoded = JSON.parse(built.requests[0]!.state as string)
-    expect(encoded.readTexts).toEqual([original])
-    expect(encoded.sources[0].text).toEqual({ readText: 0 })
-    expect(encoded.sources[0].authorText).toEqual({ readText: 0 })
-    expect(encoded.evidence[0].authorText).toEqual({ readText: 0 })
-    expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [], nativeSupportedClaimIndexes: [0] })
-  })
 
   it('rejects foreign, partial, rewritten and inconsistent read snapshots before producing native requests', () => {
     const candidate = readInput()
@@ -456,6 +415,35 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     }
   })
 
+  it('retains exact source-local authority when a same-read contribution includes a title binding', () => {
+    const original = readInput()
+    const title: WikiVerificationSource = {
+      evidenceId: readSource.evidenceId, sourceRevision: readSource.sourceRevision,
+      unitId: 'metadata:page-title', context: 'Authoritative page title',
+      text: readSource.context, kind: 'page-title', complete: true, closure: null
+    }
+    const candidate = readInput({
+      sources: [title, readSource],
+      claims: [...original.claims, { evidenceId: title.evidenceId, sourceRevision: title.sourceRevision,
+        unitId: title.unitId, statement: 'This document is named Plan comparison.' }]
+    })
+    const built = buildWikiVerificationPlan(candidate)!
+    const evaluated = new Set<string>()
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
+      evaluated.add(check.source.kind)
+      expect(check.source).toEqual(check.claimIndex === 2 ? title : readSource)
+      expect(check.claim).toEqual(candidate.claims[check.claimIndex])
+      return supports
+    }))
+    expect(evaluated).toEqual(new Set(['source-read', 'page-title']))
+    expect(assessWikiVerificationResults(built, decisions).valid).toBe(true)
+    const rejected = built.requests.map(request => consumeSupportRequest(built, request, check =>
+      check.claimIndex === 2 ? {
+        choice: 'not_supported', probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97
+      } : supports))
+    expect(assessWikiVerificationResults(built, rejected).valid).toBe(false)
+  })
+
   it('preserves original claim/source indices and one batch for aliases of the same physical read', () => {
     const alias = { ...readSource, evidenceId: 'page:plans:revision:7:section:1' }
     const unrelated = { ...readSource, evidenceId: 'page:unrelated:revision:7', readId: 'unrelated-read',
@@ -472,7 +460,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     const built = buildWikiVerificationPlan(candidate)!
     expect(built.requests).toHaveLength(1)
     const evaluated = new Set<number>()
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       evaluated.add(check.claimIndex)
       expect(check.originalSourceIndex).toBe(check.claimIndex === 0 ? 2 : 0)
       expect(check.source).toEqual(check.claimIndex === 0 ? readSource : alias)
@@ -484,7 +472,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     expect(readsFrom(built.requests[0]!).map(read => read.readId)).toEqual([readSource.readId, readSource.readId])
     expect(assessWikiVerificationResults(built, decisions).valid).toBe(true)
     for (const claimIndex of [0, 1]) {
-      const incomplete = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === claimIndex ? undefined : supports))
+      const incomplete = built.requests.map(request => consumeSupportRequest(built, request, check => check.claimIndex === claimIndex ? undefined : supports))
       expect(assessWikiVerificationResults(built, incomplete).valid).toBe(false)
     }
   })
@@ -500,7 +488,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     const built = buildWikiVerificationPlan(candidate)!
     expect(built.requests).toHaveLength(2)
     const scopes = new Set<string>()
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       const expected = check.claimIndex === 0 ? readSource : other
       expect(check.source).toEqual(expected)
       expect(check.originalSourceIndex).toBe(check.claimIndex === 0 ? 1 : 0)
@@ -525,16 +513,10 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     })) })
     const built = buildWikiVerificationPlan(candidate)!
     expect(built.requests.length).toBeGreaterThan(1)
-    const coverageRequests = built.requests.filter(request => Object.keys(request.questions).some(id => id.startsWith('coverage_')))
-    expect(coverageRequests).toHaveLength(1)
-    const contribution = state(coverageRequests[0]!)
-    expect(contribution.candidate).toEqual(candidate.claims)
-    expect(contribution.claimIndexes).toEqual(Array.from({ length: 256 }, (_, index) => index))
-    expect(contribution.sourceIndexes).toEqual([0])
-    expect(contribution.contributionReadId).toBe(readSource.readId)
-    expect(Object.values(built.checks).filter(check => check.kind === 'coverage')).toHaveLength(1)
     const evaluated: number[] = []
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
+      expect(Buffer.byteLength(JSON.stringify(request))).toBeLessThanOrEqual(122_880)
+      expect(state(request).candidate).toEqual(candidate.claims.map(claim => claim.statement))
       evaluated.push(check.claimIndex)
       expect(check.claim).toEqual(candidate.claims[check.claimIndex])
       expect(check.originalSourceIndex).toBe(0)
@@ -544,7 +526,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     }))
     expect(evaluated).toEqual(Array.from({ length: 256 }, (_, index) => index))
     expect(assessWikiVerificationResults(built, decisions).valid).toBe(true)
-    const missingLast = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === 255 ? undefined : supports))
+    const missingLast = built.requests.map(request => consumeSupportRequest(built, request, check => check.claimIndex === 255 ? undefined : supports))
     expect(assessWikiVerificationResults(built, missingLast).valid).toBe(false)
     const oversized = { ...readSource, text: 'é'.repeat(70_000), authorText: 'é'.repeat(70_000) }
     try {
@@ -570,7 +552,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     Reflect.set(read, 'authorText', 'Changed registered projection')
     Reflect.set(read, 'context', 'Changed registered context')
     Reflect.set(claim, 'statement', 'Changed claim')
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       expect(check.source).toEqual(readSource)
       expect(check.registeredRead).toBe(plansRead)
       expect(check.claim).toEqual(candidate.claims[0])
@@ -656,7 +638,7 @@ describe('Wiki verification source-local admission', () => {
       { evidenceId: 'uncited:related', sourceRevision: '1', readId: 'read:uncited:related:revision:1', source: 'An unrelated collection, not direct membership.' }
     ] })
     const built = buildWikiVerificationPlan(candidate)!
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       expect(check.claim).toEqual(candidate.claims[0])
       expect(check.originalSourceIndex).toBe(1)
       expect(check.source).toEqual(source)
@@ -676,7 +658,7 @@ describe('Wiki verification source-local admission', () => {
     }], evidence: [...input().evidence, { ...identity, readId: `read:${identity.evidenceId}`, source: raw }] })
     const built = buildWikiVerificationPlan(candidate)!
     const evaluatedScopes = new Set<string>()
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       const expected = check.claimIndex === 0 ? source : other
       evaluatedScopes.add(JSON.stringify([check.source.evidenceId, check.source.sourceRevision]))
       expect(check.claim).toEqual(candidate.claims[check.claimIndex])
@@ -688,7 +670,7 @@ describe('Wiki verification source-local admission', () => {
     expect(assessWikiVerificationResults(built, decisions).valid).toBe(true)
     const negative: Verdict = { choice: 'not_supported',
       probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
-    const denied = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === 1 ? negative : supports))
+    const denied = built.requests.map(request => consumeSupportRequest(built, request, check => check.claimIndex === 1 ? negative : supports))
     expect(assessWikiVerificationResults(built, denied).valid).toBe(false)
   })
 
@@ -696,7 +678,7 @@ describe('Wiki verification source-local admission', () => {
     const candidate = { ...matrixInput(), sources: [...matrixSources].reverse() }
     const built = buildWikiVerificationPlan(candidate)!
     const evaluatedClaims = new Set<number>()
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       evaluatedClaims.add(check.claimIndex)
       expect(check.claim).toEqual(candidate.claims[check.claimIndex])
       expect(check.originalSourceIndex).toBe(1 - check.claimIndex)
@@ -710,7 +692,7 @@ describe('Wiki verification source-local admission', () => {
       probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
     for (const rejectedClaim of [0, 1]) {
       for (const verdict of [notSupported, undefined]) {
-        const partial = built.requests.map(request => consumeSupportRequest(request, check =>
+        const partial = built.requests.map(request => consumeSupportRequest(built, request, check =>
           check.claimIndex === rejectedClaim ? verdict : supports))
         const assessment = assessWikiVerificationResults(built, partial)
         expect(assessment.valid).toBe(false)
@@ -728,7 +710,7 @@ describe('Wiki verification source-local admission', () => {
       evidence: [...original.evidence, { ...original.evidence[0]!, evidenceId: alias.evidenceId }] }
     const built = buildWikiVerificationPlan(candidate)!
     const evaluatedClaims = new Set<number>()
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       evaluatedClaims.add(check.claimIndex)
       expect(check.claim).toEqual(candidate.claims[check.claimIndex])
       expect(check.originalSourceIndex).toBe(1 - check.claimIndex)
@@ -738,7 +720,7 @@ describe('Wiki verification source-local admission', () => {
     }))
     expect(evaluatedClaims).toEqual(new Set([0, 1]))
     expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [], nativeSupportedClaimIndexes: [0, 1] })
-    const missingAlias = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === 1 ? undefined : supports))
+    const missingAlias = built.requests.map(request => consumeSupportRequest(built, request, check => check.claimIndex === 1 ? undefined : supports))
     expect(assessWikiVerificationResults(built, missingAlias).valid).toBe(false)
   })
 
@@ -752,7 +734,7 @@ describe('Wiki verification source-local admission', () => {
     const negative: Verdict = { choice: 'not_supported',
       probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
     const evaluatedClaims = new Set<number>()
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       evaluatedClaims.add(check.claimIndex)
       expect(check.claim).toEqual(candidate.claims[check.claimIndex])
       expect(check.source.closure).toEqual(matrixSources[check.claimIndex]!.closure)
@@ -784,7 +766,7 @@ describe('Wiki verification source-local admission', () => {
     const evaluatedClaims = new Set<number>()
     const decisions = built.requests.map(request => {
       expect(() => validateDecisionBatchRequest(request)).not.toThrow()
-      return consumeSupportRequest(request, check => {
+      return consumeSupportRequest(built, request, check => {
         evaluatedClaims.add(check.claimIndex)
         expect(check.originalSourceIndex).toBe(check.claimIndex)
         expect(check.claim).toEqual(candidate.claims[check.claimIndex])
@@ -798,7 +780,7 @@ describe('Wiki verification source-local admission', () => {
       valid: true, issues: [], nativeSupportedClaimIndexes: Array.from({ length: 64 }, (_, index) => index)
     })
     for (const verdict of [undefined, { ...supports, confidence: 0.8 }]) {
-      const partial = built.requests.map(request => consumeSupportRequest(request, check => check.claimIndex === 63 ? verdict : supports))
+      const partial = built.requests.map(request => consumeSupportRequest(built, request, check => check.claimIndex === 63 ? verdict : supports))
       const assessment = assessWikiVerificationResults(built, partial)
       expect(assessment.valid).toBe(false)
       expect(assessment.issues.some(issue => issue.includes('Claim 64'))).toBe(true)
@@ -832,7 +814,7 @@ describe('Wiki verification source-local admission', () => {
     const evaluatedClaims = new Set<number>()
     const decisions = built.requests.map(request => {
       expect(() => validateDecisionBatchRequest(request)).not.toThrow()
-      return consumeSupportRequest(request, check => {
+      return consumeSupportRequest(built, request, check => {
         evaluatedClaims.add(check.claimIndex)
         expect(check.source).toEqual(bound)
         expect(check.claim).toEqual(candidate.claims[0])
@@ -846,7 +828,7 @@ describe('Wiki verification source-local admission', () => {
     expect(built.originalSources[0]!.closure!.unit.normalizedText).toBe(normalized)
     expect(built.originalSources[0]!.closure!.dependencies[0]!.text).toBe(authored)
     expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [], nativeSupportedClaimIndexes: [0] })
-    const denied = built.requests.map(request => consumeSupportRequest(request, () => ({
+    const denied = built.requests.map(request => consumeSupportRequest(built, request, () => ({
       choice: 'not_supported', probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97
     })))
     expect(assessWikiVerificationResults(built, denied).valid).toBe(false)
@@ -888,7 +870,7 @@ describe('Wiki verification complete quotation boundaries', () => {
     ] })
     const built = buildWikiVerificationPlan(candidate)!
     const evaluatedClaims = new Set<number>()
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       evaluatedClaims.add(check.claimIndex)
       expect(check.claim).toEqual(candidate.claims[check.claimIndex])
       expect(check.originalSourceIndex).toBe(0)
@@ -899,7 +881,7 @@ describe('Wiki verification complete quotation boundaries', () => {
     expect(built.literalSupportCount).toBe(1)
     expect(evaluatedClaims).toEqual(new Set([1, 2]))
     expect(assessWikiVerificationResults(built, decisions)).toEqual({ valid: true, issues: [], nativeSupportedClaimIndexes: [1, 2] })
-    const missingRepeatedBinding = built.requests.map(request => consumeSupportRequest(request, check =>
+    const missingRepeatedBinding = built.requests.map(request => consumeSupportRequest(built, request, check =>
       check.claimIndex === 2 ? undefined : supports))
     expect(assessWikiVerificationResults(built, missingRepeatedBinding).valid).toBe(false)
   })
@@ -939,7 +921,7 @@ describe('Wiki verification complete quotation boundaries', () => {
     expect(built.literalSupportCount).toBe(0)
     const negative: Verdict = { choice: 'not_supported',
       probabilities: { supports: 0.01, contradicts: 0.01, not_supported: 0.98 }, confidence: 0.97 }
-    const decisions = built.requests.map(request => consumeSupportRequest(request, check => {
+    const decisions = built.requests.map(request => consumeSupportRequest(built, request, check => {
       expect(check.source).toEqual(recordSource)
       expect(check.claim.evidenceId).toBe(recordSource.evidenceId)
       expect(check.registeredRead).toBe(raw)
@@ -1048,7 +1030,6 @@ describe('Wiki verification narrow additional narration', () => {
 
   it('retains source support and narration as separate mandatory predicates', () => {
     const built = readPlan({ candidateExtras: { observations: ['These plans are tested.'], recommendations: '' } })
-    expect(Object.values(built.checks).map(check => check.kind)).toEqual(['support', 'coverage', 'narration'])
     const narration = built.requests.find(request => Object.hasOwn(request.questions, 'narration_0'))!
     expect(state(narration).sources).toEqual([readSource])
     expect(readsFrom(narration)).toEqual(readInput().evidence)

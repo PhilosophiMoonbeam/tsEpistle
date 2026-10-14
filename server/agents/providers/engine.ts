@@ -118,6 +118,8 @@ import {
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
 import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verification.ts'
+import { assessWikiContextReadiness, buildWikiContextReadinessRequest } from './wiki-context-readiness.ts'
+import { createWikiCoverageProgram, encodeWikiCoverageInput, type WikiCoverageResult, type WikiCoverageWireInput } from './wiki-coverage.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
 
 const MAX_TURNS = 12
@@ -141,9 +143,8 @@ const CORE_INSTRUCTIONS = `# Goal
 Complete the user's requested scope with admitted actions and source-grounded evidence. Check applicable skills before task actions.
 
 # Return Format
-During collection, return admitted action calls, not a freeform Wiki answer. When wiki_finish_collection is visible and the final read set is known, append it with empty arguments last in the batch of independent admitted read-only Wiki source reads expected to resolve the remaining requested facts and source qualifications. Use another collection turn only when read results determine an actual retrieval or required action, such as dependent index traversal or a missing fact; do not add an acknowledgement turn. When evidence is already sufficient and required actions are complete, finish alone. If evidence remains unavailable, finish alone with the gaps understood rather than repeating optional discovery. The host produces the typed source-local answer. Without that collection control, answer directly within the requested scope and applicable evidence rules; do not request unavailable tools.
+During collection, return admitted action calls, not a freeform Wiki answer. When wiki_finish_collection is visible and the final read set is known, append it with empty arguments last in the batch of independent admitted read-only Wiki source reads expected to resolve the remaining requested facts and source qualifications. Never combine it with search, discovery, mutations or external tools. Use another collection turn only when read results determine an actual retrieval or required action, such as dependent index traversal or a missing fact; do not add an acknowledgement turn. When evidence is already sufficient and required actions are complete, finish alone. If evidence remains unavailable, finish alone with the gaps understood rather than repeating optional discovery. The host produces the typed source-local answer. Without that collection control, answer directly within the requested scope and applicable evidence rules; do not request unavailable tools.
 Answer the requested facts from read pages and cite every factual claim. Preserve each source's applicable conditions, safety restrictions, status, units, quantities, timing, and estimate labels. Generate inventories from the delivered reads; disclose missing information and limited discovery scope.
-For a broad inventory, read relevant additional collections explicitly identified by the source before finishing; those reads establish missing members, not redundant individual-item corroboration. Include their source-defined named options and retain fictional, illustrative, or related status in separately qualified sections. Do not silently exclude a relevant collection because of that status, or treat organizers, ingredients, or incidental mentions as entries.
 When reporting a source-stated time, quantity, or safety conclusion, also disclose applicable prerequisites from that same read page. A directory value does not remove conditions in its detailed entry.
 Prefer one complete original literal quotation when it retains the requested fact and its governing qualifications. Do not split a source's status or safety paragraph into fragments that omit its remaining applicable conditions.
 
@@ -175,13 +176,13 @@ This is final tool-free synthesis. Wiki evidence is mutable shared knowledge; fr
 const WIKI_KNOWLEDGE_INSTRUCTIONS = `# Goal
 Acquire the evidence needed for every requested facet within the selected Wiki scope. Stop optional discovery once that evidence is sufficient.
 For category selection, use ordinary category inclusion rather than literal label equality unless the user requests exact labels. Include every qualifying owned entry, including narrower categories, while preserving its source-stated labels and conditions.
-For inventories, preserve collections that the read source explicitly identifies as related. Keep them separately qualified by the source's described scope; do not silently omit them or promote them into direct category members.
+For broad inventories, read relevant additional collections explicitly identified by the source before finishing; those reads establish missing members, not redundant individual-item corroboration. Include source-defined named options, preserving fictional, illustrative, or related status in separately qualified sections. Do not silently exclude a relevant collection because of that status, promote related collections into direct category members, or treat organizers, ingredients, or incidental mentions as entries.
 
 # Return Format
 Use an accepted page identity directly with ${AGENT_TOOL_NAMES['pages.get']} or ${AGENT_TOOL_NAMES['pages.getVersion']}. Preserve required selectors and the requested version.
-Otherwise, make one targeted ${AGENT_TOOL_NAMES['pages.search']} for the distinctive subject and requested facets. Read promising candidates, including differently titled inventory hits. Read a named source directly. For broad inventories or category filters, read a relevant collection, index, or directory first. Read linked pages only for missing requested facts or explicitly requested citations.
+Otherwise, make one targeted ${AGENT_TOOL_NAMES['pages.search']} using a concise distinctive retrieval anchor, such as a subject name or short title phrase. Private normal search matches one case-insensitive phrase, not independent terms: do not concatenate the question or requested field names into the query. Use the requested facets to choose and inspect candidates, including differently titled inventory hits. Read a named source directly. For broad inventories or category filters, read a relevant collection, index, or directory first. Read linked pages only for missing requested facts or explicitly requested citations.
 A read collection is itself page-content evidence. If its owned entries explicitly establish the selection criteria and requested fields, use those entries and finish collection. Do not open individual pages merely to corroborate fields already established by the collection; open them only for a specific missing fact, a conflict, a required action, or an explicit individual-page read or citation request.
-Request independent, already-admitted read-only actions together when the calling protocol permits a batch. Calls with prerequisites remain ordered across turns. Only admitted read-only Wiki source reads may precede a trailing wiki_finish_collection; never combine it with discovery, search, mutations or external tools. Do not use tools before their category becomes active.
+Request independent, already-admitted read-only actions together when the calling protocol permits a batch. Calls with prerequisites remain ordered across turns. Do not use tools before their category becomes active.
 For a basic recent recap, call ${AGENT_TOOL_NAMES['pages.listRecent']} once with limit 10 rather than searching or reading each page. For explicit tag-taxonomy, tag, path, or lifecycle browsing, use ${AGENT_TOOL_NAMES['pages.searchTags']}, ${AGENT_TOOL_NAMES['pages.listTags']}, or ${AGENT_TOOL_NAMES['pages.discover']}. Follow explicit links with ${AGENT_TOOL_NAMES['pages.related']}; use a continuation only when it helps the request.
 
 # Warnings
@@ -1278,6 +1279,34 @@ const citationPhysicalReadId = (evidence: Pick<CitationEvidence, 'pageEvidenceId
     evidence.binding.representationMetadata,
     evidence.binding.retrievedSource
   ])).digest('hex')
+
+const completeWikiReadBindings = (evidence: ReadonlyMap<string, CitationEvidence>): ReadonlyMap<string, {
+  readonly evidenceId: string
+  readonly representation: CitationEvidence
+}> => {
+  const physicalReads = new Map<string, { evidenceId: string; representation: CitationEvidence }>()
+  const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
+  for (const [evidenceId, representation] of evidence) {
+    let readId = physicalReadIds.get(representation.document)
+    if (readId === undefined) {
+      readId = citationPhysicalReadId(representation)
+      physicalReadIds.set(representation.document, readId)
+    }
+    const previous = physicalReads.get(readId)
+    if (previous !== undefined &&
+      (previous.representation.binding.sourceRevision !== representation.binding.sourceRevision ||
+        previous.representation.binding.retrievedSource !== representation.binding.retrievedSource))
+      throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Physical read aliases changed original content or revision', 409)
+    if (previous === undefined || previous.evidenceId.includes(':section:') && !evidenceId.includes(':section:'))
+      physicalReads.set(readId, { evidenceId, representation })
+  }
+  for (const [readId, { representation }] of physicalReads) {
+    if (representation.binding.representation === 'recent-excerpt' &&
+      metadataRecord(representation.binding.representationMetadata)?.contentTruncated !== false)
+      physicalReads.delete(readId)
+  }
+  return physicalReads
+}
 
 const citationEvidenceRepresentation = (evidence: CitationEvidenceBase): CitationEvidenceRepresentation => ({
   identity: {},
@@ -3399,7 +3428,7 @@ interface TurnResult extends AgentTokenUsage {
   }
 }
 const MAX_DIAGNOSTIC_TURN_CHARACTERS = 32_000
-const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' | 'collection_complete' | 'answer_accepted' | 'answer_rejected'): AgentEventData => ({
+const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' | 'collection_complete' | 'answer_accepted' | 'answer_rejected' | 'verification_completed'): AgentEventData => ({
   turn,
   outcome,
   usageVersion: 2,
@@ -3788,6 +3817,21 @@ interface ProviderTools {
 }
 
 type ChatPromptMessage = AxChatRequest['chatPrompt'][number]
+
+const wikiConversationContext = (conversation: readonly ChatPromptMessage[]): string | undefined => {
+  const currentUserIndex = conversation.findLastIndex(message => message.role === 'user')
+  const previousConversation = conversation.slice(0, currentUserIndex < 0 ? conversation.length : currentUserIndex)
+    .flatMap(message => {
+      if (message.role !== 'user' && message.role !== 'assistant') return []
+      const content = typeof message.content === 'string'
+        ? message.content
+        : message.role === 'user'
+          ? message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+          : ''
+      return content.trim() ? [`${message.role}:\n${content}`] : []
+    })
+  return previousConversation.length > 0 ? previousConversation.join('\n\n') : undefined
+}
 
 const validateSpecialistNativeContinuation = (
   dialect: AgentProviderService['continuationDialect'],
@@ -4430,7 +4474,8 @@ const providerActionOutput = (
   actionName: string,
   output: unknown,
   candidateProgress: ProviderCandidateProgress | null = null,
-  invocation?: { readonly input: unknown; readonly actionCallId: string }
+  invocation?: { readonly input: unknown; readonly actionCallId: string },
+  completeReadCollection = false
 ): unknown => {
   if (invocation !== undefined) {
     const generatedMediaOutput =
@@ -4492,6 +4537,14 @@ const providerActionOutput = (
     return projected
   }
   if (actionName === 'pages.get' || actionName === 'pages.getVersion') {
+    if (completeReadCollection) {
+      // Typed root synthesis owns citation selection and reads the original
+      // body. Section catalogs and derived retrieval hints add no authority.
+      const projected = copyFields(source, ['id', 'locale', 'path', 'title', 'contentType', 'sourceRevision', 'content', 'updatedAt', 'versionId', 'versionDate'])
+      if (Object.hasOwn(source, 'citation')) projected.citation = providerCitationOutput(source.citation)
+      if (Object.hasOwn(source, 'authority')) projected.authority = providerAuthorityOutput(source.authority)
+      return projected
+    }
     const projected = providerPageSummaryOutput(source) as Record<string, unknown>
     for (const field of ['content', 'updatedAt', 'citationSections', 'versionId', 'versionDate']) {
       if (Object.hasOwn(source, field))
@@ -4534,8 +4587,8 @@ const promptEvidencePayloadsInRequest = (
   return payloads
 }
 
-const evidenceContextMessage = (callId: string, actionName: PageReadActionName, output: unknown): ChatPromptMessage => {
-  const envelope = JSON.stringify({ callId, actionName, output: providerActionOutput(actionName, output) })
+const evidenceContextMessage = (callId: string, actionName: PageReadActionName, output: unknown, completeReadCollection = false): ChatPromptMessage => {
+  const envelope = JSON.stringify({ callId, actionName, output: providerActionOutput(actionName, output, null, undefined, completeReadCollection) })
     .replaceAll('<', '\\u003c')
     .replaceAll('>', '\\u003e')
   return {
@@ -5793,7 +5846,7 @@ export class AxAgentEngine implements AgentEngine {
     metadataContext?: Parameters<typeof extractRootRequestMetadata>[1],
     synthesis?: {
       readonly request: Readonly<AxChatRequest>
-      readonly guard: (fragment: string) => string | undefined
+      readonly guard?: (fragment: string) => string | undefined
     },
     authorizeEvidence?: () => Promise<void>
   ): Promise<TurnResult> {
@@ -5862,12 +5915,12 @@ export class AxAgentEngine implements AgentEngine {
           addRetainedBytes(accumulator, bytes, limits)
           accumulator.contentBytes += bytes
           accumulator.contentFragments.push(result.content)
-          if (synthesis !== undefined && structuralIssue === undefined) structuralIssue = synthesis.guard(result.content)
+          if (synthesis !== undefined && structuralIssue === undefined) structuralIssue = synthesis.guard?.(result.content)
         }
         appendThoughtBlocks(accumulator, provider, result, limits)
         if (synthesis !== undefined && structuralIssue === undefined) {
           for (const call of result.functionCalls ?? []) {
-            if (typeof call.function.params === 'string') structuralIssue = synthesis.guard(call.function.params)
+            if (typeof call.function.params === 'string') structuralIssue = synthesis.guard?.(call.function.params)
           }
         }
       }
@@ -6216,26 +6269,7 @@ export class AxAgentEngine implements AgentEngine {
     const readLiterals = new Map<string, ReadLiteralSnapshot>()
     const sources: WikiSynthesisSource[] = []
     const sourceReads: WikiSynthesisRead[] = []
-    const physicalReads = new Map<string, { evidenceId: string; representation: CitationEvidence }>()
-    const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
-    for (const [evidenceId, representation] of evidence) {
-      let readId = physicalReadIds.get(representation.document)
-      if (readId === undefined) {
-        readId = citationPhysicalReadId(representation)
-        physicalReadIds.set(representation.document, readId)
-      }
-      const previous = physicalReads.get(readId)
-      if (previous !== undefined &&
-        (previous.representation.binding.sourceRevision !== representation.binding.sourceRevision ||
-          previous.representation.binding.retrievedSource !== representation.binding.retrievedSource))
-        throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Physical read aliases changed original content or revision', 409)
-      if (previous === undefined || previous.evidenceId.includes(':section:') && !evidenceId.includes(':section:'))
-        physicalReads.set(readId, { evidenceId, representation })
-    }
-    for (const [readId, { evidenceId, representation }] of physicalReads) {
-      const complete = representation.binding.representation !== 'recent-excerpt' ||
-        metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false
-      if (!complete) continue
+    for (const [readId, { evidenceId, representation }] of completeWikiReadBindings(evidence)) {
       const source: WikiSynthesisSource = {
         evidenceId, sourceRevision: representation.binding.sourceRevision,
         unitId: `read:${readId}`, readId,
@@ -6310,20 +6344,7 @@ export class AxAgentEngine implements AgentEngine {
     })
     const encodedSources = encodeWikiSynthesisSources(sources, sourceReads)
     const originalSourceBytes = sourceReads.reduce((sum, read) => sum + Buffer.byteLength(read.source, 'utf8'), 0)
-    const currentUserIndex = input.conversation.findLastIndex(message => message.role === 'user')
-    const previousConversation = input.conversation.slice(0, currentUserIndex < 0 ? input.conversation.length : currentUserIndex)
-      .flatMap(message => {
-        if (message.role !== 'user' && message.role !== 'assistant') return []
-        const content = typeof message.content === 'string'
-          ? message.content
-          : message.role === 'user'
-            ? message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-            : ''
-        return content.trim() ? [`${message.role}:\n${content}`] : []
-      })
-    const conversationContext = previousConversation.length > 0
-      ? previousConversation.join('\n\n')
-      : undefined
+    const conversationContext = wikiConversationContext(input.conversation)
     const preflightComplete = new Error('Typed synthesis preflight complete')
     let preflightPlan: PublicationSequencePlan | undefined
     let dispatched: TurnResult | undefined
@@ -6509,6 +6530,103 @@ export class AxAgentEngine implements AgentEngine {
     }
   }
 
+  async #coverageTurn(
+    provider: AgentProviderService,
+    request: AgentEngineRequest,
+    input: WikiCoverageWireInput,
+    maximumDispatchTokens: number | undefined,
+    authorizeEvidence: () => Promise<void>,
+    sequence?: AgentDispatchBudgetSequence
+  ): Promise<WikiCoverageResult & { readonly turn: TurnResult }> {
+    let maxOutputTokens = Math.min(1024, generationOutputCeiling(request, provider))
+    const features = provider.service.getFeatures(provider.model)
+    const structured = features.structuredOutputModes === undefined
+      ? features.structuredOutputs === true || features.functions
+      : features.structuredOutputModes.length > 0
+    const program = createWikiCoverageProgram({ structured })
+    let dispatched: TurnResult | undefined
+    let dispatchFailure: unknown
+    const admittedChat: AxAIService['chat'] = async generation => {
+      try {
+        if (dispatched !== undefined)
+          throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Coverage permits one admitted dispatch per candidate', 500)
+        const generationRequest = { ...generation, model: provider.model }
+        const bytes = serializedProviderRequestBytes(provider, null, generation.chatPrompt, maxOutputTokens, generationRequest)
+        let contextTokens = bytes
+        if (bytes + maxOutputTokens > provider.capabilities.maxContextTokens && provider.countContextTokens !== undefined) {
+          await request.authorizeDispatch?.()
+          await authorizeEvidence()
+          assertCompactionContextFresh(request)
+          request.signal.throwIfAborted()
+          contextTokens = await provider.countContextTokens(
+            providerRequestFor(provider, null, generation.chatPrompt, maxOutputTokens, undefined, generationRequest),
+            request.signal
+          )
+          if (!Number.isSafeInteger(contextTokens) || contextTokens < 0)
+            throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid coverage context count', 502)
+        }
+        const contextAllowance = provider.capabilities.maxContextTokens - contextTokens
+        const budgetAllowance = maximumDispatchTokens === undefined ? maxOutputTokens : maximumDispatchTokens - bytes
+        if (contextAllowance < 1)
+          throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Complete coverage evidence exceeds the selected provider context bounds', 413)
+        if (budgetAllowance < 1)
+          throw classifyAgentExecutionFailure(new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Complete coverage evidence exceeds the remaining token allowance', 429), 'dispatch_admission')
+        maxOutputTokens = Math.min(maxOutputTokens, contextAllowance, budgetAllowance)
+        if (sequence !== undefined) {
+          const exposure = providerExposureFor(provider, null, generation.chatPrompt, maxOutputTokens, generationRequest)
+          await sequence.resizeUndispatched({
+            tokens: exposure.totalExposureTokens,
+            costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
+          })
+        }
+        dispatched = await this.#turn(provider, generation.chatPrompt, null,
+          sequence === undefined ? request : { ...request, dispatchBudget: sequence },
+          maxOutputTokens, maximumDispatchTokens, true, false, undefined,
+          { request: generationRequest }, authorizeEvidence)
+        return {
+          results: [{ index: 0, content: dispatched.content,
+            ...(dispatched.finishReason === undefined ? {} : { finishReason: dispatched.finishReason }),
+            ...(dispatched.calls.length === 0 ? {} : { functionCalls: dispatched.calls.map(call => ({
+              id: call.id, type: 'function' as const, function: { name: call.providerName, params: call.params }
+            })) }) }],
+          modelUsage: { ai: provider.transportKind, model: provider.model,
+            tokens: { promptTokens: dispatched.inputTokens, completionTokens: dispatched.outputTokens, totalTokens: dispatched.totalTokens } }
+        }
+      } catch (error) {
+        dispatchFailure = error
+        throw error
+      }
+    }
+    const methods = new Map<PropertyKey, unknown>()
+    const admittedAI = new Proxy(provider.service, {
+      get(target, property) {
+        if (property === 'chat') return admittedChat
+        if (methods.has(property)) return methods.get(property)
+        const value: unknown = Reflect.get(target, property, target)
+        if (typeof value !== 'function') return value
+        const bound: unknown = value.bind(target)
+        methods.set(property, bound)
+        return bound
+      }
+    })
+    let audit: WikiCoverageResult
+    try {
+      const result = await program.forward(admittedAI, input, {
+        abortSignal: request.signal, maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1,
+        model: provider.model, modelConfig: { maxTokens: maxOutputTokens }
+      })
+      audit = { verdict: result.verdict, feedback: result.feedback ?? '' }
+    } catch (error) {
+      request.signal.throwIfAborted()
+      if (dispatchFailure !== undefined) throw dispatchFailure
+      if (dispatched === undefined || (!(error instanceof AxGenerateError) && !(error instanceof AxAssertionError))) throw error
+      audit = { verdict: 'not_established', feedback: 'Independent coverage returned an invalid or unfinished bounded verdict.' }
+    }
+    if (dispatched === undefined)
+      throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Coverage did not perform an admitted dispatch', 500)
+    return { turn: dispatched, ...audit }
+  }
+
   async execute(request: AgentEngineRequest, sink: AgentEngineSink): Promise<AgentEngineResult> {
     if (request.specialist && request.mediaRequest) readSpecialistContinuation(request)
     // Production requires a configured complement even when this operation does
@@ -6569,6 +6687,7 @@ export class AxAgentEngine implements AgentEngine {
         }
       }
       const cacheAwareRoot = provider.preserveCachePrefix === true && ((request.purpose ?? 'root') === 'root' || request.specialist !== undefined)
+      const completeReadCollection = (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent'
       // A specialist's admitted read-only catalog stays stable across tasks and collection turns.
       const systemMessageFor = (turnTools: ProviderTools | null): ChatPromptMessage =>
         systemMessageForRequest(request, skillCatalog, request.specialist ? prepared.tools : turnTools, cacheAwareRoot)
@@ -6709,7 +6828,7 @@ export class AxAgentEngine implements AgentEngine {
             : providerActionOutput(recoveredAction.actionName, recoveredAction.output, null, {
                 input: recoveredAction.actionInput,
                 actionCallId: recoveredAction.actionCallId
-              })
+              }, completeReadCollection)
         const unavailableResultMessage = unavailableActionResult(tools.mode, recoveredAction.actionCallId, providerName)
         if (tools.mode === 'native') {
           activePrompt.push(
@@ -6838,37 +6957,23 @@ export class AxAgentEngine implements AgentEngine {
         }
         request.signal.throwIfAborted()
       }
-      const prepareWikiVerification = async (draft: NativeDraft): Promise<WikiVerificationContext> => {
+      const createWikiDecision = (
+        verificationEvidence: ReadonlyMap<string, CitationEvidence>,
+        physicalReadIds: WeakMap<ParsedSourceDocument, string>
+      ) => {
         const decisionProviders = this.#decisionProviders
         const runtime = verificationProvider
         if (!decisionProviders || !runtime)
           throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'A Jev decision provider is required before publishing Wiki facts', 503)
-        const verificationEvidence = new Map([...citationRegistry].filter(([evidenceId]) => !excludedEvidenceIds.has(evidenceId)))
-        const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
-        // Natural-language authority has one canonical binding per complete
-        // physical read. Private section aliases are not another native catalog.
-        const registeredReads = [...draft.readSources.entries()].map(([key, source]) => {
-          const bound = draft.evidence.get(key)
-          const current = verificationEvidence.get(source.evidenceId)
-          if (source.kind !== 'source-read' || bound === undefined || current === undefined ||
-            current.document !== bound.document || current.binding.sourceRevision !== source.sourceRevision ||
-            current.binding.retrievedSource !== source.text)
-            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the current authorized complete read', 409)
-          physicalReadIds.set(current.document, source.readId)
-          return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
-            readId: source.readId, source: source.text, context: current.authoritativeTitle ?? '',
-            authorText: source.authorText }
-        })
-        const requestFacets = contextPlan.requestFacets?.length ? contextPlan.requestFacets.map(facet => facet.quote) : [contextPlan.intent]
         const pricing = runtime.config.pricing!
         const maximum = { tokens: 64_000, costMicros: Math.ceil(pricing.perRequest * 1_000_000 + 64_000 * Math.max(pricing.inputPerMillion, pricing.outputPerMillion)) }
         if (!Number.isSafeInteger(maximum.costMicros))
           throw new AgentRepositoryError('WIKI_VERIFICATION_PRICING_INVALID', 'Wiki verification pricing cannot establish bounded exposure', 503)
         const decide = async (
           nativeRequest: DecisionBatchRequest,
-          phase: 'semantic',
+          phase: 'semantic' | 'context_readiness',
           literalSupportCount = 0
-        ): Promise<DecisionBatchResult> => {
+        ): Promise<DecisionBatchResult | null> => {
           const state = typeof nativeRequest.state === 'string' ? asRecord(JSON.parse(nativeRequest.state)) : null
           if (state === null || !Array.isArray(state.evidence))
             throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires its exact issued source reads', 409)
@@ -6886,9 +6991,22 @@ export class AxAgentEngine implements AgentEngine {
           // Every paid phase retains fresh authorization, pinned revision,
           // conservative exposure and settlement before the next phase.
           await requireLiveWikiVerification(outgoingEvidence)
-          const reservation = await request.dispatchBudget?.reserve(maximum)
+          // Readiness is optional: keep the existing publication hold intact and
+          // reserve only this additional native exposure from the parent budget.
+          if (phase === 'context_readiness' && maxTokens !== undefined &&
+            maximum.tokens > maxTokens - totalTokens - reservedFinalizationTokens) return null
+          let reservation: AgentDispatchBudgetReservation | undefined
+          try {
+            reservation = await request.dispatchBudget?.reserve(maximum)
+          } catch (error) {
+            request.signal.throwIfAborted()
+            if (phase === 'context_readiness' && error instanceof AgentRepositoryError &&
+              ['AGENT_TOKEN_BUDGET_LIMITED', 'AGENT_QUOTA_EXHAUSTED'].includes(error.code)) return null
+            throw error
+          }
           if (reservation && (reservation.tokens < maximum.tokens || reservation.costMicros < maximum.costMicros)) {
             await request.dispatchBudget?.release(reservation)
+            if (phase === 'context_readiness') return null
             throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Wiki verification exposure was not reserved', 503)
           }
           let verified: DecisionBatchResult | undefined
@@ -6915,9 +7033,9 @@ export class AxAgentEngine implements AgentEngine {
           } catch (error) {
             failure = sourceFenceRejected && !nativeDispatchAuthorized ? sourceFenceFailure ?? error : error
           }
-          const predispatchFailure = sourceFenceRejected && !nativeDispatchAuthorized ||
+          const predispatchFailure = !nativeDispatchAuthorized && (sourceFenceRejected ||
             failure instanceof AgentRepositoryError && !(failure instanceof DecisionProviderFailure) &&
-            ['DECISION_PROVIDER_UNAVAILABLE', 'DECISION_PROVIDER_NOT_FOUND', 'DECISION_PROVIDER_CORRUPT', 'DECISION_CREDENTIAL_UNAVAILABLE', 'DECISION_PROVIDER_REVISION_CHANGED', 'DECISION_BATCH_UNSUPPORTED', 'DECISION_PRE_DISPATCH_REJECTED', 'DECISION_ABORTED', 'DECISION_TIMEOUT'].includes(failure.code)
+            ['DECISION_PROVIDER_UNAVAILABLE', 'DECISION_PROVIDER_NOT_FOUND', 'DECISION_PROVIDER_CORRUPT', 'DECISION_CREDENTIAL_UNAVAILABLE', 'DECISION_PROVIDER_REVISION_CHANGED', 'DECISION_BATCH_UNSUPPORTED', 'DECISION_PRE_DISPATCH_REJECTED', 'DECISION_ABORTED', 'DECISION_TIMEOUT'].includes(failure.code))
           const failed = failure instanceof DecisionProviderFailure ? failure : undefined
           const parsedUsage = DecisionUsageSchema.safeParse(predispatchFailure ? null : verified?.usage ?? failed?.usage)
           const usage = parsedUsage.success ? parsedUsage.data : null
@@ -6949,6 +7067,16 @@ export class AxAgentEngine implements AgentEngine {
             outcome: failure ? 'verification_failed' : 'verification_completed',
             verification: { phase, checks: Object.keys(nativeRequest.questions).length, requestBytes: Buffer.byteLength(JSON.stringify(nativeRequest)), confidenceFloor: 0.8, literalSupportCount }
           })
+          if (phase === 'context_readiness' && predispatchFailure && !sourceFenceRejected &&
+            failure instanceof AgentRepositoryError && failure.code === 'DECISION_BATCH_UNSUPPORTED') return null
+          // Readiness is optional. A malformed choice may fall back only after
+          // its measured, pinned receipt settled successfully; paid uncertainty
+          // or a settlement/fence failure still blocks continuation.
+          if (phase === 'context_readiness' && failed?.code === 'INVALID_DECISION_RESPONSE' &&
+            failure === failed && nativeDispatchAuthorized && !sourceFenceRejected &&
+            usage !== null && knownCost !== null &&
+            failed.providerId === runtime.id && failed.providerRevision === runtime.revision &&
+            (maxTokens === undefined || totalTokens <= maxTokens)) return null
           if (failure) {
             if (failure instanceof DecisionProviderFailure || failure instanceof AgentRepositoryError && failure.code.startsWith('DECISION_'))
               throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Jev verification could not be completed; Wiki facts were not published', 503)
@@ -6960,6 +7088,26 @@ export class AxAgentEngine implements AgentEngine {
             throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Wiki verification exceeded the admitted run token limit', 429)
           return verified
         }
+        return decide
+      }
+      const prepareWikiVerification = async (draft: NativeDraft): Promise<WikiVerificationContext> => {
+        const verificationEvidence = new Map([...citationRegistry].filter(([evidenceId]) => !excludedEvidenceIds.has(evidenceId)))
+        const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
+        // Natural-language authority has one canonical binding per complete
+        // physical read. Private section aliases are not another native catalog.
+        const registeredReads = [...draft.readSources.entries()].map(([key, source]) => {
+          const bound = draft.evidence.get(key)
+          const current = verificationEvidence.get(source.evidenceId)
+          if (source.kind !== 'source-read' || bound === undefined || current === undefined ||
+            current.document !== bound.document || current.binding.sourceRevision !== source.sourceRevision ||
+            current.binding.retrievedSource !== source.text)
+            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the current authorized complete read', 409)
+          physicalReadIds.set(current.document, source.readId)
+          return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
+            readId: source.readId, source: source.text, context: current.authoritativeTitle ?? '',
+            authorText: source.authorText }
+        })
+        const requestFacets = contextPlan.requestFacets?.length ? contextPlan.requestFacets.map(facet => facet.quote) : [contextPlan.intent]
         const prepareVerification = (draft: NativeDraft): WikiVerificationPlan | null => {
           const selected = new Map<string, WikiVerificationSource>()
           for (const claim of draft.answer.claims) {
@@ -6993,6 +7141,13 @@ export class AxAgentEngine implements AgentEngine {
         }
         const plan = prepareVerification(draft)
         await requireLiveWikiVerification(verificationEvidence)
+        const nativeDecision = createWikiDecision(verificationEvidence, physicalReadIds)
+        const decide: WikiVerificationContext['decide'] = async (...args) => {
+          const result = await nativeDecision(...args)
+          if (result === null)
+            throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Required Wiki verification was not dispatched', 503)
+          return result
+        }
         return { plan, evidence: verificationEvidence, decide }
       }
       const requireLiveEvidence = async (assessment: DraftAssessment, evidenceView: ReadonlyMap<string, CitationEvidence>): Promise<void> => {
@@ -7130,14 +7285,14 @@ export class AxAgentEngine implements AgentEngine {
         seededReads.add(readKey)
         // This is a new-turn delivery candidate, not credit for a prior provider
         // request. Normal priced admission/compaction decides whether it fits.
-        const seedMessage = evidenceContextMessage(seed.actionCallId, seed.actionName, seed.output)
+        const seedMessage = evidenceContextMessage(seed.actionCallId, seed.actionName, seed.output, completeReadCollection)
         activePrompt.push(seedMessage)
         rememberEvidenceMessage(
           seedMessage,
           seed.actionCallId,
           seed.actionCallId,
           seed.actionName,
-          providerActionOutput(seed.actionName, seed.output),
+          providerActionOutput(seed.actionName, seed.output, null, undefined, completeReadCollection),
           seed.output,
           unavailableEvidenceContext()
         )
@@ -7275,7 +7430,8 @@ export class AxAgentEngine implements AgentEngine {
               const candidate = evidenceContextMessage(
                 representation.deliveries.find(delivery => delivery.actionCallId === receipt.actionCallId)?.providerCallId ?? receipt.actionCallId,
                 representation.sourceActionName,
-                representation.sourceOutput
+                representation.sourceOutput,
+                completeReadCollection
               )
               let fits = true
               try {
@@ -7291,7 +7447,7 @@ export class AxAgentEngine implements AgentEngine {
                   representation.deliveries.find(delivery => delivery.actionCallId === receipt.actionCallId)?.providerCallId ?? receipt.actionCallId,
                   receipt.actionCallId,
                   representation.sourceActionName,
-                  providerActionOutput(representation.sourceActionName, representation.sourceOutput),
+                  providerActionOutput(representation.sourceActionName, representation.sourceOutput, null, undefined, completeReadCollection),
                   representation.sourceOutput,
                   unavailableEvidenceContext()
                 )
@@ -7339,7 +7495,7 @@ export class AxAgentEngine implements AgentEngine {
                 representation.deliveries.find(delivery => delivery.actionCallId === receipt.actionCallId)?.providerCallId ?? receipt.actionCallId,
                 receipt.actionCallId,
                 representation.sourceActionName,
-                providerActionOutput(representation.sourceActionName, representation.sourceOutput),
+                providerActionOutput(representation.sourceActionName, representation.sourceOutput, null, undefined, completeReadCollection),
                 representation.sourceOutput,
                 unavailableEvidenceContext(),
                 { evidenceId, representationIdentity: representation.identity, units: [unit] }
@@ -7752,6 +7908,41 @@ export class AxAgentEngine implements AgentEngine {
         }
       }
       if (initialPublicationLimit !== undefined) return await publishExecutionLimit(initialPublicationLimit)
+      let warmReadinessEvidence: ReadonlyMap<string, CitationEvidence> | undefined
+      if (phase === 'collecting' && completeReadCollection && verificationProvider && maxTurns > 1 && contextPlan.intent.trim() &&
+        request.recoveredAction === undefined && (request.retainedPageReads?.length ?? 0) > 0) {
+        const readinessValidations: EvidenceValidationCache = new Map()
+        await reauthorizeEvidencePrompt(readinessValidations)
+        const restored = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, readinessValidations, true)
+        const readinessEvidence = new Map<string, CitationEvidence>()
+        const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
+        const reads = [...completeWikiReadBindings(restored ?? new Map())].map(([readId, { evidenceId, representation }]) => {
+          readinessEvidence.set(evidenceId, representation)
+          physicalReadIds.set(representation.document, readId)
+          return {
+            evidenceId, sourceRevision: representation.binding.sourceRevision, readId,
+            source: representation.binding.retrievedSource,
+            authorText: readLiteralSnapshot(representation).authorText,
+            context: representation.authoritativeTitle ?? ''
+          }
+        })
+        const nativeRequest = buildWikiContextReadinessRequest({
+          userRequest: contextPlan.intent, conversationContext: wikiConversationContext(conversation) ?? '',
+          requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
+          scope: { ...contextPlan.scope, selectedPageIds: contextPlan.selectedPageIds, currentPage: request.currentPage ?? null },
+          reads
+        })
+        if (nativeRequest !== null) {
+          const readiness = await createWikiDecision(readinessEvidence, physicalReadIds)(nativeRequest, 'context_readiness')
+          if (readiness !== null && assessWikiContextReadiness(readiness)) {
+            await requireLiveWikiVerification(readinessEvidence)
+            warmReadinessEvidence = readinessEvidence
+            phase = 'synthesizing'
+            discoveryTurn = null
+            tools = null
+          }
+        }
+      }
       for (let turn = 0; turn < maxTurns; turn++) {
         let remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
         if (remainingTokens < 1) {
@@ -7806,7 +7997,12 @@ export class AxAgentEngine implements AgentEngine {
           try {
             if (typedFinalization) {
               await reauthorizeEvidencePrompt(promptValidationResults)
-              typedEvidence = await restoreEvidenceContext(null, systemMessage, requestedMaxOutputTokens, promptValidationResults, true)
+              if (warmReadinessEvidence !== undefined) {
+                // Preserve the positively judged snapshot. A changed source must
+                // fail before synthesis, not become a newly empty paid frame.
+                await requireLiveWikiVerification(warmReadinessEvidence)
+                typedEvidence = warmReadinessEvidence
+              } else typedEvidence = await restoreEvidenceContext(null, systemMessage, requestedMaxOutputTokens, promptValidationResults, true)
               bounded = { chatPrompt: [systemMessage, ...conversation, ...activePrompt], maxOutputTokens: Math.min(requestedMaxOutputTokens, finalizationMaxOutputTokens) }
             } else {
             // First dispatch of a run: the previous run has finished responding and the user's turn is next,
@@ -7967,7 +8163,9 @@ export class AxAgentEngine implements AgentEngine {
                 assessableContent: content => assessableActionStatusContent(content, deliveredAttributedLines, deliveredBrowserAttributions),
                 reserveRepair: rejectedDraftCount === 0 && turn + 1 < maxTurns,
                 contextMeasurements: synthesisContextMeasurements,
-                authorizeEvidence: () => requireFreshRegisteredEvidence(dispatchEvidence),
+                authorizeEvidence: () => warmReadinessEvidence === undefined
+                  ? requireFreshRegisteredEvidence(dispatchEvidence)
+                  : requireLiveWikiVerification(warmReadinessEvidence),
               },
               sequence,
               sink
@@ -8152,6 +8350,8 @@ export class AxAgentEngine implements AgentEngine {
             }
           }
           let publicationVerificationEvidence: ReadonlyMap<string, CitationEvidence> | undefined
+          let coverageOutputLimited = false
+          let coverageAuditFeedback: string | undefined
           if (assessment.valid && result.rootNativeDraft !== undefined &&
             (result.rootNativeDraft.answer.claims.length > 0 || result.rootNativeDraft.answer.observations.length > 0 ||
               (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0)) {
@@ -8183,6 +8383,51 @@ export class AxAgentEngine implements AgentEngine {
               if (!semantic.valid) {
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
+              }
+              if (semantic.valid && nativeDraft.answer.claims.length > 0) {
+                const conversationContext = wikiConversationContext(conversation)
+                const coverageInput = encodeWikiCoverageInput({
+                  userRequest: contextPlan.intent,
+                  ...(conversationContext === undefined ? {} : { conversationContext }),
+                  requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
+                  unresolvedFacets: nativeDraft.answer.unresolvedFacets,
+                  reads: [...nativeDraft.readSources.values()].map(source => {
+                    if (source.kind !== 'source-read')
+                      throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage requires unchanged complete physical reads', 409)
+                    return { readRef: source.readId, source: source.text, authorText: source.authorText, title: source.context }
+                  }),
+                  claims: nativeDraft.answer.claims.map(claim => {
+                    const source = nativeDraft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
+                    if (source?.kind !== 'source-read')
+                      throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage claim lacks its exact physical read', 409)
+                    return { readRef: source.readId, statement: claim.statement }
+                  })
+                })
+                const audit = await this.#coverageTurn(synthesisProvider!, request, coverageInput,
+                  maxTokens === undefined ? undefined : maxTokens - totalTokens,
+                  async () => {
+                    await requireLiveWikiVerification(evidence)
+                    await requireFreshRegisteredEvidence(nativeDraft.evidence)
+                  }, finalizationSequence)
+                inputTokens = safeUsageAddition(inputTokens, audit.turn.inputTokens, 'Aggregate coverage input token usage')
+                outputTokens = safeUsageAddition(outputTokens, audit.turn.outputTokens, 'Aggregate coverage output token usage')
+                totalTokens = safeUsageAddition(totalTokens, audit.turn.totalTokens, 'Aggregate coverage total token usage')
+                costMicros = safeUsageAddition(costMicros, audit.turn.costMicros, 'Aggregate coverage cost')
+                await sink.event('model.turn', {
+                  ...modelTurnData(turn + 1, { ...audit.turn, content: '', calls: [] }, 'verification_completed'),
+                  purpose: 'verification', model: synthesisProvider!.model,
+                  verification: { phase: 'coverage_audit', checks: 1, verdict: audit.verdict }
+                })
+                assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
+                if (maxTokens !== undefined && totalTokens > maxTokens)
+                  throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Coverage exceeded the admitted run token limit', 429)
+                coverageOutputLimited = audit.turn.finishReason === 'length'
+                if (audit.verdict !== 'complete' || coverageOutputLimited) {
+                  coverageAuditFeedback = audit.feedback
+                  assessment = { ...assessment, valid: false,
+                    issues: [...assessment.issues, `Requested coverage: ${audit.verdict}.`] }
+                  result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
+                }
               }
             } catch (error) {
               // Preserve the already billed generating response when the
@@ -8252,7 +8497,7 @@ export class AxAgentEngine implements AgentEngine {
               await sink.event('evidence.provenance', provenanceData(assessment.valid, assessment, retrievals))
             }
           }
-          if (result.finishReason === 'length') {
+          if (result.finishReason === 'length' || coverageOutputLimited) {
             if (request.specialist) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Specialist report exceeded its output allowance', 409)
             const publishFragment = assessment.valid && result.content.trim().length > 0
             const authoritySha256 = actionSession?.authoritySha256
@@ -8301,11 +8546,12 @@ export class AxAgentEngine implements AgentEngine {
           if (!assessment.valid) {
             await publishAssessmentEvents()
             const correctionIssues = evidenceCorrectionIssues(assessment.issues)
-            repairFeedback = correctionIssues
+            repairFeedback = coverageAuditFeedback === undefined ? correctionIssues :
+              canonicalJson({ issues: correctionIssues, coverageFeedback: coverageAuditFeedback })
             if (result.rootRejectedDraft !== undefined) {
               let rejectedDraft: unknown = result.rootRejectedDraft
               try { rejectedDraft = JSON.parse(result.rootRejectedDraft) } catch { /* Preserve malformed output as quoted data. */ }
-              const correctionContext = canonicalJson({ issues: correctionIssues, rejectedDraft })
+              const correctionContext = canonicalJson({ issues: repairFeedback, rejectedDraft })
               if (Buffer.byteLength(correctionContext, 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) repairFeedback = correctionContext
             }
             if (turn + 1 >= maxTurns || ((request.purpose ?? 'root') === 'root' && rejectedDraftCount > MAX_ANSWER_REPAIRS)) {
@@ -9040,7 +9286,7 @@ export class AxAgentEngine implements AgentEngine {
             const providerOutput =
               cached !== undefined && cachedResident
                 ? { status: 'reused', reusedActionCallId: cached.actionCallId, summary: summary ?? 'Reused earlier result.' }
-                : providerActionOutput(resolved.name, output, candidateProgress, { input, actionCallId: cached?.actionCallId ?? actionCallId })
+                : providerActionOutput(resolved.name, output, candidateProgress, { input, actionCallId: cached?.actionCallId ?? actionCallId }, completeReadCollection)
             const projectedOutput = asRecord(providerOutput)
             const discoveryNotice =
               candidateProgress !== null && projectedOutput !== null && projectedOutput.discovery === candidateProgress.discovery

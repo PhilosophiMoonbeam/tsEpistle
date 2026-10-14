@@ -6,9 +6,11 @@ import { wikiSynthesisSourceRef } from '../../agents/providers/wiki-synthesis.ts
 /**
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
  * never a production fallback and carries no semantic-accuracy claim:
- * applicability resolves to `other`; support resolves to `supports`, read
- * coverage independently resolves to `complete`, and narration to `bounded`.
- * Semantic rejection and incomplete-coverage fixtures supply their own verdicts.
+ * applicability resolves to `other`; support resolves to `supports`, and
+ * narration to `bounded`. Warm readiness conservatively resolves to `collect`;
+ * transition fixtures explicitly supply positive readiness verdicts.
+ * The separate answer-profile coverage mock defaults to `complete`; rejection
+ * fixtures explicitly provide their independent audit result.
  */
 export const fixtureDecisionProviders = {
   async selectRuntime(): Promise<DecisionProviderRuntime> {
@@ -39,7 +41,7 @@ export const fixtureDecisionProviders = {
     await options.onPreDispatch?.()
     const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
     for (const [id, question] of Object.entries(request.questions)) {
-      const label = Object.keys(question.criteria).find(label => label === 'other' || label === 'supports' || label === 'complete' || label === 'bounded')
+      const label = Object.keys(question.criteria).find(label => label === 'collect' || label === 'other' || label === 'supports' || label === 'complete' || label === 'bounded')
       if (label === undefined) throw new Error(`Fixture decision provider has no supported mock criterion for question ${id}`)
       const probabilities: Record<string, number> = Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === label ? 1 : 0]))
       answers[id] = { choice: label, probabilities, confidence: 1 }
@@ -70,7 +72,7 @@ export const rejectFixtureStatements = (statements: readonly string[]) => ({
     const decision = await fixtureDecisionProviders.decideBatch(input, options)
     const supportQuestions = Object.entries(input.questions).filter(([, question]) => Object.hasOwn(question.criteria, 'supports'))
     if (supportQuestions.length === 0) return decision
-    const state = JSON.parse(input.state as string) as { candidate: readonly { statement: string }[] }
+    const state = JSON.parse(input.state as string) as { candidate: readonly (string | { statement: string })[] }
     const answers = { ...decision.answers }
     for (const [id, question] of supportQuestions) {
       const instructions = question.instructions
@@ -80,16 +82,29 @@ export const rejectFixtureStatements = (statements: readonly string[]) => ({
         throw new Error(`Fixture support question lacks its independent candidate index: ${id}`)
       const claim = state.candidate[instructions.candidate_index]
       if (claim === undefined) throw new Error(`Fixture support question selects a missing candidate: ${id}`)
-      if (statements.includes(claim.statement))
+      if (statements.includes(typeof claim === 'string' ? claim : claim.statement))
         answers[id] = { choice: 'not_supported', probabilities: { supports: 0, contradicts: 0, not_supported: 1 }, confidence: 1 }
     }
     return { ...decision, answers }
   }
 })
 
+const coverageRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
+
+const isCoverageFixtureRequest = (request: Readonly<AxChatRequest>): boolean => {
+  const format = coverageRecord(request.responseFormat)
+  const native = coverageRecord(coverageRecord(format.schema).schema)
+  const output = request.functions?.find(fn => fn.name === '__axOutput')?.parameters
+  const properties = coverageRecord(coverageRecord(native.properties).verdict ? native.properties : coverageRecord(output).properties)
+  if (Object.hasOwn(properties, 'verdict') && Object.hasOwn(properties, 'feedback')) return true
+  return request.chatPrompt.some(message => typeof message.content === 'string' &&
+    message.content.includes('Verdict') && message.content.includes('Feedback'))
+}
+
 export const fullAxFixtureService = (
   chat: AxAIService['chat'],
-  options: { readonly model?: string; readonly streaming?: boolean; readonly structuredOutput?: boolean } = {}
+  options: { readonly model?: string; readonly streaming?: boolean; readonly structuredOutput?: boolean; readonly coverage?: AxAIService['chat'] } = {}
 ): AxAIService => new AxMockAIService({
   name: 'Wiki fixture',
   modelInfo: { name: options.model ?? 'gpt-test' },
@@ -99,7 +114,16 @@ export const fullAxFixtureService = (
     structuredOutputs: options.structuredOutput ?? true,
     structuredOutputModes: options.structuredOutput === false ? [] : ['native']
   },
-  chatResponse: chat
+  chatResponse: async (request, chatOptions) => {
+    if (!isCoverageFixtureRequest(request)) return chat(request, chatOptions)
+    if (options.coverage !== undefined) return options.coverage(request, chatOptions)
+    return {
+      results: [{ index: 0, content: request.responseFormat === undefined && (request.functions?.length ?? 0) === 0
+        ? 'Verdict: complete' : JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }],
+      modelUsage: { ai: 'fixture', model: options.model ?? 'gpt-test',
+        tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } }
+    }
+  }
 })
 
 export const synthesisInputFromRequest = (request: Readonly<AxChatRequest>): string | undefined => {

@@ -1505,5 +1505,583 @@
         }
       }
     ]
+  },
+  {
+    "id": "selection-dense-restriction-challenge",
+    "family": "selection-dense-restriction-challenge",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Frozen authored source, faithful complete controls and single-restriction deletions; labels are independent human-policy expectations, not native semantic proof. Original read is unchanged for every variant."
+    },
+    "userRequest": "Summarize the Meridian fictional policy, including every material restriction stated in this source.",
+    "sources": [
+      {
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "readId": "fixture:selection-dense-restriction-challenge",
+        "context": "the Meridian fictional policy",
+        "text": "# Meridian dense QA policies — fictional and non-operative\n\nEvery entry is a fictional benchmark policy, not an operative offer or instruction for real orders. Prices use USD. Working days exclude weekends and the local public holidays. Source-stated restrictions remain attached to the affected policy.\n\n## Shipping\n\n- Standard stocked-item lead time: 3 working days; Scope: in-stock mainland orders only; Exception: remote islands require a separate quote.\n- Free-delivery threshold: USD 500; Below-threshold delivery fee: USD 12; Scope: mainland orders only.\n- Order cutoff: 14:00 local time; Consequence: orders accepted after the cutoff enter processing on the next working day.\n- Tracking notification: emailed after dispatch; Qualification: a label-created notification does not prove carrier collection.\n- Hazardous goods: unavailable through standard delivery; Requirement: do not apply the ordinary lead time to hazardous goods.\n\n## Billing\n\n- Standard invoice term: 30 calendar days; Scope: approved business accounts only; Exception: first-time customers prepay.\n- Accepted payment methods: bank transfer and corporate card; Card surcharge: none; Qualification: personal cards are not supported.\n- Currency: USD; Tax handling: listed prices exclude tax; Requirement: tax is calculated for the delivery jurisdiction.\n- Disputed invoice notification: within 10 calendar days of invoice date; Requirement: include invoice number and disputed line items.\n\n## Pilot plans\n\nBoth plans are fictional pilot offers for one organization. Monthly fees exclude tax. Ticket allowances reset monthly and do not roll over. Response targets measure the first human response during supported hours, not resolution time.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Included tickets | 30 | 80 |\n| First-response target | 48 supported hours | 24 supported hours |\n| Named operators | 2 | 5 |\n| Status | Pilot only | Pilot only |\n\n- Additional ticket fee: USD 4; Scope: tickets exceeding the selected plan's allowance; Qualification: no unused-ticket credit.\n- Plan changes: effective at the next monthly renewal; Exception: mid-cycle upgrades require a separate agreement.\n- Pilot eligibility: one organization with one billing owner; Exclusion: reseller and multi-tenant deployments.\n\n## Account contacts\n\n- Name: Morgan Vale; Role: account representative; Email: morgan.vale@example.invalid; Phone: +1 202-555-0142; Qualification: fictional and non-operative.\n- Name: Avery Moss; Role: support desk coordinator; Email: avery.moss@example.invalid; Phone: +1 202-555-0178; Qualification: fictional and non-operative.\n- Account ownership: Morgan handles commercial account questions; Scope: Morgan is not the operational support escalation contact.\n- Support ownership: Avery handles ticket coordination; Scope: Avery cannot approve invoice-term exceptions.\n\n## Support\n\n- Supported hours: weekdays 09:00–17:00 local time; Exception: local public holidays are excluded.\n- Urgent escalation channel: the owned support email; Requirement: include the ticket number and impact description.\n- Maintenance window: Sunday 02:00–04:00 local time; Qualification: the window is a notice period, not a guaranteed outage.\n- Ticket closure: after 7 calendar days without a requester response; Exception: unresolved confirmed defects remain open.\n\n## Returns\n\n- Returns window: 21 calendar days after delivery; Requirement: unused goods in original packaging; Exception: custom orders cannot be returned.\n- Return authorization: required before sending goods; Scope: obtain authorization from the support desk, not the account representative.\n- Shipping damage notification: within 2 working days after delivery; Requirement: preserve packaging and provide photographs.\n- Refund timing: 5 working days after acceptance of the return; Qualification: carrier receipt alone does not establish return acceptance.\n\n## Data and access\n\n- Ticket attachment retention: 60 calendar days after closure; Exception: retained audit items follow their own documented retention requirement.\n- Supported attachment formats: PDF, PNG and plain text; Maximum attachment size: 10 MB per file; Exclusion: executable files.\n- Account administrators: may invite operators within the selected plan's named-operator allowance; Qualification: an invitation is not an active access grant.\n- Operator access removal: effective immediately after administrator confirmation; Requirement: outstanding ticket ownership must be reassigned.\n\n## Linked annex and unavailable facts\n\n- Remote-island quote details: see the [Meridian remote delivery annex](/en/agent-bench-meridian-remote-54c2a3bf); Qualification: the annex owns its own minimum-order amount and quote requirements.\n- International freight prices: not specified in this benchmark; Requirement: do not infer them from mainland fees.\n- Service uptime commitment: not specified in this benchmark; Qualification: first-response targets are not uptime commitments.\n- Real-world availability: not established by this fictional source; Scope: do not portray these entries as operative vendor offers.\n",
+        "kind": "source-read",
+        "complete": true
+      }
+    ],
+    "sourceReads": [
+      {
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "readId": "fixture:selection-dense-restriction-challenge",
+        "title": "the Meridian fictional policy",
+        "representation": "text",
+        "complete": true,
+        "source": "# Meridian dense QA policies — fictional and non-operative\n\nEvery entry is a fictional benchmark policy, not an operative offer or instruction for real orders. Prices use USD. Working days exclude weekends and the local public holidays. Source-stated restrictions remain attached to the affected policy.\n\n## Shipping\n\n- Standard stocked-item lead time: 3 working days; Scope: in-stock mainland orders only; Exception: remote islands require a separate quote.\n- Free-delivery threshold: USD 500; Below-threshold delivery fee: USD 12; Scope: mainland orders only.\n- Order cutoff: 14:00 local time; Consequence: orders accepted after the cutoff enter processing on the next working day.\n- Tracking notification: emailed after dispatch; Qualification: a label-created notification does not prove carrier collection.\n- Hazardous goods: unavailable through standard delivery; Requirement: do not apply the ordinary lead time to hazardous goods.\n\n## Billing\n\n- Standard invoice term: 30 calendar days; Scope: approved business accounts only; Exception: first-time customers prepay.\n- Accepted payment methods: bank transfer and corporate card; Card surcharge: none; Qualification: personal cards are not supported.\n- Currency: USD; Tax handling: listed prices exclude tax; Requirement: tax is calculated for the delivery jurisdiction.\n- Disputed invoice notification: within 10 calendar days of invoice date; Requirement: include invoice number and disputed line items.\n\n## Pilot plans\n\nBoth plans are fictional pilot offers for one organization. Monthly fees exclude tax. Ticket allowances reset monthly and do not roll over. Response targets measure the first human response during supported hours, not resolution time.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Included tickets | 30 | 80 |\n| First-response target | 48 supported hours | 24 supported hours |\n| Named operators | 2 | 5 |\n| Status | Pilot only | Pilot only |\n\n- Additional ticket fee: USD 4; Scope: tickets exceeding the selected plan's allowance; Qualification: no unused-ticket credit.\n- Plan changes: effective at the next monthly renewal; Exception: mid-cycle upgrades require a separate agreement.\n- Pilot eligibility: one organization with one billing owner; Exclusion: reseller and multi-tenant deployments.\n\n## Account contacts\n\n- Name: Morgan Vale; Role: account representative; Email: morgan.vale@example.invalid; Phone: +1 202-555-0142; Qualification: fictional and non-operative.\n- Name: Avery Moss; Role: support desk coordinator; Email: avery.moss@example.invalid; Phone: +1 202-555-0178; Qualification: fictional and non-operative.\n- Account ownership: Morgan handles commercial account questions; Scope: Morgan is not the operational support escalation contact.\n- Support ownership: Avery handles ticket coordination; Scope: Avery cannot approve invoice-term exceptions.\n\n## Support\n\n- Supported hours: weekdays 09:00–17:00 local time; Exception: local public holidays are excluded.\n- Urgent escalation channel: the owned support email; Requirement: include the ticket number and impact description.\n- Maintenance window: Sunday 02:00–04:00 local time; Qualification: the window is a notice period, not a guaranteed outage.\n- Ticket closure: after 7 calendar days without a requester response; Exception: unresolved confirmed defects remain open.\n\n## Returns\n\n- Returns window: 21 calendar days after delivery; Requirement: unused goods in original packaging; Exception: custom orders cannot be returned.\n- Return authorization: required before sending goods; Scope: obtain authorization from the support desk, not the account representative.\n- Shipping damage notification: within 2 working days after delivery; Requirement: preserve packaging and provide photographs.\n- Refund timing: 5 working days after acceptance of the return; Qualification: carrier receipt alone does not establish return acceptance.\n\n## Data and access\n\n- Ticket attachment retention: 60 calendar days after closure; Exception: retained audit items follow their own documented retention requirement.\n- Supported attachment formats: PDF, PNG and plain text; Maximum attachment size: 10 MB per file; Exclusion: executable files.\n- Account administrators: may invite operators within the selected plan's named-operator allowance; Qualification: an invitation is not an active access grant.\n- Operator access removal: effective immediately after administrator confirmation; Requirement: outstanding ticket ownership must be reassigned.\n\n## Linked annex and unavailable facts\n\n- Remote-island quote details: see the [Meridian remote delivery annex](/en/agent-bench-meridian-remote-54c2a3bf); Qualification: the annex owns its own minimum-order amount and quote requirements.\n- International freight prices: not specified in this benchmark; Requirement: do not infer them from mainland fees.\n- Service uptime commitment: not specified in this benchmark; Qualification: first-response targets are not uptime commitments.\n- Real-world availability: not established by this fictional source; Scope: do not portray these entries as operative vendor offers.\n"
+      }
+    ],
+    "requestFacets": [
+      "Summarize the Meridian fictional policy, including every material restriction stated in this source."
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "substantive-0",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "USD 500"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Every entry is fictional and non-operative, not an offer or instruction for real orders. Prices use USD; working days exclude weekends and local public holidays. Shipping: stocked mainland orders take 3 working days; remote islands need a separate quote. Mainland delivery is free from USD 500, otherwise USD 12. Orders accepted after 14:00 local time enter processing next working day. Tracking is emailed after dispatch; label creation does not prove carrier collection. Hazardous goods are unavailable through standard delivery, and the ordinary lead time does not apply to them."
+        ]
+      },
+      {
+        "id": "substantive-1",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "30 calendar days"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Billing: approved business accounts have 30 calendar days; first-time customers prepay. Bank transfer and corporate card are accepted without a card surcharge; personal cards are unsupported. Listed USD prices exclude tax, calculated for the delivery jurisdiction. Notify invoice disputes within 10 calendar days of the invoice date, including invoice number and disputed line items."
+        ]
+      },
+      {
+        "id": "substantive-2",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "USD 120"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Pilot plans are fictional offers for one organization, with monthly fees excluding tax. Atlas/Boreal respectively cost USD 120/USD 180, include 30/80 tickets, have first-response targets of 48/24 supported hours and allow 2/5 named operators; both are pilot-only. Ticket allowances reset monthly without rollover. The targets measure first human response during supported hours, not resolution time. Additional tickets cost USD 4 above the selected allowance, with no unused-ticket credit. Plan changes start at the next monthly renewal; mid-cycle upgrades need a separate agreement. Eligibility requires one organization with one billing owner; reseller and multi-tenant deployments are excluded.",
+          "Pilot plans are fictional offers for one organization, with monthly fees excluding tax. Atlas/Boreal respectively cost USD 120/USD 180, include 30/80 tickets, have first-response targets of 48/24 supported hours and allow 2/5 named operators; both are pilot-only. Ticket allowances reset monthly without rollover. The targets measure first human response during supported hours, not resolution time. Additional tickets cost USD 4 above the selected allowance, with no unused-ticket credit. Plan changes start at the next monthly renewal; mid-cycle upgrades need a separate agreement. Eligibility requires one organization; reseller and multi-tenant deployments are excluded.",
+          "Pilot plans are fictional offers for one organization, with monthly fees excluding tax. Atlas/Boreal respectively cost USD 120/USD 180, include 30/80 tickets, have first-response targets of 48/24 supported hours and allow 2/5 named operators; both are pilot-only. Ticket allowances reset monthly without rollover. The targets measure first human response during supported hours. Additional tickets cost USD 4 above the selected allowance, with no unused-ticket credit. Plan changes start at the next monthly renewal; mid-cycle upgrades need a separate agreement. Eligibility requires one organization with one billing owner; reseller and multi-tenant deployments are excluded."
+        ]
+      },
+      {
+        "id": "substantive-3",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "Morgan Vale"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Account contacts are fictional and non-operative: Morgan Vale, account representative, morgan.vale@example.invalid, +1 202-555-0142; Avery Moss, support desk coordinator, avery.moss@example.invalid, +1 202-555-0178. Morgan handles commercial questions, not operational support escalation. Avery coordinates tickets but cannot approve invoice-term exceptions."
+        ]
+      },
+      {
+        "id": "substantive-4",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "09:00–17:00"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Support: weekdays 09:00–17:00 local time excluding local public holidays. Urgent escalations use the owned support email with ticket number and impact description. Sunday 02:00–04:00 local maintenance is a notice period, not a guaranteed outage. Tickets close after 7 calendar days without requester response, except unresolved confirmed defects remain open."
+        ]
+      },
+      {
+        "id": "substantive-5",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "21 calendar days"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Returns: within 21 calendar days after delivery, unused in original packaging; custom orders cannot be returned. Obtain authorization from the support desk, not the account representative, before sending goods. Notify shipping damage within 2 working days after delivery, preserving packaging and providing photographs. Refunds take 5 working days after return acceptance; carrier receipt alone does not establish acceptance."
+        ]
+      },
+      {
+        "id": "substantive-6",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "60 calendar days"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Data and access: attachments remain for 60 calendar days after ticket closure, except retained audit items follow their own documented retention requirement. PDF, PNG and plain text are supported up to 10 MB per file; executables are excluded. Administrators may invite operators within the selected named-operator allowance, but invitations are not active access grants. Removal is immediate after administrator confirmation, with outstanding ticket ownership reassigned."
+        ]
+      },
+      {
+        "id": "substantive-7",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "/en/agent-bench-meridian-remote-54c2a3bf"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "The Meridian remote delivery annex at /en/agent-bench-meridian-remote-54c2a3bf owns remote-island minimum-order amounts and quote requirements. International freight prices and service uptime commitments are unspecified; do not infer them from mainland fees or first-response targets. Real-world availability is not established, and these fictional entries must not be portrayed as operative offers."
+        ]
+      },
+      {
+        "id": "omit-billing-owner",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "one billing owner"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": []
+      },
+      {
+        "id": "omit-not-resolution",
+        "evidenceId": "selection-dense-restriction-challenge-page",
+        "sourceRevision": "selection-dense-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-dense-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "not resolution time"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": []
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "complete-summary",
+        "category": "faithful concise complete summary",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Every entry is fictional and non-operative, not an offer or instruction for real orders. Prices use USD; working days exclude weekends and local public holidays. Shipping: stocked mainland orders take 3 working days; remote islands need a separate quote. Mainland delivery is free from USD 500, otherwise USD 12. Orders accepted after 14:00 local time enter processing next working day. Tracking is emailed after dispatch; label creation does not prove carrier collection. Hazardous goods are unavailable through standard delivery, and the ordinary lead time does not apply to them."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Billing: approved business accounts have 30 calendar days; first-time customers prepay. Bank transfer and corporate card are accepted without a card surcharge; personal cards are unsupported. Listed USD prices exclude tax, calculated for the delivery jurisdiction. Notify invoice disputes within 10 calendar days of the invoice date, including invoice number and disputed line items."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Pilot plans are fictional offers for one organization, with monthly fees excluding tax. Atlas/Boreal respectively cost USD 120/USD 180, include 30/80 tickets, have first-response targets of 48/24 supported hours and allow 2/5 named operators; both are pilot-only. Ticket allowances reset monthly without rollover. The targets measure first human response during supported hours, not resolution time. Additional tickets cost USD 4 above the selected allowance, with no unused-ticket credit. Plan changes start at the next monthly renewal; mid-cycle upgrades need a separate agreement. Eligibility requires one organization with one billing owner; reseller and multi-tenant deployments are excluded."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Account contacts are fictional and non-operative: Morgan Vale, account representative, morgan.vale@example.invalid, +1 202-555-0142; Avery Moss, support desk coordinator, avery.moss@example.invalid, +1 202-555-0178. Morgan handles commercial questions, not operational support escalation. Avery coordinates tickets but cannot approve invoice-term exceptions."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Support: weekdays 09:00–17:00 local time excluding local public holidays. Urgent escalations use the owned support email with ticket number and impact description. Sunday 02:00–04:00 local maintenance is a notice period, not a guaranteed outage. Tickets close after 7 calendar days without requester response, except unresolved confirmed defects remain open."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Returns: within 21 calendar days after delivery, unused in original packaging; custom orders cannot be returned. Obtain authorization from the support desk, not the account representative, before sending goods. Notify shipping damage within 2 working days after delivery, preserving packaging and providing photographs. Refunds take 5 working days after return acceptance; carrier receipt alone does not establish acceptance."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Data and access: attachments remain for 60 calendar days after ticket closure, except retained audit items follow their own documented retention requirement. PDF, PNG and plain text are supported up to 10 MB per file; executables are excluded. Administrators may invite operators within the selected named-operator allowance, but invitations are not active access grants. Removal is immediate after administrator confirmation, with outstanding ticket ownership reassigned."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "The Meridian remote delivery annex at /en/agent-bench-meridian-remote-54c2a3bf owns remote-island minimum-order amounts and quote requirements. International freight prices and service uptime commitments are unspecified; do not infer them from mainland fees or first-response targets. Real-world availability is not established, and these fictional entries must not be portrayed as operative offers."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "complete-original",
+        "category": "faithful full-content control with plain headings",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Meridian dense QA policies — fictional and non-operative\n\nEvery entry is a fictional benchmark policy, not an operative offer or instruction for real orders. Prices use USD. Working days exclude weekends and the local public holidays. Source-stated restrictions remain attached to the affected policy.\n\nShipping\n\n- Standard stocked-item lead time: 3 working days; Scope: in-stock mainland orders only; Exception: remote islands require a separate quote.\n- Free-delivery threshold: USD 500; Below-threshold delivery fee: USD 12; Scope: mainland orders only.\n- Order cutoff: 14:00 local time; Consequence: orders accepted after the cutoff enter processing on the next working day.\n- Tracking notification: emailed after dispatch; Qualification: a label-created notification does not prove carrier collection.\n- Hazardous goods: unavailable through standard delivery; Requirement: do not apply the ordinary lead time to hazardous goods.\n\nBilling\n\n- Standard invoice term: 30 calendar days; Scope: approved business accounts only; Exception: first-time customers prepay.\n- Accepted payment methods: bank transfer and corporate card; Card surcharge: none; Qualification: personal cards are not supported.\n- Currency: USD; Tax handling: listed prices exclude tax; Requirement: tax is calculated for the delivery jurisdiction.\n- Disputed invoice notification: within 10 calendar days of invoice date; Requirement: include invoice number and disputed line items.\n\nPilot plans\n\nBoth plans are fictional pilot offers for one organization. Monthly fees exclude tax. Ticket allowances reset monthly and do not roll over. Response targets measure the first human response during supported hours, not resolution time.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Included tickets | 30 | 80 |\n| First-response target | 48 supported hours | 24 supported hours |\n| Named operators | 2 | 5 |\n| Status | Pilot only | Pilot only |\n\n- Additional ticket fee: USD 4; Scope: tickets exceeding the selected plan's allowance; Qualification: no unused-ticket credit.\n- Plan changes: effective at the next monthly renewal; Exception: mid-cycle upgrades require a separate agreement.\n- Pilot eligibility: one organization with one billing owner; Exclusion: reseller and multi-tenant deployments.\n\nAccount contacts\n\n- Name: Morgan Vale; Role: account representative; Email: morgan.vale@example.invalid; Phone: +1 202-555-0142; Qualification: fictional and non-operative.\n- Name: Avery Moss; Role: support desk coordinator; Email: avery.moss@example.invalid; Phone: +1 202-555-0178; Qualification: fictional and non-operative.\n- Account ownership: Morgan handles commercial account questions; Scope: Morgan is not the operational support escalation contact.\n- Support ownership: Avery handles ticket coordination; Scope: Avery cannot approve invoice-term exceptions.\n\nSupport\n\n- Supported hours: weekdays 09:00–17:00 local time; Exception: local public holidays are excluded.\n- Urgent escalation channel: the owned support email; Requirement: include the ticket number and impact description.\n- Maintenance window: Sunday 02:00–04:00 local time; Qualification: the window is a notice period, not a guaranteed outage.\n- Ticket closure: after 7 calendar days without a requester response; Exception: unresolved confirmed defects remain open.\n\nReturns\n\n- Returns window: 21 calendar days after delivery; Requirement: unused goods in original packaging; Exception: custom orders cannot be returned.\n- Return authorization: required before sending goods; Scope: obtain authorization from the support desk, not the account representative.\n- Shipping damage notification: within 2 working days after delivery; Requirement: preserve packaging and provide photographs.\n- Refund timing: 5 working days after acceptance of the return; Qualification: carrier receipt alone does not establish return acceptance.\n\nData and access\n\n- Ticket attachment retention: 60 calendar days after closure; Exception: retained audit items follow their own documented retention requirement.\n- Supported attachment formats: PDF, PNG and plain text; Maximum attachment size: 10 MB per file; Exclusion: executable files.\n- Account administrators: may invite operators within the selected plan's named-operator allowance; Qualification: an invitation is not an active access grant.\n- Operator access removal: effective immediately after administrator confirmation; Requirement: outstanding ticket ownership must be reassigned.\n\nLinked annex and unavailable facts\n\n- Remote-island quote details: see the [Meridian remote delivery annex](/en/agent-bench-meridian-remote-54c2a3bf); Qualification: the annex owns its own minimum-order amount and quote requirements.\n- International freight prices: not specified in this benchmark; Requirement: do not infer them from mainland fees.\n- Service uptime commitment: not specified in this benchmark; Qualification: first-response targets are not uptime commitments.\n- Real-world availability: not established by this fictional source; Scope: do not portray these entries as operative vendor offers.\n"
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omit-billing-owner",
+        "category": "single material restriction omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Every entry is fictional and non-operative, not an offer or instruction for real orders. Prices use USD; working days exclude weekends and local public holidays. Shipping: stocked mainland orders take 3 working days; remote islands need a separate quote. Mainland delivery is free from USD 500, otherwise USD 12. Orders accepted after 14:00 local time enter processing next working day. Tracking is emailed after dispatch; label creation does not prove carrier collection. Hazardous goods are unavailable through standard delivery, and the ordinary lead time does not apply to them."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Billing: approved business accounts have 30 calendar days; first-time customers prepay. Bank transfer and corporate card are accepted without a card surcharge; personal cards are unsupported. Listed USD prices exclude tax, calculated for the delivery jurisdiction. Notify invoice disputes within 10 calendar days of the invoice date, including invoice number and disputed line items."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Pilot plans are fictional offers for one organization, with monthly fees excluding tax. Atlas/Boreal respectively cost USD 120/USD 180, include 30/80 tickets, have first-response targets of 48/24 supported hours and allow 2/5 named operators; both are pilot-only. Ticket allowances reset monthly without rollover. The targets measure first human response during supported hours, not resolution time. Additional tickets cost USD 4 above the selected allowance, with no unused-ticket credit. Plan changes start at the next monthly renewal; mid-cycle upgrades need a separate agreement. Eligibility requires one organization; reseller and multi-tenant deployments are excluded."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Account contacts are fictional and non-operative: Morgan Vale, account representative, morgan.vale@example.invalid, +1 202-555-0142; Avery Moss, support desk coordinator, avery.moss@example.invalid, +1 202-555-0178. Morgan handles commercial questions, not operational support escalation. Avery coordinates tickets but cannot approve invoice-term exceptions."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Support: weekdays 09:00–17:00 local time excluding local public holidays. Urgent escalations use the owned support email with ticket number and impact description. Sunday 02:00–04:00 local maintenance is a notice period, not a guaranteed outage. Tickets close after 7 calendar days without requester response, except unresolved confirmed defects remain open."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Returns: within 21 calendar days after delivery, unused in original packaging; custom orders cannot be returned. Obtain authorization from the support desk, not the account representative, before sending goods. Notify shipping damage within 2 working days after delivery, preserving packaging and providing photographs. Refunds take 5 working days after return acceptance; carrier receipt alone does not establish acceptance."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Data and access: attachments remain for 60 calendar days after ticket closure, except retained audit items follow their own documented retention requirement. PDF, PNG and plain text are supported up to 10 MB per file; executables are excluded. Administrators may invite operators within the selected named-operator allowance, but invitations are not active access grants. Removal is immediate after administrator confirmation, with outstanding ticket ownership reassigned."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "The Meridian remote delivery annex at /en/agent-bench-meridian-remote-54c2a3bf owns remote-island minimum-order amounts and quote requirements. International freight prices and service uptime commitments are unspecified; do not infer them from mainland fees or first-response targets. Real-world availability is not established, and these fictional entries must not be portrayed as operative offers."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omit-not-resolution",
+        "category": "single material restriction omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Every entry is fictional and non-operative, not an offer or instruction for real orders. Prices use USD; working days exclude weekends and local public holidays. Shipping: stocked mainland orders take 3 working days; remote islands need a separate quote. Mainland delivery is free from USD 500, otherwise USD 12. Orders accepted after 14:00 local time enter processing next working day. Tracking is emailed after dispatch; label creation does not prove carrier collection. Hazardous goods are unavailable through standard delivery, and the ordinary lead time does not apply to them."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Billing: approved business accounts have 30 calendar days; first-time customers prepay. Bank transfer and corporate card are accepted without a card surcharge; personal cards are unsupported. Listed USD prices exclude tax, calculated for the delivery jurisdiction. Notify invoice disputes within 10 calendar days of the invoice date, including invoice number and disputed line items."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Pilot plans are fictional offers for one organization, with monthly fees excluding tax. Atlas/Boreal respectively cost USD 120/USD 180, include 30/80 tickets, have first-response targets of 48/24 supported hours and allow 2/5 named operators; both are pilot-only. Ticket allowances reset monthly without rollover. The targets measure first human response during supported hours. Additional tickets cost USD 4 above the selected allowance, with no unused-ticket credit. Plan changes start at the next monthly renewal; mid-cycle upgrades need a separate agreement. Eligibility requires one organization with one billing owner; reseller and multi-tenant deployments are excluded."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Account contacts are fictional and non-operative: Morgan Vale, account representative, morgan.vale@example.invalid, +1 202-555-0142; Avery Moss, support desk coordinator, avery.moss@example.invalid, +1 202-555-0178. Morgan handles commercial questions, not operational support escalation. Avery coordinates tickets but cannot approve invoice-term exceptions."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Support: weekdays 09:00–17:00 local time excluding local public holidays. Urgent escalations use the owned support email with ticket number and impact description. Sunday 02:00–04:00 local maintenance is a notice period, not a guaranteed outage. Tickets close after 7 calendar days without requester response, except unresolved confirmed defects remain open."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Returns: within 21 calendar days after delivery, unused in original packaging; custom orders cannot be returned. Obtain authorization from the support desk, not the account representative, before sending goods. Notify shipping damage within 2 working days after delivery, preserving packaging and providing photographs. Refunds take 5 working days after return acceptance; carrier receipt alone does not establish acceptance."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "Data and access: attachments remain for 60 calendar days after ticket closure, except retained audit items follow their own documented retention requirement. PDF, PNG and plain text are supported up to 10 MB per file; executables are excluded. Administrators may invite operators within the selected named-operator allowance, but invitations are not active access grants. Removal is immediate after administrator confirmation, with outstanding ticket ownership reassigned."
+            },
+            {
+              "evidenceId": "selection-dense-restriction-challenge-page",
+              "sourceRevision": "selection-dense-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-dense-restriction-challenge",
+              "statement": "The Meridian remote delivery annex at /en/agent-bench-meridian-remote-54c2a3bf owns remote-island minimum-order amounts and quote requirements. International freight prices and service uptime commitments are unspecified; do not infer them from mainland fees or first-response targets. Real-world availability is not established, and these fictional entries must not be portrayed as operative offers."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
+  },
+  {
+    "id": "selection-narrative-restriction-challenge",
+    "family": "selection-narrative-restriction-challenge",
+    "split": "selection",
+    "provenance": {
+      "kind": "synthetic",
+      "adjudication": "Frozen authored source, faithful complete controls and single-restriction deletions; labels are independent human-policy expectations, not native semantic proof. Original read is unchanged for every variant."
+    },
+    "userRequest": "Summarize the North Quay fictional loan program, including every material restriction stated in this source.",
+    "sources": [
+      {
+        "evidenceId": "selection-narrative-restriction-challenge-page",
+        "sourceRevision": "selection-narrative-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-narrative-restriction-challenge",
+        "readId": "fixture:selection-narrative-restriction-challenge",
+        "context": "the North Quay fictional loan program",
+        "text": "This is a fictional library-loan exercise, not an operative lending service. North Quay lends telescope kits for seven calendar days. A borrower must be an adult resident and have a current library card. The card holder must collect the kit in person; reservations cannot be collected by a proxy. Reservations are held for two opening days, not two calendar days. A kit includes a mount and eyepiece. Each borrower may hold one kit at a time. School-group loans are outside this program. Returns go to the staffed desk, never the book drop. The deposit is USD 40 and is refundable after the desk checks that the complete kit is undamaged; leaving a kit in the return bin does not establish inspection. A reservation confirms a place in the queue, not that a kit is available. The library may recall a kit before the loan ends for a safety inspection. Training appointments are optional and do not certify the borrower as a telescope operator.",
+        "kind": "source-read",
+        "complete": true
+      }
+    ],
+    "sourceReads": [
+      {
+        "evidenceId": "selection-narrative-restriction-challenge-page",
+        "sourceRevision": "selection-narrative-restriction-challenge-r1",
+        "readId": "fixture:selection-narrative-restriction-challenge",
+        "title": "the North Quay fictional loan program",
+        "representation": "text",
+        "complete": true,
+        "source": "This is a fictional library-loan exercise, not an operative lending service. North Quay lends telescope kits for seven calendar days. A borrower must be an adult resident and have a current library card. The card holder must collect the kit in person; reservations cannot be collected by a proxy. Reservations are held for two opening days, not two calendar days. A kit includes a mount and eyepiece. Each borrower may hold one kit at a time. School-group loans are outside this program. Returns go to the staffed desk, never the book drop. The deposit is USD 40 and is refundable after the desk checks that the complete kit is undamaged; leaving a kit in the return bin does not establish inspection. A reservation confirms a place in the queue, not that a kit is available. The library may recall a kit before the loan ends for a safety inspection. Training appointments are optional and do not certify the borrower as a telescope operator."
+      }
+    ],
+    "requestFacets": [
+      "Summarize the North Quay fictional loan program, including every material restriction stated in this source."
+    ],
+    "observations": [],
+    "repairFeedback": "",
+    "details": [
+      {
+        "id": "substantive-0",
+        "evidenceId": "selection-narrative-restriction-challenge-page",
+        "sourceRevision": "selection-narrative-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-narrative-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "seven calendar days"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "This fictional, non-operative library-loan exercise lends North Quay telescope kits for seven calendar days to adult residents with a current library card. The card holder collects in person; proxy collection is not permitted. Reservations last two opening days, not calendar days. Each kit has a mount and eyepiece; borrowers may hold one kit at a time, and school-group loans are excluded.",
+          "This fictional, non-operative library-loan exercise lends North Quay telescope kits for seven calendar days to adult residents with a current library card. Reservations last two opening days, not calendar days. Each kit has a mount and eyepiece; borrowers may hold one kit at a time, and school-group loans are excluded."
+        ]
+      },
+      {
+        "id": "substantive-1",
+        "evidenceId": "selection-narrative-restriction-challenge-page",
+        "sourceRevision": "selection-narrative-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-narrative-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "USD 40"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": [
+          "Return kits to the staffed desk, not the book drop. The USD 40 deposit is refunded only after desk inspection confirms the complete kit is undamaged; a return-bin drop does not establish inspection. A reservation confirms queue placement, not kit availability. Kits may be recalled early for safety inspection. Optional training appointments do not certify borrowers as telescope operators.",
+          "Return kits to the staffed desk, not the book drop. The USD 40 deposit is refunded only after desk inspection confirms the complete kit is undamaged; a return-bin drop does not establish inspection. A reservation confirms queue placement. Kits may be recalled early for safety inspection. Optional training appointments do not certify borrowers as telescope operators."
+        ]
+      },
+      {
+        "id": "omit-no-proxy",
+        "evidenceId": "selection-narrative-restriction-challenge-page",
+        "sourceRevision": "selection-narrative-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-narrative-restriction-challenge",
+        "facet": 0,
+        "allOf": [],
+        "exact": [
+          "proxy"
+        ],
+        "allowedParaphrases": [],
+        "allowedAssertions": []
+      },
+      {
+        "id": "omit-queue-not-availability",
+        "evidenceId": "selection-narrative-restriction-challenge-page",
+        "sourceRevision": "selection-narrative-restriction-challenge-r1",
+        "unitId": "read:fixture:selection-narrative-restriction-challenge",
+        "facet": 0,
+        "allOf": ["(?:not kit availability|not that a kit is available)"],
+        "exact": [],
+        "allowedParaphrases": [],
+        "allowedAssertions": []
+      }
+    ],
+    "expectedUnresolvedFacets": [],
+    "variants": [
+      {
+        "id": "complete-summary",
+        "category": "faithful concise complete summary",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-narrative-restriction-challenge-page",
+              "sourceRevision": "selection-narrative-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-narrative-restriction-challenge",
+              "statement": "This fictional, non-operative library-loan exercise lends North Quay telescope kits for seven calendar days to adult residents with a current library card. The card holder collects in person; proxy collection is not permitted. Reservations last two opening days, not calendar days. Each kit has a mount and eyepiece; borrowers may hold one kit at a time, and school-group loans are excluded."
+            },
+            {
+              "evidenceId": "selection-narrative-restriction-challenge-page",
+              "sourceRevision": "selection-narrative-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-narrative-restriction-challenge",
+              "statement": "Return kits to the staffed desk, not the book drop. The USD 40 deposit is refunded only after desk inspection confirms the complete kit is undamaged; a return-bin drop does not establish inspection. A reservation confirms queue placement, not kit availability. Kits may be recalled early for safety inspection. Optional training appointments do not certify borrowers as telescope operators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "complete-original",
+        "category": "faithful complete source control",
+        "expected": "accept",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-narrative-restriction-challenge-page",
+              "sourceRevision": "selection-narrative-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-narrative-restriction-challenge",
+              "statement": "This is a fictional library-loan exercise, not an operative lending service. North Quay lends telescope kits for seven calendar days. A borrower must be an adult resident and have a current library card. The card holder must collect the kit in person; reservations cannot be collected by a proxy. Reservations are held for two opening days, not two calendar days. A kit includes a mount and eyepiece. Each borrower may hold one kit at a time. School-group loans are outside this program. Returns go to the staffed desk, never the book drop. The deposit is USD 40 and is refundable after the desk checks that the complete kit is undamaged; leaving a kit in the return bin does not establish inspection. A reservation confirms a place in the queue, not that a kit is available. The library may recall a kit before the loan ends for a safety inspection. Training appointments are optional and do not certify the borrower as a telescope operator."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omit-no-proxy",
+        "category": "single material restriction omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-narrative-restriction-challenge-page",
+              "sourceRevision": "selection-narrative-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-narrative-restriction-challenge",
+              "statement": "This fictional, non-operative library-loan exercise lends North Quay telescope kits for seven calendar days to adult residents with a current library card. Reservations last two opening days, not calendar days. Each kit has a mount and eyepiece; borrowers may hold one kit at a time, and school-group loans are excluded."
+            },
+            {
+              "evidenceId": "selection-narrative-restriction-challenge-page",
+              "sourceRevision": "selection-narrative-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-narrative-restriction-challenge",
+              "statement": "Return kits to the staffed desk, not the book drop. The USD 40 deposit is refunded only after desk inspection confirms the complete kit is undamaged; a return-bin drop does not establish inspection. A reservation confirms queue placement, not kit availability. Kits may be recalled early for safety inspection. Optional training appointments do not certify borrowers as telescope operators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      },
+      {
+        "id": "omit-queue-not-availability",
+        "category": "single material restriction omission",
+        "expected": "incomplete",
+        "answer": {
+          "claims": [
+            {
+              "evidenceId": "selection-narrative-restriction-challenge-page",
+              "sourceRevision": "selection-narrative-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-narrative-restriction-challenge",
+              "statement": "This fictional, non-operative library-loan exercise lends North Quay telescope kits for seven calendar days to adult residents with a current library card. The card holder collects in person; proxy collection is not permitted. Reservations last two opening days, not calendar days. Each kit has a mount and eyepiece; borrowers may hold one kit at a time, and school-group loans are excluded."
+            },
+            {
+              "evidenceId": "selection-narrative-restriction-challenge-page",
+              "sourceRevision": "selection-narrative-restriction-challenge-r1",
+              "unitId": "read:fixture:selection-narrative-restriction-challenge",
+              "statement": "Return kits to the staffed desk, not the book drop. The USD 40 deposit is refunded only after desk inspection confirms the complete kit is undamaged; a return-bin drop does not establish inspection. A reservation confirms queue placement. Kits may be recalled early for safety inspection. Optional training appointments do not certify borrowers as telescope operators."
+            }
+          ],
+          "unresolvedFacets": [],
+          "observations": [],
+          "recommendations": ""
+        }
+      }
+    ]
   }
 ]

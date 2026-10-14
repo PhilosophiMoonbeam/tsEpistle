@@ -19,7 +19,6 @@ import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/pr
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
 import { unpackWikiReadTexts } from '../../agents/providers/wiki-read-transport.ts'
-import { wikiSynthesisSourceRef } from '../../agents/providers/wiki-synthesis.ts'
 import { decodeWikiVerificationSources } from '../../agents/providers/wiki-verification.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
 import { PdfFixtureDocument } from './pdf-fixture.ts'
@@ -625,21 +624,14 @@ describe('Ax agent engine', () => {
     const page = questionReadPage(79, '3', 'Meridian dense QA policies — fictional and non-operative', 'owned79', 'Policies', 'policies', '')
     page.content = content
     let supportRequests = 0
-    let selectedRef = ''
     const decisions = sourceReadDecisions('supports above floor', input => {
       expect(fixture.text.mock.calls).toHaveLength(0)
       supportRequests++
       const state = JSON.parse(input.state as string)
-      const sources = decodeWikiVerificationSources(state.sources, state.readTexts)
-      expect(sources).toEqual([expect.objectContaining({
-        evidenceId: 'page:79:revision:3', sourceRevision: '3',
-        kind: 'source-read', complete: true, text: content, closure: null
+      expect(state.evidence).toEqual([expect.objectContaining({
+        evidenceId: 'page:79:revision:3', sourceRevision: '3'
       })])
-      const verified = sources[0]!
-      if (verified.kind !== 'source-read') throw new Error('Expected the complete original read proof')
-      expect(verified.unitId).toBe(`read:${verified.readId}`)
-      expect(wikiSynthesisSourceRef(verified)).toBe(selectedRef)
-      expect(state.candidate).toEqual([expect.objectContaining({ statement })])
+      expect(state.candidate).toEqual([statement])
     })
     const fixture = questionFixture('native', [
       { calls: [{ id: 'whole-policy-read', name: 'pages.get', arguments: { id: 79 } }] },
@@ -648,7 +640,6 @@ describe('Ax agent engine', () => {
         expect(sources).toHaveLength(1)
         const source = sources[0]!
         expect(source.text).toBe(content)
-        selectedRef = source.sourceRef
         return synthesisFixtureAnswer(input, { claims: [{ ...source, statement }] })
       } }
     ], () => page, [], {}, {}, decisions)
@@ -677,9 +668,9 @@ describe('Ax agent engine', () => {
       expect(fixture.text.mock.calls).toHaveLength(0)
       supportRequests++
       const state = JSON.parse(input.state as string)
-      expect(decodeWikiVerificationSources(state.sources, state.readTexts)).toEqual([
-        expect.objectContaining({ evidenceId: 'page:76:revision:1', text: page.content, kind: 'source-read', closure: null })
-      ])
+      expect(state.evidence).toEqual([expect.objectContaining({
+        evidenceId: 'page:76:revision:1', sourceRevision: '1'
+      })])
     })
     const answer = (input: Readonly<AxChatRequest>) => synthesisFixtureAnswer(input, {
       claims: [{ ...synthesisSourcesFromRequest(input)[0]!, statement }]
@@ -714,11 +705,9 @@ describe('Ax agent engine', () => {
     const page = questionReadPage(79, '3', 'Meridian dense QA policies — fictional and non-operative', 'owned79', 'Policies', 'policies', '')
     page.content = await readFile(new URL('./fixtures/owned79-dense-policy.txt', import.meta.url), 'utf8')
     let supportRequests = 0
-    const decisions = sourceReadDecisions('contradicts', input => {
+    const decisions = sourceReadDecisions('contradicts', () => {
       expect(fixture.text.mock.calls).toHaveLength(0)
       supportRequests++
-      const state = JSON.parse(input.state as string)
-      expect(decodeWikiVerificationSources(state.sources, state.readTexts)[0]!.text).toBe(page.content)
     })
     const answer = (input: Readonly<AxChatRequest>) => synthesisFixtureAnswer(input, {
       claims: [{ ...synthesisSourcesFromRequest(input)[0]!, statement }]
@@ -745,8 +734,7 @@ describe('Ax agent engine', () => {
         expect(fixture.text.mock.calls).toHaveLength(0)
         supportRequests++
         const state = JSON.parse(input.state as string)
-        expect(state.candidate).toHaveLength(2)
-        expect(decodeWikiVerificationSources(state.sources, state.readTexts)).toHaveLength(1)
+        expect(state.candidate).toEqual([supported, rejected])
       })
       const answer = (input: Readonly<AxChatRequest>) => {
         const source = synthesisSourcesFromRequest(input)[0]!
@@ -1533,13 +1521,9 @@ describe('Ax agent engine', () => {
     const content = `# Deployment\n\n## Cases after audit\n\n${kind === 'list-item' ? '- ' : ''}${physical}\n\nThe warehouse holds 90 pallets.`
     const statement = 'The deployment ships 20 cases after audit, with elapsed times stated as estimates rather than guarantees.'
     let supportRequests = 0
-    const decisions = sourceReadDecisions('supports', input => {
+    const decisions = sourceReadDecisions('supports', () => {
       expect(fixture.text.mock.calls).toHaveLength(0)
       supportRequests++
-      const state = JSON.parse(input.state as string)
-      expect(decodeWikiVerificationSources(state.sources, state.readTexts)).toEqual([
-        expect.objectContaining({ text: content, kind: 'source-read', closure: null })
-      ])
     })
     const fixture = typedRootFixture(input => {
       const sources = synthesisSourcesFromRequest(input)
@@ -3589,7 +3573,14 @@ describe('Ax agent engine', () => {
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => rootFixtureResponse(input, responses))
     const factory = {
-      create: async () => ({ service: rootFixtureService(chat, {}), capabilities: {
+      create: async () => ({ service: rootFixtureService(chat, { coverage: async () => {
+        expect(text.mock.calls).toHaveLength(0)
+        const firstAttempt = coverageRequests++ === 0
+        return { results: [{ index: 0, content: JSON.stringify({
+          verdict: firstAttempt ? 'incomplete' : 'complete',
+          feedback: firstAttempt ? 'Include the requested regional dealer eligibility section.' : ''
+        }), finishReason: 'stop' }] }
+      } }), capabilities: {
         streaming: false,
         toolCalling: 'native',
         parallelToolCalls: true,
@@ -3632,24 +3623,7 @@ describe('Ax agent engine', () => {
       void args
     })
     let coverageRequests = 0
-    const decisionProviders = {
-      ...fixtureDecisionProviders,
-      async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> {
-        const decision = await fixtureDecisionProviders.decideBatch(input, options)
-        const coverageIds = Object.entries(input.questions)
-          .filter(([, question]) => Object.hasOwn(question.criteria, 'complete')).map(([id]) => id)
-        if (coverageIds.length === 0) return decision
-        expect(text.mock.calls).toHaveLength(0)
-        const choice = coverageRequests++ === 0 ? 'incomplete' : 'complete'
-        const answers = { ...decision.answers }
-        for (const id of coverageIds) answers[id] = {
-          choice, confidence: 1,
-          probabilities: { complete: choice === 'complete' ? 1 : 0, incomplete: choice === 'incomplete' ? 1 : 0, not_established: 0 }
-        }
-        return { ...decision, answers }
-      }
-    }
-    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders }).execute(
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
       {
         ...request(new AbortController().signal),
         messages: [{ role: 'user', content: 'Summarize the current Wiki page and cite the key sections.' }]
@@ -4664,7 +4638,7 @@ describe('Ax agent engine', () => {
       ],
       nextCursor: 'related-cursor-2'
     }
-    const releaseChecklist = questionReadPage(
+    const releaseChecklist = { ...questionReadPage(
       21,
       '11',
       'Release Checklist',
@@ -4672,7 +4646,7 @@ describe('Ax agent engine', () => {
       'Backup readiness',
       'backup-readiness',
       'Before deployment, verify the backup is current.'
-    )
+    ), knowledge: questionCandidate(21, '11', 'Release Checklist').knowledge }
     const queueOperations = questionReadPage(
       23,
       '1',
@@ -5328,6 +5302,21 @@ describe('Ax agent engine', () => {
     expect(fixture.invoke.mock.calls.map(([name, input]) => ({ name, input }))).toEqual([{ name: 'pages.getVersion', input: { pageId: 42, versionId: 6 } }])
     expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.search')).toBe(false)
     expect(fixture.invoke.mock.calls.some(([name]) => name === 'pages.get')).toBe(false)
+    const projectedRead = questionRecord(providerActionResult(fixture.providerCalls, mode, 'read-version-6', AGENT_TOOL_NAMES['pages.getVersion']))
+    expect(projectedRead).toMatchObject({
+      id: historicalPage.id,
+      locale: historicalPage.locale,
+      path: historicalPage.path,
+      versionId: historicalPage.versionId,
+      versionDate: historicalPage.versionDate,
+      sourceRevision: historicalPage.sourceRevision,
+      title: historicalPage.title,
+      contentType: historicalPage.contentType,
+      content: historicalPage.content,
+      updatedAt: historicalPage.updatedAt,
+      citation: historicalPage.citation
+    })
+    expect(projectedRead).not.toHaveProperty('citationSections')
     expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
     expect(fixture.event.mock.calls.filter(([type]) => type === 'model.turn').at(-1)?.[1]).toMatchObject({
       performance: { temporalTarget: 'historical', facetCoverage: { requested: 1, supported: 1, unavailable: 0, unread: 0 } }
@@ -5484,8 +5473,12 @@ describe('Ax agent engine', () => {
         const supportIds = Object.entries(input.questions)
           .filter(([, question]) => Object.hasOwn(question.criteria, 'supports')).map(([id]) => id)
         if (supportIds.length === 0) return decision
-        const state = JSON.parse(input.state as string) as { candidate: readonly { evidenceId: string; statement: string }[] }
-        if (!state.candidate.some(claim => claim.evidenceId === 'page:42:revision:30' && claim.statement === 'Quartz migration was approved.'))
+        const state = JSON.parse(input.state as string) as {
+          candidate: readonly (string | { evidenceId: string; statement: string })[]
+          evidence: readonly { evidenceId: string }[]
+        }
+        if (!state.evidence.some(read => read.evidenceId === 'page:42:revision:30') ||
+          !state.candidate.some(claim => (typeof claim === 'string' ? claim : claim.statement) === 'Quartz migration was approved.'))
           return decision
         const answers = { ...decision.answers }
         for (const id of supportIds) answers[id] = {
@@ -6862,7 +6855,8 @@ describe('Ax agent engine', () => {
       contentType: 'markdown',
       content: 'Alpha is ready.',
       citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
-      citationSections: []
+      citationSections: [],
+      knowledge: { schemaVersion: 1, sourceRevision: 'rev-1', state: 'complete', summary: 'Alpha retrieval hint.' }
     }))
     const actions: AgentActionSessionProvider = {
       open: async () => ({
@@ -6918,6 +6912,11 @@ describe('Ax agent engine', () => {
       expect.stringMatching(new RegExp(`^sa_${subagentRunId}_[a-f0-9]{24}$`, 'u'))
     )
     expect(invoke).toHaveBeenCalledOnce()
+    expect(providerActionResult(calls, mode, 'child-read', AGENT_TOOL_NAMES['pages.get'])).toMatchObject({
+      content: 'Alpha is ready.',
+      citationSections: [],
+      knowledge: { summary: 'Alpha retrieval hint.' }
+    })
     expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(packet)
     if (mode === 'native') {
       expect(calls[0]?.functions?.map(functionCall => functionCall.name)).toEqual(expect.arrayContaining(['wiki_get_page', 'wiki_enable_tools']))
@@ -8875,20 +8874,30 @@ describe('request-derived evidence coverage', () => {
       decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]): Promise<DecisionBatchResult> => {
         await options?.onPreDispatch?.()
         const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
-        const sources = decodeWikiVerificationSources(
-          state.sources as Parameters<typeof decodeWikiVerificationSources>[0],
-          state.readTexts as readonly string[]
-        )
-        const evidenceReads = state.evidence as readonly {
-          readonly readId: string
-          readonly source: Parameters<typeof unpackWikiReadTexts>[0]['sources'][number]
-        }[]
-        const physicalReadSources = [...new Map(evidenceReads.map(read => [read.readId, read.source] as const)).values()]
-        nativeCalls.push({
-          owners: [...new Set(sources.map(source => source.evidenceId))],
-          originalReads: unpackWikiReadTexts({ texts: state.readTexts as readonly string[], sources: physicalReadSources }),
-          projectionTexts: sources.map(source => source.text)
-        })
+        if (typeof state.source === 'string') {
+          const evidenceReads = state.evidence as readonly { readonly evidenceId: string }[]
+          const originalSource = state.source
+          nativeCalls.push({
+            owners: [...new Set(evidenceReads.map(read => read.evidenceId))],
+            originalReads: [originalSource],
+            projectionTexts: [originalSource]
+          })
+        } else {
+          const sources = decodeWikiVerificationSources(
+            state.sources as Parameters<typeof decodeWikiVerificationSources>[0],
+            state.readTexts as readonly string[]
+          )
+          const evidenceReads = state.evidence as readonly {
+            readonly readId: string
+            readonly source: Parameters<typeof unpackWikiReadTexts>[0]['sources'][number]
+          }[]
+          const physicalReadSources = [...new Map(evidenceReads.map(read => [read.readId, read.source] as const)).values()]
+          nativeCalls.push({
+            owners: [...new Set(sources.map(source => source.evidenceId))],
+            originalReads: unpackWikiReadTexts({ texts: state.readTexts as readonly string[], sources: physicalReadSources }),
+            projectionTexts: sources.map(source => source.text)
+          })
+        }
         const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
         for (const [id, question] of Object.entries(nativeRequest.questions)) {
           const choice = Object.hasOwn(question.criteria, 'supports') ? mode === 'complete quotations' ? 'supports' : 'not_supported'
@@ -9555,13 +9564,16 @@ describe('request-derived evidence coverage', () => {
           responseFormat: { type: 'json_object' as const }
         } as Readonly<AxChatRequest>
         const synthesizing = synthesisSourcesFromRequest(synthesisRequest).length > 0
-        const parts = synthesizing
-          ? [{
-              text: sourceBoundAnswer(synthesisRequest, [
-                { evidenceId: 'page:42:revision:3:section:1', sourceText: fact, statement: fact }
-              ]),
-              thoughtSignature: 'signed-answer'
-            }]
+        const auditing = body.systemInstruction?.parts.some(part => 'text' in part && part.text.includes('Audit collective coverage')) === true
+        const parts = auditing
+          ? [{ text: JSON.stringify({ verdict: 'complete', feedback: '' }) }]
+          : synthesizing
+            ? [{
+                text: sourceBoundAnswer(synthesisRequest, [
+                  { evidenceId: 'page:42:revision:3:section:1', sourceText: fact, statement: fact }
+                ]),
+                thoughtSignature: 'signed-answer'
+              }]
           : readRequested
             ? [{ functionCall: { id: 'finish-alpha', name: 'wiki_finish_collection', args: {} }, thoughtSignature: 'signed-finish' }]
             : [
