@@ -79,7 +79,7 @@ for (const statement of compiledScript.scriptSetupAst) {
 scriptParts.push(script.slice(previousImportEnd))
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptParts.join(''))
 const evaluateComposer = new Function(
-  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, agentAttachmentMimeTypes, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
+  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, unref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, agentAttachmentMimeTypes, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
   `${executableScript}
 return { ${setupNames.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
@@ -424,6 +424,7 @@ const loadComposer = (
     onBeforeUnmount: () => {},
     onMounted: () => {},
     ref: <T>(value: T): Ref<T> => ({ value }),
+    unref: Vue.unref,
     useId: testUseId,
     useTemplateRef: <T>(_key: string): Ref<T | null> => ({ value: null }),
     watch: () => {},
@@ -541,6 +542,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
         onBeforeUnmount: Vue.onBeforeUnmount,
         onMounted: Vue.onMounted,
         ref: Vue.ref,
+        unref: Vue.unref,
         useId: Vue.useId,
         useTemplateRef: Vue.useTemplateRef,
         watch: Vue.watch,
@@ -957,7 +959,6 @@ describe('Agent composer instance accessibility', () => {
     expect(optionIds[0]).not.toBe(optionIds[1])
     expect(new Set(descriptionIds).size).toBe(descriptionIds.length)
   })
-
 })
 
 describe('Agent composer media and menu interactions', () => {

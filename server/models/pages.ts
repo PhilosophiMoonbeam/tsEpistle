@@ -1096,7 +1096,7 @@ export default class Page extends Model {
     const branding = opts.branding === undefined ? undefined : opts.branding === null ? null : PageBrandingAssignmentSchema.parse(opts.branding)
     await authorizeBrandingAssignment(branding, opts)
 
-    await wiki.models.knex.transaction(async transaction => {
+    const createdPageId = await wiki.models.knex.transaction(async transaction => {
       await lockAssetMutationFence(transaction, true)
       await lockSearchIndex(transaction, false)
       const inserted = await wiki.models.pages.query(transaction).insert({
@@ -1150,13 +1150,9 @@ export default class Page extends Model {
       await enqueueCurrentPageProjections(transaction, inserted.id, 'create')
       await writePageOutboxEvent(transaction, 'page.created', inserted, opts.user)
       await enqueuePageStorageMutation(transaction, { pageId: inserted.id, author: opts.user, skipStorage: opts.skipStorage })
+      return inserted.id
     })
-    const page = await wiki.models.pages.getPageFromDb({
-      path: opts.path,
-      locale: opts.locale,
-      visibility: opts.visibility,
-      ownerId
-    })
+    const page = await wiki.models.pages.getPageFromDb(createdPageId)
     if (!page) {
       throw new wiki.Error.PageNotFound()
     }

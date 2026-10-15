@@ -558,7 +558,10 @@ export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
   const requests: AgentEngineRequest[] = []
   let beforeInference: (() => Promise<void>) | undefined
   const engine: AgentEngine = {
-    preflight: async () => ({ admissible: true, inputExposureTokens: 5, outputExposureTokens: 3, totalExposureTokens: 8 }),
+    preflight: async request => {
+      const outputExposureTokens = request.limits?.maxOutputTokens ?? profileInput.capabilities.maxOutputTokens
+      return { admissible: true, inputExposureTokens: 5, outputExposureTokens, totalExposureTokens: 5 + outputExposureTokens }
+    },
     execute: async (request, sink) => {
       await beforeInference?.()
       await request.authorizeDispatch?.()

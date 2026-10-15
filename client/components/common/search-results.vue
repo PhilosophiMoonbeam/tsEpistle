@@ -612,15 +612,17 @@ export default defineComponent({
     suggestions(): string[] {
       return this.response.suggestions
     },
-    canAsk(): boolean {
-      return this.serverCapabilitiesAvailable &&
-        this.authAuthorityReady &&
+    agentAuthorityReady(): boolean {
+      return this.authAuthorityReady &&
         siteConfig.agentsEnabled &&
         Array.isArray(wikiStore.user.permissions) &&
         wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
     },
+    canAsk(): boolean {
+      return this.serverCapabilitiesAvailable && this.agentAuthorityReady
+    },
     isAgentOpen(): boolean {
-      return this.canAsk && this.searchMode === 'ask'
+      return this.agentAuthorityReady && this.searchMode === 'ask'
     },
     agentOwnerId(): number { return wikiStore.user.id },
     agentCsrfToken(): string { return siteConfig.agentCsrfToken },
@@ -678,7 +680,6 @@ export default defineComponent({
     },
     offlineSearchActive(active: boolean) {
       if (active && this.previewSelector) this.previewSelector = null
-      if (active && this.searchMode === 'ask') this.searchMode = 'search'
     },
     serverCapabilitiesAvailable(available: boolean) {
       if (!available) this.previewSelector = null
@@ -720,7 +721,7 @@ export default defineComponent({
     agentOwnerId(newOwnerId: number, oldOwnerId: number | undefined) {
       if (oldOwnerId === undefined || newOwnerId === oldOwnerId) return
       this.agentResumeSessionId = null
-      if (this.isAgentOpen) {
+      if (this.searchMode === 'ask') {
         this.searchMode = 'search'
         this.searchIsFocused = false
       }

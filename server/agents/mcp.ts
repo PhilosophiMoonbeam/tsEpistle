@@ -313,7 +313,9 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
                   return textResult({ proposalId: persisted.proposal.id, status: 'denied', applied: false })
                 if (persisted.proposal.status === 'expired' || persisted.approval.status === 'expired')
                   return textResult({ proposalId: persisted.proposal.id, status: 'expired', applied: false })
-                if (persisted.proposal.status !== 'approved' || persisted.approval.status !== 'approved') {
+                // Completed executions recover through the kernel's receipt path without a new approval round.
+                const applied = persisted.proposal.status === 'applied' && persisted.approval.status === 'approved'
+                if (!applied && (!state || persisted.proposal.status !== 'approved' || persisted.approval.status !== 'approved')) {
                   const requestState = await codecs[0]!.mint(
                     {
                       proposalId: persisted.proposal.id,

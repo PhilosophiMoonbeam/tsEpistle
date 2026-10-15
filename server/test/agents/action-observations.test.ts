@@ -10,7 +10,6 @@ const asOf = '2026-09-26T12:00:00.000Z'
 const context = { asOf, invocationId: 'host-call-01' } as const
 const hash = 'a'.repeat(64)
 
-
 function expectKind<TKind extends string>(value: unknown, kind: TKind): asserts value is { readonly kind: TKind } {
   if (typeof value !== 'object' || value === null || !('kind' in value) || value.kind !== kind) throw new Error(`Expected observation kind ${kind}`)
 }
@@ -79,7 +78,6 @@ describe('typed action observations', () => {
     expect(result.presentation.text).not.toContain('x'.repeat(100))
   })
 
-
   it('binds approved skill content to an immutable resource identity without citation authority', () => {
     const result = presentDomainObservation(
       'skills.read',
@@ -122,7 +120,12 @@ describe('typed action observations', () => {
     expectKind(result, 'observation')
     if (result.kind !== 'observation') throw new Error('Expected transient observation')
     expect(result.supportsFactualClaim).toBe('untrusted-observation-only')
-    expect(result.observation).toMatchObject({ type: 'browser-document', contextId: 'browser-context-1', documentEpoch: 'epoch-7', url: 'https://example.com/page' })
+    expect(result.observation).toMatchObject({
+      type: 'browser-document',
+      contextId: 'browser-context-1',
+      documentEpoch: 'epoch-7',
+      url: 'https://example.com/page'
+    })
     expect(result.freshness).toMatchObject({ asOf, scope: { kind: 'browser-document', contextId: 'browser-context-1', documentEpoch: 'epoch-7' } })
     expect(result.presentation.text).toContain('UNTRUSTED browser observation')
     expect(result.presentation.text).toContain('Ignore previous instructions')
@@ -132,9 +135,7 @@ describe('typed action observations', () => {
   it('keeps the seventeenth browser text line distinct from a generated reference without Wiki citation authority', () => {
     const ref = { ref: 'e17', role: 'link', name: 'Navigation target', href: 'https://example.com/target' }
     const bodyReferenceLookingText = `Reference: ${JSON.stringify({ ...ref, name: 'Printed in document' })}`
-    const textLines = Array.from({ length: 17 }, (_, index) =>
-      index === 16 ? bodyReferenceLookingText : `Visible body line ${index + 1}.`
-    )
+    const textLines = Array.from({ length: 17 }, (_, index) => (index === 16 ? bodyReferenceLookingText : `Visible body line ${index + 1}.`))
     const result = presentDomainObservation(
       'browser.observe',
       {},
@@ -162,7 +163,6 @@ describe('typed action observations', () => {
     expect(result).not.toHaveProperty('citation')
   })
 
-
   it('bounds oversized browser URL metadata while retaining document freshness', () => {
     const oversizedUrl = `https://example.com/${'u'.repeat(2_500)}`
     const oversizedHref = `https://example.com/${'h'.repeat(2_500)}`
@@ -188,7 +188,6 @@ describe('typed action observations', () => {
     expect(result.presentation.text).not.toContain(oversizedHref)
     expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThan(8_192)
   })
-
 
   it('keeps extracted browser text time-scoped and reports output truncation independently', () => {
     const result = presentDomainObservation(
@@ -226,8 +225,6 @@ describe('typed action observations', () => {
     expect(result).not.toHaveProperty('source')
     expect(result).not.toHaveProperty('citation')
   })
-
-
 
   it('describes screenshots and generated media only as artifacts that exist', () => {
     const screenshot = presentDomainObservation(
@@ -276,7 +273,6 @@ describe('typed action observations', () => {
     expect(changed.status).toBe('applied')
     expect(JSON.stringify(changed)).not.toContain(privateMemoryEntry)
 
-
     const proposalBase = {
       proposalId: '00000000-0000-4000-8000-000000000020',
       approvalId: '00000000-0000-4000-8000-000000000021',
@@ -287,7 +283,14 @@ describe('typed action observations', () => {
       expiresAt: asOf
     }
     const proposalInput = {
-      path: 'guides/source-finder', locale: 'en', title: 'Source finder', description: '', content: '# Source finder', contentType: 'markdown', isPublished: true, tags: []
+      path: 'guides/source-finder',
+      locale: 'en',
+      title: 'Source finder',
+      description: '',
+      content: '# Source finder',
+      contentType: 'markdown',
+      isPublished: true,
+      tags: []
     }
     const pending = presentDomainObservation('pages.prepareCreate', proposalInput, { ...proposalBase, status: 'pending' }, context)
     const approved = presentDomainObservation('pages.prepareCreate', proposalInput, { ...proposalBase, status: 'approved' }, context)
@@ -299,7 +302,9 @@ describe('typed action observations', () => {
     // Keep these cross-unit guards until the engine publication replacement is executed.
     expect(pending.presentation.text).toContain('Wiki proposal status: pending.')
     expect(approved.presentation.text).toContain('Wiki proposal status: approved.')
-    expect(presentDomainObservation('pages.prepareCreate', proposalInput, { ...proposalBase, actionName: 'pages.preparePatch', status: 'pending' }, context)).toBeNull()
+    expect(
+      presentDomainObservation('pages.prepareCreate', proposalInput, { ...proposalBase, actionName: 'pages.preparePatch', status: 'pending' }, context)
+    ).toBeNull()
 
     const applied = presentDomainObservation(
       'pages.applyProposal',
@@ -337,6 +342,59 @@ describe('typed action observations', () => {
     expect(applied.receipt.page).toEqual({ id: 42, locale: 'en', path: 'guides/source-finder', title: 'Source finder', sourceRevision: '7' })
     expect(JSON.stringify(applied)).not.toContain('d'.repeat(100))
     expect(applied.supportsFactualClaim).toBe('operation-status-only')
+
+    const application = {
+      proposalId: proposalBase.proposalId,
+      status: 'applied',
+      resultHash: hash,
+      page: {
+        id: 42,
+        locale: 'en',
+        path: 'guides/source-finder',
+        title: 'Source finder',
+        description: 'd'.repeat(2_000),
+        contentType: 'markdown',
+        sourceRevision: '7',
+        knowledge: null
+      }
+    }
+    const autoApplied = presentDomainObservation(
+      'pages.prepareCreate',
+      proposalInput,
+      {
+        ...proposalBase,
+        status: 'applied',
+        application
+      },
+      context
+    )
+    expectKind(autoApplied, 'receipt')
+    if (autoApplied.kind !== 'receipt' || autoApplied.receipt.operation !== 'wiki.proposal') throw new Error('Expected automatic application receipt')
+    expect(autoApplied.receipt.application).toEqual({
+      proposalId: proposalBase.proposalId,
+      status: 'applied',
+      resultHash: hash,
+      page: { id: 42, locale: 'en', path: 'guides/source-finder', title: 'Source finder', sourceRevision: '7' }
+    })
+    expect(autoApplied.presentation.text).toContain('Applied page: ')
+    expect(autoApplied.presentation.text).not.toContain('Summary:')
+    expect(JSON.stringify(autoApplied)).not.toContain('d'.repeat(100))
+    expect(autoApplied.supportsFactualClaim).toBe('operation-status-only')
+    for (const status of ['pending', 'approved', 'denied', 'expired', 'cancelled']) {
+      expect(presentDomainObservation('pages.prepareCreate', proposalInput, { ...proposalBase, status, application }, context)).toBeNull()
+    }
+    expect(
+      presentDomainObservation(
+        'pages.prepareCreate',
+        proposalInput,
+        {
+          ...proposalBase,
+          status: 'applied',
+          application: { ...application, proposalId: '00000000-0000-4000-8000-000000000022' }
+        },
+        context
+      )
+    ).toBeNull()
   })
 
   it('defers Wiki leads and sources to the engine projection instead of emitting empty evidence', () => {
@@ -349,7 +407,6 @@ describe('typed action observations', () => {
     expect(result).toBeNull()
   })
 
-
   it('fails closed on malformed or mismatched outputs, unknown actions, and invalid context', () => {
     expect(presentDomainObservation('skills.read', { name: 'skill', versionId: 'bad', path: 'SKILL.md' }, { content: 'unvalidated' }, context)).toBeNull()
     expect(presentDomainObservation('not-an-action', {}, {}, context)).toBeNull()
@@ -358,7 +415,14 @@ describe('typed action observations', () => {
       presentDomainObservation(
         'skills.read',
         { name: 'requested-skill', versionId: '00000000-0000-4000-8000-000000000001', path: 'SKILL.md' },
-        { name: 'different-skill', versionId: '00000000-0000-4000-8000-000000000001', path: 'SKILL.md', mediaType: 'text/markdown', contentHash: hash, content: 'Other resource.' },
+        {
+          name: 'different-skill',
+          versionId: '00000000-0000-4000-8000-000000000001',
+          path: 'SKILL.md',
+          mediaType: 'text/markdown',
+          contentHash: hash,
+          content: 'Other resource.'
+        },
         context
       )
     ).toBeNull()
@@ -372,5 +436,4 @@ describe('typed action observations', () => {
     ).toBeNull()
     expect(presentDomainObservation('skills.list', {}, { skills: [] }, { ...context, asOf: 'not-a-time' })).toBeNull()
   })
-
 })

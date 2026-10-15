@@ -227,6 +227,7 @@ const OkfPageResult = strict({
   knowledge: KnowledgeProjectionViewSchema.nullable(),
   citation: OkfCitation
 })
+const AppliedProposalResult = strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: AppliedPageSummary.nullable() })
 const ProposalResult = strict({
   proposalId: Uuid,
   approvalId: Uuid,
@@ -235,7 +236,10 @@ const ProposalResult = strict({
   inputHash: ContentHash,
   diffHash: ContentHash.nullable(),
   summary: z.string().max(4_000),
-  expiresAt: z.string().max(32)
+  expiresAt: z.string().max(32),
+  application: AppliedProposalResult.optional()
+}).refine(result => result.application === undefined || (result.status === 'applied' && result.application.proposalId === result.proposalId), {
+  message: 'An application receipt must belong to this applied proposal'
 })
 const BrowserObservation = strict({
   contextId: z.string().min(1).max(128),
@@ -954,7 +958,7 @@ export const ACTION_CATALOG = {
     ),
     group: 'authoring',
     input: strict({ proposalId: Uuid, approvalId: Uuid }),
-    output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: AppliedPageSummary.nullable() }),
+    output: AppliedProposalResult,
     requiredFlags: proposalFlags,
     capability: defineActionCapability(
       'apply',

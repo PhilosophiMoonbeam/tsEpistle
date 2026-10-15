@@ -435,7 +435,7 @@
 
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, unref, useId, useTemplateRef, watch } from 'vue'
 import type { Ref } from 'vue'
 import AgentComposerMedia from './agent-composer-media.vue'
 import AgentComposerSkillMenu from './agent-composer-skill-menu.vue'
@@ -704,6 +704,7 @@ const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null
 const activeCommandIndex = ref(0)
 const sendFailed = ref(false)
 const submissionPending = ref(false)
+const hasPendingSubmission = (): boolean => submissionPending.value
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
 const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'create' | 'more' | 'skills'): Promise<void> => {
@@ -1285,23 +1286,27 @@ const submitDuringRecording = async (): Promise<void> => {
   const media = mediaComposer.value
   if (!media?.beginDictationSubmit()) return
   const typedDraft = draft.value
+  const sessionId = props.sessionId
+  const invokedSkillVersionIds = [...selectedSkillIds.value]
+  const mode = goalMode.value ? 'goal' : 'message'
+  const clickedMedia = { attachmentIds: [...mediaSubmission.value.attachmentIds], generationTools: [...(mediaSubmission.value.generationTools ?? [])] }
   submissionPending.value = true
   try {
     media.stopRecording()
     const transcript = await media.waitForDictationTranscript()
+    if (!mounted || props.sessionId !== sessionId || mediaComposer.value !== media) return
     if (transcript === null) {
       // Leave the current draft untouched, including edits made while waiting,
       // and surface the media composer's dictation message in the notice.
-      const mediaMessage = mediaComposer.value?.dictationError as string | undefined
+      const mediaMessage = unref(media.dictationError)
       if (!error.value) error.value = mediaMessage || t('common:agentComposer.noSpeechWasFound')
       return
     }
     const content = [typedDraft.trim(), transcript].filter(Boolean).join(' ')
-    const invokedSkillVersionIds = [...selectedSkillIds.value]
-    const mode = goalMode.value ? 'goal' : 'message'
     const success = await new Promise<boolean>(resolve => {
-      emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => resolve(success), { attachmentIds: [...mediaSubmission.value.attachmentIds], generationTools: mediaSubmission.value.generationTools })
+      emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => resolve(success), clickedMedia)
     })
+    if (!mounted || props.sessionId !== sessionId || mediaComposer.value !== media) return
     if (success) {
       // Mirror the plain-send success path: the submitted draft is gone.
       // The draft holds only the typed part, so compare against that.
@@ -1313,6 +1318,9 @@ const submitDuringRecording = async (): Promise<void> => {
       selectedSkillIds.value = []
       goalMode.value = false
     } else {
+      // Keep dictated text available for an explicit retry, including when the
+      // request outcome was uncertain. Never submit it again automatically.
+      draft.value = draft.value === typedDraft ? content : [draft.value.trim(), transcript].filter(Boolean).join(' ')
       sendFailed.value = true
     }
   } finally {
@@ -1378,7 +1386,7 @@ const editImage = async (media: AgentMediaView) => {
   }
 }
 const reattachMedia = async (media: AgentMediaView): Promise<boolean> => (await mediaComposer.value?.reattachMedia(media)) === true
-defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia, hasUnsentMedia, isMediaBusy })
+defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia, hasUnsentMedia, hasPendingSubmission, isMediaBusy })
 onMounted(() => {
   mounted = true
   if (typeof window.matchMedia === 'function') {

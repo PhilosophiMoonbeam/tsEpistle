@@ -662,6 +662,8 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
   const authorization = { pending: null as Promise<Response> | null }
   const mediaUpload = { pending: null as Promise<Response> | null }
   const sendResponse = { pending: null as Promise<Response> | null }
+  const threadRead = { pending: null as Promise<Response> | null }
+  const messageInputs: Array<Record<string, unknown>> = []
   const requests: Array<{ method: string; path: string }> = []
   const summary = () => {
     const { session } = serverThread
@@ -718,8 +720,9 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
       }
       return Response.json(serverThread)
     }
-    if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'GET') return Response.json(serverThread)
+    if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'GET') return threadRead.pending ?? Response.json(serverThread)
     if (path === `/_api/agents/sessions/${serverThread.session.id}/messages` && method === 'POST') {
+      messageInputs.push(body)
       if (sendResponse.pending) return sendResponse.pending
       const run: NonNullable<AgentThreadState['session']['currentRun']> = {
         id: '00000000-0000-4000-8000-000000000020',
@@ -757,7 +760,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     store.closeWorkspace()
     store.$dispose()
   })
-  return { store, state, creations, authorization, mediaUpload, sendResponse, requests }
+  return { store, state, creations, authorization, mediaUpload, sendResponse, threadRead, messageInputs, requests }
 }
 
 const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
@@ -773,6 +776,7 @@ const mountInlineAgent = (
     readonly approvalJumpVisible?: boolean
     readonly followJumpVisible?: boolean
     readonly realThread?: boolean
+    readonly mediaComponent?: Vue.Component
   } = {}
 ): MountedInlineAgent => {
   installBrowserSurface()
@@ -887,7 +891,7 @@ const mountInlineAgent = (
   app.component('AgentContextPicker', contextPickerComponent)
   app.component('AgentComposer', composerComponent)
   app.component('AgentComposerSkillMenu', skillMenuComponent)
-  app.component('AgentComposerMedia', mediaComposerComponent)
+  app.component('AgentComposerMedia', options.mediaComponent ?? mediaComposerComponent)
   app.component('AgentDictationWaveform', { template: '<canvas class="agent-dictation-waveform" />' })
   app.mount(host)
 
@@ -903,6 +907,12 @@ const mountInlineAgent = (
   }
   mountedApps.push(unmount)
   return { activator, composerFocused, historyOpen, memoryOpen, root, transcriptFollowing, unmount }
+}
+
+const unloadPrevented = (): boolean => {
+  const event = new browserWindow.Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(event)
+  return event.defaultPrevented
 }
 
 const resolveDescribedBy = (control: HTMLElement): HTMLElement[] => {
@@ -1213,6 +1223,7 @@ describe('Inline Agent workspace actions', () => {
       const state = workspace.state()
       const mounted = mountInlineAgent(state)
       await settle()
+      if (retention === 'saved') expect(unloadPrevented()).toBe(false)
       const startChat = async (): Promise<void> => {
         if (retention === 'temporary') {
           await vi.advanceTimersByTimeAsync(50)
@@ -1238,6 +1249,7 @@ describe('Inline Agent workspace actions', () => {
       Object.defineProperty(input, 'files', { configurable: true, value: [file] })
       input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
       await settle()
+      if (retention === 'saved') expect(unloadPrevented()).toBe(true)
       const uploadRequests = [...workspace.requests]
       expect(uploadRequests).toContainEqual({ method: 'POST', path: `/_api/agents/sessions/${sessionId}/media` })
       await startChat()
@@ -1264,6 +1276,7 @@ describe('Inline Agent workspace actions', () => {
       expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain(file.name)
       expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
       expect(workspace.store.drafts[sessionId] ?? emptyAgentDraft()).toEqual(emptyAgentDraft())
+      if (retention === 'saved') expect(unloadPrevented()).toBe(true)
 
       await startChat()
       expect(state.discardDraftOpen.value).toBe(true)
@@ -1284,6 +1297,7 @@ describe('Inline Agent workspace actions', () => {
       await settle()
       expect(workspace.store.thread?.session).toMatchObject({ id: next.session.id, retention })
       expect(mounted.root.querySelector('.agent-composer__media-attachments')).toBeNull()
+      if (retention === 'saved') expect(unloadPrevented()).toBe(false)
       expect(workspace.requests.filter(request => request.path === '/_api/agents/sessions' && request.method === 'POST')).toHaveLength(1)
       expect(
         workspace.requests
@@ -1377,6 +1391,209 @@ describe('Inline Agent workspace actions', () => {
     }
   })
 
+  it('warns before unloading only unsent text, clearing the guard after clearing, sending, session replacement, owner change and unmount', async () => {
+    const workspace = realWorkspace()
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state)
+    await settle()
+    expect(unloadPrevented()).toBe(false)
+    const type = async (text: string): Promise<void> => {
+      const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+      if (!textarea) throw new Error('Composer draft textbox missing')
+      textarea.value = text
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      await settle()
+    }
+    await type('Keep this question\nand its second line')
+    expect(unloadPrevented()).toBe(true)
+    await type('')
+    expect(unloadPrevented()).toBe(false)
+    await type('Send this question')
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')!.click()
+    await settle()
+    expect(workspace.requests.some(request => request.path.endsWith('/messages') && request.method === 'POST')).toBe(true)
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
+    expect(unloadPrevented()).toBe(false)
+
+    await type('Draft belonging to the previous conversation')
+    expect(unloadPrevented()).toBe(true)
+    workspace.store.thread = threadFixture('00000000-0000-4000-8000-000000000004')
+    await settle()
+    expect(unloadPrevented()).toBe(false)
+    workspace.store.updateDraft(workspace.store.thread!.session.id, { scope: { kind: 'selected' }, skillVersionIds: ['preferred-skill'] })
+    await settle()
+    expect(unloadPrevented()).toBe(false)
+    await type('Draft belonging to the previous owner')
+    expect(unloadPrevented()).toBe(true)
+    state.componentProps.ownerId = 3
+    expect(unloadPrevented()).toBe(false)
+    await settle()
+    expect(unloadPrevented()).toBe(false)
+    mounted.unmount()
+    expect(unloadPrevented()).toBe(false)
+  })
+
+  it('protects voice-only input after transcription while admission refresh is pending, and retains it after a failed admission', async () => {
+    const initial = threadFixture()
+    initial.session.mediaCapabilities = { attachments: false, imageGeneration: false, transcription: true }
+    const workspace = realWorkspace('saved', null, initial)
+    let finishTranscript!: (text: string) => void
+    const transcript = new Promise<string>(resolve => {
+      finishTranscript = resolve
+    })
+    // Only the microphone/transcriber is replaced: composer submission,
+    // unload handling, admission refresh, and POST all execute production code.
+    const microphone = Vue.defineComponent({
+      setup(_props, { expose }) {
+        const recording = Vue.ref(false)
+        const transcribing = Vue.ref(false)
+        expose({
+          recording,
+          transcribing,
+          startRecording: () => {
+            recording.value = true
+          },
+          beginDictationSubmit: () => recording.value,
+          stopRecording: () => {
+            recording.value = false
+            transcribing.value = true
+          },
+          waitForDictationTranscript: async () => {
+            const text = await transcript
+            transcribing.value = false
+            return text
+          },
+          clear: () => {}
+        })
+        return () => null
+      }
+    })
+    const mounted = mountInlineAgent(workspace.state(), { mediaComponent: microphone })
+    await settle()
+    expect(unloadPrevented()).toBe(false)
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')!.click()
+    await settle()
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')!.click()
+    await settle()
+    let finishRefresh!: (response: Response) => void
+    workspace.threadRead.pending = new Promise<Response>(resolve => {
+      finishRefresh = resolve
+    })
+    finishTranscript('What changed in the release?')
+    await settle()
+    // Neither text, attachments, nor ongoing recording/transcription can
+    // incidentally trigger the guard in this pre-admission gap.
+    expect(mounted.root.querySelector('.agent-composer__dictation')).toBeNull()
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
+    expect(workspace.store.drafts[sessionId] ?? emptyAgentDraft()).toEqual(emptyAgentDraft())
+    expect(workspace.messageInputs).toHaveLength(0)
+    expect(workspace.store.sending).toBe(true)
+    expect(unloadPrevented()).toBe(true)
+    workspace.threadRead.pending = null
+    finishRefresh(Response.json({ error: 'Conversation refresh unavailable' }, { status: 503 }))
+    await settle()
+    expect(workspace.store.sending).toBe(false)
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('What changed in the release?')
+    expect(unloadPrevented()).toBe(true)
+    expect(workspace.messageInputs).toHaveLength(0)
+    // Recovery alone must not silently submit the retained dictation.
+    await workspace.store.refreshThread()
+    await settle()
+    expect(workspace.messageInputs).toHaveLength(0)
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')!.click()
+    await settle()
+    expect(workspace.messageInputs).toHaveLength(1)
+    expect(workspace.messageInputs[0]?.content).toBe('What changed in the release?')
+    expect(unloadPrevented()).toBe(false)
+  })
+
+  for (const outcome of ['accepted', 'rejected', 'ambiguous'] as const) {
+    it(`guards attachment-only input until admission, with ${outcome} POST and delayed final refresh`, async () => {
+      const initial = threadFixture()
+      initial.session.mediaCapabilities = { attachments: true, imageGeneration: false, transcription: false }
+      const workspace = realWorkspace('saved', null, initial)
+      const mounted = mountInlineAgent(workspace.state())
+      await settle()
+      expect(unloadPrevented()).toBe(false)
+      const input = mounted.root.querySelector<HTMLInputElement>('input[type="file"]')!
+      Object.defineProperty(input, 'files', { configurable: true, value: [new File(['%PDF-1.4\nreport\n%%EOF\n'], 'report.pdf', { type: 'application/pdf' })] })
+      input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+      await settle()
+      expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain('report.pdf')
+      expect(unloadPrevented()).toBe(true)
+      let finishPost!: (response: Response) => void
+      let failPost!: (error: Error) => void
+      workspace.sendResponse.pending = new Promise<Response>((resolve, reject) => {
+        finishPost = resolve
+        failPost = reject
+      })
+      mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')!.click()
+      await settle()
+      expect(workspace.messageInputs).toHaveLength(1)
+      expect(workspace.messageInputs[0]?.attachmentIds).toEqual(['00000000-0000-4000-8000-000000000050'])
+      expect(unloadPrevented()).toBe(true)
+      let finishRefresh!: (response: Response) => void
+      workspace.threadRead.pending = new Promise<Response>(resolve => {
+        finishRefresh = resolve
+      })
+      if (outcome === 'accepted') {
+        finishPost(
+          Response.json(
+            {
+              replayed: false,
+              run: {
+                id: '00000000-0000-4000-8000-000000000020',
+                sessionId,
+                status: 'succeeded',
+                attempt: 1,
+                eventSequence: 1,
+                canCancel: false,
+                createdAt: timestamp,
+                startedAt: timestamp,
+                completedAt: timestamp,
+                errorCode: null,
+                errorMessage: null
+              }
+            },
+            { status: 202 }
+          )
+        )
+      } else if (outcome === 'rejected') {
+        finishPost(Response.json({ error: 'Admission rejected' }, { status: 409 }))
+      } else {
+        failPost(new Error('Connection lost before response'))
+      }
+      await settle()
+      expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
+      expect(workspace.store.drafts[sessionId] ?? emptyAgentDraft()).toEqual(emptyAgentDraft())
+      expect(workspace.store.sending).toBe(outcome === 'accepted')
+      expect(Boolean(mounted.root.querySelector('.agent-composer__media-attachments'))).toBe(outcome !== 'accepted')
+      expect(unloadPrevented()).toBe(outcome !== 'accepted')
+      workspace.threadRead.pending = null
+      finishRefresh(Response.json(initial))
+      if (outcome !== 'accepted') await workspace.store.refreshThread()
+      await settle()
+      expect(workspace.store.sending).toBe(false)
+      expect(workspace.messageInputs).toHaveLength(1)
+      expect(unloadPrevented()).toBe(outcome !== 'accepted')
+    })
+  }
+
+  it('removes the unload listener when an unsent offline composer unmounts', async () => {
+    testPwaState.connectionState = 'offline'
+    const state = loadGoalLockState(null)
+    state.thread.value = null
+    const mounted = mountInlineAgent(state)
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+    if (!textarea) throw new Error('Offline draft textbox missing')
+    textarea.value = 'Unsent text at unmount'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    expect(unloadPrevented()).toBe(true)
+    mounted.unmount()
+    expect(unloadPrevented()).toBe(false)
+  })
+
   it('retains an offline draft across same-owner Wiki navigation and clears it when the owner changes', async () => {
     testPwaState.connectionState = 'offline'
     const state = loadGoalLockState(null)
@@ -1387,6 +1604,7 @@ describe('Inline Agent workspace actions', () => {
     textarea.value = 'A question for when the connection returns'
     textarea.dispatchEvent(new Event('input', { bubbles: true }))
     await settle()
+    expect(unloadPrevented()).toBe(true)
     expect(state.offlineComposerDraft.value).toBe(textarea.value)
     state.componentProps.pageId = 42
     state.componentProps.pageLocale = 'en'
@@ -1400,6 +1618,7 @@ describe('Inline Agent workspace actions', () => {
     await settle()
     expect(state.offlineComposerDraft.value).toBe('')
     expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
+    expect(unloadPrevented()).toBe(false)
   })
 
   it('names the workspace accessibly and updates the selected conversation title', async () => {

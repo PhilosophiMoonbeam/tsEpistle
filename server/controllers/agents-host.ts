@@ -8,6 +8,8 @@ import { sweepAgentPdfCache } from '../agents/pdf-cache.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
 import { getAuthenticatedUserContext } from '../helpers/request-auth.ts'
+import pageErrors from '../helpers/error.ts'
+import operationErrors from '../operations/errors.ts'
 import {
   AGENT_MEDIA_MAX_BYTES,
   readOwnedAgentMediaRange,
@@ -52,9 +54,9 @@ import { SkillRuntime, type SkillPrincipal } from '../agents/skills/runtime.ts'
 import { requestAgentRunCancellation } from '../agents/coordinator.ts'
 import { ACTION_CATALOG } from '../agents/actions/catalog.ts'
 import { buildAgentAdminTools } from '../agents/admin-tools.ts'
-import { decideProposal } from '../agents/proposals/execution.ts'
+import { decideProposal, readCommittedProposalResult } from '../agents/proposals/execution.ts'
 import { BrowserTargetRegistry } from '../agents/browser/registry.ts'
-import { getMcpProposalForApproval, type ProposalRecord } from '../agents/proposals/repository.ts'
+import { AgentProposalError, getMcpProposalForApproval, type ProposalRecord } from '../agents/proposals/repository.ts'
 import { requestAgentSessionDeletion, requestUnfiledAgentHistoryClear } from '../agents/maintenance.ts'
 import type { AgentOperationalLimits } from '../agents/config.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../agents/orchestration.ts'
@@ -366,8 +368,7 @@ const ProposalMutationOperationSchema = z.object({
   operationInput: z.record(z.string(), z.unknown())
 })
 
-const authorizeProposalMutation = async (req: Request, proposal: ProposalRecord): Promise<void> => {
-  if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
+const proposalMutationOperation = (proposal: ProposalRecord): z.infer<typeof ProposalMutationOperationSchema> => {
   let operation: unknown
   try {
     operation = JSON.parse(proposal.operation)
@@ -376,20 +377,74 @@ const authorizeProposalMutation = async (req: Request, proposal: ProposalRecord)
   }
   const parsed = ProposalMutationOperationSchema.safeParse(operation)
   if (!parsed.success) throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal operation is invalid', 500)
+  return parsed.data
+}
+
+const proposalTargetId = (proposal: ProposalRecord, operation: z.infer<typeof ProposalMutationOperationSchema>): number | null => {
+  if (operation.kind === 'create') return null
+  const id = operation.kind === 'restore' ? operation.operationInput.pageId : operation.operationInput.id
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1 || (proposal.pageId != null && proposal.pageId !== id))
+    throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal target is invalid', 500)
+  return id
+}
+
+const authorizeProposalMutation = async (req: Request, proposal: ProposalRecord): Promise<void> => {
+  if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
+  const operation = proposalMutationOperation(proposal)
+  // Page operations capture WIKI at module load, so wait until wiki initialization.
   const pageOperations = (await import('../operations/pages.ts')).default
   await pageOperations.authorizeMutation({
-    kind: parsed.data.kind,
-    input: parsed.data.operationInput,
+    kind: operation.kind,
+    input: operation.operationInput,
     requester: req.user,
     sessionId: req.sessionID
   })
 }
 
 const authorizeProposalTarget = async (req: Request, proposal: ProposalRecord): Promise<void> => {
-  if (proposal.pageId === null) return
+  const pageId = proposalTargetId(proposal, proposalMutationOperation(proposal))
+  if (pageId === null) return
   if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
   const pageOperations = (await import('../operations/pages.ts')).default
-  await pageOperations.get({ id: proposal.pageId, requester: req.user, sessionId: req.sessionID })
+  const page = await pageOperations.get({ id: pageId, requester: req.user, sessionId: req.sessionID })
+  if (proposal.baseSourceRevision != null && String(Reflect.get(page, 'sourceRevision')) !== String(proposal.baseSourceRevision))
+    throw new AgentRepositoryError('PAGE_REVISION_CONFLICT', 'Page changed after proposal preparation', 409)
+}
+
+const authorizeProposalReview = async (req: Request, proposal: ProposalRecord, knex: Knex): Promise<boolean> => {
+  if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
+  const operation = proposalMutationOperation(proposal)
+  let pageId = proposalTargetId(proposal, operation)
+  const path = operation.operationInput.path
+  const locale = operation.operationInput.locale
+  if (pageId === null && (typeof path !== 'string' || typeof locale !== 'string'))
+    throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal target is invalid', 500)
+  if (pageId === null) {
+    if (proposal.status !== 'applied') {
+      await authorizeProposalMutation(req, proposal)
+      return true
+    }
+    const committed = await readCommittedProposalResult(knex, proposal)
+    if (committed === null) throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Applied proposal has no committed result', 500)
+    pageId = committed.pageId
+    // Historical create receipts cannot bind their old path to a current page.
+    if (pageId === null) return false
+  }
+  // Page operations capture WIKI at module load, so wait until wiki initialization.
+  const pageOperations = (await import('../operations/pages.ts')).default
+  try {
+    await pageOperations.get({ id: pageId, requester: req.user, sessionId: req.sessionID })
+    return true
+  } catch (error: unknown) {
+    if (!((error instanceof operationErrors.ApplicationError && error.name === 'PAGE_NOT_FOUND') || error instanceof pageErrors.PageNotFound)) throw error
+    // Never turn a denied live-page read into access to its historical source.
+    if (proposal.status !== 'pending' && req.user.permissions?.includes('manage:system')) {
+      const liveTarget = await knex('pages').where({ id: pageId }).first('id')
+      // Deleted targets have no current read authority: administrators get status only.
+      if (!liveTarget) return false
+    }
+    throw new AgentRepositoryError('PAGE_NOT_FOUND', 'This page does not exist.', 404)
+  }
 }
 
 const projectConversationFolder = (folder: AgentConversationFolderRecord) => ({
@@ -875,33 +930,46 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.get(
     `${apiPrefix}/mcp-proposals/:proposalId`,
     asyncRoute(async (req, res) => {
+      res.set('Cache-Control', 'private, no-store')
       const proposalId = UUIDSchema.parse(routeParameter(req, 'proposalId'))
       const persisted = await getMcpProposalForApproval(wiki.models.knex, proposalId)
-      await authorizeProposalTarget(req, persisted.proposal)
-      await authorizeProposalMutation(req, persisted.proposal)
-      const input = proposalInput(persisted.proposal)
+      if (
+        persisted.approval.inputHash !== persisted.proposal.inputHash ||
+        persisted.approval.authorityVersion !== persisted.proposal.authorityVersion ||
+        persisted.approval.authoritySha256 !== persisted.proposal.authoritySha256 ||
+        persisted.approval.patchSha256 !== (persisted.proposal.patchSha256 ?? null) ||
+        persisted.approval.resultCanonicalSha256 !== (persisted.proposal.resultCanonicalSha256 ?? null) ||
+        persisted.approval.diffSha256 !== (persisted.proposal.diffSha256 ?? null)
+      )
+        throw new AgentRepositoryError('PROPOSAL_LEDGER_CORRUPT', 'Proposal approval does not match its immutable payload', 500)
+      const canReviewContent = await authorizeProposalReview(req, persisted.proposal, wiki.models.knex)
+      const input = persisted.proposal.contentPurgedAt === null ? proposalInput(persisted.proposal) : {}
+      const showContent = canReviewContent && persisted.proposal.contentPurgedAt === null
       return res.json({
         proposal: {
           id: persisted.proposal.id,
           actionName: persisted.proposal.actionName,
           risk: persisted.proposal.risk,
           status: persisted.proposal.status,
-          summary: persisted.proposal.summary,
+          summary: showContent ? persisted.proposal.summary : 'Proposal status receipt; historical content is unavailable.',
           pageId: persisted.proposal.pageId ?? null,
-          path:
-            typeof input.path === 'string'
+          path: !showContent
+            ? null
+            : typeof input.path === 'string'
               ? input.path
               : typeof input.destinationPath === 'string'
                 ? input.destinationPath
                 : typeof input.confirmationPath === 'string'
                   ? input.confirmationPath
                   : null,
-          baseSourceRevision: persisted.proposal.baseSourceRevision === undefined ? null : String(persisted.proposal.baseSourceRevision),
+          baseSourceRevision: showContent && persisted.proposal.baseSourceRevision != null ? String(persisted.proposal.baseSourceRevision) : null,
           inputHash: persisted.proposal.inputHash,
-          patchHash: persisted.proposal.patchSha256 ?? null,
-          diffHash: persisted.proposal.diffSha256 ?? null,
-          diff: persisted.proposal.contentPurgedAt === null ? (persisted.proposal.diff ?? null) : null,
-          confirmationPath: persisted.proposal.risk === 'destructive-write' && typeof input.confirmationPath === 'string' ? input.confirmationPath : null,
+          patchHash: showContent ? (persisted.proposal.patchSha256 ?? null) : null,
+          diffHash: showContent ? (persisted.proposal.diffSha256 ?? null) : null,
+          diff: showContent ? (persisted.proposal.diff ?? null) : null,
+          expiresAt: new Date(persisted.proposal.expiresAt).toISOString(),
+          confirmationPath:
+            showContent && persisted.proposal.risk === 'destructive-write' && typeof input.confirmationPath === 'string' ? input.confirmationPath : null,
           approval: {
             id: persisted.approval.id,
             status: persisted.approval.status,
@@ -1499,7 +1567,17 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     if (res.headersSent) return next(error)
     if (error instanceof ZodError) return res.status(400).json({ error: 'INVALID_REQUEST', details: invalidRequestDetails(error) })
     if (error instanceof SkillValidationError) return res.status(409).json({ error: error.code, message: error.message })
-    if (error instanceof AgentRepositoryError)
+    if (error instanceof operationErrors.ApplicationError)
+      return res.status(error.status).json({ error: error.name, message: error.status >= 500 ? 'Agent request failed' : error.message })
+    if (error instanceof pageErrors.PageNotFound) return res.status(404).json({ error: 'PAGE_NOT_FOUND', message: 'This page does not exist.' })
+    if (
+      error instanceof pageErrors.PageDeleteForbidden ||
+      error instanceof pageErrors.PageMoveForbidden ||
+      error instanceof pageErrors.PageRestoreForbidden ||
+      error instanceof pageErrors.PageUpdateForbidden
+    )
+      return res.status(403).json({ error: 'PAGE_MUTATION_FORBIDDEN', message: error.message })
+    if (error instanceof AgentRepositoryError || error instanceof AgentProposalError)
       return res.status(error.status).json({ error: error.code, message: error.status >= 500 ? 'Agent request failed' : error.message })
     return next(error)
   })

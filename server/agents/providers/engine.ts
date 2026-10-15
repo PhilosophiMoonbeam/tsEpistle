@@ -1,7 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
-import { AxAssertionError, AxGenerateError, type AxAIService, type AxAIServiceOptions, type AxChatRequest, type AxChatResponse, type AxChatResponseResult, type AxFunctionJSONSchema } from '@ax-llm/ax'
+import {
+  AxAssertionError,
+  AxGenerateError,
+  type AxAIService,
+  type AxAIServiceOptions,
+  type AxChatRequest,
+  type AxChatResponse,
+  type AxChatResponseResult,
+  type AxFunctionJSONSchema
+} from '@ax-llm/ax'
 import type { MarkdownIt, MarkdownItOptions, Token } from 'markdown-it'
 import * as markdownItModule from 'markdown-it'
 import {
@@ -270,7 +279,14 @@ const specialistHandoffSection = (request: AgentEngineRequest): string | null =>
     .replaceAll('<', '\\u003c')
     .replaceAll('>', '\\u003e')}`
 }
-const prompt = (request: AgentEngineRequest, skillCatalog: unknown, toolInstructions?: string, cacheAwareRoot = false, typedSynthesis = false, phase: 'collection' | 'final-synthesis' = 'collection'): string => {
+const prompt = (
+  request: AgentEngineRequest,
+  skillCatalog: unknown,
+  toolInstructions?: string,
+  cacheAwareRoot = false,
+  typedSynthesis = false,
+  phase: 'collection' | 'final-synthesis' = 'collection'
+): string => {
   if (request.purpose === 'planner')
     return [
       WIKI_AGENT_SOUL,
@@ -330,14 +346,22 @@ const wikiProviderCacheOptions = (
 ): Pick<AxAIServiceOptions, 'promptCacheKey' | 'contextCache'> => {
   if (!provider.preserveCachePrefix) return {}
   return {
-    promptCacheKey: createHash('sha256').update(canonicalJson([
-      'wiki-cache-v1', request.run.ownerId, request.run.sessionId,
-      request.run.providerProfileVersionId, provider.transportKind, provider.model,
-      provider.capabilityRevision, request.purpose ?? 'root', phase
-    ])).digest('hex'),
-    ...(provider.service.getFeatures(provider.model).caching.supported
-      ? { contextCache: { cacheBreakpoint: 'after-examples' as const } }
-      : {})
+    promptCacheKey: createHash('sha256')
+      .update(
+        canonicalJson([
+          'wiki-cache-v1',
+          request.run.ownerId,
+          request.run.sessionId,
+          request.run.providerProfileVersionId,
+          provider.transportKind,
+          provider.model,
+          provider.capabilityRevision,
+          request.purpose ?? 'root',
+          phase
+        ])
+      )
+      .digest('hex'),
+    ...(provider.service.getFeatures(provider.model).caching.supported ? { contextCache: { cacheBreakpoint: 'after-examples' as const } } : {})
   }
 }
 const runContextMessage = (request: AgentEngineRequest, handoffOnly = false): ChatPromptMessage | null => {
@@ -448,6 +472,11 @@ interface RetrievalTrace {
 interface RecentEvidenceCoverage {
   readonly evidenceIds: readonly string[]
   readonly truncatedEvidenceIds: readonly string[]
+  readonly actionCallId: string
+  readonly requestedLimit: number | null
+  readonly exhausted: boolean | null
+  readonly returnedCount: number
+  readonly windowComplete: boolean
 }
 
 interface ClaimProvenance {
@@ -643,8 +672,12 @@ const semanticInlineText = (tokens: readonly Token[], ignoredLinkSignatures?: Re
       index = label.end
       // Autolink and linkify labels are the destination itself. They establish a
       // reference but must never contribute factual vocabulary.
-      if (token.markup !== 'autolink' && token.info !== 'auto' && label.text &&
-        !ignoredLinkSignatures?.has(sourceLinkSignature(label.text, String(token.attrGet('href')))))
+      if (
+        token.markup !== 'autolink' &&
+        token.info !== 'auto' &&
+        label.text &&
+        !ignoredLinkSignatures?.has(sourceLinkSignature(label.text, String(token.attrGet('href'))))
+      )
         text += ` ${label.text}`
       continue
     }
@@ -882,8 +915,6 @@ const numericSegments = (value: string, projection = false): readonly string[] =
     .filter(tokens => tokens.some(token => /^\p{N}/u.test(token)))
     .map(tokens => tokens.join(' '))
 
-
-
 const copulaTerms: Readonly<Record<string, true>> = {
   is: true,
   are: true,
@@ -1101,8 +1132,7 @@ const projectedSourceUnits = (document: ParsedSourceDocument): readonly Citation
     // Preserve every issued atomic identity. A genuine original multi-sentence
     // unit is independently selectable, never a reconstruction of neighbors.
     const selections = assertions.map((text, index) => ({ text, identity: `${unit.id}:assertion:${index}`, original: false }))
-    if (assertions.length > 1 && assertionUnits.length === 1)
-      selections.push({ text: unit.normalizedText, identity: unit.id, original: true })
+    if (assertions.length > 1 && assertionUnits.length === 1) selections.push({ text: unit.normalizedText, identity: unit.id, original: true })
     return selections.map(({ text, identity, original }) => {
       const textTerms = new Set(normalizedTerms(text, true))
       return {
@@ -1127,7 +1157,9 @@ const projectedSourceUnits = (document: ParsedSourceDocument): readonly Citation
         containerIds: contextIds.filter(id => id !== structural?.id),
         structuralId: structural?.id ?? null,
         structuralLabel: structural?.normalizedLabel ?? null,
-        labels: [...new Set(assertionUnits.flatMap(owned => owned.structuralLabels))].filter(label => original || assertions.length === 1 || text.includes(label)),
+        labels: [...new Set(assertionUnits.flatMap(owned => owned.structuralLabels))].filter(
+          label => original || assertions.length === 1 || text.includes(label)
+        ),
         terms: new Set([...normalizedTerms(context, true), ...textTerms]),
         textTerms,
         identifiers: identifierTerms(text, true),
@@ -1290,18 +1322,27 @@ type CitationEvidenceBase = Omit<CitationEvidence, 'representations' | 'identity
 
 /** Raw-read storage identity only; citations and native unit scopes stay distinct. */
 const citationPhysicalReadId = (evidence: Pick<CitationEvidence, 'pageEvidenceId' | 'binding'>): string =>
-  createHash('sha256').update(canonicalJson([
-    evidence.pageEvidenceId,
-    evidence.binding.sourceRevision,
-    evidence.binding.representation,
-    evidence.binding.representationMetadata,
-    evidence.binding.retrievedSource
-  ])).digest('hex')
+  createHash('sha256')
+    .update(
+      canonicalJson([
+        evidence.pageEvidenceId,
+        evidence.binding.sourceRevision,
+        evidence.binding.representation,
+        evidence.binding.representationMetadata,
+        evidence.binding.retrievedSource
+      ])
+    )
+    .digest('hex')
 
-const completeWikiReadBindings = (evidence: ReadonlyMap<string, CitationEvidence>): ReadonlyMap<string, {
-  readonly evidenceId: string
-  readonly representation: CitationEvidence
-}> => {
+const completeWikiReadBindings = (
+  evidence: ReadonlyMap<string, CitationEvidence>
+): ReadonlyMap<
+  string,
+  {
+    readonly evidenceId: string
+    readonly representation: CitationEvidence
+  }
+> => {
   const physicalReads = new Map<string, { evidenceId: string; representation: CitationEvidence }>()
   const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
   for (const [evidenceId, representation] of evidence) {
@@ -1311,16 +1352,17 @@ const completeWikiReadBindings = (evidence: ReadonlyMap<string, CitationEvidence
       physicalReadIds.set(representation.document, readId)
     }
     const previous = physicalReads.get(readId)
-    if (previous !== undefined &&
+    if (
+      previous !== undefined &&
       (previous.representation.binding.sourceRevision !== representation.binding.sourceRevision ||
-        previous.representation.binding.retrievedSource !== representation.binding.retrievedSource))
+        previous.representation.binding.retrievedSource !== representation.binding.retrievedSource)
+    )
       throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Physical read aliases changed original content or revision', 409)
-    if (previous === undefined || previous.evidenceId.includes(':section:') && !evidenceId.includes(':section:'))
+    if (previous === undefined || (previous.evidenceId.includes(':section:') && !evidenceId.includes(':section:')))
       physicalReads.set(readId, { evidenceId, representation })
   }
   for (const [readId, { representation }] of physicalReads) {
-    if (representation.binding.representation === 'recent-excerpt' &&
-      metadataRecord(representation.binding.representationMetadata)?.contentTruncated !== false)
+    if (representation.binding.representation === 'recent-excerpt' && metadataRecord(representation.binding.representationMetadata)?.contentTruncated !== false)
       physicalReads.delete(readId)
   }
   return physicalReads
@@ -1586,7 +1628,32 @@ const collectPageEvidence = (
       if (!evidenceIds.includes(page.evidenceId)) evidenceIds.push(page.evidenceId)
       if (row.contentTruncated === true && !truncatedEvidenceIds.includes(page.evidenceId)) truncatedEvidenceIds.push(page.evidenceId)
     }
-    return { recent: evidenceIds.length === 0 ? null : { evidenceIds, truncatedEvidenceIds }, conflictingEvidenceIds }
+    const requestedLimit =
+      typeof result.requestedLimit === 'number' && Number.isSafeInteger(result.requestedLimit) && result.requestedLimit >= 1 && result.requestedLimit <= 20
+        ? result.requestedLimit
+        : null
+    const exhausted = typeof result.exhausted === 'boolean' ? result.exhausted : null
+    const returnedCount = (result.pages as readonly unknown[]).length
+    return {
+      recent:
+        evidenceIds.length === 0
+          ? null
+          : {
+              evidenceIds,
+              truncatedEvidenceIds,
+              actionCallId,
+              requestedLimit,
+              exhausted,
+              returnedCount,
+              windowComplete:
+                requestedLimit !== null &&
+                exhausted !== null &&
+                returnedCount <= requestedLimit &&
+                evidenceIds.length === returnedCount &&
+                (returnedCount === requestedLimit || exhausted)
+            },
+      conflictingEvidenceIds
+    }
   }
   if (actionName !== 'pages.get' && actionName !== 'pages.getVersion' && actionName !== 'pages.getOkf') return empty
   const sourceActionName = actionName as Exclude<PageReadActionName, 'pages.listRecent'>
@@ -1731,8 +1798,7 @@ const currentClaimSlice = (prefix: string): { readonly claim: string; readonly s
   const paragraph = prefix.slice(paragraphStart).trim()
   if (paragraph.startsWith('|') && paragraph.includes('\n')) {
     const tokens = evidenceMarkdown.parse(paragraph, {})
-    if (tokens[0]?.type === 'table_open' && tokens.at(-1)?.type === 'table_close')
-      return { claim: paragraph, start: paragraphStart }
+    if (tokens[0]?.type === 'table_open' && tokens.at(-1)?.type === 'table_close') return { claim: paragraph, start: paragraphStart }
   }
   let boundary = sentenceBoundaryEnds(prefix).at(-1) ?? 0
   for (const paragraph of prefix.matchAll(/\n{2,}/gu)) {
@@ -1799,7 +1865,13 @@ const citedSuffixIsOnlyRecommendations = (content: string, suffixStart: number):
   })
 }
 
-const claimBeforeMarker = (content: string, markerIndex: number, previousMarkerEnd: number, boundStatement: string | undefined, renderedStatement: string | undefined): ClaimBeforeMarker => {
+const claimBeforeMarker = (
+  content: string,
+  markerIndex: number,
+  previousMarkerEnd: number,
+  boundStatement: string | undefined,
+  renderedStatement: string | undefined
+): ClaimBeforeMarker => {
   const prefix = content.slice(previousMarkerEnd, markerIndex).trimEnd()
   const statement = boundStatement?.trim()
   const serialized = renderedStatement?.trim()
@@ -1911,8 +1983,7 @@ const hasAuthoritativePageTitle = (evidence: CitationEvidence): evidence is Cita
   !evidence.section && evidence.authoritativeTitle !== null && TITLE_SOURCE_ACTIONS[evidence.sourceActionName] === true
 
 const supportsTitleAssertion = (assertion: TitleAssertion, evidence: CitationEvidence, currentPage: AgentCurrentPageHint | undefined): boolean => {
-  if (!hasAuthoritativePageTitle(evidence))
-    return false
+  if (!hasAuthoritativePageTitle(evidence)) return false
   if (assertion.qualifier !== null) {
     if (evidence.sourceActionName !== 'pages.get' && evidence.sourceActionName !== 'pages.listRecent') return false
     if (!currentPageMatchesEvidence(evidence, currentPage)) return false
@@ -2009,7 +2080,6 @@ const sourceUnitPacket = (unit: CitationSourceUnit) => ({
   labels: unit.labels,
   closure: unit.closure
 })
-
 
 const sameSourceUnits = (left: readonly CitationSourceUnit[], right: readonly CitationSourceUnit[]): boolean =>
   left.length === right.length &&
@@ -2110,12 +2180,13 @@ const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericCla
   // A complete original prose unit can own several sentences. Keep a numeric
   // assertion attached to its own source sentence instead of requiring the
   // summary to repeat unrelated later prose in the same native body.
-  const originalProse = (unit.kind === 'paragraph' || unit.kind === 'list-item') &&
-    (unit.closure.record?.fields.length ?? 0) === 0 && unit.text === unit.closure.unit.normalizedText
+  const originalProse =
+    (unit.kind === 'paragraph' || unit.kind === 'list-item') &&
+    (unit.closure.record?.fields.length ?? 0) === 0 &&
+    unit.text === unit.closure.unit.normalizedText
   const originalProseAssertions = originalProse ? sourceSentences(unit.text) : null
-  const sourceNumericSegments = originalProseAssertions === null
-    ? numericSegments(unit.text, true)
-    : originalProseAssertions.flatMap(text => numericSegments(text, true))
+  const sourceNumericSegments =
+    originalProseAssertions === null ? numericSegments(unit.text, true) : originalProseAssertions.flatMap(text => numericSegments(text, true))
   const inheritedNumericSegments = inheritedRestrictionTexts.flatMap(value => numericSegments(value, true))
   const numericFactsMatch = (value: string): boolean => {
     const factual = value.replace(SOURCE_RESTRICTION_PATTERN, restriction => {
@@ -2169,7 +2240,9 @@ const assessSourceClause = (clause: string, unit: CitationSourceUnit, numericCla
       significantTokens(factualSource, true)
     ) && constraintTerms(clause).every(term => significantTokens(factualSource, true).includes(term))
   const claimedConstraintTokens = significantTokens(clause)
-  const requiredRestrictions = [...inheritedRestrictionTexts, ...(unit.text.match(SOURCE_RESTRICTION_PATTERN) ?? [])].map(value => significantTokens(value, true))
+  const requiredRestrictions = [...inheritedRestrictionTexts, ...(unit.text.match(SOURCE_RESTRICTION_PATTERN) ?? [])].map(value =>
+    significantTokens(value, true)
+  )
   const inheritedRestrictions = requiredRestrictions.every(restriction => orderedSubset(restriction, claimedConstraintTokens))
   const exactIdentifiers = !hasIdentifierSubstitution(clause, unit, originalProseAssertions)
   const claimedIdentifiers = new Set(identifierTerms(clause))
@@ -2233,8 +2306,10 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit, semanticAdm
   // first field is prose, not a row identity that must be copied word for word.
   const firstIdentifiers = semanticAdmission ? identifierTerms(first.value, true) : []
   const firstTerms = semanticAdmission ? significantTokens(first.value, true) : []
-  const literalIdentity = !semanticAdmission || /^(?:name|id|identifier)$/iu.test(first.label.trim()) ||
-    firstTerms.length > 0 && firstTerms.every(term => firstIdentifiers.includes(term))
+  const literalIdentity =
+    !semanticAdmission ||
+    /^(?:name|id|identifier)$/iu.test(first.label.trim()) ||
+    (firstTerms.length > 0 && firstTerms.every(term => firstIdentifiers.includes(term)))
   // A two-column key/value record can be stated as "Key: value". Resolve only
   // this exact owned key, then validate its value as the second explicit field.
   // Keep link destinations attached to their original field. Wording projection
@@ -2275,14 +2350,19 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit, semanticAdm
     .replace(/[,:;|*_]\s*$/u, '')
     .trim()
   const prefixIdentifiers = semanticAdmission ? identifierTerms(prefix) : null
-  if (normalizedTerms(prefix).some(term => !ownerTerms.has(term)) &&
-    (!semanticAdmission || constraintTerms(prefix).some(term => prefixIdentifiers!.includes(term) && !ownerTerms.has(term))))
+  if (
+    normalizedTerms(prefix).some(term => !ownerTerms.has(term)) &&
+    (!semanticAdmission || constraintTerms(prefix).some(term => prefixIdentifiers!.includes(term) && !ownerTerms.has(term)))
+  )
     return []
   const identityIndex = mentions.findIndex(mention => mention.fieldIndex === 0)
-  const statedIdentity = identityIndex < 0 ? '' : sourceClaim
-    .slice(mentions[identityIndex]!.start, mentions[identityIndex + 1]?.start ?? sourceClaim.length)
-    .replace(/(?:\s|[*_])*(?:[,;|]|\band\b)(?:\s|[*_])*$/iu, '')
-    .trim()
+  const statedIdentity =
+    identityIndex < 0
+      ? ''
+      : sourceClaim
+          .slice(mentions[identityIndex]!.start, mentions[identityIndex + 1]?.start ?? sourceClaim.length)
+          .replace(/(?:\s|[*_])*(?:[,;|]|\band\b)(?:\s|[*_])*$/iu, '')
+          .trim()
   const identifyingRestrictions = first.value.match(SOURCE_RESTRICTION_PATTERN)?.join(' › ') ?? ''
   const result: SourceClauseAssessment[] = []
   for (let index = 0; index < mentions.length; index++) {
@@ -2307,7 +2387,10 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit, semanticAdm
           )
       )
     )
-    const governingContext = unit.closure.contexts.filter(node => fieldContextIds.includes(node.id)).map(node => node.normalizedLabel).join(' › ')
+    const governingContext = unit.closure.contexts
+      .filter(node => fieldContextIds.includes(node.id))
+      .map(node => node.normalizedLabel)
+      .join(' › ')
     const fieldContext = [governingContext, identity].filter(Boolean).join(' › ')
     const fieldUnit: CitationSourceUnit = {
       ...unit,
@@ -2333,28 +2416,34 @@ const assessRecordClause = (claim: string, unit: CitationSourceUnit, semanticAdm
     const foreignValue = record.fields.some((field, fieldIndex) => {
       if (fieldIndex === mention.fieldIndex || fieldIndex === 0 || !field.value.trim()) return false
       const value = lexicalTokens(field.value, true).map(normalizedToken)
-      const contains = (terms: readonly string[]): boolean => value.length > 0 &&
-        terms.some((_, start) => value.every((term, offset) => terms[start + offset] === term))
+      const contains = (terms: readonly string[]): boolean =>
+        value.length > 0 && terms.some((_, start) => value.every((term, offset) => terms[start + offset] === term))
       return contains(claimedValue) && !contains(lexicalTokens(mention.field.value, true).map(normalizedToken))
     })
-    const identityTokens = semanticAdmission && literalIdentity && mention.fieldIndex === 0
-      ? lexicalTokens(first.value, true).map(exactIdentityToken) : null
-    const claimedIdentityTokens = identityTokens === null ? null
-      : lexicalTokens(part).map(exactIdentityToken)
+    const identityTokens = semanticAdmission && literalIdentity && mention.fieldIndex === 0 ? lexicalTokens(first.value, true).map(exactIdentityToken) : null
+    const claimedIdentityTokens = identityTokens === null ? null : lexicalTokens(part).map(exactIdentityToken)
     const association =
-      (mention.fieldIndex !== 0 || !literalIdentity || lexicalAssociation &&
-        (identityTokens === null || claimedIdentityTokens!.some((_, start) =>
-          identityTokens.every((token, offset) => claimedIdentityTokens![start + offset] === token)))) &&
+      (mention.fieldIndex !== 0 ||
+        !literalIdentity ||
+        (lexicalAssociation &&
+          (identityTokens === null ||
+            claimedIdentityTokens!.some((_, start) => identityTokens.every((token, offset) => claimedIdentityTokens![start + offset] === token))))) &&
       !foreignValue &&
       claimedAddresses.every(value => sourceAddresses.includes(value)) &&
       (sourceAddresses.length === 0 || claimedAddresses.length > 0)
     // An explicitly stated identity is checked by its own field assessment.
     // Its numbers must not be reassigned to another field's factual value.
     const numericClause = `${prefix ? `${prefix}: ` : ''}${part}`
-    const assessment = assessSourceClause(`${prefix ? `${prefix}: ` : ''}${mention.fieldIndex !== 0 && statedIdentity ? `${statedIdentity}; ` : ''}${part}`, fieldUnit, numericClause)
+    const assessment = assessSourceClause(
+      `${prefix ? `${prefix}: ` : ''}${mention.fieldIndex !== 0 && statedIdentity ? `${statedIdentity}; ` : ''}${part}`,
+      fieldUnit,
+      numericClause
+    )
     result.push({
       ...assessment,
-      constraints: assessment.constraints && lexicalAssociation &&
+      constraints:
+        assessment.constraints &&
+        lexicalAssociation &&
         claimedAddresses.every(value => sourceAddresses.includes(value)) &&
         (sourceAddresses.length === 0 || claimedAddresses.length > 0),
       semanticConstraints: assessment.protectedConstraints && association
@@ -2547,8 +2636,7 @@ const membershipAssessment = (clause: string, evidence: CitationEvidence): Claus
       for (const context of unit.closure.contexts) {
         if (!context.complete || (context.kind !== 'heading' && context.kind !== 'summary') || !unit.containerIds.includes(context.id)) continue
         const label = structuralTokens(context.normalizedLabel)
-        if (label.length === sought.length && label.every((token, index) => token === sought[index]))
-          ancestorContainers.set(context.id, context)
+        if (label.length === sought.length && label.every((token, index) => token === sought[index])) ancestorContainers.set(context.id, context)
       }
     }
   }
@@ -2647,15 +2735,17 @@ const assessTableClaim = (claim: string, evidence: CitationEvidence): readonly C
     if (unit.recordId !== null) return false
     if (unit.kind !== 'table' || !unit.complete || unit.sourceSpans.length !== 1) return true
     const tableSpan = unit.sourceSpans[0]!
-    return !records.some(record => record.complete && record.unitIds.length > 0 &&
-      record.unitIds.every(id => {
-        const row = document.units.find(candidate => candidate.id === id)
-        return row !== undefined && row.sourceSpans.length > 0 &&
-          row.sourceSpans.every(span => span.start >= tableSpan.start && span.end <= tableSpan.end)
-      }))
+    return !records.some(
+      record =>
+        record.complete &&
+        record.unitIds.length > 0 &&
+        record.unitIds.every(id => {
+          const row = document.units.find(candidate => candidate.id === id)
+          return row !== undefined && row.sourceSpans.length > 0 && row.sourceSpans.every(span => span.start >= tableSpan.start && span.end <= tableSpan.end)
+        })
+    )
   })
-  if (foreignNarrative)
-    return [{ text: claim, terms: normalizedTerms(claim), matchedTerms: [], supported: false, kind: 'fact', bodyFact: false }]
+  if (foreignNarrative) return [{ text: claim, terms: normalizedTerms(claim), matchedTerms: [], supported: false, kind: 'fact', bodyFact: false }]
   return records.map(record => {
     const text = record.fields.map(field => `${field.label}: ${field.value}`).join('; ')
     const witnesses = evidence.sourceUnits.filter(unit => {
@@ -2667,7 +2757,13 @@ const assessTableClaim = (claim: string, evidence: CitationEvidence): readonly C
         for (const claimedUnit of document.units) {
           if (!field.unitIds.includes(claimedUnit.id)) continue
           for (const link of claimedUnit.links) {
-            if (!unit.closure.links.some(source => sourceField.unitIds.includes(source.unitId) && sourceLinkSignature(source.label, source.destination) === sourceLinkSignature(link.label, link.destination)))
+            if (
+              !unit.closure.links.some(
+                source =>
+                  sourceField.unitIds.includes(source.unitId) &&
+                  sourceLinkSignature(source.label, source.destination) === sourceLinkSignature(link.label, link.destination)
+              )
+            )
               return false
           }
         }
@@ -2675,15 +2771,18 @@ const assessTableClaim = (claim: string, evidence: CitationEvidence): readonly C
       return true
     })
     const terms = normalizedTerms(text)
-    return { text, terms, matchedTerms: terms.filter(term => witnesses.some(unit => unit.terms.has(term))), supported: witnesses.length > 0, kind: 'fact', bodyFact: witnesses.some(isBodyFactUnit) }
+    return {
+      text,
+      terms,
+      matchedTerms: terms.filter(term => witnesses.some(unit => unit.terms.has(term))),
+      supported: witnesses.length > 0,
+      kind: 'fact',
+      bodyFact: witnesses.some(isBodyFactUnit)
+    }
   })
 }
 
-const assessClaimClauses = (
-  claim: string,
-  evidence: CitationEvidence,
-  binding?: WikiSynthesisAnswer['claims'][number]
-): readonly ClauseAssessment[] => {
+const assessClaimClauses = (claim: string, evidence: CitationEvidence, binding?: WikiSynthesisAnswer['claims'][number]): readonly ClauseAssessment[] => {
   if (binding?.statement === claim && binding.evidenceId === evidence.citation.evidenceId && binding.sourceRevision === evidence.binding.sourceRevision) {
     const unit = evidence.sourceUnits.find(candidate => candidate.identity === binding.unitId)
     if (unit !== undefined) {
@@ -2697,8 +2796,10 @@ const assessClaimClauses = (
         complete: unit.complete,
         closure: unit.closure
       }
-      if (isLiteralSourceClaim(binding, protectedOriginalWikiVerificationSource) ||
-        binding.statement === getLiteralSourceStatement(protectedOriginalWikiVerificationSource)) {
+      if (
+        isLiteralSourceClaim(binding, protectedOriginalWikiVerificationSource) ||
+        binding.statement === getLiteralSourceStatement(protectedOriginalWikiVerificationSource)
+      ) {
         const terms = normalizedTerms(claim)
         return [{ text: claim, terms, matchedTerms: terms, supported: true, kind: 'fact', bodyFact: isBodyFactUnit(unit) }]
       }
@@ -2765,8 +2866,6 @@ const assessClaimClauses = (
   })
 }
 
-
-
 const incrementCounts = (counts: Map<string, number>, values: readonly string[]): void => {
   for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1)
 }
@@ -2788,8 +2887,12 @@ const literalNumbers = (value: string): readonly string[] =>
 const literalPhones = (value: string): readonly string[] =>
   evidenceMarkdown.parse(value.replace(citationMarker, ' '), {}).flatMap(token => {
     // Table cells and independent blocks must not fabricate one phone literal.
-    const text = token.type === 'inline' && token.children ? semanticInlineText(token.children)
-      : token.type === 'fence' || token.type === 'code_block' ? token.content : ''
+    const text =
+      token.type === 'inline' && token.children
+        ? semanticInlineText(token.children)
+        : token.type === 'fence' || token.type === 'code_block'
+          ? token.content
+          : ''
     return text.match(/\+?\d[\d ()-]{6,}\d/gu) ?? []
   })
 
@@ -2797,7 +2900,8 @@ const readIdentityAddresses = (value: string): readonly string[] => {
   if (!value.includes('@')) return []
   // Bound matching to individual address-like tokens. An unanchored greedy
   // email pattern on a long ordinary word repeatedly scans the same suffix.
-  return value.split(/[^\w\p{L}.+@-]+/u)
+  return value
+    .split(/[^\w\p{L}.+@-]+/u)
     .map(token => token.replace(/\.+$/u, ''))
     .filter(token => /^[\w.+-]+@[\w.-]+\.[\p{L}]+$/u.test(token))
 }
@@ -2829,8 +2933,8 @@ const readLiteralSnapshot = (evidence: CitationEvidence): ReadLiteralSnapshot =>
   }
   for (const text of texts) for (const address of readIdentityAddresses(text)) addresses.add(address)
   return {
-    authorText: !evidence.document.requiresVisibilityProjection && evidence.binding.retrievedSource.trim()
-      ? evidence.binding.retrievedSource : author.join('\n'),
+    authorText:
+      !evidence.document.requiresVisibilityProjection && evidence.binding.retrievedSource.trim() ? evidence.binding.retrievedSource : author.join('\n'),
     texts,
     numbers: new Set(texts.flatMap(literalNumbers)),
     addresses,
@@ -2841,10 +2945,13 @@ const readLiteralSnapshot = (evidence: CitationEvidence): ReadLiteralSnapshot =>
 
 const readCodeLiterals = (statement: string): readonly string[] =>
   evidenceMarkdown.parse(statement.replace(citationMarker, ' '), {}).flatMap(token =>
-    token.type === 'inline' ? (token.children ?? []).filter(child => child.type === 'code_inline').map(child => child.content)
+    token.type === 'inline'
+      ? (token.children ?? []).filter(child => child.type === 'code_inline').map(child => child.content)
       : token.type === 'fence' || token.type === 'code_block'
-        // Markdown's closing block delimiter contributes a terminal newline.
-        ? [token.content.replace(/\n$/u, '')] : [])
+        ? // Markdown's closing block delimiter contributes a terminal newline.
+          [token.content.replace(/\n$/u, '')]
+        : []
+  )
 
 // Literal existence is independent of entity/row/field association. Jev owns
 // meaning across this complete read; hidden bytes and other reads are not pools.
@@ -2852,11 +2959,15 @@ const readLiteralIntegrity = (statement: string, literals: ReadLiteralSnapshot, 
   literalNumbers(statement).every(number => literals.numbers.has(number)) &&
   readIdentityAddresses(statement).every(address => literals.addresses.has(address)) &&
   literalPhones(statement).every(phone => literals.phones.has(phone)) &&
-  readCodeLiterals(statement).every(literal =>
-    literals.texts.some(text => text.includes(literal)) || literals.destinations.has(literal)) &&
+  readCodeLiterals(statement).every(literal => literals.texts.some(text => text.includes(literal)) || literals.destinations.has(literal)) &&
   renderedLinkSignatures(statement).every(link => evidence.renderedLinks.has(link))
 
-const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvidence>, coverage?: DraftCoverage, nativeDraft?: NativeDraft): DraftAssessment => {
+const assessDraft = (
+  content: string,
+  registry: ReadonlyMap<string, CitationEvidence>,
+  coverage?: DraftCoverage,
+  nativeDraft?: NativeDraft
+): DraftAssessment => {
   const issues: string[] = []
   const groundingWarnings: string[] = []
   const claims: ClaimProvenance[] = []
@@ -2869,8 +2980,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
   for (const match of content.matchAll(citationMarker)) {
     const evidenceId = match[1] ?? ''
     const boundClaim = nativeDraft?.answer.claims[claims.length]
-    const renderedStatement = boundClaim === undefined ? undefined
-      : renderWikiSynthesisClaimStatement(boundClaim)
+    const renderedStatement = boundClaim === undefined ? undefined : renderWikiSynthesisClaimStatement(boundClaim)
     const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement, renderedStatement)
     if (nativeDraft !== undefined && (boundClaim === undefined || boundClaim.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
       issues.push('Typed source claims must retain their exact host-rendered statement and citation.')
@@ -2886,20 +2996,22 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     previousMarkerEnd = (match.index ?? 0) + match[0].length
     const registeredEvidence = registry.get(evidenceId)
     // A draft cannot revive a removed, superseded or unauthorized original read.
-    const bindingKey = boundClaim === undefined ? undefined
-      : canonicalJson([boundClaim.evidenceId, boundClaim.sourceRevision, boundClaim.unitId])
+    const bindingKey = boundClaim === undefined ? undefined : canonicalJson([boundClaim.evidenceId, boundClaim.sourceRevision, boundClaim.unitId])
     const boundEvidence = bindingKey === undefined ? undefined : nativeDraft?.evidence.get(bindingKey)
     const readSource = bindingKey === undefined ? undefined : nativeDraft?.readSources.get(bindingKey)
     const literals = bindingKey === undefined ? undefined : nativeDraft?.readLiterals.get(bindingKey)
-    const evidence = nativeDraft === undefined || (
-      boundClaim?.evidenceId === evidenceId && readSource?.kind === 'source-read' &&
-      boundClaim.unitId === `read:${readSource.readId}` &&
-      registeredEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
-      boundEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
-      registeredEvidence.binding.retrievedSource === readSource.text &&
-      boundEvidence.binding.retrievedSource === readSource.text &&
-      registeredEvidence.document === boundEvidence.document
-    ) ? registeredEvidence : undefined
+    const evidence =
+      nativeDraft === undefined ||
+      (boundClaim?.evidenceId === evidenceId &&
+        readSource?.kind === 'source-read' &&
+        boundClaim.unitId === `read:${readSource.readId}` &&
+        registeredEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
+        boundEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
+        registeredEvidence.binding.retrievedSource === readSource.text &&
+        boundEvidence.binding.retrievedSource === readSource.text &&
+        registeredEvidence.document === boundEvidence.document)
+        ? registeredEvidence
+        : undefined
     if (!evidence) {
       issues.push(`Citation ${evidenceId || '(empty)'} was not produced by a successful page read in this run.`)
       claims.push({
@@ -2922,23 +3034,30 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     const claimLinks = renderedLinkSignatures(extractedClaim.renderedClaim)
     incrementCounts(citationBoundLinks, claimLinks)
     const exactLinks = claimLinks.every(link => evidence.renderedLinks.has(link))
-    const exactCodeLinkLiterals = nativeDraft !== undefined ? literals !== undefined &&
-      readLiteralIntegrity(boundClaim!.statement, literals, evidence)
-      : linkLookingCodeLiterals(extractedClaim.renderedClaim).every(literal => evidence.source.includes(literal))
+    const exactCodeLinkLiterals =
+      nativeDraft !== undefined
+        ? literals !== undefined && readLiteralIntegrity(boundClaim!.statement, literals, evidence)
+        : linkLookingCodeLiterals(extractedClaim.renderedClaim).every(literal => evidence.source.includes(literal))
     const clauseAssessments = nativeDraft === undefined ? assessClaimClauses(assessmentClaim, evidence) : []
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
-    const sourceLocalSupported = nativeDraft !== undefined
-      ? nativeDraft.semanticSupport?.has(canonicalJson(boundClaim)) === true
-      : clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
-    const bodyFact = nativeDraft !== undefined
-      ? !titleAssertionRecognized && evidence.document.units.some(unit => unit.complete && unit.kind !== 'heading' && unit.kind !== 'summary' && unit.kind !== 'opaque')
-      : clauseAssessments.some(clause => clause.bodyFact === true)
+    const sourceLocalSupported =
+      nativeDraft !== undefined
+        ? nativeDraft.semanticSupport?.has(canonicalJson(boundClaim)) === true
+        : clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
+    const bodyFact =
+      nativeDraft !== undefined
+        ? !titleAssertionRecognized &&
+          evidence.document.units.some(unit => unit.complete && unit.kind !== 'heading' && unit.kind !== 'summary' && unit.kind !== 'opaque')
+        : clauseAssessments.some(clause => clause.bodyFact === true)
     if (sourceLocalSupported && bodyFact) hasCitedBodyFact = true
     const lexicalSupported = sourceLocalSupported && exactLinks && exactCodeLinkLiterals
-    const exactTitle = !titleAssertionRecognized ||
-      titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage)
-    const integritySupported = nativeDraft !== undefined ? exactTitle && exactLinks && exactCodeLinkLiterals
-      : titleAssertionRecognized ? exactTitle : sourceLocalSupported && exactLinks && exactCodeLinkLiterals
+    const exactTitle = !titleAssertionRecognized || (titleAssertion !== null && supportsTitleAssertion(titleAssertion, evidence, coverage?.currentPage))
+    const integritySupported =
+      nativeDraft !== undefined
+        ? exactTitle && exactLinks && exactCodeLinkLiterals
+        : titleAssertionRecognized
+          ? exactTitle
+          : sourceLocalSupported && exactLinks && exactCodeLinkLiterals
     const supported = nativeDraft === undefined && titleAssertionRecognized ? integritySupported : lexicalSupported && integritySupported
     const claimProvenance: ClaimProvenance = {
       claim,
@@ -2956,13 +3075,7 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
       authoritativeTitle: evidence.authoritativeTitle
     }
     claims.push(claimProvenance)
-    if (
-      !titleAssertionRecognized &&
-      supported &&
-      integritySupported &&
-      bodyFact
-    )
-      supportedBodyFactClaims.add(claimProvenance)
+    if (!titleAssertionRecognized && supported && integritySupported && bodyFact) supportedBodyFactClaims.add(claimProvenance)
     if (!integritySupported)
       issues.push(
         titleAssertionRecognized
@@ -2970,11 +3083,16 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
           : `Citation ${evidenceId} changes an exact link, code literal, or numeric value from its immediately preceding claim.`
       )
     // A weakly aligned cited fact is a publication failure, not an advisory warning.
-    if ((nativeDraft !== undefined || !titleAssertionRecognized) && !sourceLocalSupported &&
-      (nativeDraft === undefined || nativeDraft.semanticSupport !== undefined))
-      issues.push(nativeDraft !== undefined
-        ? `Citation ${evidenceId} lacks complete-source semantic support.`
-        : `Citation ${evidenceId} does not support every factual clause from a single source unit in its cited scope.`)
+    if (
+      (nativeDraft !== undefined || !titleAssertionRecognized) &&
+      !sourceLocalSupported &&
+      (nativeDraft === undefined || nativeDraft.semanticSupport !== undefined)
+    )
+      issues.push(
+        nativeDraft !== undefined
+          ? `Citation ${evidenceId} lacks complete-source semantic support.`
+          : `Citation ${evidenceId} does not support every factual clause from a single source unit in its cited scope.`
+      )
     if (!seenCitationIds.has(evidenceId)) {
       seenCitationIds.add(evidenceId)
       citationIds.push(evidenceId)
@@ -2999,8 +3117,8 @@ const assessDraft = (content: string, registry: ReadonlyMap<string, CitationEvid
     issues.push('Every rendered link in a source-grounded answer must be inside the exact clause immediately followed by its supporting Wiki citation.')
   }
   if (claims.length > MAX_ANSWER_CITATIONS) issues.push(`Answers may contain at most ${MAX_ANSWER_CITATIONS} citation markers.`)
-  const pendingSemanticSupport = nativeDraft !== undefined && nativeDraft.semanticSupport === undefined &&
-    claims.some(claim => claim.integritySupported && !claim.supported)
+  const pendingSemanticSupport =
+    nativeDraft !== undefined && nativeDraft.semanticSupport === undefined && claims.some(claim => claim.integritySupported && !claim.supported)
   if (!pendingSemanticSupport && coverage?.pageSummary && claims.length > 0 && !hasCitedBodyFact) {
     for (const evidence of registry.values()) {
       if (!evidence.sourceUnits.some(isBodyFactUnit)) continue
@@ -3167,11 +3285,7 @@ const provenanceData = (accepted: boolean, assessment: DraftAssessment, retrieva
   claims: assessment.claims.slice(0, MAX_ANSWER_CITATIONS).map(({ repairClaim: _repairClaim, ...claim }) => claim),
   finalCitationIds: accepted ? assessment.citationIds.slice(0, MAX_ANSWER_CITATIONS) : []
 })
-const relevantSourceUnits = (
-  fragment: string,
-  evidence: CitationEvidence,
-  orientationOnly = false
-): readonly CitationSourceUnit[] => {
+const relevantSourceUnits = (fragment: string, evidence: CitationEvidence, orientationOnly = false): readonly CitationSourceUnit[] => {
   const terms = normalizedTerms(fragment)
   const termSet = new Set(terms)
   const ranked = evidence.sourceUnits
@@ -3446,7 +3560,11 @@ interface TurnResult extends AgentTokenUsage {
   }
 }
 const MAX_DIAGNOSTIC_TURN_CHARACTERS = 32_000
-const modelTurnData = (turn: number, result: TurnResult, outcome: 'tool_calls' | 'collection_complete' | 'answer_accepted' | 'answer_rejected' | 'verification_completed'): AgentEventData => ({
+const modelTurnData = (
+  turn: number,
+  result: TurnResult,
+  outcome: 'tool_calls' | 'collection_complete' | 'answer_accepted' | 'answer_rejected' | 'verification_completed'
+): AgentEventData => ({
   turn,
   outcome,
   usageVersion: 2,
@@ -3838,16 +3956,19 @@ type ChatPromptMessage = AxChatRequest['chatPrompt'][number]
 
 const wikiConversationContext = (conversation: readonly ChatPromptMessage[]): string | undefined => {
   const currentUserIndex = conversation.findLastIndex(message => message.role === 'user')
-  const previousConversation = conversation.slice(0, currentUserIndex < 0 ? conversation.length : currentUserIndex)
-    .flatMap(message => {
-      if (message.role !== 'user' && message.role !== 'assistant') return []
-      const content = typeof message.content === 'string'
+  const previousConversation = conversation.slice(0, currentUserIndex < 0 ? conversation.length : currentUserIndex).flatMap(message => {
+    if (message.role !== 'user' && message.role !== 'assistant') return []
+    const content =
+      typeof message.content === 'string'
         ? message.content
         : message.role === 'user'
-          ? message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+          ? message.content
+              .filter(part => part.type === 'text')
+              .map(part => part.text)
+              .join('\n')
           : ''
-      return content.trim() ? [`${message.role}:\n${content}`] : []
-    })
+    return content.trim() ? [`${message.role}:\n${content}`] : []
+  })
   return previousConversation.length > 0 ? previousConversation.join('\n\n') : undefined
 }
 
@@ -3898,6 +4019,7 @@ const serializedProviderRequestBytes = (
 ): number => Buffer.byteLength(JSON.stringify(providerRequestFor(provider, tools, chatPrompt, maxOutputTokens, undefined, synthesisRequest)), 'utf8')
 interface ProviderExposure {
   readonly inputExposureTokens: number
+  readonly inputExposureUsesFullWindowBound: boolean
   readonly outputExposureTokens: number
   readonly totalExposureTokens: number
   readonly serializedRequestBytes: number
@@ -3922,15 +4044,11 @@ const providerExposureFor = (
   const hasMedia =
     unmeasuredExternalMedia ||
     chatPrompt.some(message => message.role === 'user' && Array.isArray(message.content) && message.content.some(part => part.type === 'file'))
-  const inputExposureTokens = Math.max(
-    0,
-    hasMedia
-      ? provider.capabilities.maxContextTokens - maxOutputTokens
-      : serializedRequestBytes
-  )
+  const inputExposureTokens = Math.max(0, hasMedia ? provider.capabilities.maxContextTokens - maxOutputTokens : serializedRequestBytes)
   const outputExposureTokens = maxOutputTokens
   return {
     inputExposureTokens,
+    inputExposureUsesFullWindowBound: hasMedia && serializedRequestBytes <= inputExposureTokens,
     outputExposureTokens,
     totalExposureTokens: safeUsageAddition(inputExposureTokens, outputExposureTokens, 'Provider exposure'),
     serializedRequestBytes,
@@ -3982,9 +4100,7 @@ const boundedChatPrompt = (
   return { chatPrompt, maxOutputTokens: requestedMaxOutputTokens }
 }
 
-const presentAcceptedContent = async (
-  content: string, sink: AgentEngineSink, assertPublicationFresh?: () => Promise<void>
-): Promise<void> => {
+const presentAcceptedContent = async (content: string, sink: AgentEngineSink, assertPublicationFresh?: () => Promise<void>): Promise<void> => {
   if (content.length === 0) return
   const deltaCharacters = Math.min(
     MAX_PRESENTATION_DELTA_CHARACTERS,
@@ -4101,7 +4217,13 @@ const systemMessageForRequest = (
           : `Available admitted tool categories (enable with ${TOOL_DISCOVERY_CONTROL_NAME}):\n${JSON.stringify(categoryIndex)}`
   return {
     role: 'system',
-    content: prompt(request, skillCatalog, toolInstructions, cacheAwareRoot, tools === null && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent')
+    content: prompt(
+      request,
+      skillCatalog,
+      toolInstructions,
+      cacheAwareRoot,
+      tools === null && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent'
+    )
   }
 }
 
@@ -4228,7 +4350,12 @@ const fullProviderExposureFor = (
     const media = measuredPromptMediaTokens(chatPrompt, measuredMediaTokens)
     if (!media.unmeasured) {
       inputExposureTokens = exposure.serializedRequestBytes + media.total
-      return { ...exposure, inputExposureTokens, totalExposureTokens: safeUsageAddition(inputExposureTokens, maxOutputTokens, 'Context exposure') }
+      return {
+        ...exposure,
+        inputExposureTokens,
+        inputExposureUsesFullWindowBound: false,
+        totalExposureTokens: safeUsageAddition(inputExposureTokens, maxOutputTokens, 'Context exposure')
+      }
     }
   }
   return { ...exposure, inputExposureTokens, totalExposureTokens: safeUsageAddition(inputExposureTokens, maxOutputTokens, 'Context exposure') }
@@ -4432,15 +4559,22 @@ const providerRecentEvidenceOutput = (source: Record<string, unknown>): unknown 
   return projected
 }
 
-const trustedActionStatusLine = (output: unknown): string | null => {
+const trustedActionStatusLines = (output: unknown): readonly string[] => {
   const observation = asRecord(output)
-  if (observation?.kind !== 'receipt' && observation?.kind !== 'artifact') return null
+  if (observation?.kind !== 'receipt' && observation?.kind !== 'artifact') return []
   const expectedClaimClass = observation.kind === 'receipt' ? 'operation-status-only' : 'artifact-existence-only'
-  if (observation.supportsFactualClaim !== expectedClaimClass) return null
+  if (observation.supportsFactualClaim !== expectedClaimClass) return []
   const presentation = asRecord(observation.presentation)
-  if (typeof presentation?.text !== 'string') return null
-  const line = presentation.text.split('\n', 1)[0]?.trim()
-  return line && Buffer.byteLength(line, 'utf8') <= 256 ? line : null
+  if (typeof presentation?.text !== 'string') return []
+  const receipt = asRecord(observation.receipt)
+  // Auto-applied chat preparations carry the same authorized result identity as
+  // explicit application. Never admit the model-authored proposal summary.
+  const appliedResult =
+    (receipt?.operation === 'wiki.proposal' && asRecord(receipt.application)?.status === 'applied') || receipt?.operation === 'wiki.applyProposal'
+  return presentation.text
+    .split('\n', appliedResult ? 3 : 1)
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && Buffer.byteLength(line, 'utf8') <= (appliedResult ? 8_192 : 256))
 }
 interface BrowserAttribution {
   readonly prefix: string
@@ -4500,9 +4634,7 @@ const providerActionOutput = (
       actionName === 'media.generateImage' || actionName === 'media.generateVideo' || actionName === 'media.generateMusic' ? asRecord(output) : null
     // Delivery metadata is host enrichment, not part of the strict
     // generation action result validated by the observation projector.
-    const observationOutput = generatedMediaOutput === null
-      ? output
-      : { generated: generatedMediaOutput.generated, count: generatedMediaOutput.count }
+    const observationOutput = generatedMediaOutput === null ? output : { generated: generatedMediaOutput.generated, count: generatedMediaOutput.count }
     const domain = presentDomainObservation(actionName, invocation.input, observationOutput, {
       asOf: new Date().toISOString(),
       invocationId: invocation.actionCallId
@@ -4558,7 +4690,18 @@ const providerActionOutput = (
     if (completeReadCollection) {
       // Typed root synthesis owns citation selection and reads the original
       // body. Section catalogs and derived retrieval hints add no authority.
-      const projected = copyFields(source, ['id', 'locale', 'path', 'title', 'contentType', 'sourceRevision', 'content', 'updatedAt', 'versionId', 'versionDate'])
+      const projected = copyFields(source, [
+        'id',
+        'locale',
+        'path',
+        'title',
+        'contentType',
+        'sourceRevision',
+        'content',
+        'updatedAt',
+        'versionId',
+        'versionDate'
+      ])
       if (Object.hasOwn(source, 'citation')) projected.citation = providerCitationOutput(source.citation)
       if (Object.hasOwn(source, 'authority')) projected.authority = providerAuthorityOutput(source.authority)
       return projected
@@ -4749,7 +4892,7 @@ const evidenceSnapshotForPrompt = (
         if (deliveryMatches) matchingDeliveries.push(delivery)
       }
       const sourceUnits = completeSourceResident ? representation.sourceUnits : representation.sourceUnits.filter(unit => residentUnits.has(unit.identity))
-      if (matchingDeliveries.length === 0 || sourceUnits.length === 0 && !completeSourceResident) return []
+      if (matchingDeliveries.length === 0 || (sourceUnits.length === 0 && !completeSourceResident)) return []
       const readReceipts = representation.readReceipts.filter(receipt => matchingDeliveries.some(delivery => delivery.actionCallId === receipt.actionCallId))
       if (readReceipts.length === 0) return []
       const source = completeSourceResident
@@ -5743,6 +5886,7 @@ export class AxAgentEngine implements AgentEngine {
         result = {
           admissible: plan.requiredTotalExposureTokens <= remainingTokens,
           inputExposureTokens: plan.ordinaryExposure.inputExposureTokens,
+          ...(plan.ordinaryExposure.inputExposureUsesFullWindowBound ? { inputExposureUsesFullWindowBound: true } : {}),
           outputExposureTokens: plan.ordinaryExposure.outputExposureTokens,
           totalExposureTokens: plan.ordinaryExposure.totalExposureTokens,
           compactionExposure: plan.compactionExposure,
@@ -5765,6 +5909,7 @@ export class AxAgentEngine implements AgentEngine {
         result = {
           admissible: originalFits && exposure.totalExposureTokens <= remainingTokens,
           inputExposureTokens: exposure.inputExposureTokens,
+          ...(exposure.inputExposureUsesFullWindowBound ? { inputExposureUsesFullWindowBound: true } : {}),
           outputExposureTokens: exposure.outputExposureTokens,
           totalExposureTokens: exposure.totalExposureTokens,
           requiredTotalExposureTokens: exposure.totalExposureTokens,
@@ -5898,7 +6043,7 @@ export class AxAgentEngine implements AgentEngine {
     if (synthesisNames !== undefined && [...synthesisNames.keys()].some(name => name !== '__axOutput'))
       throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Synthesis cannot offer application tools', 500)
     const observeFinishReason = (finishReason: AxChatResponseResult['finishReason']): void => {
-      if (finishReason === undefined || accumulator.finishReason === 'error' || accumulator.finishReason === 'length' && finishReason !== 'error') return
+      if (finishReason === undefined || accumulator.finishReason === 'error' || (accumulator.finishReason === 'length' && finishReason !== 'error')) return
       accumulator.finishReason = finishReason
     }
     const accept = async (response: AxChatResponse): Promise<void> => {
@@ -5956,7 +6101,12 @@ export class AxAgentEngine implements AgentEngine {
     const mediaInputExposure = preliminaryExposure.serializedRequestBytes + (preparedMedia.mediaTokens ?? 0)
     const exposure =
       preparedMedia.mediaTokens !== null && !preliminaryExposure.unmeasuredExternalMedia
-        ? { ...preliminaryExposure, inputExposureTokens: mediaInputExposure, totalExposureTokens: mediaInputExposure + maxOutputTokens }
+        ? {
+            ...preliminaryExposure,
+            inputExposureTokens: mediaInputExposure,
+            inputExposureUsesFullWindowBound: false,
+            totalExposureTokens: mediaInputExposure + maxOutputTokens
+          }
         : preliminaryExposure
     const dispatchBudget = request.dispatchBudget
     let dispatchReservation: AgentDispatchBudgetReservation | undefined
@@ -6070,10 +6220,7 @@ export class AxAgentEngine implements AgentEngine {
               if (structuralIssue !== undefined && dispatchBudget !== undefined) {
                 dispatchAbortController.abort(new Error('Synthesis structural invariant failed'))
                 cancelAttempted = true
-                await Promise.race([
-                  reader.cancel(PROVIDER_STREAM_CANCEL_REASON).catch(() => {}),
-                  new Promise<void>(resolve => setTimeout(resolve, 1_000))
-                ])
+                await Promise.race([reader.cancel(PROVIDER_STREAM_CANCEL_REASON).catch(() => {}), new Promise<void>(resolve => setTimeout(resolve, 1_000))])
                 break
               }
             } catch (error) {
@@ -6154,7 +6301,8 @@ export class AxAgentEngine implements AgentEngine {
         completeUsage = { inputTokens, outputTokens, totalTokens }
       }
       const rawContent = accumulator.contentFragments.join('')
-      const metadata: RootResponseMetadata = metadataContext === undefined || synthesis !== undefined ? { content: rawContent } : extractRootRequestMetadata(rawContent, metadataContext)
+      const metadata: RootResponseMetadata =
+        metadataContext === undefined || synthesis !== undefined ? { content: rawContent } : extractRootRequestMetadata(rawContent, metadataContext)
       const content = metadata.content
       let framingIssue = metadata.framingIssue ?? structuralIssue
       const hasAnswerCoverage = metadata.answerCoveragePresent === true
@@ -6247,9 +6395,7 @@ export class AxAgentEngine implements AgentEngine {
       const settlementUsage = responseAccepted ? completeUsage : undefined
       if (dispatchReservation && dispatchBudget && !reservationReconciled && !reservationReconcileAttempted && settlementUsage !== undefined) {
         try {
-          const costMicros = estimatedUsage
-            ? admittedCostMicros
-            : agentProviderMeasuredCostMicros(provider.pricing, settlementUsage)
+          const costMicros = estimatedUsage ? admittedCostMicros : agentProviderMeasuredCostMicros(provider.pricing, settlementUsage)
           await reconcileReservation({ ...settlementUsage, costMicros })
         } catch (settlementError) {
           throw classifyAgentExecutionFailure(settlementError, 'usage_reconciliation')
@@ -6291,11 +6437,14 @@ export class AxAgentEngine implements AgentEngine {
     const sourceReads: WikiSynthesisRead[] = []
     for (const [readId, { evidenceId, representation }] of completeWikiReadBindings(evidence)) {
       const source: WikiSynthesisSource = {
-        evidenceId, sourceRevision: representation.binding.sourceRevision,
-        unitId: `read:${readId}`, readId,
+        evidenceId,
+        sourceRevision: representation.binding.sourceRevision,
+        unitId: `read:${readId}`,
+        readId,
         context: representation.authoritativeTitle ?? '',
         text: representation.binding.retrievedSource,
-        kind: 'source-read', complete: true
+        kind: 'source-read',
+        complete: true
       }
       const key = canonicalJson([source.evidenceId, source.sourceRevision, source.unitId])
       const literals = readLiteralSnapshot(representation)
@@ -6304,10 +6453,13 @@ export class AxAgentEngine implements AgentEngine {
       readSources.set(key, { ...source, closure: null, authorText: literals.authorText })
       sources.push(source)
       sourceReads.push({
-        evidenceId, sourceRevision: source.sourceRevision, readId,
+        evidenceId,
+        sourceRevision: source.sourceRevision,
+        readId,
         title: representation.authoritativeTitle,
         representation: representation.binding.representation,
-        complete: true, source: source.text
+        complete: true,
+        source: source.text
       })
     }
     let rejection: string | undefined
@@ -6321,9 +6473,15 @@ export class AxAgentEngine implements AgentEngine {
     let rendered: string | undefined
     let nativeDraft: NativeDraft | undefined
     const features = provider.service.getFeatures(provider.model)
-    const structured = features.structuredOutputModes === undefined
-      ? features.structuredOutputs === true || features.functions
-      : features.structuredOutputModes.length > 0
+    const structured =
+      features.structuredOutputModes === undefined ? features.structuredOutputs === true || features.functions : features.structuredOutputModes.length > 0
+    const requiredOutcomeLines = input.observations.filter(
+      line =>
+        line === 'Wiki proposal status: applied.' ||
+        line === 'Wiki proposal application status: applied.' ||
+        /^Proposal: [0-9a-f-]{36}; result hash: [0-9a-f]{64}\.$/iu.test(line) ||
+        /^Wiki proposal [0-9a-f-]{36} status: (?:denied|expired|cancelled)\.$/iu.test(line)
+    )
     const program = createWikiSynthesisProgram(sources, {
       structured,
       maxOutputTokens: () => maxOutputTokens,
@@ -6333,9 +6491,14 @@ export class AxAgentEngine implements AgentEngine {
         const key = canonicalJson([source.evidenceId, source.sourceRevision, source.unitId])
         const bound = sourceEvidence.get(key)
         const literals = readLiterals.get(key)
-        if (bound === undefined || literals === undefined || !source.complete ||
-          source.unitId !== `read:${source.readId}` || source.sourceRevision !== bound.binding.sourceRevision ||
-          source.text !== bound.binding.retrievedSource)
+        if (
+          bound === undefined ||
+          literals === undefined ||
+          !source.complete ||
+          source.unitId !== `read:${source.readId}` ||
+          source.sourceRevision !== bound.binding.sourceRevision ||
+          source.text !== bound.binding.retrievedSource
+        )
           return rejectClaim(source, 'original-read-binding')
         return readLiteralIntegrity(claim.statement, literals, bound) ? true : rejectClaim(source, 'exact-literals')
       },
@@ -6347,11 +6510,22 @@ export class AxAgentEngine implements AgentEngine {
         rendered = content
         // Read identity and exact literal admission are mechanical; every claim
         // still requires independent complete-source Jev proof before publication.
-        nativeDraft = { answer, evidence: sourceEvidence, readSources, readLiterals, content,
+        nativeDraft = {
+          answer,
+          evidence: sourceEvidence,
+          readSources,
+          readLiterals,
+          content,
           contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes,
-          trustedObservations: new Set(input.observations) }
+          trustedObservations: new Set(input.observations)
+        }
         if (answer.claims.length === 0 && answer.observations.length === 0 && answer.unresolvedFacets.length !== input.requestFacets.length) {
           rejection = 'An inability must disclose every unresolved requested facet.'
+          return rejection
+        }
+        if (requiredOutcomeLines.some(line => !answer.observations.includes(line))) {
+          rejection =
+            'Report the exact delivered proposal outcome and its identity in observations. Keep any unsupported requested facts unresolved; the receipt proves no page content.'
           return rejection
         }
         const assessment = assessDraft(input.assessableContent(content), evidence, input.coverage, nativeDraft)
@@ -6376,15 +6550,19 @@ export class AxAgentEngine implements AgentEngine {
           index === 0 && message.role === 'system'
             ? {
                 ...message,
-                content:
-                  `${prompt(request, null, undefined, false, true, 'final-synthesis')}\n\n${message.content}`
+                content: `${prompt(request, null, undefined, false, true, 'final-synthesis')}\n\n${message.content}`
               }
             : message
         )
         const generationRequest: Readonly<AxChatRequest> = { ...generation, model: provider.model, chatPrompt: generatedPrompt }
         const serializedBytes = serializedProviderRequestBytes(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
         const prefixBytes = Buffer.byteLength(prompt(request, null, undefined, false, true, 'final-synthesis'), 'utf8')
-        const schemaText = JSON.stringify(asRecord(asRecord(generation.responseFormat)?.schema)?.schema ?? generation.functions?.find(fn => fn.name === '__axOutput')?.parameters ?? generation.responseFormat ?? null)
+        const schemaText = JSON.stringify(
+          asRecord(asRecord(generation.responseFormat)?.schema)?.schema ??
+            generation.functions?.find(fn => fn.name === '__axOutput')?.parameters ??
+            generation.responseFormat ??
+            null
+        )
         const cachedSourceMessage = generatedPrompt.find(message => message.role === 'user' && message.cache === true)
         const frameDiagnostics = {
           sourceCount: sourceReads.length,
@@ -6397,9 +6575,10 @@ export class AxAgentEngine implements AgentEngine {
           authoredBytes: originalSourceBytes,
           schemaBytes: Buffer.byteLength(schemaText, 'utf8'),
           schemaSha256: createHash('sha256').update(schemaText).digest('hex'),
-          systemSha256: createHash('sha256').update(generatedPrompt[0]?.content as string).digest('hex'),
-          sourcePrefixSha256: typeof cachedSourceMessage?.content === 'string'
-            ? createHash('sha256').update(cachedSourceMessage.content).digest('hex') : null,
+          systemSha256: createHash('sha256')
+            .update(generatedPrompt[0]?.content as string)
+            .digest('hex'),
+          sourcePrefixSha256: typeof cachedSourceMessage?.content === 'string' ? createHash('sha256').update(cachedSourceMessage.content).digest('hex') : null,
           prefixBytes,
           serializedRequestBytes: serializedBytes,
           requestedOutputTokens: maxOutputTokens,
@@ -6427,8 +6606,16 @@ export class AxAgentEngine implements AgentEngine {
         }
         const contextOutputAllowance = provider.capabilities.maxContextTokens - contextInputTokens
         const budgetOutputAllowance = maximumDispatchTokens === undefined ? maxOutputTokens : maximumDispatchTokens - serializedBytes
-        const reason = contextOutputAllowance < 1 ? 'context_limit' : budgetOutputAllowance < 1 ? 'token_allowance' :
-          Math.min(contextOutputAllowance, budgetOutputAllowance) < maxOutputTokens ? 'output_reduced' : nativeInputTokens === undefined ? 'byte_bound_fit' : 'native_count_fit'
+        const reason =
+          contextOutputAllowance < 1
+            ? 'context_limit'
+            : budgetOutputAllowance < 1
+              ? 'token_allowance'
+              : Math.min(contextOutputAllowance, budgetOutputAllowance) < maxOutputTokens
+                ? 'output_reduced'
+                : nativeInputTokens === undefined
+                  ? 'byte_bound_fit'
+                  : 'native_count_fit'
         const synthesisFrame = { ...frameDiagnostics, nativeInputTokens: nativeInputTokens ?? null, reason }
         if (contextOutputAllowance < 1 || budgetOutputAllowance < 1)
           await diagnosticSink?.event('evidence.provenance', {
@@ -6437,12 +6624,21 @@ export class AxAgentEngine implements AgentEngine {
             synthesisFrame
           })
         if (contextOutputAllowance < 1)
-          throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Typed source context and its output schema exceed the selected provider context limit; original history is preserved', 413)
+          throw new AgentRepositoryError(
+            'AGENT_CONTEXT_TOO_LARGE',
+            'Typed source context and its output schema exceed the selected provider context limit; original history is preserved',
+            413
+          )
         if (budgetOutputAllowance < 1)
-          throw classifyAgentExecutionFailure(new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Typed source context and its output schema exceed the remaining token allowance', 409), 'dispatch_admission')
+          throw classifyAgentExecutionFailure(
+            new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Typed source context and its output schema exceed the remaining token allowance', 409),
+            'dispatch_admission'
+          )
         maxOutputTokens = Math.min(maxOutputTokens, contextOutputAllowance, budgetOutputAllowance)
         const exposure = providerExposureFor(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
-        const repairExposure = input.reserveRepair ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure') : 0
+        const repairExposure = input.reserveRepair
+          ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure')
+          : 0
         const publicationTokens = safeUsageAddition(exposure.totalExposureTokens, repairExposure, 'Typed publication exposure')
         if (preflight) {
           preflightPlan = {
@@ -6454,13 +6650,23 @@ export class AxAgentEngine implements AgentEngine {
           throw preflightComplete
         }
         if (sequence !== undefined) {
-          const repairExposure = input.reserveRepair ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure') : 0
+          const repairExposure = input.reserveRepair
+            ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure')
+            : 0
           const maximum = safeUsageAddition(exposure.totalExposureTokens, repairExposure, 'Typed publication exposure')
           try {
             await sequence.resizeUndispatched({ tokens: maximum, costMicros: agentProviderCostMicros(provider.pricing, 0, 0, maximum) })
           } catch (error) {
-            if (!input.reserveRepair || !(error instanceof AgentRepositoryError) || !['AGENT_TOKEN_BUDGET_LIMITED', 'AGENT_QUOTA_EXHAUSTED'].includes(error.code)) throw error
-            await sequence.resizeUndispatched({ tokens: exposure.totalExposureTokens, costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens) })
+            if (
+              !input.reserveRepair ||
+              !(error instanceof AgentRepositoryError) ||
+              !['AGENT_TOKEN_BUDGET_LIMITED', 'AGENT_QUOTA_EXHAUSTED'].includes(error.code)
+            )
+              throw error
+            await sequence.resizeUndispatched({
+              tokens: exposure.totalExposureTokens,
+              costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
+            })
           }
         }
         dispatched = await this.#turn(
@@ -6477,8 +6683,7 @@ export class AxAgentEngine implements AgentEngine {
           input.authorizeEvidence,
           'synthesis'
         )
-        if (dispatched.performance !== undefined)
-          dispatched = { ...dispatched, performance: { ...dispatched.performance, synthesisFrame } }
+        if (dispatched.performance !== undefined) dispatched = { ...dispatched, performance: { ...dispatched.performance, synthesisFrame } }
         return {
           results: [
             {
@@ -6487,7 +6692,13 @@ export class AxAgentEngine implements AgentEngine {
               ...(dispatched.finishReason === undefined ? {} : { finishReason: dispatched.finishReason }),
               ...(dispatched.calls.length === 0
                 ? {}
-                : { functionCalls: dispatched.calls.map(call => ({ id: call.id, type: 'function' as const, function: { name: call.providerName, params: call.params } })) })
+                : {
+                    functionCalls: dispatched.calls.map(call => ({
+                      id: call.id,
+                      type: 'function' as const,
+                      function: { name: call.providerName, params: call.params }
+                    }))
+                  })
             }
           ],
           modelUsage: {
@@ -6518,16 +6729,35 @@ export class AxAgentEngine implements AgentEngine {
       answer = await program.forward(
         admittedAI,
         {
-          userRequest: request.knowledgeContext || request.currentPage
-            ? `${input.userRequest}\n\nSelected Wiki scope and current-page context (quoted untrusted request constraints, not source evidence):\n${JSON.stringify({ knowledgeContext: request.knowledgeContext, currentPage: request.currentPage })}`
-            : input.userRequest,
+          userRequest:
+            request.knowledgeContext || request.currentPage
+              ? `${input.userRequest}\n\nSelected Wiki scope and current-page context (quoted untrusted request constraints, not source evidence):\n${JSON.stringify({ knowledgeContext: request.knowledgeContext, currentPage: request.currentPage })}`
+              : input.userRequest,
           ...(conversationContext === undefined ? {} : { conversationContext }),
           ...encodedSources,
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
-          repairFeedback: input.repairFeedback
+          repairFeedback: [
+            input.repairFeedback,
+            ...(input.observations.some(line => /^Wiki proposal (?:[0-9a-f-]{36} )?(?:application )?status: /iu.test(line))
+              ? [
+                  'Operation outcome: select the exact delivered proposal status and applied result identity from availableObservations. An applied receipt establishes that operation and its reported result identity without a source read; it does not establish page content, source facts, duplicate absence, or unrelated requested work. A null or undisclosed result page is not proof of deletion. A default source facet does not turn an operation-only request into a page-content question. Mark only genuinely unsupported or unfinished requested details unresolved. Pending, approved, denied, expired, cancelled, partial or unavailable results never prove application. Preserve unresolved details in mixed operation-and-fact requests.'
+                ]
+              : [])
+          ]
+            .filter(Boolean)
+            .join('\n\n')
         },
-        { ...wikiProviderCacheOptions(provider, request, 'synthesis'), abortSignal: request.signal, maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1, model: provider.model, modelConfig: { maxTokens: maxOutputTokens } }
+        {
+          ...wikiProviderCacheOptions(provider, request, 'synthesis'),
+          abortSignal: request.signal,
+          maxRetries: 0,
+          maxSteps: 1,
+          asyncMode: 'off',
+          sampleCount: 1,
+          model: provider.model,
+          modelConfig: { maxTokens: maxOutputTokens }
+        }
       )
     } catch (error) {
       request.signal.throwIfAborted()
@@ -6569,16 +6799,14 @@ export class AxAgentEngine implements AgentEngine {
   ): Promise<WikiCoverageResult & { readonly turn: TurnResult }> {
     let maxOutputTokens = Math.min(1024, generationOutputCeiling(request, provider))
     const features = provider.service.getFeatures(provider.model)
-    const structured = features.structuredOutputModes === undefined
-      ? features.structuredOutputs === true || features.functions
-      : features.structuredOutputModes.length > 0
+    const structured =
+      features.structuredOutputModes === undefined ? features.structuredOutputs === true || features.functions : features.structuredOutputModes.length > 0
     const program = createWikiCoverageProgram({ structured })
     let dispatched: TurnResult | undefined
     let dispatchFailure: unknown
     const admittedChat: AxAIService['chat'] = async generation => {
       try {
-        if (dispatched !== undefined)
-          throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Coverage permits one admitted dispatch per candidate', 500)
+        if (dispatched !== undefined) throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Coverage permits one admitted dispatch per candidate', 500)
         const generationRequest = { ...generation, model: provider.model }
         const bytes = serializedProviderRequestBytes(provider, null, generation.chatPrompt, maxOutputTokens, generationRequest)
         let contextTokens = bytes
@@ -6599,7 +6827,10 @@ export class AxAgentEngine implements AgentEngine {
         if (contextAllowance < 1)
           throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Complete coverage evidence exceeds the selected provider context bounds', 413)
         if (budgetAllowance < 1)
-          throw classifyAgentExecutionFailure(new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Complete coverage evidence exceeds the remaining token allowance', 429), 'dispatch_admission')
+          throw classifyAgentExecutionFailure(
+            new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Complete coverage evidence exceeds the remaining token allowance', 429),
+            'dispatch_admission'
+          )
         maxOutputTokens = Math.min(maxOutputTokens, contextAllowance, budgetAllowance)
         if (sequence !== undefined) {
           const exposure = providerExposureFor(provider, null, generation.chatPrompt, maxOutputTokens, generationRequest)
@@ -6608,18 +6839,42 @@ export class AxAgentEngine implements AgentEngine {
             costMicros: agentProviderCostMicros(provider.pricing, 0, 0, exposure.totalExposureTokens)
           })
         }
-        dispatched = await this.#turn(provider, generation.chatPrompt, null,
+        dispatched = await this.#turn(
+          provider,
+          generation.chatPrompt,
+          null,
           sequence === undefined ? request : { ...request, dispatchBudget: sequence },
-          maxOutputTokens, maximumDispatchTokens, true, false, undefined,
-          { request: generationRequest }, authorizeEvidence, 'coverage')
+          maxOutputTokens,
+          maximumDispatchTokens,
+          true,
+          false,
+          undefined,
+          { request: generationRequest },
+          authorizeEvidence,
+          'coverage'
+        )
         return {
-          results: [{ index: 0, content: dispatched.content,
-            ...(dispatched.finishReason === undefined ? {} : { finishReason: dispatched.finishReason }),
-            ...(dispatched.calls.length === 0 ? {} : { functionCalls: dispatched.calls.map(call => ({
-              id: call.id, type: 'function' as const, function: { name: call.providerName, params: call.params }
-            })) }) }],
-          modelUsage: { ai: provider.transportKind, model: provider.model,
-            tokens: { promptTokens: dispatched.inputTokens, completionTokens: dispatched.outputTokens, totalTokens: dispatched.totalTokens } }
+          results: [
+            {
+              index: 0,
+              content: dispatched.content,
+              ...(dispatched.finishReason === undefined ? {} : { finishReason: dispatched.finishReason }),
+              ...(dispatched.calls.length === 0
+                ? {}
+                : {
+                    functionCalls: dispatched.calls.map(call => ({
+                      id: call.id,
+                      type: 'function' as const,
+                      function: { name: call.providerName, params: call.params }
+                    }))
+                  })
+            }
+          ],
+          modelUsage: {
+            ai: provider.transportKind,
+            model: provider.model,
+            tokens: { promptTokens: dispatched.inputTokens, completionTokens: dispatched.outputTokens, totalTokens: dispatched.totalTokens }
+          }
         }
       } catch (error) {
         dispatchFailure = error
@@ -6642,8 +6897,13 @@ export class AxAgentEngine implements AgentEngine {
     try {
       const result = await program.forward(admittedAI, input, {
         ...wikiProviderCacheOptions(provider, request, 'coverage'),
-        abortSignal: request.signal, maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1,
-        model: provider.model, modelConfig: { maxTokens: maxOutputTokens }
+        abortSignal: request.signal,
+        maxRetries: 0,
+        maxSteps: 1,
+        asyncMode: 'off',
+        sampleCount: 1,
+        model: provider.model,
+        modelConfig: { maxTokens: maxOutputTokens }
       })
       audit = { verdict: result.verdict, feedback: result.feedback ?? '' }
     } catch (error) {
@@ -6652,8 +6912,7 @@ export class AxAgentEngine implements AgentEngine {
       if (dispatched === undefined || (!(error instanceof AxGenerateError) && !(error instanceof AxAssertionError))) throw error
       audit = { verdict: 'not_established', feedback: 'Independent coverage returned an invalid or unfinished bounded verdict.' }
     }
-    if (dispatched === undefined)
-      throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Coverage did not perform an admitted dispatch', 500)
+    if (dispatched === undefined) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Coverage did not perform an admitted dispatch', 500)
     return { turn: dispatched, ...audit }
   }
 
@@ -6665,12 +6924,17 @@ export class AxAgentEngine implements AgentEngine {
     if (this.#decisionProviders) {
       try {
         verificationProvider = await this.#decisionProviders.selectRuntime()
-        if (verificationProvider.config.kind !== 'typesafe' ||
+        if (
+          verificationProvider.config.kind !== 'typesafe' ||
           !['jev-1.13.0', 'jev-latest', 'jev-preview'].includes(verificationProvider.config.model) ||
-          !verificationProvider.config.pricing)
+          !verificationProvider.config.pricing
+        )
           throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'Wiki verification requires an enabled, priced Jev decision provider', 503)
       } catch {
-        throw classifyAgentExecutionFailure(new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'An enabled, priced Jev decision provider with credentials is required', 503), 'setup')
+        throw classifyAgentExecutionFailure(
+          new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'An enabled, priced Jev decision provider with credentials is required', 503),
+          'setup'
+        )
       }
     }
     if (request.mediaRequest) return this.#media(request, sink, request.mediaRequest.kind)
@@ -6747,6 +7011,52 @@ export class AxAgentEngine implements AgentEngine {
       const trackedEvidenceMessages = new WeakMap<object, PromptEvidencePayload>()
       const trackedAttributedMessages = new WeakMap<object, readonly string[]>()
       const trackedBrowserMessages = new WeakMap<object, BrowserAttribution>()
+      const trackedApplicationReceipts = new Map<object, unknown>()
+      const authorizedApplicationReceipts = new WeakSet<object>()
+      const retainedProposalDecisionLines = new Set<string>()
+      const redactedApplicationResults = new WeakMap<
+        object,
+        {
+          readonly receipt: unknown
+          readonly message: ChatPromptMessage
+          readonly lines: readonly string[]
+        }
+      >()
+      const rememberProposalOutcome = (
+        message: ChatPromptMessage,
+        actionName: AgentActionName,
+        input: unknown,
+        output: unknown,
+        mode: ProviderTools['mode'],
+        callId: string,
+        providerName: string,
+        actionCallId: string
+      ): void => {
+        const status = asRecord(output)?.status
+        if (actionName.startsWith('pages.prepare') && (status === 'denied' || status === 'expired' || status === 'cancelled')) {
+          for (const line of trackedAttributedMessages.get(message) ?? []) retainedProposalDecisionLines.add(line)
+        }
+        const application = actionName === 'pages.applyProposal' ? asRecord(output) : asRecord(asRecord(output)?.application)
+        if (application?.status !== 'applied') return
+        trackedApplicationReceipts.set(message, application)
+        if (application.page === null) return
+        // Preserve the canonical ledger result; only this provider projection
+        // withholds metadata that the requester can no longer read.
+        const receipt = { ...application, page: null }
+        const canonical = actionName === 'pages.applyProposal' ? receipt : { ...asRecord(output), application: receipt }
+        const projected = providerActionOutput(actionName, canonical, null, { input, actionCallId }, completeReadCollection)
+        redactedApplicationResults.set(message, {
+          receipt,
+          message: providerResultChatMessage(mode, callId, providerName, projected),
+          lines: trustedActionStatusLines(projected)
+        })
+      }
+      const retainedProposalOutcomeLines = (): readonly string[] => [
+        ...new Set([
+          ...retainedProposalDecisionLines,
+          ...[...trackedApplicationReceipts.keys()].flatMap(message => trackedAttributedMessages.get(message)?.slice(0, 2) ?? [])
+        ])
+      ]
       const genericUnavailableResult = {
         error: { code: 'AGENT_EVIDENCE_UNAVAILABLE', message: 'Previously read page evidence is unavailable and must not be relied on.' }
       }
@@ -6798,7 +7108,7 @@ export class AxAgentEngine implements AgentEngine {
       type EvidenceValidationCache = Map<string, Promise<boolean>>
       const validateReceipt = (cache: EvidenceValidationCache, _actionCallId: string, actionName: PageReadActionName, output: unknown): Promise<boolean> => {
         const record = asRecord(output)
-        const original = record?.status === 'reused' ? asRecord(record.evidence) ?? output : output
+        const original = record?.status === 'reused' ? (asRecord(record.evidence) ?? output) : output
         // A pass validates identical original snapshots once, not once per
         // historical receipt or root/section alias. Egress always starts a pass.
         let snapshot: string | undefined
@@ -6825,12 +7135,27 @@ export class AxAgentEngine implements AgentEngine {
         }
         request.signal.throwIfAborted()
       }
-      const requireFreshPromptEvidence = (chatPrompt: readonly ChatPromptMessage[]): Promise<void> =>
-        requireFreshReceipts(promptEvidencePayloadsInRequest(chatPrompt, trackedEvidenceMessages)
-          .flatMap(payload => payload.receipts ?? [{ actionCallId: payload.actionCallId, actionName: payload.actionName, sourceOutput: payload.sourceOutput }]))
+      const requireFreshApplicationReceipts = async (): Promise<void> => {
+        if (typeof validateObservation !== 'function') return
+        for (const [message, receipt] of trackedApplicationReceipts) {
+          if (receipt !== undefined && (await validateObservation.call(actionSession, 'pages.applyProposal', receipt, request.signal)) !== true)
+            throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Applied result identity changed or is no longer authorized', 409)
+          authorizedApplicationReceipts.add(message)
+        }
+        request.signal.throwIfAborted()
+      }
+      const requireFreshPromptEvidence = async (chatPrompt: readonly ChatPromptMessage[]): Promise<void> => {
+        await requireFreshApplicationReceipts()
+        await requireFreshReceipts(
+          promptEvidencePayloadsInRequest(chatPrompt, trackedEvidenceMessages).flatMap(
+            payload => payload.receipts ?? [{ actionCallId: payload.actionCallId, actionName: payload.actionName, sourceOutput: payload.sourceOutput }]
+          )
+        )
+      }
       const requireFreshRegisteredEvidence = (evidenceView: ReadonlyMap<string, CitationEvidence>): Promise<void> =>
-        requireFreshReceipts([...evidenceView.values()].flatMap(evidence =>
-          evidence.readReceipts.map(receipt => ({ ...receipt, sourceOutput: evidence.sourceOutput }))))
+        requireFreshReceipts(
+          [...evidenceView.values()].flatMap(evidence => evidence.readReceipts.map(receipt => ({ ...receipt, sourceOutput: evidence.sourceOutput })))
+        )
       const initialValidationResults: EvidenceValidationCache = new Map()
       let activeBatchEnds: number[] = []
       let activeSummary: string | null = null
@@ -6841,7 +7166,7 @@ export class AxAgentEngine implements AgentEngine {
         request.recoveredAction !== undefined && isAppliedPageProposalResult(request.recoveredAction.actionName, request.recoveredAction.output)
       let recoveredPageEvidenceAvailable = true
       if (request.recoveredAction !== undefined) {
-        if (request.purpose !== 'root' || tools === null || actionSession === null)
+        if ((request.purpose ?? 'root') !== 'root' || tools === null || actionSession === null)
           throw new AgentRepositoryError('AGENT_ACTION_RECOVERY_REQUIRED', 'The completed action cannot be resumed without provider tools', 409)
         const recoveredDescriptor = actionSession.functions.find(action => action.name === request.recoveredAction!.actionName)
         if (!recoveredDescriptor)
@@ -6855,10 +7180,16 @@ export class AxAgentEngine implements AgentEngine {
         const recoveredOutput =
           recoveredIsPageRead && !recoveredPageEvidenceAvailable
             ? genericUnavailableResult
-            : providerActionOutput(recoveredAction.actionName, recoveredAction.output, null, {
-                input: recoveredAction.actionInput,
-                actionCallId: recoveredAction.actionCallId
-              }, completeReadCollection)
+            : providerActionOutput(
+                recoveredAction.actionName,
+                recoveredAction.output,
+                null,
+                {
+                  input: recoveredAction.actionInput,
+                  actionCallId: recoveredAction.actionCallId
+                },
+                completeReadCollection
+              )
         const unavailableResultMessage = unavailableActionResult(tools.mode, recoveredAction.actionCallId, providerName)
         if (tools.mode === 'native') {
           activePrompt.push(
@@ -6882,8 +7213,20 @@ export class AxAgentEngine implements AgentEngine {
           )
         }
         const recoveredResultMessage = activePrompt.at(-1)
-        const recoveredStatus = trustedActionStatusLine(recoveredOutput)
-        if (recoveredResultMessage !== undefined && recoveredStatus !== null) trackedAttributedMessages.set(recoveredResultMessage, [recoveredStatus])
+        const recoveredStatus = trustedActionStatusLines(recoveredOutput)
+        if (recoveredResultMessage !== undefined && recoveredStatus.length > 0) {
+          trackedAttributedMessages.set(recoveredResultMessage, recoveredStatus)
+          rememberProposalOutcome(
+            recoveredResultMessage,
+            recoveredAction.actionName,
+            recoveredAction.actionInput,
+            recoveredAction.output,
+            tools.mode,
+            recoveredAction.actionCallId,
+            providerName,
+            recoveredAction.actionCallId
+          )
+        }
         const recoveredBrowser = trustedBrowserAttribution(recoveredOutput)
         if (recoveredResultMessage !== undefined && recoveredBrowser !== null) trackedBrowserMessages.set(recoveredResultMessage, recoveredBrowser)
         if (recoveredResultMessage !== undefined && recoveredIsPageRead && recoveredPageEvidenceAvailable)
@@ -6914,6 +7257,7 @@ export class AxAgentEngine implements AgentEngine {
       const pendingSourceReads = new WeakSet<object>()
       const retrievals: RetrievalTrace[] = []
       const recentGroups: RecentEvidenceCoverage[] = []
+      const recentWindows: RecentEvidenceCoverage[] = []
       // Navigation hints and model-planned tasks describe the request; only action
       // admission and fresh read receipts confer authority. Keep this plan run-local.
       const contextPlan = {
@@ -6970,8 +7314,7 @@ export class AxAgentEngine implements AgentEngine {
         if (!runtime || !this.#decisionProviders)
           throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'A Jev decision provider is required before publishing Wiki facts', 503)
         const current = await this.#decisionProviders.selectRuntime(runtime.id)
-        if (current.id !== runtime.id || current.revision !== runtime.revision ||
-          canonicalJson(current.config) !== canonicalJson(runtime.config))
+        if (current.id !== runtime.id || current.revision !== runtime.revision || canonicalJson(current.config) !== canonicalJson(runtime.config))
           throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Wiki verification provider changed from its pinned revision', 503)
         // Revalidate original read receipts at each publication boundary.
         const validations: EvidenceValidationCache = new Map()
@@ -6987,16 +7330,16 @@ export class AxAgentEngine implements AgentEngine {
         }
         request.signal.throwIfAborted()
       }
-      const createWikiDecision = (
-        verificationEvidence: ReadonlyMap<string, CitationEvidence>,
-        physicalReadIds: WeakMap<ParsedSourceDocument, string>
-      ) => {
+      const createWikiDecision = (verificationEvidence: ReadonlyMap<string, CitationEvidence>, physicalReadIds: WeakMap<ParsedSourceDocument, string>) => {
         const decisionProviders = this.#decisionProviders
         const runtime = verificationProvider
         if (!decisionProviders || !runtime)
           throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'A Jev decision provider is required before publishing Wiki facts', 503)
         const pricing = runtime.config.pricing!
-        const maximum = { tokens: 64_000, costMicros: Math.ceil(pricing.perRequest * 1_000_000 + 64_000 * Math.max(pricing.inputPerMillion, pricing.outputPerMillion)) }
+        const maximum = {
+          tokens: 64_000,
+          costMicros: Math.ceil(pricing.perRequest * 1_000_000 + 64_000 * Math.max(pricing.inputPerMillion, pricing.outputPerMillion))
+        }
         if (!Number.isSafeInteger(maximum.costMicros))
           throw new AgentRepositoryError('WIKI_VERIFICATION_PRICING_INVALID', 'Wiki verification pricing cannot establish bounded exposure', 503)
         const decide = async (
@@ -7011,8 +7354,12 @@ export class AxAgentEngine implements AgentEngine {
           for (const value of state.evidence) {
             const read = asRecord(value)
             const source = typeof read?.evidenceId === 'string' ? verificationEvidence.get(read.evidenceId) : undefined
-            if (read === null || source === undefined || read.sourceRevision !== source.binding.sourceRevision ||
-              read.readId !== physicalReadIds.get(source.document))
+            if (
+              read === null ||
+              source === undefined ||
+              read.sourceRevision !== source.binding.sourceRevision ||
+              read.readId !== physicalReadIds.get(source.document)
+            )
               throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification changed an issued source read binding', 409)
             // The POST carries this selected representation, not every older
             // representation retained under the same citation identity.
@@ -7023,15 +7370,18 @@ export class AxAgentEngine implements AgentEngine {
           await requireLiveWikiVerification(outgoingEvidence)
           // Readiness is optional: keep the existing publication hold intact and
           // reserve only this additional native exposure from the parent budget.
-          if (phase === 'context_readiness' && maxTokens !== undefined &&
-            maximum.tokens > maxTokens - totalTokens - reservedFinalizationTokens) return null
+          if (phase === 'context_readiness' && maxTokens !== undefined && maximum.tokens > maxTokens - totalTokens - reservedFinalizationTokens) return null
           let reservation: AgentDispatchBudgetReservation | undefined
           try {
             reservation = await request.dispatchBudget?.reserve(maximum)
           } catch (error) {
             request.signal.throwIfAborted()
-            if (phase === 'context_readiness' && error instanceof AgentRepositoryError &&
-              ['AGENT_TOKEN_BUDGET_LIMITED', 'AGENT_QUOTA_EXHAUSTED'].includes(error.code)) return null
+            if (
+              phase === 'context_readiness' &&
+              error instanceof AgentRepositoryError &&
+              ['AGENT_TOKEN_BUDGET_LIMITED', 'AGENT_QUOTA_EXHAUSTED'].includes(error.code)
+            )
+              return null
             throw error
           }
           if (reservation && (reservation.tokens < maximum.tokens || reservation.costMicros < maximum.costMicros)) {
@@ -7046,7 +7396,9 @@ export class AxAgentEngine implements AgentEngine {
           let nativeDispatchAuthorized = false
           try {
             verified = await decisionProviders.decideBatch(nativeRequest, {
-              providerId: runtime.id, providerRevision: runtime.revision, signal: request.signal,
+              providerId: runtime.id,
+              providerRevision: runtime.revision,
+              signal: request.signal,
               onPreDispatch: async () => {
                 try {
                   await requireLiveWikiVerification(outgoingEvidence)
@@ -7061,15 +7413,28 @@ export class AxAgentEngine implements AgentEngine {
               }
             })
           } catch (error) {
-            failure = sourceFenceRejected && !nativeDispatchAuthorized ? sourceFenceFailure ?? error : error
+            failure = sourceFenceRejected && !nativeDispatchAuthorized ? (sourceFenceFailure ?? error) : error
           }
-          const predispatchFailure = !nativeDispatchAuthorized && (sourceFenceRejected ||
-            failure instanceof AgentRepositoryError && !(failure instanceof DecisionProviderFailure) &&
-            ['DECISION_PROVIDER_UNAVAILABLE', 'DECISION_PROVIDER_NOT_FOUND', 'DECISION_PROVIDER_CORRUPT', 'DECISION_CREDENTIAL_UNAVAILABLE', 'DECISION_PROVIDER_REVISION_CHANGED', 'DECISION_BATCH_UNSUPPORTED', 'DECISION_PRE_DISPATCH_REJECTED', 'DECISION_ABORTED', 'DECISION_TIMEOUT'].includes(failure.code))
+          const predispatchFailure =
+            !nativeDispatchAuthorized &&
+            (sourceFenceRejected ||
+              (failure instanceof AgentRepositoryError &&
+                !(failure instanceof DecisionProviderFailure) &&
+                [
+                  'DECISION_PROVIDER_UNAVAILABLE',
+                  'DECISION_PROVIDER_NOT_FOUND',
+                  'DECISION_PROVIDER_CORRUPT',
+                  'DECISION_CREDENTIAL_UNAVAILABLE',
+                  'DECISION_PROVIDER_REVISION_CHANGED',
+                  'DECISION_BATCH_UNSUPPORTED',
+                  'DECISION_PRE_DISPATCH_REJECTED',
+                  'DECISION_ABORTED',
+                  'DECISION_TIMEOUT'
+                ].includes(failure.code)))
           const failed = failure instanceof DecisionProviderFailure ? failure : undefined
-          const parsedUsage = DecisionUsageSchema.safeParse(predispatchFailure ? null : verified?.usage ?? failed?.usage)
+          const parsedUsage = DecisionUsageSchema.safeParse(predispatchFailure ? null : (verified?.usage ?? failed?.usage))
           const usage = parsedUsage.success ? parsedUsage.data : null
-          const estimated = predispatchFailure ? null : verified?.estimatedCostMicros ?? failed?.estimatedCostMicros
+          const estimated = predispatchFailure ? null : (verified?.estimatedCostMicros ?? failed?.estimatedCostMicros)
           const knownCost = estimated !== undefined && estimated !== null && Number.isSafeInteger(estimated) && estimated >= 0 ? estimated : null
           const unknownExposure = predispatchFailure ? null : usage ? (knownCost === null ? { tokens: 0, costMicros: maximum.costMicros } : null) : maximum
           if (usage) {
@@ -7086,29 +7451,57 @@ export class AxAgentEngine implements AgentEngine {
             }
           } else if (predispatchFailure && reservation) await request.dispatchBudget?.release(reservation)
           await sink.event('model.turn', {
-            purpose: 'verification', providerId: runtime.id, providerRevision: runtime.revision,
-            model: runtime.config.model, content: '', actionCallIds: [],
+            purpose: 'verification',
+            providerId: runtime.id,
+            providerRevision: runtime.revision,
+            model: runtime.config.model,
+            content: '',
+            actionCallIds: [],
             usageVersion: 2,
-            inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0, totalTokens: usage?.totalTokens ?? 0,
+            inputTokens: usage?.inputTokens ?? 0,
+            outputTokens: usage?.outputTokens ?? 0,
+            totalTokens: usage?.totalTokens ?? 0,
             usageSource: usage ? 'provider' : predispatchFailure ? 'not-dispatched' : 'unmeasured-exposure',
-            totalTokensSource: usage?.totalTokensSource ?? null, costMicros: usage ? knownCost ?? maximum.costMicros : 0,
+            totalTokensSource: usage?.totalTokensSource ?? null,
+            costMicros: usage ? (knownCost ?? maximum.costMicros) : 0,
             estimatedCostMicros: knownCost,
-            latencyMs: verified?.latencyMs ?? failed?.latencyMs ?? null, unknownExposure,
+            latencyMs: verified?.latencyMs ?? failed?.latencyMs ?? null,
+            unknownExposure,
             outcome: failure ? 'verification_failed' : 'verification_completed',
-            verification: { phase, checks: Object.keys(nativeRequest.questions).length, requestBytes: Buffer.byteLength(JSON.stringify(nativeRequest)), confidenceFloor: 0.8, literalSupportCount }
+            verification: {
+              phase,
+              checks: Object.keys(nativeRequest.questions).length,
+              requestBytes: Buffer.byteLength(JSON.stringify(nativeRequest)),
+              confidenceFloor: 0.8,
+              literalSupportCount
+            }
           })
-          if (phase === 'context_readiness' && predispatchFailure && !sourceFenceRejected &&
-            failure instanceof AgentRepositoryError && failure.code === 'DECISION_BATCH_UNSUPPORTED') return null
+          if (
+            phase === 'context_readiness' &&
+            predispatchFailure &&
+            !sourceFenceRejected &&
+            failure instanceof AgentRepositoryError &&
+            failure.code === 'DECISION_BATCH_UNSUPPORTED'
+          )
+            return null
           // Readiness is optional. A malformed choice may fall back only after
           // its measured, pinned receipt settled successfully; paid uncertainty
           // or a settlement/fence failure still blocks continuation.
-          if (phase === 'context_readiness' && failed?.code === 'INVALID_DECISION_RESPONSE' &&
-            failure === failed && nativeDispatchAuthorized && !sourceFenceRejected &&
-            usage !== null && knownCost !== null &&
-            failed.providerId === runtime.id && failed.providerRevision === runtime.revision &&
-            (maxTokens === undefined || totalTokens <= maxTokens)) return null
+          if (
+            phase === 'context_readiness' &&
+            failed?.code === 'INVALID_DECISION_RESPONSE' &&
+            failure === failed &&
+            nativeDispatchAuthorized &&
+            !sourceFenceRejected &&
+            usage !== null &&
+            knownCost !== null &&
+            failed.providerId === runtime.id &&
+            failed.providerRevision === runtime.revision &&
+            (maxTokens === undefined || totalTokens <= maxTokens)
+          )
+            return null
           if (failure) {
-            if (failure instanceof DecisionProviderFailure || failure instanceof AgentRepositoryError && failure.code.startsWith('DECISION_'))
+            if (failure instanceof DecisionProviderFailure || (failure instanceof AgentRepositoryError && failure.code.startsWith('DECISION_')))
               throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Jev verification could not be completed; Wiki facts were not published', 503)
             throw failure
           }
@@ -7128,14 +7521,24 @@ export class AxAgentEngine implements AgentEngine {
         const registeredReads = [...draft.readSources.entries()].map(([key, source]) => {
           const bound = draft.evidence.get(key)
           const current = verificationEvidence.get(source.evidenceId)
-          if (source.kind !== 'source-read' || bound === undefined || current === undefined ||
-            current.document !== bound.document || current.binding.sourceRevision !== source.sourceRevision ||
-            current.binding.retrievedSource !== source.text)
+          if (
+            source.kind !== 'source-read' ||
+            bound === undefined ||
+            current === undefined ||
+            current.document !== bound.document ||
+            current.binding.sourceRevision !== source.sourceRevision ||
+            current.binding.retrievedSource !== source.text
+          )
             throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the current authorized complete read', 409)
           physicalReadIds.set(current.document, source.readId)
-          return { evidenceId: source.evidenceId, sourceRevision: source.sourceRevision,
-            readId: source.readId, source: source.text, context: current.authoritativeTitle ?? '',
-            authorText: source.authorText }
+          return {
+            evidenceId: source.evidenceId,
+            sourceRevision: source.sourceRevision,
+            readId: source.readId,
+            source: source.text,
+            context: current.authoritativeTitle ?? '',
+            authorText: source.authorText
+          }
         })
         const requestFacets = contextPlan.requestFacets?.length ? contextPlan.requestFacets.map(facet => facet.quote) : [contextPlan.intent]
         const prepareVerification = (draft: NativeDraft): WikiVerificationPlan | null => {
@@ -7147,25 +7550,36 @@ export class AxAgentEngine implements AgentEngine {
             if (!bound || bound.binding.sourceRevision !== claim.sourceRevision)
               throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the original validated claim binding', 409)
             const source = draft.readSources.get(key)
-            if (source?.kind !== 'source-read' || source.unitId !== `read:${source.readId}` ||
-              source.text !== bound.binding.retrievedSource || source.sourceRevision !== claim.sourceRevision)
+            if (
+              source?.kind !== 'source-read' ||
+              source.unitId !== `read:${source.readId}` ||
+              source.text !== bound.binding.retrievedSource ||
+              source.sourceRevision !== claim.sourceRevision
+            )
               throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the exact complete original read', 409)
             selected.set(key, source)
           }
           let preparedPlan: WikiVerificationPlan | null
           try {
             preparedPlan = buildWikiVerificationPlan({
-              userRequest: contextPlan.intent, requestFacets,
-              claims: draft.answer.claims, sources: [...selected.values()],
+              userRequest: contextPlan.intent,
+              requestFacets,
+              claims: draft.answer.claims,
+              sources: [...selected.values()],
               candidateExtras: {
                 observations: draft.answer.observations.filter(line => !draft.trustedObservations.has(line)),
                 recommendations: draft.answer.recommendations ?? ''
               },
-              unresolvedFacets: draft.answer.unresolvedFacets, evidence: registeredReads
+              unresolvedFacets: draft.answer.unresolvedFacets,
+              evidence: registeredReads
             })
           } catch (error) {
             if (error instanceof AgentRepositoryError && error.code === 'AGENT_CONTEXT_TOO_LARGE') throw error
-            throw new AgentRepositoryError('WIKI_VERIFICATION_PLAN_INVALID', 'Wiki verification cannot retain its complete evidence within the safe request bounds', 500)
+            throw new AgentRepositoryError(
+              'WIKI_VERIFICATION_PLAN_INVALID',
+              'Wiki verification cannot retain its complete evidence within the safe request bounds',
+              500
+            )
           }
           return preparedPlan
         }
@@ -7174,8 +7588,7 @@ export class AxAgentEngine implements AgentEngine {
         const nativeDecision = createWikiDecision(verificationEvidence, physicalReadIds)
         const decide: WikiVerificationContext['decide'] = async (...args) => {
           const result = await nativeDecision(...args)
-          if (result === null)
-            throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Required Wiki verification was not dispatched', 503)
+          if (result === null) throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Required Wiki verification was not dispatched', 503)
           return result
         }
         return { plan, evidence: verificationEvidence, decide }
@@ -7241,13 +7654,16 @@ export class AxAgentEngine implements AgentEngine {
         for (const evidence of citationRegistry.values()) {
           if (evidenceConflictIds.has(evidence.citation.evidenceId)) continue
           for (const representation of evidence.representations) {
-            if (representation.sourceActionName === actionName &&
-              representation.deliveries.some(delivery => delivery.actionCallId === actionCallId && delivery.providerCallId === providerCallId))
+            if (
+              representation.sourceActionName === actionName &&
+              representation.deliveries.some(delivery => delivery.actionCallId === actionCallId && delivery.providerCallId === providerCallId)
+            )
               pendingSourceReads.add(representation.identity)
           }
         }
         if (collection.recent !== null && collection.recent.evidenceIds.length > 0) {
           contextPlan.observedRecentEvidence = true
+          recentWindows.push(collection.recent)
           // Request description is frozen before root reads. Research seeds and
           // incidental windows remain evidence without becoming answer obligations.
           const facetIndex = contextPlan.requestFacets?.findIndex((facet, index) => facet.coverage === 'recent-window' && !contextPlan.recentWindows.has(index))
@@ -7257,6 +7673,27 @@ export class AxAgentEngine implements AgentEngine {
           }
         }
         return collection
+      }
+      const userRequestWithRecentScope = (evidenceView: ReadonlyMap<string, CitationEvidence>, candidateWindow?: RecentEvidenceCoverage | null): string => {
+        const windows = (candidateWindow ? [...recentWindows, candidateWindow] : recentWindows).flatMap(window => {
+          const availableEvidenceIds = window.evidenceIds.filter(evidenceId => evidenceView.has(evidenceId))
+          return availableEvidenceIds.length === 0
+            ? []
+            : [
+                {
+                  actionCallId: window.actionCallId,
+                  requestedLimit: window.requestedLimit,
+                  exhausted: window.exhausted,
+                  returnedCount: window.returnedCount,
+                  returnedEvidenceIds: window.evidenceIds,
+                  truncatedEvidenceIds: window.truncatedEvidenceIds,
+                  availableEvidenceIds,
+                  windowComplete: window.windowComplete && availableEvidenceIds.length === window.evidenceIds.length
+                }
+              ]
+        })
+        if (windows.length === 0) return contextPlan.intent
+        return `${contextPlan.intent}\n\nHost-observed recent-page collection scope (not page facts or additional request obligations):\n${canonicalJson(windows)}\nFor a requested bounded recent listing or recap, requestedLimit is an upper bound. Only windowComplete:true certifies that the eligible accessible action window reached that limit or actual exhaustion with all returned rows available. A smaller exhausted complete window is not by itself an unresolved request facet. Cover every returned page with an available exact read; disclose missing requested evidence or unread content. Incidental recent research does not expand an ordinary question. This scope establishes no Wiki-wide absence, exclusivity, revision differences or unread-suffix coverage. Keep every other unsupported request facet unresolved.`
       }
       const pageReadCache = new Map<string, { readonly actionCallId: string; readonly output: unknown }>()
       if (specialistContinuation) {
@@ -7327,9 +7764,10 @@ export class AxAgentEngine implements AgentEngine {
           unavailableEvidenceContext()
         )
         if (seed.actionName === 'pages.get' || seed.actionName === 'pages.getVersion' || seed.actionName === 'pages.getOkf') {
-          const selector = seed.actionName === 'pages.getVersion' || root.binding.versionId !== null
-            ? { pageId: root.binding.pageId, versionId: root.binding.versionId }
-            : { id: root.binding.pageId }
+          const selector =
+            seed.actionName === 'pages.getVersion' || root.binding.versionId !== null
+              ? { pageId: root.binding.pageId, versionId: root.binding.versionId }
+              : { id: root.binding.pageId }
           const parsed = ACTION_CATALOG[seed.actionName].input.safeParse(selector)
           if (parsed.success) {
             const cacheKey = `${seed.actionName}:${canonicalJson(parsed.data)}`
@@ -7372,6 +7810,27 @@ export class AxAgentEngine implements AgentEngine {
       const reauthorizeEvidencePrompt = async (validationResults: EvidenceValidationCache): Promise<boolean> => {
         if (typeof validateObservation !== 'function') return false
         let invalidated = false
+        for (const [message, application] of trackedApplicationReceipts) {
+          if ((await validateObservation.call(actionSession, 'pages.applyProposal', application, request.signal)) === true) {
+            authorizedApplicationReceipts.add(message)
+            continue
+          }
+          // Once admitted, collector planning and summaries may both contain
+          // this identity. Without rebuilding every derivative, fail closed.
+          if (authorizedApplicationReceipts.has(message))
+            throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Previously admitted applied result identity is no longer authorized', 409)
+          const redacted = redactedApplicationResults.get(message)
+          if (redacted === undefined || (await validateObservation.call(actionSession, 'pages.applyProposal', redacted.receipt, request.signal)) !== true)
+            throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Applied operation receipt is no longer authorized', 409)
+          for (const messages of [activePrompt, conversation]) {
+            const index = messages.indexOf(message as ChatPromptMessage)
+            if (index >= 0) messages[index] = redacted.message
+          }
+          trackedApplicationReceipts.delete(message)
+          trackedApplicationReceipts.set(redacted.message, redacted.receipt)
+          trackedAttributedMessages.set(redacted.message, redacted.lines)
+          invalidated = true
+        }
         for (const messages of request.specialist ? [conversation, activePrompt] : [activePrompt]) {
           for (let index = 0; index < messages.length; index++) {
             const message = messages[index]
@@ -7422,7 +7881,12 @@ export class AxAgentEngine implements AgentEngine {
         // provider transcript evidence. Its sources are delivered only by the
         // subsequent real compact generation, after context admission.
         const restorationPrompt = completeTypedContext ? [...activePrompt] : activePrompt
-        let residentView = evidenceSnapshotForPrompt(citationRegistry, [system, ...conversation, ...restorationPrompt], trackedEvidenceMessages, excludedEvidenceIds)
+        let residentView = evidenceSnapshotForPrompt(
+          citationRegistry,
+          [system, ...conversation, ...restorationPrompt],
+          trackedEvidenceMessages,
+          excludedEvidenceIds
+        )
         const question = request.messages.at(-1)?.content ?? ''
         for (const [evidenceId, evidence] of citationRegistry) {
           if (excludedEvidenceIds.has(evidenceId)) continue
@@ -7448,15 +7912,17 @@ export class AxAgentEngine implements AgentEngine {
             // Pending originals still require actual full-frame admission and
             // fresh egress validation; never initialize delivered units from them.
             if (!pending && (previouslyDelivered === undefined || previouslyDelivered.size === 0)) continue
-            const availableUnits = pending ? representation.sourceUnits
-              : representation.sourceUnits.filter(unit => previouslyDelivered!.has(unit.identity))
+            const availableUnits = pending ? representation.sourceUnits : representation.sourceUnits.filter(unit => previouslyDelivered!.has(unit.identity))
             if (availableUnits.length === 0 && !pending) continue
             // Prefer the unchanged full read. Only real context overflow falls
             // back to explicitly scoped projections below.
             if (availableUnits.length === representation.sourceUnits.length) {
-              if (alreadyResident?.identity === representation.identity &&
+              if (
+                alreadyResident?.identity === representation.identity &&
                 alreadyResident.sourceUnits.length === representation.sourceUnits.length &&
-                alreadyResident.source === representation.source) break
+                alreadyResident.source === representation.source
+              )
+                break
               const candidate = evidenceContextMessage(
                 representation.deliveries.find(delivery => delivery.actionCallId === receipt.actionCallId)?.providerCallId ?? receipt.actionCallId,
                 representation.sourceActionName,
@@ -7483,7 +7949,10 @@ export class AxAgentEngine implements AgentEngine {
                 )
                 restored = true
                 residentView = evidenceSnapshotForPrompt(
-                  citationRegistry, [system, ...conversation, ...restorationPrompt], trackedEvidenceMessages, excludedEvidenceIds
+                  citationRegistry,
+                  [system, ...conversation, ...restorationPrompt],
+                  trackedEvidenceMessages,
+                  excludedEvidenceIds
                 )
                 break
               }
@@ -7533,12 +8002,13 @@ export class AxAgentEngine implements AgentEngine {
               restored = true
               restoredBytes += unitBytes
               if (++addedForEvidence >= 3 && !completeTypedContext) break
-              if (!completeTypedContext) residentView = evidenceSnapshotForPrompt(
-                citationRegistry,
-                [system, ...conversation, ...restorationPrompt],
-                trackedEvidenceMessages,
-                excludedEvidenceIds
-              )
+              if (!completeTypedContext)
+                residentView = evidenceSnapshotForPrompt(
+                  citationRegistry,
+                  [system, ...conversation, ...restorationPrompt],
+                  trackedEvidenceMessages,
+                  excludedEvidenceIds
+                )
             }
             if (addedForEvidence > 0) break
           }
@@ -7942,9 +8412,17 @@ export class AxAgentEngine implements AgentEngine {
       let warmReadinessEvidence: ReadonlyMap<string, CitationEvidence> | undefined
       let readinessCheckedRegistrySize = -1
       const checkReadiness = async (): Promise<void> => {
-        if (phase !== 'collecting' || !completeReadCollection || !verificationProvider || maxTurns < 2 ||
-          !contextPlan.intent.trim() || request.recoveredAction !== undefined || citationRegistry.size === 0 ||
-          citationRegistry.size === readinessCheckedRegistrySize) return
+        if (
+          phase !== 'collecting' ||
+          !completeReadCollection ||
+          !verificationProvider ||
+          maxTurns < 2 ||
+          !contextPlan.intent.trim() ||
+          request.recoveredAction !== undefined ||
+          citationRegistry.size === 0 ||
+          citationRegistry.size === readinessCheckedRegistrySize
+        )
+          return
         readinessCheckedRegistrySize = citationRegistry.size
         const readinessValidations: EvidenceValidationCache = new Map()
         await reauthorizeEvidencePrompt(readinessValidations)
@@ -7955,14 +8433,17 @@ export class AxAgentEngine implements AgentEngine {
           readinessEvidence.set(evidenceId, representation)
           physicalReadIds.set(representation.document, readId)
           return {
-            evidenceId, sourceRevision: representation.binding.sourceRevision, readId,
+            evidenceId,
+            sourceRevision: representation.binding.sourceRevision,
+            readId,
             source: representation.binding.retrievedSource,
             authorText: readLiteralSnapshot(representation).authorText,
             context: representation.authoritativeTitle ?? ''
           }
         })
         const nativeRequest = buildWikiContextReadinessRequest({
-          userRequest: contextPlan.intent, conversationContext: wikiConversationContext(conversation) ?? '',
+          userRequest: contextPlan.intent,
+          conversationContext: wikiConversationContext(conversation) ?? '',
           requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
           scope: { ...contextPlan.scope, selectedPageIds: contextPlan.selectedPageIds, currentPage: request.currentPage ?? null },
           reads
@@ -8030,17 +8511,20 @@ export class AxAgentEngine implements AgentEngine {
         const typedFinalization = tools === null && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent'
         let bounded: { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number }
         let typedEvidence: ReadonlyMap<string, CitationEvidence> | undefined
-          try {
-            if (typedFinalization) {
-              await reauthorizeEvidencePrompt(promptValidationResults)
-              if (warmReadinessEvidence !== undefined) {
-                // Preserve the positively judged snapshot. A changed source must
-                // fail before synthesis, not become a newly empty paid frame.
-                await requireLiveWikiVerification(warmReadinessEvidence)
-                typedEvidence = warmReadinessEvidence
-              } else typedEvidence = await restoreEvidenceContext(null, systemMessage, requestedMaxOutputTokens, promptValidationResults, true)
-              bounded = { chatPrompt: [systemMessage, ...conversation, ...activePrompt], maxOutputTokens: Math.min(requestedMaxOutputTokens, finalizationMaxOutputTokens) }
-            } else {
+        try {
+          if (typedFinalization) {
+            await reauthorizeEvidencePrompt(promptValidationResults)
+            if (warmReadinessEvidence !== undefined) {
+              // Preserve the positively judged snapshot. A changed source must
+              // fail before synthesis, not become a newly empty paid frame.
+              await requireLiveWikiVerification(warmReadinessEvidence)
+              typedEvidence = warmReadinessEvidence
+            } else typedEvidence = await restoreEvidenceContext(null, systemMessage, requestedMaxOutputTokens, promptValidationResults, true)
+            bounded = {
+              chatPrompt: [systemMessage, ...conversation, ...activePrompt],
+              maxOutputTokens: Math.min(requestedMaxOutputTokens, finalizationMaxOutputTokens)
+            }
+          } else {
             // First dispatch of a run: the previous run has finished responding and the user's turn is next,
             // so the relaxed turn-boundary threshold applies.
             await compactContext(turn + 1, tools, requestedMaxOutputTokens, false, turn === 0, 'all', promptValidationResults)
@@ -8048,13 +8532,13 @@ export class AxAgentEngine implements AgentEngine {
             await restoreEvidenceContext(tools, systemMessage, requestedMaxOutputTokens, promptValidationResults)
             remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
             bounded = boundedChatPrompt(provider, tools, systemMessage, conversation, activePrompt, requestedMaxOutputTokens)
-            }
-          } catch (error) {
-            if (error instanceof AgentExecutionFailure) throw error
-            throw classifyAgentExecutionFailure(error, 'context_admission')
           }
-          try {
-            if (!typedFinalization) {
+        } catch (error) {
+          if (error instanceof AgentExecutionFailure) throw error
+          throw classifyAgentExecutionFailure(error, 'context_admission')
+        }
+        try {
+          if (!typedFinalization) {
             bounded = boundedAttemptWithinBudget(
               provider,
               tools,
@@ -8069,85 +8553,85 @@ export class AxAgentEngine implements AgentEngine {
               if (exposure.totalExposureTokens > remainingTokens - reservedFinalizationTokens)
                 throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Collection would consume the publication allowance', 409)
             }
-            }
-          } catch (error) {
-            if (
-              tools !== null &&
-              (request.purpose ?? 'root') === 'root' &&
-              error instanceof AgentRepositoryError &&
-              error.code === 'AGENT_TOKEN_BUDGET_LIMITED'
-            ) {
-              if (publicationCorrectionReserved && citationRegistry.size === 0) {
-                const plan = boundedPublicationSequence(
-                  provider,
-                  systemMessageFor(null),
-                  conversation,
-                  activePrompt,
-                  finalizationMaxOutputTokens,
-                  remainingTokens,
-                  false
-                )
-                await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
-                publicationCorrectionReserved = false
-                finalizationMaxOutputTokens = plan.bounded.maxOutputTokens
-                reservedFinalizationTokens = finalizationExposureTokens = plan.tokens
-                turn--
-                continue
-              }
-              phase = 'synthesizing'
-              discoveryTurn = null
+          }
+        } catch (error) {
+          if (
+            tools !== null &&
+            (request.purpose ?? 'root') === 'root' &&
+            error instanceof AgentRepositoryError &&
+            error.code === 'AGENT_TOKEN_BUDGET_LIMITED'
+          ) {
+            if (publicationCorrectionReserved && citationRegistry.size === 0) {
+              const plan = boundedPublicationSequence(
+                provider,
+                systemMessageFor(null),
+                conversation,
+                activePrompt,
+                finalizationMaxOutputTokens,
+                remainingTokens,
+                false
+              )
+              await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
+              publicationCorrectionReserved = false
+              finalizationMaxOutputTokens = plan.bounded.maxOutputTokens
+              reservedFinalizationTokens = finalizationExposureTokens = plan.tokens
               turn--
               continue
             }
+            phase = 'synthesizing'
+            discoveryTurn = null
+            turn--
+            continue
+          }
+          throw error
+        }
+        if (tools === null && (request.purpose ?? 'root') === 'root' && !typedFinalization) {
+          try {
+            let plan: PublicationSequencePlan
+            try {
+              plan = boundedPublicationSequence(
+                provider,
+                systemMessage,
+                conversation,
+                activePrompt,
+                Math.min(bounded.maxOutputTokens, finalizationMaxOutputTokens),
+                remainingTokens,
+                publicationCorrectionReserved && !finalizationDraftDispatched && turn + 1 < maxTurns
+              )
+            } catch (error) {
+              if (!isContextLimitFailure(error) && (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_TOKEN_BUDGET_LIMITED')) throw error
+              publicationCorrectionReserved = false
+              plan = boundedPublicationSequence(
+                provider,
+                systemMessage,
+                conversation,
+                activePrompt,
+                Math.min(bounded.maxOutputTokens, finalizationMaxOutputTokens),
+                remainingTokens,
+                false
+              )
+            }
+            bounded = plan.bounded
+            await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
+            if (!finalizationSequence)
+              finalizationSequence = await request.dispatchBudget?.reserveSequence?.({ tokens: plan.tokens, costMicros: plan.costMicros })
+            finalizationExposureTokens = plan.tokens
+            reservedFinalizationTokens = plan.tokens
+            finalizationDraftDispatched = true
+          } catch (error) {
+            if (
+              request.run.goalId === null &&
+              error instanceof AgentRepositoryError &&
+              (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED')
+            )
+              return await publishExecutionLimit(error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens')
             throw error
           }
-          if (tools === null && (request.purpose ?? 'root') === 'root' && !typedFinalization) {
-            try {
-              let plan: PublicationSequencePlan
-              try {
-                plan = boundedPublicationSequence(
-                  provider,
-                  systemMessage,
-                  conversation,
-                  activePrompt,
-                  Math.min(bounded.maxOutputTokens, finalizationMaxOutputTokens),
-                  remainingTokens,
-                  publicationCorrectionReserved && !finalizationDraftDispatched && turn + 1 < maxTurns
-                )
-              } catch (error) {
-                if (!isContextLimitFailure(error) && (!(error instanceof AgentRepositoryError) || error.code !== 'AGENT_TOKEN_BUDGET_LIMITED')) throw error
-                publicationCorrectionReserved = false
-                plan = boundedPublicationSequence(
-                  provider,
-                  systemMessage,
-                  conversation,
-                  activePrompt,
-                  Math.min(bounded.maxOutputTokens, finalizationMaxOutputTokens),
-                  remainingTokens,
-                  false
-                )
-              }
-              bounded = plan.bounded
-              await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
-              if (!finalizationSequence)
-                finalizationSequence = await request.dispatchBudget?.reserveSequence?.({ tokens: plan.tokens, costMicros: plan.costMicros })
-              finalizationExposureTokens = plan.tokens
-              reservedFinalizationTokens = plan.tokens
-              finalizationDraftDispatched = true
-            } catch (error) {
-              if (
-                request.run.goalId === null &&
-                error instanceof AgentRepositoryError &&
-                (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED')
-              )
-                return await publishExecutionLimit(error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens')
-              throw error
-            }
-            // #turn reconciles only its dispatched child; the unused correction
-            // hold stays in this sequence until the next dispatch or finally.
-          }
+          // #turn reconciles only its dispatched child; the unused correction
+          // hold stays in this sequence until the next dispatch or finally.
+        }
         const dispatchEvidence = typedEvidence ?? evidenceSnapshotForPrompt(citationRegistry, bounded.chatPrompt, trackedEvidenceMessages, excludedEvidenceIds)
-        const deliveredAttributedLines = new Set<string>()
+        const deliveredAttributedLines = new Set<string>(retainedProposalOutcomeLines())
         const deliveredBrowserAttributions: BrowserAttribution[] = []
         for (const message of bounded.chatPrompt) {
           for (const line of trackedAttributedMessages.get(message) ?? []) deliveredAttributedLines.add(line)
@@ -8164,9 +8648,12 @@ export class AxAgentEngine implements AgentEngine {
             // Capacity-omitted reads cannot be repaired by paying for an empty
             // synthesis frame. Retained admitted sources may still support a
             // partial answer, but an empty authority snapshot ends acquisition.
-            if (executedOmittedCount() > 0 && ![...dispatchEvidence.values()].some(evidence =>
-              hasAuthoritativePageTitle(evidence) || evidence.sourceUnits.some(unit => unit.complete && unit.kind !== 'opaque')
-            ))
+            if (
+              executedOmittedCount() > 0 &&
+              ![...dispatchEvidence.values()].some(
+                evidence => hasAuthoritativePageTitle(evidence) || evidence.sourceUnits.some(unit => unit.complete && unit.kind !== 'opaque')
+              )
+            )
               return await publishExecutionLimit('evidence')
             if (contextPlan.requestFacets === undefined && contextPlan.intent.length > 0)
               contextPlan.requestFacets = [{ start: 0, end: contextPlan.intent.length, quote: contextPlan.intent, coverage: 'source' }]
@@ -8187,7 +8674,7 @@ export class AxAgentEngine implements AgentEngine {
               remainingTokens,
               dispatchEvidence,
               {
-                userRequest: contextPlan.intent,
+                userRequest: userRequestWithRecentScope(dispatchEvidence),
                 conversation,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [],
                 observations,
@@ -8199,14 +8686,18 @@ export class AxAgentEngine implements AgentEngine {
                 assessableContent: content => assessableActionStatusContent(content, deliveredAttributedLines, deliveredBrowserAttributions),
                 reserveRepair: rejectedDraftCount === 0 && turn + 1 < maxTurns,
                 contextMeasurements: synthesisContextMeasurements,
-                authorizeEvidence: () => warmReadinessEvidence === undefined
-                  ? requireFreshRegisteredEvidence(dispatchEvidence)
-                  : requireLiveWikiVerification(warmReadinessEvidence),
+                authorizeEvidence: async () => {
+                  await requireFreshApplicationReceipts()
+                  await (warmReadinessEvidence === undefined
+                    ? requireFreshRegisteredEvidence(dispatchEvidence)
+                    : requireLiveWikiVerification(warmReadinessEvidence))
+                }
               },
               sequence,
               sink
             )
-            if (!('content' in synthesisResult)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Synthesis returned a preflight instead of an answer', 500)
+            if (!('content' in synthesisResult))
+              throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Synthesis returned a preflight instead of an answer', 500)
             result = synthesisResult
           } else {
             result = await this.#turn(
@@ -8280,7 +8771,9 @@ export class AxAgentEngine implements AgentEngine {
           const unestablishedCoverage =
             (request.purpose ?? 'root') === 'root' &&
             ((contextPlan.requestFacets === undefined && contextPlan.observedRecentEvidence) ||
-              contextPlan.requestFacets?.some((facet, index) => facet.coverage === 'recent-window' && !contextPlan.recentWindows.has(index)) === true)
+              contextPlan.requestFacets?.some(
+                (facet, index) => facet.coverage === 'recent-window' && contextPlan.recentWindows.get(index)?.windowComplete !== true
+              ) === true)
           const requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, result.rootUnresolvedFacets ?? [], unestablishedCoverage)
           const assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
           let assessmentEvidence: ReadonlyMap<string, CitationEvidence> = dispatchEvidence
@@ -8289,13 +8782,18 @@ export class AxAgentEngine implements AgentEngine {
               ? ({ valid: true, issues: [], claims: [], citationIds: [] } satisfies DraftAssessment)
               : request.purpose === 'subagent' && !request.specialist
                 ? assessSubagentDraft(result.content, assessmentEvidence, request.currentPage)
-                : assessDraft(assessableContent, assessmentEvidence, {
-                    ...coverage,
-                    partialCoverage: {
-                      omittedCount: executedOmittedCount(),
-                      notExecutedCount: notExecutedActionCallIds.size
-                    }
-                  }, result.rootNativeDraft)
+                : assessDraft(
+                    assessableContent,
+                    assessmentEvidence,
+                    {
+                      ...coverage,
+                      partialCoverage: {
+                        omittedCount: executedOmittedCount(),
+                        notExecutedCount: notExecutedActionCallIds.size
+                      }
+                    },
+                    result.rootNativeDraft
+                  )
           if (result.rootFramingIssue !== undefined) assessment = { ...assessment, valid: false, issues: [...assessment.issues, result.rootFramingIssue] }
           if (
             request.purpose !== 'planner' &&
@@ -8366,13 +8864,18 @@ export class AxAgentEngine implements AgentEngine {
               const reassessed =
                 request.purpose === 'subagent' && !request.specialist
                   ? assessSubagentDraft(result.content, assessmentEvidence, request.currentPage)
-                  : assessDraft(assessableContent, assessmentEvidence, {
-                      ...coverage,
-                      partialCoverage: {
-                        omittedCount: executedOmittedCount(),
-                        notExecutedCount: notExecutedActionCallIds.size
-                      }
-                    }, result.rootNativeDraft)
+                  : assessDraft(
+                      assessableContent,
+                      assessmentEvidence,
+                      {
+                        ...coverage,
+                        partialCoverage: {
+                          omittedCount: executedOmittedCount(),
+                          notExecutedCount: notExecutedActionCallIds.size
+                        }
+                      },
+                      result.rootNativeDraft
+                    )
               assessment = {
                 ...reassessed,
                 valid: false,
@@ -8388,34 +8891,40 @@ export class AxAgentEngine implements AgentEngine {
           let publicationVerificationEvidence: ReadonlyMap<string, CitationEvidence> | undefined
           let coverageOutputLimited = false
           let coverageAuditFeedback: string | undefined
-          if (assessment.valid && result.rootNativeDraft !== undefined &&
-            (result.rootNativeDraft.answer.claims.length > 0 || result.rootNativeDraft.answer.observations.length > 0 ||
-              (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0)) {
+          if (
+            assessment.valid &&
+            result.rootNativeDraft !== undefined &&
+            (result.rootNativeDraft.answer.claims.length > 0 ||
+              result.rootNativeDraft.answer.observations.length > 0 ||
+              (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0)
+          ) {
             try {
               const nativeDraft = result.rootNativeDraft
               const { plan, evidence, decide } = await prepareWikiVerification(nativeDraft)
               const semanticResults: DecisionBatchResult[] = []
-              for (const nativeRequest of plan?.requests ?? [])
-                semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
-              const semantic = plan === null
-                ? { valid: true, issues: [], nativeSupportedClaimIndexes: [] }
-                : assessWikiVerificationResults(plan, semanticResults)
+              for (const nativeRequest of plan?.requests ?? []) semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
+              const semantic =
+                plan === null ? { valid: true, issues: [], nativeSupportedClaimIndexes: [] } : assessWikiVerificationResults(plan, semanticResults)
               if (plan !== null) publicationVerificationEvidence = evidence
               const verifiedDraft: NativeDraft = {
                 ...nativeDraft,
-                semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index =>
-                  canonicalJson(nativeDraft.answer.claims[index]!)))
+                semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index => canonicalJson(nativeDraft.answer.claims[index]!)))
               }
               result = { ...result, rootNativeDraft: verifiedDraft }
               // Factual truth and answer coverage are independent verdicts.
               // A truthful but incomplete answer remains entirely unpublished.
-              assessment = assessDraft(assessableContent, assessmentEvidence, {
-                ...coverage,
-                partialCoverage: {
-                  omittedCount: executedOmittedCount(),
-                  notExecutedCount: notExecutedActionCallIds.size
-                }
-              }, verifiedDraft)
+              assessment = assessDraft(
+                assessableContent,
+                assessmentEvidence,
+                {
+                  ...coverage,
+                  partialCoverage: {
+                    omittedCount: executedOmittedCount(),
+                    notExecutedCount: notExecutedActionCallIds.size
+                  }
+                },
+                verifiedDraft
+              )
               if (!semantic.valid) {
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
@@ -8423,7 +8932,7 @@ export class AxAgentEngine implements AgentEngine {
               if (semantic.valid && nativeDraft.answer.claims.length > 0) {
                 const conversationContext = wikiConversationContext(conversation)
                 const coverageInput = encodeWikiCoverageInput({
-                  userRequest: contextPlan.intent,
+                  userRequest: userRequestWithRecentScope(assessmentEvidence),
                   ...(conversationContext === undefined ? {} : { conversationContext }),
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
                   unresolvedFacets: nativeDraft.answer.unresolvedFacets,
@@ -8439,19 +8948,25 @@ export class AxAgentEngine implements AgentEngine {
                     return { readRef: source.readId, statement: claim.statement }
                   })
                 })
-                const audit = await this.#coverageTurn(synthesisProvider!, request, coverageInput,
+                const audit = await this.#coverageTurn(
+                  synthesisProvider!,
+                  request,
+                  coverageInput,
                   maxTokens === undefined ? undefined : maxTokens - totalTokens,
                   async () => {
                     await requireLiveWikiVerification(evidence)
                     await requireFreshRegisteredEvidence(nativeDraft.evidence)
-                  }, finalizationSequence)
+                  },
+                  finalizationSequence
+                )
                 inputTokens = safeUsageAddition(inputTokens, audit.turn.inputTokens, 'Aggregate coverage input token usage')
                 outputTokens = safeUsageAddition(outputTokens, audit.turn.outputTokens, 'Aggregate coverage output token usage')
                 totalTokens = safeUsageAddition(totalTokens, audit.turn.totalTokens, 'Aggregate coverage total token usage')
                 costMicros = safeUsageAddition(costMicros, audit.turn.costMicros, 'Aggregate coverage cost')
                 await sink.event('model.turn', {
                   ...modelTurnData(turn + 1, { ...audit.turn, content: '', calls: [] }, 'verification_completed'),
-                  purpose: 'verification', model: synthesisProvider!.model,
+                  purpose: 'verification',
+                  model: synthesisProvider!.model,
                   verification: { phase: 'coverage_audit', checks: 1, verdict: audit.verdict }
                 })
                 assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
@@ -8460,8 +8975,7 @@ export class AxAgentEngine implements AgentEngine {
                 coverageOutputLimited = audit.turn.finishReason === 'length'
                 if (audit.verdict !== 'complete' || coverageOutputLimited) {
                   coverageAuditFeedback = audit.feedback
-                  assessment = { ...assessment, valid: false,
-                    issues: [...assessment.issues, `Requested coverage: ${audit.verdict}.`] }
+                  assessment = { ...assessment, valid: false, issues: [...assessment.issues, `Requested coverage: ${audit.verdict}.`] }
                   result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
                 }
               }
@@ -8472,14 +8986,13 @@ export class AxAgentEngine implements AgentEngine {
                 ...modelTurnData(turn + 1, { ...result, content: '' }, 'answer_rejected'),
                 verificationFailure: { code: error instanceof AgentRepositoryError ? error.code : 'WIKI_VERIFICATION_FAILED' }
               })
-              if (error instanceof AgentRepositoryError && error.code === 'AGENT_CONTEXT_TOO_LARGE')
-                return publishExecutionLimit('evidence')
+              if (error instanceof AgentRepositoryError && error.code === 'AGENT_CONTEXT_TOO_LARGE') return publishExecutionLimit('evidence')
               throw classifyAgentExecutionFailure(error, 'provider_response')
             }
           }
-          const sourceLocalFailures = assessment.issues.filter(issue =>
-            issue.includes('does not support every factual clause from a single source unit') ||
-            issue.includes('lacks complete-source semantic support')
+          const sourceLocalFailures = assessment.issues.filter(
+            issue =>
+              issue.includes('does not support every factual clause from a single source unit') || issue.includes('lacks complete-source semantic support')
           ).length
           const exactIntegrityFailures = assessment.claims.filter(claim => claim.sourceActionCallId !== null && !claim.integritySupported).length
           const unreadFailures = assessment.claims.filter(claim => claim.sourceActionCallId === null).length
@@ -8488,17 +9001,20 @@ export class AxAgentEngine implements AgentEngine {
               facet.state !== 'unavailable' &&
               (facet.evidenceIds.length === 0
                 ? (request.research?.packets.length ?? 0) === 0 && assessment.claims.some(claim => claim.supported)
-                : facet.evidenceIds.some(evidenceId => assessment.claims.some(claim => claim.supported &&
-                  (claim.evidenceId === evidenceId ||
-                    claim.pageEvidenceId === assessmentEvidence.get(evidenceId)?.pageEvidenceId))))
+                : facet.evidenceIds.some(evidenceId =>
+                    assessment.claims.some(
+                      claim =>
+                        claim.supported && (claim.evidenceId === evidenceId || claim.pageEvidenceId === assessmentEvidence.get(evidenceId)?.pageEvidenceId)
+                    )
+                  ))
           ).length
           if (!assessment.valid) rejectedDraftCount++
           const assertAssessmentPublicationFresh = async (): Promise<void> => {
             request.signal.throwIfAborted()
             await request.authorizeDispatch?.()
+            await requireFreshApplicationReceipts()
             await requireLiveEvidence(assessment, assessmentEvidence)
-            if (publicationVerificationEvidence !== undefined)
-              await requireLiveWikiVerification(publicationVerificationEvidence)
+            if (publicationVerificationEvidence !== undefined) await requireLiveWikiVerification(publicationVerificationEvidence)
           }
           const publishAssessmentEvents = async (): Promise<void> => {
             await assertAssessmentPublicationFresh()
@@ -8542,8 +9058,7 @@ export class AxAgentEngine implements AgentEngine {
             const closeFailure = finalizeActionSession()
             if (closeFailure) throw closeFailure
             await requireLiveEvidence(assessment, assessmentEvidence)
-            if (publishFragment && publicationVerificationEvidence !== undefined)
-              await requireLiveWikiVerification(publicationVerificationEvidence)
+            if (publishFragment && publicationVerificationEvidence !== undefined) await requireLiveWikiVerification(publicationVerificationEvidence)
             await publishAssessmentEvents()
             const structured = request.purpose === 'planner' || request.purpose === 'subagent'
             if (!structured) {
@@ -8555,8 +9070,13 @@ export class AxAgentEngine implements AgentEngine {
                   )}${evidenceConflictDisclosure(evidenceConflictIds.size > 0)}${requestDisclosure}\n\n${disclosure}`
                 : disclosure
               if (publishFragment) await assertAssessmentPublicationFresh()
-              await presentAcceptedContent(publishedContent, sink,
-                publishFragment && (assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined) ? assertAssessmentPublicationFresh : undefined)
+              await presentAcceptedContent(
+                publishedContent,
+                sink,
+                publishFragment && (assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined)
+                  ? assertAssessmentPublicationFresh
+                  : undefined
+              )
             }
             const citations = !structured && publishFragment ? answerCitations(assessment.citationIds, assessmentEvidence) : []
             return {
@@ -8582,11 +9102,15 @@ export class AxAgentEngine implements AgentEngine {
           if (!assessment.valid) {
             await publishAssessmentEvents()
             const correctionIssues = evidenceCorrectionIssues(assessment.issues)
-            repairFeedback = coverageAuditFeedback === undefined ? correctionIssues :
-              canonicalJson({ issues: correctionIssues, coverageFeedback: coverageAuditFeedback })
+            repairFeedback =
+              coverageAuditFeedback === undefined ? correctionIssues : canonicalJson({ issues: correctionIssues, coverageFeedback: coverageAuditFeedback })
             if (result.rootRejectedDraft !== undefined) {
               let rejectedDraft: unknown = result.rootRejectedDraft
-              try { rejectedDraft = JSON.parse(result.rootRejectedDraft) } catch { /* Preserve malformed output as quoted data. */ }
+              try {
+                rejectedDraft = JSON.parse(result.rootRejectedDraft)
+              } catch {
+                /* Preserve malformed output as quoted data. */
+              }
               const correctionContext = canonicalJson({ issues: repairFeedback, rejectedDraft })
               if (Buffer.byteLength(correctionContext, 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) repairFeedback = correctionContext
             }
@@ -8672,8 +9196,11 @@ export class AxAgentEngine implements AgentEngine {
               409
             )
           const acceptedBaseContent = result.content
-          if ((request.purpose ?? 'root') === 'root' && result.rootNativeDraft !== undefined &&
-            Buffer.byteLength(acceptedBaseContent, 'utf8') > result.rootNativeDraft.contentByteLimit)
+          if (
+            (request.purpose ?? 'root') === 'root' &&
+            result.rootNativeDraft !== undefined &&
+            Buffer.byteLength(acceptedBaseContent, 'utf8') > result.rootNativeDraft.contentByteLimit
+          )
             throw new AgentRepositoryError('PROVIDER_RESPONSE_TOO_LARGE', 'Canonical synthesis output exceeded its admitted content byte limit.', 502)
           const acceptedContent = request.specialist
             ? result.content
@@ -8699,12 +9226,14 @@ export class AxAgentEngine implements AgentEngine {
           const specialistResult = await captureSpecialistResult(acceptedContent, acceptedThoughtBlocks)
           const closeFailure = finalizeActionSession()
           if (closeFailure) throw closeFailure
-          if (publicationVerificationEvidence !== undefined)
-            await requireLiveWikiVerification(publicationVerificationEvidence)
+          if (publicationVerificationEvidence !== undefined) await requireLiveWikiVerification(publicationVerificationEvidence)
           await publishAssessmentEvents()
           await assertAssessmentPublicationFresh()
-          await presentAcceptedContent(acceptedContent, sink,
-            assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined ? assertAssessmentPublicationFresh : undefined)
+          await presentAcceptedContent(
+            acceptedContent,
+            sink,
+            assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined ? assertAssessmentPublicationFresh : undefined
+          )
           // The agent has finished responding and the user's turn is next: compact eagerly so the
           // next dispatch starts lean. The answer is already delivered, so this pass is best-effort;
           // failures keep the uncompacted history and never fail the completed response.
@@ -8720,14 +9249,15 @@ export class AxAgentEngine implements AgentEngine {
             totalTokens,
             costMicros,
             ...specialistResult,
-            ...(requestDisclosure.length === 0 ? {} : {
-              executionLimit: {
-                reason: 'evidence' as const,
-                publication: result.rootHasVerifiedContent === true || assessment.claims.some(claim => claim.supported)
-                  ? 'partial' as const
-                  : 'inability' as const
-              }
-            }),
+            ...(requestDisclosure.length === 0
+              ? {}
+              : {
+                  executionLimit: {
+                    reason: 'evidence' as const,
+                    publication:
+                      result.rootHasVerifiedContent === true || assessment.claims.some(claim => claim.supported) ? ('partial' as const) : ('inability' as const)
+                  }
+                }),
             ...(citations.length === 0 ? {} : { citations }),
             ...(acceptedProviderState === undefined ? {} : { providerState: acceptedProviderState }),
             ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
@@ -8792,7 +9322,14 @@ export class AxAgentEngine implements AgentEngine {
           fromIndex: number,
           candidateTools: ProviderTools,
           candidateSystem: ChatPromptMessage,
-          sourceRead?: { readonly actionName: PageReadActionName; readonly actionCallId: string; readonly providerCallId: string; readonly output: unknown; readonly providerOutput: unknown; readonly expectedVersionId: number | null | undefined }
+          sourceRead?: {
+            readonly actionName: PageReadActionName
+            readonly actionCallId: string
+            readonly providerCallId: string
+            readonly output: unknown
+            readonly providerOutput: unknown
+            readonly expectedVersionId: number | null | undefined
+          }
         ): Promise<boolean> => {
           if (sourceRead !== undefined && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
             // A portable candidate must fit the actual typed frame before it
@@ -8801,30 +9338,64 @@ export class AxAgentEngine implements AgentEngine {
             if (provider.countContextTokens !== undefined) return true
             const validationResults: EvidenceValidationCache = new Map()
             await reauthorizeEvidencePrompt(validationResults)
-            const retained = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, validationResults, true) ??
-              evidenceSnapshotForPrompt(citationRegistry, [systemMessageFor(null), ...conversation, ...activePrompt], trackedEvidenceMessages, excludedEvidenceIds)
+            const retained =
+              (await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, validationResults, true)) ??
+              evidenceSnapshotForPrompt(
+                citationRegistry,
+                [systemMessageFor(null), ...conversation, ...activePrompt],
+                trackedEvidenceMessages,
+                excludedEvidenceIds
+              )
             const prospectiveRegistry = new Map(citationRegistry)
-            collectPageEvidence(sourceRead.actionName, sourceRead.actionCallId, sourceRead.output, prospectiveRegistry, [], sourceRead.expectedVersionId, sourceRead.providerCallId)
-            rememberEvidenceMessage(candidate, sourceRead.providerCallId, sourceRead.actionCallId, sourceRead.actionName, sourceRead.providerOutput, sourceRead.output,
-              unavailableEvidenceContext())
+            const collection = collectPageEvidence(
+              sourceRead.actionName,
+              sourceRead.actionCallId,
+              sourceRead.output,
+              prospectiveRegistry,
+              [],
+              sourceRead.expectedVersionId,
+              sourceRead.providerCallId
+            )
+            rememberEvidenceMessage(
+              candidate,
+              sourceRead.providerCallId,
+              sourceRead.actionCallId,
+              sourceRead.actionName,
+              sourceRead.providerOutput,
+              sourceRead.output,
+              unavailableEvidenceContext()
+            )
             const candidateEvidence = evidenceSnapshotForPrompt(prospectiveRegistry, [candidate], trackedEvidenceMessages, excludedEvidenceIds)
             const prospectiveEvidence = new Map(retained)
             for (const [evidenceId, evidence] of candidateEvidence) prospectiveEvidence.set(evidenceId, evidence)
             try {
-              const plan = await this.#synthesisTurn(provider, request, finalizationMaxOutputTokens, undefined, prospectiveEvidence, {
-                userRequest: contextPlan.intent,
-                conversation,
-                requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
-                observations: activePrompt.flatMap(message => [
-                  ...(trackedAttributedMessages.get(message) ?? []),
-                  ...[...(trackedBrowserMessages.get(message)?.quotedUnits ?? [])].map(unit => `${trackedBrowserMessages.get(message)!.prefix}${unit}`)
-                ]),
-                repairFeedback,
-                coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
-                assessableContent: content => content,
-                reserveRepair: false,
-                authorizeEvidence: () => requireFreshRegisteredEvidence(prospectiveEvidence)
-              }, undefined, undefined, true)
+              const plan = await this.#synthesisTurn(
+                provider,
+                request,
+                finalizationMaxOutputTokens,
+                undefined,
+                prospectiveEvidence,
+                {
+                  userRequest: userRequestWithRecentScope(prospectiveEvidence, collection.recent),
+                  conversation,
+                  requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
+                  observations: [
+                    ...retainedProposalOutcomeLines(),
+                    ...activePrompt.flatMap(message => [
+                      ...(trackedAttributedMessages.get(message) ?? []),
+                      ...[...(trackedBrowserMessages.get(message)?.quotedUnits ?? [])].map(unit => `${trackedBrowserMessages.get(message)!.prefix}${unit}`)
+                    ])
+                  ],
+                  repairFeedback,
+                  coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
+                  assessableContent: content => content,
+                  reserveRepair: false,
+                  authorizeEvidence: () => requireFreshRegisteredEvidence(prospectiveEvidence)
+                },
+                undefined,
+                undefined,
+                true
+              )
               if (!('bounded' in plan)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Candidate admission unexpectedly dispatched', 500)
               return true
             } catch (error) {
@@ -9311,18 +9882,33 @@ export class AxAgentEngine implements AgentEngine {
             const encoded = JSON.stringify(output)
             const summary = toolCompletionSummary(resolved.name, output, cached !== undefined)
             const candidateProgress = cached === undefined ? providerCandidateProgress(resolved.name, output, seenCandidateIdentities) : null
-            const cachedResident = cached !== undefined && [...evidenceSnapshotForPrompt(
-              citationRegistry, [systemMessageFor(tools), ...conversation, ...activePrompt], trackedEvidenceMessages, excludedEvidenceIds
-            ).values()].some(evidence =>
-              !evidence.section && evidence.sourceActionName === resolved.name &&
-              evidence.readReceipts.some(receipt => receipt.actionCallId === cached!.actionCallId) &&
-              evidence.source === evidence.binding.retrievedSource &&
-              evidence.sourceUnits.length === evidence.documentUnits.length
-            )
+            const cachedResident =
+              cached !== undefined &&
+              [
+                ...evidenceSnapshotForPrompt(
+                  citationRegistry,
+                  [systemMessageFor(tools), ...conversation, ...activePrompt],
+                  trackedEvidenceMessages,
+                  excludedEvidenceIds
+                ).values()
+              ].some(
+                evidence =>
+                  !evidence.section &&
+                  evidence.sourceActionName === resolved.name &&
+                  evidence.readReceipts.some(receipt => receipt.actionCallId === cached!.actionCallId) &&
+                  evidence.source === evidence.binding.retrievedSource &&
+                  evidence.sourceUnits.length === evidence.documentUnits.length
+              )
             const providerOutput =
               cached !== undefined && cachedResident
                 ? { status: 'reused', reusedActionCallId: cached.actionCallId, summary: summary ?? 'Reused earlier result.' }
-                : providerActionOutput(resolved.name, output, candidateProgress, { input, actionCallId: cached?.actionCallId ?? actionCallId }, completeReadCollection)
+                : providerActionOutput(
+                    resolved.name,
+                    output,
+                    candidateProgress,
+                    { input, actionCallId: cached?.actionCallId ?? actionCallId },
+                    completeReadCollection
+                  )
             const projectedOutput = asRecord(providerOutput)
             const discoveryNotice =
               candidateProgress !== null && projectedOutput !== null && projectedOutput.discovery === candidateProgress.discovery
@@ -9335,10 +9921,22 @@ export class AxAgentEngine implements AgentEngine {
             if (prospectiveTools === null) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider tools are unavailable', 403)
             const prospectiveSystem = systemMessageFor(prospectiveTools)
             const delivered =
-              (await fitsSynthesisWithCandidate(candidate, callIndex + 1, prospectiveTools, prospectiveSystem, isPageReadActionName(resolved.name) ? {
-                actionName: resolved.name, actionCallId: cached?.actionCallId ?? actionCallId, providerCallId: call.id,
-                output, providerOutput, expectedVersionId: requestedVersionIdForAction(resolved.name, input)
-              } : undefined)) &&
+              (await fitsSynthesisWithCandidate(
+                candidate,
+                callIndex + 1,
+                prospectiveTools,
+                prospectiveSystem,
+                isPageReadActionName(resolved.name)
+                  ? {
+                      actionName: resolved.name,
+                      actionCallId: cached?.actionCallId ?? actionCallId,
+                      providerCallId: call.id,
+                      output,
+                      providerOutput,
+                      expectedVersionId: requestedVersionIdForAction(resolved.name, input)
+                    }
+                  : undefined
+              )) &&
               (((request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent' && isPageReadActionName(resolved.name)) ||
                 finalizationSequence !== undefined ||
                 fitsProviderResult(provider, prospectiveTools, prospectiveSystem, conversation, activePrompt, candidate, requestedMaxOutputTokens))
@@ -9357,11 +9955,11 @@ export class AxAgentEngine implements AgentEngine {
               contextLimitedThisTurn = true
             }
             const deliveredMessage = providerResultMessage(activePrompt, mode, call.id, call.providerName, deliveredOutput)
-            const deliveredStatus = delivered ? trustedActionStatusLine(deliveredOutput) : null
-            const attributedLines = delivered
-              ? [...(deliveredStatus === null ? [] : [deliveredStatus]), ...(discoveryNotice === null ? [] : [discoveryNotice])]
-              : []
+            const deliveredStatus = delivered ? trustedActionStatusLines(deliveredOutput) : []
+            const attributedLines = delivered ? [...deliveredStatus, ...(discoveryNotice === null ? [] : [discoveryNotice])] : []
             if (attributedLines.length > 0) trackedAttributedMessages.set(deliveredMessage, attributedLines)
+            if (deliveredStatus.length > 0)
+              rememberProposalOutcome(deliveredMessage, resolved.name, input, output, mode, call.id, call.providerName, actionCallId)
             const deliveredBrowser = delivered ? trustedBrowserAttribution(deliveredOutput) : null
             if (deliveredBrowser !== null) trackedBrowserMessages.set(deliveredMessage, deliveredBrowser)
             if (delivered && candidateProgress !== null) commitProviderCandidateProgress(candidateProgress, seenCandidateIdentities)
@@ -9462,9 +10060,15 @@ export class AxAgentEngine implements AgentEngine {
           // another collector acknowledgement. No evidence is pruned or clipped.
           const preflightValidationResults: EvidenceValidationCache = new Map()
           await reauthorizeEvidencePrompt(preflightValidationResults)
-          const preflightEvidence = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, preflightValidationResults, true) ??
-            evidenceSnapshotForPrompt(citationRegistry, [systemMessageFor(null), ...conversation, ...activePrompt], trackedEvidenceMessages, excludedEvidenceIds)
-          const attributedLines = new Set<string>()
+          const preflightEvidence =
+            (await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, preflightValidationResults, true)) ??
+            evidenceSnapshotForPrompt(
+              citationRegistry,
+              [systemMessageFor(null), ...conversation, ...activePrompt],
+              trackedEvidenceMessages,
+              excludedEvidenceIds
+            )
+          const attributedLines = new Set<string>(retainedProposalOutcomeLines())
           const browserAttributions: BrowserAttribution[] = []
           for (const message of activePrompt) {
             for (const line of trackedAttributedMessages.get(message) ?? []) attributedLines.add(line)
@@ -9479,24 +10083,43 @@ export class AxAgentEngine implements AgentEngine {
           })
           try {
             const remaining = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
-            const plan = await this.#synthesisTurn(synthesisProvider, request, finalizationMaxOutputTokens, remaining, preflightEvidence, {
-              userRequest: contextPlan.intent,
-              conversation,
-              requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
-              observations: [...attributedLines, ...browserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))],
-              repairFeedback,
-              coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
-              assessableContent: content => assessableActionStatusContent(content, attributedLines, browserAttributions),
-              reserveRepair: false,
-              contextMeasurements: synthesisContextMeasurements,
-              authorizeEvidence: () => requireFreshRegisteredEvidence(preflightEvidence)
-            }, undefined, sink, true)
+            const plan = await this.#synthesisTurn(
+              synthesisProvider,
+              request,
+              finalizationMaxOutputTokens,
+              remaining,
+              preflightEvidence,
+              {
+                userRequest: userRequestWithRecentScope(preflightEvidence),
+                conversation,
+                requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
+                observations: [
+                  ...attributedLines,
+                  ...browserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))
+                ],
+                repairFeedback,
+                coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
+                assessableContent: content => assessableActionStatusContent(content, attributedLines, browserAttributions),
+                reserveRepair: false,
+                contextMeasurements: synthesisContextMeasurements,
+                authorizeEvidence: async () => {
+                  await requireFreshApplicationReceipts()
+                  await requireFreshRegisteredEvidence(preflightEvidence)
+                }
+              },
+              undefined,
+              sink,
+              true
+            )
             if (!('bounded' in plan)) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Synthesis preflight unexpectedly dispatched', 500)
             try {
               await finalizationSequence?.resizeUndispatched({ tokens: plan.tokens, costMicros: plan.costMicros })
             } catch (error) {
-              if (plan.synthesisFrame !== undefined && error instanceof AgentRepositoryError &&
-                (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED'))
+              if (
+                plan.synthesisFrame !== undefined &&
+                error instanceof AgentRepositoryError &&
+                (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED')
+              )
                 await sink.event('evidence.provenance', {
                   purpose: 'context_admission',
                   stage: 'synthesis_frame_admission',
@@ -9507,8 +10130,10 @@ export class AxAgentEngine implements AgentEngine {
             reservedFinalizationTokens = finalizationExposureTokens = plan.tokens
             finalizationMaxOutputTokens = plan.bounded.maxOutputTokens
           } catch (error) {
-            if ((error instanceof AgentExecutionFailure || error instanceof AgentRepositoryError) &&
-              (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED'))
+            if (
+              (error instanceof AgentExecutionFailure || error instanceof AgentRepositoryError) &&
+              (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED')
+            )
               return await publishExecutionLimit(error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens')
             throw classifyAgentExecutionFailure(error, 'context_admission')
           }

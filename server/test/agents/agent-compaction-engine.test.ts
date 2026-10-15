@@ -1,6 +1,7 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
+import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import {
   type AgentCompactionCanonicalSource,
   type AgentCompactionReceipt,
@@ -11,7 +12,16 @@ import {
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fixtureDecisionProviders, rejectFixtureStatements, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import {
+  fixtureDecisionProviders,
+  rejectFixtureStatements,
+  fullAxFixtureService,
+  synthesisCollectionControl,
+  synthesisFixtureAnswer,
+  synthesisInputFromRequest,
+  synthesisReadsFromRequest,
+  synthesisSourcesFromRequest
+} from './synthesis-fixture.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation, AgentEngineMessage, AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
@@ -21,7 +31,6 @@ const visibleWikiText = (content: string): string => {
   container.innerHTML = renderSafeMarkdown(content)
   return container.textContent ?? ''
 }
-
 
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 const profile = {
@@ -50,6 +59,12 @@ const response = (content: string, inputTokens: number, outputTokens: number, fi
     model: 'gpt-test',
     tokens: { promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: inputTokens + outputTokens }
   }
+})
+
+const safeExecutionFailure = (error: unknown) => ({
+  code: typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined,
+  stage: typeof error === 'object' && error !== null ? Reflect.get(error, 'stage') : undefined,
+  status: typeof error === 'object' && error !== null ? Reflect.get(error, 'status') : undefined
 })
 
 const canonicalMessages = (
@@ -211,14 +226,419 @@ const sequencedBudget = (availableTokens: number): AgentDispatchBudget & { reado
 }
 
 describe('Ax agent engine context compaction', () => {
+  it.each([false, true])('retains a delivered operation acknowledgement across active compaction (mixed facts: %s)', async mixed => {
+    const proposalId = '00000000-0000-4000-8000-000000000201'
+    const receipt = { proposalId, status: 'applied', resultHash: 'a'.repeat(64), page: null }
+    const statusLine = 'Wiki proposal application status: applied.'
+    const resultLine = `Proposal: ${proposalId}; result hash: ${receipt.resultHash}.`
+    const operationRequest = 'Report the completed approved operation.'
+    const factRequest = 'Report the current incident owner.'
+    const userRequest = mixed ? `${operationRequest} ${factRequest}` : operationRequest
+    const plan = mixed
+      ? `<wiki-request-plan>${JSON.stringify({
+          facets: [
+            { start: 0, end: operationRequest.length, quote: operationRequest, coverage: 'source' },
+            { start: operationRequest.length + 1, end: userRequest.length, quote: factRequest, coverage: 'source' }
+          ]
+        })}</wiki-request-plan>`
+      : ''
+    let collectionTurns = 0
+    let activeSummaryAccepted = false
+    const summaries: Readonly<AxChatRequest>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if (synthesisInputFromRequest(input) !== undefined)
+        return response(
+          synthesisFixtureAnswer(input, {
+            claims: [],
+            observations: [statusLine, resultLine],
+            unresolvedFacets: mixed ? [1] : []
+          }),
+          100,
+          10
+        )
+      if ((input.functions?.length ?? 0) === 0) {
+        summaries.push(input)
+        // Deliberately omit all operation identity and status from model memory.
+        return response('Earlier planning and discovery steps are summarized.', 100, 10)
+      }
+      collectionTurns++
+      if (!activeSummaryAccepted)
+        return {
+          ...response('', 100, 900),
+          results: [
+            {
+              index: 0,
+              content: `${collectionTurns === 1 ? plan : ''}${'Planning notes remain provisional. '.repeat(120)}`,
+              functionCalls: [
+                {
+                  id: `discovery-${collectionTurns}`,
+                  type: 'function',
+                  function: { name: AGENT_TOOL_NAMES['pages.search'], params: '{"query":"duplicate check"}' }
+                }
+              ]
+            }
+          ]
+        }
+      return {
+        ...response('', 100, 10),
+        results: [{ index: 0, functionCalls: [{ id: 'finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }] }]
+      }
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.search',
+            title: 'Search',
+            description: 'Find candidates',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read',
+            group: 'core'
+          },
+          {
+            name: 'pages.applyProposal',
+            title: 'Apply',
+            description: 'Apply approved proposal',
+            parameters: { type: 'object', properties: {} },
+            risk: 'reversible-write',
+            group: 'authoring',
+            capability: ACTION_CATALOG['pages.applyProposal'].capability
+          }
+        ],
+        invoke: async () => ({ results: [], suggestions: [], totalInWindow: 0, windowLimit: 250, windowTruncated: false, nextOffset: null }),
+        snapshot: async () => ({}),
+        close: () => undefined
+      })
+    }
+    const { factory } = factoryFor(chat)
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (type: string, data: unknown) => {
+      if (
+        type === 'model.turn' &&
+        typeof data === 'object' &&
+        data !== null &&
+        Reflect.get(data, 'outcome') === 'context_compacted' &&
+        Reflect.get(Reflect.get(data, 'compaction') ?? {}, 'scope') === 'active'
+      )
+        activeSummaryAccepted = true
+    })
+    // Keep authorized history intact while bounded collector batches fill the
+    // remaining space. A huge single response would hit result admission first,
+    // testing recovery after omission instead of receipt retention.
+    const base = engineRequest([
+      { role: 'assistant', content: 'Authorized earlier planning context. '.repeat(2200) },
+      { role: 'user', content: userRequest }
+    ])
+    const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      {
+        ...base,
+        run: { ...base.run, executionMode: 'agent', googleSearchEnabled: false },
+        recoveredAction: {
+          actionCallId: 'completed-apply',
+          actionName: 'pages.applyProposal',
+          actionInput: { proposalId, approvalId: '00000000-0000-4000-8000-000000000202' },
+          output: receipt
+        },
+        limits: { maxTurns: 12, maxToolCalls: 12, maxOutputTokens: 1_024, maxTokens: 1_000_000 }
+      },
+      { text, event }
+    )
+    expect(summaries.some(input => JSON.stringify(input).includes(proposalId))).toBe(true)
+    expect(
+      event.mock.calls.some(
+        ([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && Reflect.get(data, 'outcome') === 'context_compacted'
+      )
+    ).toBe(true)
+    expect(
+      event.mock.calls.some(([type, data]) => type === 'tool.completed' && typeof data === 'object' && data !== null && Reflect.has(data, 'contextExclusion'))
+    ).toBe(false)
+    const published = text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).toContain(resultLine)
+    expect(published).not.toContain('Earlier planning and discovery')
+    expect(result.citations).toBeUndefined()
+    if (mixed) {
+      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+      expect(published).toContain('current incident owner')
+    } else expect(result.executionLimit).toBeUndefined()
+  })
+
+  it.each(['collector planning', 'active summary'] as const)('fails closed before reusing receipt-derived %s after page read revocation', async boundary => {
+    const proposalId = '00000000-0000-4000-8000-000000000211'
+    const page = {
+      id: 731,
+      locale: 'en',
+      path: 'private/revoked-create',
+      title: 'Revoked creation identity',
+      description: '',
+      contentType: 'markdown',
+      knowledge: null,
+      sourceRevision: '1'
+    }
+    const receipt = { proposalId, status: 'applied', resultHash: 'a'.repeat(64), page }
+    const summary = `The approved operation created ${JSON.stringify(page)}.`
+    let readable = true
+    let activeSummaryAccepted = false
+    let collectorTurns = 0
+    const egressAfterRevocation: Readonly<AxChatRequest>[] = []
+    const summaries: Readonly<AxChatRequest>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if (!readable) egressAfterRevocation.push(input)
+      if ((input.functions?.length ?? 0) === 0) {
+        summaries.push(input)
+        return response(summary, 100, 10)
+      }
+      collectorTurns++
+      if (boundary === 'collector planning') readable = false
+      return {
+        ...response('', 100, 900),
+        results: [
+          {
+            index: 0,
+            content: `${summary}\n${'Provisional planning notes. '.repeat(150)}`,
+            functionCalls: [
+              {
+                id: `discover-${collectorTurns}`,
+                type: 'function',
+                function: { name: AGENT_TOOL_NAMES['pages.search'], params: '{"query":"duplicate check"}' }
+              }
+            ]
+          }
+        ]
+      }
+    })
+    const validateObservation = vi.fn(
+      async (actionName: string, output: unknown) =>
+        actionName !== 'pages.applyProposal' || readable || (typeof output === 'object' && output !== null && Reflect.get(output, 'page') === null)
+    )
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.search',
+            title: 'Search',
+            description: 'Find candidates',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read',
+            group: 'core'
+          },
+          {
+            name: 'pages.applyProposal',
+            title: 'Apply',
+            description: 'Apply approved proposal',
+            parameters: { type: 'object', properties: {} },
+            risk: ACTION_CATALOG['pages.applyProposal'].descriptor.risk,
+            group: 'authoring',
+            capability: ACTION_CATALOG['pages.applyProposal'].capability
+          }
+        ],
+        invoke: async () => ({ results: [], suggestions: [], totalInWindow: 0, windowLimit: 250, windowTruncated: false, nextOffset: null }),
+        validateObservation,
+        snapshot: async () => ({}),
+        close: () => undefined
+      })
+    }
+    const { factory } = factoryFor(chat)
+    const text = vi.fn(async (_delta: string) => {})
+    const base = engineRequest([
+      { role: 'assistant', content: 'Authorized earlier planning context. '.repeat(2200) },
+      { role: 'user', content: 'Report the completed approved operation after checking for duplicates.' }
+    ])
+    const failure = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
+      .execute(
+        {
+          ...base,
+          run: { ...base.run, executionMode: 'agent', googleSearchEnabled: false },
+          recoveredAction: {
+            actionCallId: 'completed-apply',
+            actionName: 'pages.applyProposal',
+            actionInput: { proposalId, approvalId: '00000000-0000-4000-8000-000000000212' },
+            output: receipt
+          },
+          limits: { maxTurns: 12, maxToolCalls: 12, maxOutputTokens: 1_024, maxTokens: 1_000_000 }
+        },
+        {
+          text,
+          event: async (type, data) => {
+            if (
+              type !== 'model.turn' ||
+              typeof data !== 'object' ||
+              data === null ||
+              Reflect.get(data, 'outcome') !== 'context_compacted' ||
+              Reflect.get(Reflect.get(data, 'compaction') ?? {}, 'scope') !== 'active'
+            )
+              return
+            expect(Reflect.get(data, 'content')).toBe(summary)
+            activeSummaryAccepted = true
+            readable = false
+          }
+        }
+      )
+      .then(() => null, safeExecutionFailure)
+    expect(failure?.code).toBe('AGENT_EVIDENCE_INVALID')
+    expect(failure?.status).toBe(409)
+    expect(activeSummaryAccepted).toBe(boundary === 'active summary')
+    if (boundary === 'active summary') expect(summaries.some(input => JSON.stringify(input).includes(page.path))).toBe(true)
+    else expect(summaries).toEqual([])
+    expect(validateObservation).toHaveBeenCalledWith('pages.applyProposal', receipt, base.signal)
+    expect(egressAfterRevocation).toEqual([])
+    expect(text).not.toHaveBeenCalled()
+  })
+
+  it('reauthorizes applied page identity before the post-read synthesis native-count preflight', async () => {
+    const receipt = {
+      proposalId: '00000000-0000-4000-8000-000000000221',
+      status: 'applied',
+      resultHash: 'b'.repeat(64),
+      page: {
+        id: 731,
+        locale: 'en',
+        path: 'private/applied-result',
+        title: 'Applied result',
+        description: '',
+        contentType: 'markdown',
+        knowledge: null,
+        sourceRevision: '1'
+      }
+    }
+    const source = {
+      id: 1,
+      locale: 'en',
+      path: 'suppliers',
+      title: 'Supplier routing',
+      sourceRevision: '2',
+      contentType: 'markdown',
+      content: `# Supplier routing\n\n${'v'.repeat(150_000)}\n\nCedar warehouse closes at 18:30 on Fridays.`,
+      citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' },
+      citationSections: []
+    }
+    let receiptReadable = true
+    let sourceReturned = false
+    let preflightProviderOpened = false
+    let admissionRevokedReceipt = false
+    const applicationValidations: boolean[] = []
+    const sourceValidations: boolean[] = []
+    const validateObservation = vi.fn(async (actionName: string) => {
+      if (actionName === 'pages.applyProposal') {
+        applicationValidations.push(receiptReadable)
+        return receiptReadable
+      }
+      sourceValidations.push(true)
+      return true
+    })
+    const invoke = vi.fn(async () => {
+      sourceReturned = true
+      return source
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Read source',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } },
+            risk: 'read',
+            group: 'core'
+          },
+          {
+            name: 'pages.applyProposal',
+            title: 'Apply',
+            description: 'Apply approved proposal',
+            parameters: { type: 'object', properties: {} },
+            risk: 'reversible-write',
+            group: 'authoring',
+            capability: ACTION_CATALOG['pages.applyProposal'].capability
+          }
+        ],
+        invoke,
+        validateObservation,
+        snapshot: async () => ({}),
+        close: () => undefined
+      })
+    }
+    const generated: Readonly<AxChatRequest>[] = []
+    const counted: Readonly<AxChatRequest>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      generated.push(input)
+      return {
+        ...response('', 100, 10),
+        results: [
+          {
+            index: 0,
+            functionCalls: [
+              {
+                id: 'supplier-read',
+                type: 'function',
+                function: { name: AGENT_TOOL_NAMES['pages.get'], params: '{"id":1}' }
+              }
+            ]
+          }
+        ]
+      }
+    })
+    const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>) => {
+      counted.push(input)
+      return 10_000
+    })
+    const factory = {
+      create: async (_versionId: string, options?: { readonly purpose?: string }) => {
+        if (sourceReturned && options?.purpose === 'agent') preflightProviderOpened = true
+        return { ...profile, countContextTokens, service: fullAxFixtureService(chat) }
+      }
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async (_delta: string) => {})
+    const base = engineRequest([{ role: 'user', content: 'Report the applied operation and when Cedar warehouse closes on Fridays.' }])
+    const failure = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
+      .execute(
+        {
+          ...base,
+          run: { ...base.run, executionMode: 'agent', googleSearchEnabled: false },
+          recoveredAction: {
+            actionCallId: 'completed-apply',
+            actionName: 'pages.applyProposal',
+            actionInput: { proposalId: receipt.proposalId, approvalId: '00000000-0000-4000-8000-000000000222' },
+            output: receipt
+          },
+          authorizeDispatch: async () => {
+            await Promise.resolve()
+            if (preflightProviderOpened) {
+              receiptReadable = false
+              admissionRevokedReceipt = true
+            }
+          },
+          dispatchBudget: sequencedBudget(1_000_000)
+        },
+        { text, event: async () => {} }
+      )
+      .then(() => null, safeExecutionFailure)
+    expect(failure?.code).toBe('AGENT_EVIDENCE_INVALID')
+    expect(failure?.status).toBe(409)
+    expect(preflightProviderOpened).toBe(true)
+    expect(admissionRevokedReceipt).toBe(true)
+    expect(sourceValidations).toContain(true)
+    expect(applicationValidations).toContain(true)
+    expect(applicationValidations).toContain(false)
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(counted.filter(input => synthesisInputFromRequest(input) !== undefined)).toEqual([])
+    expect(generated.filter(input => synthesisInputFromRequest(input) !== undefined)).toEqual([])
+    expect(text).not.toHaveBeenCalled()
+  })
+
   it.each(['native count', 'typed generation', 'ordinary generation'] as const)(
     'rechecks original page authority after awaited admission before %s egress',
     async boundary => {
       const fact = 'Cedar warehouse closes at 18:30 on Fridays.'
       const content = `# Supplier routing\n\n${boundary === 'ordinary generation' ? '' : 'v'.repeat(150_000)}\n\n${fact}`
       const page = {
-        id: 1, locale: 'en', path: 'suppliers', title: 'Supplier routing', sourceRevision: '2', contentType: 'markdown', content,
-        citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' }, citationSections: []
+        id: 1,
+        locale: 'en',
+        path: 'suppliers',
+        title: 'Supplier routing',
+        sourceRevision: '2',
+        contentType: 'markdown',
+        content,
+        citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' },
+        citationSections: []
       }
       let readable = true
       let directReadReturned = false
@@ -235,9 +655,20 @@ describe('Ax agent engine context compaction', () => {
       })
       const actions: AgentActionSessionProvider = {
         open: async () => ({
-          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read source',
-            parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' }],
-          invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+          functions: [
+            {
+              name: 'pages.get',
+              title: 'Read page',
+              description: 'Read source',
+              parameters: { type: 'object', properties: { id: { type: 'number' } } },
+              risk: 'read',
+              group: 'core'
+            }
+          ],
+          invoke,
+          validateObservation,
+          snapshot: async () => ({}),
+          close: () => undefined
         })
       }
       const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
@@ -246,17 +677,36 @@ describe('Ax agent engine context compaction', () => {
           const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(fact))!
           return response(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }), 100, 10)
         }
-        if (boundary === 'ordinary generation' && !directReadReturned) return {
-          ...response('', 100, 10),
-          results: [{ index: 0, functionCalls: [{
-            id: 'cedar-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' }
-          }] }]
-        }
+        if (boundary === 'ordinary generation' && !directReadReturned)
+          return {
+            ...response('', 100, 10),
+            results: [
+              {
+                index: 0,
+                functionCalls: [
+                  {
+                    id: 'cedar-read',
+                    type: 'function',
+                    function: { name: 'wiki_get_page', params: '{"id":1}' }
+                  }
+                ]
+              }
+            ]
+          }
         return {
           ...response('', 100, 10),
-          results: [{ index: 0, functionCalls: [{
-            id: 'cedar-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' }
-          }] }]
+          results: [
+            {
+              index: 0,
+              functionCalls: [
+                {
+                  id: 'cedar-finish',
+                  type: 'function',
+                  function: { name: 'wiki_finish_collection', params: '{}' }
+                }
+              ]
+            }
+          ]
         }
       })
       const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>) => {
@@ -270,30 +720,35 @@ describe('Ax agent engine context compaction', () => {
       } as unknown as AgentProviderFactory
       const text = vi.fn(async (_delta: string) => {})
       const base = engineRequest([{ role: 'user', content: 'When does Cedar warehouse close on Fridays?' }])
-      await expect(new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
-        ...base, run: { ...base.run, executionMode: 'agent' },
-        ...(boundary === 'ordinary generation' ? {} : {
-          retainedPageReads: [{ actionCallId: 'prior-supplier-read', actionName: 'pages.get' as const, output: page }]
-        }),
-        // A retained complete read can answer in one turn; do not require a
-        // collection loop before its real typed/count admission boundary.
-        ...(boundary === 'native count' ? { limits: { ...base.limits, maxTurns: 1 } } : {}),
-        authorizeDispatch: async () => {
-          await Promise.resolve()
-          if (boundary === 'native count' ||
-            boundary === 'ordinary generation' && directReadReturned) readable = false
-        },
-        dispatchBudget: sequencedBudget(1_000_000)
-      }, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+      await expect(
+        new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+          {
+            ...base,
+            run: { ...base.run, executionMode: 'agent' },
+            ...(boundary === 'ordinary generation'
+              ? {}
+              : {
+                  retainedPageReads: [{ actionCallId: 'prior-supplier-read', actionName: 'pages.get' as const, output: page }]
+                }),
+            // A retained complete read can answer in one turn; do not require a
+            // collection loop before its real typed/count admission boundary.
+            ...(boundary === 'native count' ? { limits: { ...base.limits, maxTurns: 1 } } : {}),
+            authorizeDispatch: async () => {
+              await Promise.resolve()
+              if (boundary === 'native count' || (boundary === 'ordinary generation' && directReadReturned)) readable = false
+            },
+            dispatchBudget: sequencedBudget(1_000_000)
+          },
+          { text, event: async () => {} }
+        )
+      ).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
       expect(readable).toBe(false)
       expect(validations).toContain(true)
       expect(validations).toContain(false)
       expect(dispatched.every(dispatch => dispatch.readable)).toBe(true)
       expect(dispatched.filter(dispatch => synthesisInputFromRequest(dispatch.input) !== undefined)).toEqual([])
-      if (boundary === 'native count')
-        expect(counted.filter(count => synthesisInputFromRequest(count.input) !== undefined)).toEqual([])
-      if (boundary === 'typed generation')
-        expect(counted.some(count => synthesisInputFromRequest(count.input) !== undefined && count.readable)).toBe(true)
+      if (boundary === 'native count') expect(counted.filter(count => synthesisInputFromRequest(count.input) !== undefined)).toEqual([])
+      if (boundary === 'typed generation') expect(counted.some(count => synthesisInputFromRequest(count.input) !== undefined && count.readable)).toBe(true)
       expect(visibleWikiText(text.mock.calls.flat().join(''))).not.toContain(fact)
       expect(invoke).toHaveBeenCalledTimes(boundary === 'ordinary generation' ? 1 : 0)
     }
@@ -302,8 +757,12 @@ describe('Ax agent engine context compaction', () => {
   it('rechecks a subagent original read after awaited admission before sending its active transcript to the summarizer', async () => {
     const fact = 'Supplier 1 requires its own receipt.'
     const page = {
-      id: 1, locale: 'en', path: 'suppliers-1', title: 'Supplier 1',
-      sourceRevision: '2', contentType: 'markdown',
+      id: 1,
+      locale: 'en',
+      path: 'suppliers-1',
+      title: 'Supplier 1',
+      sourceRevision: '2',
+      contentType: 'markdown',
       content: `# Supplier 1\n\n${fact}\n\n${'Storage rules for supplier 1. '.repeat(1400)}`,
       citation: { evidenceId: 'page:1:revision:2', label: 'Supplier 1', href: '/en/suppliers-1' },
       citationSections: []
@@ -330,43 +789,82 @@ describe('Ax agent engine context compaction', () => {
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [
-          { name: 'pages.get', title: 'Read page', description: 'Read source',
-            parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' },
-          { name: 'pages.search', title: 'Search pages', description: 'Check current supplier candidates',
-            parameters: { type: 'object', properties: { query: { type: 'string' } } }, risk: 'read', group: 'core' }
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Read source',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } },
+            risk: 'read',
+            group: 'core'
+          },
+          {
+            name: 'pages.search',
+            title: 'Search pages',
+            description: 'Check current supplier candidates',
+            parameters: { type: 'object', properties: { query: { type: 'string' } } },
+            risk: 'read',
+            group: 'core'
+          }
         ],
-        invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+        invoke,
+        validateObservation,
+        snapshot: async () => ({}),
+        close: () => undefined
       })
     }
     const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
       dispatched.push({ input, readable })
       if (synthesisInputFromRequest(input) !== undefined) {
         const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text.includes(fact))
-        return response(synthesisFixtureAnswer(input, {
-          claims: source === undefined ? [] : [{ ...source, statement: fact }],
-          unresolvedFacets: source === undefined ? [0] : []
-        }), 100, 10)
+        return response(
+          synthesisFixtureAnswer(input, {
+            claims: source === undefined ? [] : [{ ...source, statement: fact }],
+            unresolvedFacets: source === undefined ? [0] : []
+          }),
+          100,
+          10
+        )
       }
       if ((input.functions?.length ?? 0) === 0 && synthesisInputFromRequest(input) === undefined) {
         summaryRequests.push(input)
         return response('Retain all supplier receipt requirements and their original source restrictions.', 100, 10)
       }
       collectionTurns++
-      if (collectionTurns <= 3) return {
-        ...response('', 100, 10),
-        results: [{ index: 0, content: 'Inspection planning notes remain provisional. '.repeat(collectionTurns === 1 ? 20 : 800), functionCalls: [{
-          id: `supplier-collection-${collectionTurns}`, type: 'function',
-          function: collectionTurns === 1
-            ? { name: 'wiki_get_page', params: '{"id":1}' }
-            : { name: AGENT_TOOL_NAMES['pages.search'], params: '{"query":"supplier receipt requirements"}' }
-        }] }]
-      }
+      if (collectionTurns <= 3)
+        return {
+          ...response('', 100, 10),
+          results: [
+            {
+              index: 0,
+              content: 'Inspection planning notes remain provisional. '.repeat(collectionTurns === 1 ? 20 : 800),
+              functionCalls: [
+                {
+                  id: `supplier-collection-${collectionTurns}`,
+                  type: 'function',
+                  function:
+                    collectionTurns === 1
+                      ? { name: 'wiki_get_page', params: '{"id":1}' }
+                      : { name: AGENT_TOOL_NAMES['pages.search'], params: '{"query":"supplier receipt requirements"}' }
+                }
+              ]
+            }
+          ]
+        }
       collectionFinished = true
       return {
         ...response('', 100, 10),
-        results: [{ index: 0, functionCalls: [{
-          id: 'suppliers-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' }
-        }] }]
+        results: [
+          {
+            index: 0,
+            functionCalls: [
+              {
+                id: 'suppliers-finish',
+                type: 'function',
+                function: { name: 'wiki_finish_collection', params: '{}' }
+              }
+            ]
+          }
+        ]
       }
     })
     const factory = {
@@ -389,25 +887,36 @@ describe('Ax agent engine context compaction', () => {
       reconcile: underlyingBudget.reconcile,
       release: underlyingBudget.release,
       consumeTool: underlyingBudget.consumeTool,
-      get unsettledExposure() { return underlyingBudget.unsettledExposure }
+      get unsettledExposure() {
+        return underlyingBudget.unsettledExposure
+      }
     }
     const text = vi.fn(async (_delta: string) => {})
     const base = engineRequest([{ role: 'user', content: 'Read supplier page 1, check current supplier candidates, and report its receipt requirement.' }])
     const containsRawRead = (value: unknown): boolean => {
       if (typeof value === 'string') {
         if (value.includes(page.content)) return true
-        try { return containsRawRead(JSON.parse(value)) } catch { return false }
+        try {
+          return containsRawRead(JSON.parse(value))
+        } catch {
+          return false
+        }
       }
       if (Array.isArray(value)) return value.some(containsRawRead)
       return value !== null && typeof value === 'object' && Object.values(value).some(containsRawRead)
     }
     let result: AgentEngineResult | undefined
     try {
-      result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
-        ...base, purpose: 'subagent', run: { ...base.run, executionMode: 'agent' },
-        limits: { ...base.limits, maxTurns: 8 },
-        dispatchBudget: budget
-      }, { text, event: async () => {} })
+      result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        {
+          ...base,
+          purpose: 'subagent',
+          run: { ...base.run, executionMode: 'agent' },
+          limits: { ...base.limits, maxTurns: 8 },
+          dispatchBudget: budget
+        },
+        { text, event: async () => {} }
+      )
     } catch (error) {
       expect(error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
     }
@@ -422,114 +931,153 @@ describe('Ax agent engine context compaction', () => {
     expect(result?.citations).toBeUndefined()
   })
 
-
   it.each([
     [40_000, 10_000, 'real soft history compaction'],
     [150_000, 10_000, 'mandatory verification capacity refusal'],
     [150_000, 128_000, 'native capacity refusal']
-  ] as const)('retains a complete prior read under ordinary history pressure (%s chars, %s native tokens, %s)', async (sourceCharacters, nativeInputTokens, route) => {
-    const fact = 'Cedar warehouse closes at 18:30 on Fridays.'
-    const unaskedFact = 'Falcon dispatch requires a signed manifest.'
-    const content = `# Supplier routing\n\n${unaskedFact}\n\nRequired complete source background: ${'v'.repeat(sourceCharacters)}\n\n## Cedar warehouse\n\n${fact}`
-    const page = {
-      id: 1, locale: 'en', path: 'suppliers', title: 'Supplier routing', sourceRevision: '2', contentType: 'markdown', content,
-      citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' }, citationSections: []
-    }
-    const history = canonicalMessages([
-      { role: 'user', content: `OLD_FALCON_LOOKUP:${'a'.repeat(40_000)}` },
-      { role: 'assistant', content: `OLD_FALCON_ANSWER:${'b'.repeat(40_000)}` },
-      { role: 'user', content: `TAIL_CONSTRAINT:${'c'.repeat(8_000)}` },
-      { role: 'assistant', content: `TAIL_DECISION:${'d'.repeat(8_000)}` },
-      { role: 'user', content: 'And when does Cedar warehouse close on Fridays?' }
-    ])
-    let historyCompacted = false
-    const summaries: Readonly<AxChatRequest>[] = []
-    const typedDeliveries: { readonly input: Readonly<AxChatRequest>; readonly historyCompacted: boolean }[] = []
-    const counted: Readonly<AxChatRequest>[] = []
-    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
-      if ((input.functions?.length ?? 0) === 0 && synthesisInputFromRequest(input) === undefined) {
-        summaries.push(input)
-        return response('Retain the Cedar followup and original supplier constraints.', 100, 10)
+  ] as const)(
+    'retains a complete prior read under ordinary history pressure (%s chars, %s native tokens, %s)',
+    async (sourceCharacters, nativeInputTokens, route) => {
+      const fact = 'Cedar warehouse closes at 18:30 on Fridays.'
+      const unaskedFact = 'Falcon dispatch requires a signed manifest.'
+      const content = `# Supplier routing\n\n${unaskedFact}\n\nRequired complete source background: ${'v'.repeat(sourceCharacters)}\n\n## Cedar warehouse\n\n${fact}`
+      const page = {
+        id: 1,
+        locale: 'en',
+        path: 'suppliers',
+        title: 'Supplier routing',
+        sourceRevision: '2',
+        contentType: 'markdown',
+        content,
+        citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' },
+        citationSections: []
       }
-      if (synthesisInputFromRequest(input) === undefined) return {
-        ...response('', 100, 10),
-        results: [{ index: 0, functionCalls: [
-          { id: 'cached-cedar-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
-          { id: 'cedar-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }
-        ] }]
-      }
-      typedDeliveries.push({ input, historyCompacted })
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text.includes(fact))
-      if (source === undefined) throw new Error('The complete retained original must remain eligible for fresh typed delivery')
-      return response(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }), 100, 10)
-    })
-    const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>) => {
-      counted.push(input)
-      return nativeInputTokens
-    })
-    const factory = {
-      create: async () => ({ ...profile, countContextTokens, service: fullAxFixtureService(chat) })
-    } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => { throw new Error('A validated complete prior read must not fetch the page again') })
-    const validateObservation = vi.fn(async () => true)
-    const actions: AgentActionSessionProvider = {
-      open: async () => ({
-        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read source',
-          parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' }],
-        invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+      const history = canonicalMessages([
+        { role: 'user', content: `OLD_FALCON_LOOKUP:${'a'.repeat(40_000)}` },
+        { role: 'assistant', content: `OLD_FALCON_ANSWER:${'b'.repeat(40_000)}` },
+        { role: 'user', content: `TAIL_CONSTRAINT:${'c'.repeat(8_000)}` },
+        { role: 'assistant', content: `TAIL_DECISION:${'d'.repeat(8_000)}` },
+        { role: 'user', content: 'And when does Cedar warehouse close on Fridays?' }
+      ])
+      let historyCompacted = false
+      const summaries: Readonly<AxChatRequest>[] = []
+      const typedDeliveries: { readonly input: Readonly<AxChatRequest>; readonly historyCompacted: boolean }[] = []
+      const counted: Readonly<AxChatRequest>[] = []
+      const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        if ((input.functions?.length ?? 0) === 0 && synthesisInputFromRequest(input) === undefined) {
+          summaries.push(input)
+          return response('Retain the Cedar followup and original supplier constraints.', 100, 10)
+        }
+        if (synthesisInputFromRequest(input) === undefined)
+          return {
+            ...response('', 100, 10),
+            results: [
+              {
+                index: 0,
+                functionCalls: [
+                  { id: 'cached-cedar-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+                  { id: 'cedar-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }
+                ]
+              }
+            ]
+          }
+        typedDeliveries.push({ input, historyCompacted })
+        const source = synthesisSourcesFromRequest(input).find(unit => unit.evidenceId === page.citation.evidenceId && unit.text.includes(fact))
+        if (source === undefined) throw new Error('The complete retained original must remain eligible for fresh typed delivery')
+        return response(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }), 100, 10)
       })
-    }
-    const text = vi.fn(async (_delta: string) => {})
-    const base = engineRequest(history.messages)
-    const budget = sequencedBudget(1_000_000)
-    const execution = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
-      ...base, run: { ...base.run, executionMode: 'agent' },
-      retainedPageReads: [{ actionCallId: 'prior-supplier-read', actionName: 'pages.get', output: page }],
-      compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
-      dispatchBudget: budget
-    }, {
-      text, event: async () => {},
-      commitCompaction: async () => { historyCompacted = true }
-    })
-    if (route === 'native capacity refusal') {
-      await expect(execution).rejects.toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE' })
-      expect(typedDeliveries).toEqual([])
-      expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
+      const countContextTokens = vi.fn(async (input: Readonly<AxChatRequest>) => {
+        counted.push(input)
+        return nativeInputTokens
+      })
+      const factory = {
+        create: async () => ({ ...profile, countContextTokens, service: fullAxFixtureService(chat) })
+      } as unknown as AgentProviderFactory
+      const invoke = vi.fn(async () => {
+        throw new Error('A validated complete prior read must not fetch the page again')
+      })
+      const validateObservation = vi.fn(async () => true)
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            {
+              name: 'pages.get',
+              title: 'Read page',
+              description: 'Read source',
+              parameters: { type: 'object', properties: { id: { type: 'number' } } },
+              risk: 'read',
+              group: 'core'
+            }
+          ],
+          invoke,
+          validateObservation,
+          snapshot: async () => ({}),
+          close: () => undefined
+        })
+      }
+      const text = vi.fn(async (_delta: string) => {})
+      const base = engineRequest(history.messages)
+      const budget = sequencedBudget(1_000_000)
+      const execution = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        {
+          ...base,
+          run: { ...base.run, executionMode: 'agent' },
+          retainedPageReads: [{ actionCallId: 'prior-supplier-read', actionName: 'pages.get', output: page }],
+          compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
+          dispatchBudget: budget
+        },
+        {
+          text,
+          event: async () => {},
+          commitCompaction: async () => {
+            historyCompacted = true
+          }
+        }
+      )
+      if (route === 'native capacity refusal') {
+        await expect(execution).rejects.toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE' })
+        expect(typedDeliveries).toEqual([])
+        expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
+        expect(invoke).not.toHaveBeenCalled()
+        expect(text.mock.calls).toEqual([])
+        expect(budget.consumed()).toBe(chat.mock.calls.length * 110)
+        expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+        return
+      }
+      const result = await execution
       expect(invoke).not.toHaveBeenCalled()
-      expect(text.mock.calls).toEqual([])
-      expect(budget.consumed()).toBe(chat.mock.calls.length * 110)
-      expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-      return
-    }
-    const result = await execution
-    expect(invoke).not.toHaveBeenCalled()
-    expect(typedDeliveries.length).toBeGreaterThan(0)
-    for (const delivery of typedDeliveries) expect(synthesisReadsFromRequest(delivery.input)).toEqual([
-      expect.objectContaining({ evidenceId: page.citation.evidenceId, complete: true, readText: content })
-    ])
-    if (route === 'mandatory verification capacity refusal') {
-      expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
+      expect(typedDeliveries.length).toBeGreaterThan(0)
+      for (const delivery of typedDeliveries)
+        expect(synthesisReadsFromRequest(delivery.input)).toEqual([
+          expect.objectContaining({ evidenceId: page.citation.evidenceId, complete: true, readText: content })
+        ])
+      if (route === 'mandatory verification capacity refusal') {
+        expect(counted.some(input => synthesisReadsFromRequest(input).some(read => read.readText === content))).toBe(true)
+        const published = text.mock.calls.flat().join('')
+        expect(visibleWikiText(published)).not.toContain(fact)
+        expect(visibleWikiText(published)).not.toContain(unaskedFact)
+        expect(published).not.toContain('[[cite:')
+        expect(result.citations).toBeUndefined()
+        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+        expect(result.totalTokens).toBe(chat.mock.calls.length * 110)
+        expect(budget.consumed()).toBe(result.totalTokens)
+        expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+        return
+      }
+      expect(
+        summaries.some(input =>
+          input.chatPrompt.some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLD_FALCON_LOOKUP:'))
+        )
+      ).toBe(true)
+      expect(typedDeliveries.every(delivery => delivery.historyCompacted)).toBe(true)
       const published = text.mock.calls.flat().join('')
-      expect(visibleWikiText(published)).not.toContain(fact)
+      expect(visibleWikiText(published)).toContain(fact)
       expect(visibleWikiText(published)).not.toContain(unaskedFact)
-      expect(published).not.toContain('[[cite:')
-      expect(result.citations).toBeUndefined()
-      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
-      expect(result.totalTokens).toBe(chat.mock.calls.length * 110)
-      expect(budget.consumed()).toBe(result.totalTokens)
-      expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-      return
+      expect(published).toContain(`[[cite:${page.citation.evidenceId}]]`)
+      expect(result.citations).toEqual([expect.objectContaining({ evidenceId: page.citation.evidenceId })])
+      expect(result.executionLimit).toBeUndefined()
     }
-    expect(summaries.some(input => input.chatPrompt.some(message =>
-      message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLD_FALCON_LOOKUP:')))).toBe(true)
-    expect(typedDeliveries.every(delivery => delivery.historyCompacted)).toBe(true)
-    const published = text.mock.calls.flat().join('')
-    expect(visibleWikiText(published)).toContain(fact)
-    expect(visibleWikiText(published)).not.toContain(unaskedFact)
-    expect(published).toContain(`[[cite:${page.citation.evidenceId}]]`)
-    expect(result.citations).toEqual([expect.objectContaining({ evidenceId: page.citation.evidenceId })])
-    expect(result.executionLimit).toBeUndefined()
-  })
+  )
 
   it('retains exact source eligibility after old-history compaction and counts changed correction context without fake turns', async () => {
     const history = canonicalMessages([
@@ -561,70 +1109,113 @@ describe('Ax agent engine context compaction', () => {
         summaries.push(input)
         return response('Retain the original supplier constraints and the current contact lookup.', 100, 10)
       }
-      if (synthesisInputFromRequest(input) === undefined) return {
-        ...response('', 100, 10),
-        results: [{
-          index: 0,
-          functionCalls: [
-            { id: 'contact-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
-            { id: 'contact-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }
+      if (synthesisInputFromRequest(input) === undefined)
+        return {
+          ...response('', 100, 10),
+          results: [
+            {
+              index: 0,
+              functionCalls: [
+                { id: 'contact-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+                { id: 'contact-finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }
+              ]
+            }
           ]
-        }]
-      }
+        }
       deliveries.push({ input, historyCompacted })
       const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(contact))
       if (source === undefined) throw new Error('The complete original contact must remain selectable after history compaction')
-      return response(synthesisFixtureAnswer(input, {
-        claims: [{
-          evidenceId: source.evidenceId,
-          sourceRevision: source.sourceRevision,
-          sourceRef: source.sourceRef,
-          statement: deliveries.length === 1 ? 'Morgan Vale is the Falcon chief financial officer.' : contact
-        }],
-        unresolvedFacets: []
-      }), 100, 10)
+      return response(
+        synthesisFixtureAnswer(input, {
+          claims: [
+            {
+              evidenceId: source.evidenceId,
+              sourceRevision: source.sourceRevision,
+              sourceRef: source.sourceRef,
+              statement: deliveries.length === 1 ? 'Morgan Vale is the Falcon chief financial officer.' : contact
+            }
+          ],
+          unresolvedFacets: []
+        }),
+        100,
+        10
+      )
     })
     const factory = {
       create: async () => ({ ...profile, countContextTokens, service: fullAxFixtureService(chat) })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
-      id: 1, locale: 'en', path: 'suppliers', title: 'Supplier routing', sourceRevision: '2', contentType: 'markdown', content,
-      citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' }, citationSections: []
+      id: 1,
+      locale: 'en',
+      path: 'suppliers',
+      title: 'Supplier routing',
+      sourceRevision: '2',
+      contentType: 'markdown',
+      content,
+      citation: { evidenceId: 'page:1:revision:2', label: 'Supplier routing', href: '/en/suppliers' },
+      citationSections: []
     }))
     const actions: AgentActionSessionProvider = {
       open: async () => ({
-        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read source', parameters: { type: 'object', properties: {} }, risk: 'read', group: 'core' }],
-        invoke, snapshot: async () => ({}), close: () => {}, validateObservation: async () => true
+        functions: [
+          { name: 'pages.get', title: 'Read page', description: 'Read source', parameters: { type: 'object', properties: {} }, risk: 'read', group: 'core' }
+        ],
+        invoke,
+        snapshot: async () => ({}),
+        close: () => {},
+        validateObservation: async () => true
       })
     }
-    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => { historyCompacted = true })
+    const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {
+      historyCompacted = true
+    })
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (_type: string, _data: unknown) => {})
     const budget = sequencedBudget(1_000_000)
     const base = engineRequest(history.messages)
     const result = await new AxAgentEngine(factory, actions, undefined, {
       decisionProviders: rejectFixtureStatements(['Morgan Vale is the Falcon chief financial officer.'])
-    }).execute({
-      ...base,
-      run: { ...base.run, executionMode: 'agent' },
-      memory: { user: ['Frozen routing preference'], agent: [] },
-      skills: [{ id: '00000000-0000-4000-8000-000000000108', name: 'routing', skillMarkdown: 'Retain source record qualifications' }],
-      compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
-      dispatchBudget: budget
-    }, { text, event, commitCompaction })
+    }).execute(
+      {
+        ...base,
+        run: { ...base.run, executionMode: 'agent' },
+        memory: { user: ['Frozen routing preference'], agent: [] },
+        skills: [{ id: '00000000-0000-4000-8000-000000000108', name: 'routing', skillMarkdown: 'Retain source record qualifications' }],
+        compaction: { sourcePrefixSha256: history.prefixes, groundedExpiresAt: null },
+        dispatchBudget: budget
+      },
+      { text, event, commitCompaction }
+    )
     expect(history.messages).toEqual(originals)
-    expect(summaries.some(input => input.chatPrompt.some(message =>
-      message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLDEST_CONTACT_CONSTRAINT:')))).toBe(true)
+    expect(
+      summaries.some(input =>
+        input.chatPrompt.some(
+          message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('OLDEST_CONTACT_CONSTRAINT:')
+        )
+      )
+    ).toBe(true)
     expect(deliveries).toHaveLength(2)
     expect(deliveries.every(delivery => delivery.historyCompacted)).toBe(true)
-    for (const delivery of deliveries) expect(synthesisReadsFromRequest(delivery.input)).toEqual([
-      expect.objectContaining({ evidenceId: 'page:1:revision:2', complete: true, readText: content })
-    ])
+    for (const delivery of deliveries)
+      expect(synthesisReadsFromRequest(delivery.input)).toEqual([
+        expect.objectContaining({ evidenceId: 'page:1:revision:2', complete: true, readText: content })
+      ])
     expect(JSON.stringify(counted[1])).toContain('chief financial officer')
     expect(JSON.stringify(counted[0])).not.toContain('chief financial officer')
-    expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_rejected')).toHaveLength(1)
-    expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_accepted')).toHaveLength(1)
-    expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })])
+    expect(
+      event.mock.calls.filter(
+        ([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_rejected'
+      )
+    ).toHaveLength(1)
+    expect(
+      event.mock.calls.filter(
+        ([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null && 'outcome' in data && data.outcome === 'answer_accepted'
+      )
+    ).toHaveLength(1)
+    expect(event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })
+    ])
     expect(text.mock.calls.map(([delta]) => delta).join('')).toContain('Morgan Vale')
     expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('chief financial officer')
     expect(result.totalTokens).toBe(chat.mock.calls.length * 110)
@@ -738,7 +1329,12 @@ describe('Ax agent engine context compaction', () => {
       return calls.length === 1 ? response('Earlier constraint and decision remain.', 100, 10) : response('Done.', 80, 5)
     })
     const factory = {
-      create: vi.fn(async () => ({ ...profile, preserveCachePrefix: true, continuationDialect: 'gemini-generate-content-v1' as const, service: fullAxFixtureService(chat) }))
+      create: vi.fn(async () => ({
+        ...profile,
+        preserveCachePrefix: true,
+        continuationDialect: 'gemini-generate-content-v1' as const,
+        service: fullAxFixtureService(chat)
+      }))
     } as unknown as AgentProviderFactory
     const commitCompaction = vi.fn(async (_receipt: AgentCompactionReceipt) => {})
     const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
@@ -858,12 +1454,16 @@ describe('Ax agent engine context compaction', () => {
       calls.push(input)
       const control = synthesisCollectionControl(input)
       if (control !== undefined) return control
-      if (synthesisInputFromRequest(input) === undefined)
-        return response('Retain Alpha’s original release restriction and the bounded source scope.', 100, 10)
+      if (synthesisInputFromRequest(input) === undefined) return response('Retain Alpha’s original release restriction and the bounded source scope.', 100, 10)
       const firstDraft = ++typedDrafts === 1
-      return response(synthesisFixtureAnswer(input, firstDraft
-        ? `Alpha release does not require a verified staging receipt. [[cite:${alphaEvidenceId}]]`
-        : `${sourceUnit} [[cite:${alphaEvidenceId}]]`), firstDraft ? 200 : 300, firstDraft ? 20 : 30)
+      return response(
+        synthesisFixtureAnswer(
+          input,
+          firstDraft ? `Alpha release does not require a verified staging receipt. [[cite:${alphaEvidenceId}]]` : `${sourceUnit} [[cite:${alphaEvidenceId}]]`
+        ),
+        firstDraft ? 200 : 300,
+        firstDraft ? 20 : 30
+      )
     })
     const { factory } = factoryFor(chat)
     const validateObservation = vi.fn(async () => true)
@@ -911,11 +1511,11 @@ describe('Ax agent engine context compaction', () => {
     expect(visibleWikiText(published)).not.toContain('Beta background remains unchanged.')
     expect(visibleWikiText(published)).toContain(sourceUnit)
     expect(visibleWikiText(published)).not.toContain('Alpha release does not require a verified staging receipt.')
-    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([
-      { accepted: false },
-      { accepted: true }
+    expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toMatchObject([{ accepted: false }, { accepted: true }])
+    expect(event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })
     ])
-    expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })])
     expect(result.citations).toEqual([{ evidenceId: alphaEvidenceId, kind: 'page', label: 'Alpha', href: '/en/alpha' }])
     expect(validateObservation).toHaveBeenCalledWith('pages.get', evidenceSeeds[0]!.output, expect.any(AbortSignal))
   })
@@ -959,9 +1559,12 @@ describe('Ax agent engine context compaction', () => {
         'table header': 'Name | Contact code\n--- | ---\nMaya Quinn | 555-0100 x42',
         'reference definition': '- Name: Maya Quinn\n  - Email: [maya@example.test][maya]'
       }
-      const record = delivery === 'missing' ? missingDependency[_dependency]! :
-        template.replace('{{padding}}', delivery === 'padded' ? ` <!--${'presentational padding '.repeat(700)}-->` : '')
-          .replace('{{title}}', delivery === 'padded' ? 'presentational padding '.repeat(700) : 'Contact')
+      const record =
+        delivery === 'missing'
+          ? missingDependency[_dependency]!
+          : template
+              .replace('{{padding}}', delivery === 'padded' ? ` <!--${'presentational padding '.repeat(700)}-->` : '')
+              .replace('{{title}}', delivery === 'padded' ? 'presentational padding '.repeat(700) : 'Contact')
       const content = `# Contacts\n\n${independentFact}\n\n${record}\n\n${'Neutral office background. '.repeat(900)}`
       const calls: Readonly<AxChatRequest<unknown>>[] = []
       const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -972,9 +1575,20 @@ describe('Ax agent engine context compaction', () => {
           if (control !== undefined) return control
         }
         const units = synthesisSourcesFromRequest(input)
-        const draft = calls.length === 3
-          ? { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text.includes('Maya Quinn'))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: fact }
-          : { evidenceId: citation, sourceRevision: 'rev-1', sourceRef: units.find(unit => unit.text.includes(independentFact))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement: independentFact }
+        const draft =
+          calls.length === 3
+            ? {
+                evidenceId: citation,
+                sourceRevision: 'rev-1',
+                sourceRef: units.find(unit => unit.text.includes('Maya Quinn'))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA',
+                statement: fact
+              }
+            : {
+                evidenceId: citation,
+                sourceRevision: 'rev-1',
+                sourceRef: units.find(unit => unit.text.includes(independentFact))?.sourceRef ?? 'sAAAAAAAAAAAAAAAA',
+                statement: independentFact
+              }
         return response(synthesisFixtureAnswer(input, { claims: [draft], unresolvedFacets: calls.length === 3 ? [] : [0] }), 100, 10)
       })
       const { factory } = factoryFor(chat)
@@ -1038,9 +1652,7 @@ describe('Ax agent engine context compaction', () => {
       expect(commitCompaction).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'context_compacted' }))
       const published = text.mock.calls.map(([delta]) => delta).join('')
       if (complete) {
-        expect(synthesisReadsFromRequest(calls.at(-1)!)).toEqual([
-          expect.objectContaining({ readText: content, complete: true })
-        ])
+        expect(synthesisReadsFromRequest(calls.at(-1)!)).toEqual([expect.objectContaining({ readText: content, complete: true })])
         expect(visibleWikiText(published)).toContain(visibleWikiText(answer))
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
@@ -1435,7 +2047,7 @@ ${sourceUnit}`,
       if (next === undefined) throw new Error('Unexpected provider request after the scripted synthesis answer')
       return {
         ...next,
-        results: next.results.map(result => result.content === undefined ? result : { ...result, content: synthesisFixtureAnswer(input, result.content) })
+        results: next.results.map(result => (result.content === undefined ? result : { ...result, content: synthesisFixtureAnswer(input, result.content) }))
       }
     })
     const { factory } = factoryFor(chat)
