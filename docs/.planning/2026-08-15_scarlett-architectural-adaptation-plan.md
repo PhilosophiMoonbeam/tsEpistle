@@ -590,3 +590,8 @@ This is an ordinary feature/adaptation cutover, not an Enterprise Release, publi
 
 Live external IdP logins and a multi-replica maintained rollout were not performed; real signed SAML/native account cases, two-process configuration coherence and PostgreSQL Git contention covered those boundaries without changing provider credentials. A short pipe-encoded WebM fixture is rejected identically by both the prior and current native images while its host case passes; that unchanged limitation was not hidden by weakening media admission.
 
+### Focused account profile pruning (2026-10-15, Development Sprint)
+
+- Source `5c3fc0d7928e9475009b4b4cb1d75c9a0093cc6b`, image `local/tsepistle:account-profile-pruned-b31c83d7`, is deployed to the maintained tailnet. Migration 61 removes the retired account column and mapping keys while preserving applied migration history. A fresh paired recovery point was validated before replacing only Wiki; PostgreSQL identity/start time, runtime topology, configuration/secrets, original page sources, account security, groups and business counts were preserved.
+- Qualification passed 16 changed-path ordinary test files, 31 native PostgreSQL cases across four files, shared/server/client typechecks, scoped format/lint, application/image builds and bundle budgets. Isolated real-data rehearsal retained rows across 123 tables and all 1,178 supported original columns. The real tailnet exercised native account creation/password login, the create dialog, admin review/save/reload and self-service save/explicit-clear/reload. Supported location/job-title behavior and field omission passed; the owned account, browser profile and disposable PostgreSQL resources were removed.
+
