@@ -7541,7 +7541,8 @@ export class AxAgentEngine implements AgentEngine {
               checks: Object.keys(nativeRequest.questions).length,
               requestBytes: Buffer.byteLength(JSON.stringify(nativeRequest)),
               confidenceFloor: 0.8,
-              literalSupportCount
+              literalSupportCount,
+              failure: failed ? { code: failed.code, providerStatus: failed.providerStatus } : null
             }
           })
           if (
