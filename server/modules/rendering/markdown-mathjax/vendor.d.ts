@@ -2,7 +2,7 @@ declare module 'mathjax' {
   interface MathJaxConfiguration {
     loader: {
       require: NodeJS.Require
-      paths: { mathjax: string, fonts: string }
+      paths: { mathjax: string; fonts: string }
       load: string[]
       failed(error: Error): never
     }

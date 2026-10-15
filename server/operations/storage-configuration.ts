@@ -145,7 +145,10 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
             .whereRaw("??::jsonb ->> 'targetKey' = ?", ['payload', original.key])
             .first('id')
           if (outstanding)
-            return fail('Canonical storage changes are still outstanding. Restore access to the existing destination and let them finish before disabling or changing its destination or mode.', 409)
+            return fail(
+              'Canonical storage changes are still outstanding. Restore access to the existing destination and let them finish before disabling or changing its destination or mode.',
+              409
+            )
           return true
         }
         const changes: StorageConfigurationEvent['targets'] = []
@@ -226,8 +229,7 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
           const next = { ...original, isEnabled: target.isEnabled, mode: target.mode, syncInterval, config }
           await rebindAssetRelocationConfiguration(tx, original, next)
           const destinationChanged = await assertDestinationChangeAllowed(original, next)
-          if (next.isEnabled && destinationChanged)
-            await assertStorageTargetPathsAvailable(tx, next)
+          if (next.isEnabled && destinationChanged) await assertStorageTargetPathsAvailable(tx, next)
           await tx('storage')
             .where('key', target.key)
             .update({ isEnabled: target.isEnabled, mode: target.mode, syncInterval, config: JSON.stringify(config) })
