@@ -93,6 +93,15 @@ are not attachment-content evidence. Coverage checks both claim channels without
 allowing attachment statements to satisfy missing Wiki facts or recent-page
 obligations. Ownership, input capability and payload authority are rechecked
 before count, dispatch and publication; model perception remains fallible.
+Final perception uses only user attachments in the retained conversation window.
+Accepted history compaction/checkpoints retire swallowed historical inputs; a
+summary or earlier model prose cannot reattach those files. A new current input,
+including an explicitly reused **Edit image** upload, keeps its own authorization.
+
+Wiki support and provided-file scope use separate native decision contexts. Wiki
+evidence cannot stand in for file contents, and a Wiki-only support policy does not
+turn a clearly attributed file description into an unsupported Wiki claim. Both
+channels must pass their own required checks; confidence must still exceed 0.8.
 
 Failed native verification records its local failure code, received HTTP status
 (including a successful status with an unreadable body), and allowlisted native

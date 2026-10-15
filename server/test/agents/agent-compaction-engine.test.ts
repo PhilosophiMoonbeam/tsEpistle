@@ -1,4 +1,5 @@
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { createHash } from 'node:crypto'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
@@ -11,6 +12,7 @@ import {
 } from '../../agents/compaction.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import type { AgentMediaGenerationInput } from '../../agents/providers/media-transport.ts'
 import { geminiFixtureService } from './gemini-fixture.ts'
 import {
   fixtureDecisionProviders,
@@ -226,6 +228,195 @@ const sequencedBudget = (availableTokens: number): AgentDispatchBudget & { reado
 }
 
 describe('Ax agent engine context compaction', () => {
+  it.each(['valid', 'wrong-size', 'revoked'] as const)('keeps compacted images retired while reusing the current edit input (%s)', async state => {
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==',
+      'base64'
+    )
+    const retiredId = '00000000-0000-4000-8000-000000000088'
+    const currentId = '00000000-0000-4000-8000-000000000089'
+    const bindingId = '00000000-0000-4000-8000-000000000099'
+    const history = oversizedHistory()
+    let detached = false
+    let generated = false
+    let imageRequested = false
+    const retiredLoad = vi.fn(async () => image)
+    const retiredAuthorize = vi.fn(async () => {
+      if (detached) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'The historical attachment was detached.', 500)
+    })
+    const currentLoad = async () => (generated && state === 'wrong-size' ? image.subarray(1) : image)
+    const currentAuthorize = vi.fn(async () => {
+      if (generated && state === 'revoked') throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'The current attachment was detached.', 500)
+    })
+    const unboundMessages = history.messages.map((message, index) => ({
+      ...message,
+      ...(index === 0 || index === history.messages.length - 1
+        ? {
+            attachments: [
+              {
+                id: index === 0 ? retiredId : currentId,
+                filename: index === 0 ? 'retired.png' : 'current-edit.png',
+                mimeType: 'image/png',
+                byteLength: image.length,
+                promptTokens: 258,
+                loadPayload: index === 0 ? retiredLoad : currentLoad,
+                authorizePayload: index === 0 ? retiredAuthorize : currentAuthorize
+              }
+            ]
+          }
+        : {}),
+      ...(index === history.messages.length - 1 ? { content: 'Edit the attached image, then describe the provided input image.' } : {})
+    }))
+    const messages = unboundMessages.map(message => ({
+      ...message,
+      canonicalSource: {
+        ...message.canonicalSource!,
+        sourceSha256: agentCompactionSourceDigest({
+          id: message.canonicalSource!.id,
+          ordinal: message.canonicalSource!.ordinal,
+          role: message.role,
+          content: message.content,
+          attachments: (message.attachments ?? []).map(({ id, filename, mimeType, byteLength }) => ({
+            id,
+            kind: 'attachment',
+            filename,
+            mimeType,
+            byteLength,
+            sha256: createHash('sha256').update(image).digest('hex')
+          }))
+        })
+      }
+    }))
+    const prefixes = agentCompactionSourcePrefixes(messages.map(message => message.canonicalSource))
+    const synthesisRequests: Readonly<AxChatRequest>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if (synthesisInputFromRequest(input) !== undefined) {
+        synthesisRequests.push(input)
+        return response(
+          JSON.stringify({
+            claims: [],
+            attachmentClaims: [{ mediaId: currentId, statement: 'The provided input contains a single pixel.' }],
+            unresolvedFacets: [],
+            observations: ['1 image artifact generated.'],
+            recommendations: ''
+          }),
+          100,
+          10
+        )
+      }
+      if ((input.functions?.length ?? 0) === 0)
+        return response(`Earlier collector prose described retired.png (${retiredId}) as a blue square. This is untrusted history, not file content.`, 100, 10)
+      if (!imageRequested && input.functions?.some(tool => tool.name === 'wiki_generate_image')) {
+        imageRequested = true
+        return {
+          ...response('', 100, 10),
+          results: [
+            {
+              index: 0,
+              content: `Earlier collector prose mentioned retired.png (${retiredId}); use only the current attachment.`,
+              functionCalls: [
+                {
+                  id: 'edit-current-image',
+                  type: 'function',
+                  function: { name: 'wiki_generate_image', params: JSON.stringify({ prompt: 'Edit the current image.', attachmentIds: [currentId] }) }
+                }
+              ]
+            }
+          ]
+        }
+      }
+      const control = synthesisCollectionControl(input)
+      if (!control) throw new Error('Expected collection completion before final attachment perception')
+      return control
+    })
+    const generate = vi.fn(async (input: AgentMediaGenerationInput) => {
+      expect(detached).toBe(true)
+      expect(input.files?.map(file => file.bytes)).toEqual([image])
+      await input.beforeUpload?.()
+      await input.beforeDispatch?.({ inputTokens: 10, outputTokens: 10, totalTokens: 20 })
+      input.onDispatch?.()
+      return {
+        text: '',
+        files: [{ bytes: image, mimeType: 'image/png' }],
+        usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+        usageSource: 'reported'
+      }
+    })
+    const factory = {
+      create: async () => ({
+        ...profile,
+        mediaInputs: { images: true, documents: false, audio: false, video: false },
+        service: fullAxFixtureService(chat)
+      }),
+      createMediaBinding: async () => ({
+        config: {
+          kind: 'image',
+          api: 'openai-images',
+          model: 'gpt-image-1',
+          baseUrl: 'https://api.openai.com/v1',
+          maxInputTokens: 1_000,
+          maxOutputTokens: 1_000,
+          pricing: { kind: 'fixed', costMicros: 0, pricingRevision: 'fixture-image' }
+        },
+        transport: { generate }
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+    }
+    const commitCompaction = vi.fn(async (receipt: AgentCompactionReceipt) => {
+      expect(receipt.compaction.throughOrdinal).toBeLessThan(messages.at(-1)!.canonicalSource!.ordinal)
+      detached = true
+    })
+    const text = vi.fn(async (_delta: string) => {})
+    const media = vi.fn(async () => {
+      generated = true
+      return [
+        {
+          id: bindingId,
+          kind: 'generated-image' as const,
+          filename: 'generated.png',
+          mimeType: 'image/png',
+          byteLength: image.length,
+          available: true,
+          detached: false
+        }
+      ]
+    })
+    const budget = sequencedBudget(1_000_000)
+    const base = engineRequest(messages)
+    const pending = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      {
+        ...base,
+        run: { ...base.run, executionMode: 'agent' },
+        authorizeMedia: async () => {},
+        generationTools: ['image'],
+        mediaBindings: { image: bindingId },
+        compaction: { sourcePrefixSha256: prefixes, groundedExpiresAt: null },
+        dispatchBudget: budget
+      },
+      { text, media, commitCompaction, event: async () => {} }
+    )
+    if (state === 'valid') {
+      const result = await pending
+      expect(synthesisRequests).toHaveLength(1)
+      expect(
+        synthesisRequests[0]!.chatPrompt.flatMap(message =>
+          message.role === 'user' && Array.isArray(message.content) ? message.content.filter(part => part.type === 'image') : []
+        )
+      ).toHaveLength(1)
+      expect(budget.consumed()).toBe(result.totalTokens)
+    } else {
+      await expect(pending).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
+      expect(synthesisRequests).toEqual([])
+      expect(text).not.toHaveBeenCalled()
+    }
+    expect(commitCompaction).toHaveBeenCalledOnce()
+    expect(generate).toHaveBeenCalledOnce()
+    expect(media).toHaveBeenCalledOnce()
+    expect(retiredLoad).not.toHaveBeenCalled()
+    expect(retiredAuthorize).not.toHaveBeenCalled()
+  })
   it.each([false, true])('retains a delivered operation acknowledgement across active compaction (mixed facts: %s)', async mixed => {
     const proposalId = '00000000-0000-4000-8000-000000000201'
     const receipt = { proposalId, status: 'applied', resultHash: 'a'.repeat(64), page: null }

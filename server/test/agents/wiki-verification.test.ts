@@ -370,20 +370,14 @@ describe('Native provided-file scope verification', () => {
     }
   })
 
-  it('retains independent Wiki proof and narration checks when an attachment shares their admitted request', () => {
+  it('requires independent Wiki, attachment and narration verdicts without letting one replace another', () => {
     const built = readPlan({
       inputMediaSources: [media],
       attachmentClaims: [attachment],
       candidateExtras: { observations: [], recommendations: 'Consider reviewing the original plans.' }
     })
     const all = acceptedAnswers(built)
-    expect(built.requests).toHaveLength(2)
-    expect(
-      Object.values(built.checks)
-        .map(check => check.kind)
-        .sort()
-    ).toEqual(['attachment-scope', 'narration', 'support'])
-    expect(assessWikiVerificationResults(built, batchResults(built)).nativeSupportedClaimIndexes).toEqual([0])
+    expect(assessWikiVerificationResults(built, batchResults(built))).toMatchObject({ valid: true, nativeSupportedClaimIndexes: [0] })
     const supportId = Object.entries(built.checks).find(([, check]) => check.kind === 'support')![0]
     const rejectedWiki = assessWikiVerificationResults(
       built,
@@ -395,17 +389,27 @@ describe('Native provided-file scope verification', () => {
     expect(rejectedWiki.valid).toBe(false)
     expect(rejectedWiki.nativeSupportedClaimIndexes).toEqual([])
     const scopeId = Object.entries(built.checks).find(([, check]) => check.kind === 'attachment-scope')![0]
-    const combined = built.requests.find(request => Object.hasOwn(request.questions, scopeId))!
-    const combinedEvidence = JSON.parse(combined.state as string).evidence
-    expect(combinedEvidence).toHaveLength(1)
-    expect(combinedEvidence[0]).toMatchObject({
-      evidenceId: readSource.evidenceId,
-      sourceRevision: readSource.sourceRevision,
-      readId: readSource.readId
-    })
     const missingScope = { ...all }
     delete missingScope[scopeId]
     expect(assessWikiVerificationResults(built, batchResults(built, missingScope)).valid).toBe(false)
+    const rejectedFile = assessWikiVerificationResults(
+      built,
+      batchResults(built, {
+        ...all,
+        [scopeId]: { choice: 'unbound', probabilities: { bounded: 0.01, unbound: 0.98, not_established: 0.01 }, confidence: 0.97 }
+      })
+    )
+    expect(rejectedFile.valid).toBe(false)
+    expect(rejectedFile.nativeSupportedClaimIndexes).toEqual([0])
+    const narrationId = Object.entries(built.checks).find(([, check]) => check.kind === 'narration')![0]
+    const rejectedNarration = assessWikiVerificationResults(
+      built,
+      batchResults(built, {
+        ...all,
+        [narrationId]: { choice: 'unbound', probabilities: { bounded: 0.01, unbound: 0.98, not_established: 0.01 }, confidence: 0.97 }
+      })
+    )
+    expect(rejectedNarration.valid).toBe(false)
   })
 
   it('rejects revoked files and canonical metadata substitutions independently of a favorable verdict', () => {

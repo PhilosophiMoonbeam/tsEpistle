@@ -357,11 +357,11 @@ describe('private Agent media', () => {
     await expect(storeAgentMedia(db, { ...input, leaseToken: runId })).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
     expect(await db('agentMedia').first()).toBeUndefined()
   })
-  it('rejects modified saved attachment bytes before serving them', async () => {
+  it.each(['size', 'hash'] as const)('rejects modified saved attachment %s before serving it', async field => {
     const media = await upload()
-    await db('agentMedia')
-      .where({ id: media.id })
-      .update({ payload: Buffer.from('changed') })
+    const payload = field === 'size' ? Buffer.from('changed') : Buffer.from(media.payload)
+    if (field === 'hash') payload[0] = payload[0]! ^ 1
+    await db('agentMedia').where({ id: media.id }).update({ payload })
     await expect(getOwnedAgentMedia(db, 7, media.id)).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
   })
 })
