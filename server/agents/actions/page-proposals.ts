@@ -297,11 +297,13 @@ const finishProposal = async (
   const status = await waitForApproval(dependencies, context, input, proposal, run)
   try {
     if (status === 'approved') {
-      await context.executeAction('pages.applyProposal', {
-        proposalId: proposal.proposal.id,
-        approvalId: proposal.approval.id
-      })
-      return proposalResult(proposal, 'applied')
+      const application = ACTION_CATALOG['pages.applyProposal'].output.parse(
+        await context.executeAction('pages.applyProposal', {
+          proposalId: proposal.proposal.id,
+          approvalId: proposal.approval.id
+        })
+      )
+      return { ...proposalResult(proposal, 'applied'), application }
     }
     return proposalResult(proposal, status)
   } finally {
@@ -360,6 +362,21 @@ const prepareAndWait = async (
     context.authority.transport === 'agent'
       ? z.object({ sessionId: z.uuid() }).parse(await dependencies.knex('agentRuns').where({ id: context.authority.requestId }).first('sessionId'))
       : null
+  let resultCanonicalSha256 = prepared.pageId === null ? undefined : sha256(canonicalJson(prepared.resultIdentity))
+  if (context.authority.actionName === 'pages.prepareCreate') {
+    const priorQuery = dependencies.knex('agentProposals').where({ actionCallId: context.actionCallId, sourceKind: context.authority.transport })
+    if (context.authority.transport === 'agent') priorQuery.where({ runId: context.authority.requestId })
+    else if (context.authority.requester.kind === 'apiKey')
+      priorQuery.where({ requesterRequestId: context.authority.requestId, requesterApiKeyId: context.authority.requester.apiKeyId })
+    const prior = (await priorQuery.first('resultCanonicalSha256')) as { resultCanonicalSha256: string | null } | undefined
+    if (prior?.resultCanonicalSha256 != null) {
+      // Exact pre-ID create retries must retain the already approved envelope.
+      // persistProposal still compares every immutable field and its hash.
+      if (prior.resultCanonicalSha256 !== sha256(canonicalJson(prepared.resultIdentity)))
+        throw new ActionKernelError('IDEMPOTENCY_MISMATCH', 'Proposal request ID was reused with different immutable input', 409)
+      resultCanonicalSha256 = prior.resultCanonicalSha256
+    }
+  }
   const proposal = await persistProposal(dependencies.knex, {
     authority: context.authority,
     actionCallId: context.actionCallId,
@@ -374,7 +391,7 @@ const prepareAndWait = async (
     ...(prepared.patchSha256 === null ? {} : { patchSha256: prepared.patchSha256 }),
     ...(prepared.patchFormat === null ? {} : { patchFormat: prepared.patchFormat }),
     ...(prepared.patchEngineVersion === null ? {} : { patchEngineVersion: prepared.patchEngineVersion }),
-    resultCanonicalSha256: sha256(canonicalJson(prepared.resultIdentity)),
+    ...(resultCanonicalSha256 === undefined ? {} : { resultCanonicalSha256 }),
     ...(prepared.diff === null ? {} : { diff: prepared.diff, diffSha256: sha256(prepared.diff), diffRendererVersion: 1 }),
     ttlMs: dependencies.approvalTtlMilliseconds ?? 15 * 60_000
   })
@@ -602,6 +619,9 @@ const reconcileAppliedProposal = async (
   metadata: z.infer<typeof MetadataSchema>,
   requester: Express.User
 ): Promise<unknown | null> => {
+  // A matching current path cannot identify the original auto-assigned page
+  // after a crash. Never commit a replacement occupant as this creation.
+  if (metadata.kind === 'create') return null
   if (metadata.kind === 'delete') {
     if (metadata.pageId === null) return null
     try {
@@ -643,9 +663,7 @@ const reconcileAppliedProposal = async (
   }
   const actionName = Reflect.get(metadata.resultIdentity, 'actionName')
   let actual: Record<string, unknown>
-  if (metadata.kind === 'create') {
-    actual = { actionName, path: page.path, locale: page.locale, contentSha256: canonicalSourceHash(page.content) }
-  } else if (metadata.kind === 'patch') {
+  if (metadata.kind === 'patch') {
     actual = { actionName, pageId: page.id, sourceRevision: page.sourceRevision, contentSha256: canonicalSourceHash(page.content) }
   } else if (metadata.kind === 'move') {
     actual = { actionName, pageId: page.id, sourceRevision: page.sourceRevision, destinationLocale: page.locale, destinationPath: page.path }
@@ -707,8 +725,11 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
       const producer = context.authority.transport === 'mcp' ? `mcp:${context.authority.requestId}` : `agent:${context.authority.requestId}`
       const operationInput = withOkfProducer({ ...metadata.operationInput, requester: approverUser }, producer)
       const nestedOperationInput = withOkfProducer({ input: metadata.operationInput, requester: approverUser }, producer)
-      if (metadata.kind === 'create') await dependencies.operations.create(nestedOperationInput)
-      else if (metadata.kind === 'patch') await dependencies.operations.update(nestedOperationInput)
+      if (metadata.kind === 'create') {
+        const created = z.object({ id: z.number().int().positive() }).parse(await dependencies.operations.create(nestedOperationInput))
+        // Older approved proposals retain their exact expected result/hash.
+        return proposal.resultCanonicalSha256 === null ? { ...metadata.resultIdentity, pageId: created.id } : metadata.resultIdentity
+      } else if (metadata.kind === 'patch') await dependencies.operations.update(nestedOperationInput)
       else if (metadata.kind === 'move') await dependencies.operations.move(nestedOperationInput)
       else if (metadata.kind === 'restore') await dependencies.operations.restore(operationInput)
       else await dependencies.operations.remove(operationInput)
@@ -717,11 +738,14 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
     reconcile: async () => reconcileAppliedProposal(dependencies, metadata, approverUser)
   })
   let page = null
-  if (metadata.kind !== 'delete') {
-    const updated =
-      metadata.pageId === null
-        ? parsePage(await dependencies.operations.getByPath({ path: metadata.path, locale: metadata.locale, visibility: 'public', requester: approverUser }))
-        : parsePage(await dependencies.operations.get({ id: metadata.pageId, requester: approverUser }))
+  const createdIdentity = z.object({ pageId: z.number().int().positive() }).safeParse(output.result)
+  const resultPageId = metadata.kind === 'create' ? (createdIdentity.success ? createdIdentity.data.pageId : null) : metadata.pageId
+  if (metadata.kind !== 'delete' && resultPageId !== null) {
+    // Never rebind a historical create to today's occupant of its old path.
+    // Old committed creates without a durable ID disclose operation status only.
+    if (context.authority.requester.kind === 'apiKey') await dependencies.operations.get({ id: resultPageId, requester: requestingUser })
+    const updated = parsePage(await dependencies.operations.get({ id: resultPageId, requester: approverUser }))
+    if (updated.id !== resultPageId) throw new ActionKernelError('INVALID_PAGE_RESULT', 'Page operation returned a different applied page identity', 500)
     page = {
       id: updated.id,
       path: updated.path,

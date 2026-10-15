@@ -12,6 +12,13 @@ import createKnex, { type Knex } from 'knex'
 import sharp from 'sharp'
 import { z } from 'zod'
 import { agentProviderMediaInputMimeTypes, type AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
+import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
+import { createActionAuthority } from '../../agents/actions/kernel.ts'
+import { applyApprovedProposal } from '../../agents/proposals/execution.ts'
+import { persistProposal, type PersistedProposal } from '../../agents/proposals/repository.ts'
+import pageErrors from '../../helpers/error.ts'
+import operationErrors from '../../operations/errors.ts'
+import type pageOperations from '../../operations/pages.ts'
 import { AgentMediaProviderRegistry } from '../../agents/media-providers.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
@@ -282,12 +289,20 @@ const createTables = async (db: Knex): Promise<void> => {
     table.text('path')
     table.string('title')
     table.string('contentType')
+    table.bigInteger('sourceRevision')
+    table.text('content')
   })
   await db.schema.createTable('agentProposals', table => {
     table.uuid('id')
     table.uuid('sessionId')
     table.uuid('runId').nullable()
     table.string('sourceKind')
+    table.integer('requesterUserId')
+    table.integer('requesterApiKeyId')
+    table.uuid('requesterRequestId')
+    table.string('actionCallId')
+    table.text('input')
+    table.integer('authorityVersion')
     table.string('actionName')
     table.string('risk')
     table.string('status')
@@ -296,6 +311,17 @@ const createTables = async (db: Knex): Promise<void> => {
     table.integer('baseSourceRevision')
     table.string('authoritySha256')
     table.string('inputHash')
+    table.string('operationSha256')
+    table.string('baseLineEnding')
+    table.boolean('baseFinalNewline')
+    table.string('baseRawSha256')
+    table.string('baseCanonicalSha256')
+    table.string('disclosedRangesSha256')
+    table.string('patchFormat')
+    table.integer('patchEngineVersion')
+    table.text('patch')
+    table.string('resultRawSha256')
+    table.integer('diffRendererVersion')
     table.string('patchSha256')
     table.string('resultCanonicalSha256')
     table.string('diffSha256')
@@ -303,6 +329,8 @@ const createTables = async (db: Knex): Promise<void> => {
     table.dateTime('contentPurgedAt')
     table.dateTime('expiresAt')
     table.dateTime('createdAt')
+    table.dateTime('appliedAt')
+    table.text('applyResult')
   })
   await db.schema.alterTable('agentProposals', table => {
     table.text('operation')
@@ -310,11 +338,39 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentApprovals', table => {
     table.uuid('id')
     table.uuid('proposalId')
+    table.uuid('runId')
+    table.integer('requesterUserId')
+    table.integer('requesterApiKeyId')
+    table.string('inputHash')
+    table.integer('authorityVersion')
+    table.string('authoritySha256')
+    table.string('operationSha256')
+    table.string('patchSha256')
+    table.string('resultCanonicalSha256')
+    table.string('diffSha256')
+    table.integer('approvedByUserId')
     table.string('status')
     table.dateTime('requestedAt')
     table.dateTime('expiresAt')
     table.dateTime('decidedAt')
     table.text('decisionNote')
+  })
+  await db.schema.createTable('agentActionExecutions', table => {
+    table.uuid('id').primary()
+    table.uuid('proposalId').unique()
+    table.uuid('runId')
+    table.string('actionName')
+    table.integer('requesterUserId')
+    table.integer('requesterApiKeyId')
+    table.integer('approvedByUserId')
+    table.string('idempotencyKey').unique()
+    table.uuid('leaseToken')
+    table.string('status')
+    table.string('inputHash')
+    table.dateTime('startedAt')
+    table.dateTime('completedAt')
+    table.text('result')
+    table.text('error')
   })
   await db.schema.createTable('agentArtifacts', table => {
     table.uuid('id')
@@ -394,6 +450,8 @@ describe('ordinary-origin agent session API', () => {
   let authContextOwnerId: number | null = null
   let administrator = false
   let agentsEnabled = true
+  let proposalWritesEnabled = false
+  let restoreProposalOperations: (() => void) | undefined
   let mediaAuthorized = true
   let mediaUploadEnabled = false
   let mediaRegistry: AgentMediaProviderRegistry
@@ -629,6 +687,7 @@ describe('ordinary-origin agent session API', () => {
     authContextOwnerId = null
     administrator = false
     agentsEnabled = true
+    proposalWritesEnabled = false
     mediaAuthorized = true
     mediaUploadEnabled = false
     sessionConfigurationHook = undefined
@@ -796,14 +855,40 @@ describe('ordinary-origin agent session API', () => {
             goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
             retention: { temporarySessionHours: 24 },
             skills: { enabled: true, namespace: 'system/agent-skills' },
-            proposals: { enabled: false },
+            proposals: {
+              get enabled() {
+                return proposalWritesEnabled
+              }
+            },
             writes: {
-              enabled: false,
-              create: { enabled: false },
-              patch: { enabled: false },
-              move: { enabled: false },
-              restore: { enabled: false },
-              delete: { enabled: false }
+              get enabled() {
+                return proposalWritesEnabled
+              },
+              create: {
+                get enabled() {
+                  return proposalWritesEnabled
+                }
+              },
+              patch: {
+                get enabled() {
+                  return proposalWritesEnabled
+                }
+              },
+              move: {
+                get enabled() {
+                  return proposalWritesEnabled
+                }
+              },
+              restore: {
+                get enabled() {
+                  return proposalWritesEnabled
+                }
+              },
+              delete: {
+                get enabled() {
+                  return proposalWritesEnabled
+                }
+              }
             }
           }
         },
@@ -875,6 +960,8 @@ describe('ordinary-origin agent session API', () => {
   })
 
   afterEach(async () => {
+    restoreProposalOperations?.()
+    restoreProposalOperations = undefined
     vi.unstubAllGlobals()
     try {
       const closed = Promise.withResolvers<void>()
@@ -902,6 +989,349 @@ describe('ordinary-origin agent session API', () => {
         runtimeLogs.length = 0
       }
     }
+  })
+
+  const mcpProposalAuthority = (actionName: AgentActionName) =>
+    createActionAuthority(
+      actionName,
+      randomUUID(),
+      { kind: 'apiKey', apiKeyId: 41, groupId: 3, ownershipUserId: null, principal: null },
+      {
+        transport: 'mcp',
+        executionMode: 'agent',
+        supportsTools: true,
+        permissions: ['use:mcp', 'write:pages', 'delete:pages'],
+        groupIds: [3],
+        featureFlags: Object.fromEntries(AGENT_FEATURE_FLAG_KEYS.map(flag => [flag, true])) as AgentFeatureFlags
+      }
+    )
+
+  const setupMcpProposalReview = async (kind: 'create' | 'patch' | 'move' | 'restore' | 'delete' = 'patch') => {
+    proposalWritesEnabled = true
+    const initialPage = { id: 131, path: 'docs/original', localeCode: 'en', sourceRevision: '7', content: 'private historical source' }
+    const state: { page: typeof initialPage | null; readAllowed: boolean; writeAllowed: boolean } = {
+      page: kind === 'create' ? null : initialPage,
+      readAllowed: true,
+      writeAllowed: true
+    }
+    if (state.page) await db('pages').insert(state.page)
+    // Exercise the controller's delayed operation-module boundary after WIKI initialization.
+    vi.stubGlobal('WIKI', {})
+    const operations: typeof pageOperations = (await import('../../operations/pages.ts')).default
+    const get = vi.spyOn(operations, 'get').mockImplementation(async input => {
+      if (!state.page || input.id !== state.page.id) {
+        if (await db('pages').where({ id: input.id }).first('id'))
+          throw new operationErrors.ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+        throw new pageErrors.PageNotFound()
+      }
+      if (!state.readAllowed || input.requester?.id !== 7)
+        throw new operationErrors.ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+      return { ...state.page } as never
+    })
+    const getByPath = vi.spyOn(operations, 'getByPath').mockImplementation(async input => {
+      const page = await db('pages').where({ path: input.path, localeCode: input.locale }).first('id')
+      if (!page) throw new pageErrors.PageNotFound()
+      return operations.get({ ...input, id: page.id })
+    })
+    const authorize = vi.spyOn(operations, 'authorizeMutation').mockImplementation(async input => {
+      if (!state.writeAllowed || input.requester?.id !== 7) throw new pageErrors.PageUpdateForbidden()
+      if (input.kind !== 'create' && !state.page) throw new pageErrors.PageNotFound()
+    })
+    restoreProposalOperations = () => {
+      get.mockRestore()
+      getByPath.mockRestore()
+      authorize.mockRestore()
+    }
+    const actionName = {
+      create: 'pages.prepareCreate',
+      patch: 'pages.preparePatch',
+      move: 'pages.prepareMove',
+      restore: 'pages.prepareRestore',
+      delete: 'pages.prepareDelete'
+    } as const
+    const operationInput =
+      kind === 'create'
+        ? { path: initialPage.path, locale: 'en', content: 'private proposed source' }
+        : kind === 'restore'
+          ? { pageId: 131, versionId: 4, expectedSourceRevision: '7' }
+          : { id: 131, expectedSourceRevision: '7', ...(kind === 'move' ? { destinationPath: 'docs/moved', destinationLocale: 'en' } : {}) }
+    const diff = '-private historical source\n+private proposed source'
+    const persisted = await persistProposal(db, {
+      authority: mcpProposalAuthority(actionName[kind]),
+      actionCallId: randomUUID(),
+      risk: kind === 'delete' ? 'destructive-write' : 'proposal',
+      input: { path: initialPage.path, ...(kind === 'delete' ? { confirmationPath: '/en/docs/original' } : {}) },
+      operation: { kind, operationInput, ...(kind === 'create' ? { resultIdentity: { kind } } : {}) },
+      summary: `Sensitive proposal for ${initialPage.path}`,
+      ...(kind === 'create' ? {} : { pageId: 131, baseSourceRevision: '7' }),
+      diff,
+      diffSha256: createHash('sha256').update(diff).digest('hex')
+    })
+    return { state, operations, persisted, diff }
+  }
+
+  const decideMcpProposal = (persisted: PersistedProposal, confirmationPath?: string) =>
+    fetch(`${baseUrl}/_api/agents/proposals/${persisted.proposal.id}/approvals/${persisted.approval.id}/decision`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+      body: JSON.stringify({ decision: 'approved', ...(confirmationPath === undefined ? {} : { confirmationPath }) })
+    })
+
+  it.each(['create', 'patch', 'move', 'restore', 'delete'] as const)(
+    'reviews a real %s proposal ledger after approval, apply, and later page changes without replaying mutation authorization',
+    async kind => {
+      const { state, operations, persisted, diff } = await setupMcpProposalReview(kind)
+      const url = `${baseUrl}/_api/agents/mcp-proposals/${persisted.proposal.id}`
+      const pending = await fetch(url, { headers: { cookie } })
+      expect(pending.status).toBe(200)
+      expect(await pending.json()).toMatchObject({ proposal: { status: 'pending', diff, expiresAt: new Date(persisted.proposal.expiresAt).toISOString() } })
+      const decision = await decideMcpProposal(persisted, kind === 'delete' ? '/en/docs/original' : undefined)
+      expect(decision.status).toBe(200)
+      await applyApprovedProposal(db, {
+        proposalId: persisted.proposal.id,
+        approvalId: persisted.approval.id,
+        authority: mcpProposalAuthority('pages.applyProposal'),
+        signal: new AbortController().signal,
+        reauthorize: async () => {
+          await operations.authorizeMutation({ kind, input: {}, requester: { id: 7 } as Express.User })
+        },
+        mutate: async () => {
+          if (kind === 'delete') {
+            state.page = null
+            await db('pages').where({ id: 131 }).delete()
+            // Production's page FK clears this field; the immutable operation retains the target.
+            await db('agentProposals').where({ id: persisted.proposal.id }).update({ pageId: null })
+          } else {
+            state.page = {
+              id: 131,
+              path: kind === 'move' ? 'docs/moved' : 'docs/original',
+              localeCode: 'en',
+              sourceRevision: '8',
+              content: 'applied page source'
+            }
+            if (kind === 'create') await db('pages').insert(state.page)
+            else await db('pages').where({ id: 131 }).update(state.page)
+          }
+          return { pageId: 131, kind }
+        },
+        reconcile: async () => null
+      })
+      state.writeAllowed = false
+      if (state.page) {
+        state.page.sourceRevision = '9'
+        state.page.content = 'later edited source'
+        await db('pages').where({ id: 131 }).update(state.page)
+        if (kind === 'create') {
+          state.page.path = 'docs/moved'
+          await db('pages').where({ id: 131 }).update({ path: state.page.path })
+          // The requester can read the created ID, but not the replacement at its original path.
+          await db('pages').insert({ ...state.page, id: 132, path: 'docs/original', content: 'unreadable replacement source' })
+        }
+      } else administrator = true
+      const receipt = await fetch(url, { headers: { cookie } })
+      expect(receipt.status).toBe(200)
+      expect(receipt.headers.get('cache-control')).toBe('private, no-store')
+      const body = await receipt.json()
+      expect(body).toMatchObject({
+        proposal: { status: 'applied', approval: { status: 'approved' }, diff: kind === 'delete' ? null : diff }
+      })
+      expect(await db('agentActionExecutions').where({ proposalId: persisted.proposal.id }).first('status')).toEqual({ status: 'committed' })
+      if (kind === 'create') expect(operations.getByPath).not.toHaveBeenCalled()
+      if (kind === 'delete') {
+        expect(body.proposal).toMatchObject({ path: null, confirmationPath: null, baseSourceRevision: null, patchHash: null, diffHash: null })
+        expect(JSON.stringify(body)).not.toContain('private historical source')
+        expect(JSON.stringify(body)).not.toContain('docs/original')
+        administrator = false
+        expect((await fetch(url, { headers: { cookie } })).status).toBe(404)
+      } else {
+        state.readAllowed = false
+        // Even administrators cannot fall back to historical content when a live page denies reading.
+        for (const isAdministrator of [false, true]) {
+          administrator = isAdministrator
+          const denied = await fetch(url, { headers: { cookie } })
+          expect(denied.status).toBe(404)
+          expect(await denied.json()).toEqual({ error: 'PAGE_NOT_FOUND', message: 'This page does not exist.' })
+        }
+        if (kind === 'create') {
+          administrator = true
+          const createdPage = state.page!
+          state.page = null
+          await db('pages').where({ id: createdPage.id }).delete()
+          const missing = await fetch(url, { headers: { cookie } })
+          expect(missing.status).toBe(200)
+          const missingBody = await missing.json()
+          expect(missingBody.proposal).toMatchObject({
+            summary: 'Proposal status receipt; historical content is unavailable.',
+            path: null,
+            confirmationPath: null,
+            baseSourceRevision: null,
+            patchHash: null,
+            diffHash: null,
+            diff: null
+          })
+          expect(JSON.stringify(missingBody)).not.toContain('private historical source')
+          expect(JSON.stringify(missingBody)).not.toContain('docs/original')
+          administrator = false
+          expect((await fetch(url, { headers: { cookie } })).status).toBe(404)
+          state.page = createdPage
+          await db('pages').insert(createdPage)
+        }
+      }
+      administrator = false
+      state.readAllowed = true
+      if (!state.page) {
+        state.page = { id: 131, path: 'docs/original', localeCode: 'en', sourceRevision: '9', content: 'later recreated source' }
+        await db('pages').insert(state.page)
+      }
+      expect((await fetch(url, { headers: { cookie } })).status).toBe(200)
+      ownerId = 8
+      const foreign = await fetch(url, { headers: { cookie } })
+      expect(foreign.status).toBe(404)
+      expect(await foreign.json()).toMatchObject({ error: 'PAGE_NOT_FOUND' })
+    }
+  )
+
+  it('keeps historical committed creates status-only without reading replacement pages and rejects forged result identities', async () => {
+    const { state, operations, persisted } = await setupMcpProposalReview('create')
+    const url = `${baseUrl}/_api/agents/mcp-proposals/${persisted.proposal.id}`
+    expect((await decideMcpProposal(persisted)).status).toBe(200)
+    const createdPage = { id: 131, path: 'docs/original', localeCode: 'en', sourceRevision: '8', content: 'private created source' }
+    await applyApprovedProposal(db, {
+      proposalId: persisted.proposal.id,
+      approvalId: persisted.approval.id,
+      authority: mcpProposalAuthority('pages.applyProposal'),
+      signal: new AbortController().signal,
+      reauthorize: async () => {
+        await operations.authorizeMutation({ kind: 'create', input: {}, requester: { id: 7 } as Express.User })
+      },
+      mutate: async () => {
+        state.page = createdPage
+        await db('pages').insert(createdPage)
+        // Historical results recorded the successful operation without the auto-assigned ID.
+        return { kind: 'create' }
+      },
+      reconcile: async () => null
+    })
+    createdPage.path = 'docs/moved'
+    await db('pages').where({ id: createdPage.id }).update({ path: createdPage.path })
+    await db('pages').insert({ ...createdPage, id: 132, path: 'docs/original', content: 'unreadable replacement source' })
+    state.readAllowed = false
+    state.writeAllowed = false
+    for (const isAdministrator of [false, true]) {
+      administrator = isAdministrator
+      const receipt = await fetch(url, { headers: { cookie } })
+      expect(receipt.status).toBe(200)
+      expect(receipt.headers.get('cache-control')).toBe('private, no-store')
+      const body = await receipt.json()
+      expect(body.proposal).toMatchObject({
+        status: 'applied',
+        approval: { status: 'approved' },
+        summary: 'Proposal status receipt; historical content is unavailable.',
+        pageId: null,
+        path: null,
+        confirmationPath: null,
+        baseSourceRevision: null,
+        patchHash: null,
+        diffHash: null,
+        diff: null,
+        expiresAt: new Date(persisted.proposal.expiresAt).toISOString()
+      })
+      expect(JSON.stringify(body)).not.toContain('private created source')
+      expect(JSON.stringify(body)).not.toContain('private proposed source')
+      expect(JSON.stringify(body)).not.toContain('docs/original')
+      expect(JSON.stringify(body)).not.toContain('unreadable replacement source')
+    }
+    await db('agentProposals')
+      .where({ id: persisted.proposal.id })
+      .update({ applyResult: JSON.stringify({ kind: 'create', pageId: 132 }) })
+    const forged = await fetch(url, { headers: { cookie } })
+    expect(forged.status).toBe(500)
+    expect(await forged.json()).toEqual({ error: 'PROPOSAL_LEDGER_CORRUPT', message: 'Agent request failed' })
+    expect(operations.get).not.toHaveBeenCalled()
+    expect(operations.getByPath).not.toHaveBeenCalled()
+  })
+
+  it('reviews an approved stale move but keeps pending decisions live, stale-fenced, and exact-path confirmed', async () => {
+    const { state, persisted } = await setupMcpProposalReview('move')
+    const url = `${baseUrl}/_api/agents/mcp-proposals/${persisted.proposal.id}`
+    state.writeAllowed = false
+    const forbidden = await decideMcpProposal(persisted)
+    expect(forbidden.status).toBe(403)
+    expect(await forbidden.json()).toMatchObject({ error: 'PAGE_MUTATION_FORBIDDEN' })
+    state.writeAllowed = true
+    state.page!.sourceRevision = '8'
+    const stale = await decideMcpProposal(persisted)
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ error: 'PAGE_REVISION_CONFLICT' })
+    expect(await db('agentApprovals').where({ id: persisted.approval.id }).first('status')).toEqual({ status: 'pending' })
+    state.page!.sourceRevision = '7'
+    expect((await decideMcpProposal(persisted)).status).toBe(200)
+    state.page!.sourceRevision = '9'
+    state.writeAllowed = false
+    const approved = await fetch(url, { headers: { cookie } })
+    expect(approved.status).toBe(200)
+    expect(await approved.json()).toMatchObject({ proposal: { status: 'approved', approval: { status: 'approved' } } })
+    restoreProposalOperations?.()
+    restoreProposalOperations = undefined
+    await db('pages').delete()
+    const destructive = await setupMcpProposalReview('delete')
+    const wrongPath = await decideMcpProposal(destructive.persisted, '/en/docs/wrong')
+    expect(wrongPath.status).toBe(409)
+    expect(await wrongPath.json()).toMatchObject({ error: 'DESTRUCTIVE_CONFIRMATION_REQUIRED' })
+    expect(await db('agentApprovals').where({ id: destructive.persisted.approval.id }).first('status')).toEqual({ status: 'pending' })
+    destructive.state.readAllowed = false
+    const unreadable = await decideMcpProposal(destructive.persisted, '/en/docs/original')
+    expect(unreadable.status).toBe(404)
+    destructive.state.readAllowed = true
+    expect((await decideMcpProposal(destructive.persisted, '/en/docs/original')).status).toBe(200)
+  })
+
+  it('rejects hash-consistent stored create operations with missing targets as ledger corruption', async () => {
+    const { persisted } = await setupMcpProposalReview('create')
+    const operation = JSON.stringify({ kind: 'create', operationInput: {} })
+    const operationSha256 = createHash('sha256').update(operation).digest('hex')
+    await db('agentProposals').where({ id: persisted.proposal.id }).update({ operation, operationSha256 })
+    await db('agentApprovals').where({ id: persisted.approval.id }).update({ operationSha256 })
+    const corrupt = await fetch(`${baseUrl}/_api/agents/mcp-proposals/${persisted.proposal.id}`, { headers: { cookie } })
+    expect(corrupt.status).toBe(500)
+    expect(await corrupt.json()).toMatchObject({ error: 'PROPOSAL_LEDGER_CORRUPT' })
+  })
+
+  it('fails closed for wrong-source, missing, and corrupt MCP proposal ledgers without leaking stored content', async () => {
+    const { persisted, state } = await setupMcpProposalReview()
+    const url = `${baseUrl}/_api/agents/mcp-proposals/${persisted.proposal.id}`
+    const missing = await fetch(`${baseUrl}/_api/agents/mcp-proposals/${randomUUID()}`, { headers: { cookie } })
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toMatchObject({ error: 'PROPOSAL_NOT_FOUND' })
+    await db('agentProposals').where({ id: persisted.proposal.id }).update({ sourceKind: 'agent' })
+    expect((await fetch(url, { headers: { cookie } })).status).toBe(404)
+    await db('agentProposals').where({ id: persisted.proposal.id }).update({ sourceKind: 'mcp' })
+    const page = state.page!
+    state.page = null
+    await db('pages').where({ id: page.id }).delete()
+    administrator = true
+    const unavailable = await fetch(url, { headers: { cookie } })
+    expect(unavailable.status).toBe(404)
+    expect(await unavailable.json()).toEqual({ error: 'PAGE_NOT_FOUND', message: 'This page does not exist.' })
+    expect(await db('agentProposals').where({ id: persisted.proposal.id }).first('status')).toEqual({ status: 'pending' })
+    administrator = false
+    state.page = page
+    await db('pages').insert(page)
+    await db('agentProposals').where({ id: persisted.proposal.id }).update({ sourceKind: 'mcp', operation: '{"tampered":"private historical source"}' })
+    const corrupt = await fetch(url, { headers: { cookie } })
+    expect(corrupt.status).toBe(500)
+    expect(await corrupt.json()).toEqual({ error: 'PROPOSAL_LEDGER_CORRUPT', message: 'Agent request failed' })
+    await db('agentProposals').where({ id: persisted.proposal.id }).update({ operation: persisted.proposal.operation })
+    await db('agentApprovals')
+      .where({ id: persisted.approval.id })
+      .update({ inputHash: '0'.repeat(64) })
+    const mismatchedApproval = await fetch(url, { headers: { cookie } })
+    expect(mismatchedApproval.status).toBe(500)
+    expect(await mismatchedApproval.json()).toEqual({ error: 'PROPOSAL_LEDGER_CORRUPT', message: 'Agent request failed' })
+    await db('agentApprovals').where({ id: persisted.approval.id }).delete()
+    const missingApproval = await fetch(url, { headers: { cookie } })
+    expect(missingApproval.status).toBe(500)
+    expect(await missingApproval.json()).toEqual({ error: 'PROPOSAL_LEDGER_CORRUPT', message: 'Agent request failed' })
   })
 
   it.each([
@@ -2747,7 +3177,9 @@ describe('ordinary-origin agent session API', () => {
             })
           } else {
             const current = request.retainedPageReads?.find(read => read.actionName === 'pages.get')
-            await sink.text(typeof current?.output.content === 'string' && current.output.content.includes('RETAINED-TAIL') ? 'RETAINED-TAIL' : 'Missing source')
+            await sink.text(
+              typeof current?.output.content === 'string' && current.output.content.includes('RETAINED-TAIL') ? 'RETAINED-TAIL' : 'Missing source'
+            )
           }
           return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 0 }
         }
@@ -2767,7 +3199,9 @@ describe('ordinary-origin agent session API', () => {
     }
     const foreign = await submit(foreignSession)
     expect(await followupRuntime.runOnce()).toBe(true)
-    await db('agentEvents').where({ runId: foreign.run.id, type: 'tool.completed' }).update({ dataSha256: '0'.repeat(64) })
+    await db('agentEvents')
+      .where({ runId: foreign.run.id, type: 'tool.completed' })
+      .update({ dataSha256: '0'.repeat(64) })
     await submit(ownedSession)
     expect(await followupRuntime.runOnce()).toBe(true)
     const followup = await submit(ownedSession)
@@ -2787,12 +3221,19 @@ describe('ordinary-origin agent session API', () => {
       actionName: 'pages.get',
       output: page(42, '2')
     })
-    expect(retained.filter(read => read.actionName === 'pages.getVersion').map(read => read.output.versionId).sort()).toEqual([1, 2])
+    expect(
+      retained
+        .filter(read => read.actionName === 'pages.getVersion')
+        .map(read => read.output.versionId)
+        .sort()
+    ).toEqual([1, 2])
     expect(await db('agentMessages').where({ id: followup.run.assistantMessageId }).first('content')).toEqual({ content: 'RETAINED-TAIL' })
     const events = await db('agentEvents').where({ runId: ownInitialRun!, type: 'tool.completed' }).orderBy('sequence', 'desc').select('id', 'data')
     const corrupt = events.find(event => JSON.parse(String(event.data)).actionName === 'pages.get')
     if (!corrupt) throw new Error('Missing retained source receipt')
-    await db('agentEvents').where({ id: corrupt.id }).update({ dataSha256: '0'.repeat(64) })
+    await db('agentEvents')
+      .where({ id: corrupt.id })
+      .update({ dataSha256: '0'.repeat(64) })
     const rejected = await submit(ownedSession)
     expect(await followupRuntime.runOnce()).toBe(true)
     expect(engineCalls).toBe(3)
@@ -2851,15 +3292,19 @@ describe('ordinary-origin agent session API', () => {
     const boundary = starts.find(event => JSON.parse(String(event.data)).actionCallId === 'prior-1')
     if (!boundary) throw new Error('Missing real prior action boundary')
     if (corruption === 'missing') await db('agentEvents').where({ id: boundary.id }).delete()
-    else await db('agentEvents').where({ id: boundary.id }).update({ dataSha256: '0'.repeat(64) })
+    else
+      await db('agentEvents')
+        .where({ id: boundary.id })
+        .update({ dataSha256: '0'.repeat(64) })
     const rejected = await submit()
     expect(await boundaryRuntime.runOnce()).toBe(true)
     expect(engineCalls).toBe(1)
     expect(await db('agentRuns').where({ id: rejected.run.id }).first('status')).toEqual({ status: 'failed' })
     expect(await db('agentMessages').where({ id: rejected.run.assistantMessageId }).first('content')).toEqual({ content: '' })
-    expect(
-      normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: rejected.run.id }).first('consumedTokens', 'consumedCostMicros'))
-    ).toEqual({ consumedTokens: 0, consumedCostMicros: 0 })
+    expect(normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: rejected.run.id }).first('consumedTokens', 'consumedCostMicros'))).toEqual({
+      consumedTokens: 0,
+      consumedCostMicros: 0
+    })
   })
 
   it('forwards retained provider state only across an exact origin at the engine boundary', async () => {

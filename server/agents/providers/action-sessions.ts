@@ -3,11 +3,12 @@ import type { Knex } from 'knex'
 import { z } from 'zod'
 import type { AgentActionName, AgentFeatureFlags, RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
-import type { ActionCapability, ActionCapabilityOutputKind, ActionProviderPresentationFamily } from '../actions/catalog.ts'
+import { ACTION_CATALOG, type ActionCapability, type ActionCapabilityOutputKind, type ActionProviderPresentationFamily } from '../actions/catalog.ts'
 import { type ActionAdmissionSnapshot, type ActionAuthority, ActionKernel } from '../actions/kernel.ts'
 import { markAgentRunSideEffectsStarted } from '../coordinator.ts'
 import { SUBAGENT_READ_ACTIONS } from '../orchestration.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import { getOwnedProposal } from '../proposals/repository.ts'
 import type { AgentEngineRequest } from '../runtime.ts'
 import type { AgentActionSessionProvider } from './engine.ts'
 import { type AxActionSession, AxSessionHarness } from './session-harness.ts'
@@ -103,6 +104,74 @@ const hasWikiPageSourceOutput = (actionName: AgentActionName, output: unknown): 
   return Array.isArray(rows) && rows.some(hasRecentPageSourceEvidenceRow)
 }
 
+const hasWikiApplicationCapability = (actionName: AgentActionName, capability: ActionCapability | undefined): boolean =>
+  actionName === 'pages.applyProposal' &&
+  capability?.providerPresentationFamily === 'wiki.proposal' &&
+  capability.operationRole === 'apply' &&
+  capability.outputKinds.length === 1 &&
+  capability.outputKinds[0] === 'operation-receipt'
+
+const AppliedPageId = z.number().int().positive()
+const AppliedResultIdentity = z.record(z.string(), z.unknown())
+const ApplicationMetadata = z.object({
+  kind: z.enum(['create', 'patch', 'move', 'restore', 'delete']),
+  pageId: AppliedPageId.nullable(),
+  resultIdentity: AppliedResultIdentity
+})
+
+const validateCommittedApplication = async (knex: Knex, authority: ActionAuthority, output: unknown): Promise<boolean> => {
+  const receipt = ACTION_CATALOG['pages.applyProposal'].output.safeParse(output)
+  if (!receipt.success || authority.requester.kind !== 'user' || authority.transport !== 'agent') return false
+  const { proposal, approval } = await getOwnedProposal(knex, authority.requester.userId, receipt.data.proposalId)
+  if (
+    proposal.status !== 'applied' ||
+    approval.status !== 'approved' ||
+    approval.approvedByUserId !== authority.requester.userId ||
+    approval.inputHash !== proposal.inputHash ||
+    approval.authoritySha256 !== proposal.authoritySha256 ||
+    approval.authorityVersion !== proposal.authorityVersion ||
+    approval.patchSha256 !== (proposal.patchSha256 ?? null) ||
+    approval.resultCanonicalSha256 !== (proposal.resultCanonicalSha256 ?? null) ||
+    approval.diffSha256 !== (proposal.diffSha256 ?? null)
+  )
+    return false
+  const execution = await knex('agentActionExecutions')
+    .where({
+      proposalId: proposal.id,
+      runId: proposal.runId,
+      actionName: proposal.actionName,
+      requesterUserId: authority.requester.userId,
+      requesterApiKeyId: null,
+      approvedByUserId: approval.approvedByUserId,
+      inputHash: proposal.inputHash,
+      status: 'committed'
+    })
+    .first('result')
+  if (
+    typeof execution?.result !== 'string' ||
+    execution.result !== proposal.applyResult ||
+    createHash('sha256').update(execution.result).digest('hex') !== receipt.data.resultHash
+  )
+    return false
+  const metadata = ApplicationMetadata.safeParse(JSON.parse(proposal.operation))
+  if (!metadata.success) return false
+  const committed = AppliedResultIdentity.safeParse(JSON.parse(execution.result))
+  if (!committed.success) return false
+  const stableId = AppliedPageId.safeParse(committed.data.pageId)
+  const approvedResult = canonicalJson(metadata.data.resultIdentity)
+  const dynamicCreate =
+    metadata.data.kind === 'create' &&
+    proposal.resultCanonicalSha256 === null &&
+    stableId.success &&
+    canonicalJson(committed.data) === canonicalJson({ ...metadata.data.resultIdentity, pageId: stableId.data })
+  if (canonicalJson(committed.data) !== approvedResult && !dynamicCreate) return false
+  const page = receipt.data.page
+  // A null page discloses status only; it is not evidence of deletion.
+  if (page === null) return true
+  const pageId = metadata.data.kind === 'create' ? (stableId.success ? stableId.data : null) : metadata.data.pageId
+  return metadata.data.kind !== 'delete' && pageId === page.id
+}
+
 const decodeSnapshot = (value: Uint8Array | null): Readonly<Record<string, unknown>> | undefined => {
   if (value === null) return undefined
   if (value.byteLength > 256 * 1_024) throw new AgentRepositoryError('RUNTIME_SNAPSHOT_CORRUPT', 'Stored runtime snapshot is too large', 500)
@@ -164,8 +233,10 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
           if (
             signal.aborted ||
             !originalAction ||
-            !hasWikiPageSourceCapability(actionName, originalAction.definition.capability) ||
-            !hasWikiPageSourceOutput(actionName, output)
+            !(
+              hasWikiApplicationCapability(actionName, originalAction.definition.capability) ||
+              (hasWikiPageSourceCapability(actionName, originalAction.definition.capability) && hasWikiPageSourceOutput(actionName, output))
+            )
           )
             return false
           let currentAdmission: ActionAdmissionSnapshot
@@ -180,7 +251,19 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
             const currentAction = this.#dependencies.kernel
               .offer(authFor(request), currentAdmission, request.run.id)
               .find(action => action.definition.descriptor.name === actionName)
-            if (!currentAction || signal.aborted || !hasWikiPageSourceCapability(actionName, currentAction.definition.capability)) return false
+            if (
+              !currentAction ||
+              signal.aborted ||
+              !(
+                hasWikiApplicationCapability(actionName, currentAction.definition.capability) ||
+                hasWikiPageSourceCapability(actionName, currentAction.definition.capability)
+              )
+            )
+              return false
+            // Operation receipts are not source evidence. Authenticate the
+            // committed result before checking current read authority below.
+            if (actionName === 'pages.applyProposal' && !(await validateCommittedApplication(this.#dependencies.knex, currentAction.authority, output)))
+              return false
             const valid = await this.#dependencies.validateObservation?.(request, currentAction.authority, actionName, output, signal)
             return valid === true && !signal.aborted
           } catch (error: unknown) {

@@ -172,6 +172,13 @@ export interface ActionTransientObservation extends ActionObservationBase {
 
 export type WikiProposalStatus = 'pending' | 'approved' | 'applied' | 'denied' | 'expired' | 'cancelled'
 
+interface WikiApplicationReceipt {
+  readonly proposalId: string
+  readonly status: 'applied'
+  readonly resultHash: string
+  readonly page: { readonly id: number; readonly locale: string; readonly path: string; readonly title: string; readonly sourceRevision: string } | null
+}
+
 export interface ActionOperationReceiptObservation extends ActionObservationBase {
   readonly kind: 'receipt'
   readonly status: WikiProposalStatus | 'applied' | 'no-change' | 'partial' | 'unknown' | 'omitted'
@@ -194,6 +201,7 @@ export interface ActionOperationReceiptObservation extends ActionObservationBase
         readonly inputHash: string
         readonly diffHash: string | null
         readonly expiresAt: string
+        readonly application?: WikiApplicationReceipt
       }
     | {
         readonly operation: 'wiki.applyProposal'
@@ -275,28 +283,46 @@ const MAX_STRUCTURED_OBSERVATION_UNIT_BYTES = 128
 
 const maxTextBytesFor = (context: ActionObservationProjectionContext): number | null => {
   if (!isValidAsOf(context?.asOf)) return null
-  if (context.invocationId !== undefined && (typeof context.invocationId !== 'string' || context.invocationId.length === 0 || context.invocationId.length > 128)) return null
+  if (
+    context.invocationId !== undefined &&
+    (typeof context.invocationId !== 'string' || context.invocationId.length === 0 || context.invocationId.length > 128)
+  )
+    return null
   const maxTextBytes = context.maxTextBytes ?? ACTION_OBSERVATION_DEFAULT_TEXT_BYTES
-  return Number.isInteger(maxTextBytes) && maxTextBytes >= 0 && maxTextBytes <= ACTION_OBSERVATION_MAX_TEXT_BYTES
-    ? maxTextBytes
-    : null
+  return Number.isInteger(maxTextBytes) && maxTextBytes >= 0 && maxTextBytes <= ACTION_OBSERVATION_MAX_TEXT_BYTES ? maxTextBytes : null
 }
 
 const isStructuredObservationInput = (value: unknown): value is StructuredObservationInput =>
-  typeof value === 'object' && value !== null &&
-  'identity' in value && typeof value.identity === 'string' && value.identity.length > 0 &&
+  typeof value === 'object' &&
+  value !== null &&
+  'identity' in value &&
+  typeof value.identity === 'string' &&
+  value.identity.length > 0 &&
   Buffer.byteLength(value.identity, 'utf8') <= MAX_STRUCTURED_OBSERVATION_IDENTITY_BYTES
 
 const isStructuredObservationOutput = (value: unknown): value is StructuredObservationOutput => {
-  if (typeof value !== 'object' || value === null ||
-      !('inputIdentity' in value) || typeof value.inputIdentity !== 'string' ||
-      !('value' in value) || typeof value.value !== 'number' || !Number.isFinite(value.value) ||
-      !('unit' in value) || typeof value.unit !== 'string' || value.unit.length === 0 ||
-      !('asOf' in value) || !isValidAsOf(value.asOf) ||
-      !('status' in value) || (value.status !== 'complete' && value.status !== 'partial' && value.status !== 'unknown')) return false
-  return value.inputIdentity.length > 0 &&
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('inputIdentity' in value) ||
+    typeof value.inputIdentity !== 'string' ||
+    !('value' in value) ||
+    typeof value.value !== 'number' ||
+    !Number.isFinite(value.value) ||
+    !('unit' in value) ||
+    typeof value.unit !== 'string' ||
+    value.unit.length === 0 ||
+    !('asOf' in value) ||
+    !isValidAsOf(value.asOf) ||
+    !('status' in value) ||
+    (value.status !== 'complete' && value.status !== 'partial' && value.status !== 'unknown')
+  )
+    return false
+  return (
+    value.inputIdentity.length > 0 &&
     Buffer.byteLength(value.inputIdentity, 'utf8') <= MAX_STRUCTURED_OBSERVATION_IDENTITY_BYTES &&
     Buffer.byteLength(value.unit, 'utf8') <= MAX_STRUCTURED_OBSERVATION_UNIT_BYTES
+  )
 }
 
 const presentationFor = (units: Iterable<string>, maxBytes: number): BoundedActionObservationText => {
@@ -326,6 +352,18 @@ const lineUnits = function* (text: string): Iterable<string> {
 }
 
 const jsonUnit = (value: unknown): string => JSON.stringify(value) ?? 'null'
+// Keep JSON identities reversible without letting metadata become Markdown,
+// citation controls, HTML, or an unmatched code span in the observation whitelist.
+const receiptJsonUnit = (value: unknown): string =>
+  jsonUnit(value).replace(/"(?:\\.|[^"\\])*"/gu, literal =>
+    literal.replace(/[`<>[\]*_~\u007f]/gu, character => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  )
+
+const applicationPresentation = (application: WikiApplicationReceipt): readonly string[] => [
+  'Wiki proposal application status: applied.',
+  `Proposal: ${application.proposalId}; result hash: ${application.resultHash}.`,
+  ...(application.page === null ? ['Result page identity is not disclosed by this receipt.'] : [`Applied page: ${receiptJsonUnit(application.page)}`])
+]
 const browserReferenceUnit = (ref: { readonly ref: string; readonly role: string; readonly name: string; readonly href: string | null }): string =>
   ref.href !== null && Buffer.byteLength(ref.href, 'utf8') > MAX_ACTION_OBSERVATION_URL_BYTES
     ? 'Browser reference omitted: URL exceeds host metadata bound.'
@@ -354,7 +392,6 @@ const observationBase = (
   presentation
 })
 
-
 const presentProposalReceipt = (
   actionName: AgentActionName,
   output: {
@@ -366,6 +403,7 @@ const presentProposalReceipt = (
     readonly diffHash: string | null
     readonly summary: string
     readonly expiresAt: string
+    readonly application?: WikiApplicationReceipt
   },
   capability: ActionCapability,
   context: ActionObservationProjectionContext,
@@ -373,18 +411,48 @@ const presentProposalReceipt = (
 ): ActionOperationReceiptObservation | null => {
   if (output.actionName !== actionName) return null
   const proposalStatus = output.status
+  const application =
+    output.application === undefined
+      ? undefined
+      : {
+          proposalId: output.application.proposalId,
+          status: output.application.status,
+          resultHash: output.application.resultHash,
+          page:
+            output.application.page === null
+              ? null
+              : {
+                  id: output.application.page.id,
+                  locale: output.application.page.locale,
+                  path: output.application.page.path,
+                  title: output.application.page.title,
+                  sourceRevision: output.application.page.sourceRevision
+                }
+        }
   const presentation = presentationFor(
-    [
-      `Wiki proposal status: ${proposalStatus}.`,
-      `Proposal: ${output.proposalId}; approval: ${output.approvalId}.`,
-      `Summary: ${jsonUnit(output.summary)}`
-    ],
+    application === undefined
+      ? [
+          proposalStatus === 'denied' || proposalStatus === 'expired' || proposalStatus === 'cancelled'
+            ? `Wiki proposal ${output.proposalId} status: ${proposalStatus}.`
+            : `Wiki proposal status: ${proposalStatus}.`,
+          `Proposal: ${output.proposalId}; approval: ${output.approvalId}.`,
+          `Summary: ${jsonUnit(output.summary)}`
+        ]
+      : applicationPresentation(application),
     maxTextBytes
   )
   return {
     kind: 'receipt',
     status: proposalStatus,
-    ...observationBase(actionName, capability, context, 'complete', context.asOf, { kind: 'action-invocation', invocationId: context.invocationId ?? null }, presentation),
+    ...observationBase(
+      actionName,
+      capability,
+      context,
+      'complete',
+      context.asOf,
+      { kind: 'action-invocation', invocationId: context.invocationId ?? null },
+      presentation
+    ),
     representation: 'operation-receipt',
     supportsFactualClaim: 'operation-status-only',
     receipt: {
@@ -395,7 +463,8 @@ const presentProposalReceipt = (
       status: proposalStatus,
       inputHash: output.inputHash,
       diffHash: output.diffHash,
-      expiresAt: output.expiresAt
+      expiresAt: output.expiresAt,
+      ...(application === undefined ? {} : { application })
     }
   }
 }
@@ -453,21 +522,17 @@ export const projectStructuredObservation = (
   context: ActionObservationProjectionContext
 ): ActionComputedObservation | null => {
   const maxTextBytes = maxTextBytesFor(context)
-  if (maxTextBytes === null ||
-      definition.capability.providerPresentationFamily !== 'structured-observation' ||
-      definition.capability.freshnessKind !== 'computed-unverified') return null
+  if (
+    maxTextBytes === null ||
+    definition.capability.providerPresentationFamily !== 'structured-observation' ||
+    definition.capability.freshnessKind !== 'computed-unverified'
+  )
+    return null
   const validatedInput = definition.input.safeParse(input)
   if (!validatedInput.success) return null
   const validatedOutput = definition.output.safeParse(canonicalOutput)
   if (!validatedOutput.success) return null
-  return presentStructuredObservationValidated(
-    actionName,
-    validatedInput.data,
-    validatedOutput.data,
-    definition.capability,
-    context,
-    maxTextBytes
-  )
+  return presentStructuredObservationValidated(actionName, validatedInput.data, validatedOutput.data, definition.capability, context, maxTextBytes)
 }
 
 const presentDomainObservationValidated = (
@@ -482,7 +547,9 @@ const presentDomainObservationValidated = (
     return presentStructuredObservationValidated(actionName, input, output, capability, context, maxTextBytes)
   }
   if (actionName === 'skills.list') {
-    const { skills } = output as { readonly skills: readonly { readonly name: string; readonly description: string; readonly versionId: string; readonly contentHash: string }[] }
+    const { skills } = output as {
+      readonly skills: readonly { readonly name: string; readonly description: string; readonly versionId: string; readonly contentHash: string }[]
+    }
     const presentation = presentationFor(
       (function* (): Iterable<string> {
         yield `Approved skill candidates (${skills.length}; metadata only—read a selected version before use; total coverage unknown).`
@@ -499,7 +566,15 @@ const presentDomainObservationValidated = (
     return {
       kind: 'lead',
       status: 'available',
-      ...observationBase(actionName, capability, context, 'unknown', context.asOf, { kind: 'action-invocation', invocationId: context.invocationId ?? null }, presentation),
+      ...observationBase(
+        actionName,
+        capability,
+        context,
+        'unknown',
+        context.asOf,
+        { kind: 'action-invocation', invocationId: context.invocationId ?? null },
+        presentation
+      ),
       representation: 'structured-records',
       supportsFactualClaim: 'candidate-navigation-only',
       leads
@@ -507,7 +582,14 @@ const presentDomainObservationValidated = (
   }
 
   if (actionName === 'skills.read') {
-    const source = output as { readonly name: string; readonly versionId: string; readonly path: string; readonly mediaType: string; readonly contentHash: string; readonly content: string }
+    const source = output as {
+      readonly name: string
+      readonly versionId: string
+      readonly path: string
+      readonly mediaType: string
+      readonly contentHash: string
+      readonly content: string
+    }
     const request = input as { readonly name: string; readonly versionId: string; readonly path: string }
     if (source.name !== request.name || source.versionId !== request.versionId || source.path !== request.path) return null
     const resourceIdentity = `approved-skill:${jsonUnit([source.name, source.versionId, source.path, source.contentHash])}`
@@ -548,9 +630,7 @@ const presentDomainObservationValidated = (
     }
     if (!isValidAsOf(source.observedAt)) return null
     const url = Buffer.byteLength(source.url, 'utf8') <= MAX_ACTION_OBSERVATION_URL_BYTES ? source.url : null
-    const title = Buffer.byteLength(source.title, 'utf8') <= MAX_ACTION_OBSERVATION_TITLE_BYTES
-      ? source.title
-      : '[title omitted: exceeds host metadata bound]'
+    const title = Buffer.byteLength(source.title, 'utf8') <= MAX_ACTION_OBSERVATION_TITLE_BYTES ? source.title : '[title omitted: exceeds host metadata bound]'
     const presentationUrl = url ?? '[URL omitted: exceeds host metadata bound]'
     const presentation = presentationFor(
       (function* (): Iterable<string> {
@@ -608,7 +688,15 @@ const presentDomainObservationValidated = (
     return {
       kind: 'observation',
       status: 'observed',
-      ...observationBase(actionName, capability, context, canonicalCoverage, context.asOf, { kind: 'browser-extraction', invocationId: context.invocationId ?? null }, presentation),
+      ...observationBase(
+        actionName,
+        capability,
+        context,
+        canonicalCoverage,
+        context.asOf,
+        { kind: 'browser-extraction', invocationId: context.invocationId ?? null },
+        presentation
+      ),
       representation: 'untrusted-browser-extraction',
       supportsFactualClaim: 'untrusted-observation-only',
       observation: { type: 'browser-extraction', url, truncated: source.truncated, contentLines: Math.max(0, presentation.includedUnits - 2) }
@@ -643,7 +731,15 @@ const presentDomainObservationValidated = (
     return {
       kind: 'receipt',
       status,
-      ...observationBase(actionName, capability, context, 'complete', context.asOf, { kind: 'action-invocation', invocationId: context.invocationId ?? null }, presentation),
+      ...observationBase(
+        actionName,
+        capability,
+        context,
+        'complete',
+        context.asOf,
+        { kind: 'action-invocation', invocationId: context.invocationId ?? null },
+        presentation
+      ),
       representation: 'operation-receipt',
       supportsFactualClaim: 'operation-status-only',
       receipt: { operation: 'memory.manage', changed: source.changed, target: source.target, characters: source.characters, limit: source.limit }
@@ -651,16 +747,7 @@ const presentDomainObservationValidated = (
   }
 
   if (actionName.startsWith('pages.prepare') && capability.providerPresentationFamily === 'wiki.proposal') {
-    const source = output as {
-      readonly proposalId: string
-      readonly approvalId: string
-      readonly actionName: string
-      readonly status: WikiProposalStatus
-      readonly inputHash: string
-      readonly diffHash: string | null
-      readonly summary: string
-      readonly expiresAt: string
-    }
+    const source = output as Parameters<typeof presentProposalReceipt>[1]
     return presentProposalReceipt(actionName, source, capability, context, maxTextBytes)
   }
 
@@ -673,25 +760,32 @@ const presentDomainObservationValidated = (
     }
     const request = input as { readonly proposalId: string }
     if (source.proposalId !== request.proposalId) return null
-    const page = source.page === null ? null : {
-      id: source.page.id,
-      locale: source.page.locale,
-      path: source.page.path,
-      title: source.page.title,
-      sourceRevision: source.page.sourceRevision
-    }
+    const page =
+      source.page === null
+        ? null
+        : {
+            id: source.page.id,
+            locale: source.page.locale,
+            path: source.page.path,
+            title: source.page.title,
+            sourceRevision: source.page.sourceRevision
+          }
     const presentation = presentationFor(
-      [
-        'Wiki proposal application status: applied.',
-        `Proposal: ${source.proposalId}; result hash: ${source.resultHash}.`,
-        ...(page === null ? [] : [`Applied page: ${jsonUnit(page)}`])
-      ],
+      applicationPresentation({ proposalId: source.proposalId, status: 'applied', resultHash: source.resultHash, page }),
       maxTextBytes
     )
     return {
       kind: 'receipt',
       status: 'applied',
-      ...observationBase(actionName, capability, context, 'complete', context.asOf, { kind: 'action-invocation', invocationId: context.invocationId ?? null }, presentation),
+      ...observationBase(
+        actionName,
+        capability,
+        context,
+        'complete',
+        context.asOf,
+        { kind: 'action-invocation', invocationId: context.invocationId ?? null },
+        presentation
+      ),
       representation: 'operation-receipt',
       supportsFactualClaim: 'operation-status-only',
       receipt: { operation: 'wiki.applyProposal', proposalId: source.proposalId, status: 'applied', resultHash: source.resultHash, page }
@@ -705,7 +799,15 @@ const presentDomainObservationValidated = (
     return {
       kind: 'artifact',
       status: 'generated',
-      ...observationBase(actionName, capability, context, 'complete', context.asOf, { kind: 'generated-artifact', invocationId: context.invocationId ?? null }, presentation),
+      ...observationBase(
+        actionName,
+        capability,
+        context,
+        'complete',
+        context.asOf,
+        { kind: 'generated-artifact', invocationId: context.invocationId ?? null },
+        presentation
+      ),
       representation: 'artifact-metadata',
       supportsFactualClaim: 'artifact-existence-only',
       artifact: { type: artifactType, artifactId: null, mimeType: null, width: null, height: null, count: source.count }
@@ -714,7 +816,6 @@ const presentDomainObservationValidated = (
 
   return null
 }
-
 
 /**
  * Host-side projection for explicitly handled action observations. Wiki candidate/source

@@ -647,9 +647,7 @@ const retainedPageReads = (rows: readonly RuntimeContextRow[]): readonly AgentRe
     )
       continue
     const actionCallId =
-      data.cacheHit === true && typeof data.reusedActionCallId === 'string' && data.reusedActionCallId.length > 0
-        ? data.reusedActionCallId
-        : data.actionCallId
+      data.cacheHit === true && typeof data.reusedActionCallId === 'string' && data.reusedActionCallId.length > 0 ? data.reusedActionCallId : data.actionCallId
     const receiptKey = `${actionName}:${actionCallId}`
     if (receipts.has(receiptKey)) continue
     receipts.add(receiptKey)
@@ -694,15 +692,15 @@ const loadRetainedPageReads = async (knex: Knex, claim: AgentRunClaim, signal: A
         knex.raw(`${eventField('events', 'cacheHit')} AS "cacheHit"`),
         knex.raw(`${eventField('started', 'input')} AS "input"`)
       )) as Array<{
-        id: string
-        actionName: string
-        actionCallId: string | null
-        reusedActionCallId: string | null
-        cacheHit: string | number | null
-        input: string | null
-        selectorData: string | null
-        selectorDataSha256: string | null
-      }>
+      id: string
+      actionName: string
+      actionCallId: string | null
+      reusedActionCallId: string | null
+      cacheHit: string | number | null
+      input: string | null
+      selectorData: string | null
+      selectorDataSha256: string | null
+    }>
     for (const row of rows) {
       signal.throwIfAborted()
       const actionCallId = (row.cacheHit === 'true' || row.cacheHit === 1) && row.reusedActionCallId ? row.reusedActionCallId : row.actionCallId
@@ -931,6 +929,8 @@ export interface AgentEnginePreflight {
   readonly requiredCostMicros?: number
   readonly admissible: boolean
   readonly inputExposureTokens: number
+  /** Whole authorized dispatch-window bound (including possible opaque replay), not a token receipt; absent/false estimates require an additive replay proxy. */
+  readonly inputExposureUsesFullWindowBound?: boolean
   readonly outputExposureTokens: number
   readonly totalExposureTokens: number
 }
@@ -1382,8 +1382,7 @@ const completePriorActivityWindow = async (
     const boundary = boundaries[0]
     if (boundaries.length !== 1 || !boundary || Number(boundary.sequence) >= Number(row.sequence))
       throw new AgentRepositoryError('AGENT_PRIOR_ACTIVITY_CORRUPT', 'Stored tool activity has no unique earlier start boundary', 500)
-    if (sha256(boundary.data) !== boundary.dataSha256)
-      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored tool start event hash is invalid', 500)
+    if (sha256(boundary.data) !== boundary.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored tool start event hash is invalid', 500)
     recovered.push({ ...row, sequence: Number(boundary.sequence), type: 'tool.started', data: boundary.data })
     starts.add(key)
   }
@@ -2173,7 +2172,8 @@ export class AgentProductRuntime {
         requiredInputMimeTypes.add(normalizeAgentMediaMimeType(media.mimeType))
       }
       let candidates = [...snapshot.candidates]
-      const expectedOutputTokens = Math.min(current.capabilities.maxOutputTokens, current.admission.quota.tokens, input.maxTokens ?? Number.MAX_SAFE_INTEGER)
+      const requestedOutputTokens = Math.min(current.capabilities.maxOutputTokens, current.admission.quota.tokens, input.maxTokens ?? Number.MAX_SAFE_INTEGER)
+      let expectedOutputTokens = requestedOutputTokens
       let currentInputTokens = compactedCharacters
       const declared = await router.policies.getRuntime()
       if (declared.policy.enabled) {
@@ -2228,7 +2228,7 @@ export class AgentProductRuntime {
               limits: {
                 maxTurns: 12,
                 maxToolCalls: 32,
-                maxOutputTokens: expectedOutputTokens,
+                maxOutputTokens: requestedOutputTokens,
                 ...(input.maxTokens === undefined ? {} : { maxTokens: input.maxTokens })
               },
               signal: input.signal
@@ -2239,6 +2239,8 @@ export class AgentProductRuntime {
             }
             const estimate = nonNegativeUsage(proof.inputExposureTokens, 'Native routing input estimate')
             if (incumbent) {
+              // Route the same input/output frame that preflight admitted, including host output caps.
+              expectedOutputTokens = nonNegativeUsage(proof.outputExposureTokens, 'Native routing output estimate')
               const previewTime = Date.now()
               const continuationBytes = input.messageRows.reduce((total, message, index) => {
                 const source = input.canonicalSources[index]!
@@ -2253,7 +2255,8 @@ export class AgentProductRuntime {
                   (source.groundedExpiresAt === null || Date.parse(source.groundedExpiresAt) > previewTime)
                 return compatible ? safeUsageSum(total, message.providerStateCiphertext?.byteLength ?? 0, 'Routing continuation byte proxy') : total
               }, 0)
-              currentInputTokens = safeUsageSum(estimate, continuationBytes, 'Routing incumbent input estimate')
+              currentInputTokens =
+                proof.inputExposureUsesFullWindowBound === true ? estimate : safeUsageSum(estimate, continuationBytes, 'Routing incumbent input estimate')
             }
             checked.push({ ...candidate, canonicalReplayInputTokens: estimate })
           } catch (error) {

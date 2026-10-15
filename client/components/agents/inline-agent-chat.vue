@@ -718,7 +718,7 @@ const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, init
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
-const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; isMediaBusy: () => boolean }>('composer')
+const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; hasPendingSubmission: () => boolean; isMediaBusy: () => boolean }>('composer')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
@@ -1168,21 +1168,27 @@ const sendPrompt = async (
   promptGeneration = generation
   const ownerId = props.ownerId
   promptSubmissionPending.value = true
+  let completionDelivered = false
+  const complete = (success: boolean): void => {
+    if (completionDelivered || !isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return
+    completionDelivered = true
+    completion?.(success)
+  }
   try {
     const initialized = await ensureInitialized()
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     if (!initialized || !canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
     transcriptReadingIntent = false
     transcriptFollowing.value = true
-    const success = await agents.send(prompt, invokedSkillVersionIds, mode, media)
+    const success = await agents.send(prompt, invokedSkillVersionIds, mode, media, () => complete(true))
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
-    completion?.(success)
+    complete(success)
     if (success) await reconcileTranscriptGrowth(true)
     return success
   } catch (value) {
     if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
     agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.messageCouldNotSent')
-    completion?.(false)
+    complete(false)
     return false
   } finally {
     if (isComponentCurrent(componentGeneration, ownerId) && promptGeneration === generation) promptSubmissionPending.value = false
@@ -1658,6 +1664,13 @@ watch(currentPage, (page, previous) => {
   clearingUnfiledHistory.value = false
   void ensureInitialized({ forceFresh: true })
 }, { flush: 'post' })
+const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+  const storeOwnerId = (agents as unknown as { pinOwnerId?: number | null }).pinOwnerId
+  if (disposed || (storeOwnerId != null && storeOwnerId !== props.ownerId)) return
+  if (!(activeDraft.value.text || offlineComposerDraft.value || composer.value?.hasUnsentMedia() || composer.value?.hasPendingSubmission() || composer.value?.isMediaBusy())) return
+  event.preventDefault()
+  event.returnValue = ''
+}
 const handlePageHide = (): void => { agents.closeWorkspace() }
 const handlePageShow = (event: PageTransitionEvent): void => {
   if (event.persisted) void ensureInitialized({ forceFresh: true })
@@ -1791,6 +1804,7 @@ onMounted(() => {
   observeConversationDock(conversationDock.value)
   window.addEventListener('resize', scheduleTranscriptReconcile)
   window.addEventListener('pagehide', handlePageHide)
+  window.addEventListener('beforeunload', handleBeforeUnload)
   window.addEventListener('pageshow', handlePageShow)
   window.visualViewport?.addEventListener('resize', scheduleTranscriptReconcile)
   document.addEventListener('visibilitychange', handleComposerWake)
@@ -1817,6 +1831,7 @@ onBeforeUnmount(() => {
   panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)
   window.removeEventListener('pagehide', handlePageHide)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('pageshow', handlePageShow)
   window.visualViewport?.removeEventListener('resize', scheduleTranscriptReconcile)
   document.removeEventListener('visibilitychange', handleComposerWake)

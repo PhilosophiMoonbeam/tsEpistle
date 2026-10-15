@@ -14,6 +14,8 @@ export interface AgentCompactionPromptState {
 }
 export interface AgentCompactionRequestExposure {
   readonly inputExposureTokens: number
+  /** Whole authorized dispatch-window bound (including possible opaque replay), not measured tokens; absent/false estimates are additive. */
+  readonly inputExposureUsesFullWindowBound?: boolean
   readonly outputExposureTokens: number
   readonly totalExposureTokens: number
   readonly serializedRequestBytes: number

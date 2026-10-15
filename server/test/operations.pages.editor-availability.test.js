@@ -165,7 +165,7 @@ describe('page creation editor availability', () => {
     vi.spyOn(Page, 'reconnectLinks').mockResolvedValue(undefined)
     const createPage = vi.spyOn(Page, 'createPage')
     const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
-    return { operations, createPage }
+    return { operations, createPage, Page }
   }
 
   it('rejects a configurable editor hidden by an administrator', async () => {
@@ -191,6 +191,22 @@ describe('page creation editor availability', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ id: result.id, editorKey: 'markdown', visibility: 'public', authorId: 7, creatorId: 7 })
     expect(result).toMatchObject({ id: rows[0].id, path: 'allowed', editorKey: 'markdown', visibility: 'public' })
+  })
+
+  it('returns the inserted page when its path moves and is rebound before hydration', async () => {
+    const { operations, Page } = await arrange(['markdown'])
+    const hydrate = Page.getPageFromDb.bind(Page)
+    let insertedId
+    vi.spyOn(Page, 'getPageFromDb').mockImplementationOnce(async selector => {
+      const original = await db('pages').where({ path: 'rebound' }).first()
+      insertedId = original.id
+      await db('pages').where({ id: original.id }).update({ path: 'moved', hash: 'moved-page-hash' })
+      await db('pages').insert({ ...original, id: original.id + 1, title: 'Replacement occupant' })
+      return hydrate(selector)
+    })
+    const result = await operations.create({ requester: { id: 7 }, input: pageInput('markdown', 'rebound') })
+    expect(result).toMatchObject({ id: insertedId, path: 'moved' })
+    expect(await db('pages').where({ path: 'rebound' }).first()).toMatchObject({ id: insertedId + 1, title: 'Replacement occupant' })
   })
 
   it.each(['ckeditor', 'asciidoc', 'code'])('creates pages when %s is explicitly enabled', async editor => {

@@ -1151,7 +1151,8 @@ export const useAgentsStore = defineStore('agents', {
       content: string,
       invokedSkillVersionIds: readonly string[] = [],
       mode: 'message' | 'goal' = 'message',
-      media?: AgentMediaSubmission
+      media?: AgentMediaSubmission,
+      onAccepted?: () => void
     ): Promise<boolean> {
       if (!this.isWorkspaceReady()) return false
       const thread = this.thread
@@ -1261,6 +1262,9 @@ export const useAgentsStore = defineStore('agents', {
           JSON.stringify(this.drafts[sessionId]?.skillVersionIds) === JSON.stringify(draftSnapshot.skillVersionIds)
         )
           this.updateDraft(sessionId, { text: '', mode: 'message', skillVersionIds: [] })
+        // Admission is complete before the follow-up view refresh. Let the
+        // current composer release accepted input without treating it as unsent.
+        if (completionCurrent) onAccepted?.()
         // Reopening the same conversation while POST is pending must discover its accepted run.
         // A reopened workspace may accept this completion only for the same initialized owner/session.
         if (completionCurrent && this.thread?.session.id === sessionId) {

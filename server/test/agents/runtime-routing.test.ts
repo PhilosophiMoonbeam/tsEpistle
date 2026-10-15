@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { lookup } from 'node:dns/promises'
 import createKnex, { type Knex } from 'knex'
 import sharp from 'sharp'
 import type { AgentMediaBindings, AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
@@ -11,6 +12,9 @@ import { admitAgentRunInTransaction, persistAgentApprovalContinuation } from '..
 import { agentCompactionSha256, type AgentCompactionReceipt } from '../../agents/compaction.ts'
 import { getOwnedAgentGoal, insertAgentGoal } from '../../agents/goals.ts'
 import { storeAgentMedia } from '../../agents/media.ts'
+import { AxAgentEngine } from '../../agents/providers/engine.ts'
+import { AgentProviderFactory, encodeAgentProviderContinuation, type AgentProviderFetch } from '../../agents/providers/factory.ts'
+import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import { createRoutingTables, routingFixture, routingImageProviderConfig as imageProviderConfig, type RoutingFixture } from './runtime-routing.fixture.ts'
 import { PdfFixtureDocument } from './pdf-fixture.ts'
 
@@ -271,6 +275,113 @@ describe('admitted automatic conversation routing', () => {
     })
     expect(f.requests[1]?.run.model).toBe('gemini-3.5-flash')
     expect(f.requests[1]?.messages.at(-1)?.attachments?.map(attachment => attachment.id)).toEqual([media.id])
+  })
+
+  const nativeMediaPreflight = async () => {
+    const settings = await f.registry.getAdmin(f.current.profileId)
+    await f.registry.update(f.current.profileId, {
+      ...settings,
+      transportKind: 'gemini-api',
+      model: 'gemini-3.8-flash',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      authMode: 'google-api-key',
+      secretReference: 'env:TEST_PROVIDER_KEY',
+      adapterConfig: { timeoutMs: 30_000, maxRetries: 0, additionalHeaders: {}, mediaInputs: { images: true, documents: true, audio: false, video: false } },
+      capabilities: { ...settings.capabilities, maxContextTokens: 400_000, maxOutputTokens: 32_768 },
+      policies: { ...settings.policies, dailyTokens: 10_000_000, reservationTokens: 32_000, reservationCostMicros: 1_000_000 },
+      pricingRevision: 'native-media-fixture|1000000|2000000',
+      actorId: 1
+    })
+    const { currentVersionId: versionId } = await db('agentProviderProfiles').where({ id: f.current.profileId }).first('currentVersionId')
+    await f.registry.setConformed(f.current.profileId, versionId, true, 1)
+    await f.registry.setEnabled(f.current.profileId, true, 1, versionId)
+    await f.registry.setDefault(f.current.profileId, 1)
+    f.view.models = []
+    let providerCalls = 0
+    const providerFetch = Object.assign(
+      async () => {
+        providerCalls++
+        throw new Error('Routing preflight must not call a provider')
+      },
+      {
+        preconnect: () => {
+          providerCalls++
+        }
+      }
+    ) as AgentProviderFetch
+    const resolve = (async () => [{ address: '142.250.1.1', family: 4 }]) as unknown as typeof lookup
+    const engine = new AxAgentEngine(new AgentProviderFactory(db, { get: () => 'fixture-key' }, providerFetch, resolve))
+    f.engine.preflight = engine.preflight.bind(engine)
+    return { versionId: String(versionId), providerCalls: () => providerCalls }
+  }
+
+  const retainNativeHistory = async (sessionId: string, signatureBytes: number) => {
+    const continuation = encodeAgentProviderContinuation('gemini-generate-content-v1', [
+      preserveGeminiContinuation({
+        encrypted: true,
+        data: `wiki.gemini.generate-content.v1:${JSON.stringify([{ text: 'Hello!', thoughtSignature: 's'.repeat(signatureBytes) }])}`
+      })
+    ])
+    if (!continuation) throw new Error('The native fixture must encode its configured continuation dialect')
+    const execute = f.engine.execute
+    f.engine.execute = async (...args) => ({ ...(await execute(...args)), providerState: continuation })
+    const prior = await f.submit(sessionId, 7, { generationTools: [] })
+    await f.runtime.runOnce()
+    expect(await db('agentRuns').where({ id: prior.run.id }).first('status')).toEqual({ status: 'succeeded' })
+  }
+
+  for (const mimeType of ['image/png', 'application/pdf'] as const)
+    for (const history of [false, true])
+      it(`routes the actual native ${mimeType} preflight window with ${history ? 'compatible opaque history' : 'a fresh conversation'}`, async () => {
+        const native = await nativeMediaPreflight()
+        const sessionId = await f.session()
+        if (history) await retainNativeHistory(sessionId, 1_024)
+        let payload = referenceImage
+        if (mimeType === 'application/pdf') {
+          const document = new PdfFixtureDocument()
+          const catalog = document.reserveObject()
+          const pages = document.reserveObject()
+          const page = document.reserveObject()
+          const content = document.addStream('', Buffer.alloc(0))
+          document.setObject(catalog, `<< /Type /Catalog /Pages ${pages} 0 R >>`)
+          document.setObject(pages, `<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`)
+          document.setObject(page, `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents ${content} 0 R >>`)
+          payload = document.toBuffer(catalog)
+        }
+        const media = await storeAgentMedia(db, { ownerId: 7, sessionId, payload, mimeType, filename: mimeType === 'image/png' ? 'pixel.png' : 'brief.pdf' })
+        const admitted = await f.submit(sessionId, 7, { generationTools: [], attachmentIds: [media.id] })
+        expect(await f.runtime.runOnce()).toBe(true)
+        expect(await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode', 'providerProfileVersionId')).toMatchObject({
+          status: 'succeeded',
+          errorCode: null,
+          providerProfileVersionId: native.versionId
+        })
+        expect(f.requests).toHaveLength(history ? 2 : 1)
+        const dispatched = f.requests.at(-1)!
+        expect(dispatched.run.model).toBe('gemini-3.8-flash')
+        const attachment = dispatched.messages.at(-1)?.attachments?.[0]
+        expect(attachment?.id).toBe(media.id)
+        expect(await attachment?.loadPayload?.(new AbortController().signal)).toEqual(payload)
+        if (history) expect(dispatched.messages.find(message => message.role === 'assistant')?.providerState?.thoughtBlocks).toHaveLength(1)
+        expect(f.classifications()).toBe(0)
+        expect(native.providerCalls()).toBe(0)
+        expect(Number((await db('agentQuotaReservations').where({ runId: admitted.run.id }).first('consumedTokens')).consumedTokens)).toBe(8)
+      })
+
+  it('still rejects genuinely oversized canonical text plus compatible opaque continuation', async () => {
+    const native = await nativeMediaPreflight()
+    const sessionId = await f.session()
+    await retainNativeHistory(sessionId, 220_000)
+    for (let turn = 0; turn < 8; turn++) {
+      await appendAgentMessage(db, { ownerId: 7, sessionId, role: 'user', status: 'complete', content: 'Canonical conversation text. '.repeat(850) })
+      await appendAgentMessage(db, { ownerId: 7, sessionId, role: 'assistant', status: 'complete', content: 'Recorded canonical reply.' })
+    }
+    const admitted = await f.submit(sessionId, 7, { generationTools: [] })
+    await f.runtime.runOnce()
+    expect(await db('agentRuns').where({ id: admitted.run.id }).first('status')).toEqual({ status: 'failed' })
+    expect(f.requests).toHaveLength(1)
+    expect(f.classifications()).toBe(0)
+    expect(native.providerCalls()).toBe(0)
   })
 
   for (const api of ['gemini-generate-content', 'stability-images'] as const) {

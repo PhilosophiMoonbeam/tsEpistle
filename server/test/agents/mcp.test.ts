@@ -171,6 +171,9 @@ describe('Wiki MCP transport', () => {
   let server: ReturnType<express.Express['listen']>
   let client: Client | undefined
   let getPage: Mock<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>
+  let getPageByPath: Mock<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>
+  let createPage: Mock<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>
+  let removePage: Mock<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>
   let movePage: ReturnType<typeof vi.fn>
   let authorizeMutation: ReturnType<typeof vi.fn>
   let listRelated: ReturnType<typeof vi.fn>
@@ -248,6 +251,8 @@ describe('Wiki MCP transport', () => {
       projection: canonicalJson(projection)
     })
     movePage = vi.fn(async () => ({}))
+    createPage = vi.fn(async () => ({}))
+    removePage = vi.fn(async () => ({}))
     activeApiKey = { apiKeyId: 9, groupId: 3, bearerToken: 'test-api-token' }
     approver = humanPrincipal()
     authorizeMutation = vi.fn(async () => {})
@@ -302,6 +307,10 @@ describe('Wiki MCP transport', () => {
         ...page
       }
     })
+    getPageByPath = vi.fn(async input => {
+      if (input.path !== publicPage.path || input.locale !== publicPage.locale || input.visibility !== publicPage.visibility) throw new errors.PageNotFound()
+      return publicPage
+    })
     const app = express()
     authenticate = vi.fn((req, _res, next) => {
       if (activeApiKey === null) {
@@ -335,11 +344,7 @@ describe('Wiki MCP transport', () => {
         listTags: vi.fn(),
         discover: vi.fn(),
         get: getPage,
-        getByPath: vi.fn(async input => {
-          if (input.path !== publicPage.path || input.locale !== publicPage.locale || input.visibility !== publicPage.visibility)
-            throw new errors.PageNotFound()
-          return publicPage
-        }),
+        getByPath: getPageByPath,
         getHistory: vi.fn(),
         getVersion: vi.fn(async input => ({
           id: 42,
@@ -360,11 +365,11 @@ describe('Wiki MCP transport', () => {
         listRecent: vi.fn(),
         listLinks: vi.fn(),
         listRelated,
-        create: vi.fn(),
+        create: createPage,
         update: vi.fn(),
         move: movePage,
         restore: vi.fn(),
-        remove: vi.fn(),
+        remove: removePage,
         authorizeMutation
       },
       resolvePrincipal: async (apiKeyId, groupId) => apiPrincipal(apiKeyId, groupId),
@@ -809,6 +814,192 @@ describe('Wiki MCP transport', () => {
     })
   })
 
+  it.each(['create', 'delete'] as const)('recovers an applied %s receipt on a fresh modern MCP client without another approval or mutation', async kind => {
+    const createdPage = { ...publicPage, id: 131, path: 'docs/created', title: 'Created', content: '# Created\n', sourceRevision: '1' }
+    let requesterReadRevoked = false
+    if (kind === 'create') {
+      let created = false
+      getPageByPath.mockImplementation(async input => {
+        if (!created || input.path !== createdPage.path || input.locale !== createdPage.locale || input.visibility !== createdPage.visibility)
+          throw new errors.PageNotFound()
+        if (requesterReadRevoked && typeof input.requester === 'object' && input.requester !== null && Reflect.get(input.requester, 'ownershipUserId') === null)
+          throw new errors.PageNotFound()
+        return createdPage
+      })
+      getPage.mockImplementation(async input => {
+        if (!created || input.id !== createdPage.id) throw new errors.PageNotFound()
+        if (requesterReadRevoked && typeof input.requester === 'object' && input.requester !== null && Reflect.get(input.requester, 'ownershipUserId') === null)
+          throw new errors.PageNotFound()
+        return createdPage
+      })
+      createPage.mockImplementation(async () => {
+        created = true
+        return createdPage
+      })
+    } else {
+      removePage.mockImplementation(async () => {
+        getPage.mockRejectedValue(new errors.PageNotFound())
+        return {}
+      })
+    }
+    const port = (server.address() as AddressInfo).port
+    const endpoint = new URL(`http://127.0.0.1:${port}/mcp`)
+    client = new Client(
+      { name: 'wiki-mcp-completed-prepare-test', version: '1.0.0' },
+      {
+        capabilities: { elicitation: { form: {} } },
+        versionNegotiation: { mode: 'auto' },
+        inputRequired: { autoFulfill: false }
+      }
+    )
+    await client.connect(
+      new StreamableHTTPClientTransport(endpoint, {
+        authProvider: { token: async () => 'test-api-token' }
+      })
+    )
+    expect(client.getProtocolEra()).toBe('modern')
+    const prepared = await client.callTool(
+      kind === 'create'
+        ? {
+            name: 'wiki_prepare_page_create',
+            arguments: {
+              requestId: '00000000-0000-4000-8000-000000000105',
+              path: createdPage.path,
+              locale: createdPage.locale,
+              title: createdPage.title,
+              description: createdPage.description,
+              content: createdPage.content,
+              contentType: createdPage.contentType,
+              tags: []
+            }
+          }
+        : {
+            name: 'wiki_prepare_page_delete',
+            arguments: {
+              requestId: '00000000-0000-4000-8000-000000000106',
+              pageId: publicPage.id,
+              sourceRevision: publicPage.sourceRevision,
+              confirmationPath: publicPage.path
+            }
+          }
+    )
+    expect(prepared.isError).not.toBe(true)
+    expect(prepared.structuredContent).toMatchObject({ status: 'pending' })
+    const proposal = prepared.structuredContent as { proposalId: string; approvalId: string }
+    const applyCall = {
+      name: 'wiki_apply_page_proposal',
+      arguments: { proposalId: proposal.proposalId, approvalId: proposal.approvalId }
+    }
+    const pending = await client.callTool(applyCall, { allowInputRequired: true })
+    expect(pending).toMatchObject({
+      resultType: 'input_required',
+      requestState: expect.stringMatching(/^v1\./),
+      inputRequests: { approval: expect.objectContaining({ method: 'elicitation/create' }) }
+    })
+    expect(await db('agentActionExecutions')).toEqual([])
+    expect(createPage).not.toHaveBeenCalled()
+    expect(removePage).not.toHaveBeenCalled()
+    await decideProposal(db, {
+      proposalId: proposal.proposalId,
+      approvalId: proposal.approvalId,
+      userId: 7,
+      decision: 'approved',
+      authorize: async () => undefined
+    })
+    const withoutContinuation = await client.callTool(applyCall, { allowInputRequired: true })
+    expect(withoutContinuation).toMatchObject({ resultType: 'input_required', requestState: expect.stringMatching(/^v1\./) })
+    expect(await db('agentActionExecutions')).toEqual([])
+    expect(createPage).not.toHaveBeenCalled()
+    expect(removePage).not.toHaveBeenCalled()
+    await client.close()
+
+    client = new Client(
+      { name: 'wiki-mcp-completed-apply-test', version: '1.0.0' },
+      {
+        capabilities: { elicitation: { form: {} } },
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
+    const acknowledge = vi.fn(async () => ({ action: 'accept' as const, content: { acknowledge: true } }))
+    client.setRequestHandler('elicitation/create', acknowledge)
+    await client.connect(
+      new StreamableHTTPClientTransport(endpoint, {
+        authProvider: { token: async () => 'test-api-token' }
+      })
+    )
+    const applied = await client.callTool(applyCall)
+    expect(applied.isError).not.toBe(true)
+    expect(applied.structuredContent).toMatchObject({
+      proposalId: proposal.proposalId,
+      status: 'applied',
+      resultHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      page: kind === 'delete' ? null : expect.objectContaining({ id: createdPage.id, path: createdPage.path, sourceRevision: '1' })
+    })
+    expect(acknowledge).toHaveBeenCalledOnce()
+    const beforeRecovery = {
+      proposals: await db('agentProposals'),
+      approvals: await db('agentApprovals'),
+      executions: await db('agentActionExecutions')
+    }
+    expect(beforeRecovery.proposals).toEqual([expect.objectContaining({ id: proposal.proposalId, status: 'applied' })])
+    expect(beforeRecovery.approvals).toEqual([expect.objectContaining({ id: proposal.approvalId, status: 'approved', approvedByUserId: 7 })])
+    expect(beforeRecovery.executions).toEqual([expect.objectContaining({ proposalId: proposal.proposalId, status: 'committed' })])
+    const authorizationCalls = authorizeMutation.mock.calls.length
+    await client.close()
+
+    client = new Client(
+      { name: 'wiki-mcp-completed-recovery-test', version: '1.0.0' },
+      {
+        capabilities: { elicitation: { form: {} } },
+        versionNegotiation: { mode: 'auto' },
+        inputRequired: { autoFulfill: false }
+      }
+    )
+    const unexpectedElicitation = vi.fn(async () => ({ action: 'cancel' as const }))
+    client.setRequestHandler('elicitation/create', unexpectedElicitation)
+    await client.connect(
+      new StreamableHTTPClientTransport(endpoint, {
+        authProvider: { token: async () => 'test-api-token' }
+      })
+    )
+    expect(client.getProtocolEra()).toBe('modern')
+    const recovered = await client.callTool(applyCall, { allowInputRequired: true })
+    expect(recovered.isError).not.toBe(true)
+    expect(recovered.structuredContent).toEqual(applied.structuredContent)
+    expect(Reflect.get(recovered, 'resultType')).not.toBe('input_required')
+    expect(unexpectedElicitation).not.toHaveBeenCalled()
+    if (kind === 'create') {
+      requesterReadRevoked = true
+      const offered = await client.listTools()
+      expect(offered.tools.map(tool => tool.name)).toContain('wiki_apply_page_proposal')
+      const denied = await client.callTool(applyCall, { allowInputRequired: true })
+      expect(denied.isError).toBe(true)
+      expect(denied.structuredContent).toBeUndefined()
+      const serialized = JSON.stringify(denied)
+      for (const secret of [createdPage.path, createdPage.title, createdPage.description, createdPage.content]) {
+        if (secret.length > 0) expect(serialized).not.toContain(secret)
+      }
+      // The human still has access: only the actual API-key reader was revoked.
+      await expect(
+        getPageByPath({ path: createdPage.path, locale: createdPage.locale, visibility: createdPage.visibility, requester: humanPrincipal() })
+      ).resolves.toEqual(createdPage)
+      requesterReadRevoked = false
+      const restored = await client.callTool(applyCall, { allowInputRequired: true })
+      expect(restored.isError).not.toBe(true)
+      expect(restored.structuredContent).toEqual(applied.structuredContent)
+      expect(Reflect.get(restored, 'resultType')).not.toBe('input_required')
+    }
+    expect(unexpectedElicitation).not.toHaveBeenCalled()
+    expect(kind === 'create' ? createPage : removePage).toHaveBeenCalledOnce()
+    expect(kind === 'create' ? removePage : createPage).not.toHaveBeenCalled()
+    expect(authorizeMutation).toHaveBeenCalledTimes(authorizationCalls)
+    expect({
+      proposals: await db('agentProposals'),
+      approvals: await db('agentApprovals'),
+      executions: await db('agentActionExecutions')
+    }).toEqual(beforeRecovery)
+  })
+
   it('keeps patch snapshots and proposals bound to their exact API key even in the same group', async () => {
     const port = (server.address() as AddressInfo).port
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
@@ -989,10 +1180,11 @@ describe('Wiki MCP transport', () => {
     client = new Client(
       { name: 'wiki-mcp-revoked-approver-test', version: '1.0.0' },
       {
-        capabilities: {},
+        capabilities: { elicitation: { form: {} } },
         versionNegotiation: { mode: 'auto' }
       }
     )
+    client.setRequestHandler('elicitation/create', async () => ({ action: 'accept', content: { acknowledge: true } }))
     await client.connect(transport)
     const prepared = await client.callTool({
       name: 'wiki_prepare_page_move',

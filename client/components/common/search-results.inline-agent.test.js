@@ -13,26 +13,26 @@ import { currentOfflineReadingEpoch, currentOfflineReadingHandle } from '../../h
 import { readPrivateCorpus } from '../../helpers/offline-crypto.ts'
 import { mergeOfflineSearchCorpora, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync } from '../../helpers/offline-search.ts'
 
-const compileSearchMethods = (source, names, dependencies) => {
+const compileSearchMethods = (source, names, dependencies, section = 'methods') => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
   if (!script) throw new Error('Search component script was not found.')
 
   const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   let methods
   const visit = node => {
-    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === 'methods' && ts.isObjectLiteralExpression(node.initializer)) {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === section && ts.isObjectLiteralExpression(node.initializer)) {
       methods = node.initializer
     }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
-  if (!methods) throw new Error('Search component methods were not found.')
+  if (!methods) throw new Error(`Search component ${section} were not found.`)
 
-  const selected = new Set(names)
-  const declarations = methods.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
-  if (declarations.length !== selected.size) throw new Error('A requested search method was not found.')
+  const selected = names === null ? null : new Set(names)
+  const declarations = methods.properties.filter(node => ts.isMethodDeclaration(node) && (selected === null || selected.has(node.name.getText(sourceFile))))
+  if (selected !== null && declarations.length !== selected.size) throw new Error('A requested search method was not found.')
 
-  const factorySource = `(searchPages, getErrorMessage, wikiStore, useAgentsStore, isAgentSessionId, emptySearchResponse, retryServerConnection, openOfflineStorage, isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync, OFFLINE_SEARCH_RESULT_LIMIT, currentOfflineReadingHandle, currentOfflineReadingEpoch, mergeOfflineSearchCorpora, readPrivateCorpus, toOfflinePrivateSearchDocument) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
+  const factorySource = `(searchPages, getErrorMessage, wikiStore, useAgentsStore, isAgentSessionId, emptySearchResponse, retryServerConnection, openOfflineStorage, isOfflineSnapshotRecord, isOfflineSnapshotExpired, toOfflineSearchDocument, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync, OFFLINE_SEARCH_RESULT_LIMIT, currentOfflineReadingHandle, currentOfflineReadingEpoch, mergeOfflineSearchCorpora, readPrivateCorpus, toOfflinePrivateSearchDocument, siteConfig) => ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`
   const compiled = ts.transpileModule(`const factory = ${factorySource}`, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -59,7 +59,8 @@ const compileSearchMethods = (source, names, dependencies) => {
     dependencies.currentOfflineReadingEpoch ?? currentOfflineReadingEpoch,
     dependencies.mergeOfflineSearchCorpora ?? mergeOfflineSearchCorpora,
     dependencies.readPrivateCorpus ?? readPrivateCorpus,
-    dependencies.toOfflinePrivateSearchDocument
+    dependencies.toOfflinePrivateSearchDocument,
+    dependencies.siteConfig
   )
 }
 
@@ -574,6 +575,60 @@ describe('inline Ask mode contract', () => {
     } finally {
       scheduler.restore()
     }
+  })
+
+  test('retains an authorized active Agent offline without admitting new work, and tears down on an owner change', () => {
+    const dependencies = {
+      wikiStore: { user: { permissions: ['use:agents'] } },
+      siteConfig: { agentsEnabled: true }
+    }
+    const computed = compileSearchMethods(search, null, dependencies, 'computed')
+    const watch = compileSearchMethods(search, ['offlineSearchActive', 'agentOwnerId'], dependencies, 'watch')
+    const methods = compileSearchMethods(search, ['selectSearchScope'], dependencies)
+    const state = {
+      authAuthorityReady: true,
+      serverCapabilitiesAvailable: true,
+      searchMode: 'ask',
+      searchScope: 'wiki',
+      searchIsFocused: true,
+      searchRestrictLocale: false,
+      searchRestrictPath: false,
+      agentResumeSessionId: 'owned-conversation',
+      previewSelector: { kind: 'page', id: 128 }
+    }
+    for (const [name, getter] of Object.entries(computed)) {
+      if (!(name in state)) Object.defineProperty(state, name, { get: () => getter.call(state) })
+    }
+    expect(state.isAgentOpen).toBe(true)
+    expect(state.canAsk).toBe(true)
+
+    state.serverCapabilitiesAvailable = false
+    watch.offlineSearchActive.call(state, true)
+    expect(state.canAsk).toBe(false)
+    expect(state.isAgentOpen).toBe(true)
+    expect(state.searchMode).toBe('ask')
+    expect(state.previewSelector).toBeNull()
+
+    state.serverCapabilitiesAvailable = true
+    expect(state.isAgentOpen).toBe(true)
+    expect(state.canAsk).toBe(true)
+    state.authAuthorityReady = false
+    expect(state.isAgentOpen).toBe(false)
+    watch.agentOwnerId.call(state, 42, 41)
+    expect(state.agentResumeSessionId).toBeNull()
+    expect(state.searchMode).toBe('search')
+    expect(state.searchIsFocused).toBe(false)
+    state.authAuthorityReady = true
+    expect(state.isAgentOpen).toBe(false)
+
+    state.searchMode = 'ask'
+    methods.selectSearchScope.call(state, 'downloaded')
+    expect(state.searchMode).toBe('search')
+    expect(state.isAgentOpen).toBe(false)
+    dependencies.wikiStore.user.permissions = []
+    state.searchMode = 'ask'
+    expect(state.isAgentOpen).toBe(false)
+    expect(state.canAsk).toBe(false)
   })
 
   test('Ask about a query prepares scoped editable context without submitting', async () => {

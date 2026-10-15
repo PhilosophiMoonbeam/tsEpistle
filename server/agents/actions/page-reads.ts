@@ -1404,19 +1404,11 @@ export const createPageEvidenceValidator = (
         if (pageValue === null) return !signal.aborted
         const candidate = validationRecord(pageValue)
         if (!candidate || typeof candidate.id !== 'number') return false
-        const current = await readCurrent(candidate.id, false)
-        if (!current) return false
-        const expected = {
-          id: current.page.id,
-          locale: current.page.locale,
-          path: current.page.path,
-          title: current.page.title,
-          description: current.page.description,
-          contentType: current.page.contentType,
-          sourceRevision: current.page.sourceRevision,
-          knowledge: null
-        }
-        return hasCanonicalFields(candidate, expected, Object.keys(expected)) && !signal.aborted
+        // The session authenticates the immutable operation/result hash. This
+        // boundary grants only current requester visibility of its result page,
+        // not source support or a claim that the old receipt is the live revision.
+        // Later approved changes do not undo an earlier committed operation.
+        return (await readCurrent(candidate.id, false)) !== null && !signal.aborted
       }
 
       if (actionName === 'pages.search' || actionName === 'pages.discover' || actionName === 'pages.related') {
