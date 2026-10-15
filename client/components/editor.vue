@@ -258,14 +258,14 @@
       )
       component(v-if='activeModal', :is='activeModal')
       v-dialog(
-        v-if='imagePropertiesRequest'
-        :model-value='true'
+        :model-value='imagePropertiesRequest !== null'
         max-width='720'
         scrollable
         aria-labelledby='editor-image-properties-title'
         @update:model-value='closeImageProperties'
+        @after-leave='restoreImagePropertiesFocus'
       )
-        v-card
+        v-card(v-if='imagePropertiesRequest')
           v-toolbar(flat)
             v-toolbar-title#editor-image-properties-title Image properties
             v-spacer
@@ -680,6 +680,7 @@ export default defineComponent({
       imagePropertiesGeneration: 0,
       imagePropertiesUnsubscribe: null as (() => void) | null,
       imagePropertiesAbortCleanup: null as (() => void) | null,
+      imagePropertiesReturnFocus: null as { target: HTMLElement; owner: string; generation: number } | null,
       isSaving: false,
       editorAdapter: null as EditorAdapter | null,
       editorAdapterUnsubscribe: null as (() => void) | null,
@@ -1095,6 +1096,7 @@ export default defineComponent({
 
   beforeUnmount() {
     this.closeImageProperties()
+    this.imagePropertiesReturnFocus = null
     this.imagePropertiesUnsubscribe?.()
     this.imagePropertiesUnsubscribe = null
     this.lifecycleGeneration += 1
@@ -1124,11 +1126,32 @@ export default defineComponent({
       this.imagePropertiesAbortCleanup = null
       this.imagePropertiesRequest = null
     },
+    restoreImagePropertiesFocus() {
+      if (this.imagePropertiesRequest) return
+      const captured = this.imagePropertiesReturnFocus
+      this.imagePropertiesReturnFocus = null
+      if (!captured || captured.owner !== this.imagePropertiesOwnerKey ||
+          captured.generation !== this.imagePropertiesGeneration) return
+      const target = captured.target
+      if (!target.isConnected || target.matches(':disabled, [readonly], [contenteditable="false"]') ||
+          target.closest('[inert], [aria-hidden="true"], .v-overlay:not(.v-overlay--active)')) return
+      const document = target.ownerDocument
+      const focusedOverlay = document.activeElement?.closest('.v-overlay--active')
+      if (focusedOverlay && !focusedOverlay.contains(target)) return
+      for (const dialog of document.querySelectorAll('.v-dialog.v-overlay--active')) {
+        if (!dialog.contains(target)) return
+      }
+      target.focus({ preventScroll: true })
+    },
     openImageProperties(request: EditorImagePropertiesRequest) {
       this.closeImageProperties()
       if (request.signal.aborted) return
       const owner = this.imagePropertiesOwnerKey
       const generation = ++this.imagePropertiesGeneration
+      const target = document.activeElement
+      this.imagePropertiesReturnFocus = target instanceof HTMLElement
+        ? { target, owner, generation }
+        : null
       const close = () => {
         if (this.imagePropertiesGeneration === generation) this.closeImageProperties()
       }

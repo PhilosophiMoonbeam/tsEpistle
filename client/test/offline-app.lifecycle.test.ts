@@ -434,9 +434,15 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
   }
   const library = libraryComponent(modules)
   modules['./offline-library.vue'] = { default: library }
-  const mount = async (settings = false, showSettings = true) => {
+  const mount = async (settings = false, showSettings = true, storagePending = false) => {
     const notices: string[] = []
-    const props = Vue.reactive({ storage, storageState: 'available', showSettings, refreshToken: 0, onError: (message: string) => notices.push(message) })
+    const props = Vue.reactive({
+      storage: storagePending ? null : storage,
+      storageState: storagePending ? 'checking' : 'available',
+      showSettings,
+      refreshToken: 0,
+      onError: (message: string) => notices.push(message)
+    })
     app = Vue.createApp(settings ? settingsComponent(modules) : Vue.defineComponent({ setup: () => () => Vue.h(library, props) }))
     app.provide<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY, {
       reconcile: async () => createOfflineSyncUnavailableResult('No server connection in lifecycle fixture.')
@@ -915,13 +921,37 @@ describe('saved-page reader and library settings lifecycle', () => {
     expect(errors).toEqual([])
   })
 
-  it('still reports an unsaved reader route in the standalone offline fallback', async () => {
+  it.each([false, true])('still reports an unsaved reader route after initial storage availability (pending: %s)', async storagePending => {
     const fixture = await offlineFixture()
-    setLocation('/en/unsaved-reader')
-    const { host, notices, errors } = await fixture.mount(false, false)
+    setLocation('/unsaved-reader')
+    const { host, props, notices, errors } = await fixture.mount(false, false, storagePending)
+    if (storagePending) {
+      expect(notices).toEqual([])
+      expect(browserWindow.location.pathname).toBe('/unsaved-reader')
+      props.storage = fixture.storage
+      props.storageState = 'available'
+      await fixture.settle()
+    }
+    expect(browserWindow.location.pathname).toBe('/unsaved-reader')
     expect(host.querySelector('.offline-reader')).toBeNull()
     expect(host.querySelectorAll('.page-card')).toHaveLength(2)
     expect(notices).toEqual(['common:offlineLibrary.pageHasNotBeen'])
+    expect(errors).toEqual([])
+  })
+
+  it('clears an initial requested route across a private identity boundary before storage opens', async () => {
+    const fixture = await offlineFixture({ privateVault: true })
+    setLocation('/unsaved-reader')
+    const { host, props, notices, errors } = await fixture.mount(false, false, true)
+    fixture.state.epoch += 1
+    browserWindow.dispatchEvent(new browserWindow.Event('test-private-reading-change'))
+    await fixture.settle()
+    expect(browserWindow.location.pathname + browserWindow.location.search).toBe('/?saved=1')
+    props.storage = fixture.storage
+    props.storageState = 'available'
+    await fixture.settle()
+    expect(host.querySelector('.offline-reader')).toBeNull()
+    expect(notices).toEqual([])
     expect(errors).toEqual([])
   })
 
