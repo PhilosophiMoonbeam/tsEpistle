@@ -12,6 +12,10 @@ import { normalizeAvailableEditors } from '../../../shared/page-editors.ts'
 import { normalizePageFeatures } from '../../../shared/page-features.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
+import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
+import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
@@ -27,7 +31,6 @@ const markdownSource = readFileSync(markdownPath, 'utf8')
 const markdownSfc = parse(markdownSource, { filename: markdownPath })
 const markdownTemplate = markdownSfc.descriptor.template?.content ?? ''
 const markdownStyle = markdownSfc.descriptor.styles.map(style => style.content).join('\n')
-
 
 // Vuetify captures DOM globals at evaluation, after the shared browser harness installs them.
 const Vue = await import('vue')
@@ -294,6 +297,8 @@ type ShellBehavior = {
     offlineDraftMutationBlocked: (this: ShellContext) => boolean
     offlineMutationBlocked: (this: ShellContext) => boolean
     offlineDraftStatusText: (this: ShellContext) => string
+    sourceEditorReady: (this: { currentEditor: string; warmAuthenticatedActor: boolean }) => boolean
+    warmAuthenticatedActor: (this: { isAuthenticated: boolean; accountId: number }) => boolean
   }
   methods: Record<string, (this: ShellContext, ...args: never[]) => unknown>
 }
@@ -456,10 +461,13 @@ const createTestWindow = (): TestWindow => {
       this.scheduledTimers.push({ id, delay })
       return id
     },
-    fetch: (() => Promise.resolve(new Response(JSON.stringify({ protected: false }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    }))) as unknown as typeof fetch
+    fetch: (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ protected: false }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )) as unknown as typeof fetch
   }
 }
 const createOfflineStorage = (
@@ -808,6 +816,113 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
+  test('binds each source controller only after the cold actor boundary is ready and retains owner fencing', async () => {
+    const invocation = shellMarkup('component.editor-active-editor').toString()
+    const compiled = compileTemplate({
+      source: invocation,
+      filename: shellPath,
+      id: 'source-editor-readiness',
+      compilerOptions: { mode: 'function' }
+    })
+    if (compiled.errors.length) throw compiled.errors[0]
+    const render = new Function('Vue', compiled.code)(Vue)
+    for (const [editor, mode, expectedCode] of [
+      ['editorMarkdown', 'markdown', '```\nselected <>&\n```'],
+      ['editorAsciidoc', 'asciidoc', '[source]\n----\nselected <>&\n----'],
+      ['editorCode', 'html', '<pre><code>selected &lt;&gt;&amp;</code></pre>']
+    ] as const) {
+      const store = Vue.reactive(createStore())
+      store.editor.editor = editor
+      store.user = { authenticated: false, id: 0 }
+      store.authRefreshPending = true
+      store.authRefreshSettled = false
+      store.offlineIdentityReady = false
+      const behavior = loadShellBehavior(store, createTestWindow())
+      const controllers: Array<{
+        view: EditorView
+        source: { insertCodeBlock: () => boolean; insertTable: () => boolean }
+        image: { insert: (payload: { path: string; text?: string }) => boolean }
+      }> = []
+      const Source = Vue.defineComponent({
+        setup() {
+          const host = Vue.ref<HTMLElement>()
+          Vue.onMounted(() => {
+            const owner = () => `${store.user.id}:${store.offlineIdentityEpoch}:${store.page.id}`
+            const source = createSourceAuthoring(mode, () => store.user.authenticated, owner)
+            const image = createSourceImageAuthoring(mode, () => store.user.authenticated, owner)
+            const view = new EditorView({
+              parent: host.value,
+              state: EditorState.create({
+                doc: 'selected <>&',
+                selection: { anchor: 0, head: 12 },
+                extensions: [source.extension, image.extension]
+              })
+            })
+            controllers.push({ view, source, image })
+            Vue.onUnmounted(() => view.destroy())
+          })
+          return () => Vue.h('div', { ref: host })
+        }
+      })
+      const host = document.createElement('div')
+      document.body.append(host)
+      const app = Vue.createApp(
+        Vue.defineComponent({
+          components: { [editor]: Source },
+          setup() {
+            return {
+              currentEditor: Vue.computed(() => store.editor.editor),
+              sourceEditorReady: Vue.computed(() =>
+                behavior.computed.sourceEditorReady.call({
+                  currentEditor: store.editor.editor,
+                  warmAuthenticatedActor: behavior.computed.warmAuthenticatedActor.call({
+                    isAuthenticated: store.user.authenticated,
+                    accountId: store.user.id
+                  })
+                })
+              ),
+              editorInstanceKey: 0,
+              save: () => undefined,
+              wikiLinkOptions: undefined,
+              handleCollaborationState: () => undefined,
+              handleEditorAdapter: () => undefined,
+              handleEditorAdapterClear: () => undefined
+            }
+          },
+          render
+        })
+      )
+      app.mount(host)
+      try {
+        expect(controllers).toHaveLength(0)
+        store.user = { authenticated: true, id: 42 }
+        await Vue.nextTick()
+        expect(controllers).toHaveLength(0)
+        store.offlineIdentityReady = true
+        store.authRefreshPending = false
+        store.authRefreshSettled = true
+        await Vue.nextTick()
+        expect(controllers).toHaveLength(1)
+        const { source, image, view } = controllers[0]
+        expect(source.insertCodeBlock()).toBe(true)
+        expect(view.state.doc.toString()).toBe(expectedCode)
+        expect(image.insert({ path: '/owned.png', text: 'owned' })).toBe(true)
+        store.authRefreshPending = true
+        store.authRefreshSettled = false
+        await Vue.nextTick()
+        expect(controllers).toHaveLength(1)
+        store.offlineIdentityEpoch++
+        const before = view.state.doc.toString()
+        expect(source.insertTable()).toBe(false)
+        expect(image.insert({ path: '/other.png' })).toBe(false)
+        expect(view.state.doc.toString()).toBe(before)
+      } finally {
+        app.unmount()
+        host.remove()
+      }
+    }
+  })
+
   test('keeps the active editor in the bounded shell surface after notices', () => {
     const template = shellSfc.descriptor.template?.content ?? ''
     const surfaceStart = template.indexOf('.editor-main-surface')
@@ -1159,7 +1274,10 @@ describe('modern editor shell interaction contract', () => {
     app.component('VCardChin', { render: cardRender })
     app.component('EditorModalUnsaved', { ...modalOptions, render: modalRender })
     app.mount(host)
-    modalUnmounts.push(() => { app.unmount(); host.remove() })
+    modalUnmounts.push(() => {
+      app.unmount()
+      host.remove()
+    })
     await Vue.nextTick()
     const dialog = document.querySelector('[role="alertdialog"]')
     expect(dialog?.querySelector('[role="alert"]')?.textContent?.trim()).toBe(context.discardError)
@@ -1178,14 +1296,13 @@ describe('modern editor shell interaction contract', () => {
     app.component('VCardChin', { render: cardRender })
     app.component('EditorModalUnsaved', { ...modalOptions, render: modalRender })
     app.mount(host)
-    modalUnmounts.push(() => { app.unmount(); host.remove() })
+    modalUnmounts.push(() => {
+      app.unmount()
+      host.remove()
+    })
     await Vue.nextTick()
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button'))
-    expect(buttons.map(button => button.textContent?.trim())).toEqual([
-      'Discard Changes',
-      'Cancel',
-      'Save and close'
-    ])
+    expect(buttons.map(button => button.textContent?.trim())).toEqual(['Discard Changes', 'Cancel', 'Save and close'])
     expect(buttons[0]?.classList.contains('v-btn--loading')).toBe(true)
     expect(buttons[2]?.classList.contains('v-btn--loading')).toBe(false)
     expect(buttons.every(button => button.disabled)).toBe(true)
@@ -1292,10 +1409,13 @@ describe('modern editor shell interaction contract', () => {
         store.page.isPublished = false
       },
       (_store, testWindow) => {
-        testWindow.fetch = (() => Promise.resolve(new Response(JSON.stringify({ protected: true }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        }))) as unknown as typeof fetch
+        testWindow.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ protected: true }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            })
+          )) as unknown as typeof fetch
       },
       (_store, testWindow) => {
         testWindow.fetch = (() => Promise.resolve(new Response(JSON.stringify({})))) as unknown as typeof fetch
@@ -1384,8 +1504,12 @@ describe('modern editor shell interaction contract', () => {
     let visibilityCalls = 0
     let started!: () => void
     let release!: () => void
-    const requestStarted = new Promise<void>(resolve => { started = resolve })
-    const requestRelease = new Promise<void>(resolve => { release = resolve })
+    const requestStarted = new Promise<void>(resolve => {
+      started = resolve
+    })
+    const requestRelease = new Promise<void>(resolve => {
+      release = resolve
+    })
     const context = createShellHarness(store, testWindow, {
       updatePage: async (_fetcher, _id, input, sourceRevision, generation) => {
         updateInput = input
@@ -1483,8 +1607,12 @@ describe('modern editor shell interaction contract', () => {
     let createdInput: PageInput | undefined
     let started!: () => void
     let release!: () => void
-    const requestStarted = new Promise<void>(resolve => { started = resolve })
-    const requestRelease = new Promise<void>(resolve => { release = resolve })
+    const requestStarted = new Promise<void>(resolve => {
+      started = resolve
+    })
+    const requestRelease = new Promise<void>(resolve => {
+      release = resolve
+    })
     const context = createShellHarness(store, testWindow, {
       createPage: async (_fetcher, input) => {
         createdInput = input
@@ -1596,8 +1724,12 @@ describe('modern editor shell interaction contract', () => {
         submittedOkf.projection = { state: 'current', value: { summary: 'authoritative saved projection' } }
         let started!: () => void
         let release!: () => void
-        const pendingStarted = new Promise<void>(resolve => { started = resolve })
-        const pendingRelease = new Promise<void>(resolve => { release = resolve })
+        const pendingStarted = new Promise<void>(resolve => {
+          started = resolve
+        })
+        const pendingRelease = new Promise<void>(resolve => {
+          release = resolve
+        })
         const inputs: PageInput[] = []
         let refreshCalls = 0
         const changesKnowledge = lateEdit !== 'searchability'
@@ -1662,8 +1794,12 @@ describe('modern editor shell interaction contract', () => {
     const persistedOkf = _.cloneDeep(store.page.okf)
     let started!: () => void
     let release!: () => void
-    const createStarted = new Promise<void>(resolve => { started = resolve })
-    const createRelease = new Promise<void>(resolve => { release = resolve })
+    const createStarted = new Promise<void>(resolve => {
+      started = resolve
+    })
+    const createRelease = new Promise<void>(resolve => {
+      release = resolve
+    })
     const createdInputs: PageInput[] = []
     const updatedInputs: Array<{ id: number; content: string; sourceRevision: string }> = []
     const conflictIds: number[] = []
@@ -1723,12 +1859,18 @@ describe('modern editor shell interaction contract', () => {
       const store = createStore()
       const testWindow = createTestWindow()
       let release!: () => void
-      const requestRelease = new Promise<void>(resolve => { release = resolve })
+      const requestRelease = new Promise<void>(resolve => {
+        release = resolve
+      })
       const oldOkf = _.cloneDeep(store.page.okf)
       const context = createShellHarness(store, testWindow, {
         fetchPage: async () => {
           await requestRelease
-          return { okf: { ...oldOkf, authority: { ...oldOkf.authority, metadata: { type: 'Stale response' } } }, sourceRevision: 'stale-revision', isSearchable: false }
+          return {
+            okf: { ...oldOkf, authority: { ...oldOkf.authority, metadata: { type: 'Stale response' } } },
+            sourceRevision: 'stale-revision',
+            isSearchable: false
+          }
         }
       })
       const refresh = context.refreshOkfAfterSave(context.captureSaveSnapshot())
@@ -1752,7 +1894,9 @@ describe('modern editor shell interaction contract', () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let release!: (conflict: boolean) => void
-    const pendingConflict = new Promise<boolean>(resolve => { release = resolve })
+    const pendingConflict = new Promise<boolean>(resolve => {
+      release = resolve
+    })
     const context = createShellHarness(store, testWindow, {
       checkPageConflict: async () => pendingConflict
     })

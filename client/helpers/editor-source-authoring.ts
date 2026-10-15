@@ -306,30 +306,32 @@ export async function completeSourceAuthoring(
   return { from: line.from + tag.index, options: [snippetCompletion(`<kbd>\${Key}</kbd>`, { label: '<kbd>', type: 'keyword', detail: 'Keyboard key' })] }
 }
 
-export function createSourceAuthoring(
-  mode: SourceImageMode,
-  canEdit: () => boolean,
-  owner: () => string
-): {
+export interface SourceAuthoring {
   extension: Extension
   complete: (context: CompletionContext) => Promise<CompletionResult | null>
   insertCodeBlock: () => boolean
   insertTable: () => boolean
+  insertExtension: (content: string) => boolean
   destroy: () => void
-} {
+}
+
+export function createSourceAuthoring(mode: SourceImageMode, canEdit: () => boolean, owner: () => string): SourceAuthoring {
   let view: EditorView | null = null
   const initialOwner = owner()
   let abort = new AbortController()
   const active = () =>
     !abort.signal.aborted && owner() === initialOwner && canEdit() && !view?.compositionStarted && (!view || view.state.facet(EditorView.editable))
-  const insert = (kind: 'code' | 'table'): boolean => {
+  const insert = (kind: 'code' | 'table' | 'block', serialized = ''): boolean => {
     if (!view || !active() || view.compositionStarted || view.state.readOnly || !view.state.facet(EditorView.editable)) return false
     const state = view.state
     const transaction = state.changeByRange(range => {
       const selected = state.sliceDoc(range.from, range.to)
       let content: string
       let cursor: number
-      if (kind === 'code') {
+      if (kind === 'block') {
+        content = serialized
+        cursor = content.length
+      } else if (kind === 'code') {
         if (mode === 'markdown') {
           let length = 3
           for (const run of selected.matchAll(/`+/g)) length = Math.max(length, run[0].length + 1)
@@ -356,10 +358,10 @@ export function createSourceAuthoring(
         cursor = content.indexOf('Header')
       }
       const before = range.from > 0 && state.sliceDoc(range.from - 1, range.from) !== '\n' ? '\n' : ''
-      const after = range.to < state.doc.length && state.sliceDoc(range.to, range.to + 1) !== '\n' ? '\n' : ''
+      const after = !content.endsWith('\n') && range.to < state.doc.length && state.sliceDoc(range.to, range.to + 1) !== '\n' ? '\n' : ''
       return {
         changes: { from: range.from, to: range.to, insert: before + content + after },
-        range: EditorSelection.cursor(range.from + before.length + cursor)
+        range: EditorSelection.cursor(range.from + before.length + cursor + (kind === 'block' ? after.length : 0))
       }
     })
     view.dispatch(transaction, { scrollIntoView: true, userEvent: `input.${kind}` })
@@ -422,6 +424,7 @@ export function createSourceAuthoring(
     complete,
     insertCodeBlock: () => insert('code'),
     insertTable: () => insert('table'),
+    insertExtension: content => insert('block', content),
     destroy() {
       view = null
       abort.abort()

@@ -298,6 +298,39 @@ describe('offline snapshot admission operations', () => {
     expect(error).toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
   })
 
+  it('keeps only bounded code language hints and exact source, not online token markup or arbitrary classes', async () => {
+    page.render = [
+      '<p class="language-javascript arbitrary">Example</p>',
+      '<pre class="prismjs line-numbers language-JS arbitrary"><code class="language-javascript arbitrary">',
+      '<span class="token keyword arbitrary">const</span> message = <span class="token string">"&lt;script&gt;literal&lt;/script&gt;"</span>;\n',
+      '</code></pre>',
+      '<pre><code class="language-not-bundled">readable unknown grammar</code></pre>',
+      '<pre><code class="language-' + 'x'.repeat(33) + '">readable invalid hint</code></pre>'
+    ].join('')
+
+    const snapshot = await operations.getOfflineSnapshot({ id: 7 })
+
+    expect(snapshot.content.html).toBe(
+      '<p>Example</p><pre class="language-js"><code class="language-javascript">const message = "&lt;script&gt;literal&lt;/script&gt;";\n</code></pre>' +
+        '<pre><code class="language-not-bundled">readable unknown grammar</code></pre>' +
+        '<pre><code>readable invalid hint</code></pre>'
+    )
+    expect(snapshot.searchText).toContain('const message = "<script>literal</script>";')
+  })
+
+  it.each([
+    '<pre><code class="language-javascript" onclick="alert(1)">const unsafe = 1;</code></pre>',
+    '<pre><code class="language-javascript" style="background:url(https://remote.test/image)">const unsafe = 1;</code></pre>',
+    '<pre><code class="language-javascript"><span class="token keyword" onmouseover="alert(1)">const</span></code></pre>',
+    '<pre><code class="language-javascript"><script>alert(1)</script></code></pre>',
+    '<pre><code class="language-javascript"><svg onload="alert(1)"></svg></code></pre>',
+    '<pre><code class="language-javascript" data-language="javascript">const unsafe = 1;</code></pre>'
+  ])('rejects active markup even alongside an allowed language hint: %s', async render => {
+    page.render = render
+
+    await expect(operations.getOfflineSnapshot({ id: 7 })).rejects.toMatchObject({ status: 404, code: 'OFFLINE_PAGE_INELIGIBLE' })
+  })
+
   it('resolves relative links from the configured page URL and canonicalizes safe navigation', async () => {
     page.render = [
       '<p>Links</p>',

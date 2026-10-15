@@ -1,3 +1,4 @@
+import type { TokenStream } from 'prismjs'
 import {
   OfflineHtmlFragmentV1Schema,
   OfflinePageSnapshotV1Schema,
@@ -8,6 +9,68 @@ import {
 
 const XHTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
 const MAX_RENDER_NODES = 10_000
+// Highlighting is optional presentation: larger or exhausted blocks stay readable
+// plain text. Only the default, locally bundled grammars are eligible.
+const MAX_HIGHLIGHT_BLOCK_CHARACTERS = 8_192
+const MAX_HIGHLIGHT_CHARACTERS = 32_768
+const MAX_HIGHLIGHT_NODES = 2_000
+const BUNDLED_LANGUAGES: Record<string, true> = {
+  markup: true,
+  html: true,
+  xml: true,
+  svg: true,
+  mathml: true,
+  ssml: true,
+  atom: true,
+  rss: true,
+  css: true,
+  clike: true,
+  javascript: true,
+  js: true
+}
+const TOKEN_CLASSES: Record<string, true> = {
+  comment: true,
+  prolog: true,
+  doctype: true,
+  cdata: true,
+  punctuation: true,
+  property: true,
+  tag: true,
+  boolean: true,
+  number: true,
+  constant: true,
+  symbol: true,
+  selector: true,
+  'attr-name': true,
+  string: true,
+  char: true,
+  builtin: true,
+  operator: true,
+  entity: true,
+  url: true,
+  atrule: true,
+  'attr-value': true,
+  keyword: true,
+  function: true,
+  'class-name': true,
+  regex: true,
+  important: true,
+  variable: true,
+  bold: true,
+  italic: true,
+  namespace: true,
+  parameter: true,
+  'template-string': true,
+  'template-punctuation': true,
+  interpolation: true,
+  'interpolation-punctuation': true,
+  'regex-source': true,
+  'regex-delimiter': true,
+  'regex-flags': true
+}
+
+const codeLanguageClass = (element: Element): string | undefined =>
+  [...element.classList].find(value => /^language-[a-z0-9][a-z0-9_+.-]{0,31}$/iu.test(value))?.toLowerCase()
 
 const ALLOWED_ELEMENTS: Record<string, true> = {
   p: true,
@@ -245,10 +308,64 @@ const copyNode = (source: Node, context: CopyContext): Node[] => {
       context.linkCount += 1
     }
   }
+  // No online token spans or arbitrary source classes are trusted. This sole
+  // passive hint is enough to regenerate reviewed local tokens after copying.
+  if (tagName === 'pre' || tagName === 'code') {
+    const languageClass = codeLanguageClass(element)
+    if (languageClass) target.className = languageClass
+  }
   for (const child of copyChildren(element, context)) target.appendChild(child)
-  return tagName === 'pre' || tagName === 'table'
-    ? [makeOverflowRegion(tagName, target, context)]
-    : [target]
+  return tagName === 'pre' || tagName === 'table' ? [makeOverflowRegion(tagName, target, context)] : [target]
+}
+
+const highlightCodeBlocks = async (fragment: DocumentFragment, context: CopyContext): Promise<void> => {
+  const blocks = [...fragment.querySelectorAll('pre > code')].filter(code => {
+    const languageClass = codeLanguageClass(code) ?? codeLanguageClass(code.parentElement!)
+    return languageClass && Object.hasOwn(BUNDLED_LANGUAGES, languageClass.slice('language-'.length))
+  })
+  if (!blocks.length) return
+  // Match the existing local preview import: no autoscan, plugins, autoloader,
+  // worker, HTML stringification hooks or remote grammar requests.
+  // A static import cannot set Prism's manual flag before its initialization.
+  if (typeof window !== 'undefined' && !Reflect.get(window, 'Prism')) Reflect.set(window, 'Prism', { manual: true })
+  const { default: Prism } = await import('prismjs')
+  let remainingCharacters = MAX_HIGHLIGHT_CHARACTERS
+  let remainingNodes = Math.min(MAX_HIGHLIGHT_NODES, MAX_RENDER_NODES - context.nodeCount)
+  for (const code of blocks) {
+    const languageClass = codeLanguageClass(code) ?? codeLanguageClass(code.parentElement!)!
+    const language = languageClass.slice('language-'.length)
+    const grammar = Prism.languages[language]
+    const source = code.textContent ?? ''
+    if (!grammar || !source || source.length > MAX_HIGHLIGHT_BLOCK_CHARACTERS || source.length > remainingCharacters || remainingNodes <= 0) continue
+    remainingCharacters -= source.length
+    const highlighted = document.createDocumentFragment()
+    let nodeCount = 0
+    const appendTokens = (parent: Node, tokens: TokenStream, depth: number): boolean => {
+      if (depth > 32) return false
+      if (Array.isArray(tokens)) {
+        for (const token of tokens) if (!appendTokens(parent, token, depth + 1)) return false
+        return true
+      }
+      nodeCount += 1
+      if (nodeCount > remainingNodes) return false
+      if (typeof tokens === 'string') parent.appendChild(document.createTextNode(tokens))
+      else {
+        const span = document.createElement('span')
+        span.classList.add('token')
+        const aliases = typeof tokens.alias === 'string' ? [tokens.alias] : (tokens.alias ?? [])
+        for (const name of [tokens.type, ...aliases]) if (Object.hasOwn(TOKEN_CLASSES, name)) span.classList.add(name)
+        if (!appendTokens(span, tokens.content, depth + 1)) return false
+        parent.appendChild(span)
+      }
+      return true
+    }
+    if (!appendTokens(highlighted, Prism.tokenize(source, grammar), 0)) continue
+    code.className = languageClass
+    code.parentElement!.className = languageClass
+    code.replaceChildren(highlighted)
+    remainingNodes -= nodeCount
+    context.nodeCount += nodeCount
+  }
 }
 
 const installSafeNavigation = (target: HTMLElement): void => {
@@ -293,6 +410,7 @@ export const renderOfflineHtmlFragment = async (target: HTMLElement, value: unkn
   const context: CopyContext = { nodeCount: 0, linkCount: 0 }
   const fragment = document.createDocumentFragment()
   for (const child of copyChildren(template.content, context)) fragment.appendChild(child)
+  await highlightCodeBlocks(fragment, context)
   target.replaceChildren(fragment)
   installSafeNavigation(target)
   return { nodeCount: context.nodeCount, linkCount: context.linkCount }
