@@ -128,8 +128,17 @@ const readPayload = (payload: unknown): AssetRelocationPayload => {
 }
 
 const immutablePayloadFields = [
-  'operationId', 'effectId', 'assetId', 'sourcePath', 'destinationPath', 'sourceHash', 'destinationHash',
-  'contentSha256', 'targetKey', 'authorName', 'authorEmail'
+  'operationId',
+  'effectId',
+  'assetId',
+  'sourcePath',
+  'destinationPath',
+  'sourceHash',
+  'destinationHash',
+  'contentSha256',
+  'targetKey',
+  'authorName',
+  'authorEmail'
 ] as const
 
 const payloadMatchesLedger = (payload: AssetRelocationPayload, effect: RelocationEffectRow, operation: RelocationOperationRow): boolean =>
@@ -158,10 +167,11 @@ interface RelocationConfigurationJobRow {
   state: string
 }
 
-const configurationTransitionBlocked = (): Error => new errors.ApplicationError(
-  'Outstanding asset relocation must retain its known destination and configuration history. Restore the existing target before retrying this change.',
-  { status: 409, code: 'ASSET_RELOCATION_CONFIGURATION_CONFLICT' }
-)
+const configurationTransitionBlocked = (): Error =>
+  new errors.ApplicationError(
+    'Outstanding asset relocation must retain its known destination and configuration history. Restore the existing target before retrying this change.',
+    { status: 409, code: 'ASSET_RELOCATION_CONFIGURATION_CONFLICT' }
+  )
 
 /**
  * An authorized control-plane transition, under asset → search → target fences.
@@ -173,8 +183,11 @@ export const rebindAssetRelocationConfiguration = async (
   original: RelocationConfiguration,
   next: RelocationConfiguration
 ): Promise<void> => {
-  const effects = await transaction<RelocationEffectRow>(effectsTable).where('targetKey', original.key)
-    .whereNot('status', 'succeeded').orderBy('id').forUpdate()
+  const effects = await transaction<RelocationEffectRow>(effectsTable)
+    .where('targetKey', original.key)
+    .whereNot('status', 'succeeded')
+    .orderBy('id')
+    .forUpdate()
   if (effects.length === 0) return
   if (original.key !== next.key || nativeStorageMutationConfigurationKey(original) !== nativeStorageMutationConfigurationKey(next)) {
     throw configurationTransitionBlocked()
@@ -185,8 +198,15 @@ export const rebindAssetRelocationConfiguration = async (
   for (const effect of effects) {
     const operation = await transaction<RelocationOperationRow>(operationsTable).where('id', effect.operationId).forUpdate().first()
     const job = await transaction<RelocationConfigurationJobRow>('durableJobs').where('id', effect.jobId).forUpdate().first()
-    if (!operation || !job || job.type !== 'asset-relocation' || job.version !== 1 ||
-      effect.targetConfigurationRevision !== oldRevision || job.state === 'succeeded') throw configurationTransitionBlocked()
+    if (
+      !operation ||
+      !job ||
+      job.type !== 'asset-relocation' ||
+      job.version !== 1 ||
+      effect.targetConfigurationRevision !== oldRevision ||
+      job.state === 'succeeded'
+    )
+      throw configurationTransitionBlocked()
     let rawPayload: unknown
     let payload: AssetRelocationPayload
     try {
@@ -199,8 +219,11 @@ export const rebindAssetRelocationConfiguration = async (
       throw configurationTransitionBlocked()
     }
     const existingReceipt = await transaction<RelocationEffectRow>(effectsTable)
-      .where('operationId', effect.operationId).where('targetKey', effect.targetKey)
-      .where('targetConfigurationRevision', nextRevision).whereNot('id', effect.id).first('id')
+      .where('operationId', effect.operationId)
+      .where('targetKey', effect.targetKey)
+      .where('targetConfigurationRevision', nextRevision)
+      .whereNot('id', effect.id)
+      .first('id')
     if (existingReceipt) throw configurationTransitionBlocked()
     transitions.push({ effect, job, rawPayload })
   }
@@ -212,7 +235,8 @@ export const rebindAssetRelocationConfiguration = async (
       .update({ targetConfigurationRevision: nextRevision, updatedAt: now })
     if (updatedEffect !== 1) throw configurationTransitionBlocked()
     // The deduplication key remains the immutable admission identity, not a new operation.
-    const updatedJob = await transaction('durableJobs').where({ id: transition.job.id, type: 'asset-relocation', version: 1 })
+    const updatedJob = await transaction('durableJobs')
+      .where({ id: transition.job.id, type: 'asset-relocation', version: 1 })
       .update({ payload: JSON.stringify({ ...transition.rawPayload, targetConfigurationRevision: nextRevision }), updatedAt: now })
     if (updatedJob !== 1) throw configurationTransitionBlocked()
   }
@@ -411,9 +435,14 @@ export const createAssetRelocationHandler =
           await knex.transaction(async transaction => {
             await requireCurrentLease(transaction, job)
             const stored = await transaction<RelocationConfigurationJobRow>('durableJobs')
-              .where('id', job.id).where('type', job.type).where('version', job.version).where('state', 'running')
-              .where('leaseOwner', job.leaseOwner).where('leaseToken', job.leaseToken)
-              .where('leaseExpiresAt', '>', new Date()).first('payload')
+              .where('id', job.id)
+              .where('type', job.type)
+              .where('version', job.version)
+              .where('state', 'running')
+              .where('leaseOwner', job.leaseOwner)
+              .where('leaseToken', job.leaseToken)
+              .where('leaseExpiresAt', '>', new Date())
+              .first('payload')
             if (!stored || job.type !== 'asset-relocation' || job.version !== 1) throw new Error('Asset relocation durable lease is no longer current')
             const persistedPayload = readPayload(JSON.parse(stored.payload))
             if (immutablePayloadFields.some(field => persistedPayload[field] !== claimedPayload[field])) {

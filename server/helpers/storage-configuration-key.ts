@@ -47,9 +47,7 @@ export const nativeStorageMutationConfigurationKey = (target: {
     // AWS bucket names are global only on the native AWS endpoint. A saved
     // custom endpoint can resolve the same bucket differently for another account.
     const awsGlobalBucket = target.key === 's3' && (endpoint === undefined || endpoint === null)
-    config = Object.fromEntries(Object.entries(config).filter(([key]) =>
-      !Object.hasOwn(operationalFields, key) && !(awsGlobalBucket && key === 'accessKeyId')
-    ))
+    config = Object.fromEntries(Object.entries(config).filter(([key]) => !Object.hasOwn(operationalFields, key) && !(awsGlobalBucket && key === 'accessKeyId')))
   }
   return createHash('sha256')
     .update(storageStableValue({ key: target.key, isEnabled: target.isEnabled, mode: target.mode, config }))
