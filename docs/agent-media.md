@@ -76,6 +76,24 @@ MIME parameters, case and recognized audio aliases are normalized before applyin
 5. Generated files initially enter tool context as private artifact IDs, MIME/dimension/count metadata and bounded text, **not automatic base64 replay**. The user must attach/reuse them to make them model input. Already authorized attached files can be replayed with conversation history only under the current input/ownership/expiry rules. Old generated artifacts are not automatically promoted into every later prompt.
 6. Outbound MCP image/audio result parts obey the same explicit LLM input policy and native validation; a tool cannot bypass it. Music is audio when analyzed by a model, not a fifth input modality. Dictation uses the independent transcription profile and returns text.
 
+Final typed synthesis receives the actual native files from the retained eligible
+user attachment window, including eligible historical attachments. Each final
+dispatch owns its own upload, native count, authorization and cleanup lifecycle;
+preflight never uploads files. File parts and host-owned ID/name/MIME references
+are appended to the uncached variables suffix, never the cached Wiki source
+prefix or a question-specific schema enum. Planning reserves measured exposure
+or the conservative full input/output window rather than counting file placeholders.
+
+Attachment descriptions are a separate claim channel attributed to the escaped
+host filename, not Wiki citations or host-observed facts. Independent verification
+checks that claims stay within provided-material scope; it does not verify pixel
+truth. The final native model must perceive the real authorized file. Collector
+prose, tool-only image references and automatically generated assistant artifacts
+are not attachment-content evidence. Coverage checks both claim channels without
+allowing attachment statements to satisfy missing Wiki facts or recent-page
+obligations. Ownership, input capability and payload authority are rechecked
+before count, dispatch and publication; model perception remains fallible.
+
 ### Context window and accounting
 
 Gemini input admission uses native Files token counting. Other supported model paths retain the application's conservative serialized-size/full-window exposure guard; these are **estimated admission units, not measured prompt tokens**. Large valid inline images/PDFs can consequently be rejected in small configured windows. OpenAI Responses and Anthropic do have separate input-token-count APIs; this implementation does not claim otherwise or call private Ax serializer internals to fabricate a wire-faithful count. Actual inference receipts settle usage after complete output.

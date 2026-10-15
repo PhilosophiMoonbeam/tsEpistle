@@ -1,18 +1,90 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { optimize, runControl, axSerializeOptimizedProgram, axDeserializeOptimizedProgram, AxAssertionError, AxGenerateError, type AxAIService, type AxGEPAAdapter, type AxMetricFn, type AxProgramForwardOptions, type AxSerializedOptimizedProgram, type AxTypedExample } from '@ax-llm/ax'
+import {
+  optimize,
+  runControl,
+  axSerializeOptimizedProgram,
+  axDeserializeOptimizedProgram,
+  AxAssertionError,
+  AxGenerateError,
+  type AxAIService,
+  type AxGEPAAdapter,
+  type AxMetricFn,
+  type AxProgramForwardOptions,
+  type AxSerializedOptimizedProgram,
+  type AxTypedExample
+} from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
-import { createWikiSynthesisProgram, encodeWikiSynthesisAnswer, encodeWikiSynthesisSources, validateWikiSynthesisShape, type WikiSynthesisAnswer, type WikiSynthesisClaim, type WikiSynthesisInput, type WikiSynthesisSource, type WikiSynthesisReferenceIndex } from './wiki-synthesis.ts'
+import {
+  createWikiSynthesisProgram,
+  encodeWikiSynthesisAnswer,
+  encodeWikiSynthesisSources,
+  validateWikiSynthesisShape,
+  type WikiSynthesisAnswer,
+  type WikiSynthesisClaim,
+  type WikiSynthesisInput,
+  type WikiSynthesisSource,
+  type WikiSynthesisReferenceIndex
+} from './wiki-synthesis.ts'
 
-const sourceSchema = z.object({ evidenceId: z.string().min(1), sourceRevision: z.string().min(1), unitId: z.string().min(1), readId: z.string().min(1), context: z.string(), text: z.string(), kind: z.literal('source-read'), complete: z.boolean() }).strict()
-const readSchema = z.object({ evidenceId: z.string().min(1), sourceRevision: z.string().min(1), readId: z.string().min(1), title: z.string().nullable(), representation: z.string().min(1), complete: z.boolean(), source: z.string() }).strict()
+const sourceSchema = z
+  .object({
+    evidenceId: z.string().min(1),
+    sourceRevision: z.string().min(1),
+    unitId: z.string().min(1),
+    readId: z.string().min(1),
+    context: z.string(),
+    text: z.string(),
+    kind: z.literal('source-read'),
+    complete: z.boolean()
+  })
+  .strict()
+const readSchema = z
+  .object({
+    evidenceId: z.string().min(1),
+    sourceRevision: z.string().min(1),
+    readId: z.string().min(1),
+    title: z.string().nullable(),
+    representation: z.string().min(1),
+    complete: z.boolean(),
+    source: z.string()
+  })
+  .strict()
 const claimSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), statement: z.string() })
-const answerSchema = z.object({ claims: z.array(claimSchema).max(64), unresolvedFacets: z.array(z.number().int().nonnegative()).max(64), observations: z.array(z.string()), recommendations: z.string().default('') })
+// This Wiki-only corpus admits no native files; never silently strip a new claim channel.
+const answerSchema = z
+  .object({
+    claims: z.array(claimSchema).max(64),
+    attachmentClaims: z.array(z.never()).max(0).optional(),
+    unresolvedFacets: z.array(z.number().int().nonnegative()).max(64),
+    observations: z.array(z.string()),
+    recommendations: z.string().default('')
+  })
+  .transform(({ attachmentClaims, ...answer }) => (attachmentClaims === undefined ? answer : { ...answer, attachmentClaims }))
 const fixtureSchema = z.object({
-  id: z.string(), family: z.string(), split: z.enum(['train', 'selection', 'final']),
+  id: z.string(),
+  family: z.string(),
+  split: z.enum(['train', 'selection', 'final']),
   provenance: z.object({ kind: z.literal('synthetic'), adjudication: z.string() }),
-  userRequest: z.string(), sources: z.array(sourceSchema), sourceReads: z.array(readSchema), requestFacets: z.array(z.string()), observations: z.array(z.string()), repairFeedback: z.string(),
-  details: z.array(z.object({ id: z.string(), evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), facet: z.number().int().nonnegative(), allOf: z.array(z.string()), exact: z.array(z.string()), allowedParaphrases: z.array(z.string()), allowedAssertions: z.array(z.string()).default([]) })),
+  userRequest: z.string(),
+  sources: z.array(sourceSchema),
+  sourceReads: z.array(readSchema),
+  requestFacets: z.array(z.string()),
+  observations: z.array(z.string()),
+  repairFeedback: z.string(),
+  details: z.array(
+    z.object({
+      id: z.string(),
+      evidenceId: z.string(),
+      sourceRevision: z.string(),
+      unitId: z.string(),
+      facet: z.number().int().nonnegative(),
+      allOf: z.array(z.string()),
+      exact: z.array(z.string()),
+      allowedParaphrases: z.array(z.string()),
+      allowedAssertions: z.array(z.string()).default([])
+    })
+  ),
   expectedUnresolvedFacets: z.array(z.number().int().nonnegative()),
   variants: z.array(z.object({ id: z.string(), category: z.string(), expected: z.enum(['accept', 'reject', 'incomplete']), answer: answerSchema }))
 })
@@ -22,10 +94,20 @@ export type WikiSynthesisSplit = WikiSynthesisFixture['split']
 export const WIKI_SYNTHESIS_EVALUATION_CONTRACT = Object.freeze({
   version: 3,
   cli: 'bun server/scripts/wiki-synthesis-evaluation.ts --mode classify|optimize|evaluate|compare --artifact <file> [--compare-reasoning] [--output-artifact <new-file>; required for compare]',
-  apis: ['createWikiSynthesisProgram', 'renderWikiSynthesisAnswer', 'optimize', 'axSerializeOptimizedProgram', 'axDeserializeOptimizedProgram', 'createWikiOfflineDispatchAdmission'],
-  rubric: 'Score = read-scoped precision × independently adjudicated requested-detail recall × unresolved-facet accuracy, with zero credit for unsupported assertions or unsafe output shape. Support is a finite independently adjudicated assertion or paraphrase for the exact registered complete-read binding, not lexical field/unit authority or token overlap. Only whitespace and a terminal period normalize; literals, operators, modality, negation and governing qualifiers stay intact. False inability scores zero; adjudicated unavailable evidence permits truthful abstention. Advice must obey the shared formal Recommendations boundary; uncited factual premises are rejected. This offline corpus is not the production native semantic judge.',
-  isolation: 'Distinct physical train, selection-validation and final files; disjoint fixture families and evidence IDs. Only train and selection enter optimize. Freeze and serialize the selected artifact before loading final. Compare default versus low on selection only, with two alternately ordered paired passes; final is never a selection input.',
-  privacy: 'Synthetic corpus only; stdout is numeric metadata/fixture IDs. Never log provider errors, prompts, responses or secrets. Optimization artifacts contain synthetic demos and instructions and are saved privately.'
+  apis: [
+    'createWikiSynthesisProgram',
+    'renderWikiSynthesisAnswer',
+    'optimize',
+    'axSerializeOptimizedProgram',
+    'axDeserializeOptimizedProgram',
+    'createWikiOfflineDispatchAdmission'
+  ],
+  rubric:
+    'Score = read-scoped precision × independently adjudicated requested-detail recall × unresolved-facet accuracy, with zero credit for unsupported assertions or unsafe output shape. Support is a finite independently adjudicated assertion or paraphrase for the exact registered complete-read binding, not lexical field/unit authority or token overlap. Only whitespace and a terminal period normalize; literals, operators, modality, negation and governing qualifiers stay intact. False inability scores zero; adjudicated unavailable evidence permits truthful abstention. Advice must obey the shared formal Recommendations boundary; uncited factual premises are rejected. This offline corpus is not the production native semantic judge.',
+  isolation:
+    'Distinct physical train, selection-validation and final files; disjoint fixture families and evidence IDs. Only train and selection enter optimize. Freeze and serialize the selected artifact before loading final. Compare default versus low on selection only, with two alternately ordered paired passes; final is never a selection input.',
+  privacy:
+    'Synthetic corpus only; stdout is numeric metadata/fixture IDs. Never log provider errors, prompts, responses or secrets. Optimization artifacts contain synthetic demos and instructions and are saved privately.'
 })
 
 export const parseWikiSynthesisFixtures = (value: unknown, split: WikiSynthesisSplit): WikiSynthesisFixture[] => {
@@ -42,7 +124,12 @@ export const parseWikiSynthesisFixtures = (value: unknown, split: WikiSynthesisS
       evidence.add(source.evidenceId)
     }
     for (const detail of fixture.details) {
-      if (!fixture.sources.some(source => source.evidenceId === detail.evidenceId && source.sourceRevision === detail.sourceRevision && source.unitId === detail.unitId) || detail.facet >= fixture.requestFacets.length)
+      if (
+        !fixture.sources.some(
+          source => source.evidenceId === detail.evidenceId && source.sourceRevision === detail.sourceRevision && source.unitId === detail.unitId
+        ) ||
+        detail.facet >= fixture.requestFacets.length
+      )
         throw new Error('Offline adjudication references an unknown source or facet')
       for (const pattern of detail.allOf) new RegExp(pattern, 'iu')
     }
@@ -64,17 +151,38 @@ export const assertWikiSynthesisSplitIsolation = (...splits: readonly (readonly 
 
 // Normalize presentation only; never erase operators, modality, negation or qualifier relationships.
 const assertionText = (text: string): string => text.trim().replace(/\s+/gu, ' ').replace(/\.$/u, '')
-const exactTokens = (text: string): string[] => text.match(/https?:\/\/[^\s;]+|(?:>=|<=|>|<)|\b\d+(?:\.\d+)?%?/gu)?.map(token => token.replace(/[.,]$/u, '')) ?? []
+const exactTokens = (text: string): string[] =>
+  text.match(/https?:\/\/[^\s;]+|(?:>=|<=|>|<)|\b\d+(?:\.\d+)?%?/gu)?.map(token => token.replace(/[.,]$/u, '')) ?? []
 
 /** A finite, independently adjudicated assertion corpus, not a word-overlap semantic judge. */
 export const validateWikiFixtureClaim = (fixture: WikiSynthesisFixture, claim: WikiSynthesisClaim, source: WikiSynthesisSource): boolean => {
-  if (!source.complete || source.evidenceId !== claim.evidenceId || source.sourceRevision !== claim.sourceRevision || source.unitId !== claim.unitId || /\[\[|\]\]|\[source|\[citation|##|```/iu.test(claim.statement)) return false
+  if (
+    !source.complete ||
+    source.evidenceId !== claim.evidenceId ||
+    source.sourceRevision !== claim.sourceRevision ||
+    source.unitId !== claim.unitId ||
+    /\[\[|\]\]|\[source|\[citation|##|```/iu.test(claim.statement)
+  )
+    return false
   const statement = assertionText(claim.statement)
   if (!statement) return false
-  if (fixture.variants.some(variant => variant.expected === 'accept' && variant.answer.claims.some(adjudicated =>
-    adjudicated.evidenceId === source.evidenceId && adjudicated.sourceRevision === source.sourceRevision &&
-    adjudicated.unitId === source.unitId && assertionText(adjudicated.statement) === statement))) return true
-  const details = fixture.details.filter(detail => detail.evidenceId === source.evidenceId && detail.sourceRevision === source.sourceRevision && detail.unitId === source.unitId)
+  if (
+    fixture.variants.some(
+      variant =>
+        variant.expected === 'accept' &&
+        variant.answer.claims.some(
+          adjudicated =>
+            adjudicated.evidenceId === source.evidenceId &&
+            adjudicated.sourceRevision === source.sourceRevision &&
+            adjudicated.unitId === source.unitId &&
+            assertionText(adjudicated.statement) === statement
+        )
+    )
+  )
+    return true
+  const details = fixture.details.filter(
+    detail => detail.evidenceId === source.evidenceId && detail.sourceRevision === source.sourceRevision && detail.unitId === source.unitId
+  )
   return details.some(detail => [...detail.allowedParaphrases, ...detail.allowedAssertions].some(assertion => statement === assertionText(assertion)))
 }
 
@@ -83,11 +191,20 @@ const privateTracer = new ProxyTracerProvider().getTracer('wiki-synthesis-evalua
 
 // Override inherited generation defaults, including native GEPA's teacher AxGen.
 // An attached native run control bypasses inherited response-cache reads/writes.
-const offlineForwardOptions = () => ({
-  control: runControl(), maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1,
-  debug: false, verbose: false,
-  excludeContentFromTrace: true, includeRequestBodyInErrors: false, tracer: privateTracer, logger: () => {}
-} satisfies AxProgramForwardOptions<string>)
+const offlineForwardOptions = () =>
+  ({
+    control: runControl(),
+    maxRetries: 0,
+    maxSteps: 1,
+    asyncMode: 'off',
+    sampleCount: 1,
+    debug: false,
+    verbose: false,
+    excludeContentFromTrace: true,
+    includeRequestBodyInErrors: false,
+    tracer: privateTracer,
+    logger: () => {}
+  }) satisfies AxProgramForwardOptions<string>
 
 export interface WikiSynthesisRubric {
   readonly score: number
@@ -121,7 +238,18 @@ export interface WikiSynthesisEvaluation {
 
 export const scoreWikiSynthesisAnswer = (fixture: WikiSynthesisFixture, value: unknown): WikiSynthesisRubric => {
   const parsed = answerSchema.safeParse(value)
-  const empty = { score: 0, shapeSafe: false, precision: 0, coverage: 0, exactIntegrity: 0, locality: 0, falseRejection: fixture.details.length > 0 ? 1 : 0, coveredDetails: 0, requestedDetails: fixture.details.length, rejectedClaims: 0 }
+  const empty = {
+    score: 0,
+    shapeSafe: false,
+    precision: 0,
+    coverage: 0,
+    exactIntegrity: 0,
+    locality: 0,
+    falseRejection: fixture.details.length > 0 ? 1 : 0,
+    coveredDetails: 0,
+    requestedDetails: fixture.details.length,
+    rejectedClaims: 0
+  }
   if (!parsed.success) return empty
   const answer = parsed.data
   const shapeSafe = validateWikiSynthesisShape(answer) === true
@@ -130,7 +258,9 @@ export const scoreWikiSynthesisAnswer = (fixture: WikiSynthesisFixture, value: u
   let exact = 0
   const supported = new Map<string, string[]>()
   for (const claim of answer.claims) {
-    const source = fixture.sources.find(unit => unit.evidenceId === claim.evidenceId && unit.sourceRevision === claim.sourceRevision && unit.unitId === claim.unitId)
+    const source = fixture.sources.find(
+      unit => unit.evidenceId === claim.evidenceId && unit.sourceRevision === claim.sourceRevision && unit.unitId === claim.unitId
+    )
     if (!source) continue
     local++
     if (exactTokens(claim.statement).every(token => exactTokens(source.text).includes(token))) exact++
@@ -145,38 +275,78 @@ export const scoreWikiSynthesisAnswer = (fixture: WikiSynthesisFixture, value: u
   for (const detail of fixture.details) {
     const statements = supported.get(`${detail.evidenceId}:${detail.unitId}`) ?? []
     // A qualifier in another claim must not qualify a bare threshold/owned record.
-    if (statements.some(text => detail.allOf.every(pattern => new RegExp(pattern, 'iu').test(text)) && detail.exact.every(literal => text.includes(literal)))) covered++
+    if (statements.some(text => detail.allOf.every(pattern => new RegExp(pattern, 'iu').test(text)) && detail.exact.every(literal => text.includes(literal))))
+      covered++
   }
   const precision = answer.claims.length ? valid / answer.claims.length : fixture.details.length === 0 ? 1 : 0
   const coverage = fixture.details.length ? covered / fixture.details.length : 1
-  const unresolvedCorrect = answer.unresolvedFacets.length === fixture.expectedUnresolvedFacets.length && new Set(answer.unresolvedFacets).size === answer.unresolvedFacets.length && answer.unresolvedFacets.every(facet => fixture.expectedUnresolvedFacets.includes(facet))
+  const unresolvedCorrect =
+    answer.unresolvedFacets.length === fixture.expectedUnresolvedFacets.length &&
+    new Set(answer.unresolvedFacets).size === answer.unresolvedFacets.length &&
+    answer.unresolvedFacets.every(facet => fixture.expectedUnresolvedFacets.includes(facet))
   const observationsCorrect = answer.observations.every(observation => fixture.observations.includes(observation))
-  return { score: precision * coverage * Number(shapeSafe && valid === answer.claims.length && unresolvedCorrect && observationsCorrect), shapeSafe, precision, coverage, exactIntegrity: answer.claims.length ? exact / answer.claims.length : fixture.details.length === 0 ? 1 : 0,
-    locality: answer.claims.length ? local / answer.claims.length : fixture.details.length === 0 ? 1 : 0, falseRejection: fixture.details.length > 0 && covered === 0 ? 1 : 0, coveredDetails: covered, requestedDetails: fixture.details.length, rejectedClaims: answer.claims.length - valid }
+  return {
+    score: precision * coverage * Number(shapeSafe && valid === answer.claims.length && unresolvedCorrect && observationsCorrect),
+    shapeSafe,
+    precision,
+    coverage,
+    exactIntegrity: answer.claims.length ? exact / answer.claims.length : fixture.details.length === 0 ? 1 : 0,
+    locality: answer.claims.length ? local / answer.claims.length : fixture.details.length === 0 ? 1 : 0,
+    falseRejection: fixture.details.length > 0 && covered === 0 ? 1 : 0,
+    coveredDetails: covered,
+    requestedDetails: fixture.details.length,
+    rejectedClaims: answer.claims.length - valid
+  }
 }
 
-export const classifyWikiSynthesisCorpus = (fixtures: readonly WikiSynthesisFixture[]) => fixtures.flatMap(fixture => fixture.variants.map(variant => {
-  const rubric = scoreWikiSynthesisAnswer(fixture, variant.answer)
-  const classification = !rubric.shapeSafe || rubric.rejectedClaims > 0 || rubric.locality < 1 && variant.answer.claims.length > 0 ? 'reject' : rubric.score === 1 ? 'accept' : 'incomplete'
-  return { fixtureId: fixture.id, variantId: variant.id, category: variant.category, expected: variant.expected, classification, matched: variant.expected === classification, ...rubric }
-}))
+export const classifyWikiSynthesisCorpus = (fixtures: readonly WikiSynthesisFixture[]) =>
+  fixtures.flatMap(fixture =>
+    fixture.variants.map(variant => {
+      const rubric = scoreWikiSynthesisAnswer(fixture, variant.answer)
+      const classification =
+        !rubric.shapeSafe || rubric.rejectedClaims > 0 || (rubric.locality < 1 && variant.answer.claims.length > 0)
+          ? 'reject'
+          : rubric.score === 1
+            ? 'accept'
+            : 'incomplete'
+      return {
+        fixtureId: fixture.id,
+        variantId: variant.id,
+        category: variant.category,
+        expected: variant.expected,
+        classification,
+        matched: variant.expected === classification,
+        ...rubric
+      }
+    })
+  )
 
 const createFixtureProgram = (fixtures: readonly WikiSynthesisFixture[], service: AxAIService, rejected: () => void) => {
   const features = service.getFeatures()
-  return createWikiSynthesisProgram(fixtures.flatMap(fixture => fixture.sources), {
-    structured: features.structuredOutputModes === undefined ? features.functions || features.structuredOutputs === true : features.structuredOutputModes.length > 0,
-    facetCount: Math.max(...fixtures.map(fixture => fixture.requestFacets.length)), observations: fixtures.flatMap(fixture => fixture.observations),
-    validateClaim: (claim, source) => {
-      const fixture = fixtures.find(entry => entry.sources.some(unit => unit.evidenceId === source.evidenceId))
-      const valid = fixture !== undefined && validateWikiFixtureClaim(fixture, claim, source)
-      if (!valid) rejected()
-      return valid || 'The offline adjudicated source-locality gate rejected this claim.'
-    },
-    validateAnswer: answer => validateWikiSynthesisShape(answer)
-  })
+  return createWikiSynthesisProgram(
+    fixtures.flatMap(fixture => fixture.sources),
+    {
+      structured:
+        features.structuredOutputModes === undefined ? features.functions || features.structuredOutputs === true : features.structuredOutputModes.length > 0,
+      facetCount: Math.max(...fixtures.map(fixture => fixture.requestFacets.length)),
+      observations: fixtures.flatMap(fixture => fixture.observations),
+      validateClaim: (claim, source) => {
+        const fixture = fixtures.find(entry => entry.sources.some(unit => unit.evidenceId === source.evidenceId))
+        const valid = fixture !== undefined && validateWikiFixtureClaim(fixture, claim, source)
+        if (!valid) rejected()
+        return valid || 'The offline adjudicated source-locality gate rejected this claim.'
+      },
+      validateAnswer: answer => validateWikiSynthesisShape(answer)
+    }
+  )
 }
 
-export const evaluateWikiSynthesisFixtures = async (fixtures: readonly WikiSynthesisFixture[], service: AxAIService, artifact?: AxSerializedOptimizedProgram, maximumCorrections = 0): Promise<WikiSynthesisEvaluation> => {
+export const evaluateWikiSynthesisFixtures = async (
+  fixtures: readonly WikiSynthesisFixture[],
+  service: AxAIService,
+  artifact?: AxSerializedOptimizedProgram,
+  maximumCorrections = 0
+): Promise<WikiSynthesisEvaluation> => {
   if (!Number.isInteger(maximumCorrections) || maximumCorrections < 0 || maximumCorrections > 1) throw new Error('Offline corrections must be zero or one')
   const results: WikiSynthesisFixtureEvaluation[] = []
   for (const fixture of fixtures) {
@@ -188,7 +358,9 @@ export const evaluateWikiSynthesisFixtures = async (fixtures: readonly WikiSynth
     let sourceRejected = false
     for (let attempt = 0; attempt <= maximumCorrections; attempt++) {
       sourceRejected = false
-      const program = createFixtureProgram([fixture], service, () => { sourceRejected = true })
+      const program = createFixtureProgram([fixture], service, () => {
+        sourceRejected = true
+      })
       if (artifact) program.applyOptimization(axDeserializeOptimizedProgram(artifact))
       let completedInference = false
       let terminalFailure = false
@@ -210,7 +382,19 @@ export const evaluateWikiSynthesisFixtures = async (fixtures: readonly WikiSynth
         }
       })
       try {
-        answer = await program.forward(observedAI, { userRequest: fixture.userRequest, ...encodeWikiSynthesisSources(fixture.sources, fixture.sourceReads), requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: attempt ? 'The previous synthesis failed its complete-read support or shape gate. Re-read the complete original reads and preserve requested coverage.' : '' }, offlineForwardOptions())
+        answer = await program.forward(
+          observedAI,
+          {
+            userRequest: fixture.userRequest,
+            ...encodeWikiSynthesisSources(fixture.sources, fixture.sourceReads),
+            requestFacets: fixture.requestFacets,
+            availableObservations: fixture.observations,
+            repairFeedback: attempt
+              ? 'The previous synthesis failed its complete-read support or shape gate. Re-read the complete original reads and preserve requested coverage.'
+              : ''
+          },
+          offlineForwardOptions()
+        )
         if (terminalFailure) {
           answer = undefined
           failedAttempts++
@@ -219,15 +403,30 @@ export const evaluateWikiSynthesisFixtures = async (fixtures: readonly WikiSynth
         break
       } catch (error) {
         failedAttempts++
-        if (sourceRejected || error instanceof AxAssertionError || error instanceof AxGenerateError && error.cause instanceof AxAssertionError) rejectedAttempts++
-        if (!completedInference || terminalFailure || !(error instanceof AxGenerateError || error instanceof AxAssertionError) || attempt >= maximumCorrections) break
+        if (sourceRejected || error instanceof AxAssertionError || (error instanceof AxGenerateError && error.cause instanceof AxAssertionError))
+          rejectedAttempts++
+        if (!completedInference || terminalFailure || !(error instanceof AxGenerateError || error instanceof AxAssertionError) || attempt >= maximumCorrections)
+          break
         corrections++
       }
     }
-    results.push({ fixtureId: fixture.id, ...scoreWikiSynthesisAnswer(fixture, answer), rejectedAttempts, failedAttempts, corrections, wallMilliseconds: performance.now() - started })
+    results.push({
+      fixtureId: fixture.id,
+      ...scoreWikiSynthesisAnswer(fixture, answer),
+      rejectedAttempts,
+      failedAttempts,
+      corrections,
+      wallMilliseconds: performance.now() - started
+    })
   }
-  return { fixtureCount: fixtures.length, meanScore: results.reduce((sum, result) => sum + result.score, 0) / fixtures.length,
-    failedAttempts: results.reduce((sum, result) => sum + result.failedAttempts, 0), rejectedAttempts: results.reduce((sum, result) => sum + result.rejectedAttempts, 0), corrections: results.reduce((sum, result) => sum + result.corrections, 0), results }
+  return {
+    fixtureCount: fixtures.length,
+    meanScore: results.reduce((sum, result) => sum + result.score, 0) / fixtures.length,
+    failedAttempts: results.reduce((sum, result) => sum + result.failedAttempts, 0),
+    rejectedAttempts: results.reduce((sum, result) => sum + result.rejectedAttempts, 0),
+    corrections: results.reduce((sum, result) => sum + result.corrections, 0),
+    results
+  }
 }
 
 /** Holdout loader and writer enforce the irreversible selection/final boundary in the caller. */
@@ -245,7 +444,14 @@ export const optimizeWikiSynthesis = async (input: {
   assertWikiSynthesisSplitIsolation(input.train, input.selection)
   const minibatchSize = input.train.length
   const minimumMetricCalls = input.selection.length + minibatchSize * 2 + input.selection.length
-  if (!input.train.length || !input.selection.length || !Number.isSafeInteger(input.maximumMetricCalls) || input.maximumMetricCalls < minimumMetricCalls || !Number.isSafeInteger(input.trials) || input.trials < 1)
+  if (
+    !input.train.length ||
+    !input.selection.length ||
+    !Number.isSafeInteger(input.maximumMetricCalls) ||
+    input.maximumMetricCalls < minimumMetricCalls ||
+    !Number.isSafeInteger(input.trials) ||
+    input.trials < 1
+  )
     throw new Error('Offline optimizer allowance must cover baseline, parent, mutated child and full validation')
   let rejectedAttempts = 0
   let failedAttempts = 0
@@ -258,8 +464,7 @@ export const optimizeWikiSynthesis = async (input: {
   const evaluatedMutations = new Set<string>()
   const tuning = [...input.train, ...input.selection]
   const fixtureWires = new Map(tuning.map(fixture => [fixture, encodeWikiSynthesisSources(fixture.sources, fixture.sourceReads)]))
-  const wireRefs = (encoded: string): string[] =>
-    Object.keys((JSON.parse(encoded) as WikiSynthesisReferenceIndex).reads)
+  const wireRefs = (encoded: string): string[] => Object.keys((JSON.parse(encoded) as WikiSynthesisReferenceIndex).reads)
   const fixtureRefs = new Map(tuning.map(fixture => [fixture, new Set(wireRefs(fixtureWires.get(fixture)!.sourceReferences))]))
   const matchedExamples = new WeakMap<object, WikiSynthesisFixture | undefined>()
   const matchFixture = (example: { userRequest?: unknown; sourceReferences?: unknown }): WikiSynthesisFixture | undefined => {
@@ -278,12 +483,19 @@ export const optimizeWikiSynthesis = async (input: {
     matchedExamples.set(example, matched)
     return matched
   }
-  const program = createFixtureProgram(tuning, input.studentAI, () => { rejectedAttempts++ })
+  const program = createFixtureProgram(tuning, input.studentAI, () => {
+    rejectedAttempts++
+  })
   const initialComponents = Object.fromEntries(program.getOptimizableComponents().map(component => [component.key, component.current]))
-  const examples = (fixtures: readonly WikiSynthesisFixture[]) => fixtures.map(fixture => ({
-    userRequest: fixture.userRequest, ...fixtureWires.get(fixture)!, requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: fixture.repairFeedback,
-    ...encodeWikiSynthesisAnswer(fixture.variants.find(variant => variant.id === 'reference')!.answer)
-  }))
+  const examples = (fixtures: readonly WikiSynthesisFixture[]) =>
+    fixtures.map(fixture => ({
+      userRequest: fixture.userRequest,
+      ...fixtureWires.get(fixture)!,
+      requestFacets: fixture.requestFacets,
+      availableObservations: fixture.observations,
+      repairFeedback: fixture.repairFeedback,
+      ...encodeWikiSynthesisAnswer(fixture.variants.find(variant => variant.id === 'reference')!.answer)
+    }))
   const metric: AxMetricFn = ({ prediction, example }) => {
     metricCalls++
     const fixture = matchFixture(example)
@@ -304,7 +516,9 @@ export const optimizeWikiSynthesis = async (input: {
         if (!fixture) throw new Error('Optimizer attempted an example outside train/selection')
         let rejected = false
         let prediction: WikiSynthesisAnswer | undefined
-        const bound = createFixtureProgram([fixture], input.studentAI, () => { rejected = true })
+        const bound = createFixtureProgram([fixture], input.studentAI, () => {
+          rejected = true
+        })
         const beforeComponents = Object.fromEntries(bound.getOptimizableComponents().map(component => [component.key, component.current]))
         bound.applyOptimizedComponents(candidate)
         const changedForward = candidateChanged && bound.getOptimizableComponents().some(component => component.current !== beforeComponents[component.key])
@@ -315,13 +529,21 @@ export const optimizeWikiSynthesis = async (input: {
         evaluatedAttempts++
         let failed = false
         try {
-          prediction = await bound.forward(input.studentAI, {
-            userRequest: fixture.userRequest, ...fixtureWires.get(fixture)!, requestFacets: fixture.requestFacets, availableObservations: fixture.observations, repairFeedback: fixture.repairFeedback
-          }, offlineForwardOptions())
+          prediction = await bound.forward(
+            input.studentAI,
+            {
+              userRequest: fixture.userRequest,
+              ...fixtureWires.get(fixture)!,
+              requestFacets: fixture.requestFacets,
+              availableObservations: fixture.observations,
+              repairFeedback: fixture.repairFeedback
+            },
+            offlineForwardOptions()
+          )
         } catch (error) {
           failed = true
           failedAttempts++
-          if (error instanceof AxAssertionError || error instanceof AxGenerateError && error.cause instanceof AxAssertionError) rejected = true
+          if (error instanceof AxAssertionError || (error instanceof AxGenerateError && error.cause instanceof AxAssertionError)) rejected = true
         }
         if (rejected) rejectedAttempts++
         const rubric = scoreWikiSynthesisAnswer(fixture, prediction)
@@ -329,26 +551,69 @@ export const optimizeWikiSynthesis = async (input: {
         scores.push(await metric({ prediction, example }))
         if (captureTraces) trajectories.push({ fixtureId: fixture.id, rubric, failed, ...(prediction ? { prediction } : {}) })
       }
-      if (appliedMutation) evaluatedMutations.add(createHash('sha256').update(JSON.stringify(Object.entries(candidate).sort(([left], [right]) => left.localeCompare(right)))).digest('hex'))
-      if (!candidateChanged && batch.length === input.selection.length && input.selection.every(fixture => batch.some(example => matchFixture(example) === fixture)))
+      if (appliedMutation)
+        evaluatedMutations.add(
+          createHash('sha256')
+            .update(JSON.stringify(Object.entries(candidate).sort(([left], [right]) => left.localeCompare(right))))
+            .digest('hex')
+        )
+      if (
+        !candidateChanged &&
+        batch.length === input.selection.length &&
+        input.selection.every(fixture => batch.some(example => matchFixture(example) === fixture))
+      )
         baselineSelectionScore = scores.reduce((sum, score) => sum + score, 0) / scores.length
       return { outputs, scores, ...(captureTraces ? { trajectories } : {}) }
     },
-    make_reflective_dataset: (_candidate, batch, components) => Object.fromEntries(components.map(component => [component, (batch.trajectories ?? []).map(trace => {
-      const fixture = tuning.find(entry => entry.id === trace.fixtureId)!
-      return { userRequest: fixture.userRequest, ...fixtureWires.get(fixture)!, requestFacets: fixture.requestFacets,
-        independentlyAdjudicatedDetails: fixture.details, prediction: trace.prediction, feedback: trace.rubric, failed: trace.failed }
-    })]))
+    make_reflective_dataset: (_candidate, batch, components) =>
+      Object.fromEntries(
+        components.map(component => [
+          component,
+          (batch.trajectories ?? []).map(trace => {
+            const fixture = tuning.find(entry => entry.id === trace.fixtureId)!
+            return {
+              userRequest: fixture.userRequest,
+              ...fixtureWires.get(fixture)!,
+              requestFacets: fixture.requestFacets,
+              independentlyAdjudicatedDetails: fixture.details,
+              prediction: trace.prediction,
+              feedback: trace.rubric,
+              failed: trace.failed
+            }
+          })
+        ])
+      )
   }
   const result = await optimize(program, examples(input.train), metric, {
-    studentAI: input.studentAI, teacherAI: input.teacherAI, validationExamples: examples(input.selection), maxMetricCalls: input.maximumMetricCalls,
-    gepaAdapter: adapter, numTrials: input.trials, minibatch: true, minibatchSize, minibatchFullEvalSteps: 1, skipPerfectScore: false, sampleCount: 1, bootstrap: false, seed: 42, verbose: false,
-    logger: event => { if (event.name === 'Notification' && event.id === 'gepa_teacher') teacherProposalFailures++ }, optimizerLogger: () => {},
-    teacherOptions: { ...offlineForwardOptions(), logger: event => { if (event.name === 'ValidationError' || event.name === 'RefusalError') teacherRejectedAttempts++ } }
+    studentAI: input.studentAI,
+    teacherAI: input.teacherAI,
+    validationExamples: examples(input.selection),
+    maxMetricCalls: input.maximumMetricCalls,
+    gepaAdapter: adapter,
+    numTrials: input.trials,
+    minibatch: true,
+    minibatchSize,
+    minibatchFullEvalSteps: 1,
+    skipPerfectScore: false,
+    sampleCount: 1,
+    bootstrap: false,
+    seed: 42,
+    verbose: false,
+    logger: event => {
+      if (event.name === 'Notification' && event.id === 'gepa_teacher') teacherProposalFailures++
+    },
+    optimizerLogger: () => {},
+    teacherOptions: {
+      ...offlineForwardOptions(),
+      logger: event => {
+        if (event.name === 'ValidationError' || event.name === 'RefusalError') teacherRejectedAttempts++
+      }
+    }
   })
   if (!result.optimizedProgram) throw new Error('Native optimizer did not produce an applicable artifact')
   const baselinePerfect = baselineSelectionScore === 1
-  if (evaluatedMutations.size === 0 && !baselinePerfect) throw new Error('Native optimizer did not evaluate a changed candidate; no optimized artifact may be claimed')
+  if (evaluatedMutations.size === 0 && !baselinePerfect)
+    throw new Error('Native optimizer did not evaluate a changed candidate; no optimized artifact may be claimed')
   program.applyOptimization(result.optimizedProgram)
   const artifact = axSerializeOptimizedProgram(result.optimizedProgram)
   const fingerprint = createHash('sha256').update(JSON.stringify(artifact)).digest('hex')
@@ -359,7 +624,24 @@ export const optimizeWikiSynthesis = async (input: {
   const final = await input.loadFinal()
   assertWikiSynthesisSplitIsolation(input.train, input.selection, final)
   const finalHoldout = await evaluateWikiSynthesisFixtures(final, selectedAI, artifact)
-  return { fingerprint, optimizerBestScore: result.bestScore, optimizationStatus: evaluatedMutations.size === 0 ? 'baseline-perfect-no-optimization-needed' : 'mutated-candidate-evaluated',
-    baselineSelectionScore: baselineSelectionScore ?? null, minibatchSize, minimumMetricCalls, mutatedCandidateEvaluations, evaluatedMutatedCandidates: evaluatedMutations.size,
-    metricCalls, evaluatedAttempts, rejectedAttempts, failedAttempts, synthesisCorrections: 0, teacherProposalFailures, teacherRejectedAttempts, selection, ...(reasoning ? { reasoningSelection: reasoning.report } : {}), finalHoldout }
+  return {
+    fingerprint,
+    optimizerBestScore: result.bestScore,
+    optimizationStatus: evaluatedMutations.size === 0 ? 'baseline-perfect-no-optimization-needed' : 'mutated-candidate-evaluated',
+    baselineSelectionScore: baselineSelectionScore ?? null,
+    minibatchSize,
+    minimumMetricCalls,
+    mutatedCandidateEvaluations,
+    evaluatedMutatedCandidates: evaluatedMutations.size,
+    metricCalls,
+    evaluatedAttempts,
+    rejectedAttempts,
+    failedAttempts,
+    synthesisCorrections: 0,
+    teacherProposalFailures,
+    teacherRejectedAttempts,
+    selection,
+    ...(reasoning ? { reasoningSelection: reasoning.report } : {}),
+    finalHoldout
+  }
 }

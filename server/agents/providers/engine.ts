@@ -120,8 +120,10 @@ import {
   createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
   renderWikiSynthesisClaimStatement,
+  renderWikiSynthesisAttachmentClaimStatement,
   type WikiSynthesisAnswer,
   type WikiSynthesisSource,
+  type WikiSynthesisInputMedia,
   type WikiSynthesisRead,
   wikiSynthesisSourceRef
 } from './wiki-synthesis.ts'
@@ -2968,6 +2970,10 @@ const assessDraft = (
   coverage?: DraftCoverage,
   nativeDraft?: NativeDraft
 ): DraftAssessment => {
+  // Native attachment clauses undergo disjoint scope admission, not Wiki
+  // citation admission and never the trusted host-observation whitelist.
+  if (nativeDraft !== undefined)
+    for (const claim of nativeDraft.answer.attachmentClaims ?? []) content = content.replace(renderWikiSynthesisAttachmentClaimStatement(claim), '')
   const issues: string[] = []
   const groundingWarnings: string[] = []
   const claims: ClaimProvenance[] = []
@@ -3510,6 +3516,7 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
 
 interface NativeDraft {
   readonly answer: WikiSynthesisAnswer
+  readonly inputMediaSources?: readonly WikiSynthesisInputMedia[]
   readonly evidence: ReadonlyMap<string, CitationEvidence>
   readonly readSources: ReadonlyMap<string, WikiVerificationSource>
   readonly readLiterals: ReadonlyMap<string, ReadLiteralSnapshot>
@@ -5591,6 +5598,7 @@ export class AxAgentEngine implements AgentEngine {
       })
       await this.#authorizeMedia(request)
       for (const source of sources.values()) await source.file.authorizePayload?.(request.signal)
+      await request.authorizeDispatch?.()
       const mediaTokens = await nativeInput.transport.countTokens(llm.model, contents, request.signal)
       if (mediaTokens + textBytes + maxOutputTokens > llm.capabilities.maxContextTokens)
         throw Object.assign(
@@ -5625,6 +5633,10 @@ export class AxAgentEngine implements AgentEngine {
                   mime_type: part.mimeType
                 }
           )
+          await this.#authorizeMedia(request)
+          await source.file.authorizePayload?.(request.signal)
+          await request.authorizeDispatch?.()
+          request.signal.throwIfAborted()
           const sourceTokens = await nativeInput.transport.countTokens(llm.model, sourceContents, request.signal)
           this.#measuredMediaPromptTokens.set(source.file.id, sourceTokens)
           try {
@@ -6178,8 +6190,8 @@ export class AxAgentEngine implements AgentEngine {
         }
       }
       assertCompactionContextFresh(request)
-      await request.authorizeDispatch?.()
       await authorizeEvidence?.()
+      await request.authorizeDispatch?.()
       assertCompactionContextFresh(request)
       request.signal.throwIfAborted()
       providerDispatched = true
@@ -6435,6 +6447,26 @@ export class AxAgentEngine implements AgentEngine {
     const readLiterals = new Map<string, ReadLiteralSnapshot>()
     const sources: WikiSynthesisSource[] = []
     const sourceReads: WikiSynthesisRead[] = []
+    // Keep the admitted user-file window even when textual history compacts.
+    // Disabled native modalities are tool-only references, never content authority;
+    // assistant-generated artifacts enter only after explicit user attachment.
+    const mediaFiles = new Map<string, NonNullable<(typeof request.messages)[number]['attachments']>[number]>()
+    for (const message of request.messages) {
+      if (message.role !== 'user') continue
+      for (const file of message.attachments ?? []) {
+        const modality = agentMediaInputModality(file.mimeType)
+        if (!modality || !provider.mediaInputs?.[modality]) continue
+        assertAgentMediaInput(file.mimeType, file.byteLength, provider.mediaInputs, provider.transportKind, provider.nativeMediaCapabilities)
+        mediaFiles.set(file.id, file)
+      }
+    }
+    const inputMediaSources: WikiSynthesisInputMedia[] = [...mediaFiles.values()].map(({ id, filename, mimeType }) => ({ id, filename, mimeType }))
+    const authorizeInputMedia = async (): Promise<void> => {
+      if (mediaFiles.size === 0) return
+      await this.#authorizeMedia(request)
+      for (const file of mediaFiles.values()) await file.authorizePayload?.(request.signal)
+      request.signal.throwIfAborted()
+    }
     for (const [readId, { evidenceId, representation }] of completeWikiReadBindings(evidence)) {
       const source: WikiSynthesisSource = {
         evidenceId,
@@ -6484,6 +6516,7 @@ export class AxAgentEngine implements AgentEngine {
     )
     const program = createWikiSynthesisProgram(sources, {
       structured,
+      inputMediaSources,
       maxOutputTokens: () => maxOutputTokens,
       observations: input.observations,
       facetCount: input.requestFacets.length,
@@ -6512,6 +6545,7 @@ export class AxAgentEngine implements AgentEngine {
         // still requires independent complete-source Jev proof before publication.
         nativeDraft = {
           answer,
+          inputMediaSources,
           evidence: sourceEvidence,
           readSources,
           readLiterals,
@@ -6519,7 +6553,12 @@ export class AxAgentEngine implements AgentEngine {
           contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes,
           trustedObservations: new Set(input.observations)
         }
-        if (answer.claims.length === 0 && answer.observations.length === 0 && answer.unresolvedFacets.length !== input.requestFacets.length) {
+        if (
+          answer.claims.length === 0 &&
+          (answer.attachmentClaims?.length ?? 0) === 0 &&
+          answer.observations.length === 0 &&
+          answer.unresolvedFacets.length !== input.requestFacets.length
+        ) {
           rejection = 'An inability must disclose every unresolved requested facet.'
           return rejection
         }
@@ -6554,6 +6593,16 @@ export class AxAgentEngine implements AgentEngine {
               }
             : message
         )
+        if (inputMediaSources.length > 0)
+          generatedPrompt.push({
+            role: 'user',
+            content: inputMediaSources.map(file => ({
+              type: 'file' as const,
+              fileUri: `wiki-media:${file.id}`,
+              mimeType: file.mimeType,
+              filename: file.filename
+            }))
+          })
         const generationRequest: Readonly<AxChatRequest> = { ...generation, model: provider.model, chatPrompt: generatedPrompt }
         const serializedBytes = serializedProviderRequestBytes(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
         const prefixBytes = Buffer.byteLength(prompt(request, null, undefined, false, true, 'final-synthesis'), 'utf8')
@@ -6586,7 +6635,11 @@ export class AxAgentEngine implements AgentEngine {
         }
         let nativeInputTokens: number | undefined
         let contextInputTokens = serializedBytes
-        if (serializedBytes + maxOutputTokens > provider.capabilities.maxContextTokens && provider.countContextTokens !== undefined) {
+        if (
+          inputMediaSources.length === 0 &&
+          serializedBytes + maxOutputTokens > provider.capabilities.maxContextTokens &&
+          provider.countContextTokens !== undefined
+        ) {
           const countRequest = providerRequestFor(provider, null, generatedPrompt, maxOutputTokens, undefined, generationRequest)
           const key = createHash('sha256').update(JSON.stringify(countRequest)).digest('hex')
           nativeInputTokens = input.contextMeasurements?.get(key)
@@ -6605,7 +6658,18 @@ export class AxAgentEngine implements AgentEngine {
           contextInputTokens = nativeInputTokens
         }
         const contextOutputAllowance = provider.capabilities.maxContextTokens - contextInputTokens
-        const budgetOutputAllowance = maximumDispatchTokens === undefined ? maxOutputTokens : maximumDispatchTokens - serializedBytes
+        let planningExposure = providerExposureFor(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
+        const measuredMedia = measuredPromptMediaTokens(generatedPrompt, this.#measuredMediaPromptTokens)
+        if (inputMediaSources.length > 0 && !measuredMedia.unmeasured) {
+          const inputExposureTokens = safeUsageAddition(serializedBytes, measuredMedia.total, 'Typed media input exposure')
+          planningExposure = {
+            ...planningExposure,
+            inputExposureTokens,
+            inputExposureUsesFullWindowBound: false,
+            totalExposureTokens: safeUsageAddition(inputExposureTokens, maxOutputTokens, 'Typed media publication exposure')
+          }
+        }
+        const budgetOutputAllowance = maximumDispatchTokens === undefined ? maxOutputTokens : maximumDispatchTokens - planningExposure.inputExposureTokens
         const reason =
           contextOutputAllowance < 1
             ? 'context_limit'
@@ -6635,7 +6699,7 @@ export class AxAgentEngine implements AgentEngine {
             'dispatch_admission'
           )
         maxOutputTokens = Math.min(maxOutputTokens, contextOutputAllowance, budgetOutputAllowance)
-        const exposure = providerExposureFor(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
+        const exposure = planningExposure
         const repairExposure = input.reserveRepair
           ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure')
           : 0
@@ -6679,8 +6743,11 @@ export class AxAgentEngine implements AgentEngine {
           true,
           false,
           undefined,
-          { request: generationRequest, guard: createWikiSynthesisStreamGuard(sources, { maxOutputTokens }) },
-          input.authorizeEvidence,
+          { request: generationRequest, guard: createWikiSynthesisStreamGuard(sources, { maxOutputTokens, inputMediaSources }) },
+          async () => {
+            await authorizeInputMedia()
+            await input.authorizeEvidence()
+          },
           'synthesis'
         )
         if (dispatched.performance !== undefined) dispatched = { ...dispatched, performance: { ...dispatched.performance, synthesisFrame } }
@@ -6735,6 +6802,7 @@ export class AxAgentEngine implements AgentEngine {
               : input.userRequest,
           ...(conversationContext === undefined ? {} : { conversationContext }),
           ...encodedSources,
+          ...(inputMediaSources.length === 0 ? {} : { inputMediaReferences: JSON.stringify(inputMediaSources) }),
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
           repairFeedback: [
@@ -6785,7 +6853,7 @@ export class AxAgentEngine implements AgentEngine {
       rootMetadataPresent: true,
       rootNativeDraft: nativeDraft,
       rootUnresolvedFacets: answer.unresolvedFacets,
-      rootHasVerifiedContent: answer.claims.length > 0 || answer.observations.length > 0
+      rootHasVerifiedContent: answer.claims.length > 0 || (answer.attachmentClaims?.length ?? 0) > 0 || answer.observations.length > 0
     }
   }
 
@@ -7565,6 +7633,8 @@ export class AxAgentEngine implements AgentEngine {
               userRequest: contextPlan.intent,
               requestFacets,
               claims: draft.answer.claims,
+              ...(draft.inputMediaSources === undefined ? {} : { inputMediaSources: draft.inputMediaSources }),
+              ...(draft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: draft.answer.attachmentClaims }),
               sources: [...selected.values()],
               candidateExtras: {
                 observations: draft.answer.observations.filter(line => !draft.trustedObservations.has(line)),
@@ -8687,10 +8757,10 @@ export class AxAgentEngine implements AgentEngine {
                 reserveRepair: rejectedDraftCount === 0 && turn + 1 < maxTurns,
                 contextMeasurements: synthesisContextMeasurements,
                 authorizeEvidence: async () => {
-                  await requireFreshApplicationReceipts()
                   await (warmReadinessEvidence === undefined
                     ? requireFreshRegisteredEvidence(dispatchEvidence)
                     : requireLiveWikiVerification(warmReadinessEvidence))
+                  await requireFreshApplicationReceipts()
                 }
               },
               sequence,
@@ -8895,6 +8965,7 @@ export class AxAgentEngine implements AgentEngine {
             assessment.valid &&
             result.rootNativeDraft !== undefined &&
             (result.rootNativeDraft.answer.claims.length > 0 ||
+              (result.rootNativeDraft.answer.attachmentClaims?.length ?? 0) > 0 ||
               result.rootNativeDraft.answer.observations.length > 0 ||
               (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0)
           ) {
@@ -8929,13 +9000,15 @@ export class AxAgentEngine implements AgentEngine {
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
               }
-              if (semantic.valid && nativeDraft.answer.claims.length > 0) {
+              if (semantic.valid && (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0)) {
                 const conversationContext = wikiConversationContext(conversation)
                 const coverageInput = encodeWikiCoverageInput({
                   userRequest: userRequestWithRecentScope(assessmentEvidence),
                   ...(conversationContext === undefined ? {} : { conversationContext }),
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
                   unresolvedFacets: nativeDraft.answer.unresolvedFacets,
+                  ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
+                  ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
                   reads: [...nativeDraft.readSources.values()].map(source => {
                     if (source.kind !== 'source-read')
                       throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage requires unchanged complete physical reads', 409)
@@ -9012,9 +9085,21 @@ export class AxAgentEngine implements AgentEngine {
           const assertAssessmentPublicationFresh = async (): Promise<void> => {
             request.signal.throwIfAborted()
             await request.authorizeDispatch?.()
-            await requireFreshApplicationReceipts()
+            if ((result.rootNativeDraft?.inputMediaSources?.length ?? 0) > 0) {
+              await this.#authorizeMedia(request)
+              for (const source of result.rootNativeDraft!.inputMediaSources ?? []) {
+                const file = request.messages
+                  .filter(message => message.role === 'user')
+                  .flatMap(message => message.attachments ?? [])
+                  .find(file => file.id === source.id)
+                if (!file || file.mimeType !== source.mimeType || file.filename !== source.filename)
+                  throw new AgentRepositoryError('AGENT_MEDIA_UNAVAILABLE', 'An attachment is no longer available.', 409)
+                await file.authorizePayload?.(request.signal)
+              }
+            }
             await requireLiveEvidence(assessment, assessmentEvidence)
             if (publicationVerificationEvidence !== undefined) await requireLiveWikiVerification(publicationVerificationEvidence)
+            await requireFreshApplicationReceipts()
           }
           const publishAssessmentEvents = async (): Promise<void> => {
             await assertAssessmentPublicationFresh()
@@ -10103,8 +10188,8 @@ export class AxAgentEngine implements AgentEngine {
                 reserveRepair: false,
                 contextMeasurements: synthesisContextMeasurements,
                 authorizeEvidence: async () => {
-                  await requireFreshApplicationReceipts()
                   await requireFreshRegisteredEvidence(preflightEvidence)
+                  await requireFreshApplicationReceipts()
                 }
               },
               undefined,

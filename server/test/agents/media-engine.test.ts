@@ -372,164 +372,477 @@ describe('ordinary Gemini attachment setup through the production factory', () =
 
   for (const mimeType of ['image/png', 'application/pdf'] as const)
     for (const legacy of [true, false])
-      it(`uploads, natively counts and dispatches a lazy ${mimeType} with ${legacy ? 'historical' : 'explicit'} input policy`, async () => {
-        if (mimeType === 'image/png') expect(await sharp(png).raw().toBuffer()).toHaveLength(4)
-        const payload = mimeType === 'image/png' ? png : pdf()
-        const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
-        try {
-          await seed(db, legacy)
-          const remote = { name: 'files/context', uri: `${origin}/v1beta/files/context`, mimeType, state: 'ACTIVE', sizeBytes: String(payload.length) }
-          const wire: { url: string; init: RequestInit }[] = []
-          const dispatchBudget = budget()
-          const authorizePayload = vi.fn(async (signal: AbortSignal) => signal.throwIfAborted())
-          const loadPayload = vi.fn(async (signal: AbortSignal) => {
-            signal.throwIfAborted()
-            return payload
+      for (const historical of [false, true])
+        for (const revokeAt of mimeType === 'image/png' && !legacy && !historical
+          ? [null, 'before-final-count', 'final-count', 'publication', 'profile-last-payload']
+          : [null])
+          for (const operationOnly of mimeType === 'image/png' && !legacy && !historical && revokeAt === null ? [false, true] : [false])
+            for (const recountRevocation of mimeType === 'image/png' && !legacy && !historical && revokeAt === null && !operationOnly
+              ? [null, 'aggregate', 'persisted']
+              : [null])
+              for (const receiptRevocation of mimeType === 'image/png' &&
+              !legacy &&
+              !historical &&
+              revokeAt === null &&
+              !operationOnly &&
+              recountRevocation === null
+                ? [null, 'dispatch', 'publication']
+                : [null])
+                it(`publishes attributed native ${mimeType} content from ${historical ? 'historical' : 'current'} input with ${legacy ? 'legacy' : 'explicit'} policy${revokeAt ? `; blocks revocation at ${revokeAt}` : ''}${operationOnly ? '; preserves a delivered image-edit receipt without claiming output pixels' : ''}${recountRevocation ? `; blocks multi-file recount after ${recountRevocation}` : ''}${receiptRevocation ? `; fences receipt grant revoked during ${receiptRevocation} payload authorization` : ''}`, async () => {
+                  if (mimeType === 'image/png') expect(await sharp(png).raw().toBuffer()).toHaveLength(4)
+                  const payload = mimeType === 'image/png' ? png : pdf()
+                  const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+                  try {
+                    await seed(db, legacy)
+                    const remote = {
+                      name: 'files/context',
+                      uri: `${origin}/v1beta/files/context`,
+                      mimeType,
+                      state: 'ACTIVE',
+                      sizeBytes: String(payload.length)
+                    }
+                    const finalRemote = { ...remote, name: 'files/final-context', uri: `${origin}/v1beta/files/final-context` }
+                    const wire: { url: string; init: RequestInit }[] = []
+                    const dispatchBudget = budget()
+                    let uploadCount = 0
+                    let revoked = false
+                    let countCalls = 0
+                    let receiptReadable = true
+                    const authorizePayload = vi.fn(async (signal: AbortSignal) => {
+                      signal.throwIfAborted()
+                      if (revoked) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'Attachment is detached from its admitted input binding.', 500)
+                      const generations = wire.filter(({ url }) => url.includes(':streamGenerateContent')).length
+                      if (revokeAt === 'profile-last-payload' && countCalls === 2 && generations === 1)
+                        await db('agentProviderProfiles').where({ id: 'profile' }).update({ status: 'disabled' })
+                      if (
+                        (receiptRevocation === 'dispatch' && countCalls === 2 && generations === 1) ||
+                        (receiptRevocation === 'publication' && generations === 3)
+                      ) {
+                        await Promise.resolve()
+                        receiptReadable = false
+                      }
+                    })
+                    const loadPayload = vi.fn(async (signal: AbortSignal) => {
+                      signal.throwIfAborted()
+                      return payload
+                    })
+                    const recordPromptTokens = vi.fn(async (_tokens: number) => {
+                      if (recountRevocation === 'persisted') revoked = true
+                    })
+                    const implementation = Object.assign(
+                      async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+                        const url = String(input)
+                        wire.push({ url, init: init ?? {} })
+                        if (url === `${origin}/upload/v1beta/files`) {
+                          uploadCount++
+                          return new Response(null, {
+                            headers: { 'x-goog-upload-url': `${origin}/upload/v1beta/files?upload_id=context&upload_protocol=resumable` }
+                          })
+                        }
+                        if (url === `${origin}/upload/v1beta/files?upload_id=context&upload_protocol=resumable`) {
+                          expect(Buffer.from(init?.body as Uint8Array)).toEqual(payload)
+                          expect(authorizePayload.mock.calls.length).toBeGreaterThanOrEqual(2)
+                          expect(dispatchBudget.reserve).toHaveBeenCalledTimes(recountRevocation === null ? uploadCount - 1 : 0)
+                          if (revokeAt === 'before-final-count' && uploadCount === 2) revoked = true
+                          return Response.json({ file: uploadCount === 1 ? remote : finalRemote })
+                        }
+                        if (url === `${origin}/v1beta/models/${model}:countTokens`) {
+                          countCalls++
+                          if (recountRevocation === 'aggregate' && countCalls === 1) revoked = true
+                          if (revokeAt === 'final-count' && countCalls === 2) revoked = true
+                          return Response.json({ totalTokens: 258 })
+                        }
+                        if (url === `${origin}/v1beta/models/${model}:streamGenerateContent?alt=sse`) {
+                          const generation = JSON.parse(String(init?.body))
+                          const schema = generation.generationConfig?.responseJsonSchema
+                          const coverage = schema?.properties?.verdict !== undefined
+                          const synthesis = schema?.properties?.claims !== undefined
+                          expect(dispatchBudget.reserve).toHaveBeenCalledTimes(coverage ? 4 : synthesis ? 2 : 1)
+                          if (synthesis) {
+                            expect(generation.generationConfig.responseMimeType).toBe('application/json')
+                            expect(generation.generationConfig.responseJsonSchema.properties).toMatchObject({
+                              claims: { type: 'array' },
+                              unresolvedFacets: { type: 'array' },
+                              observations: { type: 'array' }
+                            })
+                            expect(wire.filter(operation => operation.url === remote.uri && operation.init.method === 'DELETE')).toHaveLength(1)
+                          }
+                          if (coverage && revokeAt === 'publication') revoked = true
+                          // Collector and typed synthesis both stream on this profile. The
+                          // response must follow the actual request's schema, not its URL.
+                          const content = coverage
+                            ? JSON.stringify({ verdict: 'complete', feedback: '' })
+                            : synthesis
+                              ? JSON.stringify(
+                                  operationOnly
+                                    ? {
+                                        claims: [],
+                                        attachmentClaims: [],
+                                        unresolvedFacets: [],
+                                        observations: ['1 image artifact generated.'],
+                                        recommendations: ''
+                                      }
+                                    : {
+                                        claims: [],
+                                        attachmentClaims: [
+                                          {
+                                            mediaId: '00000000-0000-4000-8000-000000000088',
+                                            statement:
+                                              mimeType === 'image/png' ? 'The provided image contains a single pixel.' : 'The provided document has one page.'
+                                          }
+                                        ],
+                                        unresolvedFacets: [],
+                                        observations:
+                                          receiptRevocation === null
+                                            ? []
+                                            : [
+                                                'Wiki proposal application status: applied.',
+                                                `Proposal: 00000000-0000-4000-8000-000000000020; result hash: ${'b'.repeat(64)}.`
+                                              ],
+                                        recommendations: ''
+                                      }
+                                )
+                              : 'The attachment is available.'
+                          return new Response(
+                            `data: ${JSON.stringify({
+                              responseId: synthesis ? 'fixture-synthesis-response' : 'fixture-response',
+                              modelVersion: model,
+                              candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: content }] } }],
+                              usageMetadata: { promptTokenCount: 500, candidatesTokenCount: 5, totalTokenCount: 505 }
+                            })}\n\n`,
+                            { headers: { 'content-type': 'text/event-stream' } }
+                          )
+                        }
+                        if ((url === remote.uri || url === finalRemote.uri) && init?.method === 'DELETE') return new Response(null, { status: 204 })
+                        throw new Error('Unexpected fixture provider operation')
+                      },
+                      { preconnect: () => {} }
+                    ) as AgentProviderFetch
+                    const resolve = (async () => [{ address: '142.250.1.1', family: 4 }]) as unknown as typeof lookup
+                    const factory = new AgentProviderFactory(db, { get: async () => 'fixture-key' }, implementation, resolve)
+                    const close = vi.fn()
+                    const actions: AgentActionSessionProvider = {
+                      open: async () => ({
+                        functions: [
+                          {
+                            name: operationOnly ? 'media.generateImage' : 'pages.get',
+                            description: ACTION_CATALOG[operationOnly ? 'media.generateImage' : 'pages.get'].descriptor.description,
+                            risk: 'read',
+                            group: 'core',
+                            capability: ACTION_CATALOG[operationOnly ? 'media.generateImage' : 'pages.get'].capability,
+                            parameters: z.toJSONSchema(ACTION_CATALOG[operationOnly ? 'media.generateImage' : 'pages.get'].input)
+                          },
+                          ...(receiptRevocation === null
+                            ? []
+                            : [
+                                {
+                                  name: 'pages.applyProposal' as const,
+                                  description: ACTION_CATALOG['pages.applyProposal'].descriptor.description,
+                                  risk: ACTION_CATALOG['pages.applyProposal'].descriptor.risk,
+                                  group: ACTION_CATALOG['pages.applyProposal'].group,
+                                  capability: ACTION_CATALOG['pages.applyProposal'].capability,
+                                  parameters: z.toJSONSchema(ACTION_CATALOG['pages.applyProposal'].input)
+                                }
+                              ])
+                        ],
+                        authoritySha256: null,
+                        invoke: async () => {
+                          throw new Error('The media fixture must not execute Wiki actions')
+                        },
+                        snapshot: async () => ({}),
+                        validateObservation: async () => receiptReadable,
+                        close
+                      })
+                    }
+                    const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
+                    const { mediaRequest: _mediaRequest, ...base } = request()
+                    const text = vi.fn(async (_content: string) => {})
+                    const engineRequest: AgentEngineRequest = {
+                      ...base,
+                      generationTools: [],
+                      mediaBindings: {},
+                      dispatchBudget,
+                      authorizeDispatch: async () => {
+                        const profile = await db('agentProviderProfiles').where({ id: 'profile', status: 'enabled' }).first('id')
+                        if (!profile) throw new AgentRepositoryError('PROFILE_VERSION_CHANGED', 'Provider disabled before dispatch.', 409)
+                      },
+                      ...(operationOnly
+                        ? {
+                            recoveredAction: {
+                              actionCallId: '00000000-0000-4000-8000-000000000099',
+                              actionName: 'media.generateImage',
+                              actionInput: { prompt: 'Edit the provided image.', attachmentIds: ['00000000-0000-4000-8000-000000000088'] },
+                              output: { generated: true, count: 1 }
+                            }
+                          }
+                        : {}),
+                      ...(receiptRevocation === null
+                        ? {}
+                        : {
+                            recoveredAction: {
+                              actionCallId: '00000000-0000-4000-8000-000000000098',
+                              actionName: 'pages.applyProposal',
+                              actionInput: { proposalId: '00000000-0000-4000-8000-000000000020', approvalId: '00000000-0000-4000-8000-000000000021' },
+                              output: { proposalId: '00000000-0000-4000-8000-000000000020', status: 'applied', resultHash: 'b'.repeat(64), page: null }
+                            }
+                          }),
+                      messages: [
+                        {
+                          role: 'user',
+                          content: operationOnly ? 'Edit the attached image.' : 'Briefly describe the attached file.',
+                          attachments: [
+                            {
+                              id: '00000000-0000-4000-8000-000000000088',
+                              filename: mimeType === 'image/png' ? 'pixel.png' : 'brief.pdf',
+                              mimeType,
+                              byteLength: payload.length,
+                              ...(mimeType === 'application/pdf' ? { preparePdf: (signal: AbortSignal) => prepareAgentPdf(payload, signal) } : { loadPayload }),
+                              authorizePayload,
+                              recordPromptTokens
+                            },
+                            ...(recountRevocation === null
+                              ? []
+                              : [
+                                  {
+                                    id: '00000000-0000-4000-8000-000000000089',
+                                    filename: 'second-pixel.png',
+                                    mimeType,
+                                    byteLength: payload.length,
+                                    loadPayload,
+                                    authorizePayload,
+                                    recordPromptTokens
+                                  }
+                                ])
+                          ]
+                        },
+                        ...(historical
+                          ? [
+                              {
+                                role: 'assistant' as const,
+                                content: 'I can inspect that file.',
+                                attachments: [
+                                  {
+                                    id: '00000000-0000-4000-8000-000000000090',
+                                    filename: 'generated-not-input.png',
+                                    mimeType: 'image/png',
+                                    byteLength: png.length,
+                                    loadPayload: async () => {
+                                      throw new Error('Assistant-generated artifacts must not be replayed as user input')
+                                    }
+                                  }
+                                ]
+                              },
+                              { role: 'user' as const, content: 'Briefly describe the file attached earlier.' }
+                            ]
+                          : [])
+                      ]
+                    }
+                    expect(await engine.preflight(engineRequest)).toMatchObject({
+                      admissible: true,
+                      inputExposureTokens: 383_616,
+                      outputExposureTokens: 16_384,
+                      totalExposureTokens: 400_000,
+                      inputExposureUsesFullWindowBound: true
+                    })
+                    expect(wire).toEqual([])
+                    expect(dispatchBudget.reserve).not.toHaveBeenCalled()
+                    if (recountRevocation !== null) {
+                      await expect(engine.execute(engineRequest, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
+                      expect(countCalls).toBe(recountRevocation === 'aggregate' ? 1 : 2)
+                      expect(recordPromptTokens).toHaveBeenCalledTimes(recountRevocation === 'aggregate' ? 0 : 1)
+                      expect(text).not.toHaveBeenCalled()
+                      expect(wire.filter(({ url }) => url.includes(':streamGenerateContent'))).toHaveLength(0)
+                      expect(wire.filter(({ init }) => init.method === 'DELETE')).toHaveLength(2)
+                      return
+                    }
+                    if (receiptRevocation !== null) {
+                      await expect(engine.execute(engineRequest, { text, event: async () => {} })).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+                      expect(text).not.toHaveBeenCalled()
+                      expect(wire.filter(({ url }) => url.includes(':streamGenerateContent'))).toHaveLength(receiptRevocation === 'dispatch' ? 1 : 3)
+                      expect(wire.filter(({ init }) => init.method === 'DELETE')).toHaveLength(2)
+                      return
+                    }
+                    if (revokeAt !== null) {
+                      await expect(engine.execute(engineRequest, { text, event: async () => {} })).rejects.toMatchObject({
+                        code: revokeAt === 'profile-last-payload' ? 'PROVIDER_REQUEST_FAILED' : 'AGENT_MEDIA_CORRUPT'
+                      })
+                      expect(text).not.toHaveBeenCalled()
+                      expect(wire.filter(({ url, init }) => (url === remote.uri || url === finalRemote.uri) && init.method === 'DELETE')).toHaveLength(2)
+                      const generations = wire.filter(({ url }) => url === `${origin}/v1beta/models/${model}:streamGenerateContent?alt=sse`)
+                      expect(generations).toHaveLength(revokeAt === 'publication' ? 3 : 1)
+                      expect(countCalls).toBe(revokeAt === 'before-final-count' ? 1 : 2)
+                      return
+                    }
+                    const result = await engine.execute(engineRequest, { text, event: async () => {} })
+                    expect(result.totalTokens).toBe(operationOnly ? 1_010 : 1_515)
+                    const published = text.mock.calls.map(([content]) => content).join('')
+                    if (operationOnly) {
+                      expect(published).toContain('1 image artifact generated.')
+                      expect(published).not.toContain('single pixel')
+                      expect(published).not.toMatch(/no Wiki|unable|cannot|partial/iu)
+                    } else {
+                      expect(published).toContain(mimeType === 'image/png' ? 'single pixel' : 'one page')
+                    }
+                    expect(published).not.toContain('The attachment is available.')
+                    expect(published).not.toContain('[[cite:')
+                    expect(published).not.toContain('"unresolvedFacets"')
+                    expect(wire.filter(({ url }) => url === `${origin}/upload/v1beta/files`)).toHaveLength(2)
+                    expect(wire.filter(({ url }) => url === `${origin}/upload/v1beta/files?upload_id=context&upload_protocol=resumable`)).toHaveLength(2)
+                    const counts = wire.filter(({ url }) => url === `${origin}/v1beta/models/${model}:countTokens`)
+                    expect(counts).toHaveLength(2)
+                    const count = JSON.parse(String(counts[0]?.init.body))
+                    expect(count.contents[0].parts).toEqual([{ fileData: { fileUri: remote.uri, mimeType } }])
+                    expect(JSON.parse(String(counts[1]?.init.body)).contents[0].parts).toEqual([{ fileData: { fileUri: finalRemote.uri, mimeType } }])
+                    const generations = wire.filter(({ url }) => url === `${origin}/v1beta/models/${model}:streamGenerateContent?alt=sse`)
+                    expect(generations).toHaveLength(operationOnly ? 2 : 3)
+                    const generation = JSON.parse(String(generations[0]?.init.body))
+                    expect(generation.contents.find((content: { role: string }) => content.role === 'user').parts).toEqual(
+                      expect.arrayContaining([{ fileData: { fileUri: remote.uri, mimeType } }])
+                    )
+                    expect(JSON.stringify(generation)).not.toContain('wiki-media:')
+                    expect(JSON.stringify(generation)).not.toContain(payload.toString('base64'))
+                    const synthesis = JSON.parse(String(generations[1]?.init.body))
+                    expect(synthesis.contents.flatMap((content: { parts: unknown[] }) => content.parts)).toContainEqual({
+                      fileData: { fileUri: finalRemote.uri, mimeType }
+                    })
+                    expect(JSON.stringify(synthesis)).not.toContain(remote.uri)
+                    expect(JSON.stringify(synthesis)).not.toContain(payload.toString('base64'))
+                    expect(wire.filter(({ url, init }) => url === remote.uri && init.method === 'DELETE')).toHaveLength(1)
+                    expect(wire.filter(({ url, init }) => url === finalRemote.uri && init.method === 'DELETE')).toHaveLength(1)
+                    expect(recordPromptTokens).toHaveBeenCalledWith(258)
+                    expect(recordPromptTokens).toHaveBeenCalledTimes(2)
+                    expect(dispatchBudget.reconcile).toHaveBeenCalledWith(
+                      expect.anything(),
+                      expect.objectContaining({ inputTokens: 500, outputTokens: 5, totalTokens: 505 })
+                    )
+                    expect(dispatchBudget.reconcile).toHaveBeenCalledTimes(operationOnly ? 2 : 4)
+                    if (!operationOnly) {
+                      expect(dispatchBudget.reserve).toHaveBeenCalledWith({ tokens: 64_000, costMicros: 0 })
+                      expect(dispatchBudget.reconcile).toHaveBeenCalledWith(
+                        expect.anything(),
+                        expect.objectContaining({
+                          inputTokens: 0,
+                          outputTokens: 0,
+                          totalTokens: 0,
+                          costMicros: 0
+                        })
+                      )
+                    }
+                    expect(close).toHaveBeenCalledTimes(2)
+                    expect(dispatchBudget.release).not.toHaveBeenCalled()
+                    if (mimeType === 'image/png') expect(loadPayload).toHaveBeenCalledTimes(2)
+                  } finally {
+                    await db.destroy()
+                  }
+                })
+
+  it('keeps tool-only image references outside native attachment-content authority', async () => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    try {
+      await seed(db, false)
+      await db('agentProviderProfileVersions')
+        .where({ id: versionId })
+        .update({
+          adapterConfig: JSON.stringify({
+            timeoutMs: 120_000,
+            maxRetries: 0,
+            additionalHeaders: {},
+            mediaInputs: { images: false, documents: true, audio: false, video: false }
           })
-          const recordPromptTokens = vi.fn(async (_tokens: number) => {})
-          const implementation = Object.assign(
-            async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
-              const url = String(input)
-              wire.push({ url, init: init ?? {} })
-              if (url === `${origin}/upload/v1beta/files`)
-                return new Response(null, { headers: { 'x-goog-upload-url': `${origin}/upload/v1beta/files?upload_id=context&upload_protocol=resumable` } })
-              if (url === `${origin}/upload/v1beta/files?upload_id=context&upload_protocol=resumable`) {
-                expect(Buffer.from(init?.body as Uint8Array)).toEqual(payload)
-                expect(authorizePayload.mock.calls.length).toBeGreaterThanOrEqual(2)
-                expect(dispatchBudget.reserve).not.toHaveBeenCalled()
-                return Response.json({ file: remote })
-              }
-              if (url === `${origin}/v1beta/models/${model}:countTokens`) return Response.json({ totalTokens: 258 })
-              if (url === `${origin}/v1beta/models/${model}:streamGenerateContent?alt=sse`) {
-                const generation = JSON.parse(String(init?.body))
-                const synthesis = generation.generationConfig?.responseJsonSchema !== undefined
-                expect(dispatchBudget.reserve).toHaveBeenCalledTimes(synthesis ? 2 : 1)
-                if (synthesis) {
-                  expect(generation.generationConfig.responseMimeType).toBe('application/json')
-                  expect(generation.generationConfig.responseJsonSchema.properties).toMatchObject({
-                    claims: { type: 'array' },
-                    unresolvedFacets: { type: 'array' },
-                    observations: { type: 'array' }
-                  })
-                  expect(wire.filter(operation => operation.url === remote.uri && operation.init.method === 'DELETE')).toHaveLength(1)
-                }
-                // Collector and typed synthesis both stream on this profile. The
-                // response must follow the actual request's schema, not its URL.
-                const content = synthesis
-                  ? JSON.stringify({ claims: [], unresolvedFacets: [0], observations: [], recommendations: '' })
-                  : 'The attachment is available.'
-                return new Response(
-                  `data: ${JSON.stringify({
-                    responseId: synthesis ? 'fixture-synthesis-response' : 'fixture-response',
-                    modelVersion: model,
-                    candidates: [{ index: 0, finishReason: 'STOP', content: { role: 'model', parts: [{ text: content }] } }],
-                    usageMetadata: { promptTokenCount: 500, candidatesTokenCount: 5, totalTokenCount: 505 }
-                  })}\n\n`,
-                  { headers: { 'content-type': 'text/event-stream' } }
-                )
-              }
-              if (url === remote.uri && init?.method === 'DELETE') return new Response(null, { status: 204 })
-              throw new Error('Unexpected fixture provider operation')
-            },
-            { preconnect: () => {} }
-          ) as AgentProviderFetch
-          const resolve = (async () => [{ address: '142.250.1.1', family: 4 }]) as unknown as typeof lookup
-          const factory = new AgentProviderFactory(db, { get: async () => 'fixture-key' }, implementation, resolve)
-          const close = vi.fn()
-          const actions: AgentActionSessionProvider = {
-            open: async () => ({
-              functions: [
+        })
+      const generations: unknown[] = []
+      const implementation = Object.assign(
+        async (input: URL | RequestInfo, init?: RequestInit) => {
+          expect(String(input)).toBe(`${origin}/v1beta/models/${model}:streamGenerateContent?alt=sse`)
+          const generation = JSON.parse(String(init?.body))
+          generations.push(generation)
+          const synthesis = generation.generationConfig?.responseJsonSchema !== undefined
+          return new Response(
+            `data: ${JSON.stringify({
+              candidates: [
                 {
-                  name: 'pages.get',
-                  description: ACTION_CATALOG['pages.get'].descriptor.description,
-                  risk: 'read',
-                  group: 'core',
-                  capability: ACTION_CATALOG['pages.get'].capability,
-                  parameters: z.toJSONSchema(ACTION_CATALOG['pages.get'].input)
+                  index: 0,
+                  finishReason: 'STOP',
+                  content: {
+                    role: 'model',
+                    parts: [
+                      {
+                        text: synthesis
+                          ? JSON.stringify({ claims: [], attachmentClaims: [], observations: [], unresolvedFacets: [0], recommendations: '' })
+                          : 'Collector prose claims the unavailable image is red.'
+                      }
+                    ]
+                  }
                 }
               ],
-              authoritySha256: null,
-              invoke: async () => {
-                throw new Error('The media fixture must not execute Wiki actions')
-              },
-              snapshot: async () => ({}),
-              close
-            })
-          }
-          const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders })
-          const { mediaRequest: _mediaRequest, ...base } = request()
-          const text = vi.fn(async (_content: string) => {})
-          const engineRequest: AgentEngineRequest = {
-            ...base,
-            generationTools: [],
-            mediaBindings: {},
-            dispatchBudget,
-            messages: [
-              {
-                role: 'user',
-                content: 'Briefly describe the attached file.',
-                attachments: [
-                  {
-                    id: '00000000-0000-4000-8000-000000000088',
-                    filename: mimeType === 'image/png' ? 'pixel.png' : 'brief.pdf',
-                    mimeType,
-                    byteLength: payload.length,
-                    ...(mimeType === 'application/pdf' ? { preparePdf: (signal: AbortSignal) => prepareAgentPdf(payload, signal) } : { loadPayload }),
-                    authorizePayload,
-                    recordPromptTokens
-                  }
-                ]
-              }
-            ]
-          }
-          expect(await engine.preflight(engineRequest)).toMatchObject({
-            admissible: true,
-            inputExposureTokens: 383_616,
-            outputExposureTokens: 16_384,
-            totalExposureTokens: 400_000,
-            inputExposureUsesFullWindowBound: true
-          })
-          expect(wire).toEqual([])
-          expect(dispatchBudget.reserve).not.toHaveBeenCalled()
-          const result = await engine.execute(engineRequest, { text, event: async () => {} })
-          expect(result.totalTokens).toBe(1_010)
-          const published = text.mock.calls.map(([content]) => content).join('')
-          expect(published.trim().length).toBeGreaterThan(0)
-          expect(published).not.toContain('The attachment is available.')
-          expect(published).not.toContain('[[cite:')
-          expect(published).not.toContain('"unresolvedFacets"')
-          expect(wire.filter(({ url }) => url === `${origin}/upload/v1beta/files`)).toHaveLength(1)
-          expect(wire.filter(({ url }) => url === `${origin}/upload/v1beta/files?upload_id=context&upload_protocol=resumable`)).toHaveLength(1)
-          const counts = wire.filter(({ url }) => url === `${origin}/v1beta/models/${model}:countTokens`)
-          expect(counts).toHaveLength(1)
-          const count = JSON.parse(String(counts[0]?.init.body))
-          expect(count.contents[0].parts).toEqual([{ fileData: { fileUri: remote.uri, mimeType } }])
-          const generations = wire.filter(({ url }) => url === `${origin}/v1beta/models/${model}:streamGenerateContent?alt=sse`)
-          expect(generations).toHaveLength(2)
-          const generation = JSON.parse(String(generations[0]?.init.body))
-          expect(generation.contents.find((content: { role: string }) => content.role === 'user').parts).toEqual(
-            expect.arrayContaining([{ fileData: { fileUri: remote.uri, mimeType } }])
+              usageMetadata: { promptTokenCount: 500, candidatesTokenCount: 5, totalTokenCount: 505 }
+            })}\n\n`,
+            { headers: { 'content-type': 'text/event-stream' } }
           )
-          expect(JSON.stringify(generation)).not.toContain('wiki-media:')
-          expect(JSON.stringify(generation)).not.toContain(payload.toString('base64'))
-          const synthesis = JSON.parse(String(generations[1]?.init.body))
-          expect(JSON.stringify(synthesis)).not.toContain(remote.uri)
-          expect(JSON.stringify(synthesis)).not.toContain(payload.toString('base64'))
-          expect(wire.filter(({ url, init }) => url === remote.uri && init.method === 'DELETE')).toHaveLength(1)
-          expect(recordPromptTokens).toHaveBeenCalledWith(258)
-          expect(recordPromptTokens).toHaveBeenCalledTimes(1)
-          expect(dispatchBudget.reconcile).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({ inputTokens: 500, outputTokens: 5, totalTokens: 505 })
-          )
-          expect(dispatchBudget.reconcile).toHaveBeenCalledTimes(2)
-          expect(close).toHaveBeenCalledTimes(2)
-          expect(dispatchBudget.release).not.toHaveBeenCalled()
-          if (mimeType === 'image/png') expect(loadPayload).toHaveBeenCalledTimes(1)
-        } finally {
-          await db.destroy()
-        }
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch
+      const resolve = (async () => [{ address: '142.250.1.1', family: 4 }]) as unknown as typeof lookup
+      const action = ACTION_CATALOG['media.generateImage']
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            {
+              name: 'media.generateImage',
+              description: action.descriptor.description,
+              risk: action.descriptor.risk,
+              group: action.group,
+              capability: action.capability,
+              parameters: z.toJSONSchema(action.input)
+            }
+          ],
+          authoritySha256: null,
+          invoke: async () => {
+            throw new Error('This description request must not generate an image')
+          },
+          snapshot: async () => ({}),
+          close: () => {}
+        })
+      }
+      const engine = new AxAgentEngine(new AgentProviderFactory(db, { get: async () => 'fixture-key' }, implementation, resolve), actions, undefined, {
+        decisionProviders: fixtureDecisionProviders
       })
+      const { mediaRequest: _mediaRequest, ...base } = request()
+      const loadPayload = vi.fn(async () => {
+        throw new Error('Tool-only references have no native content permission')
+      })
+      const text = vi.fn(async (_content: string) => {})
+      await engine.execute(
+        {
+          ...base,
+          generationTools: [],
+          mediaBindings: {},
+          messages: [
+            {
+              role: 'user',
+              content: 'Describe the attached image.',
+              attachments: [
+                {
+                  id: '00000000-0000-4000-8000-000000000088',
+                  filename: 'pixel.png',
+                  mimeType: 'image/png',
+                  byteLength: png.length,
+                  loadPayload
+                }
+              ]
+            }
+          ]
+        },
+        { text, event: async () => {} }
+      )
+      expect(generations).toHaveLength(2)
+      for (const generation of generations) expect(JSON.stringify(generation)).not.toMatch(/fileData|inlineData|wiki-media:/u)
+      expect(loadPayload).not.toHaveBeenCalled()
+      expect(text.mock.calls.map(([content]) => content).join('')).not.toMatch(/image is red|Collector prose|Provided file/u)
+    } finally {
+      await db.destroy()
+    }
+  })
 
   it('does not label an oversized serialized media frame as a whole-window bound', async () => {
     const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })

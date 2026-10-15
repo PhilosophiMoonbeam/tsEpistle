@@ -41,6 +41,8 @@ Early server-session creation remains intentional: the existing provider resolut
 
 The conversation header identifies the resolved provider and Agent model. Its provider picker offers only authorized profiles and the workspace default. Changing provider preserves the unsent message and included Wiki sources, resets Web search consent, and does not submit a request. Active work, conversation mutations, uploads, recordings, and unsent attachments block provider changes with an explanation.
 
+Opening History or Memory moves keyboard focus into its labelled panel. Closing, including Escape from that panel, restores its own visible trigger. Modal panels trap focus; docked and wide panels leave the rest of the workspace reachable. Owned menus/dialogs and composing input retain Escape ownership, and an in-progress memory mutation still fences dismissal.
+
 ## Composer input and attachments
 
 Desktop Enter submits, Shift+Enter inserts a newline, and Ctrl/Command+Enter submits. With a coarse primary pointer, Enter inserts a newline and the explicit Send control submits. Input-method composition does not accidentally send a message.
@@ -50,6 +52,8 @@ Up to four files can be attached. A multi-file selection is validated as a whole
 Attachment input types follow the resolved Agent profile. Image creation and dictation use their separately authorized media profiles, so a profile that cannot consume audio attachments may still offer transcription. A full four-file selection disables both the visible Attach control and its native file input; removing a file restores admission.
 
 Typing updates the in-memory draft synchronously without rewriting pinned-source preferences. Transcript clearance follows the measured composer height, and scroll updates are coalesced so a growing draft or streamed response does not repeatedly force layout.
+
+The empty-conversation welcome grows into spare transcript space but does not flex-shrink below its intrinsic content height. In short viewports, its starter cards therefore contribute to transcript overflow and can scroll above the sticky composer dock instead of spilling behind it.
 
 ## Provider workbench
 
