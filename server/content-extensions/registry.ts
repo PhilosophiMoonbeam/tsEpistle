@@ -1,13 +1,10 @@
-import {
-  BUILTIN_CONTENT_EXTENSIONS,
-  type ContentExtensionDefinition,
-  type ContentExtensionEnvelope
-} from '../../shared/content-extensions.ts'
+import { BUILTIN_CONTENT_EXTENSIONS, type ContentExtensionDefinition, type ContentExtensionEnvelope } from '../../shared/content-extensions.ts'
 import { renderDiagramContentExtension } from './diagram.ts'
 import { renderGalleryContentExtension } from './gallery.ts'
 import { renderIndexContentExtension } from './index.ts'
 import { renderInfoboxContentExtension } from './infobox.ts'
 import { renderKrokiContentExtension } from './kroki.ts'
+import { renderLinksGridContentExtension } from './links-grid.ts'
 import { renderMapContentExtension } from './map.ts'
 import { renderMediaContentExtension } from './media.ts'
 import { renderPdfContentExtension } from './pdf.ts'
@@ -22,9 +19,10 @@ export interface ContentExtensionRegistration {
   render(envelope: ContentExtensionEnvelope): Promise<string>
 }
 
-const definitionByKey = Object.fromEntries(
-  BUILTIN_CONTENT_EXTENSIONS.map(definition => [definition.key, definition])
-) as Record<string, ContentExtensionDefinition>
+const definitionByKey = Object.fromEntries(BUILTIN_CONTENT_EXTENSIONS.map(definition => [definition.key, definition])) as Record<
+  string,
+  ContentExtensionDefinition
+>
 
 const rendererByKey: Record<string, ContentExtensionRegistration['render']> = {
   diagram: renderDiagramContentExtension,
@@ -32,6 +30,7 @@ const rendererByKey: Record<string, ContentExtensionRegistration['render']> = {
   index: renderIndexContentExtension,
   infobox: renderInfoboxContentExtension,
   kroki: renderKrokiContentExtension,
+  'links-grid': renderLinksGridContentExtension,
   map: renderMapContentExtension,
   media: renderMediaContentExtension,
   pdf: renderPdfContentExtension,

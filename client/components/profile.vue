@@ -45,6 +45,12 @@
             v-list-item.profile-nav__item(to='/pages' color='primary' rounded='lg')
               template(v-slot:prepend): v-icon mdi-file-document-outline
               v-list-item-title {{ $t('profile:pages.title') }}
+            v-list-item.profile-nav__item(to='/discussions' color='primary' rounded='lg')
+              template(v-slot:prepend): v-icon mdi-comment-text-multiple-outline
+              v-list-item-title {{ $t('profile:nav.discussions', { defaultValue: 'My discussions' }) }}
+            v-list-item.profile-nav__item(to='/notifications' color='primary' rounded='lg')
+              template(v-slot:prepend): v-icon mdi-bell-outline
+              v-list-item-title {{ $t('profile:nav.notifications', { defaultValue: 'Notifications' }) }}
             v-list-item.profile-nav__item(to='/offline' color='primary' rounded='lg')
               template(v-slot:prepend): v-icon mdi-cloud-check-outline
               v-list-item-title {{ $t('profile:nav.offline', { defaultValue: 'Offline access' }) }}

@@ -1,6 +1,6 @@
 import { CommentApiError, createComment, fetchComments, fetchMentionCandidates } from './comments-api.ts'
 
-function createJsonResponse (payload, status = 200) {
+function createJsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { 'Content-Type': 'application/json; charset=utf-8' }
@@ -9,15 +9,18 @@ function createJsonResponse (payload, status = 200) {
 
 describe('comments api helper', () => {
   test('scopes comment listing to an unambiguous page identifier', async () => {
-    const comments = [{
-      id: 31,
-      render: '<p>Owner comment</p>',
-      authorName: 'Owner',
-      replyTo: 0,
-      authorHandle: 'owner',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      updatedAt: '2026-08-14T00:00:00.000Z'
-    }]
+    const comments = [
+      {
+        id: 31,
+        render: '<p>Owner comment</p>',
+        authorName: 'Owner',
+        replyTo: 0,
+        authorHandle: 'owner',
+        createdAt: '2026-08-14T00:00:00.000Z',
+        annotations: [],
+        updatedAt: '2026-08-14T00:00:00.000Z'
+      }
+    ]
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(comments))
 
     expect(await fetchComments(fetchImpl, 17)).toEqual(comments)
@@ -28,30 +31,68 @@ describe('comments api helper', () => {
   })
   test('preserves clear comment content in typed rows for uncertain-create reconciliation', async () => {
     const source = 'Useful guide'
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 31,
+          pageId: 17,
+          annotations: [],
+          content: source,
+          render: 'rendered comment',
+          authorName: 'Owner',
+          replyTo: 0,
+          authorHandle: 'owner',
+          createdAt: '2026-08-14T00:00:00.000Z',
+          updatedAt: '2026-08-14T00:00:00.000Z'
+        }
+      ])
+    )
+
+    await expect(fetchComments(fetchImpl, 17)).resolves.toEqual([
+      {
+        id: 31,
+        render: 'rendered comment',
+        pageId: 17,
+        annotations: [],
+        content: source,
+        authorName: 'Owner',
+        replyTo: 0,
+        authorHandle: 'owner',
+        createdAt: '2026-08-14T00:00:00.000Z',
+        updatedAt: '2026-08-14T00:00:00.000Z'
+      }
+    ])
+  })
+  test('preserves authorized passage revisions and current authors, rejecting malformed annotations', async () => {
+    const annotation = {
+      id: 3,
+      commentId: 31,
+      position: 0,
+      revision: 2,
+      note: '**Note**',
+      anchor: { exact: 'Passage', prefix: '', suffix: '', heading: null, offset: 7 },
+      resolvedAt: null,
+      resolvedById: null,
+      createdAt: '',
+      updatedAt: ''
+    }
+    const row = {
       id: 31,
       pageId: 17,
-      content: source,
-      render: 'rendered comment',
-      authorName: 'Owner',
+      authorId: 9,
+      render: '<p>Discussion</p>',
+      authorName: 'Reader',
+      authorHandle: 'reader',
       replyTo: 0,
-      authorHandle: 'owner',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      updatedAt: '2026-08-14T00:00:00.000Z'
-    }]))
-
-    await expect(fetchComments(fetchImpl, 17)).resolves.toEqual([{
-      id: 31,
-      render: 'rendered comment',
-      content: source,
-      authorName: 'Owner',
-      replyTo: 0,
-      authorHandle: 'owner',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      updatedAt: '2026-08-14T00:00:00.000Z'
-    }])
+      createdAt: '',
+      updatedAt: '',
+      annotations: [annotation]
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([row]))
+    await expect(fetchComments(fetchImpl, 17)).resolves.toMatchObject([{ authorId: 9, pageId: 17, annotations: [annotation] }])
+    fetchImpl.mockResolvedValue(createJsonResponse([{ ...row, annotations: [{ ...annotation, revision: 0 }] }]))
+    await expect(fetchComments(fetchImpl, 17)).rejects.toBeInstanceOf(CommentApiError)
   })
-
 
   test('scopes mention discovery to the current page and validates candidates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 7, handle: 'alice', name: 'Alice' }]))
@@ -77,9 +118,11 @@ describe('comments api helper', () => {
   })
 
   test('rejects non-JSON successful comment reads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response('[]', {
-      headers: { 'Content-Type': 'text/plain' }
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response('[]', {
+        headers: { 'Content-Type': 'text/plain' }
+      })
+    )
     const request = fetchComments(fetchImpl, 17, 'Bad comments content type')
 
     await expect(request).rejects.toBeInstanceOf(CommentApiError)
@@ -116,13 +159,17 @@ describe('comments api helper', () => {
 
   test('propagates JSON rejection details from comment creates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Comment content is required' }, 422))
-    const request = createComment(fetchImpl, {
-      pageId: 17,
-      replyTo: 0,
-      content: '',
-      guestName: 'Guest',
-      guestEmail: 'guest@example.test'
-    }, 'Bad comment create')
+    const request = createComment(
+      fetchImpl,
+      {
+        pageId: 17,
+        replyTo: 0,
+        content: '',
+        guestName: 'Guest',
+        guestEmail: 'guest@example.test'
+      },
+      'Bad comment create'
+    )
 
     await expect(request).rejects.toBeInstanceOf(CommentApiError)
     await expect(request).rejects.toMatchObject({
@@ -135,17 +182,23 @@ describe('comments api helper', () => {
   })
 
   test('treats a non-JSON successful create as unknown rather than acknowledging it', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response('{"id":53}', {
-      status: 201,
-      headers: { 'Content-Type': 'text/plain' }
-    }))
-    const request = createComment(fetchImpl, {
-      pageId: 17,
-      replyTo: 0,
-      content: 'Useful guide',
-      guestName: 'Guest',
-      guestEmail: 'guest@example.test'
-    }, 'Bad comment create content type')
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response('{"id":53}', {
+        status: 201,
+        headers: { 'Content-Type': 'text/plain' }
+      })
+    )
+    const request = createComment(
+      fetchImpl,
+      {
+        pageId: 17,
+        replyTo: 0,
+        content: 'Useful guide',
+        guestName: 'Guest',
+        guestEmail: 'guest@example.test'
+      },
+      'Bad comment create content type'
+    )
 
     await expect(request).rejects.toBeInstanceOf(CommentApiError)
     await expect(request).rejects.toMatchObject({
@@ -156,5 +209,4 @@ describe('comments api helper', () => {
       outcome: 'unknown'
     })
   })
-
 })

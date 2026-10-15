@@ -257,6 +257,24 @@
         @save='saveUnsavedAndClose'
       )
       component(v-if='activeModal', :is='activeModal')
+      v-dialog(
+        v-if='imagePropertiesRequest'
+        :model-value='true'
+        max-width='720'
+        scrollable
+        aria-labelledby='editor-image-properties-title'
+        @update:model-value='closeImageProperties'
+      )
+        v-card
+          v-toolbar(flat)
+            v-toolbar-title#editor-image-properties-title Image properties
+            v-spacer
+            v-btn(icon='mdi-close', aria-label='Close image properties', @click='closeImageProperties')
+          editor-image-properties(
+            :key='imagePropertiesGeneration'
+            :request='imagePropertiesRequest'
+            @close='closeImageProperties'
+          )
 
     v-bottom-navigation.editor-mobile-actions(
       v-if='$vuetify.display.smAndDown'
@@ -343,6 +361,7 @@ import {
 } from '../../shared/page-branding.ts'
 import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 import type { WikiLinkOptions } from '../../shared/wikilinks.ts'
+import { onEditorImageProperties, type EditorImagePropertiesRequest, type EditorImagePropertyPatch } from '../helpers/editor-image-properties'
 
 
 const OFFLINE_CREATE_IDENTITY_KEY = 'tsepistle-offline-create-identity'
@@ -509,6 +528,7 @@ export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
   components: {
     StatusIndicator,
+    editorImageProperties: createAsyncComponent(() => import('./editor/editor-image-properties.vue')),
     editorCode: createAsyncComponent(() => import('./editor/editor-code.vue')),
     editorCkeditor: createAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
     editorVisualMarkdown: createAsyncComponent(() => import('./editor/editor-visual-markdown.vue')),
@@ -656,6 +676,10 @@ export default defineComponent({
   },
   data() {
     return {
+      imagePropertiesRequest: null as EditorImagePropertiesRequest | null,
+      imagePropertiesGeneration: 0,
+      imagePropertiesUnsubscribe: null as (() => void) | null,
+      imagePropertiesAbortCleanup: null as (() => void) | null,
       isSaving: false,
       editorAdapter: null as EditorAdapter | null,
       editorAdapterUnsubscribe: null as (() => void) | null,
@@ -757,6 +781,13 @@ export default defineComponent({
           absoluteLinks: this.absoluteLinks
         }
       }
+    },
+    imagePropertiesOwnerKey(): string {
+      return JSON.stringify([
+        wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch,
+        wikiStore.page.id, wikiStore.page.locale, wikiStore.page.path,
+        this.currentEditor, this.editorInstanceKey, this.lifecycleGeneration
+      ])
     },
     currentStyling(): string { return wikiStore.page.scriptCss },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
@@ -937,6 +968,10 @@ export default defineComponent({
     },
   },
   watch: {
+    imagePropertiesOwnerKey: {
+      flush: 'sync',
+      handler() { this.closeImageProperties() }
+    },
     currentEditor(newValue: string) {
       if (newValue !== '' && this.mode === 'create') {
         if (this.modalTimer !== null) window.clearTimeout(this.modalTimer)
@@ -970,6 +1005,7 @@ export default defineComponent({
     }
   },
   created() {
+    this.imagePropertiesUnsubscribe = onEditorImageProperties(this.openImageProperties)
     if (this.initMode === 'create') {
       this.offlineCreateIdentity = readOfflineCreateIdentity() ?? createOfflineDraftIdentity()
       writeOfflineCreateIdentity(this.offlineCreateIdentity)
@@ -1052,6 +1088,9 @@ export default defineComponent({
   },
 
   beforeUnmount() {
+    this.closeImageProperties()
+    this.imagePropertiesUnsubscribe?.()
+    this.imagePropertiesUnsubscribe = null
     this.lifecycleGeneration += 1
     this.offlineMetadataOperation += 1
     this.offlineStorage?.close()
@@ -1074,6 +1113,31 @@ export default defineComponent({
     removeEditorPageCss()
   },
   methods: {
+    closeImageProperties() {
+      this.imagePropertiesAbortCleanup?.()
+      this.imagePropertiesAbortCleanup = null
+      this.imagePropertiesRequest = null
+    },
+    openImageProperties(request: EditorImagePropertiesRequest) {
+      this.closeImageProperties()
+      if (request.signal.aborted) return
+      const owner = this.imagePropertiesOwnerKey
+      const generation = ++this.imagePropertiesGeneration
+      const close = () => {
+        if (this.imagePropertiesGeneration === generation) this.closeImageProperties()
+      }
+      request.signal.addEventListener('abort', close, { once: true })
+      this.imagePropertiesAbortCleanup = () => request.signal.removeEventListener('abort', close)
+      this.imagePropertiesRequest = markRaw({
+        properties: { ...request.properties, styles: [...request.properties.styles] },
+        signal: request.signal,
+        apply: (patch: EditorImagePropertyPatch) => {
+          if (request.signal.aborted || owner !== this.imagePropertiesOwnerKey ||
+            generation !== this.imagePropertiesGeneration || !this.imagePropertiesRequest) return false
+          return request.apply(patch)
+        }
+      })
+    },
     currentEditableState(): EditableStateValue {
       return {
         content: wikiStore.editor.content,

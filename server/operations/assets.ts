@@ -6,10 +6,14 @@ import type { Knex } from 'knex'
 import { randomUUID, createHash } from 'node:crypto'
 
 import { enqueueAssetRelocationEffect } from '../jobs/asset-relocation.ts'
+import { enqueueAssetStorageMutation } from '../jobs/storage-mutations.ts'
 import { assertAssetLocationAssetSettled, assertAssetLocationReservations, lockAssetLocation, withAssetLocationLocks } from '../helpers/asset-location-lock.ts'
 import assetHelper from '../helpers/asset.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
+import { storageConfigurationKey } from '../helpers/storage-configuration-key.ts'
+import { isRecord } from '../models/moduleTypes.ts'
+import { assertNoPublicStoragePageAtPath } from '../helpers/storage-path-admission.ts'
 
 import { AssetFolderHierarchyError } from '../models/assetFolders.ts'
 import { resolveAssetBrandingView, stripAssetBrandingMetadata } from '../helpers/asset-branding.ts'
@@ -65,10 +69,15 @@ interface Query<Row> extends PromiseLike<Row[]> {
 }
 interface StorageTarget {
   key: string
-  configurationKey: string
   active: boolean
-  paused: boolean
   supportsAssetRelocation?: boolean
+}
+interface ConfiguredStorageTarget {
+  key: string
+  isEnabled: boolean
+  mode: string
+  syncInterval: string
+  config: unknown
 }
 interface Models {
   assets: {
@@ -78,8 +87,6 @@ interface Models {
   }
   assetFolders: { query(transaction?: Knex.Transaction): Query<Folder>; getHierarchy(id: number, transaction?: Knex.Transaction): Promise<Folder[]> }
   storage: {
-    assetEvent(event: Record<string, unknown>): Promise<unknown>
-    runtimeTargets?(): StorageTarget[]
     relocationTargets?(): StorageTarget[]
   }
   knex: Knex
@@ -118,7 +125,6 @@ const logRelocationCacheCleanupFailure = (): void => {
     // Cache cleanup and logging are best effort after the relocation transaction commits.
   }
 }
-
 
 const invalidFolderSlug = () => new ApplicationError('Folder slug must be a canonical non-empty path segment.', { status: 400, code: 'ASSET_FOLDER_INVALID' })
 
@@ -355,8 +361,7 @@ const imageResizeStale = () =>
     status: 409,
     code: 'ASSET_IMAGE_SOURCE_STALE'
   })
-const imageResizeInputError = (message: string) =>
-  new ApplicationError(message, { status: 400, code: 'ASSET_IMAGE_INPUT_INVALID' })
+const imageResizeInputError = (message: string) => new ApplicationError(message, { status: 400, code: 'ASSET_IMAGE_INPUT_INVALID' })
 
 const assetRowBytes = (value: unknown): Buffer => {
   if (Buffer.isBuffer(value)) return value
@@ -528,6 +533,7 @@ const resizeImage = async ({
         if (!auth.checkPageAccess(requester, ['write:assets'], { path: destinationPath }, authority)) {
           throw imageResizeDestinationForbidden()
         }
+        await assertNoPublicStoragePageAtPath(transaction, destinationPath)
 
         await lockAssetLocation(transaction, currentSourcePath)
         await lockAssetLocation(transaction, destinationPath)
@@ -551,10 +557,11 @@ const resizeImage = async ({
         const destinationHash = assetHelper.generateHash(destinationPath)
         const collision = await transaction('assets').where({ hash: destinationHash }).first('id')
         if (collision) throw imageResizeConflict()
-        const existing = folderId === null
-          ? await transaction('assets').where({ filename }).whereNull('folderId').first('id') ??
-            await transaction('assets').where({ filename, folderId: 0 }).first('id')
-          : await transaction('assets').where({ filename, folderId }).first('id')
+        const existing =
+          folderId === null
+            ? ((await transaction('assets').where({ filename }).whereNull('folderId').first('id')) ??
+              (await transaction('assets').where({ filename, folderId: 0 }).first('id')))
+            : await transaction('assets').where({ filename, folderId }).first('id')
         if (existing) throw imageResizeConflict()
 
         const now = new Date().toISOString()
@@ -572,73 +579,26 @@ const resizeImage = async ({
             createdAt: now,
             updatedAt: now
           })
-          .returning('*')
+          .returning('id')
         const row = Array.isArray(inserted) ? inserted[0] : inserted
         const createdAssetId = Number(typeof row === 'object' && row !== null ? Reflect.get(row, 'id') : row)
         if (!Number.isSafeInteger(createdAssetId) || createdAssetId < 1) {
           throw new ApplicationError('The resized asset could not be persisted.', { status: 503, code: 'ASSET_IMAGE_PERSISTENCE_FAILED' })
         }
         await transaction('assetData').insert({ id: createdAssetId, data: transformed.data })
+        await enqueueAssetStorageMutation(transaction, { assetId: createdAssetId, paths: [destinationPath], author: requester })
         return {
           id: createdAssetId,
-          filename,
           hash: destinationHash,
-          ext: filenameExtension,
-          kind: 'image',
-          mime: imageResizeMime[format],
-          fileSize: transformed.data.length,
-          metadata: {},
-          authorId: requester.id,
-          createdAt: now,
-          updatedAt: now,
           path: destinationPath
         }
       })
 
-      let publicationStarted = false
+      await assertHeld?.()
       try {
-        await assertHeld?.()
         if (models.assets.deleteAssetCaches) await models.assets.deleteAssetCaches([asset.hash])
-        publicationStarted = true
-        await models.storage.assetEvent({
-          event: 'uploaded',
-          asset: {
-            ...asset,
-            data: transformed.data,
-            authorName: requester.name,
-            authorEmail: requester.email
-          }
-        })
-        await assertHeld?.()
       } catch {
-        if (publicationStarted) {
-          try {
-            await models.storage.assetEvent({
-              event: 'deleted',
-              asset: {
-                ...asset,
-                authorName: requester.name,
-                authorEmail: requester.email
-              }
-            })
-          } catch {
-            // Storage cleanup is best effort after a failed new-asset publication.
-          }
-        }
-        try {
-          if (models.assets.deleteAssetCaches) await models.assets.deleteAssetCaches([asset.hash])
-        } catch {
-          // Cache cleanup is retried independently from canonical-row rollback.
-        }
-        try {
-          await models.knex.transaction(async transaction => {
-            await transaction('assetData').where({ id: asset.id }).delete()
-            await transaction('assets').where({ id: asset.id, hash: asset.hash }).delete()
-          })
-        } catch {
-          // Keep the request unsuccessful if canonical-row rollback cannot complete.
-        }
-        throw new ApplicationError('The resized asset could not be published.', { status: 503, code: 'ASSET_IMAGE_PUBLICATION_FAILED' })
+        logRelocationCacheCleanupFailure()
       }
 
       return {
@@ -771,6 +731,7 @@ const relocate = async ({
         if (!auth.checkPageAccess(requester, ['manage:system', 'write:assets'], { path: destinationPath }, authority)) {
           throw new errors.AssetRenameTargetForbidden()
         }
+        await assertNoPublicStoragePageAtPath(transaction, destinationPath)
         for (const path of [sourcePath, destinationPath].sort()) await lockAssetLocation(transaction, path)
         await assertAssetLocationReservations(transaction, [sourcePath, destinationPath])
 
@@ -785,13 +746,21 @@ const relocate = async ({
         const bytes = relocationBytes(dataRow.data)
         const contentSha256 = createHash('sha256').update(bytes).digest('hex')
         const destinationHash = assetHelper.generateHash(destinationPath)
-        const targets =
-          typeof models.storage.relocationTargets === 'function'
-            ? models.storage.relocationTargets().filter(target => target.active)
-            : typeof models.storage.runtimeTargets === 'function'
-              ? models.storage.runtimeTargets().filter(target => target.active)
-              : []
-        const unsupportedTarget = targets.find(target => target.supportsAssetRelocation === false)
+        const runtimeTargets = models.storage.relocationTargets?.() ?? []
+        const targets = (
+          await transaction<ConfiguredStorageTarget>('storage')
+            .where('isEnabled', true)
+            .orderBy('key')
+            .forShare()
+            .select('key', 'isEnabled', 'mode', 'syncInterval', 'config')
+        ).map(target => {
+          const config: unknown = typeof target.config === 'string' ? JSON.parse(target.config) : target.config
+          if (!isRecord(config)) throw new Error('Storage target configuration is invalid')
+          return { key: target.key, configurationKey: storageConfigurationKey({ ...target, config }) }
+        })
+        const unsupportedTarget = targets.find(target =>
+          runtimeTargets.some(runtime => runtime.key === target.key && runtime.active && runtime.supportsAssetRelocation === false)
+        )
         if (unsupportedTarget) {
           throw new ApplicationError(`Storage target ${unsupportedTarget.key} cannot reconcile asset relocations.`, {
             status: 503,
@@ -863,7 +832,7 @@ const remove = async ({ requester, id }: { requester: Requester; id: number }): 
     ['assets'],
     async assertHeld => {
       await assertHeld?.()
-      const { asset, assetPath } = await models.knex.transaction(async transaction => {
+      const { asset } = await models.knex.transaction(async transaction => {
         const asset = await models.assets.query(transaction).where({ id }).forUpdate().first()
         if (!asset) throw new errors.AssetInvalid()
         const assetPath = await asset.getAssetPath()
@@ -876,21 +845,11 @@ const remove = async ({ requester, id }: { requester: Requester; id: number }): 
         await assertAssetLocationAssetSettled(transaction, asset.id)
         await assertAssetLocationReservations(transaction, [assetPath])
         await models.assets.query(transaction).deleteById(id)
-        return { asset, assetPath }
+        await enqueueAssetStorageMutation(transaction, { assetId: asset.id, paths: [assetPath], author: requester })
+        return { asset }
       })
       await assertHeld?.()
       await asset.deleteAssetCache()
-      await models.storage.assetEvent({
-        event: 'deleted',
-        asset: {
-          ...asset,
-          metadata: stripAssetBrandingMetadata(asset.metadata),
-          path: assetPath,
-          authorId: requester.id,
-          authorName: requester.name,
-          authorEmail: requester.email
-        }
-      })
       await assertHeld?.()
     },
     models.knex

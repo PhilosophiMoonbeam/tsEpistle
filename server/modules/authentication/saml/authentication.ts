@@ -1,3 +1,4 @@
+import { mappedProviderProfile, samlEmailVerified, type ProviderProfileFields } from '../provider-profile.ts'
 import type { Knex } from 'knex'
 import { randomBytes } from 'node:crypto'
 import { synchronizeProviderGroups } from '../../../helpers/authentication-provisioning.ts'
@@ -10,8 +11,14 @@ import _ from 'lodash'
 // SAML Account
 // ------------------------------------
 
-
-import { MultiSamlStrategy, ValidateInResponseTo, type CacheProvider, type MultiStrategyConfig, type PassportSamlConfig } from '@node-saml/passport-saml'
+import {
+  MultiSamlStrategy,
+  ValidateInResponseTo,
+  type CacheProvider,
+  type MultiStrategyConfig,
+  type PassportSamlConfig,
+  type Profile
+} from '@node-saml/passport-saml'
 const asPassportUser = <T extends object>(user: T): T => user
 
 const getSignatureAlgorithm = (algorithm: string): 'sha1' | 'sha256' | 'sha512' => {
@@ -37,6 +44,77 @@ const getAudience = (value: unknown): string | undefined => {
   }
   throw new Error('SAML audience must be a string.')
 }
+
+// Node-SAML's getAssertion() returns its namespace-stripped xml2js tree.
+type SamlAssertionElement = {
+  $?: Record<string, string>
+  _?: unknown
+  AttributeStatement?: SamlAssertionElement[]
+  Attribute?: SamlAssertionElement[]
+  AttributeValue?: (SamlAssertionElement | string)[]
+  [key: string]: unknown
+}
+
+const isEmptySamlText = (value: SamlAssertionElement | string | undefined, parents: SamlAssertionElement[]): boolean => {
+  if (typeof value === 'string') return value.trim() === ''
+  if (typeof value !== 'object' || value === null || Array.isArray(value) || Object.keys(value).some(key => key !== '_' && key !== '$')) return false
+  if (value._ !== undefined && (typeof value._ !== 'string' || value._.trim() !== '')) return false
+  if (value.$ === undefined) return true
+  const contexts = [...parents, value]
+  const namespace = (prefix: string): unknown => {
+    const key = prefix ? `xmlns:${prefix}` : 'xmlns'
+    for (let index = contexts.length - 1; index >= 0; index--) {
+      const attributes = contexts[index]?.$
+      if (attributes && Object.hasOwn(attributes, key)) return attributes[key]
+    }
+    return undefined
+  }
+  return Object.entries(value.$).every(([name, text]) => {
+    if (name === 'xmlns' || name.startsWith('xmlns:')) return true
+    const parts = name.split(':')
+    // Nil, unknown metadata and non-string schema types are not textual clears.
+    if (parts.length !== 2 || parts[1] !== 'type' || namespace(parts[0]!) !== 'http://www.w3.org/2001/XMLSchema-instance' || typeof text !== 'string') {
+      return false
+    }
+    const type = text.trim().split(':')
+    return type.length <= 2 && type.at(-1) === 'string' && namespace(type.length === 2 ? type[0]! : '') === 'http://www.w3.org/2001/XMLSchema'
+  })
+}
+
+/** Recover only unambiguous empty text from Node-SAML's authenticated assertion, never the unsigned response. */
+const samlProviderProfile = (profile: Profile, mappings: Record<keyof ProviderProfileFields, unknown>): ProviderProfileFields => {
+  const result = mappedProviderProfile(profile, mappings)
+  if (typeof profile.getAssertion !== 'function') return result
+  const { Assertion: assertion } = profile.getAssertion() as { Assertion: SamlAssertionElement }
+  if (!assertion || !Array.isArray(assertion.AttributeStatement)) return result
+  for (const field of ['location', 'jobTitle', 'pronouns'] as const) {
+    const mapping = mappings[field]
+    if (typeof mapping !== 'string' || !mapping.trim()) continue
+    const mapped: unknown = _.get(profile, mapping)
+    if (mapped !== undefined && result[field] !== '') continue
+    const path = Object.hasOwn(profile, mapping) ? [mapping] : _.toPath(mapping)
+    const name = path.length === 1 ? path[0] : path.length === 2 && path[0] === 'attributes' ? path[1] : undefined
+    if (name === undefined || !_.has(profile, path)) continue
+    let matches = 0
+    let emptyText = false
+    for (const statement of assertion.AttributeStatement) {
+      if (!Array.isArray(statement.Attribute)) continue
+      for (const attribute of statement.Attribute) {
+        if (attribute.$?.Name !== name) continue
+        matches++
+        emptyText =
+          Array.isArray(attribute.AttributeValue) &&
+          attribute.AttributeValue.length === 1 &&
+          isEmptySamlText(attribute.AttributeValue[0], [assertion, statement, attribute])
+      }
+    }
+    // Node-SAML preserves an own undefined property for a single empty value.
+    // Absent, repeated, nil and structured values must not erase existing data.
+    if (matches === 1 && emptyText) result[field] = ''
+    else delete result[field]
+  }
+  return result
+}
 type SamlRequest = FederatedLoginRequest & {
   readonly body?: unknown
   readonly query?: unknown
@@ -53,8 +131,8 @@ type SamlRequestCacheInput = {
 }
 
 const requestValue = (request: SamlRequest, name: string): unknown => {
-  const body = typeof request.body === 'object' && request.body !== null ? request.body as Record<string, unknown> : undefined
-  const query = typeof request.query === 'object' && request.query !== null ? request.query as Record<string, unknown> : undefined
+  const body = typeof request.body === 'object' && request.body !== null ? (request.body as Record<string, unknown>) : undefined
+  const query = typeof request.query === 'object' && request.query !== null ? (request.query as Record<string, unknown>) : undefined
   return body?.[name] ?? query?.[name]
 }
 
@@ -64,12 +142,12 @@ const stringRequestValue = (request: SamlRequest, name: string): string | undefi
 }
 
 const isSamlCallbackRequest = (request: SamlRequest): boolean => {
-  const path = typeof request.path === 'string'
-    ? request.path
-    : typeof request.originalUrl === 'string' ? request.originalUrl.split('?', 1)[0] ?? '' : ''
-  return /^\/login\/[^/]+\/callback$/u.test(path) ||
+  const path = typeof request.path === 'string' ? request.path : typeof request.originalUrl === 'string' ? (request.originalUrl.split('?', 1)[0] ?? '') : ''
+  return (
+    /^\/login\/[^/]+\/callback$/u.test(path) ||
     stringRequestValue(request, 'SAMLResponse') !== undefined ||
     stringRequestValue(request, 'SAMLRequest') !== undefined
+  )
 }
 
 const samlCacheProvider = (input: SamlRequestCacheInput): CacheProvider => {
@@ -190,21 +268,23 @@ const plugin: AuthenticationPlugin = {
         protocol: 'saml',
         providerRevision,
         payload: relayState === undefined ? { requestId } : { requestId, relayState }
-      }).then(() => {
-        done(null, {
-          ...samlConfig,
-          validateInResponseTo: ValidateInResponseTo.always,
-          requestIdExpirationPeriodMs: FEDERATED_LOGIN_TTL_MS,
-          generateUniqueId: () => requestId,
-          cacheProvider: samlCacheProvider({
-            request,
-            store,
-            providerKey: conf.key,
-            providerRevision,
-            expectedRequestId: requestId
+      })
+        .then(() => {
+          done(null, {
+            ...samlConfig,
+            validateInResponseTo: ValidateInResponseTo.always,
+            requestIdExpirationPeriodMs: FEDERATED_LOGIN_TTL_MS,
+            generateUniqueId: () => requestId,
+            cacheProvider: samlCacheProvider({
+              request,
+              store,
+              providerKey: conf.key,
+              providerRevision,
+              expectedRequestId: requestId
+            })
           })
         })
-      }).catch(error => done(asError(error)))
+        .catch(error => done(asError(error)))
     }
 
     passport.use(
@@ -221,6 +301,11 @@ const plugin: AuthenticationPlugin = {
             if (!profile) {
               throw new Error('SAML profile is missing.')
             }
+            const verifiedEmailMapping =
+              typeof conf.mappingVerifiedEmail === 'string' && conf.mappingVerifiedEmail ? conf.mappingVerifiedEmail : 'email_verified'
+            if (conf.requireVerifiedEmail === true && !samlEmailVerified(_.get(profile, verifiedEmailMapping))) {
+              throw new Error('Provider email verification is required.')
+            }
             const userId = _.get(profile, [conf.mappingUID], null) || _.get(profile, 'nameID', null)
             if (!userId) {
               throw new Error('Invalid or Missing Unique ID field!')
@@ -232,7 +317,12 @@ const plugin: AuthenticationPlugin = {
                 id: userId,
                 email: _.get(profile, conf.mappingEmail, ''),
                 displayName: _.get(profile, conf.mappingDisplayName, '???'),
-                picture: _.get(profile, conf.mappingPicture, '')
+                picture: _.get(profile, conf.mappingPicture, ''),
+                providerProfile: samlProviderProfile(profile, {
+                  location: conf.mappingLocation,
+                  jobTitle: conf.mappingJobTitle,
+                  pronouns: conf.mappingPronouns
+                })
               }
             })
 

@@ -36,12 +36,33 @@ const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   descriptor.script.content.replace(/^import\s[\s\S]*?from\s+['"][^'"]+['"]\s*;?/gm, '').replace('export default', 'return')
 )
 const evaluate = new Function(
-  'passwordPolicyMixin', 'newPasswordIssue', 'AsyncState', 'PasswordStrength', 'wikiStore',
-  'changeProfilePassword', 'fetchProfile', 'removeProfileAvatar', 'updateProfile',
-  'updateProfilePreferences', 'uploadProfileAvatar', 'fetchLocales', 'validateValues',
-  'resolveThemeName', 'applyUserPresentation', 'getErrorMessage', 'changedProfileFields',
-  'PROFILE_DETAIL_FIELDS', 'PROFILE_PREFERENCE_FIELDS', 'profileDraftIssues', 'restoreProfileDraft',
-  'restoreProfileField', 'snapshotProfileDraft', 'timezoneOptions', 'PasswordVisibilityToggle', 'requestConfirmation', executable
+  'passwordPolicyMixin',
+  'newPasswordIssue',
+  'AsyncState',
+  'PasswordStrength',
+  'wikiStore',
+  'changeProfilePassword',
+  'fetchProfile',
+  'removeProfileAvatar',
+  'updateProfile',
+  'updateProfilePreferences',
+  'uploadProfileAvatar',
+  'fetchLocales',
+  'validateValues',
+  'resolveThemeName',
+  'applyUserPresentation',
+  'getErrorMessage',
+  'changedProfileFields',
+  'PROFILE_DETAIL_FIELDS',
+  'PROFILE_PREFERENCE_FIELDS',
+  'profileDraftIssues',
+  'restoreProfileDraft',
+  'restoreProfileField',
+  'snapshotProfileDraft',
+  'timezoneOptions',
+  'PasswordVisibilityToggle',
+  'requestConfirmation',
+  executable
 )
 // The real shared password toggle, so the profile keeps its fixed name and pressed state.
 const toggleFile = join(process.cwd(), 'client/components/common/password-visibility-toggle.vue')
@@ -55,9 +76,10 @@ const toggleTemplate = compileTemplate({
   compilerOptions: { mode: 'function' }
 })
 const PasswordVisibilityToggle = {
-  ...new Function('defineComponent', new Bun.Transpiler({ loader: 'ts' }).transformSync(
-    toggleSfc.script!.content.replace(/^import .*$/gm, '').replace('export default', 'return')
-  ))(Vue.defineComponent),
+  ...new Function(
+    'defineComponent',
+    new Bun.Transpiler({ loader: 'ts' }).transformSync(toggleSfc.script!.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
+  )(Vue.defineComponent),
   render: new Function('Vue', toggleTemplate.code)(Vue) as RenderFunction
 }
 
@@ -70,6 +92,7 @@ const translations: Record<string, string> = {
   'profile:mentionHandle': 'Identifiant de mention',
   'profile:location': 'Lieu',
   'profile:jobTitle': 'Profession',
+  'profile:pronouns': 'Pronoms',
   'profile:timezone': 'Fuseau horaire',
   'profile:dateFormat': 'Format de date',
   'profile:timeFormat': 'Format horaire',
@@ -98,17 +121,38 @@ const translations: Record<string, string> = {
 }
 const translate = (key: string, options: Record<string, unknown> = {}) =>
   String(translations[key] ?? options.defaultValue ?? key).replace(/\{\{(\w+)\}\}/g, (_match, name) => String(options[name] ?? ''))
-const response = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
-  status, headers: { 'Content-Type': 'application/json' }
-})
+const response = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  })
 const profile = (overrides: Partial<Profile> = {}): Profile => ({
-  id: 73, email: 'reader@example.test', name: 'Example Reader', handle: 'reader',
-  providerKey: 'local', providerName: 'Compte local', pictureUrl: 'https://provider.example/avatar.png',
-  isSystem: false, isVerified: true, location: '', jobTitle: '', timezone: 'Europe/Paris',
-  dateFormat: '', timeFormat: 'locale', appearance: 'light', reduceMotion: false,
-  underlineLinks: false, contentTextSize: 'default', communicationLocale: null,
-  createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z',
-  lastLoginAt: '2026-09-03T00:00:00Z', groups: [], pagesTotal: 0, ...overrides
+  id: 73,
+  email: 'reader@example.test',
+  name: 'Example Reader',
+  handle: 'reader',
+  providerKey: 'local',
+  providerName: 'Compte local',
+  pictureUrl: 'https://provider.example/avatar.png',
+  isSystem: false,
+  isVerified: true,
+  location: '',
+  jobTitle: '',
+  pronouns: '',
+  timezone: 'Europe/Paris',
+  dateFormat: '',
+  timeFormat: 'locale',
+  appearance: 'light',
+  reduceMotion: false,
+  underlineLinks: false,
+  contentTextSize: 'default',
+  communicationLocale: null,
+  createdAt: '2026-09-01T00:00:00Z',
+  updatedAt: '2026-09-02T00:00:00Z',
+  lastLoginAt: '2026-09-03T00:00:00Z',
+  groups: [],
+  pagesTotal: 0,
+  ...overrides
 })
 const placeholder = Vue.defineComponent({ render: () => Vue.h('div') })
 const AdminHero = Vue.defineComponent({
@@ -138,17 +182,38 @@ class AvatarIntersectionObserver implements IntersectionObserver {
   readonly rootMargin = '0px'
   readonly thresholds = [0]
   readonly targets = new Set<Element>()
-  constructor(private readonly callback: IntersectionObserverCallback) { observers.add(this) }
-  observe(target: Element) { this.targets.add(target) }
-  unobserve(target: Element) { this.targets.delete(target) }
-  disconnect() { this.targets.clear(); observers.delete(this) }
-  takeRecords(): IntersectionObserverEntry[] { return [] }
+  constructor(private readonly callback: IntersectionObserverCallback) {
+    observers.add(this)
+  }
+  observe(target: Element) {
+    this.targets.add(target)
+  }
+  unobserve(target: Element) {
+    this.targets.delete(target)
+  }
+  disconnect() {
+    this.targets.clear()
+    observers.delete(this)
+  }
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
   intersect(target: Element) {
     const bounds = target.getBoundingClientRect()
-    this.callback([{
-      target, isIntersecting: true, intersectionRatio: 1, time: performance.now(),
-      boundingClientRect: bounds, intersectionRect: bounds, rootBounds: null
-    }], this)
+    this.callback(
+      [
+        {
+          target,
+          isIntersecting: true,
+          intersectionRatio: 1,
+          time: performance.now(),
+          boundingClientRect: bounds,
+          intersectionRect: bounds,
+          rootBounds: null
+        }
+      ],
+      this
+    )
   }
 }
 const intersectAvatar = async (host: HTMLElement) => {
@@ -201,7 +266,8 @@ const mount = async (initialProfile = profile()) => {
     startLoading: vi.fn((key: string) => activeLoading.add(key)),
     stopLoading: vi.fn((key: string) => activeLoading.delete(key)),
     refreshAuth: vi.fn(async () => undefined),
-    showNotification: vi.fn(), showError: vi.fn()
+    showNotification: vi.fn(),
+    showError: vi.fn()
   })
   const fetch = vi.fn(async (url: string, _init?: RequestInit): Promise<Response> => {
     if (url === '/_api/auth/password-policy') return response({ minimum: 12 })
@@ -215,21 +281,47 @@ const mount = async (initialProfile = profile()) => {
   const confirmAnswers: boolean[] = []
   const requestConfirmation = vi.fn(async (_request: Record<string, unknown>) => confirmAnswers.shift() ?? false)
   const options = evaluate(
-    passwordPolicyMixin, newPasswordIssue, placeholder, placeholder, store,
-    usersApi.changeProfilePassword, usersApi.fetchProfile, usersApi.removeProfileAvatar,
-    usersApi.updateProfile, usersApi.updateProfilePreferences, usersApi.uploadProfileAvatar,
-    fetchLocales, validateValues, resolveThemeName, applyUserPresentation, getErrorMessage,
-    draftModel.changedProfileFields, draftModel.PROFILE_DETAIL_FIELDS, draftModel.PROFILE_PREFERENCE_FIELDS,
-    draftModel.profileDraftIssues, draftModel.restoreProfileDraft, draftModel.restoreProfileField,
-    draftModel.snapshotProfileDraft, draftModel.timezoneOptions, PasswordVisibilityToggle, requestConfirmation
+    passwordPolicyMixin,
+    newPasswordIssue,
+    placeholder,
+    placeholder,
+    store,
+    usersApi.changeProfilePassword,
+    usersApi.fetchProfile,
+    usersApi.removeProfileAvatar,
+    usersApi.updateProfile,
+    usersApi.updateProfilePreferences,
+    usersApi.uploadProfileAvatar,
+    fetchLocales,
+    validateValues,
+    resolveThemeName,
+    applyUserPresentation,
+    getErrorMessage,
+    draftModel.changedProfileFields,
+    draftModel.PROFILE_DETAIL_FIELDS,
+    draftModel.PROFILE_PREFERENCE_FIELDS,
+    draftModel.profileDraftIssues,
+    draftModel.restoreProfileDraft,
+    draftModel.restoreProfileField,
+    draftModel.snapshotProfileDraft,
+    draftModel.timezoneOptions,
+    PasswordVisibilityToggle,
+    requestConfirmation
   ) as ComponentOptions
   app = Vue.createApp({ ...options, render })
   fixtureScope = Vue.effectScope()
   const vuetify = fixtureScope.run(() => {
-    const installed = createVuetify({ components, directives, theme: { defaultTheme: 'dark' }, defaults: {
-      VMenu: { transition: false }, VSelect: { menuProps: { transition: false } },
-      VAutocomplete: { menuProps: { transition: false } }, VDialog: { transition: false }
-    } })
+    const installed = createVuetify({
+      components,
+      directives,
+      theme: { defaultTheme: 'dark' },
+      defaults: {
+        VMenu: { transition: false },
+        VSelect: { menuProps: { transition: false } },
+        VAutocomplete: { menuProps: { transition: false } },
+        VDialog: { transition: false }
+      }
+    })
     app!.use(installed)
     return installed
   })!
@@ -247,8 +339,7 @@ const mount = async (initialProfile = profile()) => {
   return { host, vm, fetch, store, activeLoading, vuetify, componentErrors, applyUserPresentation, router, options, requestConfirmation, confirmAnswers }
 }
 const button = (host: ParentNode, name: string) => {
-  const matches = [...host.querySelectorAll<HTMLButtonElement>('button')].filter(item =>
-    (item.getAttribute('aria-label') ?? item.textContent?.trim()) === name)
+  const matches = [...host.querySelectorAll<HTMLButtonElement>('button')].filter(item => (item.getAttribute('aria-label') ?? item.textContent?.trim()) === name)
   expect(matches).toHaveLength(1)
   return matches[0]!
 }
@@ -295,7 +386,10 @@ const fillPasswords = async (host: HTMLElement) => {
 const deferred = () => {
   let resolve!: (value: Response) => void
   let reject!: (reason: Error) => void
-  const promise = new Promise<Response>((yes, no) => { resolve = yes; reject = no })
+  const promise = new Promise<Response>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
   return { promise, resolve, reject }
 }
 const requestsTo = (fetch: { mock: { calls: Array<[string, RequestInit?]> } }, url: string) =>
@@ -357,6 +451,13 @@ describe('profile workspace contracts', () => {
     expect(name.value).toBe('Example Reader')
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
 
+    const pronouns = field(host, translations['profile:pronouns']!)
+    await fill(pronouns, 'they/them')
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
+    expect((await press(pronouns, 'Escape')).defaultPrevented).toBe(true)
+    expect(pronouns.value).toBe('')
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+
     const reduceMotion = field(host, translations['profile:reduceMotion']!)
     reduceMotion.click()
     await settle()
@@ -383,31 +484,38 @@ describe('profile workspace contracts', () => {
     const { host, fetch, store } = await mount()
     await fill(field(host, translations['profile:mentionHandle']!), '  New_Handle ')
     await fill(field(host, translations['profile:displayName']!), ' Renamed Reader ')
+    await fill(field(host, translations['profile:pronouns']!), ' they/them ')
     fetch.mockResolvedValueOnce(response({ message: 'Profile saved' }))
     saveButton(host).click()
     await settle()
     expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(1)
     expect(requestsTo(fetch, '/_api/users/profile/preferences')).toHaveLength(0)
     const body = JSON.parse(requestsTo(fetch, '/_api/users/profile')[0]![1]!.body as string)
-    expect(body).toMatchObject({ name: ' Renamed Reader ', handle: '  New_Handle ', appearance: 'light', timezone: 'Europe/Paris' })
+    expect(body).toMatchObject({ name: ' Renamed Reader ', handle: '  New_Handle ', pronouns: ' they/them ', appearance: 'light', timezone: 'Europe/Paris' })
     expect(field(host, translations['profile:mentionHandle']!).value).toBe('new_handle')
+    expect(field(host, translations['profile:pronouns']!).value).toBe('they/them')
     expect(store.user.name).toBe('Renamed Reader')
     expect(store.refreshAuth).toHaveBeenCalledTimes(1)
     expect(store.showNotification).toHaveBeenCalledWith(expect.objectContaining({ style: 'success' }))
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
 
     await fill(field(host, translations['profile:location']!), 'Lyon')
+    await fill(field(host, translations['profile:pronouns']!), '')
     field(host, translations['profile:reduceMotion']!).click()
     await settle()
-    expect(dockText(host)).toBe('2 modifications non enregistrées')
+    expect(dockText(host)).toBe('3 modifications non enregistrées')
     fetch.mockResolvedValueOnce(response({ message: 'Profile saved' }))
     fetch.mockRejectedValueOnce(new Error('Preferences unavailable'))
     store.showNotification.mockClear()
     saveButton(host).click()
     await settle()
     expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(2)
+    expect(JSON.parse(requestsTo(fetch, '/_api/users/profile')[1]![1]!.body as string).pronouns).toBe('')
     expect(JSON.parse(requestsTo(fetch, '/_api/users/profile/preferences')[0]![1]!.body as string)).toEqual({
-      reduceMotion: true, underlineLinks: false, contentTextSize: 'default', communicationLocale: null
+      reduceMotion: true,
+      underlineLinks: false,
+      contentTextSize: 'default',
+      communicationLocale: null
     })
     expect(store.showError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Preferences unavailable' }))
     expect(store.showNotification).not.toHaveBeenCalled()
@@ -418,6 +526,7 @@ describe('profile workspace contracts', () => {
   test('invalidates the loaded account draft immediately when the authenticated account changes', async () => {
     const { host, fetch, store } = await mount()
     await fill(field(host, translations['profile:displayName']!), 'Account A unsaved draft')
+    await fill(field(host, translations['profile:pronouns']!), 'they/them')
     const accountB = profile({ id: 74, name: 'Account B', handle: 'account_b' })
     fetch.mockImplementation(async (url: string) => {
       if (url === '/_api/users/profile') return response(accountB)
@@ -429,6 +538,7 @@ describe('profile workspace contracts', () => {
     await settle()
 
     expect(field(host, translations['profile:displayName']!).value).toBe('Account B')
+    expect(field(host, translations['profile:pronouns']!).value).toBe('')
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
     saveButton(host).click()
     await settle()
@@ -469,7 +579,8 @@ describe('profile workspace contracts', () => {
     const { host, fetch, store, activeLoading } = await mount()
     const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
     Object.defineProperty(input, 'files', {
-      configurable: true, value: [new File(['avatar image'], 'avatar.png', { type: 'image/png' })]
+      configurable: true,
+      value: [new File(['avatar image'], 'avatar.png', { type: 'image/png' })]
     })
     const pending = deferred()
     fetch.mockImplementationOnce(() => pending.promise)
@@ -501,10 +612,13 @@ describe('profile workspace contracts', () => {
     }
   })
 
-  test('blocks saving an invalid mention handle and explains why in the dock', async () => {
+  test.each([
+    ['mention handle', 'profile:mentionHandle', 'no spaces', 'Use 3–32 letters, numbers, underscores or hyphens.'],
+    ['pronouns', 'profile:pronouns', 'x'.repeat(256), 'Use 255 characters or fewer.']
+  ])('blocks saving invalid %s and focuses the affected field', async (_label, key, value, message) => {
     const { host, fetch } = await mount()
-    const handle = field(host, translations['profile:mentionHandle']!)
-    await fill(handle, 'no spaces')
+    const input = field(host, translations[key]!)
+    await fill(input, value)
     expect(dockText(host)).toBe(translations['profile:dock.fixOne'])
     const save = saveButton(host)
     expect(save.getAttribute('aria-disabled')).toBe('true')
@@ -513,8 +627,8 @@ describe('profile workspace contracts', () => {
     save.click()
     await settle()
     expect(fetch.mock.calls).toHaveLength(requests)
-    expect(document.activeElement).toBe(handle)
-    expect(host.textContent).toContain('Use 3–32 letters, numbers, underscores or hyphens.')
+    expect(document.activeElement).toBe(input)
+    expect(host.textContent).toContain(message)
   })
 
   test('guards leaving with unsaved changes and restores the saved theme on discard or unmount', async () => {
@@ -655,7 +769,12 @@ describe('profile workspace contracts', () => {
     await intersectAvatar(host)
     expect(host.querySelector('.profile-avatar-preview img')?.getAttribute('src')).toBe('https://provider.example/avatar.png')
     const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
-    expect(input.accept.split(',').map(value => value.trim()).sort()).toEqual(['image/jpeg', 'image/png', 'image/webp'])
+    expect(
+      input.accept
+        .split(',')
+        .map(value => value.trim())
+        .sort()
+    ).toEqual(['image/jpeg', 'image/png', 'image/webp'])
     const upload = button(host, 'Importer un avatar')
     const removeButtons = () => [...host.querySelectorAll('button')].filter(item => item.getAttribute('aria-label') === 'Supprimer l’avatar')
     expect(removeButtons()).toHaveLength(0)
@@ -712,8 +831,10 @@ describe('profile workspace contracts', () => {
   })
 
   test.each([
-    ['Sombre', 'dark', 'dark', false], ['Clair', 'light', 'light', false],
-    ['Suivre l’appareil', 'system', 'light', true], ['Par défaut', '', 'light', true]
+    ['Sombre', 'dark', 'dark', false],
+    ['Clair', 'light', 'light', false],
+    ['Suivre l’appareil', 'system', 'light', true],
+    ['Par défaut', '', 'light', true]
   ] as const)('previews the %s appearance on the installed app and saves it from the dock', async (label, appearance, expectedName, expectedSystem) => {
     const { host, fetch, store, vuetify } = await mount(profile({ appearance: appearance === 'light' ? 'dark' : 'light' }))
     const decoy = fixtureScope!.run(() => createVuetify({ theme: { defaultTheme: 'dark' } }))!

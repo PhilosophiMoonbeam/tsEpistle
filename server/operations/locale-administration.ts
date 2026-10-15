@@ -18,6 +18,7 @@ import {
 } from '../../shared/locale-policy.ts'
 import { flattenLocaleStrings, mergeLocaleCatalog, type LocaleStrings } from '../helpers/locale-package.ts'
 import { parseLocaleFileBytes, type ParsedLocaleFile } from '../repositories/locale-packages.ts'
+import { readForkLocaleKeys, installedLocaleCoverage } from './locale-coverage.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import { DurableJobStore, type DurableJob } from '../core/durable-jobs.ts'
@@ -62,9 +63,7 @@ interface StoredLocalFileReview extends LocaleFileReview {
   jobId?: string
   eventId?: string
 }
-export type LocalePackageJobContext =
-  | { kind: 'local'; alreadyApplied: boolean }
-  | { kind: 'remote'; endpoint: string; alreadyApplied: boolean }
+export type LocalePackageJobContext = { kind: 'local'; alreadyApplied: boolean } | { kind: 'remote'; endpoint: string; alreadyApplied: boolean }
 export interface LocalePackageStore {
   jobContext(job: DurableJob): Promise<LocalePackageJobContext>
   publishJob(job: DurableJob, catalog: LocaleCatalogEntry[], strings?: LocaleStrings): Promise<LocaleWriteResult>
@@ -249,10 +248,8 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     if (review.binding !== localReviewBinding(review)) return fail('The staged language-file review was changed.', 409)
     if (review.actorId !== saved.actorId || review.actorFingerprint !== principalFingerprint(saved.actorId, requester))
       return fail('This language-file review belongs to a different administrator.', 403)
-    if (review.workspaceFingerprint !== saved.fingerprint)
-      return fail('Locale settings or installed packages changed after this file was reviewed.', 409)
-    if (!review.jobId && Date.parse(review.expiresAt) <= Date.now())
-      return fail('This language-file review expired. Review the file again.', 409)
+    if (review.workspaceFingerprint !== saved.fingerprint) return fail('Locale settings or installed packages changed after this file was reviewed.', 409)
+    if (!review.jobId && Date.parse(review.expiresAt) <= Date.now()) return fail('This language-file review expired. Review the file again.', 409)
   }
   const verifyLocalReviewBytes = (review: StoredLocalFileReview) => {
     const bytes = Buffer.from(review.exactBytes, 'base64')
@@ -264,8 +261,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     } catch {
       return fail('The staged language file changed after review.', 409)
     }
-    if (parsed.digest !== review.digest || parsed.normalized !== review.normalizedStrings)
-      return fail('The staged language file changed after review.', 409)
+    if (parsed.digest !== review.digest || parsed.normalized !== review.normalizedStrings) return fail('The staged language file changed after review.', 409)
     return parsed
   }
   const localeForCode = (saved: State, code: string): LocaleCatalogEntry => {
@@ -279,19 +275,12 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     const query = tx('locales').where({ code })
     return lock ? query.forUpdate().first() : query.first()
   }
-  const assertLocalPackageCurrent = async (
-    tx: Knex.Transaction,
-    saved: State,
-    review: StoredLocalFileReview,
-    lock: boolean
-  ) => {
+  const assertLocalPackageCurrent = async (tx: Knex.Transaction, saved: State, review: StoredLocalFileReview, lock: boolean) => {
     const current = record(await storedPackage(tx, review.code, lock)),
       row = Object.keys(current).length ? current : null
-    if (localPackageFingerprint(row) !== review.packageFingerprint)
-      return fail('The installed package changed after this file was reviewed.', 409)
+    if (localPackageFingerprint(row) !== review.packageFingerprint) return fail('The installed package changed after this file was reviewed.', 409)
     const currentLocale = localeForCode(saved, review.code)
-    if (stable(currentLocale) !== stable(review.locale))
-      return fail('The language catalog or installed package changed after this file was reviewed.', 409)
+    if (stable(currentLocale) !== stable(review.locale)) return fail('The language catalog or installed package changed after this file was reviewed.', 409)
     return row
   }
   const clearExpiredLocalReview = async () => {
@@ -302,10 +291,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
       if (!Object.hasOwn(metadata, 'localFileReview')) return
       let shouldClear = !review
       if (review?.jobId) {
-        const job = await tx('durableJobs')
-          .where({ id: review.jobId, type: 'locale-package', version: 1 })
-          .forUpdate()
-          .first('state')
+        const job = await tx('durableJobs').where({ id: review.jobId, type: 'locale-package', version: 1 }).forUpdate().first('state')
         shouldClear = !job || !['pending', 'running'].includes(job.state)
       } else if (review) {
         shouldClear = Date.parse(review.expiresAt) <= Date.now()
@@ -319,7 +305,11 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
   const applied = (saved: State): boolean => {
     const runtime = deps.runtime(),
       lang = record(saved.configuration.lang)
-    return runtime.locale === saved.policy.locale && (runtime.revision ?? '') === (lang.revision ?? '') && stable(runtime.configuration) === stable({ ...record(runtime.configuration), ...lang })
+    return (
+      runtime.locale === saved.policy.locale &&
+      (runtime.revision ?? '') === (lang.revision ?? '') &&
+      stable(runtime.configuration) === stable({ ...record(runtime.configuration), ...lang })
+    )
   }
   const activate = async (): Promise<LocaleWriteResult> => {
     try {
@@ -333,6 +323,8 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     const tx = await deps.db.transaction({ isolationLevel: 'repeatable read', readOnly: true })
     try {
       const saved = await state(tx, requester)
+      const forkKeys = await readForkLocaleKeys()
+      const packages = await tx<{ code: string; strings: unknown }>('locales').select('code', 'strings')
       const counts = await tx('pages')
         .select('localeCode')
         .count('* as pages')
@@ -396,10 +388,28 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         locales: mergeLocaleCatalog(saved.catalog, saved.locales).map(locale => {
           const installed = saved.locales.find(row => row.code === locale.code),
             count = counts.find(row => row.localeCode === locale.code)
+          const latestPublication = events(saved).find(
+            event => event.code === locale.code && event.appliedAt && (event.kind === 'local' || event.kind === 'install')
+          )
+          const packageSource =
+            locale.code === 'en'
+              ? ('bundled' as const)
+              : latestPublication?.kind === 'local'
+                ? ('local' as const)
+                : latestPublication?.kind === 'install'
+                  ? ('remote' as const)
+                  : ('unknown' as const)
           return {
             ...locale,
             isInstalled: Boolean(installed),
             installDate: installed?.updatedAt ?? null,
+            upstreamAvailability: saved.catalog.find(row => row.code === locale.code)?.availability ?? null,
+            packageSource,
+            installedCoverage: !installed
+              ? null
+              : locale.code === 'en'
+                ? { presentKeys: forkKeys.size, totalKeys: forkKeys.size, missingKeys: 0, percent: 100 }
+                : installedLocaleCoverage(forkKeys, packages.find(row => row.code === locale.code)?.strings),
             pages: Number(count?.pages ?? 0),
             publishedPages: Number(count?.publishedPages ?? 0),
             linkedTranslations: Number(count?.linkedTranslations ?? 0),
@@ -499,8 +509,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
       input: { code: unknown; fingerprint: unknown; reason: unknown; bytes: unknown }
     ): Promise<LocaleFileReview> {
       const codeResult = LocaleCodeSchema.safeParse(input.code)
-      if (!codeResult.success || Intl.getCanonicalLocales(codeResult.data)[0] !== codeResult.data)
-        return fail('Choose an explicit canonical language code.')
+      if (!codeResult.success || Intl.getCanonicalLocales(codeResult.data)[0] !== codeResult.data) return fail('Choose an explicit canonical language code.')
       const code = codeResult.data
       if (code === 'en') return fail('Bundled English translations cannot be replaced.')
       const why = reason(input.reason)
@@ -524,8 +533,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
           !existingReview.jobId &&
           Date.parse(existingReview.expiresAt) > Date.now() &&
           existingReview.binding === localReviewBinding(existingReview) &&
-          (existingReview.actorId !== saved.actorId ||
-            existingReview.actorFingerprint !== principalFingerprint(saved.actorId, requester))
+          (existingReview.actorId !== saved.actorId || existingReview.actorFingerprint !== principalFingerprint(saved.actorId, requester))
         )
           return fail('Another administrator has an active local-file review. Wait for it to expire before staging a new file.', 409)
         const locale = localeForCode(saved, code)
@@ -536,7 +544,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         let previous: unknown = Object.create(null)
         if (row) {
           try {
-            previous = typeof row.strings === 'string' ? JSON.parse(row.strings) as unknown : row.strings
+            previous = typeof row.strings === 'string' ? (JSON.parse(row.strings) as unknown) : row.strings
           } catch {
             return fail('The installed package cannot be safely compared with this file.', 409)
           }
@@ -547,7 +555,10 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
           after = flattenLocaleStrings(parsedFile.strings),
           changes = {
             added: [...after.keys()].filter(key => !before.has(key)).sort(),
-            changed: [...after].filter(([key, value]) => before.has(key) && before.get(key) !== value).map(([key]) => key).sort(),
+            changed: [...after]
+              .filter(([key, value]) => before.has(key) && before.get(key) !== value)
+              .map(([key]) => key)
+              .sort(),
             removed: [...before.keys()].filter(key => !after.has(key)).sort()
           },
           now = Date.now(),
@@ -578,8 +589,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
       return deps.db.transaction(async tx => {
         const saved = await state(tx, requester, true),
           staged = storedLocalReview(saved.metadata.localFileReview)
-        if (!staged || staged.id !== input.reviewId || staged.jobId)
-          return fail('The reviewed language file is unavailable. Review the file again.', 409)
+        if (!staged || staged.id !== input.reviewId || staged.jobId) return fail('The reviewed language file is unavailable. Review the file again.', 409)
         assertLocalReviewBound(saved, requester, staged)
         verifyLocalReviewBytes(staged)
         await assertLocalPackageCurrent(tx, saved, staged, true)
@@ -588,9 +598,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         const eventId = randomUUID(),
           now = new Date().toISOString(),
           principal =
-            saved.actorId === null
-              ? { id: 1, ownershipUserId: null, groups: requester!.groups }
-              : { id: saved.actorId, authVersion: requester!.authVersion },
+            saved.actorId === null ? { id: 1, ownershipUserId: null, groups: requester!.groups } : { id: saved.actorId, authVersion: requester!.authVersion },
           job = await new DurableJobStore(tx).enqueue({
             type: 'locale-package',
             version: 1,
@@ -650,8 +658,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
           await tx.commit()
           return { kind: 'local', alreadyApplied: false }
         }
-        if (job.payload.kind !== 'install' && job.payload.kind !== 'catalog')
-          return fail('The language operation payload is invalid.')
+        if (job.payload.kind !== 'install' && job.payload.kind !== 'catalog') return fail('The language operation payload is invalid.')
         if (event.kind !== job.payload.kind) return fail('This language operation no longer has a matching receipt.', 409)
         if (saved.configuration.offline === true) return fail('Language downloads are disabled in offline mode.')
         if (fingerprint(saved.configuration.graphEndpoint) !== job.payload.sourceFingerprint)
@@ -708,14 +715,16 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
             }
           await tx('locales').insert(data).onConflict('code').merge(['name', 'nativeName', 'isRTL', 'availability', 'strings', 'updatedAt'])
           const lang = record(saved.configuration.lang),
-            metadata: Record<string, unknown> = { ...saved.metadata, history: events(saved).map(row => (row.id === event.id ? { ...row, appliedAt: now } : row)) }
+            metadata: Record<string, unknown> = {
+              ...saved.metadata,
+              history: events(saved).map(row => (row.id === event.id ? { ...row, appliedAt: now } : row))
+            }
           delete metadata.localFileReview
           await put(tx, 'lang', { ...lang, ...(lang.code === locale.code ? { rtl: locale.isRTL } : {}), revision: event.id }, now)
           await put(tx, 'localeAdministration', metadata, now)
           return
         }
-        if (job.payload.kind !== 'install' && job.payload.kind !== 'catalog')
-          return fail('The language operation payload is invalid.')
+        if (job.payload.kind !== 'install' && job.payload.kind !== 'catalog') return fail('The language operation payload is invalid.')
         if (event.kind !== job.payload.kind) return fail('This language operation no longer has a matching receipt.', 409)
         if (saved.configuration.offline === true || fingerprint(saved.configuration.graphEndpoint) !== job.payload.sourceFingerprint)
           return fail('The language source or offline policy changed during this operation.', 409)
@@ -745,7 +754,7 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         )
       })
       return activate()
-    },
+    }
   }
 }
 let runtimeStore: ReturnType<typeof createLocaleAdministrationStore> | undefined, runtimeDatabase: Knex | undefined

@@ -6,6 +6,9 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-te
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import common from '../../helpers/common.ts'
 import { up as storageMigration } from '../../db/migrations/tsepistle-000023-storage-administration.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
+import { up as createAssetRelocation } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
 import { storageModuleDefinition } from '../../repositories/storage-configuration.ts'
 import { createStorageConfigurationStore } from '../../operations/storage-configuration.ts'
 import type { StorageConfigurationWorkspace, StorageModuleDefinition, StorageTargetDraft } from '../../../shared/storage-workspace.ts'
@@ -19,10 +22,11 @@ const drafts = (workspace: StorageConfigurationWorkspace): StorageTargetDraft[] 
     mode,
     syncInterval,
     config: structuredClone(config),
-    secrets: Object.fromEntries(Object.keys(secrets).map((key) => [key, { action: 'keep' as const }]))
+    secrets: Object.fromEntries(Object.keys(secrets).map(key => [key, { action: 'keep' as const }]))
   }))
 suite('Reviewed storage configuration on PostgreSQL', () => {
   let db: Knex, definitions: StorageModuleDefinition[], store: ReturnType<typeof createStorageConfigurationStore>
+  const originalWiki = globalThis.WIKI
   const read = () => store.inspect(admin),
     body = (workspace: StorageConfigurationWorkspace) => ({
       targets: drafts(workspace),
@@ -31,26 +35,26 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
     })
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 6 } })
-    await db.schema.createTable('settings', (t) => {
+    await db.schema.createTable('settings', t => {
       t.string('key').primary()
       t.jsonb('value')
       t.string('updatedAt').notNullable()
     })
-    await db.schema.createTable('users', (t) => {
+    await db.schema.createTable('users', t => {
       t.integer('id').primary()
       t.boolean('isActive')
       t.integer('authVersion')
     })
-    await db.schema.createTable('groups', (t) => {
+    await db.schema.createTable('groups', t => {
       t.integer('id').primary()
       t.jsonb('permissions')
       t.string('adminRevision')
     })
-    await db.schema.createTable('userGroups', (t) => {
+    await db.schema.createTable('userGroups', t => {
       t.integer('userId')
       t.integer('groupId')
     })
-    await db.schema.createTable('storage', (t) => {
+    await db.schema.createTable('storage', t => {
       t.string('key').primary()
       t.boolean('isEnabled')
       t.string('mode')
@@ -59,15 +63,56 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
       t.jsonb('state')
     })
     await storageMigration(db)
+    await createDurableJobs(db)
+    await addLeaseToken(db)
+    await db.raw(`
+      CREATE TABLE pages (id integer PRIMARY KEY, path text NOT NULL, "localeCode" text NOT NULL, "contentType" text NOT NULL, visibility text NOT NULL);
+      CREATE TABLE "assetFolders" (id integer PRIMARY KEY, slug text NOT NULL, "parentId" integer);
+      CREATE TABLE assets (id integer PRIMARY KEY, filename text NOT NULL, "folderId" integer, hash text NOT NULL);
+    `)
+    await createAssetRelocation(db)
+    globalThis.WIKI = {
+      config: { db: { type: 'postgres' }, lang: { code: 'en', namespacing: false } },
+      models: { knex: db }
+    } as never
   })
   afterAll(async () => {
+    globalThis.WIKI = originalWiki
     if (db) {
-      for (const table of ['storageOperations', 'storage', 'settings', 'userGroups', 'groups', 'users']) await db.schema.dropTableIfExists(table)
+      for (const table of [
+        'assetRelocationEffects',
+        'assetRelocationOperations',
+        'durableJobs',
+        'storageOperations',
+        'assets',
+        'assetFolders',
+        'pages',
+        'storage',
+        'settings',
+        'userGroups',
+        'groups',
+        'users'
+      ])
+        await db.schema.dropTableIfExists(table)
       await db.destroy()
     }
   })
   beforeEach(async () => {
-    for (const table of ['storageOperations', 'storage', 'settings', 'userGroups', 'groups', 'users']) await db(table).delete()
+    for (const table of [
+      'assetRelocationEffects',
+      'assetRelocationOperations',
+      'durableJobs',
+      'storageOperations',
+      'assets',
+      'assetFolders',
+      'pages',
+      'storage',
+      'settings',
+      'userGroups',
+      'groups',
+      'users'
+    ])
+      await db(table).delete()
     await db('users').insert([
       { id: 1, isActive: true, authVersion: 0 },
       { id: 3, isActive: true, authVersion: 0 }
@@ -88,7 +133,7 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
       raw.props = common.parseModuleProps(raw.props)
       const definition = storageModuleDefinition(raw)
       definitions.push(definition)
-      const config = Object.fromEntries(definition.fields.map((field) => [field.key, field.default]))
+      const config = Object.fromEntries(definition.fields.map(field => [field.key, field.default]))
       if (key === 'git') {
         config.sshPrivateKeyContent = 'original-secret'
         config.opaque = 'unowned-secret'
@@ -109,9 +154,9 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
       json = JSON.stringify(workspace)
     expect(json).not.toContain('original-secret')
     expect(json).not.toContain('unowned-secret')
-    expect(workspace.targets.find((row) => row.key === 'git')?.secrets.sshPrivateKeyContent).toBe(true)
+    expect(workspace.targets.find(row => row.key === 'git')?.secrets.sshPrivateKeyContent).toBe(true)
     const input = body(workspace)
-    input.targets.find((row) => row.key === 'git')!.config.branch = 'main'
+    input.targets.find(row => row.key === 'git')!.config.branch = 'main'
     await store.save(admin, input)
     expect((await db('storage').where('key', 'git').first()).config).toMatchObject({
       sshPrivateKeyContent: 'original-secret',
@@ -122,8 +167,8 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
   it('publishes multiple targets atomically with attributed field names and preserves operational records', async () => {
     const before = await db('storage').orderBy('key'),
       input = body(await read())
-    input.targets.find((row) => row.key === 'disk')!.config.path = '/tmp/wiki-reviewed-storage'
-    input.targets.find((row) => row.key === 'git')!.config.branch = 'main'
+    input.targets.find(row => row.key === 'disk')!.config.path = '/tmp/wiki-reviewed-storage'
+    input.targets.find(row => row.key === 'git')!.config.branch = 'main'
     const receipt = await store.save(admin, input),
       workspace = await read()
     expect(receipt.changedTargets).toEqual(['disk', 'git'])
@@ -135,13 +180,13 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
         { key: 'git', fields: ['config.branch'] }
       ]
     })
-    expect((await db('storage').orderBy('key')).map((row) => row.state)).toEqual(before.map((row) => row.state))
+    expect((await db('storage').orderBy('key')).map(row => row.state)).toEqual(before.map(row => row.state))
   })
   it('rolls back earlier target changes when a later target fails validation', async () => {
     const before = await db('storage').orderBy('key'),
       input = body(await read())
-    input.targets.find((row) => row.key === 'disk')!.config.path = '/tmp/should-not-save'
-    input.targets.find((row) => row.key === 's3')!.isEnabled = true
+    input.targets.find(row => row.key === 'disk')!.config.path = '/tmp/should-not-save'
+    input.targets.find(row => row.key === 's3')!.isEnabled = true
     await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
     expect(await db('storage').orderBy('key')).toEqual(before)
     expect(await db('settings')).toHaveLength(0)
@@ -184,24 +229,26 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
   })
   it('applies explicit secret replacement and clearing without recording values in history', async () => {
     let input = body(await read())
-    input.targets.find((row) => row.key === 'git')!.secrets.sshPrivateKeyContent = { action: 'replace', value: 'replacement-secret' }
+    input.targets.find(row => row.key === 'git')!.secrets.sshPrivateKeyContent = { action: 'replace', value: 'replacement-secret' }
     await store.save(admin, input)
     expect((await db('storage').where('key', 'git').first()).config.sshPrivateKeyContent).toBe('replacement-secret')
     expect(JSON.stringify((await read()).history)).not.toContain('replacement-secret')
     input = body(await read())
-    input.targets.find((row) => row.key === 'git')!.secrets.sshPrivateKeyContent = { action: 'clear' }
+    input.targets.find(row => row.key === 'git')!.secrets.sshPrivateKeyContent = { action: 'clear' }
     await store.save(admin, input)
-    expect((await read()).targets.find((row) => row.key === 'git')?.secrets.sshPrivateKeyContent).toBe(false)
+    expect((await read()).targets.find(row => row.key === 'git')?.secrets.sshPrivateKeyContent).toBe(false)
   })
 
   it('serializes competing publications so one immutable review can commit only once', async () => {
-    const workspace = await read(), first = body(workspace), second = body(workspace)
+    const workspace = await read(),
+      first = body(workspace),
+      second = body(workspace)
     first.targets[0]!.config.path = '/tmp/first-review'
     second.targets[0]!.config.path = '/tmp/second-review'
     const results = await Promise.allSettled([store.save(admin, first), store.save(admin, second)])
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
     const rejected = results.find(result => result.status === 'rejected') as PromiseRejectedResult
-    expect(rejected.reason).toMatchObject({status: 409})
+    expect(rejected.reason).toMatchObject({ status: 409 })
     const current = await read()
     expect(current.history).toHaveLength(1)
     expect(['/tmp/first-review', '/tmp/second-review']).toContain(current.targets[0]?.config.path)
@@ -222,7 +269,7 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
     expect(await db('settings').orderBy('key')).toEqual(settings)
     for (const field of ['unknown', 'constructor', 'prototype']) {
       input = body(await read())
-      const disk = input.targets.find((row) => row.key === 'disk')!
+      const disk = input.targets.find(row => row.key === 'disk')!
       disk.config.path = '/tmp/foreign-field-must-not-save'
       Object.defineProperty(disk.config, field, { value: 'bad', enumerable: true })
       await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
@@ -241,16 +288,16 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
     })
     const unavailableBefore = await db('storage').where('key', 'legacy-unavailable').first()
     let input = body(await read())
-    input.targets.find((row) => row.key === 'legacy-unavailable')!.isEnabled = false
+    input.targets.find(row => row.key === 'legacy-unavailable')!.isEnabled = false
     await store.save(admin, input)
     const unavailableSaved = await db('storage').where('key', 'legacy-unavailable').first()
     expect(unavailableSaved.config).toEqual({ secret: 'untouched' })
     expect(unavailableSaved).toEqual({ ...unavailableBefore, isEnabled: false })
-    definitions.find((row) => row.key === 'git')!.isAvailable = false
+    definitions.find(row => row.key === 'git')!.isAvailable = false
     await db('storage').where('key', 'git').update({ isEnabled: true })
     const gitBefore = await db('storage').where('key', 'git').first()
     input = body(await read())
-    input.targets.find((row) => row.key === 'git')!.isEnabled = false
+    input.targets.find(row => row.key === 'git')!.isEnabled = false
     await store.save(admin, input)
     const gitSaved = await db('storage').where('key', 'git').first()
     expect(gitSaved.config.sshPrivateKeyContent).toBe('original-secret')
@@ -263,7 +310,7 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
       .update({ isEnabled: true, mode: 'unsupported-old-mode', syncInterval: 'bad', config: JSON.stringify({ ...row.config, authType: 'legacy' }) })
     const before = await db('storage').where('key', 'git').first()
     const input = body(await read())
-    input.targets.find((row) => row.key === 'git')!.isEnabled = false
+    input.targets.find(row => row.key === 'git')!.isEnabled = false
     await store.save(admin, input)
     const saved = await db('storage').where('key', 'git').first()
     expect(saved.mode).toBe('unsupported-old-mode')
@@ -271,12 +318,12 @@ suite('Reviewed storage configuration on PostgreSQL', () => {
   })
   it('normalizes zero-duration schedules and rejects timer-overflow, busy-loop and unsupported schedules', async () => {
     let input = body(await read())
-    input.targets.find((row) => row.key === 'git')!.syncInterval = 'PT0S'
+    input.targets.find(row => row.key === 'git')!.syncInterval = 'PT0S'
     await store.save(admin, input)
     expect((await db('storage').where('key', 'git').first()).syncInterval).toBe('P0D')
     for (const interval of ['PT1S', 'P30D', 'garbage']) {
       input = body(await read())
-      input.targets.find((row) => row.key === 'git')!.syncInterval = interval
+      input.targets.find(row => row.key === 'git')!.syncInterval = interval
       await expect(store.save(admin, input)).rejects.toMatchObject({ status: 400 })
     }
     input = body(await read())

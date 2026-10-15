@@ -13,6 +13,7 @@ import { isUserDateFormat, isUserTimeFormat, isUserTimezone, userPresentationDef
 import { siteBannerOrDefault } from '../../shared/site-banner.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
+import { DISCUSSION_SETTINGS_LOCK } from './discussion-settings.ts'
 import errors from './errors.ts'
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -58,6 +59,7 @@ const settingKeys = [
   'seo',
   'banner',
   'pageExtensions',
+  'features',
   'editShortcuts',
   'generalAdministration',
   'userDefaults'
@@ -71,6 +73,7 @@ export const generalPolicyFromConfiguration = (configuration: Record<string, unk
   }
   result.banner = siteBannerOrDefault(configuration.banner)
   result.userDefaults = normalizePresentationDefaults(flat.userDefaults)
+  result.featureGlossary = record(configuration.features).featureGlossary !== false
   return result
 }
 export const generalConfigurationPatch = (policy: GeneralPolicy, configuration: Record<string, unknown>): Record<string, unknown> => ({
@@ -82,6 +85,7 @@ export const generalConfigurationPatch = (policy: GeneralPolicy, configuration: 
   banner: policy.banner,
   pageExtensions: policy.pageExtensions,
   userDefaults: policy.userDefaults,
+  features: { ...record(configuration.features), featureGlossary: policy.featureGlossary },
   seo: { ...record(configuration.seo), description: policy.description, robots: policy.robots },
   editShortcuts: { ...record(configuration.editShortcuts), ...Object.fromEntries(Object.entries(policy).filter(([key]) => key.startsWith('edit'))) }
 })
@@ -133,6 +137,7 @@ export const createGeneralAdministrationStore = (deps: Dependencies) => {
     }
     if (!groups.some(group => ids.includes(group.id) && group.permissions.includes('manage:system')))
       return fail('Full system administration is required.', 403)
+    if (lock) await tx.raw('SELECT pg_advisory_xact_lock(?)', [DISCUSSION_SETTINGS_LOCK])
     const query = tx<Setting>('settings').whereIn('key', settingKeys).orderBy('key'),
       rows = await (lock ? query.forUpdate() : query)
     const configuration = {

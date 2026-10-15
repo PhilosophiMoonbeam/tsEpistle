@@ -2,6 +2,8 @@ import _ from 'lodash'
 import { canReadPage, pageAuthorizationContext, principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { commentMentionHandles, renderCommentMarkdown } from '../helpers/comment-markdown.ts'
+import type { DiscussionAnnotation } from '../../shared/discussion-annotations.ts'
+import { discussionAnnotations } from './discussion-annotations.ts'
 
 import { assertPageUnlocked } from './page-protection.ts'
 import { writeLegacyDiscussionProviders } from './discussion-settings.ts'
@@ -76,7 +78,10 @@ interface CommentErrors {
 const getWiki = () =>
   WIKI as unknown as {
     models: CommentModels
-    data: { commentProviders: Array<Record<string, unknown> & { key: string }>; commentProvider: { key?: string; getCommentById(id: number): Promise<Comment | undefined> } }
+    data: {
+      commentProviders: Array<Record<string, unknown> & { key: string }>
+      commentProvider: { key?: string; getCommentById(id: number): Promise<Comment | undefined> }
+    }
     config: { features: { featurePageComments: boolean } }
     auth: {
       checkAccess(requester: Requester, permissions: readonly string[]): boolean
@@ -88,7 +93,12 @@ const getWiki = () =>
   }
 const COMMENT_CREATE_WINDOW_MILLISECONDS = 15_000
 const commentCreateKey = (requester: Requester, ip: string): string => `comment-create:${principalId(requester) ?? 'guest'}:${ip || 'unknown'}`
-const commentReadDto = (comment: Comment, includeAuditFields: boolean, authorHandle = ''): Record<string, unknown> => ({
+const commentReadDto = (
+  comment: Comment,
+  includeAuditFields: boolean,
+  authorHandle = '',
+  annotations: DiscussionAnnotation[] = []
+): Record<string, unknown> => ({
   id: comment.id,
   pageId: comment.pageId,
   content: comment.content,
@@ -99,28 +109,35 @@ const commentReadDto = (comment: Comment, includeAuditFields: boolean, authorHan
   authorHandle,
   createdAt: comment.createdAt,
   updatedAt: comment.updatedAt,
+  annotations,
   ...(includeAuditFields ? { authorEmail: comment.email, authorIP: comment.ip } : {})
 })
 const visibleThread = (comments: Comment[]): Comment[] => {
   const byId = new Map(comments.map(comment => [comment.id, comment]))
-  return comments.flatMap(comment => {
-    if (comment.isHidden) return []
-    let parentId = Number(comment.replyTo) || 0
-    if (parentId === 0) return [{ ...comment, replyTo: 0 }]
-    const seen = new Set<number>([comment.id])
-    while (parentId > 0) {
-      if (seen.has(parentId)) return [{ ...comment, replyTo: 0 }]
-      seen.add(parentId)
-      const parent = byId.get(parentId)
-      if (!parent || parent.isHidden) return [{ ...comment, replyTo: 0 }]
-      const ancestorId = Number(parent.replyTo) || 0
-      if (ancestorId === 0) return [{ ...comment, replyTo: parent.id }]
-      parentId = ancestorId
-    }
-    return [{ ...comment, replyTo: 0 }]
-  }).sort((left, right) => String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? '')) || left.id - right.id)
+  return comments
+    .flatMap(comment => {
+      if (comment.isHidden) return []
+      let parentId = Number(comment.replyTo) || 0
+      if (parentId === 0) return [{ ...comment, replyTo: 0 }]
+      const seen = new Set<number>([comment.id])
+      while (parentId > 0) {
+        if (seen.has(parentId)) return [{ ...comment, replyTo: 0 }]
+        seen.add(parentId)
+        const parent = byId.get(parentId)
+        if (!parent || parent.isHidden) return [{ ...comment, replyTo: 0 }]
+        const ancestorId = Number(parent.replyTo) || 0
+        if (ancestorId === 0) return [{ ...comment, replyTo: parent.id }]
+        parentId = ancestorId
+      }
+      return [{ ...comment, replyTo: 0 }]
+    })
+    .sort((left, right) => String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? '')) || left.id - right.id)
 }
-interface MentionRow { id: number; handle: string; name: string }
+interface MentionRow {
+  id: number
+  handle: string
+  name: string
+}
 const resolveMentionHandles = async (models: CommentModels, pageId: number, comments: Comment[]): Promise<Set<string>> => {
   const mentioned = [...new Set(comments.flatMap(comment => commentMentionHandles(String(comment.content ?? ''))))]
   if (mentioned.length === 0) return new Set()
@@ -190,17 +207,29 @@ const listProviders = async () => {
 
 const updateProviders = async (providers: unknown): Promise<void> => {
   validateRows(providers, validProvider, 'Invalid comment providers payload')
-  await writeLegacyDiscussionProviders(providers.map(provider => ({ key: provider.key, isEnabled: provider.isEnabled, config: parseConfig(provider.config, { errorMessage: 'Invalid comment providers payload' }) })))
+  await writeLegacyDiscussionProviders(
+    providers.map(provider => ({
+      key: provider.key,
+      isEnabled: provider.isEnabled,
+      config: parseConfig(provider.config, { errorMessage: 'Invalid comment providers payload' })
+    }))
+  )
 }
 
 const availability = async ({ requester, pageId, sessionId = '' }: { requester: Requester; pageId: number; sessionId?: string }) => {
   const { models, auth, Error: errors, data, config } = getWiki()
   if (!Number.isSafeInteger(pageId) || pageId < 1) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
-  const page = await models.pages.query().select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId').findById(pageId).withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
+  const page = await models.pages
+    .query()
+    .select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId')
+    .findById(pageId)
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => builder.select('tag'))
   const authority = await auth.loadPageRuleAuthority(requester)
   const context = page ? pageAuthorizationContext(page) : null
   if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
-  if (!canReadPage(requester, page, authority) || context === null || !auth.checkPageAccess(requester, ['read:comments'], context, authority)) throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
+  if (!canReadPage(requester, page, authority) || context === null || !auth.checkPageAccess(requester, ['read:comments'], context, authority))
+    throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
   await assertPageUnlocked({ requester, pageId, sessionId, authority })
   const result = await models.knex.raw<{ rows: Array<{ closed: boolean }> }>('SELECT "closed" FROM "pageDiscussionPolicy" WHERE "pageId" = ?', [pageId])
   const closed = result.rows[0]?.closed === true
@@ -221,11 +250,7 @@ const list = async ({ requester, pageId, sessionId = '' }: { requester: Requeste
   const authority = await auth.loadPageRuleAuthority(requester)
   const pageContext = page ? pageAuthorizationContext(page) : null
   if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
-  if (
-    !canReadPage(requester, page, authority) ||
-    pageContext === null ||
-    !auth.checkPageAccess(requester, ['read:comments'], pageContext, authority)
-  ) {
+  if (!canReadPage(requester, page, authority) || pageContext === null || !auth.checkPageAccess(requester, ['read:comments'], pageContext, authority)) {
     throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
   }
   await assertPageUnlocked({ requester, pageId, sessionId, authority })
@@ -237,15 +262,24 @@ const list = async ({ requester, pageId, sessionId = '' }: { requester: Requeste
   const handles = new Map<number, string>()
   if (authorIds.length > 0) {
     const placeholders = authorIds.map(() => '?').join(', ')
-    const result = await models.knex.raw<{ rows: Array<{ id: number; handle: string }> }>(`SELECT "id", "handle" FROM "users" WHERE "id" IN (${placeholders}) AND "handle" IS NOT NULL AND "isActive" = true AND "isSystem" = false`, authorIds)
+    const result = await models.knex.raw<{ rows: Array<{ id: number; handle: string }> }>(
+      `SELECT "id", "handle" FROM "users" WHERE "id" IN (${placeholders}) AND "handle" IS NOT NULL AND "isActive" = true AND "isSystem" = false`,
+      authorIds
+    )
     for (const row of result.rows) handles.set(Number(row.id), row.handle)
   }
-  return comments.map(comment => commentReadDto(comment, includeAuditFields, handles.get(Number(comment.authorId)) ?? ''))
+  const annotations = await discussionAnnotations().annotations(
+    requester,
+    page.id,
+    comments.map(comment => comment.id),
+    sessionId
+  )
+  return comments.map(comment => commentReadDto(comment, includeAuditFields, handles.get(Number(comment.authorId)) ?? '', annotations.get(comment.id) ?? []))
 }
 
 const get = async ({ requester, id, sessionId = '' }: { requester: Requester; id: number; sessionId?: string }) => {
   const { models, auth, Error: errors, logger } = getWiki()
-  const comment = await models.comments.query().findById(id) as unknown as Comment | undefined
+  const comment = (await models.comments.query().findById(id)) as unknown as Comment | undefined
   if (!comment || !comment.pageId || comment.isHidden) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
   const page = await models.pages
     .query()
@@ -260,11 +294,7 @@ const get = async ({ requester, id, sessionId = '' }: { requester: Requester; id
   const authority = await auth.loadPageRuleAuthority(requester)
   const pageContext = pageAuthorizationContext(page)
   if (page.visibility === 'private' && !canReadPage(requester, page, authority)) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
-  if (
-    !canReadPage(requester, page, authority) ||
-    pageContext === null ||
-    !auth.checkPageAccess(requester, ['read:comments'], pageContext, authority)
-  ) {
+  if (!canReadPage(requester, page, authority) || pageContext === null || !auth.checkPageAccess(requester, ['read:comments'], pageContext, authority)) {
     throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
   }
   await assertPageUnlocked({ requester, pageId: comment.pageId, sessionId, authority })
@@ -274,21 +304,45 @@ const get = async ({ requester, id, sessionId = '' }: { requester: Requester; id
   projected.render = renderCommentMarkdown(String(projected.content ?? ''), resolvedMentions)
   let authorHandle = ''
   if (Number(projected.authorId) > 2) {
-    const result = await models.knex.raw<{ rows: Array<{ handle: string }> }>('SELECT "handle" FROM "users" WHERE "id" = ? AND "handle" IS NOT NULL AND "isActive" = true AND "isSystem" = false', [projected.authorId])
+    const result = await models.knex.raw<{ rows: Array<{ handle: string }> }>(
+      'SELECT "handle" FROM "users" WHERE "id" = ? AND "handle" IS NOT NULL AND "isActive" = true AND "isSystem" = false',
+      [projected.authorId]
+    )
     authorHandle = result.rows[0]?.handle ?? ''
   }
-  return commentReadDto(projected, auth.checkAccess(requester, ['manage:system']), authorHandle)
+  const annotations = await discussionAnnotations().annotations(requester, comment.pageId, [projected.id], sessionId)
+  return commentReadDto(projected, auth.checkAccess(requester, ['manage:system']), authorHandle, annotations.get(projected.id) ?? [])
 }
 
-const searchMentions = async ({ requester, pageId, query, sessionId = '' }: { requester: Requester; pageId: number; query: unknown; sessionId?: string }): Promise<MentionRow[]> => {
+const searchMentions = async ({
+  requester,
+  pageId,
+  query,
+  sessionId = ''
+}: {
+  requester: Requester
+  pageId: number
+  query: unknown
+  sessionId?: string
+}): Promise<MentionRow[]> => {
   const requesterId = principalId(requester)
   if (requesterId === null || requesterId === 2) throw Object.assign(new Error('Sign in to search mention handles.'), { status: 401 })
   const { models, auth, Error: errors } = getWiki()
   await list({ requester, pageId, sessionId })
-  const page = await models.pages.query().select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId').findById(pageId).withGraphJoined('tags').modifyGraph('tags', builder => builder.select('tag'))
+  const page = await models.pages
+    .query()
+    .select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId')
+    .findById(pageId)
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => builder.select('tag'))
   const authority = await auth.loadPageRuleAuthority(requester)
   const context = page ? pageAuthorizationContext(page) : null
-  if (!page || context === null || (!auth.checkPageAccess(requester, ['write:comments'], context, authority) && !auth.checkPageAccess(requester, ['manage:comments'], context, authority))) throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
+  if (
+    !page ||
+    context === null ||
+    (!auth.checkPageAccess(requester, ['write:comments'], context, authority) && !auth.checkPageAccess(requester, ['manage:comments'], context, authority))
+  )
+    throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
   const prefix = typeof query === 'string' ? query.trim().toLowerCase() : ''
   if (!/^[a-z0-9_-]{2,32}$/.test(prefix)) return []
   const result = await models.knex.raw<{ rows: MentionRow[] }>(
@@ -308,7 +362,17 @@ const searchMentions = async ({ requester, pageId, query, sessionId = '' }: { re
   return result.rows.map(row => ({ id: Number(row.id), handle: row.handle, name: row.name }))
 }
 
-const create = async ({ requester, ip, input, sessionId = '' }: { requester: Requester; ip: string; input: Record<string, unknown>; sessionId?: string }): Promise<unknown> => {
+const create = async ({
+  requester,
+  ip,
+  input,
+  sessionId = ''
+}: {
+  requester: Requester
+  ip: string
+  input: Record<string, unknown>
+  sessionId?: string
+}): Promise<unknown> => {
   const retryAfterMilliseconds = await consumeCommentCreate(requester, ip)
   if (retryAfterMilliseconds !== null) {
     throw Object.assign(new (getWiki().Error.BruteTooManyAttempts)(), {

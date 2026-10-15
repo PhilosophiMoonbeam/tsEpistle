@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "5e6164343a697b8708ac1542587c265f59ee66a052a82c103d51ef9d18e9242d",
+    "sha256": "ccf073b448b4a47649e66f0eb28e46149cddfc01012ed92141cd470d256e639c",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -1425,6 +1425,13 @@
       "homepage": "https://code.haverbeke.berlin/marijn/find-cluster-break"
     },
     {
+      "name": "@mathjax/mathjax-mhchem-font-extension",
+      "versions": [
+        "4.1.3"
+      ],
+      "license": "Apache-2.0"
+    },
+    {
       "name": "@mathjax/mathjax-newcm-font",
       "versions": [
         "4.1.3"
@@ -2510,7 +2517,7 @@
     {
       "name": "@xmldom/xmldom",
       "versions": [
-        "0.9.12"
+        "0.8.15"
       ],
       "license": "MIT",
       "homepage": "https://github.com/xmldom/xmldom"

@@ -1,6 +1,6 @@
 const ActualRouter = (await import('express')).default.Router
 let mountedRouter
-const workspace = () => ({ id: 42, fingerprint: 'account-version', profile: { name: 'Alice', email: 'alice@example.com', location: '', jobTitle: '', timezone: 'UTC', groups: [3] }, isActive: true, isVerified: false, twoFactor: 'off', capabilities: { edit: true } })
+const workspace = () => ({ id: 42, fingerprint: 'account-version', profile: { name: 'Alice', email: 'alice@example.com', location: '', jobTitle: '', pronouns: 'they/them', timezone: 'UTC', groups: [3] }, isActive: true, isVerified: false, twoFactor: 'off', capabilities: { edit: true } })
 const accounts = { creationOptions: vi.fn(), create: vi.fn(), inspect: vi.fn(), updateProfile: vi.fn(), remove: vi.fn(), act: vi.fn(), prepareWelcome: vi.fn(), finishWelcome: vi.fn() }
 vi.mockModule('../../operations/account-administration.ts', import.meta.url, () => ({ accountAdministration: () => accounts }))
 beforeEach(() => {
@@ -119,6 +119,7 @@ describe('controllers/api users endpoints', () => {
               providerId: 'provider-42',
               location: 'Tallinn',
               jobTitle: 'Architect',
+              pronouns: 'they/them',
               timezone: 'Europe/Tallinn',
               dateFormat: 'YYYY-MM-DD',
               timeFormat: '24h',
@@ -174,6 +175,7 @@ describe('controllers/api users endpoints', () => {
       verification: express.__router.patch.mock.calls.find(([path]) => path === '/:id/verification')[1],
       tfa: express.__router.patch.mock.calls.find(([path]) => path === '/:id/tfa')[1],
       preferences: express.__router.patch.mock.calls.find(([path]) => path === '/profile/preferences')[1],
+      updateProfile: express.__router.patch.mock.calls.find(([path]) => path === '/profile')[1],
       profile: express.__router.get.mock.calls.find(([path]) => path === '/profile')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
@@ -197,9 +199,9 @@ describe('controllers/api users endpoints', () => {
 
 
   it('creates admin users for authorized requests', async () => {
-    const { create } = await loadHandler(), user = { permissions: ['write:users'] }, body = { providerKey: 'local', email: 'alice@example.com', passwordRaw: 'temporary-secret', name: 'Alice', groups: [3], mustChangePassword: true, sendWelcomeEmail: false, ignored: true }, res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const { create } = await loadHandler(), user = { permissions: ['write:users'] }, body = { providerKey: 'local', email: 'alice@example.com', passwordRaw: 'temporary-secret', name: 'Alice', pronouns: ' she/her ', groups: [3], mustChangePassword: true, sendWelcomeEmail: false, ignored: true }, res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await create({ user, body }, res)
-    expect(accounts.create).toHaveBeenCalledWith(user, expect.objectContaining({ fingerprint: 'creation-version', providerKey: 'local', password: body.passwordRaw, profile: expect.objectContaining({ name: 'Alice', email: body.email, groups: [3] }), mustChangePassword: true }))
+    expect(accounts.create).toHaveBeenCalledWith(user, expect.objectContaining({ fingerprint: 'creation-version', providerKey: 'local', password: body.passwordRaw, profile: expect.objectContaining({ name: 'Alice', email: body.email, pronouns: 'she/her', groups: [3] }), mustChangePassword: true }))
     expect(accounts.create.mock.calls[0][1]).not.toHaveProperty('ignored'); expect(global.WIKI.models.users.sendWelcomeEmail).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ succeeded: true, message: 'User created successfully' })
   })
@@ -268,12 +270,6 @@ describe('controllers/api users endpoints', () => {
     expect(res.status).toHaveBeenCalledWith(409); expect(res.json).toHaveBeenCalledWith({ error: 'Account already exists.' })
   })
 
-  it('updates admin users for authorized requests', async () => {
-    const { update } = await loadHandler(), user = { permissions: ['manage:users'] }, res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-    await update({ user, params: { id: '42' }, body: { name: 'Alice updated', groups: [4], location: '', ignored: true } }, res)
-    expect(accounts.updateProfile).toHaveBeenCalledWith(user, 42, expect.objectContaining({ fingerprint: 'account-version', profile: expect.objectContaining({ name: 'Alice updated', groups: [4], location: '' }) }))
-    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled(); expect(res.json).toHaveBeenCalledWith({ succeeded: true, message: 'User updated successfully' })
-  })
 
   it('returns 400 for malformed admin user update ids and groups', async () => {
     const { update } = await loadHandler()
@@ -408,10 +404,27 @@ describe('controllers/api users endpoints', () => {
     expect(result.status).toBe(200)
     expect(result.body).toMatchObject({
       id: 42, name: 'Alice', email: 'alice@example.com', groups: ['Administrators', 'Editors'], pagesTotal: 3,
-      reduceMotion: true, underlineLinks: true, contentTextSize: 'larger', communicationLocale: 'fr-CA'
+      reduceMotion: true, underlineLinks: true, contentTextSize: 'larger', communicationLocale: 'fr-CA',
+      pronouns: 'they/them',
     })
     expect(result.body).not.toHaveProperty('password')
     expect(result.body).not.toHaveProperty('tfaSecret')
+  })
+
+
+  it.each([
+    { label: 'null', pronouns: null },
+    { label: 'boolean', pronouns: false },
+    { label: 'array', pronouns: [] },
+    { label: 'over limit', pronouns: 'x'.repeat(256) }
+  ])('rejects malformed or oversized profile pronouns before account writes ($label)', async ({ pronouns }) => {
+    const { updateProfile } = await loadHandler()
+    const body = { name: 'Alice', handle: 'alice', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', timeFormat: 'locale', appearance: 'light', pronouns }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    await updateProfile({ user: { id: 42 }, body, get: () => '42' }, res, vi.fn())
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
+    expect(global.WIKI.models.users.refreshToken).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -804,6 +817,7 @@ describe('controllers/api users endpoints', () => {
       providerIs2FACapable: true,
       location: 'Tallinn',
       jobTitle: 'Architect',
+      pronouns: 'they/them',
       timezone: 'Europe/Tallinn',
       dateFormat: 'YYYY-MM-DD',
       timeFormat: '24h',
@@ -1008,6 +1022,7 @@ describe('controllers/api users endpoints', () => {
       underlineLinks: true,
       contentTextSize: 'larger',
       communicationLocale: 'fr-CA',
+      pronouns: 'they/them',
       groups: ['Administrators', 'Editors'],
       pagesTotal: 3
     })

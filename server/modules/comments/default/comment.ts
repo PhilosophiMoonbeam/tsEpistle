@@ -6,7 +6,6 @@ import type { PagePrincipal } from '../../../helpers/page-access.ts'
 import { createDiscussionPostingStore } from '../../../operations/discussion-posting.ts'
 import { renderCommentMarkdown } from '../../../helpers/comment-markdown.ts'
 
-
 interface CommentPage {
   id: number
   localeCode: string
@@ -30,6 +29,7 @@ interface CreateCommentInput {
   user: CommentUser
   requester: PagePrincipal
   sessionId: string
+  annotations?: unknown
 }
 
 interface UpdateCommentInput {
@@ -198,7 +198,6 @@ let akismetClient: AkismetClient | null = null
 let antiSpamState: 'off' | 'verified' | 'unverified' = 'off'
 let antiSpamCheckedAt: string | null = null
 
-
 // ------------------------------------
 // Default Comment Provider
 // ------------------------------------
@@ -241,8 +240,10 @@ const plugin = {
   /**
    * Create New Comment
    */
-  getAntiSpamStatus() { return { state: antiSpamState, checkedAt: antiSpamCheckedAt } },
-  async create({ page, replyTo, content, user, requester, sessionId }: CreateCommentInput) {
+  getAntiSpamStatus() {
+    return { state: antiSpamState, checkedAt: antiSpamCheckedAt }
+  },
+  async create({ page, replyTo, content, user, requester, sessionId, annotations }: CreateCommentInput) {
     const context = WIKI as unknown as {
       models: { knex: Knex }
       config: { features: Record<string, unknown> }
@@ -260,29 +261,39 @@ const plugin = {
       db: context.models.knex,
       fallbackFeatures: () => context.config.features,
       loadPageRuleAuthority: (principal, transaction) => context.auth.loadPageRuleAuthority(principal, transaction),
-      canPost: (principal, currentPage, authority) => context.auth.checkPageAccess(
-        principal,
-        ['write:comments'],
-        {
-          path: String(currentPage.path ?? ''),
-          locale: String(currentPage.localeCode ?? ''),
-          tags: (Array.isArray(currentPage.tags) ? currentPage.tags : []) as Array<{ tag: string }>
-        },
-        authority
-      ),
+      canPost: (principal, currentPage, authority) =>
+        context.auth.checkPageAccess(
+          principal,
+          ['write:comments'],
+          {
+            path: String(currentPage.path ?? ''),
+            locale: String(currentPage.localeCode ?? ''),
+            tags: (Array.isArray(currentPage.tags) ? currentPage.tags : []) as Array<{ tag: string }>
+          },
+          authority
+        ),
       async checkSpam({ page: currentPage, providerConfig }) {
         const client = akismetClient
         if (!client || client.key !== providerConfig.akismet) return
         let isSpam = false
         try {
-          isSpam = await client.checkSpam({ ip: user.ip, ...(user.agentagent ? { useragent: user.agentagent } : {}), content, name: user.name, email: user.email,
-            permalink: `${wiki.config.host}/${String(currentPage.localeCode)}/${String(currentPage.path)}`, permalinkDate: String(currentPage.updatedAt), type: (replyTo ?? 0) > 0 ? 'reply' : 'comment', role: user.groups.includes(1) ? 'administrator' : user.id === 2 ? 'guest' : 'user' })
+          isSpam = await client.checkSpam({
+            ip: user.ip,
+            ...(user.agentagent ? { useragent: user.agentagent } : {}),
+            content,
+            name: user.name,
+            email: user.email,
+            permalink: `${wiki.config.host}/${String(currentPage.localeCode)}/${String(currentPage.path)}`,
+            permalinkDate: String(currentPage.updatedAt),
+            type: (replyTo ?? 0) > 0 ? 'reply' : 'comment',
+            role: user.groups.includes(1) ? 'administrator' : user.id === 2 ? 'guest' : 'user'
+          })
         } catch {
           wiki.logger.warn('Akismet comment check failed; the comment will remain available for local moderation.')
         }
         if (isSpam) throw new Error('Comment was rejected because it is marked as spam.')
       }
-    }).post({ pageId: page.id, replyTo: replyTo ?? 0, content, render: renderCommentMarkdown(content), user, requester, sessionId })
+    }).post({ pageId: page.id, replyTo: replyTo ?? 0, content, render: renderCommentMarkdown(content), user, requester, sessionId, annotations })
   },
   /**
    * Update an existing comment

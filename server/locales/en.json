@@ -197,6 +197,21 @@
     },
     "accountNotifications": {
       "title": "Notifications",
+      "activity": "Page and discussion activity",
+      "recentActivity": "Recent authorized page changes, replies and mentions.",
+      "loadingActivity": "Loading activity…",
+      "checkingActivity": "Activity status is not yet verified.",
+      "moreActivityMayBeAvailable": "More activity may be available.",
+      "checkMoreActivity": "Check more activity",
+      "noRecentActivity": "No recent activity to show.",
+      "loadMoreActivity": "Load more activity",
+      "category": {
+        "pageCreated": "Page created",
+        "pageDeleted": "Page deleted",
+        "watchedPageComment": "Comment on a watched page",
+        "commentReply": "Reply in your discussion",
+        "mention": "You were mentioned"
+      },
       "pageChanges": "Page changes",
       "recentPageChanges": "Recent page changes",
       "loadingPageChanges": "Loading recent page changes…",
@@ -219,6 +234,9 @@
       "recently": "Recently",
       "watchAriaLabel": "{{action}}: {{title}}",
       "unreadWatchAriaLabel": "{{action}}: {{title}}, {{unread}}"
+    },
+    "glossary": {
+      "title": "Glossary"
     },
     "user": {
       "search": "Search User",
@@ -739,6 +757,7 @@
       "destination": "Page destination:"
     },
     "sidebar": {
+      "loadError": "Unable to load this folder. Please try again.",
       "root": "(root)",
       "browse": "Browse",
       "mainMenu": "Main Menu",
@@ -4869,6 +4888,8 @@
       "exactSupportReport": "Exact support report"
     },
     "general": {
+      "enableGlossary": "Enable glossary",
+      "glossaryAvailabilityHint": "Turning this off hides the glossary and refuses glossary changes without deleting terms. Turning it back on restores access under the existing permissions.",
       "logo": "Logo",
       "logoWorkflowNote": "Uploads publish independently of the settings draft. Review your image before starting; processing continues after you leave this page.",
       "logoActive": "Active logo",
@@ -4972,6 +4993,7 @@
       "siteBannerContentHint": "Markdown is supported; raw HTML is ignored. Maximum 8,000 characters.",
       "siteBannerPreview": "Preview",
       "fieldLabels": {
+        "featureGlossary": "Glossary",
         "host": "Public address",
         "title": "Workspace name",
         "company": "Organization",
@@ -7005,6 +7027,7 @@
       "displayName": "Display name",
       "emailAddress": "Email address",
       "roleJobTitle": "Role or job title",
+      "pronouns": "Pronouns",
       "location": "Location",
       "timeZone": "Time zone",
       "groupMembership": "Group membership",
@@ -7655,6 +7678,7 @@
       "opensNewTab": "Opens in a new tab"
     },
     "usersCreate": {
+      "pronouns": "Pronouns",
       "permissionsCount_one": "{{count}} permission",
       "permissionsCount_other": "{{count}} permissions",
       "chooseEnabledSignProvider": "Choose an enabled sign-in provider.",
@@ -9305,6 +9329,8 @@
       "uploadCount": "Upload {{count}}"
     },
     "markup": {
+      "imageProperties": "Image properties",
+      "noMatchingCommands": "No matching commands",
       "abbreviationDefinition": "Definition",
       "abbreviationTerm": "TERM",
       "bold": "Bold",
@@ -10137,6 +10163,7 @@
       "title": "Comments"
     },
     "jobTitle": "Job Title",
+    "pronouns": "Pronouns",
     "location": "Location",
     "subtitle": "My personal info",
     "timezone": "Timezone",
@@ -10191,6 +10218,8 @@
       "eyebrow": "Account"
     },
     "nav": {
+      "discussions": "My discussions",
+      "notifications": "Notifications",
       "label": "Profile sections",
       "open": "Open profile navigation",
       "close": "Close profile navigation",
@@ -10200,6 +10229,7 @@
     "issues": {
       "nameRequired": "Enter a display name.",
       "nameTooLong": "Use 255 characters or fewer.",
+      "pronounsTooLong": "Use 255 characters or fewer.",
       "handleInvalid": "Use 3–32 letters, numbers, underscores or hyphens."
     },
     "dock": {
@@ -10255,6 +10285,19 @@
     "searchWithinResultsPlaceholder": "Search within results..."
   },
   "mail": {
+    "pageWatch": {
+      "subject": "{{event}} — {{pageTitle}} — {{siteTitle}}",
+      "preheader": "{{event}}",
+      "content": "{{event}}",
+      "buttonText": "Open page",
+      "footer": "You receive these updates through your page watch or account notification preferences. Manage your notification preferences in the workspace.",
+      "actions": {
+        "created": "{{actor}} created this page",
+        "watchedComment": "{{actor}} commented on this page",
+        "commentReply": "{{actor}} replied to your discussion",
+        "mention": "{{actor}} mentioned you in a discussion"
+      }
+    },
     "test": {
       "confirmation": "Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration."
     }

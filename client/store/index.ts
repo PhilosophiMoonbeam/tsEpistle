@@ -346,7 +346,10 @@ export const useWikiStore = defineStore('wiki', {
         groupsTotal: 0,
         pagesTotal: 0,
         usersTotal: 0,
-        tagsTotal: 0
+        tagsTotal: 0,
+        assetsTotal: null,
+        assetsBytes: null,
+        commentsTotal: null
       } as SystemSummary
     },
     editor: {

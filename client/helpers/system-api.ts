@@ -1,10 +1,11 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards.ts'
 import { ProductMetadataSchema, type ProductMetadata } from '../../shared/product.ts'
+import type { ProtectedAdminSummaryMetrics } from './admin-summary.ts'
 
 type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 export type UpdateStatus = 'unavailable' | 'current' | 'available'
-export type SystemSummary = {
+export type SystemSummary = ProtectedAdminSummaryMetrics & {
   product: ProductMetadata
   currentVersion: string
   latestVersion: string | null
@@ -66,7 +67,9 @@ const request = async (
   return payload
 }
 
-const normalizeSummary = (payload: unknown, fallbackMessage: string): SystemSummary => {
+const protectedSummaryFields = ['assetsTotal', 'assetsBytes', 'commentsTotal'] as const
+
+function assertSummary(payload: unknown, fallbackMessage: string): asserts payload is SystemSummary {
   if (!isRecord(payload)) throw new Error(fallbackMessage)
   const product = ProductMetadataSchema.safeParse(payload.product)
   if (!product.success || payload.currentVersion !== product.data.version) throw new Error(fallbackMessage)
@@ -78,22 +81,23 @@ const normalizeSummary = (payload: unknown, fallbackMessage: string): SystemSumm
   if (!['unavailable', 'current', 'available'].includes(String(payload.updateStatus))) throw new Error(fallbackMessage)
   for (const key of ['groupsTotal', 'pagesTotal', 'usersTotal', 'tagsTotal'])
     if (typeof payload[key] !== 'number' || !Number.isFinite(payload[key])) throw new Error(fallbackMessage)
-  return payload as SystemSummary
+  for (const key of protectedSummaryFields)
+    if (payload[key] !== null && (typeof payload[key] !== 'number' || !Number.isFinite(payload[key]) || payload[key] < 0)) throw new Error(fallbackMessage)
+  payload.product = product.data
 }
 
-export const fetchSystemSummary = async (fetchImpl: FetchImpl, fallbackMessage = 'System summary response is invalid') =>
-  normalizeSummary(await request(fetchImpl, 'GET', '/_api/system/summary', undefined, fallbackMessage), fallbackMessage)
+export const fetchSystemSummary = async (fetchImpl: FetchImpl, fallbackMessage = 'System summary response is invalid') => {
+  const payload: unknown = await request(fetchImpl, 'GET', '/_api/system/summary', undefined, fallbackMessage)
+  assertSummary(payload, fallbackMessage)
+  return payload
+}
 
 export const fetchSystemHost = async (fetchImpl: FetchImpl, fallbackMessage = 'Site host response is invalid') => {
   const payload = await request(fetchImpl, 'GET', '/_api/system/host', undefined, fallbackMessage)
   if (!isRecord(payload) || typeof payload.host !== 'string') throw new Error(fallbackMessage)
   return { host: payload.host }
 }
-export const fetchSystemMetricsState = async (
-  fetchImpl: FetchImpl,
-  signal?: AbortSignal,
-  fallbackMessage = 'Metrics status response is invalid'
-) => {
+export const fetchSystemMetricsState = async (fetchImpl: FetchImpl, signal?: AbortSignal, fallbackMessage = 'Metrics status response is invalid') => {
   const payload = await request(fetchImpl, 'GET', '/metrics/status', undefined, fallbackMessage, undefined, signal)
   if (!isRecord(payload) || typeof payload.enabled !== 'boolean') throw new Error(fallbackMessage)
   return { enabled: payload.enabled }

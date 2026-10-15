@@ -35,6 +35,7 @@ interface PostCommentOptions extends CommentAction {
   content: string
   guestName: string
   guestEmail: string
+  annotations?: unknown
 }
 
 interface UpdateCommentOptions extends CommentAction {
@@ -73,9 +74,11 @@ export default class Comment extends Model {
   declare createdAt: string
   declare updatedAt: string
 
-  static override get tableName () { return 'comments' }
+  static override get tableName() {
+    return 'comments'
+  }
 
-  static override get jsonSchema () {
+  static override get jsonSchema() {
     return {
       type: 'object',
       required: [],
@@ -92,26 +95,42 @@ export default class Comment extends Model {
     }
   }
 
-  static override get relationMappings () {
+  static override get relationMappings() {
     return {
       author: { relation: Model.BelongsToOneRelation, modelClass: User, join: { from: 'comments.authorId', to: 'users.id' } },
       page: { relation: Model.BelongsToOneRelation, modelClass: Page, join: { from: 'comments.pageId', to: 'pages.id' } }
     }
   }
 
-  override $beforeUpdate (): void { this.updatedAt = new Date().toISOString() }
-  override $beforeInsert (): void {
+  override $beforeUpdate(): void {
+    this.updatedAt = new Date().toISOString()
+  }
+  override $beforeInsert(): void {
     this.createdAt = new Date().toISOString()
     this.updatedAt = new Date().toISOString()
   }
 
-  static async postNewComment ({ pageId, replyTo, content, guestName, guestEmail, user, ip, sessionId = '' }: PostCommentOptions): Promise<unknown> {
+  static async postNewComment({
+    pageId,
+    replyTo,
+    content,
+    guestName,
+    guestEmail,
+    user,
+    ip,
+    sessionId = '',
+    annotations
+  }: PostCommentOptions): Promise<unknown> {
     rejectApiPrincipalMutation(user)
     if (user.id === 2) {
-      const validation = validateValues({ email: _.toLower(guestEmail), name: guestName }, {
-        email: { email: true, length: { maximum: 255 } },
-        name: { presence: { allowEmpty: false }, length: { minimum: 2, maximum: 255 } }
-      }, { format: 'flat' })
+      const validation = validateValues(
+        { email: _.toLower(guestEmail), name: guestName },
+        {
+          email: { email: true, length: { maximum: 255 } },
+          name: { presence: { allowEmpty: false }, length: { minimum: 2, maximum: 255 } }
+        },
+        { format: 'flat' }
+      )
       if (validation?.[0]) throw new wiki.Error.InputInvalid(validation[0])
     }
     content = _.trim(content)
@@ -122,26 +141,25 @@ export default class Comment extends Model {
     const authority = await wiki.auth.loadPageRuleAuthority(user)
     const pageContext = pageAuthorizationContext(page)
     if (page.visibility === 'private' && !canReadPage(user, page, authority)) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
-    if (
-      !canReadPage(user, page, authority) ||
-      pageContext === null ||
-      !wiki.auth.checkPageAccess(user, ['write:comments'], pageContext, authority)
-    ) {
+    if (!canReadPage(user, page, authority) || pageContext === null || !wiki.auth.checkPageAccess(user, ['write:comments'], pageContext, authority)) {
       throw Object.assign(new wiki.Error.CommentPostForbidden(), { status: 403 })
     }
     await assertPageUnlocked({ requester: user, pageId, sessionId, authority })
     if (typeof wiki.data.commentProvider.create !== 'function') throw new wiki.Error.InputInvalid('Built-in discussions are not the active provider.')
+    if (annotations !== undefined && wiki.data.commentProvider.key !== 'default')
+      throw new ApplicationError('Annotations require the built-in discussion provider.', { status: 409 })
     return wiki.data.commentProvider.create({
       requester: user,
       sessionId,
       page,
       replyTo,
       content,
+      ...(annotations === undefined ? {} : { annotations }),
       user: { ...user, ...(user.id === 2 ? { name: guestName, email: guestEmail } : {}), ip }
     })
   }
 
-  static async updateComment ({ id, content, user, sessionId = '' }: UpdateCommentOptions): Promise<unknown> {
+  static async updateComment({ id, content, user, sessionId = '' }: UpdateCommentOptions): Promise<unknown> {
     rejectApiPrincipalMutation(user)
     content = _.trim(content)
     if (content.length < 2 || content.length > 50000) throw new wiki.Error.InputInvalid('Comments must be 2 to 50,000 characters.')
@@ -157,14 +175,14 @@ export default class Comment extends Model {
       await authorizeCommentManagement(user, page, transaction, sessionId)
       const now = new Date()
       await transaction('comments').where({ id, pageId: page.id }).update({ content, render: renderedContent, updatedAt: now.toISOString() })
-      if (!comment.isHidden && await anonymousDiscussionIsVisible(transaction, page, now)) {
+      if (!comment.isHidden && (await anonymousDiscussionIsVisible(transaction, page, now))) {
         await writeCommentWebhookEvent(transaction, page.id, id, 'updated', now)
       }
       return renderedContent
     })
   }
 
-  static async deleteComment ({ id, user, sessionId = '' }: DeleteCommentOptions): Promise<void> {
+  static async deleteComment({ id, user, sessionId = '' }: DeleteCommentOptions): Promise<void> {
     rejectApiPrincipalMutation(user)
     await wiki.models.knex.transaction(async transaction => {
       const subject = await transaction('comments').where('id', id).first('pageId')
@@ -178,15 +196,15 @@ export default class Comment extends Model {
       const now = new Date()
       await this.query(transaction).where({ pageId: page.id, replyTo: id }).patch({ replyTo: 0 })
       await this.query(transaction).where({ id, pageId: page.id }).delete()
-      if (!target.isHidden && await anonymousDiscussionIsVisible(transaction, page, now)) {
+      if (!target.isHidden && (await anonymousDiscussionIsVisible(transaction, page, now))) {
         await writeCommentWebhookEvent(transaction, page.id, id, 'deleted', now)
       }
     })
   }
-
 }
 
 interface CommentProvider {
+  key?: string
   create: (input: Record<string, unknown>) => Promise<unknown>
   update: (input: Record<string, unknown>) => Promise<unknown>
   remove: (input: Record<string, unknown>) => Promise<void>
@@ -209,7 +227,7 @@ const wiki = WIKI as unknown as {
   }
   data: { commentProvider: CommentProvider }
   config: { features: Record<string, unknown> }
-  models: { knex: Knex, pages: { getPageFromDb: (id: number) => Promise<CommentPage | null> } }
+  models: { knex: Knex; pages: { getPageFromDb: (id: number) => Promise<CommentPage | null> } }
 }
 
 const anonymousCommentReader: CommentUser = { id: 2, ownershipUserId: null }
@@ -217,20 +235,12 @@ const anonymousCommentReader: CommentUser = { id: 2, ownershipUserId: null }
 const loadDiscussionPageForMutation = async (transaction: Knex.Transaction, pageId: number): Promise<CommentPage> => {
   const page = await transaction('pages').where('id', pageId).forShare().first()
   if (!page) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
-  const tags = await transaction('pageTags')
-    .join('tags', 'tags.id', 'pageTags.tagId')
-    .where('pageTags.pageId', pageId)
-    .select('tags.tag')
+  const tags = await transaction('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', pageId).select('tags.tag')
   page.tags = tags.map(row => ({ tag: row.tag }))
   return page as CommentPage
 }
 
-const authorizeCommentManagement = async (
-  user: CommentUser,
-  page: CommentPage,
-  transaction: Knex.Transaction,
-  sessionId: string
-): Promise<void> => {
+const authorizeCommentManagement = async (user: CommentUser, page: CommentPage, transaction: Knex.Transaction, sessionId: string): Promise<void> => {
   const authority = await wiki.auth.loadPageRuleAuthority(user, transaction)
   const context = pageAuthorizationContext(page)
   if (page.visibility === 'private' && !canReadPage(user, page, authority)) {
@@ -244,27 +254,23 @@ const authorizeCommentManagement = async (
   }
 }
 
-const anonymousDiscussionIsVisible = async (
-  transaction: Knex.Transaction,
-  page: CommentPage,
-  now: Date
-): Promise<boolean> => {
+const anonymousDiscussionIsVisible = async (transaction: Knex.Transaction, page: CommentPage, now: Date): Promise<boolean> => {
   const protection = await transaction('pageAccessPasswords').where('pageId', page.id).first('pageId')
   if (!isCommentWebhookPageEligible(page, Boolean(protection), now)) return false
   const featureRow = await transaction('settings').where('key', 'features').first('value')
   const storedFeatures = featureRow?.value
-  const features = storedFeatures && typeof storedFeatures === 'object' && !Array.isArray(storedFeatures)
-    ? storedFeatures
-    : wiki.config.features
+  const features = storedFeatures && typeof storedFeatures === 'object' && !Array.isArray(storedFeatures) ? storedFeatures : wiki.config.features
   const commentsEnabled = Reflect.get(features, 'featurePageComments') === true || Reflect.get(features, 'featurePageComments') === 1
   if (!commentsEnabled) return false
   const providers = await transaction('commentProviders').where('isEnabled', true).orderBy('key').select('key')
   if (providers.length !== 1 || providers[0].key !== 'default') return false
   const authority = await wiki.auth.loadPageRuleAuthority(anonymousCommentReader, transaction)
   const context = pageAuthorizationContext(page)
-  return context !== null &&
+  return (
+    context !== null &&
     canReadPage(anonymousCommentReader, page, authority) &&
     wiki.auth.checkPageAccess(anonymousCommentReader, ['read:comments'], context, authority)
+  )
 }
 
 const writeCommentWebhookEvent = async (

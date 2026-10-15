@@ -6,6 +6,7 @@ import { createAccountAdministrationStore } from '../../operations/account-admin
 import { up, down } from '../../db/migrations/tsepistle-000017-account-administration.ts'
 import { up as groupUp } from '../../db/migrations/tsepistle-000018-group-administration.ts'
 import { up as presentationUp } from '../../db/migrations/tsepistle-000036-user-presentation-defaults.ts'
+import { up as pronounsUp } from '../../db/migrations/tsepistle-000059-user-pronouns.ts'
 const connection = getPostgresTestConnection('_account_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const admin = { id: 1, authVersion: 0 } as never,
@@ -28,6 +29,7 @@ suite('PostgreSQL account administration', () => {
     mustChangePwd: false,
     location: 'Old location',
     jobTitle: 'Editor',
+    pronouns: 'they/them',
     timezone: 'UTC',
     createdAt: '2026-09-01T00:00:00Z',
     updatedAt: '2026-09-01T00:00:00Z',
@@ -98,6 +100,7 @@ suite('PostgreSQL account administration', () => {
     await up(db)
     await groupUp(db)
     await presentationUp(db)
+    await pronounsUp(db)
     await db.schema.createTable('apiKeys', t => {
       t.increments('id')
       t.text('key')
@@ -224,7 +227,7 @@ suite('PostgreSQL account administration', () => {
       store.create(admin, {
         fingerprint: options.fingerprint,
         providerKey: 'local',
-        profile: { name: 'Policy fixture', email: 'policy@example.invalid', location: '', jobTitle: '', timezone: 'UTC', groups: [] },
+        profile: { name: 'Policy fixture', email: 'policy@example.invalid', location: '', jobTitle: '', pronouns: '', timezone: 'UTC', groups: [] },
         isVerified: false,
         mustChangePassword: true,
         password: 'twelve-chars!',
@@ -301,6 +304,48 @@ suite('PostgreSQL account administration', () => {
     })
     expect(JSON.stringify(next.history)).not.toContain('New name')
   })
+  it('preserves omitted pronouns, trims explicit updates, clears empty text and fences a concurrent profile change', async () => {
+    const initial = await store.inspect(operator, 3)
+    const next = await store.updateProfile(operator, 3, {
+      ...(await review(3, operator)),
+      profile: { ...initial.profile, pronouns: ' she/her ' }
+    })
+    expect(next.profile).toEqual({ ...initial.profile, pronouns: 'she/her' })
+    expect((await db('users').where('id', 3).first()).authVersion).toBe(0)
+    expect(next.history[0].details).toEqual({ fields: ['pronouns'], sessionsEnded: false })
+    expect(JSON.stringify(next.history)).not.toContain('she/her')
+    const omitted: Record<string, unknown> = { ...next.profile, name: 'Renamed person' }
+    delete omitted.pronouns
+    const renamed = await store.updateProfile(operator, 3, { ...(await review(3, operator)), profile: omitted })
+    expect(renamed.profile).toEqual({ ...next.profile, name: 'Renamed person' })
+    for (const pronouns of [null, false, [], 'x'.repeat(256)]) {
+      await expect(
+        store.updateProfile(operator, 3, {
+          ...(await review(3, operator)),
+          profile: { ...renamed.profile, pronouns }
+        })
+      ).rejects.toMatchObject({ status: 400 })
+    }
+    const bounded = await store.updateProfile(operator, 3, {
+      ...(await review(3, operator)),
+      profile: { ...renamed.profile, pronouns: 'x'.repeat(255) }
+    })
+    expect(bounded.profile.pronouns).toBe('x'.repeat(255))
+    const cleared = await store.updateProfile(operator, 3, {
+      ...(await review(3, operator)),
+      profile: { ...bounded.profile, pronouns: '' }
+    })
+    expect(cleared.profile.pronouns).toBe('')
+    await db('users').where('id', 3).update({ pronouns: 'he/him' })
+    await expect(
+      store.updateProfile(operator, 3, {
+        fingerprint: cleared.fingerprint,
+        reason: 'Review an outdated profile',
+        profile: { ...cleared.profile, name: 'Stale name' }
+      })
+    ).rejects.toMatchObject({ status: 409 })
+    expect(await db('users').where('id', 3).first()).toMatchObject({ name: 'Renamed person', pronouns: 'he/him', location: 'Old location', jobTitle: 'Editor' })
+  })
   it('ends existing sessions on membership changes, preserves private ownership and rejects escalation', async () => {
     await db('pages').insert({ id: 1, ownerId: 3, creatorId: 3, authorId: 3, visibility: 'private' })
     await db('groups').insert({ id: 6, name: 'Script authors', permissions: JSON.stringify(['read:pages', 'write:scripts']), isSystem: false })
@@ -339,7 +384,10 @@ suite('PostgreSQL account administration', () => {
     expect(initial.availableGroups.find(group => group.id === 2)?.canAssign).toBe(true)
     const next = await store.updateProfile(operator, 3, { ...(await review(3, operator)), profile: { ...initial.profile, groups: [2, 3] } })
     expect(next.profile.groups).toEqual([2, 3])
-    expect(await db('userGroups').where('userId', 3).orderBy('groupId')).toEqual([{ userId: 3, groupId: 2 }, { userId: 3, groupId: 3 }])
+    expect(await db('userGroups').where('userId', 3).orderBy('groupId')).toEqual([
+      { userId: 3, groupId: 2 },
+      { userId: 3, groupId: 3 }
+    ])
     expect((await db('users').where('id', 3).first()).authVersion).toBe(1)
     expect((await store.inspect(admin, 2)).capabilities.edit).toBe(false)
   })
@@ -440,7 +488,7 @@ suite('PostgreSQL account administration', () => {
       reason: 'Create a test author'
     })
     const row = await db('users').where('id', created.id).first()
-    expect(row).toMatchObject({ name: profile.name, email: profile.email, isActive: true, isVerified: true, mustChangePwd: true, authVersion: 0 })
+    expect(row).toMatchObject({ name: profile.name, email: profile.email, pronouns: '', isActive: true, isVerified: true, mustChangePwd: true, authVersion: 0 })
     expect(await bcrypt.compare('creation-password-12!', row.password)).toBe(true)
     expect(await db('userGroups').where('userId', created.id)).toEqual([{ userId: created.id, groupId: 3 }])
     expect((await db('userAdministrationEvents').where('userId', created.id).first()).action).toBe('account-created')
@@ -454,7 +502,9 @@ suite('PostgreSQL account administration', () => {
         reason: 'Attempt group escalation'
       })
     ).rejects.toMatchObject({ status: 403 })
-    await db('groups').where('id', 4).update({ permissions: JSON.stringify(['write:users']) })
+    await db('groups')
+      .where('id', 4)
+      .update({ permissions: JSON.stringify(['write:users']) })
     const creationReview = await store.creationOptions(operator)
     const scriptInput = {
       fingerprint: creationReview.fingerprint,
@@ -490,7 +540,7 @@ suite('PostgreSQL account administration', () => {
     const options = await store.creationOptions(admin),
       input = {
         fingerprint: options.fingerprint,
-        profile: { name: 'Work account', email: 'work@example.invalid', location: '', jobTitle: '', timezone: 'UTC', groups: [3] },
+        profile: { name: 'Work account', email: 'work@example.invalid', location: '', jobTitle: '', pronouns: ' he/him ', timezone: 'UTC', groups: [3] },
         providerKey: 'oidc',
         isVerified: true,
         mustChangePassword: false,
@@ -509,6 +559,8 @@ suite('PostgreSQL account administration', () => {
     expect(await db('users').where('providerKey', 'oidc').whereRaw('LOWER(??) = ?', ['email', input.profile.email]).select('email')).toEqual([
       { email: input.profile.email }
     ])
+    const created = await db('users').where({ providerKey: 'oidc' }).whereRaw('LOWER(??) = ?', ['email', input.profile.email]).first()
+    expect((await store.inspect(admin, created.id)).profile.pronouns).toBe('he/him')
     await db('groups').where('id', 3).update({ name: 'Renamed authors' })
     await expect(store.create(admin, { ...input, profile: { ...input.profile, email: 'different@example.invalid' } })).rejects.toMatchObject({ status: 409 })
   })

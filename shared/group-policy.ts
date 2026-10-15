@@ -8,8 +8,7 @@ export interface GroupPageRule {
   locales: string[]
 }
 
-export const normalizeGroupRulePath = (match: GroupRuleMatch, path: string): string =>
-  match === 'SUBTREE' ? path.replace(/\/+$/, '') : path
+export const normalizeGroupRulePath = (match: GroupRuleMatch, path: string): string => (match === 'SUBTREE' ? path.replace(/\/+$/, '') : path)
 
 export interface GroupPolicyDraft {
   name: string
@@ -57,6 +56,12 @@ export const groupPermissions: GroupPermission[] = [
   content('read:comments', 'Read discussions', 'Read comments on allowed pages.'),
   content('write:comments', 'Join discussions', 'Post comments on allowed pages.'),
   content('manage:comments', 'Moderate discussions', 'Moderate comments on allowed pages; administration may require additional authority.'),
+  content('read:glossary', 'Read glossary', 'Read the selected locale’s glossary catalog using page rules for the fixed path glossary.'),
+  content(
+    'manage:glossary',
+    'Manage glossary',
+    'Create, edit and delete entries in the selected locale’s glossary using page rules for the fixed path glossary.'
+  ),
   global('use:agents', 'Use the Wiki Agent', 'Start private agent sessions. Tools retain their own permission checks.', 'Intelligence', 'content'),
   global('use:agent-browser', 'Use agent browsing', 'Use enabled browser actions. Also requires Use the Wiki Agent.', 'Intelligence', 'content'),
   global('use:mcp', 'Connect through MCP', 'Use /mcp through eligible API keys for this group.', 'Intelligence', 'content'),

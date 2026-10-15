@@ -8,6 +8,7 @@
     :ratings-visible='ratingsVisible'
     :last-editor-visible='lastEditorVisible'
     @update:active-view='selectPageView'
+    @focus-thread='openDiscussionThread'
   )
     template(v-slot:contents)
       slot(v-if='navigationKey === 0' name='contents')
@@ -29,6 +30,7 @@ import WikiPageLinks from './wiki-page-links.vue'
 import WikiPageRatings from './wiki-page-ratings.vue'
 import Page from '../themes/default/components/page.vue'
 import { loadingStart, loadingStop } from '../helpers/root-ui-store'
+import { focusDiscussionThread } from '../helpers/discussion-annotation-events'
 import {
   decodeWikiPagePayload,
   installWikiNavigationHandler,
@@ -47,6 +49,11 @@ const pageViewForUrl = (url: string | URL, linksVisible = false): PageView => {
   const hash = new URL(url, window.location.href).hash
   if (linksVisible && hash === '#page-links') return 'links'
   return hash === '#discussion' || hash.startsWith('#comment-post-id-') ? 'talk' : 'article'
+}
+const pageQueryWithoutGlossary = (url: URL): string => {
+  const query = new URLSearchParams(url.search)
+  query.delete('glossary')
+  return query.toString()
 }
 const NAVIGATION_STATE_KEY = '__wikiPageNavigation'
 const NAVIGATION_LOADING_KEY = 'wiki-page-navigation'
@@ -101,6 +108,11 @@ export default defineComponent({
   },
   mounted() {
     window.addEventListener('hashchange', this.handleHashChange)
+    window.addEventListener('wiki:navigation', this.handleReaderLocation)
+    void nextTick().then(() => {
+      if (this.activePageView === 'talk') this.restoreScroll(new URL(this.currentUrl))
+      this.focusHashThread()
+    })
     if (!this.currentPage.spaNavigation) return
 
     this.removeNavigationHandler = installWikiNavigationHandler(this.navigate)
@@ -117,6 +129,7 @@ export default defineComponent({
     this.removeNavigationHandler?.()
     document.removeEventListener('click', this.handleDocumentClick)
     window.removeEventListener('hashchange', this.handleHashChange)
+    window.removeEventListener('wiki:navigation', this.handleReaderLocation)
     window.removeEventListener('popstate', this.handlePopState)
     if (this.previousScrollRestoration !== null && 'scrollRestoration' in window.history) {
       window.history.scrollRestoration = this.previousScrollRestoration
@@ -130,12 +143,35 @@ export default defineComponent({
       if (view === 'talk') destination.hash = 'discussion'
       else if (view === 'links') destination.hash = 'page-links'
       else if (destination.hash === '#discussion' || destination.hash.startsWith('#comment-post-id-') || destination.hash === '#page-links') destination.hash = ''
-      window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
+      window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
       this.currentUrl = destination.href
       this.activePageView = view
       await nextTick()
       if (view === 'talk' || view === 'links') this.restoreScroll(destination)
       else document.querySelector<HTMLElement>('.contents')?.focus({ preventScroll: true })
+    },
+    async openDiscussionThread(commentId: number): Promise<void> {
+      if (!Number.isSafeInteger(commentId) || commentId < 1) return
+      const destination = new URL(window.location.href)
+      destination.hash = `comment-post-id-${commentId}`
+      if (destination.href === this.currentUrl) {
+        this.activePageView = 'talk'
+        await nextTick()
+        this.focusHashThread()
+      } else await this.navigate(destination)
+    },
+    focusHashThread(): void {
+      if (this.activePageView !== 'talk' || !this.currentPage.props.commentsEnabled || this.currentPage.props.commentsExternal) return
+      const match = /^#comment-post-id-([1-9][0-9]*)$/u.exec(new URL(this.currentUrl).hash)
+      const commentId = match ? Number(match[1]) : 0
+      if (Number.isSafeInteger(commentId) && commentId > 0) focusDiscussionThread(this.currentPage.props.pageId, commentId)
+    },
+    handleReaderLocation(): void {
+      const destination = new URL(window.location.href)
+      const current = new URL(this.currentUrl)
+      if (destination.pathname === current.pathname && destination.hash === current.hash && pageQueryWithoutGlossary(destination) === pageQueryWithoutGlossary(current)) {
+        this.currentUrl = destination.href
+      }
     },
     saveCurrentHistoryScroll(): void {
       const currentState = typeof window.history.state === 'object' && window.history.state !== null
@@ -178,15 +214,20 @@ export default defineComponent({
       if (destination.href === this.currentUrl) return
 
       const current = new URL(this.currentUrl)
-      if (destination.pathname === current.pathname && destination.search === current.search) {
+      if (destination.pathname === current.pathname && pageQueryWithoutGlossary(destination) === pageQueryWithoutGlossary(current)) {
+        const glossaryOnly = destination.hash === current.hash && destination.search !== current.search
         this.activePageView = pageViewForUrl(destination, this.linksVisible)
         if (!options.popState) {
           this.saveCurrentHistoryScroll()
-          window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
+          window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
         }
         this.currentUrl = destination.href
         await nextTick()
-        this.restoreScroll(destination, options.scrollY)
+        if (!glossaryOnly) this.restoreScroll(destination, options.scrollY)
+        if (!glossaryOnly) this.focusHashThread()
+        window.dispatchEvent(new CustomEvent('wiki:navigation', {
+          detail: { url: destination.href, title: this.currentPage.props.title }
+        }))
         return
       }
 
@@ -224,7 +265,7 @@ export default defineComponent({
 
         if (!options.popState) {
           this.saveCurrentHistoryScroll()
-          window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: 0 }, '', parsed.url)
+          window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: true, scrollY: 0 }, '', parsed.url)
         }
         this.currentPage = markRaw(parsed.payload)
         this.contentHtml = parsed.contentHtml
@@ -239,6 +280,7 @@ export default defineComponent({
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
         if (controller.signal.aborted || sequence !== this.navigationSequence) return
         this.restoreScroll(parsed.url, options.scrollY)
+        this.focusHashThread()
         window.dispatchEvent(new CustomEvent('wiki:navigation', {
           detail: { url: parsed.url.href, title: parsed.payload.props.title }
         }))
@@ -267,6 +309,8 @@ export default defineComponent({
       }
     },
     restoreScroll(destination: URL, savedScrollY = 0): void {
+      // Comments resolves and focuses authorized root/reply targets after lazy loading.
+      if (/^#comment-post-id-[1-9][0-9]*$/u.test(destination.hash)) return
       if (destination.hash) {
         const encodedId = destination.hash.slice(1)
         let targetId = encodedId

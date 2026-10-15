@@ -15,6 +15,7 @@ import { fallbackLocalizationLabel } from './modules/localization.ts'
 import { offlineEnglish } from './helpers/offline-english.ts'
 import { applyReaderLayout } from './helpers/reader-layout.ts'
 import { preparePwaStartup, setReloadSafetyProvider } from './helpers/pwa.ts'
+import { applyCodeTheme } from './helpers/code-appearance.ts'
 
 export async function mountOfflineApp(appearance: string): Promise<void> {
   setReloadSafetyProvider(() => ({ safe: true, revision: 'offline-reader', actorEpoch: 'neutral' }))
@@ -47,6 +48,7 @@ export async function mountOfflineApp(appearance: string): Promise<void> {
   app.component('Notify', Notify)
   app.onUnmount(installThemeSwitchGuard(vuetify.theme))
   applyReaderLayout(siteConfig.readerLayout)
+  applyCodeTheme(siteConfig.codeTheme)
   window.WIKI = app
   app.mount('#offline-app')
 }

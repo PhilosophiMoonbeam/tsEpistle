@@ -91,7 +91,6 @@ describe('Visual Markdown page contracts', () => {
         knex,
         pageHistory: { addVersion: vi.fn() },
         pages: {},
-        storage: { pageEvent: vi.fn() },
         tags: {}
       },
       scheduler: { registerJob: vi.fn() }

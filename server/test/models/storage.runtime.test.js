@@ -1,3 +1,5 @@
+import { nativeStorageMutationConfigurationKey } from '../../helpers/storage-configuration-key.ts'
+
 const template = Object.fromEntries(
   ['init', 'deactivated', 'created', 'updated', 'deleted', 'renamed', 'assetUploaded', 'assetDeleted', 'assetRenamed', 'getLocalLocation', 'sync', 'dump', 'exportAll'].map(
     key => [key, vi.fn()]
@@ -14,7 +16,7 @@ describe('Storage runtime replacement and synchronization', () => {
     mode: 'push',
     syncInterval: 'P0D',
     config: { path: value, nested: { value } },
-    state: { status: 'warning', message: 'previous', lastAttempt: null, lastOperation: { message: 'Keep the manual receipt' } },
+    state: { status: 'warning', message: 'previous', lastAttempt: null },
     $query: vi.fn(() => ({ patch: vi.fn().mockResolvedValue(1) }))
   })
   beforeEach(async () => {
@@ -60,17 +62,24 @@ describe('Storage runtime replacement and synchronization', () => {
     expect(template.deactivated).toHaveBeenCalledTimes(1)
   })
 
-  it('preserves the latest manual receipt during scheduled success and failure and ignores stale generations', async () => {
+  it('records scheduled success and failure and ignores stale generations', async () => {
     await Storage.initTargets()
-    const target = Storage.targets[0],
-      receipt = target.state.lastOperation
+    const target = Storage.targets[0]
     expect(await Storage.syncTarget('disk', 'stale')).toBe(false)
     expect(template.sync).not.toHaveBeenCalled()
     expect(await Storage.syncTarget('disk', target.runtimeGeneration)).toBe(true)
-    expect(target.state.lastOperation).toEqual(receipt)
+    expect(target.state).toMatchObject({
+      status: 'operational',
+      lastOperation: { targetKey: 'disk', handler: 'sync', outcome: 'succeeded' }
+    })
     template.sync.mockRejectedValueOnce(new Error('sync failure'))
     await expect(Storage.syncTarget('disk', target.runtimeGeneration)).rejects.toThrow('sync failure')
-    expect(target.state).toMatchObject({ status: 'error', message: 'sync failure', lastOperation: receipt })
+    expect(target.state.status).toBe('error')
+    expect(template.sync).toHaveBeenCalledTimes(2)
+    const failedState = target.state
+    expect(await Storage.syncTarget('disk', 'stale')).toBe(false)
+    expect(target.state).toBe(failedState)
+    expect(template.sync).toHaveBeenCalledTimes(2)
   })
   it('finishes an active action, replaces the runtime, and drains a cancelled stale timer without deadlock', async () => {
     await Storage.initTargets()
@@ -100,8 +109,6 @@ describe('Storage runtime replacement and synchronization', () => {
     await Storage.initTargets()
     expect(Storage.activeTargets).toHaveLength(0)
     expect(template.deactivated).toHaveBeenCalledTimes(1)
-    await Storage.pageEvent({ event: 'created', page: { path: 'guide' } })
-    expect(template.created).not.toHaveBeenCalled()
   })
   it('retains the active runtime when the replacement configuration cannot be read', async () => {
     await Storage.initTargets()
@@ -143,7 +150,7 @@ describe('Storage runtime replacement and synchronization', () => {
     template.dump.mockImplementation(async () => {
       events.push('effect')
     })
-    template.created.mockImplementation(async () => {
+    template.updated.mockImplementation(async () => {
       events.push('page')
     })
     const operation = Storage.performAdministrativeOperation(
@@ -158,7 +165,11 @@ describe('Storage runtime replacement and synchronization', () => {
       }
     )
     await vi.waitFor(() => expect(events).toEqual(['review', 'effect', 'receipt']))
-    const page = Storage.pageEvent({ event: 'created', page: { path: 'guide' } })
+    const page = Storage.performMutation(
+      { targetKey: 'disk', targetConfigurationRevision: nativeStorageMutationConfigurationKey(Storage.activeTargets[0]) },
+      dispatch => dispatch.writePage({ path: 'guide' }),
+      new AbortController().signal
+    )
     await Promise.resolve()
     expect(events).toEqual(['review', 'effect', 'receipt'])
     gate.resolve()
@@ -236,11 +247,14 @@ describe('Storage runtime replacement and synchronization', () => {
     await Storage.initTargets()
     const generation = rows[0].runtimeGeneration
     global.WIKI.config.offline = true
-    await Storage.pageEvent({ event: 'created', page: { path: 'guide' } })
-    await Storage.assetEvent({ event: 'uploaded', asset: { path: 'asset' } })
+    await expect(Storage.performMutation(
+      { targetKey: 'sftp', targetConfigurationRevision: nativeStorageMutationConfigurationKey(rows[0]) },
+      dispatch => dispatch.writeAsset({ path: 'asset' }),
+      new AbortController().signal
+    )).rejects.toThrow('paused in offline mode')
     expect(await Storage.syncTarget('sftp', generation)).toBe(false)
     await expect(Storage.executeAction('sftp', 'exportAll')).rejects.toBeInstanceOf(Error)
-    for (const method of ['created', 'assetUploaded', 'sync', 'exportAll']) expect(template[method]).not.toHaveBeenCalled()
+    for (const method of ['updated', 'assetUploaded', 'sync', 'exportAll']) expect(template[method]).not.toHaveBeenCalled()
   })
 
   it('does not initialize enabled targets unavailable in this build', async () => {

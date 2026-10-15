@@ -169,7 +169,7 @@
                 v-btn.radius-7(variant="outlined", @click='cancel')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
-                v-btn.radius-7(v-if='!isBranding', color='primary', @click='insert', :disabled='!currentFileId || !isAssetActionable(currentFileId)')
+                v-btn.radius-7(v-if='!isBranding', color='primary', @click='insert', :disabled='!currentFileId || !isAssetActionable(currentFileId) || (currentAsset?.kind === `IMAGE` && !imagePropertiesValid)')
                   v-icon(start) mdi-playlist-plus
                   span {{$t('common:actions.insert')}}
                 v-btn.radius-7(v-else, color='primary', @click='confirmSelection', :disabled='!canConfirmSelection', :loading='brandingLoading')
@@ -227,8 +227,18 @@
               variant="outlined"
               single-line
               color='primary'
+              label='Image alignment'
               :placeholder='$t(`editor:editorModalMedia.none`)'
             )
+            v-textarea.mt-3(v-model='imageAlt', label='Alternative text', hint='Describe the image, or leave empty for a decorative image.', persistent-hint, counter='2000', maxlength='2000', rows='2', auto-grow, :error-messages='imageAltValid ? [] : [`Use at most 2000 characters without control characters.`]')
+            v-text-field.mt-3(v-model='imageWidth', label='Display width', hint='Empty, auto, pixels up to 16384, or up to 100%. This does not resize the asset.', persistent-hint, :error-messages='imageWidthValid ? [] : [`Enter a supported width.`]')
+            v-text-field.mt-3(v-model='imageHeight', label='Display height', hint='Empty, auto, pixels up to 16384, or up to 100%.', persistent-hint, :error-messages='imageHeightValid ? [] : [`Enter a supported height.`]')
+            fieldset.mt-3.pa-3.rounded
+              legend.px-2 Framing
+              v-checkbox(v-model='imageStyles', value='border', label='Border', hide-details, density='compact')
+              v-checkbox(v-model='imageStyles', value='rounded', label='Rounded corners', hide-details, density='compact')
+              v-checkbox(v-model='imageStyles', value='shadow', label='Shadow', hide-details, density='compact')
+            v-alert.mt-3(v-if='imageInsertError', type='error', variant='tonal', role='alert') {{ imageInsertError }}
             v-btn.mt-2(
               v-if='isResizableAsset(currentAsset)'
               block
@@ -452,7 +462,13 @@ import 'filepond/dist/filepond.min.css'
 import { isRecord } from '../../helpers/type-guards'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
+import { isSafeEditorImageSource, isValidEditorImageAlt, normalizeEditorImageDimension, type EditorImageAlignment, type EditorImageStyle } from '../../helpers/editor-image-properties'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
+
+const imageInsertionOwner = (): string => JSON.stringify([
+  wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch,
+  wikiStore.page.id, wikiStore.page.locale, wikiStore.page.path, wikiStore.editor.editorKey
+])
 
 const FilePond = vueFilePond() as unknown as Component
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
@@ -661,7 +677,13 @@ export default defineComponent({
       imageAlignments: IMAGE_ALIGNMENTS.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.alignment_${item.value || 'none'}`) })),
       mediaSortBy: MEDIA_SORT_BY,
       renameAssetRules: RENAME_ASSET_RULES.map(rule => (value: unknown) => { const message = rule(value); return typeof message === 'string' ? this.$t(message) : message }),
-      imageAlignment: '',
+      imageAlignment: '' as EditorImageAlignment,
+      imageAlt: '',
+      imageWidth: '',
+      imageHeight: '',
+      imageStyles: [] as EditorImageStyle[],
+      imageInsertError: '',
+      insertionOwner: imageInsertionOwner(),
       loading: false,
       newFolderDialog: false,
       newFolderName: '',
@@ -712,6 +734,11 @@ export default defineComponent({
     }
   },
   computed: {
+    currentInsertionOwner(): string { return imageInsertionOwner() },
+    imageAltValid(): boolean { return isValidEditorImageAlt(this.imageAlt) },
+    imageWidthValid(): boolean { return normalizeEditorImageDimension(this.imageWidth) !== null },
+    imageHeightValid(): boolean { return normalizeEditorImageDimension(this.imageHeight) !== null },
+    imagePropertiesValid(): boolean { return this.imageAltValid && this.imageWidthValid && this.imageHeightValid },
     editorKey() {
       return wikiStore.editor.editorKey
     },
@@ -899,6 +926,21 @@ export default defineComponent({
     }
   },
   watch: {
+    currentInsertionOwner: {
+      flush: 'sync',
+      handler() {
+        if (this.isBranding) return
+        this.disposed = true
+        this.mediaRequest += 1
+        this.mediaAbortController?.abort()
+        this.assets = markRaw([])
+        this.imageAlt = ''
+        this.imageWidth = ''
+        this.imageHeight = ''
+        this.imageStyles = []
+        if (!this.embedded && this.activeModal === 'editorModalMedia') this.cancel()
+      }
+    },
     purpose(newValue: MediaPickerPurpose, oldValue: MediaPickerPurpose) {
       if (newValue === oldValue) return
       this.invalidateBrandingSelection()
@@ -912,6 +954,8 @@ export default defineComponent({
     },
     currentFileId(newValue: number | null) {
       if (this.isBranding && newValue === null) this.invalidateBrandingSelection()
+      this.imageAlt = this.assets.find(asset => asset.id === newValue)?.filename ?? ''
+      this.imageInsertError = ''
     },
     newFolderDialog(newValue: boolean) {
       if (newValue) {
@@ -1166,15 +1210,27 @@ export default defineComponent({
       this.queuedFileCount = Array.isArray(files) ? files.length : 0
     },
     insert () {
-      if (this.isBranding) return
+      if (this.isBranding || this.disposed) return
+      if (this.insertionOwner !== this.currentInsertionOwner) return
       if (!this.isAssetActionable(this.currentFileId)) return
       const asset = _.find(this.assets, ['id', this.currentFileId])
-      if (!asset) throw new Error(this.$t('editor:editorModalMedia.noAssetSelectedInsertion'))
+      if (!asset) return
+      this.imageInsertError = ''
+      const path = this.assetPath(asset)
+      if (asset.kind === 'IMAGE' && (!this.imagePropertiesValid || !isSafeEditorImageSource(path))) {
+        this.imageInsertError = 'The image source or properties are invalid. Correct them before inserting.'
+        return
+      }
       emitEditorInsert({
         kind: asset.kind,
-        path: this.assetPath(asset),
-        text: asset.filename,
-        align: this.imageAlignment
+        path,
+        text: asset.kind === 'IMAGE' ? this.imageAlt : asset.filename,
+        align: this.imageAlignment,
+        ...(asset.kind === 'IMAGE' ? {
+          width: normalizeEditorImageDimension(this.imageWidth)!,
+          height: normalizeEditorImageDimension(this.imageHeight)!,
+          styles: [...this.imageStyles]
+        } : {})
       })
       this.activeModal = ''
     },

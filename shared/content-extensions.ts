@@ -31,10 +31,11 @@ export const KROKI_DIAGRAM_TYPES = [
   'wireviz'
 ] as const
 
-export type KrokiDiagramType = typeof KROKI_DIAGRAM_TYPES[number]
+export type KrokiDiagramType = (typeof KROKI_DIAGRAM_TYPES)[number]
 export type ContentExtensionKey =
   | 'qr'
   | 'gallery'
+  | 'links-grid'
   | 'index'
   | 'tabs'
   | 'spoiler'
@@ -72,6 +73,38 @@ export interface GalleryContentExtensionEnvelope {
     columns?: 1 | 2 | 3 | 4
     fit?: 'cover' | 'contain'
     aspectRatio?: 'square' | 'natural'
+  }
+}
+
+export const LINKS_GRID_ICONS = {
+  page: '/_assets/svg/icon-browse-page.svg',
+  globe: '/_assets/svg/icon-globe-earth.svg',
+  tags: '/_assets/svg/icon-tags.svg',
+  'external-link': '/_assets/svg/icon-open-in-browser.svg'
+} as const
+
+export interface LinksGridContentExtensionCard {
+  title: string
+  url: string
+  description?: string
+  image?: string
+  icon?: keyof typeof LINKS_GRID_ICONS
+  tags?: string[]
+}
+
+export interface LinksGridContentExtensionEnvelope {
+  key: 'links-grid'
+  version: 1
+  props: {
+    cards: LinksGridContentExtensionCard[]
+  }
+}
+
+export const LINKS_GRID_STARTER: LinksGridContentExtensionEnvelope = {
+  key: 'links-grid',
+  version: 1,
+  props: {
+    cards: [{ title: 'Documentation', url: '/en/home', description: 'Start reading here.', icon: 'page', tags: ['Guide'] }]
   }
 }
 
@@ -215,6 +248,7 @@ export interface MapContentExtensionEnvelope {
 export type ContentExtensionEnvelope =
   | QrContentExtensionEnvelope
   | GalleryContentExtensionEnvelope
+  | LinksGridContentExtensionEnvelope
   | IndexContentExtensionEnvelope
   | TabsContentExtensionEnvelope
   | SpoilerContentExtensionEnvelope
@@ -249,6 +283,13 @@ export const BUILTIN_CONTENT_EXTENSIONS: ContentExtensionDefinition[] = [
     title: 'Image gallery',
     description: 'Present authorized local images in an accessible responsive gallery.',
     icon: 'mdi-view-gallery-outline'
+  },
+  {
+    key: 'links-grid',
+    version: 1,
+    title: 'Links grid',
+    description: 'Present named links with descriptions, tags, and optional local images or approved icons.',
+    icon: 'mdi-view-grid-outline'
   },
   {
     key: 'index',
@@ -333,29 +374,29 @@ const CONTENT_EXTENSION_KEYS = new Set(BUILTIN_CONTENT_EXTENSIONS.map(definition
 
 type JsonObject = Record<string, unknown>
 
-function isJsonObject (value: unknown): value is JsonObject {
+function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function requireJsonObject (value: unknown, path: string): JsonObject {
+function requireJsonObject(value: unknown, path: string): JsonObject {
   if (!isJsonObject(value)) throw new Error(`${path} must be an object.`)
   return value
 }
 
-function rejectUnknownProperties (value: JsonObject, allowed: readonly string[], path: string): void {
+function rejectUnknownProperties(value: JsonObject, allowed: readonly string[], path: string): void {
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key)) throw new Error(`${path} contains unknown property "${key}".`)
   }
 }
 
-function boundedString (value: unknown, path: string, minimum: number, maximum: number): string {
+function boundedString(value: unknown, path: string, minimum: number, maximum: number): string {
   if (typeof value !== 'string' || value.length < minimum || value.length > maximum) {
     throw new Error(`${path} must be a string between ${minimum} and ${maximum} characters.`)
   }
   return value
 }
 
-function optionalBoundedString (value: unknown, path: string, maximum: number): string | undefined {
+function optionalBoundedString(value: unknown, path: string, maximum: number): string | undefined {
   if (value === undefined) return undefined
   if (typeof value !== 'string' || value.length > maximum) {
     throw new Error(`${path} must be a string no longer than ${maximum} characters.`)
@@ -363,7 +404,7 @@ function optionalBoundedString (value: unknown, path: string, maximum: number): 
   return value
 }
 
-function boundedInteger (value: unknown, path: string, minimum: number, maximum: number, fallback: number): number {
+function boundedInteger(value: unknown, path: string, minimum: number, maximum: number, fallback: number): number {
   const candidate = value ?? fallback
   if (!Number.isInteger(candidate) || (candidate as number) < minimum || (candidate as number) > maximum) {
     throw new Error(`${path} must be a whole number from ${minimum} to ${maximum}.`)
@@ -371,20 +412,20 @@ function boundedInteger (value: unknown, path: string, minimum: number, maximum:
   return candidate as number
 }
 
-function boundedNumber (value: unknown, path: string, minimum: number, maximum: number): number {
+function boundedNumber(value: unknown, path: string, minimum: number, maximum: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
     throw new Error(`${path} must be a finite number from ${minimum} to ${maximum}.`)
   }
   return value
 }
 
-function strictBoolean (value: unknown, path: string, fallback: boolean): boolean {
+function strictBoolean(value: unknown, path: string, fallback: boolean): boolean {
   const candidate = value ?? fallback
   if (typeof candidate !== 'boolean') throw new Error(`${path} must be a boolean.`)
   return candidate
 }
 
-function hasControlCharacter (value: string): boolean {
+function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index)
     if (code <= 31 || code === 127) return true
@@ -392,11 +433,11 @@ function hasControlCharacter (value: string): boolean {
   return false
 }
 
-export function isContentExtensionKey (value: unknown): value is ContentExtensionKey {
+export function isContentExtensionKey(value: unknown): value is ContentExtensionKey {
   return typeof value === 'string' && CONTENT_EXTENSION_KEYS.has(value as ContentExtensionKey)
 }
 
-export function isSafeContentExtensionAssetPath (value: string): boolean {
+export function isSafeContentExtensionAssetPath(value: string): boolean {
   if (value !== value.trim() || !value.startsWith('/') || value.startsWith('//') || value.length > 512) return false
   if (value.includes('\\') || value.includes('?') || value.includes('#') || hasControlCharacter(value)) return false
   try {
@@ -410,14 +451,14 @@ export function isSafeContentExtensionAssetPath (value: string): boolean {
   }
 }
 
-function requireAssetPath (value: unknown, path: string): string {
+function requireAssetPath(value: unknown, path: string): string {
   if (typeof value !== 'string' || !isSafeContentExtensionAssetPath(value)) {
     throw new Error(`${path} must be a safe same-origin asset path.`)
   }
   return value
 }
 
-function parseQrEnvelope (propsInput: unknown): QrContentExtensionEnvelope {
+function parseQrEnvelope(propsInput: unknown): QrContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['value', 'label', 'size', 'errorCorrection'], 'Content extension props')
   const value = boundedString(props.value, 'Content extension props.value', 1, 2048)
@@ -430,7 +471,7 @@ function parseQrEnvelope (propsInput: unknown): QrContentExtensionEnvelope {
   return { key: 'qr', version: 1, props: { value, ...(label === undefined ? {} : { label }), size, errorCorrection } }
 }
 
-function parseGalleryEnvelope (propsInput: unknown): GalleryContentExtensionEnvelope {
+function parseGalleryEnvelope(propsInput: unknown): GalleryContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['images', 'columns', 'fit', 'aspectRatio'], 'Content extension props')
   if (!Array.isArray(props.images) || props.images.length < 1 || props.images.length > 50) {
@@ -454,13 +495,85 @@ function parseGalleryEnvelope (propsInput: unknown): GalleryContentExtensionEnve
   return { key: 'gallery', version: 1, props: { images, columns, fit, aspectRatio } }
 }
 
-function validIndexPath (value: string): boolean {
+function requireLinksGridUrl(value: unknown, path: string): string {
+  const url = boundedString(value, path, 1, 2048)
+  if (url !== url.trim() || hasControlCharacter(url) || url.includes('\\')) {
+    throw new Error(`${path} must be a safe link URL.`)
+  }
+  if (isSafeContentExtensionAssetPath(url)) {
+    const decoded = decodeURIComponent(url)
+    if (!hasControlCharacter(decoded) && !decoded.startsWith('//')) return url
+  }
+  try {
+    const parsed = new URL(url)
+    if (
+      ['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol) &&
+      ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname.length > 0) &&
+      !parsed.username &&
+      !parsed.password
+    )
+      return url
+  } catch {
+    // Invalid or relative URLs outside the same-origin path contract are refused.
+  }
+  throw new Error(`${path} must be a same-origin path or an http, https, mailto, or tel URL without credentials.`)
+}
+
+function parseLinksGridEnvelope(propsInput: unknown): LinksGridContentExtensionEnvelope {
+  const props = requireJsonObject(propsInput, 'Content extension props')
+  rejectUnknownProperties(props, ['cards'], 'Content extension props')
+  if (!Array.isArray(props.cards) || props.cards.length < 1 || props.cards.length > 50) {
+    throw new Error('Content extension props.cards must contain between 1 and 50 cards.')
+  }
+  const cards = props.cards.map((input, index): LinksGridContentExtensionCard => {
+    const path = `Content extension props.cards[${index}]`
+    const card = requireJsonObject(input, path)
+    rejectUnknownProperties(card, ['title', 'url', 'description', 'image', 'icon', 'tags'], path)
+    const title = boundedString(card.title, `${path}.title`, 1, 200)
+    if (!title.trim()) throw new Error(`${path}.title must name the link.`)
+    const url = requireLinksGridUrl(card.url, `${path}.url`)
+    const description = optionalBoundedString(card.description, `${path}.description`, 1000)
+    const image = card.image === undefined ? undefined : requireAssetPath(card.image, `${path}.image`)
+    if (image !== undefined) {
+      const decoded = decodeURIComponent(image)
+      if (hasControlCharacter(decoded) || decoded.startsWith('//') || !/\.(?:png|jpe?g|gif|webp|avif)$/i.test(decoded)) {
+        throw new Error(`${path}.image must be a local PNG, JPEG, GIF, WebP, or AVIF image.`)
+      }
+    }
+    const icon = card.icon
+    if (icon !== undefined && (typeof icon !== 'string' || !Object.hasOwn(LINKS_GRID_ICONS, icon))) {
+      throw new Error(`${path}.icon must be an approved links-grid icon.`)
+    }
+    if (card.tags !== undefined && (!Array.isArray(card.tags) || card.tags.length > 8)) {
+      throw new Error(`${path}.tags must contain at most 8 tags.`)
+    }
+    const tags =
+      card.tags === undefined
+        ? undefined
+        : (card.tags as unknown[]).map((tag, tagIndex) => {
+            const value = boundedString(tag, `${path}.tags[${tagIndex}]`, 1, 40)
+            if (!value.trim()) throw new Error(`${path}.tags[${tagIndex}] must not be blank.`)
+            return value
+          })
+    return {
+      title,
+      url,
+      ...(description === undefined ? {} : { description }),
+      ...(image === undefined ? {} : { image }),
+      ...(icon === undefined ? {} : { icon: icon as keyof typeof LINKS_GRID_ICONS }),
+      ...(tags === undefined ? {} : { tags })
+    }
+  })
+  return { key: 'links-grid', version: 1, props: { cards } }
+}
+
+function validIndexPath(value: string): boolean {
   if (value.length > 512 || value.startsWith('/') || value.endsWith('/') || value.includes('\\') || value.includes('//')) return false
   if (value.includes('?') || value.includes('#') || hasControlCharacter(value)) return false
   return value.split('/').every(segment => segment !== '.' && segment !== '..')
 }
 
-function parseIndexEnvelope (propsInput: unknown): IndexContentExtensionEnvelope {
+function parseIndexEnvelope(propsInput: unknown): IndexContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['path', 'locale', 'depth', 'columns', 'showIcons', 'order', 'limit', 'emptyLabel'], 'Content extension props')
   if (typeof props.path !== 'string' || !validIndexPath(props.path)) {
@@ -485,7 +598,7 @@ function parseIndexEnvelope (propsInput: unknown): IndexContentExtensionEnvelope
   }
 }
 
-function parseTabsEnvelope (propsInput: unknown): TabsContentExtensionEnvelope {
+function parseTabsEnvelope(propsInput: unknown): TabsContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['tabs', 'active'], 'Content extension props')
   if (!Array.isArray(props.tabs) || props.tabs.length < 2 || props.tabs.length > 12) {
@@ -494,9 +607,10 @@ function parseTabsEnvelope (propsInput: unknown): TabsContentExtensionEnvelope {
   const tabs = props.tabs.map((input, index): TabsContentExtensionPanel => {
     const tab = requireJsonObject(input, `Content extension props.tabs[${index}]`)
     rejectUnknownProperties(tab, ['label', 'content', 'headingLevel'], `Content extension props.tabs[${index}]`)
-    const headingLevel = tab.headingLevel === undefined
-      ? undefined
-      : boundedInteger(tab.headingLevel, `Content extension props.tabs[${index}].headingLevel`, 1, 6, 1) as 1 | 2 | 3 | 4 | 5 | 6
+    const headingLevel =
+      tab.headingLevel === undefined
+        ? undefined
+        : (boundedInteger(tab.headingLevel, `Content extension props.tabs[${index}].headingLevel`, 1, 6, 1) as 1 | 2 | 3 | 4 | 5 | 6)
     return {
       label: boundedString(tab.label, `Content extension props.tabs[${index}].label`, 1, 100),
       content: boundedString(tab.content, `Content extension props.tabs[${index}].content`, 1, 20000),
@@ -507,7 +621,7 @@ function parseTabsEnvelope (propsInput: unknown): TabsContentExtensionEnvelope {
   return { key: 'tabs', version: 1, props: { tabs, active } }
 }
 
-function parseSpoilerEnvelope (propsInput: unknown): SpoilerContentExtensionEnvelope {
+function parseSpoilerEnvelope(propsInput: unknown): SpoilerContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['label', 'hint', 'content'], 'Content extension props')
   const label = optionalBoundedString(props.label, 'Content extension props.label', 200) ?? 'Spoiler'
@@ -516,7 +630,7 @@ function parseSpoilerEnvelope (propsInput: unknown): SpoilerContentExtensionEnve
   return { key: 'spoiler', version: 1, props: { label, hint, content } }
 }
 
-function parseInfoboxEnvelope (propsInput: unknown): InfoboxContentExtensionEnvelope {
+function parseInfoboxEnvelope(propsInput: unknown): InfoboxContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['title', 'image', 'imageAlt', 'caption', 'facts'], 'Content extension props')
   const title = boundedString(props.title, 'Content extension props.title', 1, 200)
@@ -548,7 +662,7 @@ function parseInfoboxEnvelope (propsInput: unknown): InfoboxContentExtensionEnve
   }
 }
 
-function parsePdfEnvelope (propsInput: unknown): PdfContentExtensionEnvelope {
+function parsePdfEnvelope(propsInput: unknown): PdfContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['src', 'title', 'page', 'height'], 'Content extension props')
   const src = requireAssetPath(props.src, 'Content extension props.src')
@@ -559,7 +673,7 @@ function parsePdfEnvelope (propsInput: unknown): PdfContentExtensionEnvelope {
   return { key: 'pdf', version: 1, props: { src, title, page, height } }
 }
 
-function parseMediaEnvelope (propsInput: unknown): MediaContentExtensionEnvelope {
+function parseMediaEnvelope(propsInput: unknown): MediaContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['kind', 'src', 'title', 'poster', 'caption'], 'Content extension props')
   if (props.kind !== 'audio' && props.kind !== 'video') throw new Error('Content extension props.kind must be "audio" or "video".')
@@ -568,10 +682,14 @@ function parseMediaEnvelope (propsInput: unknown): MediaContentExtensionEnvelope
   const poster = props.poster === undefined ? undefined : requireAssetPath(props.poster, 'Content extension props.poster')
   if (props.kind === 'audio' && poster !== undefined) throw new Error('Content extension props.poster is available only for video.')
   const caption = optionalBoundedString(props.caption, 'Content extension props.caption', 300)
-  return { key: 'media', version: 1, props: { kind: props.kind, src, title, ...(poster === undefined ? {} : { poster }), ...(caption === undefined ? {} : { caption }) } }
+  return {
+    key: 'media',
+    version: 1,
+    props: { kind: props.kind, src, title, ...(poster === undefined ? {} : { poster }), ...(caption === undefined ? {} : { caption }) }
+  }
 }
 
-function parseYoutubeEnvelope (propsInput: unknown): YoutubeContentExtensionEnvelope {
+function parseYoutubeEnvelope(propsInput: unknown): YoutubeContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['videoId', 'title', 'start', 'controls'], 'Content extension props')
   const videoId = boundedString(props.videoId, 'Content extension props.videoId', 6, 64)
@@ -582,7 +700,7 @@ function parseYoutubeEnvelope (propsInput: unknown): YoutubeContentExtensionEnve
   return { key: 'youtube', version: 1, props: { videoId, title, start, controls } }
 }
 
-function parseDiagramEnvelope (propsInput: unknown): DiagramContentExtensionEnvelope {
+function parseDiagramEnvelope(propsInput: unknown): DiagramContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['source', 'caption', 'theme', 'align'], 'Content extension props')
   const source = boundedString(props.source, 'Content extension props.source', 1, 50000)
@@ -596,7 +714,7 @@ function parseDiagramEnvelope (propsInput: unknown): DiagramContentExtensionEnve
   return { key: 'diagram', version: 1, props: { source, ...(caption === undefined ? {} : { caption }), theme, align } }
 }
 
-function parseKrokiEnvelope (propsInput: unknown): KrokiContentExtensionEnvelope {
+function parseKrokiEnvelope(propsInput: unknown): KrokiContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['type', 'source', 'format', 'caption', 'align'], 'Content extension props')
   if (typeof props.type !== 'string' || !KROKI_DIAGRAM_TYPES.includes(props.type as KrokiDiagramType)) {
@@ -611,7 +729,7 @@ function parseKrokiEnvelope (propsInput: unknown): KrokiContentExtensionEnvelope
   return { key: 'kroki', version: 1, props: { type: props.type as KrokiDiagramType, source, format, ...(caption === undefined ? {} : { caption }), align } }
 }
 
-function parsePlantUmlEnvelope (propsInput: unknown): PlantUmlContentExtensionEnvelope {
+function parsePlantUmlEnvelope(propsInput: unknown): PlantUmlContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['source', 'format', 'caption', 'align'], 'Content extension props')
   const source = boundedString(props.source, 'Content extension props.source', 1, 50000)
@@ -623,7 +741,7 @@ function parsePlantUmlEnvelope (propsInput: unknown): PlantUmlContentExtensionEn
   return { key: 'plantuml', version: 1, props: { source, format, ...(caption === undefined ? {} : { caption }), align } }
 }
 
-function parseMapEnvelope (propsInput: unknown): MapContentExtensionEnvelope {
+function parseMapEnvelope(propsInput: unknown): MapContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['latitude', 'longitude', 'zoom', 'height', 'label'], 'Content extension props')
   const latitude = boundedNumber(props.latitude, 'Content extension props.latitude', -90, 90)
@@ -634,12 +752,13 @@ function parseMapEnvelope (propsInput: unknown): MapContentExtensionEnvelope {
   return { key: 'map', version: 1, props: { latitude, longitude, zoom, height, ...(label === undefined ? {} : { label }) } }
 }
 
-export function parseContentExtensionEnvelope (input: unknown): ContentExtensionEnvelope {
+export function parseContentExtensionEnvelope(input: unknown): ContentExtensionEnvelope {
   const envelope = requireJsonObject(input, 'Content extension')
   rejectUnknownProperties(envelope, ['key', 'version', 'props'], 'Content extension')
   if (envelope.version !== 1) throw new Error('Content extensions require version 1.')
   if (envelope.key === 'qr') return parseQrEnvelope(envelope.props)
   if (envelope.key === 'gallery') return parseGalleryEnvelope(envelope.props)
+  if (envelope.key === 'links-grid') return parseLinksGridEnvelope(envelope.props)
   if (envelope.key === 'index') return parseIndexEnvelope(envelope.props)
   if (envelope.key === 'tabs') return parseTabsEnvelope(envelope.props)
   if (envelope.key === 'spoiler') return parseSpoilerEnvelope(envelope.props)
@@ -654,7 +773,7 @@ export function parseContentExtensionEnvelope (input: unknown): ContentExtension
   throw new Error(`Content extension key must be one of: ${BUILTIN_CONTENT_EXTENSIONS.map(definition => `"${definition.key}"`).join(', ')}.`)
 }
 
-export function parseContentExtensionFence (markdownBody: string): ContentExtensionEnvelope {
+export function parseContentExtensionFence(markdownBody: string): ContentExtensionEnvelope {
   if (typeof markdownBody !== 'string') throw new Error('Content extension fence body must be a JSON string.')
   let input: unknown
   try {
@@ -665,49 +784,125 @@ export function parseContentExtensionFence (markdownBody: string): ContentExtens
   return parseContentExtensionEnvelope(input)
 }
 
-function canonicalProps (envelope: ContentExtensionEnvelope): Record<string, unknown> {
+function canonicalProps(envelope: ContentExtensionEnvelope): Record<string, unknown> {
   switch (envelope.key) {
     case 'qr':
-      return { value: envelope.props.value, ...(envelope.props.label === undefined ? {} : { label: envelope.props.label }), size: envelope.props.size, errorCorrection: envelope.props.errorCorrection }
+      return {
+        value: envelope.props.value,
+        ...(envelope.props.label === undefined ? {} : { label: envelope.props.label }),
+        size: envelope.props.size,
+        errorCorrection: envelope.props.errorCorrection
+      }
     case 'gallery':
-      return { images: envelope.props.images.map(image => ({ src: image.src, alt: image.alt, ...(image.caption === undefined ? {} : { caption: image.caption }) })), columns: envelope.props.columns, fit: envelope.props.fit, aspectRatio: envelope.props.aspectRatio }
+      return {
+        images: envelope.props.images.map(image => ({ src: image.src, alt: image.alt, ...(image.caption === undefined ? {} : { caption: image.caption }) })),
+        columns: envelope.props.columns,
+        fit: envelope.props.fit,
+        aspectRatio: envelope.props.aspectRatio
+      }
+    case 'links-grid':
+      return {
+        cards: envelope.props.cards.map(card => ({
+          title: card.title,
+          url: card.url,
+          ...(card.description === undefined ? {} : { description: card.description }),
+          ...(card.image === undefined ? {} : { image: card.image }),
+          ...(card.icon === undefined ? {} : { icon: card.icon }),
+          ...(card.tags === undefined ? {} : { tags: card.tags })
+        }))
+      }
     case 'index':
-      return { path: envelope.props.path, locale: envelope.props.locale, depth: envelope.props.depth, columns: envelope.props.columns, showIcons: envelope.props.showIcons, order: envelope.props.order, limit: envelope.props.limit, ...(envelope.props.emptyLabel === undefined ? {} : { emptyLabel: envelope.props.emptyLabel }) }
+      return {
+        path: envelope.props.path,
+        locale: envelope.props.locale,
+        depth: envelope.props.depth,
+        columns: envelope.props.columns,
+        showIcons: envelope.props.showIcons,
+        order: envelope.props.order,
+        limit: envelope.props.limit,
+        ...(envelope.props.emptyLabel === undefined ? {} : { emptyLabel: envelope.props.emptyLabel })
+      }
     case 'tabs':
-      return { tabs: envelope.props.tabs.map(tab => ({ label: tab.label, content: tab.content, ...(tab.headingLevel === undefined ? {} : { headingLevel: tab.headingLevel }) })), active: envelope.props.active }
+      return {
+        tabs: envelope.props.tabs.map(tab => ({
+          label: tab.label,
+          content: tab.content,
+          ...(tab.headingLevel === undefined ? {} : { headingLevel: tab.headingLevel })
+        })),
+        active: envelope.props.active
+      }
     case 'spoiler':
       return { label: envelope.props.label, hint: envelope.props.hint, content: envelope.props.content }
     case 'infobox':
-      return { title: envelope.props.title, ...(envelope.props.image === undefined ? {} : { image: envelope.props.image, imageAlt: envelope.props.imageAlt }), ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }), facts: envelope.props.facts.map(fact => ({ label: fact.label, value: fact.value })) }
+      return {
+        title: envelope.props.title,
+        ...(envelope.props.image === undefined ? {} : { image: envelope.props.image, imageAlt: envelope.props.imageAlt }),
+        ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }),
+        facts: envelope.props.facts.map(fact => ({ label: fact.label, value: fact.value }))
+      }
     case 'pdf':
       return { src: envelope.props.src, title: envelope.props.title, page: envelope.props.page, height: envelope.props.height }
     case 'media':
-      return { kind: envelope.props.kind, src: envelope.props.src, title: envelope.props.title, ...(envelope.props.poster === undefined ? {} : { poster: envelope.props.poster }), ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }) }
+      return {
+        kind: envelope.props.kind,
+        src: envelope.props.src,
+        title: envelope.props.title,
+        ...(envelope.props.poster === undefined ? {} : { poster: envelope.props.poster }),
+        ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption })
+      }
     case 'youtube':
       return { videoId: envelope.props.videoId, title: envelope.props.title, start: envelope.props.start, controls: envelope.props.controls }
     case 'diagram':
-      return { source: envelope.props.source, ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }), theme: envelope.props.theme, align: envelope.props.align }
+      return {
+        source: envelope.props.source,
+        ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }),
+        theme: envelope.props.theme,
+        align: envelope.props.align
+      }
     case 'kroki':
-      return { type: envelope.props.type, source: envelope.props.source, format: envelope.props.format, ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }), align: envelope.props.align }
+      return {
+        type: envelope.props.type,
+        source: envelope.props.source,
+        format: envelope.props.format,
+        ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }),
+        align: envelope.props.align
+      }
     case 'plantuml':
-      return { source: envelope.props.source, format: envelope.props.format, ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }), align: envelope.props.align }
+      return {
+        source: envelope.props.source,
+        format: envelope.props.format,
+        ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption }),
+        align: envelope.props.align
+      }
     case 'map':
-      return { latitude: envelope.props.latitude, longitude: envelope.props.longitude, zoom: envelope.props.zoom, height: envelope.props.height, ...(envelope.props.label === undefined ? {} : { label: envelope.props.label }) }
+      return {
+        latitude: envelope.props.latitude,
+        longitude: envelope.props.longitude,
+        zoom: envelope.props.zoom,
+        height: envelope.props.height,
+        ...(envelope.props.label === undefined ? {} : { label: envelope.props.label })
+      }
   }
 }
 
-export function serializeContentExtensionFence (envelope: ContentExtensionEnvelope): string {
+export function serializeContentExtensionFence(envelope: ContentExtensionEnvelope): string {
   const normalized = parseContentExtensionEnvelope(envelope)
   return `\`\`\`wiki-extension\n${JSON.stringify({ key: normalized.key, version: normalized.version, props: canonicalProps(normalized) })}\n\`\`\`\n`
 }
 
-export function contentExtensionCompatibility (definition: ContentExtensionDefinition): { compatible: boolean, diagnostic: string | null } {
+export function contentExtensionCompatibility(definition: ContentExtensionDefinition): { compatible: boolean; diagnostic: string | null } {
   const supported = BUILTIN_CONTENT_EXTENSIONS.find(candidate => candidate.key === definition.key)
   if (!supported) {
-    return { compatible: false, diagnostic: `Extension "${definition.key}" is not supported by content extension host version ${CONTENT_EXTENSION_HOST_VERSION}.` }
+    return {
+      compatible: false,
+      diagnostic: `Extension "${definition.key}" is not supported by content extension host version ${CONTENT_EXTENSION_HOST_VERSION}.`
+    }
   }
   if (definition.version !== supported.version) {
-    return { compatible: false, diagnostic: `Extension "${definition.key}" version ${definition.version} is incompatible with content extension host version ${CONTENT_EXTENSION_HOST_VERSION}; install extension version ${supported.version}.` }
+    return {
+      compatible: false,
+      diagnostic: `Extension "${definition.key}" version ${definition.version} is incompatible with content extension host version ${CONTENT_EXTENSION_HOST_VERSION}; install extension version ${supported.version}.`
+    }
   }
   return { compatible: true, diagnostic: null }
 }

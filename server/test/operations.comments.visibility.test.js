@@ -14,18 +14,51 @@ const authorityFor = requester => ({
 })
 
 const rateLimitKnex = () => {
-  const rows = new Map()
-  return {
-    raw: vi.fn(async (_query, [key, expire, now]) => {
-      const current = rows.get(key)
-      const startsNewWindow = current === undefined || current.expire === null || current.expire <= now
-      const row = startsNewWindow
-        ? { points: 1, expire }
-        : { points: current.points + 1, expire: current.expire }
-      rows.set(key, row)
-      return { rows: [row] }
-    })
+  const counters = new Map()
+  const tables = {
+    commentProviders: [{ key: 'default', isEnabled: true }],
+    settings: [{ key: 'features', value: { featurePageComments: true } }],
+    pages: [], pageTags: [], tags: [], pageAccessPasswords: [], pageUnlockGrants: [],
+    comments: [], commentAnnotations: []
   }
+  const knex = table => {
+    if (!(table in tables)) throw new Error(`Unexpected discussion table: ${table}`)
+    let rows = tables[table].map(row => ({ ...row, ...Object.fromEntries(Object.entries(row).map(([key, value]) => [`${table}.${key}`, value])) }))
+    const project = columns => rows.map(row => columns.length
+      ? Object.fromEntries(columns.map(column => [column.split('.').at(-1), row[column]]))
+      : Object.fromEntries(Object.entries(row).filter(([key]) => !key.includes('.'))))
+    const query = {
+      where(column, value) {
+        const entries = typeof column === 'object' ? Object.entries(column) : [[column, value]]
+        rows = rows.filter(row => entries.every(([key, expected]) => row[key] === expected))
+        return query
+      },
+      whereIn(column, values) { rows = rows.filter(row => values.includes(row[column])); return query },
+      join(other, left, right) {
+        rows = rows.flatMap(row => tables[other].map(item => ({
+          ...row, ...Object.fromEntries(Object.entries(item).map(([key, value]) => [`${other}.${key}`, value]))
+        })).filter(item => item[left] === item[right]))
+        return query
+      },
+      forShare() { return query },
+      orderBy(column) { rows.sort((a, b) => a[column] < b[column] ? -1 : a[column] > b[column] ? 1 : 0); return query },
+      first(...columns) { return Promise.resolve(project(columns)[0]) },
+      select(...columns) { return Promise.resolve(project(columns)) },
+      then(resolve, reject) { return Promise.resolve(project([])).then(resolve, reject) }
+    }
+    return query
+  }
+  knex.tables = tables
+  knex.transaction = callback => callback(knex)
+  knex.raw = vi.fn(async (sql, [key, expire, now]) => {
+    if (sql.trimStart().startsWith('SELECT')) return { rows: [] }
+    const current = counters.get(key)
+    const startsNewWindow = current === undefined || current.expire === null || current.expire <= now
+    const row = startsNewWindow ? { points: 1, expire } : { points: current.points + 1, expire: current.expire }
+    counters.set(key, row)
+    return { rows: [row] }
+  })
+  return knex
 }
 
 const pageQuery = page => {
@@ -84,6 +117,19 @@ describe('comment page identity and private existence isolation', () => {
       { id: 31, pageId: 17, name: 'Owner', email: 'owner@example.invalid', ip: '127.0.0.1' },
       { id: 32, pageId: 18, name: 'Other owner', email: 'other@example.invalid', ip: '127.0.0.2' }
     ]
+    global.WIKI.models.knex.tables.pages = [page]
+    global.WIKI.models.knex.tables.comments = comments.map(row => ({ ...row, replyTo: 0, isHidden: false }))
+    global.WIKI.models.knex.tables.commentAnnotations = [{
+      id: 41, commentId: 31, position: 0, note: 'Owner passage',
+      anchor: { exact: 'quote', prefix: '', suffix: '', heading: null, offset: 0 },
+      revision: 1, resolvedAt: null, resolvedById: null,
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'
+    }, {
+      id: 42, commentId: 32, position: 0, note: 'Another private page',
+      anchor: { exact: 'secret', prefix: '', suffix: '', heading: null, offset: 0 },
+      revision: 1, resolvedAt: null, resolvedById: null,
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'
+    }]
     const filters = []
     const commentQuery = {
       where: vi.fn((column, value) => {
@@ -95,7 +141,9 @@ describe('comment page identity and private existence isolation', () => {
     global.WIKI.models.comments.query.mockReturnValue(commentQuery)
     const operations = (await vi.importFresh('../operations/comments.ts', import.meta.url)).default
 
-    expect(await operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17, sessionId: 'reader-session' })).toEqual([expect.objectContaining({ id: 31, authorName: 'Owner' })])
+    const rows = await operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17, sessionId: 'reader-session' })
+    expect(rows).toEqual([expect.objectContaining({ id: 31, authorName: 'Owner' })])
+    expect(rows[0].annotations).toEqual([expect.objectContaining({ id: 41, note: 'Owner passage' })])
     expect(query.findById).toHaveBeenCalledWith(17)
     expect(assertUnlocked).toHaveBeenCalledWith(expect.objectContaining({
       requester: { id: 7, permissions: ['read:comments'] },
@@ -108,6 +156,18 @@ describe('comment page identity and private existence isolation', () => {
   it('projects replies with unavailable ancestry as standalone visible comments', async () => {
     const page = { id: 17, localeCode: 'en', path: 'same/path', visibility: 'private', ownerId: 7, tags: [] }
     global.WIKI.models.pages.query.mockReturnValue(pageQuery(page))
+    global.WIKI.models.knex.tables.pages = [page]
+    global.WIKI.models.knex.tables.comments = [
+      { id: 31, pageId: 17, replyTo: 0, isHidden: true },
+      { id: 32, pageId: 17, replyTo: 31, isHidden: false },
+      { id: 33, pageId: 17, replyTo: 999, isHidden: false }
+    ]
+    global.WIKI.models.knex.tables.commentAnnotations = [{
+      id: 41, commentId: 31, position: 0, note: 'Hidden root annotation',
+      anchor: { exact: 'secret', prefix: '', suffix: '', heading: null, offset: 0 },
+      revision: 1, resolvedAt: null, resolvedById: null,
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'
+    }]
     global.WIKI.models.comments.query.mockReturnValue({
       where: vi.fn().mockReturnValue({
         orderBy: vi.fn().mockResolvedValue([
@@ -121,6 +181,7 @@ describe('comment page identity and private existence isolation', () => {
 
     const rows = await operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17 })
     expect(rows.map(row => ({ id: row.id, replyTo: row.replyTo }))).toEqual([{ id: 32, replyTo: 0 }, { id: 33, replyTo: 0 }])
+    expect(rows.map(row => row.annotations)).toEqual([[], []])
   })
 
   it('returns the same not-found error for an absent page and another owner private page', async () => {

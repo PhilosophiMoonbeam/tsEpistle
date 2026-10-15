@@ -6,6 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import type AssetModel from '../../models/assets.ts'
 import type * as AssetBranding from '../../helpers/asset-branding.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
 const originalWiki = wikiGlobal.WIKI
@@ -13,7 +15,6 @@ let db: Knex
 let tempRoot: string
 let Asset: typeof AssetModel
 let removeAsset: typeof assetOperations.remove
-let storageEvent = vi.fn()
 let branding: typeof AssetBranding
 let localLookup = vi.fn()
 
@@ -135,17 +136,33 @@ describe('asset aggregate persistence', () => {
       table.integer('id').primary().references('id').inTable('assets').onDelete('CASCADE')
       table.binary('data').notNullable()
     })
+    await db.schema.createTable('pages', table => {
+      table.integer('id').primary()
+      table.string('path').notNullable()
+      table.string('localeCode').notNullable()
+      table.string('contentType').notNullable()
+      table.string('visibility').notNullable()
+    })
 
-    storageEvent = vi.fn().mockResolvedValue(undefined)
+    await createDurableJobs(db)
+    await addLeaseToken(db)
+    await db.schema.createTable('storage', table => {
+      table.string('key').primary()
+      table.boolean('isEnabled').notNullable()
+      table.string('mode').notNullable()
+      table.string('syncInterval').notNullable()
+      table.json('config').notNullable()
+    })
+    await db('storage').insert({ key: 'disk', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
     localLookup = vi.fn().mockResolvedValue([])
     const models: Record<string, unknown> = {
       knex: db,
-      assetFolders: { getHierarchy: vi.fn(async (folderId: number) => folderId === 42 ? [{ slug: '.git' }] : []) },
-      storage: { assetEvent: storageEvent, getLocalLocations: localLookup }
+      assetFolders: { getHierarchy: vi.fn(async (folderId: number) => (folderId === 42 ? [{ slug: '.git' }] : [])) },
+      storage: { getLocalLocations: localLookup }
     }
     wikiGlobal.WIKI = {
       ROOTPATH: tempRoot,
-      config: { dataPath: 'data', uploads: { maxFileSize: 5 * 1024 * 1024, scanSVG: false, forceDownload: false } },
+      config: { dataPath: 'data', lang: { code: 'en', namespacing: false }, uploads: { maxFileSize: 5 * 1024 * 1024, scanSVG: false, forceDownload: false } },
       logger: { warn: vi.fn(), error: vi.fn() },
       scheduler: { registerJob: vi.fn() },
       auth: {
@@ -192,7 +209,7 @@ describe('asset aggregate persistence', () => {
     expect(['first', 'second']).toContain(Buffer.from(blobs[0].data).toString())
   })
 
-  it('preserves branded asset bytes and metadata when a queued replacement is busy', async () => {
+  it('preserves branded asset bytes and metadata when replacement analysis is busy', async () => {
     await upload(path.join(tempRoot, 'initial-upload'), 'old bytes', { skipStorage: true })
     const asset = (await db('assets').first()) as { id: number; hash: string }
     const previousBranding = {
@@ -205,22 +222,12 @@ describe('asset aggregate persistence', () => {
     }
     const previousMetadata = { branding: previousBranding, revision: 4 }
     const reservations = Array.from({ length: 8 }, (_, index) => branding.reserveAssetBrandingAnalysis(asset.id + index + 1))
-    let releaseFirstUpload!: () => void
-    const firstUploadReady = new Promise<void>(resolve => {
-      releaseFirstUpload = resolve
-    })
-    storageEvent.mockImplementationOnce(async () => {
-      await firstUploadReady
-    })
     try {
-      const firstUpload = upload(path.join(tempRoot, 'first-queued-upload'), 'new bytes')
-      await vi.waitFor(() => expect(storageEvent).toHaveBeenCalledOnce())
+      await upload(path.join(tempRoot, 'first-queued-upload'), 'new bytes')
       await db('assets')
         .where({ id: asset.id })
         .update({ metadata: JSON.stringify(previousMetadata) })
       const secondUpload = upload(path.join(tempRoot, 'second-queued-upload'), 'newer bytes', { skipStorage: true })
-      releaseFirstUpload()
-      await firstUpload
       await expect(secondUpload).rejects.toMatchObject({
         status: 503,
         name: 'BRANDING_BUSY'
@@ -231,7 +238,6 @@ describe('asset aggregate persistence', () => {
       expect(Buffer.from((await db('assetData').where({ id: asset.id }).first()).data).toString()).toBe('new bytes')
       expect(await readFile(path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`), 'utf8')).toBe('new bytes')
     } finally {
-      releaseFirstUpload()
       reservations.forEach(branding.releaseAssetBrandingAnalysis)
     }
   })
@@ -292,23 +298,32 @@ describe('asset aggregate persistence', () => {
     expect(await db('assetData')).toEqual([])
     const hash = createHash('sha1').update('logo.txt').digest('hex')
     await expect(access(path.join(tempRoot, 'data', 'cache', `${hash}.dat`))).rejects.toThrow()
-    expect(storageEvent).not.toHaveBeenCalled()
+    expect(await db('durableJobs')).toHaveLength(0)
   })
 
-  it('deletes metadata and its cascading blob before publishing cache and storage effects', async () => {
+  it('atomically admits deletion while removing metadata and its cascading blob', async () => {
     await upload(path.join(tempRoot, 'delete-upload'), 'delete me', { skipStorage: true })
     const asset = (await db('assets').first()) as { id: number; hash: string }
-    storageEvent.mockImplementation(async () => {
-      expect(await db('assets')).toEqual([])
-      expect(await db('assetData')).toEqual([])
-    })
 
     await removeAsset({ requester: { id: 7, name: 'Test User', email: 'test@example.com' }, id: asset.id })
 
     expect(await db('assets')).toEqual([])
     expect(await db('assetData')).toEqual([])
     await expect(access(path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`))).rejects.toThrow()
-    expect(storageEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'deleted' }))
+    const jobs = await db('durableJobs')
+    expect(jobs).toHaveLength(1)
+    expect(JSON.parse(jobs[0].payload)).toMatchObject({ entityType: 'asset', entityId: asset.id, paths: ['logo.txt'] })
+  })
+
+  it('rolls back a delete and preserves its cache when durable admission fails', async () => {
+    await upload(path.join(tempRoot, 'delete-rollback'), 'retained source', { skipStorage: true })
+    const asset = await db('assets').first()
+    await db.raw("CREATE TRIGGER reject_storage_admission BEFORE INSERT ON durableJobs BEGIN SELECT RAISE(FAIL, 'storage admission failed'); END")
+    await expect(removeAsset({ requester: { id: 7, name: 'Test User', email: 'test@example.com' }, id: asset.id })).rejects.toThrow('storage admission failed')
+    expect(await db('assets').where({ id: asset.id }).first()).toMatchObject({ hash: asset.hash })
+    expect(Buffer.from((await db('assetData').where({ id: asset.id }).first()).data).toString()).toBe('retained source')
+    expect(await readFile(path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`), 'utf8')).toBe('retained source')
+    expect(await db('durableJobs')).toHaveLength(0)
   })
 
   it('requires a persisted identity before consulting stale cache or local storage', async () => {

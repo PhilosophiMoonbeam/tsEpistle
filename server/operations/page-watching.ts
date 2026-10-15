@@ -1,10 +1,25 @@
-import type { PageWatchNotification, PageWatchNotificationList } from '../../shared/site-notifications.ts'
+import { NOTIFICATION_CATEGORIES } from '../../shared/site-notifications.ts'
+import type {
+  NotificationCategory,
+  NotificationPreferences,
+  NotificationPreferencesPatch,
+  NotificationPreferencesResponse,
+  PageNotificationCategory,
+  PageWatchNotification,
+  PageWatchNotificationList
+} from '../../shared/site-notifications.ts'
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { canReadPage, principalId } from '../helpers/page-access.ts'
 import type { PagePrincipal, PageVisibilityRecord } from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import errors from './errors.ts'
+import {
+  canReadDiscussionNotification,
+  canReadNotificationPage,
+  loadDeletedNotificationScopes,
+  loadDiscussionNotificationAccess
+} from '../jobs/notification-access.ts'
 
 const { ApplicationError } = errors
 
@@ -52,6 +67,9 @@ const notificationCursors = new Map<string, StoredNotificationCursor>()
 interface CurrentNotificationPage extends PageVisibilityRecord, Record<string, unknown> {
   id: number
   title: string
+  isPublished?: unknown
+  publishStartDate?: unknown
+  publishEndDate?: unknown
 }
 
 interface CurrentNotificationPageWithLocale extends CurrentNotificationPage {
@@ -61,6 +79,9 @@ interface NotificationRow extends Record<string, unknown> {
   id: string
   pageId: number
   eventType: string
+  eventId: string
+  category: string | null
+  commentId: number | null
   actorName: string
   title: string
   path: string
@@ -166,7 +187,9 @@ const loadPageTags = async (transaction: Knex.Transaction, pageId: number): Prom
 const loadCurrentNotificationPages = async (pageIds: readonly number[]): Promise<Map<number, CurrentNotificationPage>> => {
   if (pageIds.length === 0) return new Map()
   const database = wiki.models.knex
-  const pageRows = await database<Record<string, unknown>>('pages').whereIn('id', pageIds).select('*')
+  const pageRows = await database<CurrentNotificationPage>('pages')
+    .whereIn('id', pageIds)
+    .select('id', 'title', 'path', 'localeCode', 'visibility', 'ownerId', 'isPublished', 'publishStartDate', 'publishEndDate')
   const tagRows = await database<{ pageId: number | string; tag: string }>('pageTags')
     .innerJoin('tags', 'tags.id', 'pageTags.tagId')
     .whereIn('pageTags.pageId', pageIds)
@@ -194,9 +217,92 @@ const loadCurrentNotificationPages = async (pageIds: readonly number[]): Promise
       id: pageId,
       title: row.title,
       tags: tagsByPage.get(pageId) ?? []
-    } as CurrentNotificationPage)
+    })
   }
   return pages
+}
+
+interface NotificationPreferenceRow {
+  category: NotificationCategory
+  inAppEnabled: boolean | number
+  emailEnabled: boolean | number
+}
+
+const currentPreferenceOwner = async (transaction: Knex.Transaction, userId: number): Promise<void> => {
+  const user = await transaction('users').where('id', userId).forUpdate().first('id', 'isActive', 'email')
+  if (!user || (user.isActive !== true && user.isActive !== 1) || user.email === 'api@localhost') {
+    throw new ApplicationError('Authentication is required', { status: 401, code: 'AUTH_REQUIRED' })
+  }
+}
+
+const readPreferences = async (database: Knex | Knex.Transaction, userId: number): Promise<NotificationPreferencesResponse> => {
+  const preferences: NotificationPreferences = {
+    pageCreated: { inApp: false, email: false },
+    pageDeleted: { inApp: false, email: false },
+    watchedPageComment: { inApp: false, email: false },
+    commentReply: { inApp: false, email: false },
+    mention: { inApp: false, email: false }
+  }
+  const rows = await database<NotificationPreferenceRow>('userNotificationPreferences')
+    .where('userId', userId)
+    .whereIn('category', [...NOTIFICATION_CATEGORIES])
+    .select('category', 'inAppEnabled', 'emailEnabled')
+  for (const row of rows)
+    preferences[row.category] = { inApp: row.inAppEnabled === true || row.inAppEnabled === 1, email: row.emailEnabled === true || row.emailEnabled === 1 }
+  return { ownerId: userId, preferences }
+}
+
+const preferencePatch = (input: unknown): NotificationPreferencesPatch => {
+  const invalid = (): never => {
+    throw new ApplicationError('Invalid notification preferences', { status: 400, code: 'INVALID_INPUT' })
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'preferences')) return invalid()
+  const preferences: unknown = Reflect.get(input, 'preferences')
+  if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences) || Object.keys(preferences).length === 0) return invalid()
+  for (const [category, channels] of Object.entries(preferences)) {
+    if (
+      !NOTIFICATION_CATEGORIES.some(known => known === category) ||
+      !channels ||
+      typeof channels !== 'object' ||
+      Array.isArray(channels) ||
+      Object.keys(channels).length === 0
+    )
+      return invalid()
+    for (const [channel, enabled] of Object.entries(channels))
+      if ((channel !== 'inApp' && channel !== 'email') || typeof enabled !== 'boolean') return invalid()
+  }
+  return preferences as NotificationPreferencesPatch
+}
+
+export const getNotificationPreferences = async (requester: PagePrincipal | undefined): Promise<NotificationPreferencesResponse> => {
+  const userId = authenticatedUserId(requester)
+  return wiki.models.knex.transaction(async transaction => {
+    await currentPreferenceOwner(transaction, userId)
+    return readPreferences(transaction, userId)
+  })
+}
+
+export const updateNotificationPreferences = async (requester: PagePrincipal | undefined, input: unknown): Promise<NotificationPreferencesResponse> => {
+  const userId = authenticatedUserId(requester)
+  const patch = preferencePatch(input)
+  return wiki.models.knex.transaction(async transaction => {
+    await currentPreferenceOwner(transaction, userId)
+    for (const category of NOTIFICATION_CATEGORIES) {
+      const channels = patch[category]
+      if (!channels) continue
+      const updatedAt = new Date()
+      const changes = {
+        ...(channels.inApp === undefined ? {} : { inAppEnabled: channels.inApp }),
+        ...(channels.email === undefined ? {} : { emailEnabled: channels.email }),
+        updatedAt
+      }
+      await transaction('userNotificationPreferences')
+        .insert({ userId, category, inAppEnabled: channels.inApp ?? false, emailEnabled: channels.email ?? false, updatedAt })
+        .onConflict(['userId', 'category'])
+        .merge(changes)
+    }
+    return readPreferences(transaction, userId)
+  })
 }
 export const getPageWatchState = async ({ requester, id }: WatchInput): Promise<{ watched: boolean; emailEnabled: boolean; inAppEnabled: boolean }> => {
   const userId = authenticatedUserId(requester)
@@ -249,7 +355,32 @@ const isCurrentNotificationPage = (page: CurrentNotificationPage | undefined): p
   typeof page.localeCode === 'string' &&
   page.localeCode.length > 0 &&
   (page.visibility === 'public' || page.visibility === 'private')
-export const listPageWatchNotifications = async (requester: PagePrincipal | undefined, cursor?: string | null): Promise<PageWatchNotificationList> => {
+
+const notificationRouting = (row: NotificationRow): { category: PageNotificationCategory; commentId: number | null } | null => {
+  const category = row.category === null || row.category === undefined ? 'pageWatch' : row.category
+  if (category !== 'pageWatch' && !NOTIFICATION_CATEGORIES.some(known => known === category)) return null
+  const discussion = category === 'mention' || category === 'commentReply' || category === 'watchedPageComment'
+  const commentId = row.commentId === null || row.commentId === undefined ? null : Number(row.commentId)
+  if (discussion ? commentId === null || !Number.isSafeInteger(commentId) || commentId < 1 : commentId !== null) return null
+  return { category: category as PageNotificationCategory, commentId }
+}
+
+const loadDeletedNotificationPages = async (
+  rows: readonly NotificationRow[],
+  currentPages: ReadonlyMap<number, CurrentNotificationPage>
+): Promise<Map<string, CurrentNotificationPageWithLocale>> => {
+  const eventIds = rows
+    .filter(row => row.category === 'pageDeleted' && !currentPages.has(Number(row.pageId)) && typeof row.eventId === 'string')
+    .map(row => row.eventId)
+  if (eventIds.length === 0) return new Map()
+  const events = await wiki.models.knex<{ id: string; type: string; payload: string }>('outboxEvents').whereIn('id', eventIds).select('id', 'type', 'payload')
+  return loadDeletedNotificationScopes(wiki.models.knex, events)
+}
+export const listPageWatchNotifications = async (
+  requester: PagePrincipal | undefined,
+  cursor?: string | null,
+  sessionId = ''
+): Promise<PageWatchNotificationList> => {
   const userId = authenticatedUserId(requester)
   const storedCursor = readNotificationCursor(userId, cursor)
   const authority = await wiki.auth.loadPageRuleAuthority(requester)
@@ -291,9 +422,25 @@ export const listPageWatchNotifications = async (requester: PagePrincipal | unde
       }
       break
     }
+    if (rows.some(row => row.category !== null && row.category !== undefined && row.category !== 'pageWatch')) {
+      await wiki.models.knex.transaction(transaction => currentPreferenceOwner(transaction, userId))
+    }
 
     const pageIds = Array.from(new Set(rows.map(row => Number(row.pageId)).filter(pageId => Number.isSafeInteger(pageId) && pageId > 0)))
     const currentPages = await loadCurrentNotificationPages(pageIds)
+    const deletedPages = await loadDeletedNotificationPages(rows, currentPages)
+    const globalPageIds = rows
+      .filter(row => row.category === 'pageCreated' || row.category === 'pageDeleted')
+      .map(row => Number(row.pageId))
+      .filter(pageId => currentPages.has(pageId))
+    const protectionRows =
+      globalPageIds.length > 0 ? await wiki.models.knex<{ pageId: number }>('pageAccessPasswords').whereIn('pageId', globalPageIds).select('pageId') : []
+    const protectedGlobalPageIds = new Set(protectionRows.map(row => Number(row.pageId)))
+    const commentIds = rows.flatMap(row => {
+      const routing = notificationRouting(row)
+      return routing?.commentId === null || routing === null ? [] : [routing.commentId]
+    })
+    const discussionAccess = commentIds.length > 0 ? await loadDiscussionNotificationAccess(wiki.models.knex, pageIds, commentIds, requester, sessionId) : null
     const revokedWatcherPageIds = new Set<number>()
     const purgeNotificationIds: string[] = []
     let processedRowsInBatch = 0
@@ -307,10 +454,31 @@ export const listPageWatchNotifications = async (requester: PagePrincipal | unde
       queryCursor = lastProcessedCursor
 
       const pageId = Number(row.pageId)
-      const page = Number.isSafeInteger(pageId) && pageId > 0 ? currentPages.get(pageId) : undefined
-      if (!isCurrentNotificationPage(page) || !canReadPage(requester, page, authority)) {
+      const routing = notificationRouting(row)
+      if (!routing) {
+        purgeNotificationIds.push(String(row.id))
+        continue
+      }
+      const currentPage = Number.isSafeInteger(pageId) && pageId > 0 ? currentPages.get(pageId) : undefined
+      const page = currentPage ?? deletedPages.get(row.eventId)
+      if (
+        !isCurrentNotificationPage(page) ||
+        page.id !== pageId ||
+        !(routing.category === 'pageWatch' || (routing.category === 'pageDeleted' && !currentPage && page.isDeletedNotificationReplacement !== true)
+          ? canReadPage(requester, page, authority)
+          : canReadNotificationPage(requester, page, authority))
+      ) {
         if (Number.isSafeInteger(pageId) && pageId > 0) revokedWatcherPageIds.add(pageId)
         purgeNotificationIds.push(String(row.id))
+        continue
+      }
+      if ((routing.category === 'pageCreated' || routing.category === 'pageDeleted') && protectedGlobalPageIds.has(pageId)) continue
+      if (
+        routing.commentId !== null &&
+        (!discussionAccess || !canReadDiscussionNotification(requester, page, routing.commentId, authority, discussionAccess))
+      ) {
+        const comment = discussionAccess?.comments.get(routing.commentId)
+        if (!comment || comment.pageId !== pageId || comment.isHidden === true || comment.isHidden === 1) purgeNotificationIds.push(String(row.id))
         continue
       }
 
@@ -318,6 +486,8 @@ export const listPageWatchNotifications = async (requester: PagePrincipal | unde
         id: String(row.id),
         pageId,
         eventType: row.eventType,
+        category: routing.category,
+        commentId: routing.commentId,
         actorName: row.actorName,
         title: page.title,
         path: page.path,
@@ -360,8 +530,43 @@ export const listPageWatchNotifications = async (requester: PagePrincipal | unde
   }
 }
 
-export const markPageWatchNotificationRead = async (requester: PagePrincipal | undefined, id: string): Promise<void> => {
+export const markPageWatchNotificationRead = async (requester: PagePrincipal | undefined, id: string, sessionId = ''): Promise<void> => {
   const userId = authenticatedUserId(requester)
   if (!id) throw new ApplicationError('Notification id is required', { status: 400, code: 'INVALID_INPUT' })
+  const row = await wiki.models.knex<NotificationRow>('pageWatchNotifications').where({ id, userId }).first()
+  if (!row) return
+  const routing = notificationRouting(row)
+  if (routing && routing.category !== 'pageWatch') await wiki.models.knex.transaction(transaction => currentPreferenceOwner(transaction, userId))
+  const pageId = Number(row.pageId)
+  const currentPages = await loadCurrentNotificationPages([pageId])
+  const currentPage = currentPages.get(pageId)
+  const deletedPages = await loadDeletedNotificationPages([row], currentPages)
+  const page = currentPage ?? deletedPages.get(row.eventId)
+  const authority = await wiki.auth.loadPageRuleAuthority(requester)
+  if (
+    !routing ||
+    !isCurrentNotificationPage(page) ||
+    page.id !== pageId ||
+    !(routing.category === 'pageWatch' || (routing.category === 'pageDeleted' && !currentPage && page.isDeletedNotificationReplacement !== true)
+      ? canReadPage(requester, page, authority)
+      : canReadNotificationPage(requester, page, authority))
+  ) {
+    await purgeNotificationRows(userId, [id], [pageId])
+    return
+  }
+  if (
+    (routing.category === 'pageCreated' || routing.category === 'pageDeleted') &&
+    currentPage &&
+    (await wiki.models.knex('pageAccessPasswords').where('pageId', pageId).first('pageId'))
+  )
+    return
+  if (routing.commentId !== null) {
+    const access = await loadDiscussionNotificationAccess(wiki.models.knex, [pageId], [routing.commentId], requester, sessionId)
+    if (!canReadDiscussionNotification(requester, page, routing.commentId, authority, access)) {
+      const comment = access.comments.get(routing.commentId)
+      if (!comment || comment.pageId !== pageId || comment.isHidden === true || comment.isHidden === 1) await purgeNotificationRows(userId, [id], [])
+      return
+    }
+  }
   await wiki.models.knex('pageWatchNotifications').where({ id, userId }).update({ readAt: new Date() })
 }

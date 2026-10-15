@@ -1,3 +1,4 @@
+import { mappedProviderProfile } from '../provider-profile.ts'
 import { synchronizeProviderGroups } from '../../../helpers/authentication-provisioning.ts'
 import { oidcStateOptions } from '../oauth-state.ts'
 import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin } from '../../types.ts'
@@ -35,17 +36,24 @@ const plugin: OidcPlugin = {
           acrValues: conf.acrValues
         },
         async (req, iss, uiProfile, idProfile, context, idToken, accessToken, refreshToken, params, cb) => {
-          const profile = Object.assign({}, idProfile, uiProfile)
-          const picture = _.get(profile, '_json.' + conf.pictureClaim, '')
-
           try {
+            const profile = Object.assign({}, idProfile, uiProfile)
+            // Raw ID-token claims are not exposed on the parsed library profile.
+            const claims: unknown = typeof idToken === 'string' ? JSON.parse(Buffer.from(idToken.split('.')[1] ?? '', 'base64url').toString('utf8')) : {}
+            const rawClaims = Object.assign({}, claims, _.get(uiProfile, '_json'))
+            const picture = _.get(rawClaims, conf.pictureClaim, '')
+            const verifiedEmailClaim = typeof conf.verifiedEmailClaim === 'string' && conf.verifiedEmailClaim ? conf.verifiedEmailClaim : 'email_verified'
+            if (conf.requireVerifiedEmail === true && _.get(rawClaims, verifiedEmailClaim) !== true) {
+              throw new Error('Provider email verification is required.')
+            }
             const user = await wiki.models.users.processProfile({
               providerKey: req.params.strategy,
               profile: {
                 ...profile,
-                email: _.get(profile, '_json.' + conf.emailClaim),
-                displayName: _.get(profile, '_json.' + conf.displayNameClaim, ''),
-                picture: picture
+                email: _.get(rawClaims, conf.emailClaim),
+                displayName: _.get(rawClaims, conf.displayNameClaim, ''),
+                picture: picture,
+                providerProfile: mappedProviderProfile(rawClaims, { location: conf.locationClaim, jobTitle: conf.jobTitleClaim, pronouns: conf.pronounsClaim })
               }
             })
             if (conf.mapGroups) {

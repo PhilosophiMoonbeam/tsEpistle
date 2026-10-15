@@ -1,9 +1,10 @@
-import { Editor } from '@tiptap/core'
+import { Editor, type ChainedCommands } from '@tiptap/core'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import { createWikiMarkdownRenderer, sanitizeWikiMarkdownHtml } from '../markdown/preview.ts'
 import { createTiptapExtensions, getVisualEditorDefinition, serializeVisualEditorData, type VisualEditorFormat } from './editor-config.ts'
 import { prepareTiptapHtml, prepareTiptapMarkdown } from './dialect.ts'
+import { installTiptapSlashMenu } from './slash-menu.ts'
 import {
   VISUAL_MARKDOWN_GLYPHS,
   insertVisualMarkdownAdmonition,
@@ -14,12 +15,50 @@ import {
 import { parseWikiLinkAt, resolveWikiLinkHref, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
 
 const editors: Editor[] = []
+let restoreRangeGeometry: (() => void) | undefined
+
+function installRangeGeometry(): void {
+  if (restoreRangeGeometry) return
+  const { Range, DOMRect } = document.defaultView!
+  const prototype = Range.prototype
+  const methods = ['getClientRects', 'getBoundingClientRect'] as const
+  const originals = methods.map(name => Object.getOwnPropertyDescriptor(prototype, name))
+  const elementPrototype = document.defaultView!.HTMLElement.prototype
+  const originalScroll = Object.getOwnPropertyDescriptor(elementPrototype, 'scrollIntoView')
+  Object.defineProperty(elementPrototype, 'scrollIntoView', { configurable: true, value: () => {} })
+  // JSDOM has no layout. Supply geometry only; keep native editor/menu behavior intact.
+  const rectangle = new DOMRect(0, 0, 1, 16)
+  Object.defineProperties(prototype, {
+    getClientRects: {
+      configurable: true,
+      value: () =>
+        Object.assign([rectangle], {
+          item: (index: number) => (index === 0 ? rectangle : null)
+        })
+    },
+    getBoundingClientRect: {
+      configurable: true,
+      value: () => rectangle
+    }
+  })
+  restoreRangeGeometry = () => {
+    methods.forEach((name, index) => {
+      const original = originals[index]
+      if (original) Object.defineProperty(prototype, name, original)
+      else Reflect.deleteProperty(prototype, name)
+    })
+    if (originalScroll) Object.defineProperty(elementPrototype, 'scrollIntoView', originalScroll)
+    else Reflect.deleteProperty(elementPrototype, 'scrollIntoView')
+    restoreRangeGeometry = undefined
+  }
+}
 const enabledWikiLinks: WikiLinkOptions = {
   enabled: true,
   context: { locale: 'en', pagePath: 'guide', namespaced: true }
 }
 
-function createEditor (format: VisualEditorFormat, content: string, wikiLinks?: WikiLinkOptions): Editor {
+function createEditor(format: VisualEditorFormat, content: string, wikiLinks?: WikiLinkOptions): Editor {
+  installRangeGeometry()
   const element = document.createElement('div')
   document.body.appendChild(element)
   const editor = new Editor({
@@ -32,7 +71,7 @@ function createEditor (format: VisualEditorFormat, content: string, wikiLinks?: 
   return editor
 }
 
-function findTextblockEnd (editor: Editor, text: string, parentType: string): number | null {
+function findTextblockEnd(editor: Editor, text: string, parentType: string): number | null {
   let result: number | null = null
   editor.state.doc.descendants((node, position, parent) => {
     if (node.isTextblock && node.textContent === text && parent?.type.name === parentType) {
@@ -42,7 +81,7 @@ function findTextblockEnd (editor: Editor, text: string, parentType: string): nu
   return result
 }
 
-function selectionHasAncestor (editor: Editor, name: string): boolean {
+function selectionHasAncestor(editor: Editor, name: string): boolean {
   const $from = editor.state.selection.$from
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     if ($from.node(depth).type.name === name) return true
@@ -50,12 +89,18 @@ function selectionHasAncestor (editor: Editor, name: string): boolean {
   return false
 }
 
-function pressEnter (editor: Editor): boolean {
+function pressEnter(editor: Editor): boolean {
   const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
   editor.view.dom.dispatchEvent(event)
   return event.defaultPrevented
 }
 
+function typeVisualText(editor: Editor, text: string): void {
+  const { from, to } = editor.state.selection
+  const defaultTransaction = () => editor.state.tr.insertText(text)
+  const handled = editor.view.someProp('handleTextInput', handler => handler(editor.view, from, to, text, defaultTransaction))
+  if (!handled) editor.view.dispatch(defaultTransaction())
+}
 
 async function renderServerMarkdown(input: string): Promise<string> {
   return Reflect.apply(
@@ -86,8 +131,12 @@ async function renderServerMarkdown(input: string): Promise<string> {
 }
 
 afterEach(() => {
-  for (const editor of editors.splice(0)) editor.destroy()
-  document.body.replaceChildren()
+  try {
+    for (const editor of editors.splice(0)) editor.destroy()
+    document.body.replaceChildren()
+  } finally {
+    restoreRangeGeometry?.()
+  }
 })
 
 describe('Tiptap visual formats', () => {
@@ -346,7 +395,8 @@ graph TD
     expect(nextTermEditor.state.selection.$from.parent.type.name).toBe('definitionTerm')
     expect(nextTermEditor.state.selection.$from.parent.textContent).toBe('Next')
 
-    const source = '<dl><dt>Term</dt><dd><p>First paragraph</p><p>Second paragraph</p><ul><li><p>Nested item</p></li></ul></dd><dd><p>Alternate definition</p></dd></dl>'
+    const source =
+      '<dl><dt>Term</dt><dd><p>First paragraph</p><p>Second paragraph</p><ul><li><p>Nested item</p></li></ul></dd><dd><p>Alternate definition</p></dd></dl>'
     const editor = createEditor('html', source)
     const firstParagraphEnd = findTextblockEnd(editor, 'First paragraph', 'definitionDescription')
     expect(firstParagraphEnd).not.toBeNull()
@@ -439,6 +489,163 @@ graph TD
       editor.options.element.classList.add('contents', 'editor-page-canvas')
 
       expect(serializeVisualEditorData(fixture.format, editor)).toBe(serialized)
+    }
+  })
+
+  it('edits real sized image nodes without rewriting titles or unrelated source classes', () => {
+    const source = '![A diagram](/assets/diagram.png "Architecture" =120x80){.align-right .keep-me .wiki-image-border}'
+    const editor = createEditor('markdown', source)
+    expect(editor.state.doc.firstChild?.type.name).toBe('image')
+    expect(editor.getMarkdown()).toBe(source)
+
+    editor.commands.setNodeSelection(0)
+    editor.commands.updateAttributes('image', { width: '50%', class: 'keep-me align-center wiki-image-shadow' })
+    const updated = editor.getMarkdown()
+    expect(updated).toContain('"Architecture" =50%x80')
+    expect(updated).toContain('keep-me')
+    expect(updated).toContain('align-center')
+    expect(updated).toContain('wiki-image-shadow')
+    expect(updated).not.toContain('align-right')
+    const reopened = createEditor('markdown', updated)
+    expect(reopened.state.doc.firstChild?.attrs.width).toBe('50%')
+    expect(reopened.state.doc.firstChild?.attrs.class).toContain('keep-me')
+  })
+
+  it('keeps supported HTML image properties editable and unknown image attributes opaque', () => {
+    const supported = '<img src="/assets/photo.png" alt="Photo" width="160" height="auto" class="align-abstopright wiki-image-rounded" style="width:160px">'
+    const editor = createEditor('markdown', supported)
+    expect(editor.state.doc.firstChild?.type.name).toBe('image')
+    expect(editor.getMarkdown()).toBe(supported)
+    editor.commands.setNodeSelection(0)
+    editor.commands.updateAttributes('image', { alt: 'Updated photograph', width: '320' })
+    const edited = editor.getMarkdown()
+    expect(edited).toContain('alt="Updated photograph"')
+    expect(edited).toContain('width="320"')
+    expect(edited).toContain('width:320px')
+    expect(edited).toContain('align-abstopright wiki-image-rounded')
+    editor.commands.updateAttributes('image', { alt: '' })
+    expect(editor.getMarkdown()).toContain('alt=""')
+
+    const withoutAlt = createEditor('markdown', '<img src="/assets/photo.png">')
+    withoutAlt.commands.setNodeSelection(0)
+    withoutAlt.commands.updateAttributes('image', { alt: 'New description' })
+    expect(withoutAlt.getMarkdown()).toContain('alt="New description"')
+
+    const unknown = '<img src="/assets/photo.png" data-custom="keep exactly" class="foreign" style="object-fit:contain">'
+    for (const format of ['markdown', 'html'] as const) {
+      const opaque = createEditor(format, unknown)
+      expect(opaque.state.doc.firstChild?.type.name).toBe('wikiSourceBlock')
+      expect(serializeVisualEditorData(format, opaque)).toContain(unknown)
+    }
+  })
+
+  it('executes filtered slash commands through native keyboard and pointer actions', () => {
+    for (const format of ['markdown', 'html'] as const) {
+      const editor = createEditor(format, '')
+      installTiptapSlashMenu(
+        editor,
+        [
+          { id: 'heading', label: 'Heading', run: (chain: ChainedCommands) => chain.setHeading({ level: 2 }) },
+          { id: 'table', label: 'Table', run: (chain: ChainedCommands) => chain.insertTable({ rows: 2, cols: 2, withHeaderRow: true }) }
+        ],
+        'Insert'
+      )
+      typeVisualText(editor, '/')
+      typeVisualText(editor, 'heading')
+      expect(pressEnter(editor)).toBe(true)
+      expect(editor.state.doc.firstChild?.type.name).toBe('heading')
+      expect(editor.state.doc.firstChild?.attrs.level).toBe(2)
+
+      editor.commands.setContent('')
+      typeVisualText(editor, '/')
+      editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+      expect(pressEnter(editor)).toBe(true)
+      expect(editor.state.doc.firstChild?.type.name).toBe('table')
+
+      editor.commands.setContent('')
+      typeVisualText(editor, '/')
+      typeVisualText(editor, 'table')
+      const menu = document.querySelector<HTMLElement>(`#${editor.view.dom.getAttribute('aria-controls')}`)
+      expect(menu?.hidden).toBe(false)
+      menu?.querySelector<HTMLButtonElement>('button')?.click()
+      expect(editor.state.doc.firstChild?.type.name).toBe('table')
+      expect(editor.state.doc.firstChild?.childCount).toBe(2)
+      editor.destroy()
+    }
+  })
+
+  it('maps an active slash line past unrelated document edits and refuses replaced queries', () => {
+    const editor = createEditor('markdown', '')
+    installTiptapSlashMenu(editor, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+    typeVisualText(editor, '/')
+    const paragraph = editor.schema.nodes.paragraph!.create(null, editor.schema.text('Remote paragraph'))
+    editor.view.dispatch(editor.state.tr.insert(0, paragraph))
+    const menuId = editor.view.dom.getAttribute('aria-controls')
+    expect(menuId).not.toBeNull()
+    const menu = document.getElementById(menuId!)!
+    expect(menu.hidden).toBe(false)
+    const button = menu.querySelector<HTMLButtonElement>('button')
+    expect(button).not.toBeNull()
+    button!.click()
+    expect(editor.state.doc.firstChild?.textContent).toBe('Remote paragraph')
+    const mappedBlock = editor.state.doc.nodeAt(paragraph.nodeSize)
+    expect(mappedBlock?.type.name).toBe('heading')
+    expect(mappedBlock?.attrs.level).toBe(2)
+    expect(mappedBlock?.textContent).toBe('')
+
+    editor.commands.setContent('')
+    typeVisualText(editor, '/')
+    const staleButton = document.querySelector<HTMLButtonElement>('.editor-tiptap-slash-menu button')
+    editor.view.dispatch(editor.state.tr.insertText('other', editor.state.selection.from))
+    staleButton?.click()
+    expect(editor.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(editor.getText()).toBe('/other')
+  })
+
+  it('dismisses slash suggestions without consuming source during Escape, IME or read-only transitions', () => {
+    const editor = createEditor('markdown', '')
+    installTiptapSlashMenu(editor, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+    typeVisualText(editor, '/')
+    const menu = document.querySelector<HTMLElement>('.editor-tiptap-slash-menu')!
+    editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(menu.hidden).toBe(true)
+    expect(editor.getText()).toBe('/')
+
+    editor.commands.setContent('')
+    editor.view.dom.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    typeVisualText(editor, '/')
+    expect(menu.hidden).toBe(true)
+    expect(editor.getText()).toBe('/')
+    editor.view.dom.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+
+    // A fresh editor avoids depending on the browser's deferred composition-end timer.
+    const readonly = createEditor('html', '')
+    installTiptapSlashMenu(readonly, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+    typeVisualText(readonly, '/')
+    const activeMenu = document.querySelector<HTMLElement>(`#${readonly.view.dom.getAttribute('aria-controls')}`)!
+    const staleButton = activeMenu.querySelector<HTMLButtonElement>('button')
+    readonly.setEditable(false)
+    staleButton?.click()
+    expect(activeMenu.hidden).toBe(true)
+    expect(readonly.getText()).toBe('/')
+    readonly.setEditable(true)
+    expect(activeMenu.hidden).toBe(true)
+    readonly.destroy()
+    expect(activeMenu.isConnected).toBe(false)
+  })
+
+  it('does not trigger a slash menu in code, nested lists, or a replaced selection', () => {
+    for (const fixture of [
+      { source: '<pre><code></code></pre>', position: 1 },
+      { source: '<ul><li><p></p></li></ul>', position: 3 },
+      { source: '<p>Replace</p>', position: { from: 1, to: 8 } }
+    ]) {
+      const editor = createEditor('html', fixture.source)
+      installTiptapSlashMenu(editor, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+      editor.commands.setTextSelection(fixture.position)
+      typeVisualText(editor, '/')
+      expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
+      expect(editor.getText()).toContain('/')
     }
   })
 

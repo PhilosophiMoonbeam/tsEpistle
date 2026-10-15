@@ -1,7 +1,9 @@
 <template lang="pug">
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive }]')
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
-    nav-header(v-if='!printView', reserve-actions)
+    nav-header(v-if='!printView', reserve-actions, :glossary-available='glossaryAvailable')
+    glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', @access='setGlossaryAccess')
+    discussion-annotations(v-if='!printView', :page-id='pageId', :content-root='readerContentRoot', :enabled='commentsEnabled && commentsPerms.read && !commentsExternal', @compose='composePassage', @thread='$emit(`focus-thread`, $event)')
     //- Decorative: a live progressbar would announce every scroll step.
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
@@ -243,7 +245,7 @@
               )
             section.page-links-panel.contents#page-links(v-if='linksActive', role='tabpanel', aria-labelledby='page-view-links-tab', tabindex='-1')
               slot(name='links', :page-id='pageId', :locale='locale', :source-revision='sourceRevision')
-            section.comments-container#discussion(v-if='!printView && ((commentsExternal && !linksActive) || (!commentsExternal && selectedPageView === `talk` && commentsEnabled && commentsPerms.read))' role='tabpanel' :aria-labelledby='commentsExternal ? `discussion-title` : `page-view-talk-tab`')
+            section.comments-container#discussion(v-if='!printView && ((commentsExternal && !linksActive) || (!commentsExternal && discussionMounted && commentsEnabled && commentsPerms.read))', v-show='commentsExternal || selectedPageView === `talk`', role='tabpanel', :aria-labelledby='commentsExternal ? `discussion-title` : `page-view-talk-tab`')
               .comments-header
                 .comments-header-icon
                   v-icon(size='20', aria-hidden='true') mdi-forum-outline
@@ -831,6 +833,11 @@ import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import PageBrandingMark from '@/components/common/page-branding-mark.vue'
 import SiteBanner from '@/components/common/site-banner.vue'
+import GlossaryReader from '@/components/common/glossary-reader.vue'
+import DiscussionAnnotations from '@/components/common/discussion-annotations.vue'
+import { composeDiscussionAnnotation, onJumpDiscussionAnnotation } from '@/helpers/discussion-annotation-events'
+import type { GlossaryAccess } from '../../../../shared/glossary.ts'
+import type { DiscussionAnnotationAnchor } from '../../../../shared/discussion-annotations.ts'
 import {
   buildOutlineTree,
   filterOutlineTree,
@@ -1454,15 +1461,18 @@ export default defineComponent({
   name: 'PageView',
   components: {
     AsyncState,
+    GlossaryReader,
+    DiscussionAnnotations,
     NavSidebar,
     SiteBanner,
     PageBrandingMark,
     PageTocTree,
   },
-  emits: ['update:activeView'],
+  emits: ['update:activeView', 'focus-thread'],
   setup () {
     return {
       goTo: useGoTo(),
+      readerContentRoot: shallowRef<HTMLElement | null>(null),
       offlineStorage: shallowRef<OfflineStorage | null>(null),
       offlineSyncService: inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
     }
@@ -1593,6 +1603,9 @@ export default defineComponent({
     const initialWidth = typeof window === 'undefined' ? 0 : window.innerWidth
     return {
       locales: siteLangs,
+      glossaryAvailable: false,
+      discussionMounted: false,
+      annotationJumpUnsubscribe: null as (() => void) | null,
       navShown: initialWidth >= 1280,
       tocExpanded: initialWidth >= 1280,
       tocQuery: '',
@@ -2104,6 +2117,12 @@ export default defineComponent({
     }
   },
   watch: {
+    selectedPageView: {
+      immediate: true,
+      handler(value: string) {
+        if (value === 'talk') this.discussionMounted = true
+      }
+    },
     readerSectionsAvailable (available: boolean) {
       if (!available) this.closeReaderSections()
     },
@@ -2116,6 +2135,7 @@ export default defineComponent({
     },
     pageAuthorityKey (value: string, previous: string) {
       if (value === previous) return
+      this.glossaryAvailable = false
       this.pageWatchRequestId += 1
       this.protectionRequestId += 1
       this.approvalRequestId += 1
@@ -2193,6 +2213,8 @@ export default defineComponent({
         if (value === previous) return
         this.syncPageStore()
         this.resetPageRouteState()
+        this.discussionMounted = this.selectedPageView === 'talk'
+        this.glossaryAvailable = false
         await this.$nextTick()
         this.setupDesktopRailObserver()
         this.refreshPageContent()
@@ -2225,6 +2247,10 @@ export default defineComponent({
   },
   created() {
     this.syncPageStore()
+    // Subscribe before the child: queue the native pane update before its nextTick jump.
+    this.annotationJumpUnsubscribe = onJumpDiscussionAnnotation(pageId => {
+      if (pageId === this.pageId && this.commentsEnabled && this.commentsPerms.read && !this.commentsExternal) this.selectPageView('article')
+    })
   },
   mounted () {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -2302,7 +2328,7 @@ export default defineComponent({
     window.addEventListener('afterprint', this.afterPrintHandler)
 
     // -> Handle anchor scrolling
-    if (window.location.hash && window.location.hash.length > 1) {
+    if (window.location.hash && window.location.hash.length > 1 && !/^#(?:discussion$|comment-post-id-)/u.test(window.location.hash)) {
       if (document.readyState === 'complete') {
         this.$nextTick(() => {
           this.scrollToPageAnchor(window.location.hash, false)
@@ -2318,6 +2344,7 @@ export default defineComponent({
   },
   beforeUnmount () {
     this.offlineDisposed = true
+    this.annotationJumpUnsubscribe?.()
     if (this.approvalReviewerTimer !== null) clearTimeout(this.approvalReviewerTimer)
     this.pageActionGeneration += 1
     this.pageWatchRequestId += 1
@@ -3264,6 +3291,7 @@ export default defineComponent({
     },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement
+      this.readerContentRoot = container
       this.mermaidAbortController?.abort()
       const mermaidController = markRaw(new AbortController())
       this.mermaidAbortController = mermaidController
@@ -3291,6 +3319,7 @@ export default defineComponent({
 
       const currentPageUrl = window.location.href.replace(window.location.hash, '')
       container.querySelectorAll<HTMLAnchorElement>(`a[href^="#"], a[href^="${currentPageUrl}#"]`).forEach(anchor => {
+        if (/^#(?:discussion$|comment-post-id-)/u.test(anchor.hash)) return
         anchor.onclick = (event: MouseEvent) => {
           event.preventDefault()
           event.stopPropagation()
@@ -4171,6 +4200,18 @@ export default defineComponent({
     },
     selectPageView(value: unknown): void {
       if (value === 'article' || value === 'talk' || (value === 'links' && this.linksVisible)) this.$emit('update:activeView', value)
+    },
+    setGlossaryAccess(access: GlossaryAccess): void {
+      this.glossaryAvailable = access.enabled && (access.canRead || access.canManage)
+    },
+    async composePassage(anchor: DiscussionAnnotationAnchor): Promise<void> {
+      if (!this.commentsEnabled || this.commentsExternal || !this.commentsPerms.write || !this.pageOnlineActionReady) return
+      const pageId = this.pageId
+      const authorityKey = this.pageAuthorityKey
+      this.goToComments()
+      await this.$nextTick()
+      if (pageId !== this.pageId || authorityKey !== this.pageAuthorityKey || !this.talkActive || !this.commentsPerms.write || !this.pageOnlineActionReady) return
+      composeDiscussionAnnotation(pageId, anchor)
     },
     focusLinks (): void {
       this.$nextTick(() => document.querySelector<HTMLElement>('#page-links')?.focus({ preventScroll: true }))

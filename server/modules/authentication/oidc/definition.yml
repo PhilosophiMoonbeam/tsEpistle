@@ -93,3 +93,32 @@ props:
     title: ACR Values
     hint: (optional) Authentication Context Class Reference
     order: 14
+  locationClaim:
+    type: String
+    title: Location Claim
+    default: ''
+    hint: Optional; absent claims preserve the local value and empty text clears it.
+    order: 15
+  jobTitleClaim:
+    type: String
+    title: Job Title Claim
+    default: ''
+    hint: Optional; absent claims preserve the local value and empty text clears it.
+    order: 16
+  pronounsClaim:
+    type: String
+    title: Pronouns Claim
+    default: ''
+    hint: Optional; absent claims preserve the local value and empty text clears it.
+    order: 17
+  requireVerifiedEmail:
+    type: Boolean
+    title: Require Verified Email
+    default: false
+    hint: Refuse login unless the configured authenticated claim is boolean true.
+    order: 18
+  verifiedEmailClaim:
+    type: String
+    title: Verified Email Claim
+    default: email_verified
+    order: 19

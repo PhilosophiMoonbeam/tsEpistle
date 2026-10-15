@@ -253,6 +253,23 @@
               >
             </div>
             <div class="theme-setting-group">
+              <h3>Code appearance</h3>
+              <v-select
+                v-model="draft.codeTheme"
+                :items="codeThemeOptions"
+                label="Prism code theme"
+                variant="outlined"
+                :disabled="locked"
+                hint="Native follows the workspace palette. Paper and Midnight use fixed, readable code colors. Changes publish only after review."
+                persistent-hint
+              />
+              <v-btn
+                variant="text"
+                :disabled="locked || draft.codeTheme === saved.policy.codeTheme"
+                @click="draft.codeTheme = saved.policy.codeTheme"
+              >Restore saved code appearance</v-btn>
+            </div>
+            <div class="theme-setting-group">
               <h3>{{ $t('admin:theme.personalPresentation') }}</h3>
               <p>
                 {{ $t('admin:theme.eachReaderChoosesSystem') }}
@@ -415,6 +432,22 @@
               </article>
             </div>
           </div>
+          <section
+            class="theme-code-preview"
+            :data-wiki-code-theme="draft.codeTheme"
+            :data-wiki-code-mode="mode"
+            :style="codePreviewStyle"
+            aria-label="Prism code appearance preview"
+          >
+            <h3>Code preview</h3>
+            <p class="theme-note">Draft only · JavaScript · {{ codeThemeOptions.find(item => item.value === draft?.codeTheme)?.title }}</p>
+            <p v-if="codePreviewLoading" role="status">Loading syntax preview…</p>
+            <p v-if="codePreviewError" role="alert">
+              {{ codePreviewError }}
+              <v-btn variant="text" @click="loadCodePreview">Retry preview</v-btn>
+            </p>
+            <pre class="prismjs language-javascript" tabindex="0" aria-label="JavaScript example"><code v-if="codePreviewHtml" class="language-javascript" v-html="codePreviewHtml"></code><code v-else class="language-javascript">{{ codePreviewSource }}</code></pre>
+          </section>
           <div class="theme-preview-options">
             <v-select
               v-model="previewFont"
@@ -590,6 +623,7 @@ import {
   onMounted,
   onBeforeUnmount,
   ref,
+  watch,
 } from "vue";
 import {
   useRoute,
@@ -623,6 +657,8 @@ import {
   contrastForeground,
 } from "../../helpers/theme.ts";
 import { applyReaderLayout } from "../../helpers/reader-layout.ts";
+import { applyCodeTheme, CODE_THEME_PREVIEW_SOURCE, renderCodeThemePreview } from "../../helpers/code-appearance.ts";
+import { rememberOfflinePresentation } from "../../helpers/offline-presentation.ts";
 import { wikiStore } from "../../store/index.ts";
 import {
   fetchThemeWorkspace,
@@ -660,6 +696,16 @@ const loadError = ref(""),
   reviewFingerprint = ref(""),
   selectedId = ref(""),
   replacementId = ref("");
+const codePreviewSource = CODE_THEME_PREVIEW_SOURCE;
+const codePreviewHtml = ref(""),
+  codePreviewLoading = ref(false),
+  codePreviewError = ref("");
+const codePreviewController = new AbortController();
+const codeThemeOptions = [
+  { title: "Native · workspace palette", value: "native" },
+  { title: "Paper · light", value: "paper" },
+  { title: "Midnight · dark", value: "midnight" },
+];
 const customCodeFields = ["injectCSS", "injectHead", "injectBody"] as const;
 type CustomCodeField = (typeof customCodeFields)[number];
 const mode = ref<"light" | "dark">("light"),
@@ -741,6 +787,10 @@ const previewStyle = computed(() => ({
   "--specimen-leading": String(Number(draft.value?.reading.lineHeight) || 1.68),
   "--specimen-width": (Number(draft.value?.reading.copyWidth) || 101) + "ch",
 }));
+const codePreviewStyle = computed(() => ({
+  "--wiki-code-native-bg": previewColors.value.surface,
+  "--wiki-code-native-fg": foreground(previewColors.value.surface),
+}));
 const contrastChecks = computed(() =>
   (
     [
@@ -808,6 +858,22 @@ const preserveCustomCode = (
 };
 let sequence = 0,
   disposed = false;
+async function loadCodePreview() {
+  if (disposed || codePreviewLoading.value) return;
+  codePreviewLoading.value = true;
+  codePreviewError.value = "";
+  try {
+    const html = await renderCodeThemePreview(codePreviewController.signal);
+    if (!disposed && !codePreviewController.signal.aborted && html !== null)
+      codePreviewHtml.value = html;
+  } catch {
+    if (!disposed && !codePreviewController.signal.aborted)
+      codePreviewError.value = "Syntax preview could not load. Your draft has not been changed.";
+  } finally {
+    if (!disposed) codePreviewLoading.value = false;
+  }
+}
+watch(() => Boolean(saved.value), ready => { if (ready) void loadCodePreview(); });
 async function load() {
   if (busy.value) return;
   const seq = ++sequence;
@@ -964,9 +1030,12 @@ async function confirm() {
       )!.colors;
       applyWikiThemeColors(theme, colors);
       applyReaderLayout(published.reading);
+      applyCodeTheme(published.codeTheme);
       siteConfig.themeColors = copy(colors);
       siteConfig.readerLayout = copy(published.reading);
+      siteConfig.codeTheme = published.codeTheme;
       siteConfig.tocPosition = published.tocPosition;
+      rememberOfflinePresentation(wikiStore.user.appearance);
     }
     reviewing.value = false;
     reviewed.value = null;
@@ -1063,6 +1132,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true;
   sequence++;
+  codePreviewController.abort();
   window.removeEventListener("beforeunload", beforeUnload);
 });
 </script>

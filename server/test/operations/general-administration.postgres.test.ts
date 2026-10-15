@@ -2,13 +2,14 @@ import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createGeneralAdministrationStore, generalPolicyFromConfiguration, patchLegacyGeneralConfiguration } from '../../operations/general-administration.ts'
+import { createDiscussionSettingsStore } from '../../operations/discussion-settings.ts'
 import { generalPolicyDefaults, type GeneralPolicy } from '../../../shared/general-policy.ts'
 const connection = getPostgresTestConnection('_general_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
 suite('PostgreSQL reviewed General settings', () => {
   let db: Knex, store: ReturnType<typeof createGeneralAdministrationStore>
-  const tables = ['userGroups', 'users', 'groups', 'settings']
+  const tables = ['userGroups', 'users', 'groups', 'commentProviders', 'settings']
   const read = () => store.inspect(admin)
   const write = async (patch: Partial<GeneralPolicy>, extra = {}) => {
     const w = await read()
@@ -36,6 +37,11 @@ suite('PostgreSQL reviewed General settings', () => {
       t.integer('groupId')
       t.primary(['userId', 'groupId'])
     })
+    await db.schema.createTable('commentProviders', t => {
+      t.string('key').primary()
+      t.boolean('isEnabled').notNullable()
+      t.jsonb('config').notNullable()
+    })
   })
   afterAll(async () => {
     if (db) {
@@ -45,14 +51,16 @@ suite('PostgreSQL reviewed General settings', () => {
   })
   beforeEach(async () => {
     for (const table of tables) await db(table).delete()
-    await db('settings').insert([
-      { key: 'host', value: '{"v":"https://wiki.example.com"}' },
-      { key: 'title', value: '{"v":"Original"}' },
-      { key: 'seo', value: '{"description":"Description","robots":["index"],"analyticsId":"private-analytics-value"}' },
-      { key: 'editShortcuts', value: '{"editFab":true,"futureShortcut":"retained"}' },
-      { key: 'features', value: '{"featurePageComments":false}' },
-      { key: 'auth', value: '{"audience":"unchanged"}' }
-    ].map(row => ({ ...row, updatedAt: new Date().toISOString() })))
+    await db('settings').insert(
+      [
+        { key: 'host', value: '{"v":"https://wiki.example.com"}' },
+        { key: 'title', value: '{"v":"Original"}' },
+        { key: 'seo', value: '{"description":"Description","robots":["index"],"analyticsId":"private-analytics-value"}' },
+        { key: 'editShortcuts', value: '{"editFab":true,"futureShortcut":"retained"}' },
+        { key: 'features', value: '{"featurePageComments":false}' },
+        { key: 'auth', value: '{"audience":"unchanged"}' }
+      ].map(row => ({ ...row, updatedAt: new Date().toISOString() }))
+    )
     await db('groups').insert([
       { id: 1, permissions: '["manage:system"]' },
       { id: 2, permissions: '["manage:users"]' }
@@ -62,6 +70,7 @@ suite('PostgreSQL reviewed General settings', () => {
       { userId: 1, groupId: 1 },
       { userId: 3, groupId: 2 }
     ])
+    await db('commentProviders').insert({ key: 'default', isEnabled: true, config: '{"minDelay":0}' })
     store = createGeneralAdministrationStore({ db, reviewKey: 'fixture-key', fallback: () => ({}), runtime: () => structuredClone(generalPolicyDefaults) })
   })
   it('projects owned settings without exposing unrelated settings or private analytics values', async () => {
@@ -81,8 +90,52 @@ suite('PostgreSQL reviewed General settings', () => {
     expect(w.history[0]).toMatchObject({ actorId: 1, reason: 'Review workspace settings' })
     expect((await db('settings').where('key', 'seo').first()).value.analyticsId).toBe('private-analytics-value')
     expect((await db('settings').where('key', 'editShortcuts').first()).value.futureShortcut).toBe('retained')
-    expect((await db('settings').where('key', 'features').first()).value).toEqual({ featurePageComments: false })
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ featurePageComments: false, featureGlossary: true })
     expect((await db('settings').where('key', 'auth').first()).value).toEqual({ audience: 'unchanged' })
+  })
+  it('durably toggles the actual nested glossary feature and retains unrelated feature values', async () => {
+    const flags = { featurePageComments: false, featurePageRatings: true, futureFeature: { retained: true } }
+    await db('settings')
+      .where('key', 'features')
+      .update({ value: JSON.stringify(flags) })
+    expect((await read()).policy.featureGlossary).toBe(true)
+    await write({ featureGlossary: false })
+    expect((await read()).policy.featureGlossary).toBe(false)
+    expect((await read()).history[0]?.fields).toEqual(['featureGlossary'])
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: false })
+    expect(await db('settings').where('key', 'featureGlossary')).toEqual([])
+    await write({ featureGlossary: true })
+    expect((await read()).policy.featureGlossary).toBe(true)
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: true })
+  })
+  it.each([false, true])('preserves glossary and discussion choices when reviewed saves race (features row exists: %s)', async exists => {
+    if (!exists) await db('settings').where('key', 'features').delete()
+    const discussion = createDiscussionSettingsStore({
+      db,
+      definitions: () => [{ key: 'default', props: { minDelay: { type: 'number' } }, isAvailable: true }],
+      fallbackFeatures: () => ({}),
+      activate: async () => []
+    })
+    const generalReview = await read(),
+      discussionReview = await discussion.read()
+    const outcomes = await Promise.allSettled([
+      store.save(admin, {
+        policy: { ...generalReview.policy, featureGlossary: false },
+        fingerprint: generalReview.fingerprint,
+        reason: 'Disable glossary temporarily'
+      }),
+      discussion.write({ enabled: true, providers: discussionReview.providers }, discussionReview.fingerprint)
+    ])
+    const discussionOutcome = outcomes[1]!
+    expect(discussionOutcome).toMatchObject({ status: 'fulfilled' })
+    const generalOutcome = outcomes[0]!
+    if (generalOutcome.status === 'rejected') {
+      expect(generalOutcome.reason).toMatchObject({ status: 409 })
+      await write({ featureGlossary: false })
+    }
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ featurePageComments: true, featureGlossary: false })
+    expect((await discussion.read()).enabled).toBe(true)
+    expect((await read()).policy.featureGlossary).toBe(false)
   })
   it('rejects stale concurrent reviews and prevents an ABA review from becoming current again', async () => {
     const before = await read(),
@@ -107,6 +160,7 @@ suite('PostgreSQL reviewed General settings', () => {
     await expect(write({ host: 'http://wiki.example.com' })).rejects.toMatchObject({ status: 409 })
     await expect(write({ robots: ['index', 'noindex'] })).rejects.toMatchObject({ status: 400 })
     await expect(write({ title: 'Next' }, { reason: '' })).rejects.toMatchObject({ status: 400 })
+    await expect(write({ featureGlossary: 'false' as never })).rejects.toMatchObject({ status: 400 })
     expect(await db('settings').orderBy('key')).toEqual(before)
   })
   it('rolls back earlier row updates when a later settings write fails', async () => {
@@ -152,11 +206,28 @@ suite('PostgreSQL reviewed General settings', () => {
     const previous = globalThis.WIKI
     const config: Record<string, unknown> = { ...structuredClone(generalPolicyDefaults), sessionSecret: 'legacy-review-key' }
     let activations = 0
-    const auth = { strategyHost: 'https://wiki.example.com', activateStrategies: async () => { auth.strategyHost = String(config.host); activations++ } }
+    const auth = {
+      strategyHost: 'https://wiki.example.com',
+      activateStrategies: async () => {
+        auth.strategyHost = String(config.host)
+        activations++
+      }
+    }
     globalThis.WIKI = {
-      models: { knex: db }, config, auth,
-      configSvc: { loadFromDb: async () => { const rows = await db('settings'); Object.assign(config, Object.fromEntries(rows.map(row => [row.key, row.value && typeof row.value === 'object' && 'v' in row.value ? row.value.v : row.value]))) } },
-      events: { outbound: { emit: () => {} } }, logger: { warn: () => {} }
+      models: { knex: db },
+      config,
+      auth,
+      configSvc: {
+        loadFromDb: async () => {
+          const rows = await db('settings')
+          Object.assign(
+            config,
+            Object.fromEntries(rows.map(row => [row.key, row.value && typeof row.value === 'object' && 'v' in row.value ? row.value.v : row.value]))
+          )
+        }
+      },
+      events: { outbound: { emit: () => {} } },
+      logger: { warn: () => {} }
     } as typeof globalThis.WIKI
     try {
       await patchLegacyGeneralConfiguration(admin, { title: 'Legacy updated', pageExtensions: 'TXT, md, txt', analyticsId: 'private-analytics-value' })
@@ -171,11 +242,18 @@ suite('PostgreSQL reviewed General settings', () => {
       await expect(patchLegacyGeneralConfiguration(admin, { title: 'Cannot save', availableEditors: ['markdown'] })).rejects.toMatchObject({ status: 400 })
       await expect(patchLegacyGeneralConfiguration(admin, { title: 'Cannot save', pageExtensions: '../invalid' })).rejects.toMatchObject({ status: 400 })
       expect(await db('settings').orderBy('key')).toEqual(before)
-    } finally { globalThis.WIKI = previous }
+    } finally {
+      globalThis.WIKI = previous
+    }
   })
 })
 describe('General settings reload projection', () => {
   it('reload projection honors persisted empty lists', () => {
     expect(generalPolicyFromConfiguration({ pageExtensions: [], seo: { robots: [] } })).toMatchObject({ pageExtensions: [], robots: [] })
+  })
+  it('defaults glossary availability to true and reads false only from the actual nested setting', () => {
+    for (const configuration of [{}, { features: {} }, { featureGlossary: false }, { features: { featureGlossary: true } }])
+      expect(generalPolicyFromConfiguration(configuration).featureGlossary).toBe(true)
+    expect(generalPolicyFromConfiguration({ featureGlossary: true, features: { featureGlossary: false } }).featureGlossary).toBe(false)
   })
 })

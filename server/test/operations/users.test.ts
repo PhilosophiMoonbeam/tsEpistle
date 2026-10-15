@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
-const adminWorkspace = () => ({ id: 10, fingerprint: 'reviewed-version', profile: { name: 'User', email: 'user@example.test', location: '', jobTitle: '', timezone: 'UTC', groups: [2] }, capabilities: { edit: true }, isActive: true })
+const adminWorkspace = () => ({
+  id: 10,
+  fingerprint: 'reviewed-version',
+  profile: { name: 'User', email: 'user@example.test', location: '', jobTitle: '', pronouns: 'they/them', timezone: 'UTC', groups: [2] },
+  capabilities: { edit: true },
+  isActive: true
+})
 const accountStore = { inspect: vi.fn(), updateProfile: vi.fn() }
 vi.mockModule('../../operations/account-administration.ts', import.meta.url, () => ({ accountAdministration: () => accountStore }))
 class AuthRequired extends Error {}
@@ -33,6 +39,7 @@ const installWiki = (overrides: Record<string, unknown> = {}) => {
     email: 'user@example.test',
     name: 'User',
     providerKey: 'local',
+    pronouns: 'they/them',
     providerId: null,
     password: '',
     tfaSecret: '',
@@ -112,7 +119,11 @@ describe('user authority revocation', () => {
       await pending
     }
 
-    expect(accountStore.updateProfile).toHaveBeenCalledWith(administrator, 10, expect.objectContaining({ fingerprint: 'reviewed-version', profile: expect.objectContaining({ groups: [3] }) }))
+    expect(accountStore.updateProfile).toHaveBeenCalledWith(
+      administrator,
+      10,
+      expect.objectContaining({ fingerprint: 'reviewed-version', profile: expect.objectContaining({ groups: [3] }) })
+    )
     expect(updateUser).not.toHaveBeenCalled()
     expect(lifecycle).toEqual(['commit', 'revoke-local', 'revoke-peer'])
     expect(revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
@@ -135,7 +146,9 @@ describe('user authority revocation', () => {
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
     const response = { cookie: vi.fn(), set: vi.fn() }
 
-    await expect(operations.default.changePassword({ requester, expectedAccountId: 10, current: 'old-password', newPassword: 'new-password', response })).resolves.toBeUndefined()
+    await expect(
+      operations.default.changePassword({ requester, expectedAccountId: 10, current: 'old-password', newPassword: 'new-password', response })
+    ).resolves.toBeUndefined()
 
     expect(lifecycle).toEqual(['commit', 'revoke-local', 'revoke-peer', 'refresh'])
     expect(revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
@@ -154,9 +167,20 @@ describe('self-service profile identity', () => {
     const input = { name: 'Changed', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', appearance: 'light' }
 
     await expect(operations.default.getProfile(profileRequester as Express.User)).rejects.toBeInstanceOf(AuthRequired)
-    await expect(operations.default.updateProfile({ requester: profileRequester as Express.User, expectedAccountId: 10, input, response })).rejects.toBeInstanceOf(AuthRequired)
-    await expect(operations.default.updateProfilePreferences({ requester: profileRequester as Express.User, expectedAccountId: 10, input: { appearance: 'dark' }, response })).rejects.toBeInstanceOf(AuthRequired)
-    await expect(operations.default.changePassword({ requester: profileRequester, expectedAccountId: 10, current: 'old-password', newPassword: 'new-password', response })).rejects.toBeInstanceOf(AuthRequired)
+    await expect(
+      operations.default.updateProfile({ requester: profileRequester as Express.User, expectedAccountId: 10, input, response })
+    ).rejects.toBeInstanceOf(AuthRequired)
+    await expect(
+      operations.default.updateProfilePreferences({
+        requester: profileRequester as Express.User,
+        expectedAccountId: 10,
+        input: { appearance: 'dark' },
+        response
+      })
+    ).rejects.toBeInstanceOf(AuthRequired)
+    await expect(
+      operations.default.changePassword({ requester: profileRequester, expectedAccountId: 10, current: 'old-password', newPassword: 'new-password', response })
+    ).rejects.toBeInstanceOf(AuthRequired)
 
     expect(findById).not.toHaveBeenCalled()
     expect(updateUser).not.toHaveBeenCalled()
@@ -164,56 +188,74 @@ describe('self-service profile identity', () => {
     expect(response.cookie).not.toHaveBeenCalled()
   })
 
-  it.each(['details', 'preferences', 'avatar upload', 'avatar removal', 'password'])('rejects a stale account-A %s draft under account-B cookies before persistence', async kind => {
-    const { findById, refreshToken, updateUser } = installWiki()
-    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
-    const response = { cookie: vi.fn(), set: vi.fn() }
-    const identity = { requester, expectedAccountId: 11, response }
-    const mutation = kind === 'details'
-      ? () => operations.default.updateProfile({ ...identity, input: { name: 'Account A draft', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', appearance: 'light' } })
-      : kind === 'preferences'
-        ? () => operations.default.updateProfilePreferences({ ...identity, input: { appearance: 'dark' } })
-        : kind === 'avatar upload'
-          ? () => operations.default.updateAvatar({ ...identity, data: Buffer.from('unused image') })
-          : kind === 'avatar removal'
-            ? () => operations.default.clearAvatar(identity)
-            : () => operations.default.changePassword({ ...identity, current: 'old-password', newPassword: 'new-password' })
+  it.each(['details', 'preferences', 'avatar upload', 'avatar removal', 'password'])(
+    'rejects a stale account-A %s draft under account-B cookies before persistence',
+    async kind => {
+      const { findById, refreshToken, updateUser } = installWiki()
+      const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
+      const response = { cookie: vi.fn(), set: vi.fn() }
+      const identity = { requester, expectedAccountId: 11, response }
+      const mutation =
+        kind === 'details'
+          ? () =>
+              operations.default.updateProfile({
+                ...identity,
+                input: { name: 'Account A draft', location: '', jobTitle: '', pronouns: 'she/her', timezone: 'UTC', dateFormat: '', appearance: 'light' }
+              })
+          : kind === 'preferences'
+            ? () => operations.default.updateProfilePreferences({ ...identity, input: { appearance: 'dark' } })
+            : kind === 'avatar upload'
+              ? () => operations.default.updateAvatar({ ...identity, data: Buffer.from('unused image') })
+              : kind === 'avatar removal'
+                ? () => operations.default.clearAvatar(identity)
+                : () => operations.default.changePassword({ ...identity, current: 'old-password', newPassword: 'new-password' })
 
-    await expect(mutation()).rejects.toMatchObject({ status: 409, name: 'STALE_PROFILE' })
-    expect(findById).not.toHaveBeenCalled()
-    expect(updateUser).not.toHaveBeenCalled()
-    expect(refreshToken).not.toHaveBeenCalled()
-    expect(response.cookie).not.toHaveBeenCalled()
-  })
+      await expect(mutation()).rejects.toMatchObject({ status: 409, name: 'STALE_PROFILE' })
+      expect(findById).not.toHaveBeenCalled()
+      expect(updateUser).not.toHaveBeenCalled()
+      expect(refreshToken).not.toHaveBeenCalled()
+      expect(response.cookie).not.toHaveBeenCalled()
+    }
+  )
 
-  it.each([undefined, null, '', '10x', '0', 0, Number.MAX_SAFE_INTEGER + 1])('rejects a missing or malformed draft account identity (%s) before loading an account', async expectedAccountId => {
-    const { findById, updateUser, refreshToken } = installWiki()
-    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
-    await expect(operations.default.updateProfilePreferences({
-      requester, expectedAccountId, input: { appearance: 'dark' }
-    })).rejects.toMatchObject({ name: 'INVALID_PROFILE_ACCOUNT', status: 400 })
-    expect(findById).not.toHaveBeenCalled()
-    expect(updateUser).not.toHaveBeenCalled()
-    expect(refreshToken).not.toHaveBeenCalled()
-  })
+  it.each([undefined, null, '', '10x', '0', 0, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects a missing or malformed draft account identity (%s) before loading an account',
+    async expectedAccountId => {
+      const { findById, updateUser, refreshToken } = installWiki()
+      const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
+      await expect(
+        operations.default.updateProfilePreferences({
+          requester,
+          expectedAccountId,
+          input: { appearance: 'dark' }
+        })
+      ).rejects.toMatchObject({ name: 'INVALID_PROFILE_ACCOUNT', status: 400 })
+      expect(findById).not.toHaveBeenCalled()
+      expect(updateUser).not.toHaveBeenCalled()
+      expect(refreshToken).not.toHaveBeenCalled()
+    }
+  )
 
   it('allows an ordinary human principal to update only that principal and refresh its cookie', async () => {
     const { findById, refreshToken, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
     const response = { cookie: vi.fn(), set: vi.fn() }
 
-    await expect(operations.default.updateProfile({
-      requester,
-      expectedAccountId: 10,
-      input: { name: 'Changed', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', appearance: 'light' },
-      response
-    })).resolves.toBeUndefined()
+    await expect(
+      operations.default.updateProfile({
+        requester,
+        expectedAccountId: 10,
+        input: { name: 'Changed', location: '', jobTitle: '', pronouns: ' she/her ', timezone: 'UTC', dateFormat: '', appearance: 'light' },
+        response
+      })
+    ).resolves.toBeUndefined()
 
     expect(findById).toHaveBeenCalledWith(10)
     expect(updateUser).toHaveBeenCalledWith({
       id: 10,
       name: 'Changed',
       jobTitle: '',
+      pronouns: 'she/her',
       location: '',
       timezone: 'UTC',
       dateFormat: '',
@@ -221,6 +263,28 @@ describe('self-service profile identity', () => {
     })
     expect(refreshToken).toHaveBeenCalledWith(10)
     expect(response.cookie).toHaveBeenCalledWith('jwt', 'replacement-jwt', expect.any(Object))
+  })
+
+  it('omits absent pronouns from a self-service update and rejects malformed or oversized values before persistence', async () => {
+    const { updateUser, refreshToken } = installWiki()
+    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
+    const response = { cookie: vi.fn(), set: vi.fn() }
+    const input = { name: 'User', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', appearance: 'light' }
+    await operations.default.updateProfile({ requester, expectedAccountId: 10, input, response })
+    expect(updateUser).toHaveBeenCalledWith({ id: 10, ...input })
+    updateUser.mockClear()
+    refreshToken.mockClear()
+    response.cookie.mockClear()
+    for (const pronouns of [null, false, [], 'x'.repeat(256)]) {
+      await expect(operations.default.updateProfile({ requester, expectedAccountId: 10, input: { ...input, pronouns }, response })).rejects.toMatchObject({
+        name: 'INVALID_INPUT'
+      })
+    }
+    expect(updateUser).not.toHaveBeenCalled()
+    expect(refreshToken).not.toHaveBeenCalled()
+    expect(response.cookie).not.toHaveBeenCalled()
+    await operations.default.updateProfile({ requester, expectedAccountId: 10, input: { ...input, pronouns: '' }, response })
+    expect(updateUser).toHaveBeenCalledWith(expect.objectContaining({ id: 10, pronouns: '' }))
   })
 })
 describe('profile preferences operation', () => {
@@ -286,7 +350,9 @@ describe('account credential operation revocation', () => {
     const operations = await vi.importFresh('../../operations/authentication.ts', import.meta.url)
     const response = { cookie: vi.fn(), set: vi.fn() }
 
-    await expect(operations.default.loginChangePassword({ continuationToken: 'token', newPassword: 'new-password' }, { req: {}, res: response })).resolves.toEqual({
+    await expect(
+      operations.default.loginChangePassword({ continuationToken: 'token', newPassword: 'new-password' }, { req: {}, res: response })
+    ).resolves.toEqual({
       authenticated: true
     })
 

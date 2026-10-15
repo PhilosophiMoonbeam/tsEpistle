@@ -21,6 +21,7 @@ import { createContentExtensionRerenderHandler } from './content-extension-reren
 import { createPageWatchNotificationHandler, type PageWatchWikiContext } from './page-watch-notification.ts'
 import { cleanupSiteLogoRevisions, createSiteLogoProcessHandler } from './site-logo-process.ts'
 import { createAssetRelocationHandler } from './asset-relocation.ts'
+import { createStorageMutationHandler } from './storage-mutations.ts'
 
 const cleanupRetentionMs = 30 * 24 * 60 * 60 * 1_000
 const cleanupBatchSize = 500
@@ -41,6 +42,9 @@ export const cleanupDurableJobs: DurableJobHandler = async (job, { knex, signal 
         })
       })
     }
+    query.andWhere(storage => {
+      storage.whereNot('durableJobs.type', 'storage-mutation').orWhereNot('durableJobs.version', 1).orWhere('durableJobs.state', 'succeeded')
+    })
     const candidates = await query
       .clone()
       .select<{ id: string }[]>('id')
@@ -248,6 +252,7 @@ export const createDurableJobHandlers = (
   Object.freeze({
     'locale-package@1': createLocalePackageHandler(),
     'storage-action@1': createStorageActionHandler(),
+    'storage-mutation@1': createStorageMutationHandler(),
     'cleanup-durable-jobs@1': cleanupDurableJobs,
     'cleanup-site-logo@1': cleanupSiteLogoRevisions,
     'process-site-logo@1': createSiteLogoProcessHandler(1),

@@ -1,3 +1,4 @@
+import { boundedProviderProfile, type ProviderProfileFields } from '../modules/authentication/provider-profile.ts'
 import { assertSavedPassword } from '../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { loadEnrollmentPolicy } from '../helpers/authentication-provisioning.ts'
@@ -218,6 +219,7 @@ interface UpdateUserOptions {
   groups?: number[]
   location?: string
   jobTitle?: string
+  pronouns?: string
   timezone?: string
   dateFormat?: string
   timeFormat?: UserTimeFormat
@@ -238,6 +240,7 @@ interface UserPatch {
   password?: string
   location?: string
   jobTitle?: string
+  pronouns?: string
   timezone?: string
   dateFormat?: string
   timeFormat?: UserTimeFormat
@@ -295,6 +298,7 @@ export default class User extends Model {
   declare tfaSecret: string | null
   declare jobTitle: string
   declare location: string
+  declare pronouns: string
   declare timezone: string
   declare dateFormat: string
   declare timeFormat: UserTimeFormat
@@ -338,6 +342,7 @@ export default class User extends Model {
         tfaSecret: { type: ['string', 'null'] },
         jobTitle: { type: 'string' },
         location: { type: 'string' },
+        pronouns: { type: 'string', maxLength: 255 },
         pictureUrl: { type: ['string', 'null'] },
         timezone: { type: 'string' },
         dateFormat: { type: 'string' },
@@ -475,13 +480,17 @@ export default class User extends Model {
     email,
     name,
     picture,
-    pictureData
+    pictureData,
+    providerProfile,
+    providerId
   }: {
     userId: number
     email: string
     name: string
     picture: unknown
     pictureData: Buffer | undefined
+    providerProfile?: ProviderProfileFields
+    providerId?: string
   }): Promise<User> {
     return wiki.models.knex.transaction(async trx => {
       const userQuery = trx<User>('users').where({ id: userId })
@@ -501,7 +510,9 @@ export default class User extends Model {
           })
       const patch: Partial<User> = {
         email,
-        name
+        name,
+        ...boundedProviderProfile(providerProfile),
+        ...(providerId === undefined ? {} : { providerId })
       }
       if (!avatarOverride) patch.pictureUrl = pictureUrl
       await trx<User>('users').where({ id: userId }).update(patch)
@@ -585,11 +596,6 @@ export default class User extends Model {
         providerId: null,
         providerKey
       })
-      if (user) {
-        user = await user.$query().patchAndFetch({
-          providerId: _.toString(profile.id)
-        })
-      }
     }
 
     // Parse display name
@@ -618,7 +624,9 @@ export default class User extends Model {
         email: primaryEmail,
         name: displayName,
         picture: profile.picture,
-        pictureData
+        pictureData,
+        providerProfile: boundedProviderProfile(profile.providerProfile),
+        ...(user.providerId === null ? { providerId: _.toString(profile.id) } : {})
       })
       return user
     }
@@ -644,6 +652,7 @@ export default class User extends Model {
           providerId: _.toString(profile.id),
           email: primaryEmail,
           name: displayName,
+          ...boundedProviderProfile(profile.providerProfile),
           pictureUrl: pictureUrl,
           localeCode: wiki.config.lang.code,
           defaultEditor: 'markdown',
@@ -1227,6 +1236,7 @@ export default class User extends Model {
     groups,
     location,
     jobTitle,
+    pronouns,
     timezone,
     dateFormat,
     timeFormat,
@@ -1242,6 +1252,7 @@ export default class User extends Model {
     if (underlineLinks !== undefined && typeof underlineLinks !== 'boolean') throw new wiki.Error.InputInvalid()
     if (contentTextSize !== undefined && !UserContentTextSizeSchema.safeParse(contentTextSize).success) throw new wiki.Error.InputInvalid()
     if (communicationLocale !== undefined && !UserCommunicationLocaleSchema.safeParse(communicationLocale).success) throw new wiki.Error.InputInvalid()
+    if (pronouns !== undefined && (typeof pronouns !== 'string' || pronouns.trim().length > 255)) throw new wiki.Error.InputInvalid()
     return wiki.models.knex.transaction(async trx => {
       const usr = await wiki.models.users.query(trx).findById(id).forUpdate()
       if (!usr) {
@@ -1309,6 +1320,9 @@ export default class User extends Model {
       }
       if (typeof jobTitle === 'string' && jobTitle !== usr.jobTitle) {
         usrData.jobTitle = _.trim(jobTitle)
+      }
+      if (typeof pronouns === 'string' && pronouns !== usr.pronouns) {
+        usrData.pronouns = pronouns.trim()
       }
       if (typeof timezone === 'string' && !_.isEmpty(timezone) && timezone !== usr.timezone) {
         usrData.timezone = timezone

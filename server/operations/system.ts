@@ -14,12 +14,10 @@ import type { ProductMetadata } from '../../shared/product.ts'
 
 import { requireSystemAuthority } from '../helpers/system-authority.ts'
 import type { SystemRequester } from '../helpers/system-authority.ts'
+import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
+import { isApiPrincipal } from '../helpers/api-principal.ts'
 import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
-import {
-  admitPageRenderEffect,
-  readPageRenderEffectStatus,
-  supersedeStalePageRenderEffects
-} from '../core/page-mutation-outbox.ts'
+import { admitPageRenderEffect, readPageRenderEffectStatus, supersedeStalePageRenderEffects } from '../core/page-mutation-outbox.ts'
 import type { PageProjectionLocation, PageRenderEffectStatusView } from '../core/page-mutation-outbox.ts'
 const { ApplicationError } = errors
 
@@ -144,7 +142,7 @@ const systemRuntimeGlobal = globalThis as unknown as SystemRuntimeGlobal
 const wiki = systemRuntimeGlobal.WIKI
 const getosAsync = promisify(getos) as unknown as () => Promise<OperatingSystemInfo>
 
-const getSummary = async () => {
+const getSummary = async (requester: PagePrincipal) => {
   const product = ProductMetadataSchema.parse(wiki.product)
   const [groups, pages, users, tags] = await Promise.all([
     wiki.models.groups.query().count('* as total').first(),
@@ -152,8 +150,31 @@ const getSummary = async () => {
     wiki.models.users.query().count('* as total').first(),
     wiki.models.tags.query().count('* as total').first()
   ])
+  const protectedTotals = await wiki.models.knex.transaction(
+    async tx => {
+      try {
+        const apiKey = isApiPrincipal(requester) ? { id: requester.api, groupId: requester.grp, expiresAt: requester.exp ?? null } : undefined
+        if (principalId(requester) === null && !apiKey) return { assetsTotal: null, assetsBytes: null, commentsTotal: null }
+        await requireSystemAuthority(tx, { user: requester, ...(apiKey ? { apiKey } : {}) })
+      } catch (error) {
+        if (error instanceof ApplicationError && error.status === 403) return { assetsTotal: null, assetsBytes: null, commentsTotal: null }
+        throw error
+      }
+      const [assets, comments] = await Promise.all([
+        tx('assets').count('* as total').sum('fileSize as bytes').first(),
+        tx('comments').where('isHidden', false).whereRaw('length(trim(??)) > 0', ['content']).count('* as total').first()
+      ])
+      return {
+        assetsTotal: _.toSafeInteger(assets?.total),
+        assetsBytes: _.toSafeInteger(assets?.bytes),
+        commentsTotal: _.toSafeInteger(comments?.total)
+      }
+    },
+    { isolationLevel: 'repeatable read', readOnly: true }
+  )
   return {
     product,
+    ...protectedTotals,
     currentVersion: product.version,
     latestVersion: null,
     latestVersionReleaseDate: null,
@@ -175,8 +196,8 @@ const getOperatingSystem = async () => {
 
 const getPlatform = async () => ((await fs.pathExists('/.dockerenv')) ? 'docker' : os.platform())
 
-const getInfo = async () => ({
-  ...(await getSummary()),
+const getInfo = async (requester: PagePrincipal) => ({
+  ...(await getSummary(requester)),
   configFile: path.join(process.cwd(), 'config.yml'),
   cpuCores: os.cpus().length,
   dbHost: wiki.config.db.host,

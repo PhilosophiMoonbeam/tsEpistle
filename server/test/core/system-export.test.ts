@@ -287,6 +287,9 @@ describe('system export pipelines', () => {
           id: 7,
           name: 'Ada',
           email: 'ada@example.test',
+          location: 'Tallinn',
+          jobTitle: 'Editor',
+          pronouns: 'she/her',
           password: '$2b$12$password-hash',
           tfaSecret: 'totp-secret',
           authVersion: 4,
@@ -306,7 +309,11 @@ describe('system export pipelines', () => {
       apiKeys: [{ name: 'Automation', expiration: 'P30D', isRevoked: false, validUntil: '2027-01-01' }]
     })
     expect(settingsOutput.apiKeys[0]).not.toHaveProperty('key')
-    const output = `${fs.readFileSync(path.join(directory, 'settings.json'), 'utf8')}${JSON.stringify(readGzipJson(path.join(directory, 'users.json.gz')))}`
+    const usersOutput = readGzipJson(path.join(directory, 'users.json.gz'))
+    expect(usersOutput).toEqual([
+      expect.objectContaining({ id: 7, name: 'Ada', email: 'ada@example.test', location: 'Tallinn', jobTitle: 'Editor', pronouns: 'she/her' })
+    ])
+    const output = `${fs.readFileSync(path.join(directory, 'settings.json'), 'utf8')}${JSON.stringify(usersOutput)}`
     for (const secret of Object.values(secrets)) expect(output).not.toContain(secret)
     expect(output).not.toContain('password-hash')
     expect(output).not.toContain('totp-secret')

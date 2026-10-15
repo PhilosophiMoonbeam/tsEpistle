@@ -97,6 +97,9 @@ export type MailPageWatchAction =
   | 'changed-visibility'
   | 'transferred-ownership'
   | 'changed'
+  | 'watched-comment'
+  | 'comment-reply'
+  | 'mention'
 
 /** Non-translated values interpolated into a fixed template by the mail runtime. */
 export interface MailTemplateData {
@@ -181,7 +184,7 @@ export const MAIL_TEMPLATES = [
       kicker: '',
       content: '{{event}}',
       buttonText: 'Open page',
-      footer: 'You receive these updates because you watch this page. Manage your notification preferences in the workspace.'
+      footer: 'You receive these updates through your page watch or account notification preferences. Manage your notification preferences in the workspace.'
     },
     actions: {
       created: { key: 'pageWatch.actions.created', english: '{{actor}} created this page' },
@@ -191,6 +194,9 @@ export const MAIL_TEMPLATES = [
       deleted: { key: 'common.watchEventDeleted', english: '{{actor}} deleted this page' },
       'changed-visibility': { key: 'common.watchEventVisibilityChanged', english: '{{actor}} changed visibility for this page' },
       'transferred-ownership': { key: 'common.watchEventOwnershipTransferred', english: '{{actor}} transferred ownership of this page' },
+      'watched-comment': { key: 'pageWatch.actions.watchedComment', english: '{{actor}} commented on this page' },
+      'comment-reply': { key: 'pageWatch.actions.commentReply', english: '{{actor}} replied to your discussion' },
+      mention: { key: 'pageWatch.actions.mention', english: '{{actor}} mentioned you in a discussion' },
       changed: { key: 'common.watchEventChanged', english: '{{actor}} changed this page' }
     },
     htmlText: {
@@ -212,14 +218,16 @@ export const MAIL_TEMPLATES = [
       kicker: '',
       title: 'This is a test email',
       introduction: 'If you are reading it, {{siteName}} can send mail through the SMTP server it is configured with.',
-      confirmation: 'Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration.',
+      confirmation:
+        'Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration.',
       footer: 'You are receiving this because somebody sent a test email from the administration area.'
     },
     htmlText: {
       'Delivery check': 'kicker',
       'A message from your workspace': 'title',
       'An administrator requested this test of the mail configuration for <strong><%- siteTitle %></strong>.': 'introduction',
-      '<p style="margin:0;font-size:15px;line-height:1.75">Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration.</p>': 'confirmation',
+      '<p style="margin:0;font-size:15px;line-height:1.75">Receiving this message confirms that this test reached your mailbox. Future messages may still be affected by provider policy, filtering, or changes to the configuration.</p>':
+        'confirmation',
       'No account action is required.': 'footer'
     }
   }

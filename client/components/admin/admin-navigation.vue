@@ -98,6 +98,13 @@
                 @click="openCopy"
                 >{{ $t('admin:navigation.copyLocale') }}</v-btn
               ><v-btn
+                data-testid="navigation-move-repair-open"
+                variant="text"
+                prepend-icon="mdi-link-variant"
+                :disabled="locked || dirty || !draft.tree.some(tree => tree.locale === currentLocale)"
+                @click="openMoveRepair"
+                >Repair moved page links</v-btn
+              ><v-btn
                 variant="text"
                 class="navigation-preview-jump"
                 @click="
@@ -529,6 +536,70 @@
       path="home"
       :locale="currentLocale"
     />
+    <page-selector
+      v-model="repairPickerOpen"
+      mode="select"
+      :must-exist="true"
+      :allow-locale-change="true"
+      :open-handler="selectMovedPage"
+      path="home"
+      :locale="currentLocale"
+    />
+    <v-dialog v-model="repairOpen" :persistent="busy" max-width="900" scrollable @update:model-value="!$event && closeMoveRepair()">
+      <v-card title="Repair moved page links" data-testid="navigation-move-repair">
+        <v-card-text>
+          <p>Review links in the {{ repairMenuLocale }} custom menu after the selected page's latest recorded move. Only selected destinations change. Labels, icons, audiences, order and menu locale stay unchanged. Page content is not edited.</p>
+          <p class="navigation-note mt-3">Only explicit locale-qualified public paths are supported. External links, relative or ambiguous paths and unrelated prefixes are left untouched.</p>
+          <p v-if="repairLoading" role="status" class="mt-4">Checking the current page, move history and saved navigation…</p>
+          <template v-if="moveReview">
+            <dl class="mt-4">
+              <dt>Recorded old public identity</dt><dd class="navigation-move-target"><code>/{{ moveReview.oldIdentity.locale }}/{{ moveReview.oldIdentity.path }}</code></dd>
+              <dt>Current public identity</dt><dd class="navigation-move-target"><code>/{{ moveReview.newIdentity.locale }}/{{ moveReview.newIdentity.path }}</code></dd>
+              <dt>Current page revision</dt><dd>{{ moveReview.sourceRevision }}</dd>
+            </dl>
+            <p v-if="!moveReview.items.length" role="status" class="mt-4">No supported links to that old identity were found in this menu. Nothing will be saved.</p>
+            <v-checkbox
+              v-for="item in moveReview.items"
+              :key="navigationRepairItemKey(item)"
+              v-model="repairSelected"
+              :value="navigationRepairItemKey(item)"
+              :disabled="busy || repairStale"
+              hide-details
+              data-testid="navigation-move-repair-item"
+            >
+              <template #label><span class="navigation-move-target">{{ item.locale }} · {{ item.itemId }}<br><code>{{ item.oldTarget }}</code><br>→ <code>{{ item.newTarget }}</code></span></template>
+            </v-checkbox>
+            <v-textarea
+              v-model="repairReason"
+              label="Administrative reason"
+              variant="outlined"
+              rows="2"
+              maxlength="1000"
+              hint="3–1000 characters"
+              persistent-hint
+              :disabled="busy || repairStale"
+              class="mt-5"
+              data-testid="navigation-move-repair-reason"
+            />
+          </template>
+          <v-alert v-if="repairError" type="error" variant="tonal" class="mt-4" role="alert">{{ repairError }}</v-alert>
+        </v-card-text>
+        <v-card-actions class="navigation-move-actions">
+          <v-btn :disabled="busy" @click="closeMoveRepair">Cancel</v-btn>
+          <v-btn v-if="!repairStale" :disabled="busy || repairLoading" @click="chooseAnotherMovedPage">Choose another page</v-btn>
+          <v-spacer />
+          <v-btn v-if="repairStale" :disabled="busy" @click="reloadMoveRepair">Reload and review again</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="busy"
+            :disabled="busy || repairLoading || repairStale || !moveReview || !repairSelected.length || repairReason.trim().length < 3"
+            data-testid="navigation-move-repair-save"
+            @click="commitMoveRepair"
+          >Publish selected link repairs</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
     <v-dialog v-model="copyOpen" max-width="580"
       ><v-card :title="$t('admin:navigation.copyLocaleMenu')"
         ><v-card-text
@@ -662,7 +733,10 @@ import {
   fetchNavigationWorkspace,
   saveNavigationWorkspace,
   retryNavigationRuntime,
+  reviewMovedNavigationPage,
+  repairMovedNavigationPage,
 } from "../../helpers/navigation-workspace-api.ts";
+import { navigationRepairItemKey, type NavigationMoveReview } from "../../../shared/navigation-move-repair.ts";
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
@@ -696,6 +770,11 @@ const copySource = ref(""),
   copyMode = ref<"append" | "replace">("append"),
   previewAudience = ref("visitor"),
   previewGroups = ref<number[]>([]);
+const repairOpen = ref(false), repairPickerOpen = ref(false), repairLoading = ref(false),
+  moveReview = ref<NavigationMoveReview | null>(null), repairSelected = ref<string[]>([]),
+  repairReason = ref(""), repairError = ref(""), repairStale = ref(false),
+  repairMenuLocale = ref(""), repairPageId = ref(0);
+let repairOwner = 0, repairController: AbortController | undefined;
 const sections = [
   { key: "structure", title: t('admin:navigation.menuStructure') },
   { key: "display", title: t('admin:navigation.displayLocales') },
@@ -746,6 +825,8 @@ const locked = computed(
     busy.value ||
     initializing.value ||
     stale.value ||
+    repairOpen.value ||
+    repairPickerOpen.value ||
     !saved.value,
 );
 const changedFields = computed(() =>
@@ -841,6 +922,7 @@ watch(currentLocale, () => {
   selectedId.value = currentItems.value[0]?.id || "";
 });
 async function load() {
+  closeMoveRepair();
   if (busy.value) return;
   const seq = ++sequence;
   loading.value = true;
@@ -951,6 +1033,101 @@ function moveItem(direction: number) {
 function selectPage(value: { path: string; locale: string; visibility?: "public" | "private" }) {
   if (!locked.value && selected.value?.kind === "link")
     selected.value.target = `${value.visibility === "private" ? "/_private" : ""}/${value.locale}/${value.path}`;
+}
+function closeMoveRepair() {
+  if (busy.value) return;
+  repairOwner++;
+  repairController?.abort();
+  repairController = undefined;
+  repairOpen.value = false;
+  repairPickerOpen.value = false;
+  repairLoading.value = false;
+  moveReview.value = null;
+  repairSelected.value = [];
+  repairReason.value = "";
+  repairError.value = "";
+  repairStale.value = false;
+}
+function openMoveRepair() {
+  if (locked.value || dirty.value || disposed) return;
+  repairMenuLocale.value = currentLocale.value;
+  repairPickerOpen.value = true;
+}
+function chooseAnotherMovedPage() {
+  closeMoveRepair();
+  openMoveRepair();
+}
+async function selectMovedPage(value: { id: number; visibility?: "public" | "private" }) {
+  if (disposed || busy.value || loading.value || stale.value || dirty.value || !repairPickerOpen.value) return;
+  repairOpen.value = true;
+  repairPickerOpen.value = false;
+  moveReview.value = null;
+  repairSelected.value = [];
+  repairReason.value = "";
+  repairError.value = "";
+  if (value.visibility !== "public" || !value.id) {
+    repairError.value = "Choose a currently readable, published, unlocked public page with a recorded move.";
+    return;
+  }
+  repairPageId.value = value.id;
+  const owner = ++repairOwner;
+  repairController?.abort();
+  const controller = new AbortController();
+  repairController = controller;
+  repairLoading.value = true;
+  try {
+    const result = await reviewMovedNavigationPage(value.id, repairMenuLocale.value, controller.signal);
+    if (disposed || owner !== repairOwner || controller.signal.aborted || !repairOpen.value) return;
+    moveReview.value = result;
+    if (result.fingerprint !== saved.value?.fingerprint) {
+      repairStale.value = true;
+      repairError.value = "Saved navigation changed. Reload and review again before publishing.";
+    }
+  } catch (error) {
+    if (!disposed && owner === repairOwner && !controller.signal.aborted) {
+      repairError.value = errorMessage(error);
+      const status = error && typeof error === "object" ? Reflect.get(error, "status") : 0;
+      repairStale.value = !status || [401, 403, 409].includes(Number(status)) || Number(status) >= 500;
+    }
+  } finally {
+    if (!disposed && owner === repairOwner) repairLoading.value = false;
+  }
+}
+async function reloadMoveRepair() {
+  if (busy.value) return;
+  const pageId = repairPageId.value, locale = repairMenuLocale.value;
+  await load();
+  if (disposed || stale.value || !saved.value) return;
+  repairMenuLocale.value = locale;
+  repairPickerOpen.value = true;
+  await selectMovedPage({ id: pageId, visibility: "public" });
+}
+async function commitMoveRepair() {
+  if (disposed || busy.value || repairLoading.value || repairStale.value || !moveReview.value || !repairSelected.value.length || repairReason.value.trim().length < 3) return;
+  const owner = repairOwner, reviewed = moveReview.value;
+  const selected = reviewed.items.filter(item => repairSelected.value.includes(navigationRepairItemKey(item))).map(item => ({ locale: item.locale, itemId: item.itemId }));
+  busy.value = true;
+  repairError.value = "";
+  const controller = new AbortController();
+  repairController = controller;
+  try {
+    const result = await repairMovedNavigationPage(reviewed, selected, repairReason.value.trim(), controller.signal);
+    if (disposed || owner !== repairOwner || controller.signal.aborted) return;
+    busy.value = false;
+    closeMoveRepair();
+    attention.value = result.activation !== "applied";
+    notice.value = attention.value ? "Selected links saved; runtime activation needs attention." : "Selected links repaired and published to readers.";
+    await load();
+  } catch (error) {
+    if (!disposed && owner === repairOwner && !controller.signal.aborted) {
+      const status = error && typeof error === "object" ? Reflect.get(error, "status") : 0;
+      repairStale.value = !status || [401, 403, 409].includes(Number(status)) || Number(status) >= 500;
+      repairError.value = errorMessage(error) + (!status ? " The save outcome is unconfirmed. Reload before repeating it." : "");
+      if (repairStale.value) stale.value = true;
+    }
+  } finally {
+    if (!disposed && owner === repairOwner) busy.value = false;
+  }
 }
 function editLocale(code: string) {
   currentLocale.value = code;
@@ -1133,14 +1310,15 @@ const date = (value: string) => {
 const canLeave = async () =>
   !busy.value &&
   !initializing.value &&
-  ((!dirty.value && !(reviewing.value && reason.value)) ||
+  ((!dirty.value && !(reviewing.value && reason.value) && !(repairOpen.value && (repairReason.value || repairSelected.value.length))) ||
     (await confirmDiscard(t('admin:navigation.discardUnsavedNavigationChanges'))));
 function beforeUnload(event: BeforeUnloadEvent) {
   if (
     busy.value ||
     initializing.value ||
     dirty.value ||
-    (reviewing.value && reason.value)
+    (reviewing.value && reason.value) ||
+    (repairOpen.value && (repairReason.value || repairSelected.value.length))
   ) {
     event.preventDefault();
     event.returnValue = "";
@@ -1155,7 +1333,13 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true;
   sequence++;
+  repairOwner++;
+  repairController?.abort();
   window.removeEventListener("beforeunload", beforeUnload);
 });
 </script>
 <style lang="scss" src="./navigation-workspace.scss"></style>
+<style scoped>
+.navigation-move-target { overflow-wrap: anywhere; min-width: 0; white-space: normal; }
+.navigation-move-actions { flex-wrap: wrap; }
+</style>

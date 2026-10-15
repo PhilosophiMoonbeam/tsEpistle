@@ -142,6 +142,7 @@ export type Profile = {
   isVerified: boolean
   location: string
   jobTitle: string
+  pronouns: string
   timezone: string
   dateFormat: string
   timeFormat: UserTimeFormat
@@ -162,6 +163,7 @@ type ProfileUpdateInput = {
   handle: string
   location: string
   jobTitle: string
+  pronouns?: string
   timezone: string
   dateFormat: string
   timeFormat: UserTimeFormat
@@ -187,6 +189,8 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     typeof payload.isVerified !== 'boolean' ||
     typeof payload.location !== 'string' ||
     typeof payload.jobTitle !== 'string' ||
+    typeof payload.pronouns !== 'string' ||
+    payload.pronouns.length > 255 ||
     typeof payload.timezone !== 'string' ||
     typeof payload.dateFormat !== 'string' ||
     typeof payload.appearance !== 'string' ||
@@ -216,6 +220,7 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     isVerified: payload.isVerified,
     location: payload.location,
     jobTitle: payload.jobTitle,
+    pronouns: payload.pronouns,
     timezone: payload.timezone,
     dateFormat: payload.dateFormat,
     timeFormat,
@@ -278,7 +283,11 @@ export async function uploadProfileAvatar(
   return normalizeProfileAvatarMutation(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function removeProfileAvatar(fetchImpl: FetchImpl, expectedAccountId: number, fallbackMessage = 'Profile avatar removal failed'): Promise<ProfileAvatarMutationResult> {
+export async function removeProfileAvatar(
+  fetchImpl: FetchImpl,
+  expectedAccountId: number,
+  fallbackMessage = 'Profile avatar removal failed'
+): Promise<ProfileAvatarMutationResult> {
   const response = await sameOriginJsonFetch(fetchImpl, '/_api/users/profile/avatar', {
     method: 'DELETE',
     credentials: 'same-origin',
@@ -287,7 +296,14 @@ export async function removeProfileAvatar(fetchImpl: FetchImpl, expectedAccountI
   return normalizeProfileAvatarMutation(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function sendProfileRequest(fetchImpl: FetchImpl, expectedAccountId: number, path: string, method: string, body: unknown, fallbackMessage: string): Promise<string> {
+async function sendProfileRequest(
+  fetchImpl: FetchImpl,
+  expectedAccountId: number,
+  path: string,
+  method: string,
+  body: unknown,
+  fallbackMessage: string
+): Promise<string> {
   const response = await sameOriginJsonFetch(fetchImpl, `/_api/users/profile${path}`, {
     method,
     credentials: 'same-origin',
@@ -305,7 +321,12 @@ async function sendProfileRequest(fetchImpl: FetchImpl, expectedAccountId: numbe
   return payload.message
 }
 
-export function updateProfile(fetchImpl: FetchImpl, expectedAccountId: number, input: ProfileUpdateInput, fallbackMessage = 'Profile update failed'): Promise<string> {
+export function updateProfile(
+  fetchImpl: FetchImpl,
+  expectedAccountId: number,
+  input: ProfileUpdateInput,
+  fallbackMessage = 'Profile update failed'
+): Promise<string> {
   return sendProfileRequest(fetchImpl, expectedAccountId, '', 'PATCH', input, fallbackMessage)
 }
 export function updateProfilePreferences(
@@ -317,6 +338,12 @@ export function updateProfilePreferences(
   return sendProfileRequest(fetchImpl, expectedAccountId, '/preferences', 'PATCH', input, fallbackMessage)
 }
 
-export function changeProfilePassword(fetchImpl: FetchImpl, expectedAccountId: number, current: string, newPassword: string, fallbackMessage = 'Password change failed'): Promise<string> {
+export function changeProfilePassword(
+  fetchImpl: FetchImpl,
+  expectedAccountId: number,
+  current: string,
+  newPassword: string,
+  fallbackMessage = 'Password change failed'
+): Promise<string> {
   return sendProfileRequest(fetchImpl, expectedAccountId, '/password', 'POST', { current, newPassword }, fallbackMessage)
 }

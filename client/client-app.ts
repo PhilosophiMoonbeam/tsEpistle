@@ -22,6 +22,7 @@ import {
   type OfflineSyncResult,
   type OfflineSyncService
 } from './helpers/offline-sync.ts'
+import { applyCodeTheme } from './helpers/code-appearance.ts'
 
 const OFFLINE_SYNC_COORDINATOR_KEY = 'offline-sync-coordinator'
 const offlineSyncCoordinator = shallowRef<OfflineSyncCoordinator | null>(null)
@@ -280,6 +281,7 @@ const initializeClientApp = async (): Promise<void> => {
     return
 
   applyReaderLayout(siteConfig.readerLayout)
+  applyCodeTheme(siteConfig.codeTheme)
   const applyReadingPreferences = (): void => {
     const root = document.documentElement
     root.dataset.readerMotion = wikiStore.user.reduceMotion ? 'reduced' : 'default'

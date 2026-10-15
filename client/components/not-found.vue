@@ -44,6 +44,7 @@
               :prepend-icon='$vuetify.locale.isRtl ? "mdi-arrow-right" : "mdi-arrow-left"'
               @click='goBack'
             ) {{$t('notfound.goback')}}
+          AuthorizedFolderChildren(v-if='folderLocale && folderPath', :locale='folderLocale', :path='folderPath')
     search-results
 </template>
 
@@ -52,10 +53,14 @@ import { computed, nextTick } from 'vue'
 import { emitSearchFocus } from '../helpers/search-navigation-events'
 import { goBackOrHome, safeEditorHref, searchQueryFromPath } from '../helpers/state-page-actions'
 import { wikiStore } from '../store/index.ts'
+import AuthorizedFolderChildren from './common/authorized-folder-children.vue'
 
-const { createHref = '' } = defineProps<{
+const { createHref = '', folderLocale = '', folderPath = '' } = defineProps<{
   /** Set by the server only when the signed-in user may create a page at this path. */
   createHref?: string
+  /** Canonical public scope; withheld for protected, unreadable and private pages. */
+  folderLocale?: string
+  folderPath?: string
 }>()
 
 const requestedPath = typeof window === 'undefined' ? '' : safeDecode(window.location.pathname)

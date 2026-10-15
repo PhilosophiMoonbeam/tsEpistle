@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts
 import type PageModel from '../../models/pages.ts'
 import errors from '../../helpers/error.ts'
 
-
 const localeRelationMovePatch = vi.fn(async () => ({}))
 const writeOutboxEvent = vi.fn(async () => undefined)
 const enqueuePageMutationEffects = vi.fn(async () => undefined)
@@ -63,6 +62,7 @@ beforeEach(async () => {
   projectionQuery.forUpdate.mockReturnValue(projectionQuery)
   const knexTransaction = Object.assign(
     vi.fn((table: string) => {
+      if (table === 'storage') return { where: () => ({ orderBy: () => ({ forShare: () => ({ select: async () => [] }) }) }) }
       if (table !== 'pages') throw new Error(`Unexpected transaction table ${table}`)
       return projectionQuery
     }),
@@ -116,7 +116,6 @@ beforeEach(async () => {
       knex,
       pageHistory: { addVersion: vi.fn(async () => undefined) },
       pages: {},
-      storage: { pageEvent: vi.fn(async () => undefined) },
       tags: {}
     },
     scheduler: { registerJob: vi.fn() }
@@ -172,7 +171,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       sourceRevision: '1',
       renderedSourceRevision: '1',
       tags: oldTags,
-      $relatedQuery: vi.fn(async (relation: string) => relation === 'tags' ? oldTags : []),
+      $relatedQuery: vi.fn(async (relation: string) => (relation === 'tags' ? oldTags : [])),
       title: 'Moved page',
       toc: '[]',
       visibility: 'private'

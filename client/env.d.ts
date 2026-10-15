@@ -10,6 +10,7 @@ import type { ProductMetadata } from '../shared/product.ts'
 import type { SiteBannerConfig } from '../shared/site-banner.ts'
 import type { LogoEffectDescriptor } from '../shared/site-logo.ts'
 import type { ThemeColors } from '../shared/theme-colors.ts'
+import type { CodeTheme } from '../shared/theme-policy.ts'
 import type { helpers } from './helpers/index.ts'
 import type boot from './modules/boot.ts'
 
@@ -20,6 +21,7 @@ export type SiteConfig = {
   themeColors: ThemeColors
   initialAppearance?: 'light' | 'dark' | 'system'
   readerLayout?: import('../shared/theme-policy.ts').ReaderLayout
+  codeTheme?: CodeTheme
   tocPosition: string
   lang: string
   localeRevision?: string

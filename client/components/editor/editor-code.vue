@@ -7,6 +7,16 @@
             v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:editorCode.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `primary` : undefined') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
+        v-tooltip(location='right')
+          template(v-slot:activator='{ props }')
+            v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertCodeBlock`)', @click='sourceAuthoring?.insertCodeBlock()').mx-0
+              v-icon mdi-code-braces
+          span {{$t('editor:markup.insertCodeBlock')}}
+        v-tooltip(location='right')
+          template(v-slot:activator='{ props }')
+            v-btn.mt-3(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.tableHelper`)', @click='sourceAuthoring?.insertTable()').mx-0
+              v-icon mdi-table
+          span {{$t('editor:markup.tableHelper')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right")
@@ -29,9 +39,12 @@
 
 <script lang='ts'>
 import { defineComponent, markRaw } from 'vue'
+import type { Raw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
+import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
+import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import type { ContentInsertOptions, LineInsertOptions, MultiLineInsertOptions } from './common/editor-types'
 import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
 import { EditorAdapterController } from './common/editor-adapter'
@@ -43,7 +56,6 @@ const HTML_ESCAPE_REPLACEMENTS: Record<string, string> = {
   '"': '&quot;',
   "'": '&#39;'
 }
-const IMAGE_ALIGNMENTS = new Set(['left', 'center', 'right', 'abstopright'])
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, character => HTML_ESCAPE_REPLACEMENTS[character] ?? character)
@@ -59,6 +71,8 @@ export default defineComponent({
     return {
       editorAdapter: null as EditorAdapterController | null,
       cm: null as TextEditorHandle | null,
+      imageAuthoring: null as Raw<ReturnType<typeof createSourceImageAuthoring>> | null,
+      sourceAuthoring: null as Raw<ReturnType<typeof createSourceAuthoring>> | null,
       cursorPos: { ch: 0, line: 0 } as TextPosition
     }
   },
@@ -99,6 +113,7 @@ export default defineComponent({
       wikiStore.editor.content = ''
     },
     toggleModal(key: string) {
+      if (key === 'editorModalMedia' && !this.activeModal && this.imageAuthoring?.open()) return
       this.activeModal = (this.activeModal === key) ? '' : key
     },
     handleEditorSaveConflict() {
@@ -109,19 +124,9 @@ export default defineComponent({
     },
     handleEditorInsert(opts: EditorInsertPayload) {
       switch (opts.kind) {
-        case 'IMAGE': {
-          if (typeof opts.path !== 'string') break
-          const text = typeof opts.text === 'string' ? opts.text : ''
-          let img = this.$t('editor:editorCode.imgSrcAlt', { path: escapeHtml(opts.path), text: escapeHtml(text), interpolation: { escapeValue: false } })
-          if (typeof opts.align === 'string' && IMAGE_ALIGNMENTS.has(opts.align)) {
-            img += ` class="align-${opts.align}"`
-          }
-          img += ` />`
-          this.insertAtCursor({
-            content: img
-          })
+        case 'IMAGE':
+          this.imageAuthoring?.insert(opts)
           break
-        }
         case 'BINARY': {
           if (typeof opts.path !== 'string') break
           const text = typeof opts.text === 'string' && opts.text.length > 0 ? opts.text : opts.path
@@ -189,12 +194,21 @@ export default defineComponent({
     if (!(parent instanceof HTMLElement)) {
       throw new Error(this.$t('editor:editorCode.codemirrorEditorHostUnavailable'))
     }
+    this.imageAuthoring = markRaw(createSourceImageAuthoring(
+      'html', () => wikiStore.user.authenticated,
+      () => `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    ))
+    this.sourceAuthoring = markRaw(createSourceAuthoring(
+      'html', () => wikiStore.user.authenticated,
+      () => `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    ))
     const cm = new TextEditor({
       parent,
       ariaLabel: this.$t('editor:editorCode.htmlSource'),
       dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
       language: html(),
+      extensions: [this.imageAuthoring.extension, this.sourceAuthoring.extension],
       onChange: value => {
         wikiStore.editor.content = value
         this.editorAdapter?.noteTextChange()
@@ -222,6 +236,10 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount() {
+    this.imageAuthoring?.destroy()
+    this.imageAuthoring = null
+    this.sourceAuthoring?.destroy()
+    this.sourceAuthoring = null
     const adapter = this.editorAdapter
     if (adapter) {
       this.$emit('editor-adapter-clear', adapter)

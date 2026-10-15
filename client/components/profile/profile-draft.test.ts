@@ -1,20 +1,34 @@
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
 import type { Profile } from '../../helpers/users-api.ts'
-import {
-  changedProfileFields,
-  profileDraftIssues,
-  restoreProfileDraft,
-  restoreProfileField,
-  snapshotProfileDraft,
-  timezoneOptions
-} from './profile-draft.ts'
+import { changedProfileFields, profileDraftIssues, restoreProfileDraft, restoreProfileField, snapshotProfileDraft, timezoneOptions } from './profile-draft.ts'
 
 const profile = (overrides: Partial<Profile> = {}): Profile => ({
-  id: 1, email: 'reader@example.test', name: 'Reader', handle: 'reader', providerKey: 'local',
-  providerName: 'Local', pictureUrl: null, isSystem: false, isVerified: true, location: '', jobTitle: '',
-  timezone: 'UTC', dateFormat: '', timeFormat: 'locale', appearance: 'light', reduceMotion: false,
-  underlineLinks: false, contentTextSize: 'default', communicationLocale: null,
-  createdAt: '', updatedAt: '', lastLoginAt: '', groups: [], pagesTotal: 0, ...overrides
+  id: 1,
+  email: 'reader@example.test',
+  name: 'Reader',
+  handle: 'reader',
+  providerKey: 'local',
+  providerName: 'Local',
+  pictureUrl: null,
+  isSystem: false,
+  isVerified: true,
+  location: '',
+  jobTitle: '',
+  pronouns: '',
+  timezone: 'UTC',
+  dateFormat: '',
+  timeFormat: 'locale',
+  appearance: 'light',
+  reduceMotion: false,
+  underlineLinks: false,
+  contentTextSize: 'default',
+  communicationLocale: null,
+  createdAt: '',
+  updatedAt: '',
+  lastLoginAt: '',
+  groups: [],
+  pagesTotal: 0,
+  ...overrides
 })
 
 describe('profile draft model', () => {
@@ -25,7 +39,8 @@ describe('profile draft model', () => {
     current.underlineLinks = true
     current.name = 'Renamed'
     current.communicationLocale = 'fr'
-    expect(changedProfileFields(saved, current)).toEqual(['name', 'underlineLinks', 'communicationLocale'])
+    current.pronouns = 'they/them'
+    expect(changedProfileFields(saved, current)).toEqual(['name', 'pronouns', 'underlineLinks', 'communicationLocale'])
     // The snapshot is a copy, not a view of the live record.
     expect(saved.name).toBe('Reader')
   })
@@ -35,8 +50,10 @@ describe('profile draft model', () => {
     const saved = snapshotProfileDraft(current)
     current.appearance = 'dark'
     current.jobTitle = 'Archivist'
+    current.pronouns = 'she/her'
     expect(restoreProfileField(current, saved, 'location')).toBe(false)
     expect(restoreProfileField(current, saved, 'appearance')).toBe(true)
+    expect(restoreProfileField(current, saved, 'pronouns')).toBe(true)
     expect(changedProfileFields(saved, current)).toEqual(['jobTitle'])
     restoreProfileDraft(current, saved)
     expect(changedProfileFields(saved, current)).toEqual([])
@@ -44,11 +61,13 @@ describe('profile draft model', () => {
   })
 
   test('mirrors the server name and mention-handle rules', () => {
-    expect(profileDraftIssues({ name: 'Reader', handle: '' })).toEqual({})
-    expect(profileDraftIssues({ name: '  ', handle: ' Mixed_Case-1 ' })).toEqual({ name: 'nameRequired' })
-    expect(profileDraftIssues({ name: 'x'.repeat(256), handle: 'ab' })).toEqual({ name: 'nameTooLong', handle: 'handleInvalid' })
-    expect(profileDraftIssues({ name: 'Reader', handle: 'no spaces' })).toEqual({ handle: 'handleInvalid' })
-    expect(profileDraftIssues({ name: 'Reader', handle: 'x'.repeat(33) })).toEqual({ handle: 'handleInvalid' })
+    expect(profileDraftIssues({ name: 'Reader', handle: '', pronouns: '' })).toEqual({})
+    expect(profileDraftIssues({ name: '  ', handle: ' Mixed_Case-1 ', pronouns: '' })).toEqual({ name: 'nameRequired' })
+    expect(profileDraftIssues({ name: 'x'.repeat(256), handle: 'ab', pronouns: '' })).toEqual({ name: 'nameTooLong', handle: 'handleInvalid' })
+    expect(profileDraftIssues({ name: 'Reader', handle: 'no spaces', pronouns: '' })).toEqual({ handle: 'handleInvalid' })
+    expect(profileDraftIssues({ name: 'Reader', handle: 'x'.repeat(33), pronouns: '' })).toEqual({ handle: 'handleInvalid' })
+    expect(profileDraftIssues({ name: 'Reader', handle: '', pronouns: 'x'.repeat(255) })).toEqual({})
+    expect(profileDraftIssues({ name: 'Reader', handle: '', pronouns: 'x'.repeat(256) })).toEqual({ pronouns: 'pronounsTooLong' })
   })
 
   test('lists searchable IANA time zones by UTC offset and keeps a saved legacy alias', () => {

@@ -95,6 +95,8 @@
                     <span>{{ $t('admin:locale.publicPages', { pages: locale.pages, interpolation: { escapeValue: false } }) }}</span><span>{{ $t('admin:locale.translationSets', { linkedTranslations: locale.linkedTranslations, interpolation: { escapeValue: false } }) }}</span
                     ><span>{{ $t('admin:locale.menuItems', { menuItems: locale.menuItems, interpolation: { escapeValue: false } }) }}</span>
                   </div>
+                  <p v-if="locale.installedCoverage">Installed fork keys: {{ locale.installedCoverage.presentKeys }} / {{ locale.installedCoverage.totalKeys }} ({{ locale.installedCoverage.percent }}%); {{ locale.installedCoverage.missingKeys }} missing.</p>
+                  <p v-else>Installed fork-key coverage unknown.</p>
                 </div>
                 <v-checkbox
                   :model-value="enabled(locale.code)"
@@ -109,7 +111,7 @@
             <div class="locale-note">
               <v-icon icon="mdi-information-outline" size="20" />
               <p>
-                {{ $t('admin:locale.installingLanguageTranslatesSupported') }}
+                Missing or blank installed interface keys fall back to English. Key presence measures package coverage, not translation quality; identical English values are not proof of translation.
               </p>
             </div>
             <div class="locale-section-head">
@@ -317,11 +319,19 @@
                   <span v-if="locale.isInstalled" class="locale-badge">{{
                     updateAvailable(locale) ? $t('admin:locale.updateAvailable') : $t('admin:locale.installed')
                   }}</span>
+                  <p v-if="locale.isInstalled">Package source: {{ locale.packageSource === 'local' ? 'reviewed local / sideloaded' : locale.packageSource === 'bundled' ? 'bundled English source' : locale.packageSource === 'remote' ? 'upstream installation' : 'unknown (including older or sideloaded packages)' }}</p>
                 </div>
                 <div class="locale-coverage">
-                  <strong>{{ locale.availability }}<small>%</small></strong
-                  ><span>{{ $t('admin:locale.upstreamInterfaceCoverage') }}</span>
-                  <div class="locale-coverage-track" aria-hidden="true"><i :style="{ width: locale.availability + '%' }" /></div>
+                  <template v-if="locale.upstreamAvailability !== null">
+                    <strong>{{ locale.upstreamAvailability }}<small>%</small></strong>
+                    <span>{{ $t('admin:locale.upstreamInterfaceCoverage') }}</span>
+                    <div class="locale-coverage-track" aria-hidden="true"><i :style="{ width: locale.upstreamAvailability + '%' }" /></div>
+                  </template>
+                  <span v-else>Upstream coverage unknown; package not in the current catalog.</span>
+                  <template v-if="locale.isInstalled">
+                    <p v-if="locale.installedCoverage"><strong>{{ locale.installedCoverage.percent }}%</strong> installed fork keys · {{ locale.installedCoverage.presentKeys }} / {{ locale.installedCoverage.totalKeys }} · {{ locale.installedCoverage.missingKeys }} missing</p>
+                    <p v-else>Installed fork-key coverage unknown.</p>
+                  </template>
                 </div>
                 <v-btn
                   :variant="locale.isInstalled ? 'text' : 'tonal'"
@@ -341,7 +351,7 @@
             <div class="locale-note">
               <v-icon icon="mdi-translate" size="20" />
               <p>
-                {{ $t('admin:locale.coverageReportedUpstreamTranslation') }}
+                Upstream availability is reported by the catalog, independently of installed coverage against this fork's current English source. Missing or blank keys fall back to English. Nonempty installed keys count as present even when equal to English; this is not a translation-quality score.
               </p>
             </div>
           </template>

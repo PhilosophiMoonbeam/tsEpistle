@@ -8,18 +8,14 @@ import {
   okfConceptId,
   okfFilePath,
   parseOkfDocument,
+  parseOkfFilePath,
   renderOkfDocument,
   validateStoredOkfMetadata,
   type OkfMetadata,
   type OkfPageDocument
 } from '../../okf/format.ts'
 import pageHelper from '../../helpers/page.ts'
-import type {
-  StoragePageDocument,
-  StoragePageDocumentInput,
-  StoragePageDocumentFormat,
-  StoragePageFields
-} from './types.ts'
+import type { StoragePageDocument, StoragePageDocumentInput, StoragePageDocumentFormat, StoragePageFields } from './types.ts'
 
 export interface StoragePageEncodingInput {
   readonly path: string
@@ -57,9 +53,7 @@ const encodingDate = (value: Date | string): string => {
  * bounded x-wiki extension carries the DB facts needed to round-trip the
  * page. Other content types retain the historical page metadata serializer.
  */
-export const encodeStoragePageDocument = (
-  page: StoragePageEncodingInput
-): OkfPageDocument | string | Record<string, unknown> => {
+export const encodeStoragePageDocument = (page: StoragePageEncodingInput): OkfPageDocument | string | Record<string, unknown> => {
   const tags = encodingTags(page.tags)
   if (page.contentType !== 'markdown') {
     const injected = pageHelper.injectPageMetadata({
@@ -77,9 +71,7 @@ export const encodeStoragePageDocument = (
     if (page.contentType === 'json' && typeof injected === 'object' && injected !== null) {
       const metadataValue = Reflect.get(injected, '_meta')
       const metadata =
-        typeof metadataValue === 'object' && metadataValue !== null && !Array.isArray(metadataValue)
-          ? metadataValue as Record<string, unknown>
-          : {}
+        typeof metadataValue === 'object' && metadataValue !== null && !Array.isArray(metadataValue) ? (metadataValue as Record<string, unknown>) : {}
       return { ...injected, _meta: { ...metadata, pageFeatures } }
     }
     if (page.contentType === 'html' && typeof injected === 'string') {
@@ -100,7 +92,7 @@ export const encodeStoragePageDocument = (
     ...(page.description.trim().length > 0 ? { description: page.description } : {}),
     tags,
     'x-wiki': {
-      ...(typeof storedXWiki === 'object' && storedXWiki !== null && !Array.isArray(storedXWiki) ? storedXWiki as Record<string, unknown> : {}),
+      ...(typeof storedXWiki === 'object' && storedXWiki !== null && !Array.isArray(storedXWiki) ? (storedXWiki as Record<string, unknown>) : {}),
       published: page.isPublished === true || page.isPublished === 1,
       editor: page.editorKey,
       source_revision: String(page.sourceRevision),
@@ -128,8 +120,7 @@ const LEGACY_V1 = /^\s*<!--\s*(?:TITLE|SUBTITLE):/iu
 const TYPE_KEY = /^(?:[ \t]*)type[ \t]*:/mu
 const MAX_TREE_DEPTH = 20
 
-
-const sourceText = (source: string | Uint8Array): string => typeof source === 'string' ? source : Buffer.from(source).toString('utf8')
+const sourceText = (source: string | Uint8Array): string => (typeof source === 'string' ? source : Buffer.from(source).toString('utf8'))
 
 const sourceHash = (source: string | Uint8Array): string => createHash('sha256').update(source).digest('hex')
 
@@ -155,9 +146,7 @@ const parseYaml = (value: string): ParsedYaml => {
       maxTotalMergeKeys: 0
     })
     return {
-      metadata: typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : null,
+      metadata: typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null,
       error: null
     }
   } catch (error: unknown) {
@@ -166,29 +155,33 @@ const parseYaml = (value: string): ParsedYaml => {
 }
 
 const tagsFrom = (value: unknown): string[] => {
-  if (Array.isArray(value)) return value.filter((tag): tag is string => typeof tag === 'string').map(tag => tag.trim()).filter(Boolean)
-  if (typeof value === 'string') return value.split(',').map(tag => tag.trim()).filter(Boolean)
+  if (Array.isArray(value))
+    return value
+      .filter((tag): tag is string => typeof tag === 'string')
+      .map(tag => tag.trim())
+      .filter(Boolean)
+  if (typeof value === 'string')
+    return value
+      .split(',')
+      .map(tag => tag.trim())
+      .filter(Boolean)
   return []
 }
 const okfPublishedFrom = (metadata: OkfMetadata): boolean | undefined => {
   const extension = metadata['x-wiki']
-  if (typeof extension !== 'object' || extension === null || Array.isArray(extension) || !Object.hasOwn(extension, 'published'))
-    return undefined
+  if (typeof extension !== 'object' || extension === null || Array.isArray(extension) || !Object.hasOwn(extension, 'published')) return undefined
   const published = (extension as Record<string, unknown>).published
-  if (typeof published !== 'boolean')
-    throw new TypeError('OKF extension x-wiki.published must be a boolean')
+  if (typeof published !== 'boolean') throw new TypeError('OKF extension x-wiki.published must be a boolean')
   return published
 }
 
 const okfPageFeaturesFrom = (metadata: OkfMetadata): PageFeatures | undefined => {
   const extension = metadata['x-wiki']
-  if (typeof extension !== 'object' || extension === null || Array.isArray(extension) || !Object.hasOwn(extension, 'page_features'))
-    return undefined
+  if (typeof extension !== 'object' || extension === null || Array.isArray(extension) || !Object.hasOwn(extension, 'page_features')) return undefined
   const pageFeatures = parsePageFeatures((extension as Record<string, unknown>).page_features)
   if (pageFeatures === null) throw new TypeError('OKF extension x-wiki.page_features must be valid version 1 page features')
   return pageFeatures
 }
-
 
 const pageFeaturesFrom = (value: unknown): PageFeatures => {
   const pageFeatures = parsePageFeatures(value)
@@ -243,14 +236,7 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
   if (importer.length === 0) throw new TypeError('Storage page importer identity must not be empty')
   const byteLength = typeof source === 'string' ? Buffer.byteLength(source, 'utf8') : source.byteLength
   if (byteLength > OKF_MAX_DOCUMENT_BYTES) {
-    return result(
-      'okf_invalid',
-      source,
-      text,
-      { tags: [] },
-      null,
-      [`OKF_DOCUMENT_TOO_LARGE: OKF document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`]
-    )
+    return result('okf_invalid', source, text, { tags: [] }, null, [`OKF_DOCUMENT_TOO_LARGE: OKF document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`])
   }
 
   // A claimed or malformed OKF document is never allowed to silently degrade
@@ -258,14 +244,7 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
   const beginsWithFrontmatter = FRONTMATTER_OPENER.test(text)
   const frontmatter = FRONTMATTER.exec(text)
   if (beginsWithFrontmatter && frontmatter === null) {
-    return result(
-      'okf_invalid',
-      source,
-      text,
-      { tags: [] },
-      null,
-      ['INVALID_FRONTMATTER: YAML frontmatter is missing a bounded closing delimiter']
-    )
+    return result('okf_invalid', source, text, { tags: [] }, null, ['INVALID_FRONTMATTER: YAML frontmatter is missing a bounded closing delimiter'])
   }
   const parsedFrontmatter = frontmatter === null ? null : parseYaml(frontmatter[1] ?? '')
 
@@ -273,10 +252,8 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
     return result('okf_invalid', source, text, { tags: [] }, null, [diagnostic(parsedFrontmatter.error)])
 
   const frontmatterMetadata = parsedFrontmatter?.metadata ?? null
-  const claimsOkf = frontmatter !== null && (
-    (frontmatterMetadata !== null && Object.hasOwn(frontmatterMetadata, 'type'))
-    || TYPE_KEY.test(frontmatter[1] ?? '')
-  )
+  const claimsOkf =
+    frontmatter !== null && ((frontmatterMetadata !== null && Object.hasOwn(frontmatterMetadata, 'type')) || TYPE_KEY.test(frontmatter[1] ?? ''))
 
   if (claimsOkf) {
     try {
@@ -300,7 +277,10 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
   if (frontmatter !== null && frontmatterMetadata !== null) {
     try {
       const fields = fieldsFrom(frontmatterMetadata)
-      const body = text.slice(frontmatter[0].length).replace(/^\r?\n/u, '').replaceAll('\r\n', '\n')
+      const body = text
+        .slice(frontmatter[0].length)
+        .replace(/^\r?\n/u, '')
+        .replaceAll('\r\n', '\n')
       return result('legacy_wiki', source, body, fields, defaultMetadata(fields, importer, now), [])
     } catch (error: unknown) {
       return result('okf_invalid', source, text, { tags: [] }, null, [diagnostic(error)])
@@ -316,12 +296,7 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
     }
     if (typeof parsedJson === 'object' && parsedJson !== null && !Array.isArray(parsedJson)) {
       const metadata = Reflect.get(parsedJson, '_meta')
-      if (
-        typeof metadata === 'object' &&
-        metadata !== null &&
-        !Array.isArray(metadata) &&
-        Object.hasOwn(metadata, 'pageFeatures')
-      ) {
+      if (typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata) && Object.hasOwn(metadata, 'pageFeatures')) {
         try {
           const fields: StoragePageFields = { pageFeatures: pageFeaturesFrom(Reflect.get(metadata, 'pageFeatures')), tags: [] }
           return result('legacy_wiki', source, text, fields, defaultMetadata(fields, importer, now), [])
@@ -375,3 +350,61 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
 export const parseStoragePageDocument = classifyStoragePageDocument
 
 export default classifyStoragePageDocument
+
+export interface StoragePageIngestionOptions extends Readonly<Record<string, unknown>> {
+  readonly stripLeadingH1?: unknown
+  readonly mapReadmeToHome?: unknown
+}
+
+export interface StoragePageImport {
+  readonly document: StoragePageDocument
+  readonly identity: { readonly locale: string; readonly path: string }
+}
+
+/** One ingestion policy for both local-disk inventories and pinned Git changes. */
+export const classifyStoragePageImport = (
+  input: StoragePageDocumentInput,
+  relativePath: string,
+  options: StoragePageIngestionOptions = {}
+): StoragePageImport => {
+  const normalizedPath = relativePath.replaceAll('\\', '/')
+  let document = classifyStoragePageDocument(input)
+  const canonical = document.format === 'okf_valid' ? parseOkfFilePath(normalizedPath) : null
+  let identity = canonical === null ? { locale: input.locale, path: input.pagePath } : { locale: canonical.locale, path: canonical.pagePath }
+  const external =
+    document.format !== 'okf_valid' &&
+    document.format !== 'okf_invalid' &&
+    (input.contentType === 'markdown' || input.contentType === 'asciidoc') &&
+    !/(?:^|\/)(?:index|log)\.concept\.md$/iu.test(normalizedPath)
+  if (!external) return { document, identity }
+
+  // getPagePath removes only a recognized locale prefix. A slash remaining in
+  // the page path therefore rules out a nested README, including unknown locales.
+  if (options.mapReadmeToHome === true && /^readme$/iu.test(identity.path)) {
+    identity = { locale: identity.locale, path: 'home' }
+  }
+  if (options.stripLeadingH1 === true) {
+    const body = document.body
+    const heading =
+      input.contentType === 'markdown'
+        ? (/^(?:[ \t]*\n)*[ ]{0,3}#[ \t]+([^\n]+)(?:\n|$)/u.exec(body) ?? /^(?:[ \t]*\n)*[ ]{0,3}([^ \t\n][^\n]*)\n[ ]{0,3}=+[ \t]*(?:\n|$)/u.exec(body))
+        : // A document title with an author, revision, or attribute header cannot
+          // be removed safely. Only the explicit blank-line/body form is stripped.
+          /^=[ \t]+([^\n]+)\n[ \t]*\n/u.exec(body)
+    if (heading !== null) {
+      const remainder = body.slice(heading[0].length).replace(/^(?:[ \t]*\n)+/u, '')
+      const title = (input.contentType === 'markdown' ? heading[1]!.replace(/[ \t]+#+[ \t]*$/u, '') : heading[1]!).trim()
+      if (title.length > 0 && remainder.trim().length > 0 && (input.contentType !== 'asciidoc' || !remainder.startsWith(':'))) {
+        const fields = { ...document.fields, ...(document.title === undefined ? { title } : {}) }
+        document = {
+          ...document,
+          body: remainder,
+          ...fields,
+          fields,
+          okfMetadata: document.okfMetadata === null ? null : { ...document.okfMetadata, ...(document.title === undefined ? { title } : {}) }
+        }
+      }
+    }
+  }
+  return { document, identity }
+}

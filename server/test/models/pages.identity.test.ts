@@ -7,6 +7,9 @@ import createKnex from 'knex'
 import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type PageModel from '../../models/pages.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
+import { up as createAssetRelocation } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
 
 const localeRelationMovePatch = vi.fn(async (_transaction: Knex.Transaction, _page: { id: number }, _locale: string) => ({}))
 const writeOutboxEvent = vi.fn(async (_knex: unknown, _event: { type: string; payload: Record<string, unknown> }) => undefined)
@@ -31,7 +34,6 @@ const actor = { id: 11, name: 'Administrator', email: 'admin@example.com', permi
   email: string
 }
 const searchRenamed = vi.fn(async (_page: unknown) => undefined)
-const storagePageEvent = vi.fn(async (_event: unknown) => undefined)
 const outboundEmit = vi.fn((_event: string, _payload?: unknown) => undefined)
 let db: Knex
 let Page: typeof PageModel
@@ -86,6 +88,29 @@ const pageRow = (overrides: Record<string, unknown> = {}) => ({
 })
 
 const installSchema = async () => {
+  await createDurableJobs(db)
+  await addLeaseToken(db)
+  await db.schema.createTable('storage', table => {
+    table.string('key').primary()
+    table.boolean('isEnabled').notNullable()
+    table.string('mode').notNullable()
+    table.string('syncInterval').notNullable()
+    table.json('config').notNullable()
+  })
+  await db('storage').insert({ key: 'disk', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
+  await db.schema.createTable('assetFolders', table => {
+    table.increments('id').primary()
+    table.string('name').notNullable()
+    table.string('slug').notNullable()
+    table.integer('parentId').nullable().references('id').inTable('assetFolders')
+  })
+  await db.schema.createTable('assets', table => {
+    table.increments('id').primary()
+    table.string('filename').notNullable()
+    table.string('hash').notNullable()
+    table.integer('folderId').nullable().references('id').inTable('assetFolders')
+  })
+  await createAssetRelocation(db)
   await db.schema.createTable('pages', table => {
     table.integer('id').primary()
     table.text('path').notNullable()
@@ -212,8 +237,6 @@ beforeEach(async () => {
   localeRelationMovePatch.mockResolvedValue({})
   searchRenamed.mockReset()
   searchRenamed.mockResolvedValue(undefined)
-  storagePageEvent.mockReset()
-  storagePageEvent.mockResolvedValue(undefined)
   outboundEmit.mockReset()
   tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-page-identity-'))
   db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
@@ -238,7 +261,7 @@ beforeEach(async () => {
     Error: errors,
     auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
     collaboration: { pageChanged: vi.fn(async () => undefined) },
-    config: { dataPath: 'data', db: { type: 'sqlite' } },
+    config: { dataPath: 'data', db: { type: 'sqlite' }, lang: { code: 'en' } },
     data: {
       editors: [],
       searchEngine: { created: vi.fn(), deleted: vi.fn(), renamed: searchRenamed, updated: vi.fn() }
@@ -262,7 +285,6 @@ beforeEach(async () => {
         })
       },
       pages: {},
-      storage: { pageEvent: storagePageEvent },
       tags: {}
     },
     scheduler: { registerJob: vi.fn() }
@@ -325,6 +347,20 @@ describe('models/pages identity aggregate', () => {
 
     expect(page.sourceRevision).toBe('9007199254740993')
     expect(page.renderedSourceRevision).toBe('9007199254740993')
+  })
+
+  it('rolls back canonical visibility, revision and history when durable storage admission fails', async () => {
+    await db('pages').insert(pageRow())
+    await db.raw("CREATE TRIGGER reject_storage_admission BEFORE INSERT ON durableJobs BEGIN SELECT RAISE(FAIL, 'storage admission failed'); END")
+    await expect(Page.changeVisibility({ id: 42, visibility: 'private', user: actor, expectedSourceRevision: '1' })).rejects.toThrow('storage admission failed')
+    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId', 'sourceRevision')).toMatchObject({
+      visibility: 'public',
+      ownerId: null,
+      sourceRevision: 1
+    })
+    expect(await db('pageHistory')).toHaveLength(0)
+    expect(await db('pageMutationOutbox')).toHaveLength(0)
+    expect(await db('durableJobs')).toHaveLength(0)
   })
 
   it('emits visibility and ownership identities from the committed state', async () => {
@@ -514,12 +550,6 @@ describe('models/pages identity aggregate', () => {
     })
     expect(searchRenamed).not.toHaveBeenCalled()
     expect(Page.prepareSearchDocument).not.toHaveBeenCalled()
-    expect(storagePageEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'renamed',
-        page: expect.objectContaining({ moveAuthorId: 11, moveAuthorName: 'Administrator', destinationLocaleCode: 'fr' })
-      })
-    )
   })
 
   it('creates no durable search work when a conflicted locale mutation rolls back', async () => {
@@ -564,7 +594,7 @@ describe('models/pages identity aggregate', () => {
     })
     expect(await db('pageHistory').where({ pageId: 42 }).select('localeCode', 'hash')).toEqual([expect.objectContaining({ localeCode: 'en', hash: oldHash })])
     expect(await db('pageTree').where({ pageId: 42 }).first('localeCode')).toMatchObject({ localeCode: 'en' })
-    expect(storagePageEvent).not.toHaveBeenCalled()
+    expect(await db('durableJobs')).toHaveLength(0)
     expect(searchRenamed).not.toHaveBeenCalled()
     expect(await db('pageMutationOutbox')).toEqual([])
     expect(writeOutboxEvent).not.toHaveBeenCalled()

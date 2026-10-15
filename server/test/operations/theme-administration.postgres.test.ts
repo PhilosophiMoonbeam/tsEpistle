@@ -47,7 +47,9 @@ suite('PostgreSQL reviewed Theme settings', () => {
   })
   beforeEach(async () => {
     for (const table of tables) await db(table).delete()
-    await db('settings').insert([{ key: 'theming', value: JSON.stringify({ ...themePolicyDefaults, retained: 'future-option' }), updatedAt: new Date().toISOString() }])
+    await db('settings').insert([
+      { key: 'theming', value: JSON.stringify({ ...themePolicyDefaults, retained: 'future-option' }), updatedAt: new Date().toISOString() }
+    ])
     await db('groups').insert([
       { id: 1, permissions: '["manage:system"]' },
       { id: 2, permissions: '["manage:users"]' }
@@ -78,8 +80,40 @@ suite('PostgreSQL reviewed Theme settings', () => {
     expect((await read()).policy.palettes).toEqual([second])
     expect((await read()).policy.reading).toEqual({ textSize: 19, lineHeight: 1.8, copyWidth: 68 })
   })
+  it('persists reviewed code appearance and fences obsolete reviews without accepting stylesheet names', async () => {
+    const original = await read()
+    expect(original.policy.codeTheme).toBe('native')
+    await store.save(admin, {
+      policy: { ...original.policy, codeTheme: 'midnight' },
+      fingerprint: original.fingerprint,
+      reason: 'Choose a readable dark code preset'
+    })
+    const published = await read()
+    expect(published.policy.codeTheme).toBe('midnight')
+    expect((await db('settings').where('key', 'theming').first()).value.codeTheme).toBe('midnight')
+    expect(published.history[0]?.fields).toEqual(['codeTheme'])
+    await expect(
+      store.save(admin, {
+        policy: { ...original.policy, codeTheme: 'paper' },
+        fingerprint: original.fingerprint,
+        reason: 'Attempt an obsolete code theme review'
+      })
+    ).rejects.toMatchObject({ status: 409 })
+    const before = await db('settings').orderBy('key')
+    for (const codeTheme of ['https://example.invalid/theme.css', '../theme.css', '', null, { css: 'body{}' }]) {
+      await expect(
+        store.save(admin, {
+          policy: { ...published.policy, codeTheme },
+          fingerprint: published.fingerprint,
+          reason: 'Reject an unreviewed stylesheet'
+        })
+      ).rejects.toMatchObject({ status: 400 })
+    }
+    expect(await db('settings').orderBy('key')).toEqual(before)
+  })
   it('rejects concurrent and ABA reviews', async () => {
-    const before = await read(), payload = { policy: { ...before.policy, tocPosition: 'right' }, fingerprint: before.fingerprint, reason: 'Concurrent review' }
+    const before = await read(),
+      payload = { policy: { ...before.policy, tocPosition: 'right' }, fingerprint: before.fingerprint, reason: 'Concurrent review' }
     const results = await Promise.allSettled([store.save(admin, payload), store.save(admin, payload)])
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
     expect(results.find(r => r.status === 'rejected')).toMatchObject({ reason: { status: 409 } })
@@ -106,20 +140,23 @@ suite('PostgreSQL reviewed Theme settings', () => {
     const beforeAppearance = await store.inspect(delegated)
     expect(beforeAppearance.capabilities).toEqual({ editCustomCode: false })
     await store.save(delegated, {
-      policy: { ...beforeAppearance.policy, tocPosition: 'right' },
+      policy: { ...beforeAppearance.policy, tocPosition: 'right', codeTheme: 'paper' },
       fingerprint: beforeAppearance.fingerprint,
       reason: 'Publish a delegated appearance change'
     })
     const afterAppearance = await store.inspect(delegated)
     expect(afterAppearance.policy.tocPosition).toBe('right')
+    expect(afterAppearance.policy.codeTheme).toBe('paper')
     const settingsBefore = await db('settings').orderBy('key')
     for (const field of ['injectCSS', 'injectHead', 'injectBody'] as const) {
       const review = await store.inspect(delegated)
-      await expect(store.save(delegated, {
-        policy: { ...review.policy, [field]: '' },
-        fingerprint: review.fingerprint,
-        reason: `Clear ${field} without system authority`
-      })).rejects.toMatchObject({ status: 403 })
+      await expect(
+        store.save(delegated, {
+          policy: { ...review.policy, [field]: '' },
+          fingerprint: review.fingerprint,
+          reason: `Clear ${field} without system authority`
+        })
+      ).rejects.toMatchObject({ status: 403 })
       const after = await store.inspect(delegated)
       expect(after.policy[field]).toBe(review.policy[field])
       expect(after.history).toEqual(review.history)
@@ -128,11 +165,13 @@ suite('PostgreSQL reviewed Theme settings', () => {
     }
     const stale = await store.inspect(delegated)
     await db('groups').where('id', 2).update({ permissions: '["manage:users"]' })
-    await expect(store.save(delegated, {
-      policy: { ...stale.policy, tocPosition: 'left' },
-      fingerprint: stale.fingerprint,
-      reason: 'Publish after delegated authority was removed'
-    })).rejects.toMatchObject({ status: 403 })
+    await expect(
+      store.save(delegated, {
+        policy: { ...stale.policy, tocPosition: 'left' },
+        fingerprint: stale.fingerprint,
+        reason: 'Publish after delegated authority was removed'
+      })
+    ).rejects.toMatchObject({ status: 403 })
   })
   it('checks API group grants and rejects malformed principals', async () => {
     expect((await store.inspect({ id: 1, ownershipUserId: null, groups: [1] } as never)).policy.theme).toBe('default')
@@ -160,13 +199,27 @@ suite('PostgreSQL reviewed Theme settings', () => {
   it('rolls back settings when the history write fails', async () => {
     await db.raw(`ALTER TABLE settings ADD CONSTRAINT reject_revision CHECK (key <> 'themeAdministration')`)
     const before = await db('settings').orderBy('key')
-    try { await expect(write({ tocPosition: 'off' })).rejects.toThrow(); expect(await db('settings').orderBy('key')).toEqual(before) }
-    finally { await db.raw('ALTER TABLE settings DROP CONSTRAINT reject_revision') }
+    try {
+      await expect(write({ tocPosition: 'off' })).rejects.toThrow()
+      expect(await db('settings').orderBy('key')).toEqual(before)
+    } finally {
+      await db.raw('ALTER TABLE settings DROP CONSTRAINT reject_revision')
+    }
   })
   it('retains committed settings on activation failure and permits a current retry', async () => {
-    let failed = true, observed = structuredClone(themePolicyDefaults)
-    store = createThemeAdministrationStore({ db, reviewKey: 'fixture-key', fallback: () => ({}), runtime: () => observed,
-      onCommitted: async () => { if (failed) throw new Error('Runtime unavailable'); observed = (await read()).policy; return true } })
+    let failed = true,
+      observed = structuredClone(themePolicyDefaults)
+    store = createThemeAdministrationStore({
+      db,
+      reviewKey: 'fixture-key',
+      fallback: () => ({}),
+      runtime: () => observed,
+      onCommitted: async () => {
+        if (failed) throw new Error('Runtime unavailable')
+        observed = (await read()).policy
+        return true
+      }
+    })
     expect(await write({ tocPosition: 'off' })).toEqual({ activation: 'needs-attention' })
     expect((await read()).policy.tocPosition).toBe('off')
     failed = false
@@ -184,20 +237,32 @@ suite('PostgreSQL reviewed Theme settings', () => {
     const previous = globalThis.WIKI
     const config: Record<string, unknown> = { theming: structuredClone(themePolicyDefaults), sessionSecret: 'legacy-review-key' }
     globalThis.WIKI = {
-      models: { knex: db }, config,
-      configSvc: { loadFromDb: async () => { const rows = await db('settings'); Object.assign(config, Object.fromEntries(rows.map(row => [row.key, row.value]))) } },
-      events: { outbound: { emit: () => {} } }, logger: { warn: () => {} }
+      models: { knex: db },
+      config,
+      configSvc: {
+        loadFromDb: async () => {
+          const rows = await db('settings')
+          Object.assign(config, Object.fromEntries(rows.map(row => [row.key, row.value])))
+        }
+      },
+      events: { outbound: { emit: () => {} } },
+      logger: { warn: () => {} }
     } as typeof globalThis.WIKI
     try {
-      const colors = structuredClone(themePolicyDefaults.palettes[0].colors); colors.light.primary = '#123456'
-      await themingOperations.updateConfig({ theme: 'default', iconset: 'mdi', darkMode: false, colors, injectCSS: '/* intact */\n.contents { color: red; }\n' }, admin)
+      const colors = structuredClone(themePolicyDefaults.palettes[0].colors)
+      colors.light.primary = '#123456'
+      await themingOperations.updateConfig(
+        { theme: 'default', iconset: 'mdi', darkMode: false, colors, injectCSS: '/* intact */\n.contents { color: red; }\n' },
+        admin
+      )
       expect((await read()).policy.palettes[0].colors.light.primary).toBe('#123456')
       expect(themingOperations.getConfig().injectCSS).toBe('/* intact */\n.contents { color: red; }\n')
       expect((await read()).history[0]).toMatchObject({ actorId: 1, fields: expect.arrayContaining(['palettes', 'injectCSS']) })
       await expect(themingOperations.updateConfig({ activePaletteId: 'missing' }, admin)).rejects.toMatchObject({ status: 400 })
       await expect(themingOperations.updateConfig({ title: 'not owned' }, admin)).rejects.toMatchObject({ status: 400 })
       await expect(themingOperations.updateConfig({ tocPosition: 'right' }, { id: 3, authVersion: 0 } as never)).rejects.toMatchObject({ status: 403 })
-    } finally { globalThis.WIKI = previous }
+    } finally {
+      globalThis.WIKI = previous
+    }
   })
-
 })

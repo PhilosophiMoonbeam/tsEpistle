@@ -2,6 +2,27 @@ import createKnex from 'knex'
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
 import { configureTransportRuntime } from '../controllers/_types.ts'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addLeaseToken } from '../db/migrations/2.5.158.ts'
+import { storageConfigurationKey } from '../helpers/storage-configuration-key.ts'
+
+const createStorageTargets = async (db, enabled = false) => {
+  await db.schema.createTable('storage', table => {
+    table.string('key').primary()
+    table.boolean('isEnabled').notNullable()
+    table.string('mode').notNullable()
+    table.string('syncInterval').notNullable()
+    table.json('config').notNullable()
+  })
+  await db.schema.createTable('pages', table => {
+    table.integer('id').primary()
+    table.string('path').notNullable()
+    table.string('localeCode').notNullable()
+    table.string('contentType').notNullable()
+    table.string('visibility').notNullable()
+  })
+  if (enabled) await db('storage').insert({ key: 'disk', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
+}
 
 const assetHash = path => createHash('sha1').update(path).digest('hex')
 const namedError = name => class extends Error {
@@ -109,6 +130,7 @@ const createRelocationDatabase = async () => {
     table.dateTime('updatedAt').notNullable()
     table.dateTime('completedAt').nullable()
   })
+  await createStorageTargets(db)
   return db
 }
 const createImageResizeDatabase = async () => {
@@ -141,6 +163,9 @@ const createImageResizeDatabase = async () => {
     table.string('slug').notNullable()
     table.integer('parentId').nullable()
   })
+  await createStorageTargets(db, true)
+  await createDurableJobs(db)
+  await addLeaseToken(db)
   return db
 }
 
@@ -152,9 +177,9 @@ const installImageResizeWiki = ({
   const assetQuery = createAssetQuery(db)
   const pageAccess = vi.fn(checkPageAccess)
   const loadAuthority = vi.fn(loadPageRuleAuthority)
-  const storage = { assetEvent: vi.fn().mockResolvedValue(undefined) }
+  const storage = {}
   global.WIKI = {
-    config: { db: { type: 'sqlite' } },
+    config: { db: { type: 'sqlite' }, lang: { code: 'en', namespacing: false } },
     Error: {
       AssetDeleteForbidden: namedError('AssetDeleteForbidden'),
       AssetFolderExists: namedError('AssetFolderExists'),
@@ -181,7 +206,7 @@ const installImageResizeWiki = ({
       storage
     }
   }
-  return { assetQuery, pageAccess, loadAuthority, storage }
+  return { assetQuery, pageAccess, loadAuthority }
 }
 
 const insertResizeSource = async (db, bytes, { id = 1, filename = 'source.png', folderId = null } = {}) => {
@@ -205,7 +230,7 @@ const insertResizeSource = async (db, bytes, { id = 1, filename = 'source.png', 
   return asset
 }
 
-const installRelocationWiki = ({
+const installRelocationWiki = async ({
   db,
   assetQuery,
   getHierarchy = async () => [],
@@ -214,16 +239,20 @@ const installRelocationWiki = ({
   storage = {},
   logger = { warn: vi.fn() }
 }) => {
+  for (const target of targets) {
+    const configured = { key: target.key, isEnabled: true, mode: 'push', syncInterval: 'P0D', config: {} }
+    await db('storage').insert({ ...configured, config: JSON.stringify(configured.config) }).onConflict('key').ignore()
+    target.configurationKey = storageConfigurationKey(configured)
+  }
   const folderQuery = vi.fn((transaction = db) => transaction('assetFolders'))
   const pageAccess = vi.fn(checkPageAccess)
   const storageRuntime = {
-    assetEvent: vi.fn(),
     deleteAssetCaches: vi.fn().mockResolvedValue(undefined),
     relocationTargets: vi.fn(() => targets),
     ...storage
   }
   global.WIKI = {
-    config: { db: { type: 'sqlite' } },
+    config: { db: { type: 'sqlite' }, lang: { code: 'en', namespacing: false } },
     logger,
     Error: {
       AssetDeleteForbidden: namedError('AssetDeleteForbidden'),
@@ -249,7 +278,7 @@ const installRelocationWiki = ({
   }
   return { folderQuery, pageAccess, storage: storageRuntime }
 }
-const assetRouter = { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn(), use: vi.fn() }
+const assetRouter = Object.fromEntries(['get', 'head', 'post', 'put', 'patch', 'delete', 'options', 'all', 'use'].map(method => [method, vi.fn()]))
 vi.mockModule('express', import.meta.url, () => ({ default: { Router: () => assetRouter } }))
 
 const authorityFor = requester => ({
@@ -285,7 +314,9 @@ describe('asset operations', () => {
     const readQuery = {
       findById: vi.fn().mockResolvedValue(asset)
     }
-    const transaction = {}
+    const transaction = Object.assign(vi.fn(() => ({
+      where: () => ({ orderBy: () => ({ forShare: () => ({ select: async () => [] }) }) })
+    })), { schema: { hasTable: async () => false } })
     const transactionQuery = {
       where: vi.fn(),
       whereNull: vi.fn(),
@@ -299,7 +330,6 @@ describe('asset operations', () => {
     const assetsQuery = vi.fn(transactionArg => (transactionArg === transaction ? transactionQuery : readQuery))
     const knex = vi.fn()
     knex.transaction = vi.fn(async callback => callback(transaction))
-    const assetEvent = vi.fn().mockResolvedValue(undefined)
     global.WIKI = {
       Error: {
         AssetDeleteForbidden: Error,
@@ -315,7 +345,7 @@ describe('asset operations', () => {
         assets: { query: assetsQuery, flushTempUploads: vi.fn() },
         assetFolders: { query: vi.fn(), getHierarchy: vi.fn() },
         knex,
-        storage: { assetEvent }
+        storage: {}
       }
     }
     const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
@@ -328,7 +358,6 @@ describe('asset operations', () => {
     await operations.remove({ requester, id: 1 })
 
     expect(asset.deleteAssetCache).toHaveBeenCalledOnce()
-    expect(assetEvent).toHaveBeenCalledOnce()
   })
 
   it('lists root assets', async () => {
@@ -453,7 +482,7 @@ describe('asset operations', () => {
       }
       const reconcileAssetRelocation = vi.fn().mockResolvedValue(undefined)
       const assetQuery = createAssetQuery(db)
-      const { pageAccess, storage } = installRelocationWiki({
+      const { pageAccess, storage } = await installRelocationWiki({
         db,
         assetQuery,
         targets: [target],
@@ -496,6 +525,51 @@ describe('asset operations', () => {
     }
   })
 
+  for (const activity of ['initializing', 'offline-paused', 'failed-initialization']) {
+    it(`durably admits relocation for a database-enabled target during ${activity}`, async () => {
+      const db = await createRelocationDatabase()
+      try {
+        const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+        const asset = { id: 7, filename: 'old.png', hash: assetHash('old.png'), ext: '.png', folderId: null }
+        await db('assets').insert(asset)
+        await db('assetData').insert({ id: asset.id, data: Buffer.from('retained canonical bytes') })
+        const target = { key: 'disk', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: {} }
+        await db('storage').insert({ ...target, config: JSON.stringify(target.config) })
+        const reconcileAssetRelocation = vi.fn().mockRejectedValue(new Error(activity))
+        await installRelocationWiki({
+          db,
+          assetQuery: createAssetQuery(db),
+          targets: activity === 'initializing' ? [] : [{
+            key: target.key, configurationKey: storageConfigurationKey(target), active: false,
+            paused: activity === 'offline-paused', supportsAssetRelocation: true
+          }],
+          storage: { reconcileAssetRelocation }
+        })
+        const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+        const receipt = await operations.relocate({ requester, id: asset.id, filename: 'new.png' })
+        expect(receipt).toMatchObject({
+          status: 'pending', sourcePath: 'old.png', destinationPath: 'new.png',
+          effects: [{ targetKey: 'disk', status: 'pending' }]
+        })
+        expect(await db('assetRelocationEffects').where({ operationId: receipt.id })).toHaveLength(1)
+        expect(await db('durableJobs').where({ type: 'asset-relocation', version: 1 })).toHaveLength(1)
+        await runRelocationWorker(db)
+        expect(await operations.relocationStatus({ requester, id: receipt.id })).toMatchObject({
+          status: 'pending', effects: [{ targetKey: 'disk', status: 'pending' }]
+        })
+        reconcileAssetRelocation.mockResolvedValue(undefined)
+        await db('durableJobs').where({ state: 'pending' }).update({ nextRunAt: new Date(0) })
+        await runRelocationWorker(db)
+        expect(await operations.relocationStatus({ requester, id: receipt.id })).toMatchObject({
+          status: 'succeeded', effects: [{ targetKey: 'disk', status: 'succeeded' }]
+        })
+        expect(await db('assets').where({ id: asset.id }).first()).toMatchObject({ filename: 'new.png', hash: assetHash('new.png') })
+      } finally {
+        await db.destroy()
+      }
+    })
+  }
+
   it('moves an asset when folderId is the only requested field', async () => {
     const db = await createRelocationDatabase()
     try {
@@ -520,7 +594,7 @@ describe('asset operations', () => {
       }
       const reconcileAssetRelocation = vi.fn().mockResolvedValue(undefined)
       const assetQuery = createAssetQuery(db)
-      const { pageAccess, storage } = installRelocationWiki({
+      const { pageAccess, storage } = await installRelocationWiki({
         db,
         assetQuery,
         targets: [target],
@@ -588,7 +662,7 @@ describe('asset operations', () => {
         ])
         await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
         const assetQuery = createAssetQuery(db)
-        const { pageAccess } = installRelocationWiki({
+        const { pageAccess } = await installRelocationWiki({
           db,
           assetQuery,
           checkPageAccess: scenario.check,
@@ -632,7 +706,7 @@ describe('asset operations', () => {
       await db('assets').insert(asset)
       await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
       const assetQuery = createAssetQuery(db)
-      const { storage } = installRelocationWiki({ db, assetQuery, targets: [target] })
+      const { storage } = await installRelocationWiki({ db, assetQuery, targets: [target] })
       const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
 
       await expect(operations.relocate({ requester, id: asset.id, filename: 'new.png', folderId: 0 })).rejects.toMatchObject({
@@ -672,7 +746,7 @@ describe('asset operations', () => {
       await db('assets').insert(asset)
       await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
       const assetQuery = createAssetQuery(db)
-      installRelocationWiki({
+      await installRelocationWiki({
         db,
         assetQuery,
         targets: [target],
@@ -722,7 +796,7 @@ describe('asset operations', () => {
       await db('assets').insert(asset)
       await db('assetData').insert({ id: asset.id, data: Buffer.from('asset bytes') })
       const assetQuery = createAssetQuery(db)
-      installRelocationWiki({
+      await installRelocationWiki({
         db,
         assetQuery,
         targets: [target],
@@ -774,7 +848,7 @@ describe('asset operations', () => {
         { id: 22, data: Buffer.from('other bytes') }
       ])
       const assetQuery = createAssetQuery(db)
-      installRelocationWiki({ db, assetQuery, targets: [target] })
+      await installRelocationWiki({ db, assetQuery, targets: [target] })
       const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
 
       const accepted = await operations.relocate({ requester, id: 21, filename: 'new.png', folderId: 0 })
@@ -817,7 +891,7 @@ describe('asset operations', () => {
         { id: 24, data: Buffer.from('other bytes') }
       ])
       const assetQuery = createAssetQuery(db)
-      installRelocationWiki({ db, assetQuery, targets: [target], storage: { reconcileAssetRelocation } })
+      await installRelocationWiki({ db, assetQuery, targets: [target], storage: { reconcileAssetRelocation } })
       const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
 
       const accepted = await operations.relocate({ requester, id: 23, filename: 'new.png', folderId: 0 })
@@ -853,7 +927,7 @@ describe('asset operations', () => {
       await db('assets').insert({ id: 25, filename: 'old.png', hash: assetHash('old.png'), ext: '.png', folderId: null })
       await db('assetData').insert({ id: 25, data: Buffer.from('asset bytes') })
       const assetQuery = createAssetQuery(db)
-      installRelocationWiki({
+      await installRelocationWiki({
         db,
         assetQuery,
         targets: [target],
@@ -921,7 +995,7 @@ describe('asset operations', () => {
         assets: { query: vi.fn(), flushTempUploads: vi.fn() },
         assetFolders: { query: vi.fn(() => folderQuery), getHierarchy },
         knex,
-        storage: { assetEvent: vi.fn() }
+        storage: {}
       }
     }
 
@@ -971,7 +1045,7 @@ describe('asset operations', () => {
         assets: { query: vi.fn(), flushTempUploads: vi.fn() },
         assetFolders: { query: vi.fn(() => folderQuery), getHierarchy },
         knex,
-        storage: { assetEvent: vi.fn() }
+        storage: {}
       }
     }
 
@@ -1020,7 +1094,7 @@ describe('asset operations', () => {
         assets: { query: vi.fn(), flushTempUploads: vi.fn() },
         assetFolders: { query: vi.fn(() => folderQuery), getHierarchy },
         knex,
-        storage: { assetEvent: vi.fn() }
+        storage: {}
       }
     }
 
@@ -1094,7 +1168,7 @@ describe('asset operations', () => {
           assets: { query: vi.fn(), flushTempUploads: vi.fn() },
           assetFolders: { query: vi.fn(() => folderQuery), getHierarchy },
           knex,
-          storage: { assetEvent: vi.fn() }
+          storage: {}
         }
       }
 
@@ -1134,7 +1208,7 @@ describe('asset operations', () => {
         assets: { query: vi.fn(), flushTempUploads: vi.fn() },
         assetFolders: { query: vi.fn(), getHierarchy },
         knex,
-        storage: { assetEvent: vi.fn() }
+        storage: {}
       }
     }
 
@@ -1194,7 +1268,7 @@ describe('asset operations', () => {
           assets: { query: vi.fn(), flushTempUploads: vi.fn() },
           assetFolders: { query: vi.fn(() => folderQuery), getHierarchy },
           knex,
-          storage: { assetEvent: vi.fn() }
+          storage: {}
         }
       }
 
@@ -1304,7 +1378,7 @@ describe('asset operations', () => {
       const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
       const sourceBytes = await sharp({ create: { width: 8, height: 4, channels: 3, background: 'red' } }).png().toBuffer()
       const source = await insertResizeSource(db, sourceBytes)
-      const { pageAccess, storage } = installImageResizeWiki({ db })
+      const { pageAccess } = installImageResizeWiki({ db })
       const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
 
       const receipt = await operations.resizeImage({
@@ -1349,10 +1423,31 @@ describe('asset operations', () => {
           ['write:assets', 'copy.webp']
         ])
       )
-      expect(storage.assetEvent).toHaveBeenCalledWith(expect.objectContaining({
-        event: 'uploaded',
-        asset: expect.objectContaining({ id: receipt.assetId, path: 'copy.webp', data: output })
-      }))
+      const effects = await db('durableJobs')
+      expect(effects).toHaveLength(1)
+      expect(JSON.parse(effects[0].payload)).toMatchObject({ entityType: 'asset', entityId: receipt.assetId, paths: ['copy.webp'] })
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('rolls back a resized output and its blob when storage admission fails', async () => {
+    const db = await createImageResizeDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+      const sourceBytes = await sharp({ create: { width: 8, height: 4, channels: 3, background: 'red' } }).png().toBuffer()
+      const source = await insertResizeSource(db, sourceBytes)
+      installImageResizeWiki({ db })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+      await db.raw("CREATE TRIGGER reject_storage_admission BEFORE INSERT ON durableJobs BEGIN SELECT RAISE(FAIL, 'storage admission failed'); END")
+      await expect(operations.resizeImage({
+        requester, id: source.id, destination: { filename: 'copy.webp', folderId: null },
+        width: 4, height: 4, aspectPolicy: 'preserve', format: 'webp', quality: 80, animationPolicy: 'preserve'
+      })).rejects.toThrow('storage admission failed')
+      expect(await db('assets')).toHaveLength(1)
+      expect(await db('assetData')).toHaveLength(1)
+      expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(sourceBytes)
+      expect(await db('durableJobs')).toHaveLength(0)
     } finally {
       await db.destroy()
     }
@@ -1366,7 +1461,7 @@ describe('asset operations', () => {
       const db = await createImageResizeDatabase()
       try {
         const source = await insertResizeSource(db, sourceBytes)
-        const { storage } = installImageResizeWiki({
+        installImageResizeWiki({
           db,
           checkPageAccess: (_user, permissions) => permissions[0] !== 'write:assets'
         })
@@ -1383,7 +1478,6 @@ describe('asset operations', () => {
           animationPolicy: 'preserve'
         })).rejects.toMatchObject({ status: 403, name: 'ASSET_IMAGE_DESTINATION_FORBIDDEN' })
         expect(await db('assets')).toHaveLength(1)
-        expect(storage.assetEvent).not.toHaveBeenCalled()
       } finally {
         await db.destroy()
       }
@@ -1392,7 +1486,7 @@ describe('asset operations', () => {
       const db = await createImageResizeDatabase()
       try {
         const source = await insertResizeSource(db, sourceBytes)
-        const { pageAccess, storage } = installImageResizeWiki({ db, checkPageAccess: () => false })
+        const { pageAccess } = installImageResizeWiki({ db, checkPageAccess: () => false })
         const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
         await expect(operations.resizeImage({
           requester,
@@ -1412,7 +1506,6 @@ describe('asset operations', () => {
           expect.any(Object)
         )
         expect(await db('assets')).toHaveLength(1)
-        expect(storage.assetEvent).not.toHaveBeenCalled()
       } finally {
         await db.destroy()
       }
@@ -1430,7 +1523,7 @@ describe('asset operations', () => {
           hash: assetHash('copy.png'),
           authorId: requester.id
         })
-        const { storage } = installImageResizeWiki({ db })
+        installImageResizeWiki({ db })
         const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
         await expect(operations.resizeImage({
           requester,
@@ -1445,7 +1538,6 @@ describe('asset operations', () => {
         })).rejects.toMatchObject({ status: 409, name: 'ASSET_IMAGE_DESTINATION_CONFLICT' })
         expect(await db('assets')).toHaveLength(2)
         expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(sourceBytes)
-        expect(storage.assetEvent).not.toHaveBeenCalled()
       } finally {
         await db.destroy()
       }
@@ -1456,7 +1548,7 @@ describe('asset operations', () => {
       try {
         const source = await insertResizeSource(db, sourceBytes)
         let authorityLoads = 0
-        const { loadAuthority, storage } = installImageResizeWiki({
+        const { loadAuthority } = installImageResizeWiki({
           db,
           loadPageRuleAuthority: async (suppliedRequester, transaction) => {
             authorityLoads += 1
@@ -1481,7 +1573,6 @@ describe('asset operations', () => {
         expect(loadAuthority).toHaveBeenCalledTimes(2)
         expect(await db('assets')).toHaveLength(1)
         expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(sourceBytes)
-        expect(storage.assetEvent).not.toHaveBeenCalled()
       } finally {
         await db.destroy()
       }

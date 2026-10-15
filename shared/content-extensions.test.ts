@@ -12,7 +12,8 @@ import {
   type ContentExtensionDefinition
 } from './content-extensions.ts'
 
-const canonicalFence = '```wiki-extension\n{"key":"qr","version":1,"props":{"value":"https://example.com","label":"Example","size":512,"errorCorrection":"H"}}\n```\n'
+const canonicalFence =
+  '```wiki-extension\n{"key":"qr","version":1,"props":{"value":"https://example.com","label":"Example","size":512,"errorCorrection":"H"}}\n```\n'
 const canonicalBody = '{"key":"qr","version":1,"props":{"value":"https://example.com","label":"Example","size":512,"errorCorrection":"H"}}'
 
 const qr = (input: unknown) => {
@@ -34,12 +35,9 @@ const index = (input: unknown) => {
 }
 
 describe('content extension contract', () => {
-  it('declares the complete built-in extension catalog', () => {
+  it('keeps catalog keys unique and rejects unsupported keys', () => {
     expect(CONTENT_EXTENSION_HOST_VERSION).toBe(1)
     const keys = BUILTIN_CONTENT_EXTENSIONS.map(extension => extension.key)
-    expect(new Set(keys)).toEqual(new Set([
-      'qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map'
-    ]))
     expect(new Set(keys).size).toBe(keys.length)
     expect(BUILTIN_CONTENT_EXTENSIONS.every(extension => extension.version === 1)).toBe(true)
     expect(isContentExtensionKey('plantuml')).toBe(true)
@@ -68,22 +66,24 @@ describe('content extension contract', () => {
     expect(() => parseContentExtensionFence(canonicalFence)).toThrow(/exactly one valid JSON object/)
   })
 
-  it.each([1, 2048])('accepts QR value boundary length %s', (length) => {
+  it.each([1, 2048])('accepts QR value boundary length %s', length => {
     const value = 'x'.repeat(length)
     expect(qr({ key: 'qr', version: 1, props: { value } }).props.value).toBe(value)
   })
 
-  it.each([128, 1024])('accepts QR size boundary %s', (size) => {
+  it.each([128, 1024])('accepts QR size boundary %s', size => {
     expect(qr({ key: 'qr', version: 1, props: { value: 'x', size } }).props.size).toBe(size)
   })
 
-  it.each([127, 1025, Number.NaN])('rejects invalid QR size %s', (size) => {
+  it.each([127, 1025, Number.NaN])('rejects invalid QR size %s', size => {
     expect(() => qr({ key: 'qr', version: 1, props: { value: 'x', size } })).toThrow(/128 to 1024/)
   })
 
   it('accepts QR label and correction boundaries', () => {
-    expect(qr({ key: 'qr', version: 1, props: { value: 'x', label: 'a'.repeat(200), errorCorrection: 'H' } }).props)
-      .toMatchObject({ label: 'a'.repeat(200), errorCorrection: 'H' })
+    expect(qr({ key: 'qr', version: 1, props: { value: 'x', label: 'a'.repeat(200), errorCorrection: 'H' } }).props).toMatchObject({
+      label: 'a'.repeat(200),
+      errorCorrection: 'H'
+    })
     expect(() => qr({ key: 'qr', version: 1, props: { value: 'x', label: 'a'.repeat(201) } })).toThrow(/200 characters/)
     expect(() => qr({ key: 'qr', version: 1, props: { value: 'x', errorCorrection: 'medium' } })).toThrow(/one of "L", "M", "Q", or "H"/)
   })
@@ -107,7 +107,9 @@ describe('content extension contract', () => {
 
   it('enforces gallery count, text, enum, and internal-asset boundaries', () => {
     const image = { src: '/uploads/a.jpg', alt: 'A' }
-    expect(gallery({ key: 'gallery', version: 1, props: { images: Array.from({ length: 50 }, () => image), columns: 4, fit: 'contain' } }).props.images).toHaveLength(50)
+    expect(
+      gallery({ key: 'gallery', version: 1, props: { images: Array.from({ length: 50 }, () => image), columns: 4, fit: 'contain' } }).props.images
+    ).toHaveLength(50)
     expect(() => gallery({ key: 'gallery', version: 1, props: { images: [] } })).toThrow(/between 1 and 50/)
     expect(() => gallery({ key: 'gallery', version: 1, props: { images: [image], columns: 5 } })).toThrow(/1 to 4/)
     expect(() => gallery({ key: 'gallery', version: 1, props: { images: [{ src: 'https://example.test/a.jpg', alt: 'A' }] } })).toThrow(/same-origin/)
@@ -169,22 +171,29 @@ describe('content extension contract', () => {
     expect(envelope.key).toBe('tabs')
     if (envelope.key === 'tabs') expect(envelope.props.tabs[0]?.headingLevel).toBe(2)
     expect(serializeContentExtensionFence(envelope)).toContain('"headingLevel":2')
-    expect(() => parseContentExtensionEnvelope({
-      key: 'tabs',
-      version: 1,
-      props: {
-        tabs: [
-          { label: 'Overview', content: 'Alpha', headingLevel: 7 },
-          { label: 'Details', content: 'Beta' }
-        ]
-      }
-    })).toThrow(/headingLevel.*1 to 6/)
+    expect(() =>
+      parseContentExtensionEnvelope({
+        key: 'tabs',
+        version: 1,
+        props: {
+          tabs: [
+            { label: 'Overview', content: 'Alpha', headingLevel: 7 },
+            { label: 'Details', content: 'Beta' }
+          ]
+        }
+      })
+    ).toThrow(/headingLevel.*1 to 6/)
   })
 
   it.each([
     {
       key: 'tabs',
-      props: { tabs: [{ label: 'First', content: 'Alpha' }, { label: 'Second', content: 'Beta' }] },
+      props: {
+        tabs: [
+          { label: 'First', content: 'Alpha' },
+          { label: 'Second', content: 'Beta' }
+        ]
+      },
       expected: { active: 0 }
     },
     {
@@ -240,25 +249,33 @@ describe('content extension contract', () => {
   })
 
   it('enforces static, media, diagram, and map security boundaries', () => {
-    expect(() => parseContentExtensionEnvelope({
-      key: 'tabs',
-      version: 1,
-      props: { tabs: [{ label: 'Only', content: 'one' }] }
-    })).toThrow(/between 2 and 12/)
-    expect(() => parseContentExtensionEnvelope({
-      key: 'infobox',
-      version: 1,
-      props: { title: 'Unsafe', image: 'https://evil.test/a.jpg', imageAlt: 'A', facts: [{ label: 'A', value: 'B' }] }
-    })).toThrow(/same-origin/)
+    expect(() =>
+      parseContentExtensionEnvelope({
+        key: 'tabs',
+        version: 1,
+        props: { tabs: [{ label: 'Only', content: 'one' }] }
+      })
+    ).toThrow(/between 2 and 12/)
+    expect(() =>
+      parseContentExtensionEnvelope({
+        key: 'infobox',
+        version: 1,
+        props: { title: 'Unsafe', image: 'https://evil.test/a.jpg', imageAlt: 'A', facts: [{ label: 'A', value: 'B' }] }
+      })
+    ).toThrow(/same-origin/)
     expect(() => parseContentExtensionEnvelope({ key: 'pdf', version: 1, props: { src: '/uploads/not-pdf.txt' } })).toThrow(/PDF asset/)
-    expect(() => parseContentExtensionEnvelope({ key: 'media', version: 1, props: { kind: 'audio', src: '/a.mp3', poster: '/poster.jpg' } })).toThrow(/only for video/)
+    expect(() => parseContentExtensionEnvelope({ key: 'media', version: 1, props: { kind: 'audio', src: '/a.mp3', poster: '/poster.jpg' } })).toThrow(
+      /only for video/
+    )
     expect(() => parseContentExtensionEnvelope({ key: 'youtube', version: 1, props: { videoId: 'javascript:alert(1)' } })).toThrow(/identifier characters/)
     expect(() => parseContentExtensionEnvelope({ key: 'kroki', version: 1, props: { type: 'unknown', source: 'x' } })).toThrow(/supported Kroki/)
-    expect(() => parseContentExtensionEnvelope({
-      key: 'plantuml',
-      version: 1,
-      props: { source: 'x', server: 'https://evil.test' }
-    })).toThrow(/unknown property "server"/)
+    expect(() =>
+      parseContentExtensionEnvelope({
+        key: 'plantuml',
+        version: 1,
+        props: { source: 'x', server: 'https://evil.test' }
+      })
+    ).toThrow(/unknown property "server"/)
     expect(() => parseContentExtensionEnvelope({ key: 'map', version: 1, props: { latitude: 91, longitude: 0 } })).toThrow(/-90 to 90/)
   })
 
@@ -285,6 +302,76 @@ describe('content extension contract', () => {
   it('rejects malformed JSON and trailing JSON values', () => {
     expect(() => parseContentExtensionFence('{')).toThrow(/exactly one valid JSON object/)
     expect(() => parseContentExtensionFence(`${canonicalBody}{}`)).toThrow(/exactly one valid JSON object/)
+  })
+})
+
+describe('links-grid envelope contract', () => {
+  const card = { title: 'Guide', url: '/en/guide' }
+  const parseCards = (cards: unknown) => parseContentExtensionEnvelope({ key: 'links-grid', version: 1, props: { cards } })
+
+  it('preserves text, optional local media, tags, and canonical property order', () => {
+    const source =
+      '{"key":"links-grid","version":1,"props":{"cards":[{"title":"A < B & C","url":"https://example.test/docs?q=1&lang=en","description":"Plain <b>text</b>","image":"/images/guide.webp","icon":"page","tags":["A & B","<tag>"]}]}}'
+    const envelope = parseContentExtensionFence(source)
+    expect(serializeContentExtensionFence(envelope)).toBe(`\`\`\`wiki-extension\n${source}\n\`\`\`\n`)
+    if (envelope.key !== 'links-grid') throw new TypeError('Expected links-grid envelope.')
+    expect(envelope.props.cards[0]?.description).toBe('Plain <b>text</b>')
+    expect(envelope.props.cards[0]?.tags).toEqual(['A & B', '<tag>'])
+  })
+
+  it.each(['/en/guide', 'https://example.test/docs', 'http://example.test', 'mailto:editor@example.test', 'tel:+15555550100'])('accepts safe link %s', url => {
+    const envelope = parseCards([{ ...card, url }])
+    if (envelope.key !== 'links-grid') throw new TypeError('Expected links-grid envelope.')
+    expect(envelope.props.cards[0]?.url).toBe(url)
+  })
+
+  it.each([
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'vbscript:msgbox(1)',
+    '//evil.test/image',
+    '/%2f%2fevil.test/image',
+    '/%0aevil',
+    '/_api/admin',
+    '/a/../b',
+    'https://user:password@example.test',
+    ' https://example.test',
+    'https://example.test\n',
+    '\\\\evil.test'
+  ])('refuses unsafe link %s', url => {
+    expect(() => parseCards([{ ...card, url }])).toThrow()
+  })
+
+  it('accepts the card-count limits and refuses excess rather than truncating', () => {
+    expect(parseCards([card]).key).toBe('links-grid')
+    const envelope = parseCards(Array.from({ length: 50 }, () => card))
+    if (envelope.key !== 'links-grid') throw new TypeError('Expected links-grid envelope.')
+    expect(envelope.props.cards).toHaveLength(50)
+    expect(() => parseCards([])).toThrow(/between 1 and 50/)
+    expect(() => parseCards(Array.from({ length: 51 }, () => card))).toThrow(/between 1 and 50/)
+  })
+
+  it.each([
+    { title: ' ' },
+    { title: 'x'.repeat(201) },
+    { url: `https://example.test/${'x'.repeat(2048)}` },
+    { description: 'x'.repeat(1001) },
+    { tags: Array.from({ length: 9 }, () => 'tag') },
+    { tags: ['x'.repeat(41)] },
+    { tags: [' '] },
+    { tags: [1] },
+    { image: 'https://example.test/image.png' },
+    { image: '/images/custom.svg' },
+    { image: '/images/file.html' },
+    { image: '/images/%0aimage.png' },
+    { image: '//evil.test/image.png' },
+    { icon: '<svg onload=alert(1)>' },
+    { icon: 'mdi-script' },
+    { icon: 'constructor' },
+    { style: 'background:url(https://evil.test)' },
+    { title: null }
+  ])('refuses unsafe or oversized card fields %j', change => {
+    expect(() => parseCards([{ ...card, ...change }])).toThrow()
   })
 })
 

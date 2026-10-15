@@ -49,6 +49,8 @@ const profileRoutes = (): RouteRecordRaw[] => [
   { path: '/', redirect: '/profile' },
   { path: '/profile', component: () => import('./components/profile/profile.vue') },
   { path: '/pages', component: () => import('./components/profile/pages.vue') },
+  { path: '/discussions', component: () => import('./components/profile/discussions.vue') },
+  { path: '/notifications', component: () => import('./components/profile/notifications.vue') },
   { path: '/offline', component: () => import('./components/pwa/offline-settings.vue') }
 ]
 

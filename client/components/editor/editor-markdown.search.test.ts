@@ -1,85 +1,20 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import {
   acceptCompletion,
   autocompletion,
   completionStatus,
   currentCompletions,
   insertBracket,
-  insertCompletionText,
-  pickedCompletion,
   setSelectedCompletion,
   startCompletion
 } from '@codemirror/autocomplete'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { EditorSelection, type Extension } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
-import { parse } from '@vue/compiler-sfc'
-import * as ts from 'typescript'
+import { EditorSelection } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
-import { searchPages, type PageSearchResult } from '../../helpers/pages-api.ts'
+import type { PageSearchResult } from '../../helpers/pages-api.ts'
+import { completeSourcePageLink } from '../../helpers/editor-source-authoring.ts'
 import { TextEditor } from './common/text-editor.ts'
-
-const filename = join(process.cwd(), 'client/components/editor/editor-markdown.vue')
-const descriptor = parse(readFileSync(filename, 'utf8'), { filename }).descriptor
-if (!descriptor.script) throw new Error('Markdown editor has no script')
-const script = ts.createSourceFile(filename, descriptor.script.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-
-// The completion is local to mounted(), so execute its production initializer and
-// its actual extension registration. This is an executable seam, not a source
-// assertion or a second implementation of route construction/replacement.
-const initializers = new Map<string, string>()
-const visit = (node: ts.Node): void => {
-  if (
-    ts.isVariableDeclaration(node) &&
-    ts.isIdentifier(node.name) &&
-    node.initializer &&
-    ['completePageLink', 'extensions', 'markdownEditorInputTheme'].includes(node.name.text)
-  ) {
-    initializers.set(node.name.text, node.initializer.getText(script))
-  }
-  ts.forEachChild(node, visit)
-}
-visit(script)
-const initializer = (name: string): string => {
-  const expression = initializers.get(name)
-  if (!expression) throw new Error(`Markdown completion harness cannot locate ${name}`)
-  return expression
-}
-// Preserve mounted()'s lexical component `this` while transpiling the arrow.
-// Transpiling it at module scope can otherwise erase that binding.
-const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  [
-    'function createProductionExtensions() {',
-    `const markdownEditorInputTheme = ${initializer('markdownEditorInputTheme')};`,
-    `const completePageLink = ${initializer('completePageLink')};`,
-    `const extensions = ${initializer('extensions')};`,
-    'return extensions;',
-    '}'
-  ].join('\n')
-)
-const productionExtensions = new Function(
-  'searchPages',
-  'siteLangs',
-  'window',
-  'EditorView',
-  'autocompletion',
-  'keymap',
-  'insertCompletionText',
-  'pickedCompletion',
-  `${executable}\nreturn createProductionExtensions.call(this)`
-) as (
-  this: { locale: string },
-  search: typeof searchPages,
-  languages: string[],
-  window: Window,
-  view: typeof EditorView,
-  completion: typeof autocompletion,
-  keys: typeof keymap,
-  insert: typeof insertCompletionText,
-  picked: typeof pickedCompletion
-) => Extension[]
 
 const editors: TextEditor[] = []
 const rangePrototype = browserWindow.document.createRange().constructor.prototype
@@ -138,17 +73,7 @@ const createEditor = (results: PageSearchResult['results'], namespaced = true, v
     ariaLabel: 'Markdown source',
     language: markdown({ base: markdownLanguage }),
     extensions: [
-      ...productionExtensions.call(
-        { locale: 'en' },
-        searchPages,
-        namespaced ? ['en'] : [],
-        browserWindow,
-        EditorView,
-        autocompletion,
-        keymap,
-        insertCompletionText,
-        pickedCompletion
-      ),
+      autocompletion({ override: [context => completeSourcePageLink(context, 'en', namespaced)] }),
       // Remove only the UI's accidental-keypress delay, not its completion source.
       autocompletion({ interactionDelay: 0 })
     ]

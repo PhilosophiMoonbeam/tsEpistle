@@ -22,6 +22,18 @@ props:
     title: Create Daily Backups
     hint: A tar.gz archive containing all content will be created daily in subfolder named _daily. Archives are kept for a month.
     order: 2
+  stripLeadingH1:
+    type: Boolean
+    default: false
+    title: Strip leading external document heading
+    hint: 'Ingestion only: remove a leading Markdown H1 or header-free AsciiDoc title from plain or legacy sources when body content remains. Canonical OKF and reserved concepts are never changed.'
+    order: 3
+  mapReadmeToHome:
+    type: Boolean
+    default: false
+    title: Import root README as home
+    hint: 'Ingestion only: map plain or legacy Markdown/AsciiDoc README at the target or locale root to home. Nested README and OKF stay unchanged; ambiguous home sources are refused. Exports retain canonical paths.'
+    order: 4
 actions:
   - handler: dump
     label: Dump all content to disk

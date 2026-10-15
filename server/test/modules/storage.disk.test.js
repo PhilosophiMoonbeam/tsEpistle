@@ -7,10 +7,13 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
 import tar from 'tar-fs'
+import { EventEmitter } from 'node:events'
 import moment from 'moment'
 import { JSON_SCHEMA, load } from 'js-yaml'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test'
 import { openStorageRoot } from '../../modules/storage/local-filesystem.ts'
+import { okfFilePath } from '../../okf/format.ts'
+import { nativeStorageMutationConfigurationKey } from '../../helpers/storage-configuration-key.ts'
 describe('disk storage target', () => {
   let plugin
   let rootPath
@@ -426,8 +429,14 @@ describe('disk storage target', () => {
       data: Buffer.from('healthy asset')
     }
 
-    await Storage.pageEvent({ event: 'created', page })
-    await Storage.assetEvent({ event: 'uploaded', asset })
+    await Storage.performMutation(
+      { targetKey: 'disk', targetConfigurationRevision: nativeStorageMutationConfigurationKey(Storage.activeTargets.find(target => target.key === 'disk')) },
+      async dispatch => {
+        await dispatch.writePage(page)
+        await dispatch.writeAsset(asset)
+      },
+      new AbortController().signal
+    )
     const locations = await Storage.getLocalLocations({ asset })
 
     expect(failedTarget.state).toEqual({
@@ -435,7 +444,7 @@ describe('disk storage target', () => {
       message: expect.any(String),
       lastAttempt: expect.any(String)
     })
-    expect(await fs.readFile(path.join(rootPath, 'content', 'en', 'guide.md'), 'utf8')).toContain('source_revision: \'1\'')
+    expect(await fs.readFile(path.join(rootPath, 'content', okfFilePath('en', 'guide')), 'utf8')).toContain('source_revision: \'1\'')
     expect(await fs.readFile(path.join(rootPath, 'content', 'images', 'logo.txt'), 'utf8')).toBe('healthy asset')
     expect(locations).toHaveLength(1)
     expect(locations[0].key).toBe('disk')
@@ -451,6 +460,54 @@ describe('disk storage target', () => {
     for (const target of Storage.targets ?? []) {
       if (typeof target.fn?.deactivated === 'function') await target.fn.deactivated.call(target.fn)
     }
+  })
+
+  it.each([
+    [[{ kind: 'page', relPath: 'README.md', ok: false, error: 'Import remains pending' }], 'error', 'failed'],
+    [[{ kind: 'page', relPath: 'guide.md', ok: true }, { kind: 'page', relPath: 'README.md', ok: false, error: 'Import remains pending' }], 'warning', 'partial']
+  ])('retains truthful scheduled Git import failure state (%s)', async (results, status, outcome) => {
+    global.WIKI.SERVERPATH = '/tmp/wiki-server'
+    global.WIKI.data = {
+      storage: [{ key: 'git', isAvailable: true, schedule: 'PT30M', actions: [{ handler: 'sync' }] }]
+    }
+    global.WIKI.models = {
+      storage: class {},
+      knex: vi.fn(),
+      Objection: { transaction: { start: vi.fn() } }
+    }
+    const Storage = (await vi.importFresh('../../models/storage.ts', import.meta.url)).default
+    global.WIKI.models.storage = Storage
+    const target = {
+      key: 'git',
+      isEnabled: true,
+      mode: 'sync',
+      syncInterval: 'PT30M',
+      config: { localRepoPath: path.join(rootPath, 'git-repo'), branch: 'main' },
+      runtimeGeneration: 'active-generation',
+      state: { status: 'operational', message: '', lastAttempt: null },
+      fn: { sync: vi.fn().mockResolvedValue(results) },
+      $query: vi.fn(() => ({ patch: vi.fn().mockResolvedValue(undefined) }))
+    }
+    Storage.targets = [target]
+    Storage.activeTargets = [target]
+    expect(await Storage.syncTarget('git', 'active-generation')).toBe(false)
+    expect(target.fn.sync).toHaveBeenCalledTimes(1)
+    expect(target.state).toMatchObject({
+      status,
+      lastOperation: { outcome, handler: 'sync', total: results.length, failed: 1 }
+    })
+    expect(target.state.lastOperation.items).toContainEqual(expect.objectContaining({
+      path: 'README.md',
+      outcome: 'failed'
+    }))
+
+    target.fn.sync.mockResolvedValueOnce([{ kind: 'page', relPath: 'README.md', ok: true }])
+    expect(await Storage.syncTarget('git', target.runtimeGeneration)).toBe(true)
+    expect(target.fn.sync).toHaveBeenCalledTimes(2)
+    expect(target.state).toMatchObject({
+      status: 'operational',
+      lastOperation: { handler: 'sync', outcome: 'succeeded', failed: 0 }
+    })
   })
 
   it('serializes event and bulk Markdown exports byte-identically with authoritative OKF metadata', async () => {
@@ -685,6 +742,67 @@ describe('disk storage target', () => {
       lastEditorVisible: false
     })
   })
+  it.each([false, true])('applies configured external ingestion choices without changing canonical OKF (enabled=%s)', async enabled => {
+    context.config.stripLeadingH1 = enabled
+    context.config.mapReadmeToHome = enabled
+    const canonical = '---\ntype: Reference\n---\n\n# Canonical\n\nKeep this heading'
+    const documents = {
+      'README.md': '# Welcome\n\nExternal body',
+      'fr/README.adoc': '= Bonjour\n\nCorps',
+      'docs/README.md': '# Nested\n\nNested body',
+      'author.adoc': '= Document\nJane Doe <jane@example.test>\nv1.0, 2026-10-01\n\nBody',
+      'heading-only.md': '# Only heading\n',
+      'en/index.concept.md': canonical
+    }
+    for (const [name, bytes] of Object.entries(documents)) {
+      const destination = path.join(rootPath, 'content', name)
+      await fs.mkdir(path.dirname(destination), { recursive: true })
+      await fs.writeFile(destination, bytes)
+    }
+    const imported = []
+    global.WIKI.models.users = { getRootUser: vi.fn().mockResolvedValue({ id: 1 }) }
+    global.WIKI.models.pages = {
+      getPageFromDb: vi.fn().mockResolvedValue(null),
+      createPage: vi.fn(async page => { imported.push(page); return { id: imported.length } })
+    }
+    global.WIKI.models.editors = { getDefaultEditor: vi.fn().mockResolvedValue('markdown') }
+
+    const results = await plugin.importAll.call(context)
+
+    expect(results.every(item => item.ok)).toBe(true)
+    expect(imported).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: enabled ? 'home' : 'README', locale: 'en', content: enabled ? 'External body' : documents['README.md'] }),
+      expect.objectContaining({ path: enabled ? 'home' : 'README', locale: 'fr', content: enabled ? 'Corps' : documents['fr/README.adoc'] }),
+      expect.objectContaining({ path: 'docs/README', content: enabled ? 'Nested body' : documents['docs/README.md'] }),
+      expect.objectContaining({ path: 'author', content: documents['author.adoc'] }),
+      expect.objectContaining({ path: 'heading-only', content: documents['heading-only.md'] }),
+      expect.objectContaining({ path: 'index', content: '# Canonical\n\nKeep this heading' })
+    ]))
+    expect(await fs.readFile(path.join(rootPath, 'content', 'README.md'), 'utf8')).toBe(documents['README.md'])
+  })
+
+  it.each([
+    ['README.md', 'home.md'],
+    ['README.md', 'en/home.md'],
+    ['fr/README.adoc', 'fr/home.md'],
+    ['README.md', 'en/README.adoc']
+  ])('refuses ambiguous mapped home sources %s and %s before any database write', async (first, second) => {
+    context.config.mapReadmeToHome = true
+    for (const name of [first, second]) {
+      const destination = path.join(rootPath, 'content', name)
+      await fs.mkdir(path.dirname(destination), { recursive: true })
+      await fs.writeFile(destination, 'Distinct input: ' + name)
+    }
+    const createPage = vi.fn()
+    const updatePage = vi.fn()
+    global.WIKI.models.users = { getRootUser: vi.fn().mockResolvedValue({ id: 1 }) }
+    global.WIKI.models.pages = { getPageFromDb: vi.fn().mockResolvedValue(null), createPage, updatePage }
+    await expect(plugin.importAll.call(context)).rejects.toThrow('Ambiguous home import')
+    expect(createPage).not.toHaveBeenCalled()
+    expect(updatePage).not.toHaveBeenCalled()
+    for (const name of [first, second]) expect(await fs.readFile(path.join(rootPath, 'content', name), 'utf8')).toBe('Distinct input: ' + name)
+  })
+
   it('imports regular files through descriptor sources and leaves outside content unchanged', async () => {
     const scanRoot = path.join(rootPath, 'content')
     const outsideRoot = path.join(rootPath, 'outside')
@@ -1077,6 +1195,26 @@ describe('Git storage rename identities', () => {
       },
       models: {}
     }
+    // This suite tests Git bytes/identities; PostgreSQL contention is exercised
+    // against independent real connections in storage.git-lock.postgres.test.ts.
+    const connection = new EventEmitter()
+    global.WIKI.models.knex = Object.assign(() => ({
+      where() { return this },
+      whereNot() { return this },
+      whereRaw() { return this },
+      first: async () => undefined
+    }), {
+      client: {
+        config: { client: 'pg' },
+        acquireConnection: async () => connection,
+        releaseConnection: async () => undefined,
+        destroyRawConnection: async () => undefined
+      },
+      raw: () => ({
+        connection() { return this },
+        timeout: async () => ({ rows: [{ locked: true, held: true, unlocked: true }] })
+      })
+    })
     root = await openStorageRoot(rootPath)
   })
 
@@ -1200,64 +1338,86 @@ describe('Git storage rename identities', () => {
     }))
   })
 
-  it('maps both sides of canonical reserved renames and canonical deletes to page identities', async () => {
-    const filePath = path.join(rootPath, 'en', 'log.concept.md')
-    await fs.mkdir(path.dirname(filePath), { recursive: true })
-    await fs.writeFile(filePath, 'content')
-    const movePage = vi.fn().mockResolvedValue(undefined)
-    const deletePage = vi.fn().mockResolvedValue(undefined)
-    global.WIKI.models.pages = { movePage, deletePage }
-    const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
-    const commonDiskModule = await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)
-    const firstAdmission = await commonDiskModule.collectStorageEntries(root)
-    const user = { id: 1 }
+  it('synchronizes pinned canonical reserved renames and deletes without rewriting protected source', async () => {
+    const remotePath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-git-remote-'))
+    const seedPath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-git-seed-'))
+    try {
+      const { simpleGit } = await import('simple-git')
+      const git = simpleGit(rootPath)
+      await git.init()
+      await git.addConfig('user.name', 'Wiki Test')
+      await git.addConfig('user.email', 'wiki@example.test')
+      const document = '---\ntype: Reference\nverified:\n  by: human:99\n  at: 2026-08-30T00:00:00Z\nvendor: retained\n---\n\n# Canonical heading\n\nProtected body'
+      const oldPath = 'en/index.concept.md'
+      const newPath = 'en/log.concept.md'
+      await fs.mkdir(path.join(rootPath, 'en'), { recursive: true })
+      await fs.writeFile(path.join(rootPath, oldPath), document)
+      await git.add(oldPath)
+      await git.commit('canonical index')
+      const originalCommit = (await git.raw(['rev-parse', 'HEAD'])).trim()
+      const branch = (await git.raw(['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+      await simpleGit(remotePath).init(true)
+      await git.addRemote('origin', remotePath)
+      await git.push('origin', branch)
+      await simpleGit().clone(remotePath, seedPath)
+      const seed = simpleGit(seedPath)
+      await seed.addConfig('user.name', 'External Writer')
+      await seed.addConfig('user.email', 'external@example.test')
+      await seed.raw(['mv', '--', oldPath, newPath])
+      await seed.commit('rename canonical index to log')
+      await seed.push('origin', branch)
+      const renamedCommit = (await seed.raw(['rev-parse', 'HEAD'])).trim()
+      const user = { id: 1 }
+      const movePage = vi.fn().mockResolvedValue(undefined)
+      const deletePage = vi.fn().mockResolvedValue(undefined)
+      global.WIKI.models.users = { getRootUser: vi.fn().mockResolvedValue(user) }
+      global.WIKI.models.pages = { movePage, deletePage }
+      const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+      const runtime = { ...storage, root, git, repoPath: rootPath, mode: 'pull', config: { branch, stripLeadingH1: true, mapReadmeToHome: true } }
 
-    await storage.processFiles.call({ repoPath: rootPath, root }, {
-      admission: firstAdmission,
-      files: [{
-        file: { stats: { size: 7 } },
-        oldPath: 'en/index.concept.md',
-        relPath: 'en/log.concept.md',
-        binary: false,
-        insertions: 0,
-        deletions: 0,
-        before: 0,
-        after: 0,
-        importAll: false
-      }]
-    }, user)
-    await fs.rm(filePath)
-    const secondAdmission = await commonDiskModule.collectStorageEntries(root)
-    await storage.processFiles.call({ repoPath: rootPath, root }, {
-      admission: secondAdmission,
-      files: [{
-        file: { stats: { size: 0 } },
-        oldPath: 'en/log.concept.md',
-        relPath: 'en/log.concept.md',
-        binary: false,
-        insertions: 0,
-        deletions: 1,
-        before: 0,
-        after: 0,
-        importAll: false
-      }]
-    }, user)
+      expect(await storage.sync.call(runtime)).toEqual([
+        expect.objectContaining({ kind: 'page', relPath: newPath, ok: true })
+      ])
+      expect(movePage).toHaveBeenCalledTimes(1)
+      expect(movePage).toHaveBeenCalledWith({
+        user,
+        path: 'index',
+        destinationPath: 'log',
+        locale: 'en',
+        destinationLocale: 'en',
+        okfProducer: 'import:git',
+        skipStorage: true
+      })
+      expect((await git.raw(['rev-parse', 'HEAD'])).trim()).toBe(renamedCommit)
+      expect(await fs.readFile(path.join(rootPath, newPath), 'utf8')).toBe(document)
+      await expect(fs.access(path.join(rootPath, oldPath))).rejects.toThrow()
+      expect(await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])).toBe(`${newPath}\n`)
+      expect(await git.raw(['show', `${originalCommit}:${oldPath}`])).toBe(document)
+      expect(deletePage).not.toHaveBeenCalled()
 
-    expect(movePage).toHaveBeenCalledWith({
-      user,
-      path: 'index',
-      destinationPath: 'log',
-      locale: 'en',
-      destinationLocale: 'en',
-      okfProducer: 'import:git',
-      skipStorage: true
-    })
-    expect(deletePage).toHaveBeenCalledWith({
-      user,
-      path: 'log',
-      locale: 'en',
-      skipStorage: true
-    })
+      await seed.raw(['rm', '--', newPath])
+      await seed.commit('remove canonical log')
+      await seed.push('origin', branch)
+      const deletedCommit = (await seed.raw(['rev-parse', 'HEAD'])).trim()
+      expect(await storage.sync.call(runtime)).toEqual([
+        expect.objectContaining({ kind: 'page', relPath: newPath, ok: true })
+      ])
+      expect(deletePage).toHaveBeenCalledTimes(1)
+      expect(deletePage).toHaveBeenCalledWith({
+        user,
+        path: 'log',
+        locale: 'en',
+        skipStorage: true
+      })
+      expect(movePage).toHaveBeenCalledTimes(1)
+      expect((await git.raw(['rev-parse', 'HEAD'])).trim()).toBe(deletedCommit)
+      await expect(fs.access(path.join(rootPath, newPath))).rejects.toThrow()
+      expect(await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])).toBe('')
+      expect(await git.raw(['show', `${renamedCommit}:${newPath}`])).toBe(document)
+    } finally {
+      await fs.rm(remotePath, { recursive: true, force: true })
+      await fs.rm(seedPath, { recursive: true, force: true })
+    }
   })
 
   it('rejects an unsafe Git tree before importing or mutating the database', async () => {
@@ -1397,6 +1557,87 @@ describe('Git storage rename identities', () => {
     }
   })
 
+  it('replays failed mapped imports from the retained pinned base and preserves README identity on later deletion', async () => {
+    const remotePath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-git-remote-'))
+    const seedPath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-git-seed-'))
+    try {
+      const { simpleGit } = await import('simple-git')
+      const git = simpleGit(rootPath)
+      await git.init()
+      await git.addConfig('user.name', 'Wiki Test')
+      await git.addConfig('user.email', 'wiki@example.test')
+      await fs.writeFile(path.join(rootPath, 'README.md'), '# Old\n\nOld body')
+      await git.add('README.md')
+      await git.commit('initial')
+      const branch = (await git.raw(['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+      await simpleGit(remotePath).init(true)
+      await git.addRemote('origin', remotePath)
+      await git.push('origin', branch)
+      await simpleGit().clone(remotePath, seedPath)
+      const seed = simpleGit(seedPath)
+      await seed.addConfig('user.name', 'External Writer')
+      await seed.addConfig('user.email', 'external@example.test')
+      await fs.writeFile(path.join(seedPath, 'README.md'), '# New\n\nNew body')
+      await seed.add('README.md')
+      await seed.commit('external update')
+      await seed.push('origin', branch)
+      const imported = []
+      let unavailable = true
+      global.WIKI.models.users = { getRootUser: vi.fn().mockResolvedValue({ id: 1 }) }
+      global.WIKI.models.pages = {
+        getPageFromDb: vi.fn().mockResolvedValue(null),
+        createPage: vi.fn(async page => {
+          if (unavailable) throw new Error('Database temporarily unavailable')
+          imported.push(page)
+          return { id: 1 }
+        })
+      }
+      global.WIKI.models.editors = { getDefaultEditor: vi.fn().mockResolvedValue('markdown') }
+      const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+      const runtime = { ...storage, root, git, repoPath: rootPath, mode: 'pull', config: { branch, stripLeadingH1: true, mapReadmeToHome: true } }
+      const first = await storage.sync.call(runtime)
+      expect(first).toEqual([expect.objectContaining({ ok: false, relPath: 'README.md' })])
+      const reconciled = (await git.raw(['rev-parse', 'HEAD'])).trim()
+      expect((await git.raw(['rev-parse', `refs/wiki/pending-import/${branch}`])).trim()).not.toBe(reconciled)
+      unavailable = false
+      expect(await storage.sync.call(runtime)).toEqual([expect.objectContaining({ ok: true, relPath: 'README.md' })])
+      expect((await git.raw(['rev-parse', 'HEAD'])).trim()).toBe(reconciled)
+      expect(imported).toEqual([expect.objectContaining({ path: 'home', content: 'New body', title: 'New' })])
+      await expect(Promise.resolve(git.raw(['rev-parse', '--verify', `refs/wiki/pending-import/${branch}`]))).rejects.toThrow()
+      expect(await fs.readFile(path.join(rootPath, 'README.md'), 'utf8')).toBe('# New\n\nNew body')
+      const deletePage = vi.fn().mockResolvedValue(undefined)
+      global.WIKI.models.pages.deletePage = deletePage
+      await fs.rm(path.join(seedPath, 'README.md'))
+      await seed.raw(['add', '-u', '--', 'README.md'])
+      await seed.commit('remove external README')
+      await seed.push('origin', branch)
+      expect(await storage.sync.call(runtime)).toEqual([expect.objectContaining({ ok: true, relPath: 'README.md' })])
+      expect(deletePage).toHaveBeenCalledWith(expect.objectContaining({ path: 'home', locale: 'en', skipStorage: true }))
+    } finally {
+      await fs.rm(remotePath, { recursive: true, force: true })
+      await fs.rm(seedPath, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses synchronization and purge while an uncommitted mutation is pending without deleting it', async () => {
+    const { simpleGit } = await import('simple-git')
+    const git = simpleGit(rootPath)
+    await git.init()
+    await git.addConfig('user.name', 'Wiki Test')
+    await git.addConfig('user.email', 'wiki@example.test')
+    await fs.writeFile(path.join(rootPath, 'committed.md'), 'Committed')
+    await git.add('committed.md')
+    await git.commit('initial')
+    await fs.writeFile(path.join(rootPath, 'pending.md'), 'Uncommitted durable effect bytes')
+    const branch = (await git.raw(['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+    const runtime = { ...storage, root, git, repoPath: rootPath, mode: 'pull', config: { branch } }
+    await expect(storage.sync.call(runtime)).rejects.toThrow('pending mutations')
+    await expect(storage.purge.call(runtime)).rejects.toThrow('pending mutations')
+    expect(await fs.readFile(path.join(rootPath, 'pending.md'), 'utf8')).toBe('Uncommitted durable effect bytes')
+    expect((await git.raw(['status', '--porcelain'])).trim()).toBe('?? pending.md')
+  })
+
   it('commits canonical Markdown paths for the full page lifecycle while preserving legacy non-Markdown paths', async () => {
     global.WIKI.config.lang.namespacing = false
     const { simpleGit } = await import('simple-git')
@@ -1472,6 +1713,9 @@ describe('Git storage rename identities', () => {
     const renamedTree = await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])
     expect(renamedTree).toContain('fr/log.concept.md')
     expect(renamedTree).not.toContain('en/log.concept.md')
+    const renamedCommit = (await git.raw(['rev-parse', 'HEAD'])).trim()
+    await storage.renamed.call(context, renamedPage)
+    expect((await git.raw(['rev-parse', 'HEAD'])).trim()).toBe(renamedCommit)
 
     await storage.deleted.call(context, {
       ...page,
@@ -1480,6 +1724,9 @@ describe('Git storage rename identities', () => {
     await expect(fs.access(path.join(rootPath, 'fr', 'log.concept.md'))).rejects.toThrow()
     const deletedTree = await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])
     expect(deletedTree).not.toContain('fr/log.concept.md')
+    const deletedCommit = (await git.raw(['rev-parse', 'HEAD'])).trim()
+    await storage.deleted.call(context, { ...page, localeCode: 'fr' })
+    expect((await git.raw(['rev-parse', 'HEAD'])).trim()).toBe(deletedCommit)
 
     await storage.created.call(context, {
       ...page,
@@ -1495,6 +1742,23 @@ describe('Git storage rename identities', () => {
     expect(await fs.readFile(path.join(rootPath, 'legacy.html'), 'utf8')).toContain('<p>Legacy</p>')
     const finalTree = await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])
     expect(finalTree).toContain('legacy.html')
+
+    const data = Buffer.from('Canonical relocation bytes')
+    await storage.assetUploaded.call(context, { path: 'assets/old.bin', data, authorName: page.authorName, authorEmail: page.authorEmail })
+    const relocation = {
+      sourcePath: 'assets/old.bin',
+      destinationPath: 'assets/new.bin',
+      data,
+      contentSha256: createHash('sha256').update(data).digest('hex'),
+      authorName: page.authorName,
+      authorEmail: page.authorEmail
+    }
+    await storage.assetRelocated.call(context, relocation)
+    const relocatedCommit = (await git.raw(['rev-parse', 'HEAD'])).trim()
+    await storage.assetRelocated.call(context, relocation)
+    expect((await git.raw(['rev-parse', 'HEAD'])).trim()).toBe(relocatedCommit)
+    expect(await fs.readFile(path.join(rootPath, 'assets/new.bin'))).toEqual(data)
+    await expect(fs.access(path.join(rootPath, 'assets/old.bin'))).rejects.toThrow()
   })
 
   it('uses canonical Markdown paths and legacy non-Markdown paths during bulk export', async () => {
@@ -1535,6 +1799,7 @@ describe('Git storage rename identities', () => {
     ]
     let streamIndex = 0
     global.WIKI.models.knex = {
+      ...global.WIKI.models.knex,
       column: vi.fn(() => {
         const rows = streamIndex++ === 0 ? pages : []
         const builder = {
@@ -1558,10 +1823,11 @@ describe('Git storage rename identities', () => {
     global.WIKI.models.assetFolders = {
       getAllPaths: vi.fn(() => Promise.resolve({}))
     }
-    const git = {
-      add: vi.fn(() => Promise.resolve()),
-      commit: vi.fn(() => Promise.resolve())
-    }
+    const { simpleGit } = await import('simple-git')
+    const git = simpleGit(rootPath)
+    await git.init()
+    await git.addConfig('user.name', 'Wiki Test')
+    await git.addConfig('user.email', 'wiki@example.test')
     const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
 
     await storage.syncUntracked.call({
@@ -1575,8 +1841,8 @@ describe('Git storage rename identities', () => {
     const legacyPath = path.join(rootPath, 'legacy.html')
     expect(await fs.readFile(indexPath, 'utf8')).toContain('Index content')
     expect(await fs.readFile(legacyPath, 'utf8')).toContain('<p>Legacy</p>')
-    expect(git.add).toHaveBeenCalledWith('./en/index.concept.md')
-    expect(git.add).toHaveBeenCalledWith('./legacy.html')
+    expect(await git.raw(['show', 'HEAD:en/index.concept.md'])).toContain('Index content')
+    expect(await git.raw(['show', 'HEAD:legacy.html'])).toContain('<p>Legacy</p>')
   })
 
   it('looks up an asset by its old hash, patches its destination identity by id, and invalidates its cache', async () => {

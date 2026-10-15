@@ -176,3 +176,32 @@ props:
     default: 'memberOf'
     hint: The field storing the user groups attribute (when Map Groups is enabled). Can be a variable name or a URI-formatted string.
     order: 45
+  mappingLocation:
+    type: String
+    title: Location Field Mapping
+    default: ''
+    hint: Optional; absent claims preserve the local value and empty text clears it.
+    order: 46
+  mappingJobTitle:
+    type: String
+    title: Job Title Field Mapping
+    default: ''
+    hint: Optional; absent claims preserve the local value and empty text clears it.
+    order: 47
+  mappingPronouns:
+    type: String
+    title: Pronouns Field Mapping
+    default: ''
+    hint: Optional; absent claims preserve the local value and empty text clears it.
+    order: 48
+  requireVerifiedEmail:
+    type: Boolean
+    title: Require Verified Email
+    default: false
+    hint: Refuse login unless a single verified-email attribute is true or textual true/1.
+    order: 49
+  mappingVerifiedEmail:
+    type: String
+    title: Verified Email Field Mapping
+    default: email_verified
+    order: 50

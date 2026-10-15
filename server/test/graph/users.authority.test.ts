@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { readFileSync } from 'node:fs'
 import { graphql, type GraphQLSchema } from 'graphql/index.js'
 import { makeExecutableSchema } from '@graphql-tools/schema'
 import errors from '../../helpers/error.ts'
@@ -14,18 +15,18 @@ let schema: GraphQLSchema
 beforeAll(async () => {
   resolverMap = (await vi.importFresh('../../graph/resolvers/user.ts', import.meta.url)).default
   schema = makeExecutableSchema({
-    typeDefs: `
-      type Query { users: UserQuery }
-      type Mutation { users: UserMutation }
-      type UserQuery { profile: UserProfile }
-      type UserProfile { id: Int! }
-      type UserMutation {
-        updateProfile(name: String!, location: String!, jobTitle: String!, timezone: String!, dateFormat: String!, appearance: String!): DefaultResponse
-        changePassword(current: String!, new: String!): DefaultResponse
-      }
-      type DefaultResponse { responseResult: ResponseStatus }
-      type ResponseStatus { succeeded: Boolean!, errorCode: Int!, slug: String!, message: String }
-    `,
+    typeDefs: [
+      `
+        scalar Date
+        directive @auth(requires: [String]) on FIELD_DEFINITION
+        type Query { _health: Boolean }
+        type Mutation { _health: Boolean }
+        type Group { id: Int! }
+        type DefaultResponse { responseResult: ResponseStatus }
+        type ResponseStatus { succeeded: Boolean!, errorCode: Int!, slug: String!, message: String }
+      `,
+      readFileSync(new URL('../../graph/schemas/user.graphql', import.meta.url), 'utf8')
+    ],
     resolvers: {
       Query: resolverMap.Query,
       Mutation: resolverMap.Mutation,
@@ -58,7 +59,8 @@ describe('GraphQL profile transport results', () => {
 
     const mutation = await graphql({
       schema,
-      source: 'mutation { users { updateProfile(name: "API", location: "", jobTitle: "", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
+      source:
+        'mutation { users { updateProfile(name: "API", location: "", jobTitle: "", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
       contextValue: { req: { user: apiPrincipal, get: () => '1' }, res: {} }
     })
     expect(mutation.errors).toBeUndefined()
@@ -101,7 +103,8 @@ describe('GraphQL profile transport results', () => {
 
     const result = await graphql({
       schema,
-      source: 'mutation { users { updateProfile(name: "Human", location: "", jobTitle: "", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
+      source:
+        'mutation { users { updateProfile(name: "Human", location: "", jobTitle: "", pronouns: "they/them", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
       contextValue: { req: { user: humanPrincipal, get: () => '7' }, res: {} }
     })
     expect(result.errors).toBeUndefined()
@@ -116,5 +119,20 @@ describe('GraphQL profile transport results', () => {
         }
       }
     })
+    expect(operations.updateProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requester: humanPrincipal,
+        expectedAccountId: '7',
+        input: expect.objectContaining({ pronouns: 'they/them' })
+      })
+    )
+    operations.getProfile.mockResolvedValue({ id: 7, pronouns: 'they/them' })
+    const profile = await graphql({
+      schema,
+      source: '{ users { profile { id pronouns } } }',
+      contextValue: { req: { user: humanPrincipal }, res: {} }
+    })
+    expect(profile.errors).toBeUndefined()
+    expect(profile.data).toEqual({ users: { profile: { id: 7, pronouns: 'they/them' } } })
   })
 })
