@@ -90,6 +90,7 @@ suite('Agent controls persisted HTTP authorization boundary', () => {
     })
     app.use(
       createAgentsHostController({
+        logger: console,
         auth: {
           authenticate(req, _res, next) {
             if (signedIn) {

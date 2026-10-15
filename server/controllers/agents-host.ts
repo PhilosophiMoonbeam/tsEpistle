@@ -131,6 +131,7 @@ interface AgentHostWiki extends AgentControlServices {
       }
     }
   }
+  readonly logger: { error(error: unknown): void }
   readonly models: {
     readonly knex: Knex
   }
@@ -1579,7 +1580,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       return res.status(403).json({ error: 'PAGE_MUTATION_FORBIDDEN', message: error.message })
     if (error instanceof AgentRepositoryError || error instanceof AgentProposalError)
       return res.status(error.status).json({ error: error.code, message: error.status >= 500 ? 'Agent request failed' : error.message })
-    return next(error)
+    wiki.logger.error(error)
+    return res.status(500).json({ error: 'AGENT_REQUEST_FAILED', message: 'Agent request failed' })
   })
 
   return router

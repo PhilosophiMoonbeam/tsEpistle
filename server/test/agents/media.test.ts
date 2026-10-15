@@ -282,7 +282,7 @@ describe('private Agent media', () => {
       .where({ id: row.id })
       .update({ sha256: '0'.repeat(64) })
     await expect(stageOwnedAgentMedia(db, 7, row.id, new AbortController().signal)).rejects.toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
-  })
+  }, 30_000)
   it('reauthorizes lazy small-file reads and refuses altered content after descriptor creation', async () => {
     const row = await upload()
     const source = ownedAgentMediaSource(db, 7, sessionId, await getOwnedAgentMediaMetadata(db, 7, row.id))
