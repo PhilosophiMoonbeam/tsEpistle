@@ -405,6 +405,18 @@ function isPageTreeItem (item: unknown): item is PageTreeItem {
     typeof (item as { treeId?: unknown }).treeId === 'number'
 }
 
+function findPageTreeItem (items: PageTreeItem[], id: number): PageTreeItem | undefined {
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    if (item.id === id) return item
+    if (item.children) {
+      const child = findPageTreeItem(item.children, id)
+      if (child) return child
+    }
+  }
+  return undefined
+}
+
 function comparePageEntries (left: PageEntry, right: PageEntry): number {
   if (left.title !== right.title) return left.title < right.title ? -1 : 1
   if (left.path === right.path) return 0
@@ -612,6 +624,8 @@ export default defineComponent({
       this.currentPage = null
       const pathParts = this.currentPath?.split('/') ?? []
       this.currentPath = [current?.path ?? '', pathParts[pathParts.length - 1] ?? ''].filter(Boolean).join('/')
+      const folder = findPageTreeItem(this.tree, nodeId)
+      if (folder) void this.fetchFolders(folder)
     },
     currentPage (newValue: PageEntry | null) {
       if (this.moveReceipt !== null) return
@@ -945,18 +959,17 @@ export default defineComponent({
       this.treeAbortController?.abort()
       this.treeAbortController = new AbortController()
       this.treeViewCacheId += 1
-      const root = createRootNode(locale, this.treeViewCacheId)
       this.pendingRequests = 0
       this.folderLoadFailures = {}
       this.folderRequestIds = {}
       this.folderPendingRequestIds = {}
-      this.tree = [root]
+      this.tree = [createRootNode(locale, this.treeViewCacheId)]
       this.currentNode = [0]
       this.openNodes = [0]
       this.currentPage = null
       this.pages = []
       this.all = []
-      await this.fetchFolders(root)
+      await this.fetchFolders(this.tree[0])
     },
     isFolderRetrying(failure: FolderLoadFailure): boolean {
       return this.folderPendingRequestIds[failure.key] !== undefined
@@ -966,6 +979,7 @@ export default defineComponent({
     },
     retryFolderLoad(failure: FolderLoadFailure): void {
       if (failure.item.treeId !== this.treeViewCacheId || this.isFolderRetrying(failure)) return
+      delete this.folderRequestIds[failure.key]
       void this.fetchFolders(failure.item)
     },
     async fetchFolders (item: unknown): Promise<void> {
@@ -976,6 +990,8 @@ export default defineComponent({
       const controller = this.treeAbortController
       if (!controller || controller.signal.aborted) return
       const requestKey = `${requestTreeId}:${item.id}`
+      // Activation and expansion share one attempt; only explicit retry starts another.
+      if (this.folderRequestIds[requestKey] !== undefined) return
       const requestId = ++this.folderRequestSequence
       this.folderRequestIds[requestKey] = requestId
       this.folderPendingRequestIds[requestKey] = requestId
@@ -991,6 +1007,17 @@ export default defineComponent({
           requestLocale !== this.currentLocale ||
           this.folderRequestIds[requestKey] !== requestId
         ) return
+        // Native IDs can be rebuilt while the picker is open; never publish another branch.
+        if (item.id !== 0 && items.some(row =>
+          row.parent !== item.id ||
+          row.locale !== item.locale ||
+          row.visibility !== item.visibility ||
+          row.ownerId !== item.ownerId ||
+          !row.path.startsWith(item.path) ||
+          row.path.charAt(item.path.length) !== '/' ||
+          row.path.length <= item.path.length + 1 ||
+          row.path.indexOf('/', item.path.length + 1) !== -1
+        )) throw new Error(this.$t('common:pageSelector.pagesCouldNotLoaded'))
         const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, treeId: requestTreeId, children: [] }))
         const itemPages = items.filter(isPageEntry)
         item.children = itemFolders.length > 0 ? itemFolders : undefined

@@ -1,12 +1,13 @@
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
+import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 globalThis.translate = translateEnglish
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 import type { App, ComponentOptions, PropType, RenderFunction } from 'vue'
+import { fetchPageTree as fetchNativePageTree } from '../../helpers/pages-api.ts'
 import type { MoveLinkReviewInput, MoveLinkReviewResponse, PageTreeRow } from '../../helpers/pages-api.ts'
 
 const filename = join(process.cwd(), 'client/components/common/page-selector.vue')
@@ -25,7 +26,10 @@ const globals = globalThis as typeof globalThis & {
 globals.siteConfig = { lang: 'en' }
 globals.siteLangs = []
 
+// Vuetify snapshots browser capabilities, so module loading follows the shared DOM harness.
 const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const { VTreeview } = await import('vuetify/components/VTreeview')
 const compiled = compileTemplate({
   filename,
   id: 'page-selector-presentation-test',
@@ -44,7 +48,7 @@ const passthrough = (tag = 'div') =>
   Vue.defineComponent({
     inheritAttrs: false,
     setup(_props, { attrs, slots }) {
-      return () => Vue.h(tag, attrs, slots.default?.())
+      return () => Vue.h(tag, attrs, [slots.default?.(), slots.append?.()])
     }
   })
 
@@ -99,7 +103,6 @@ const VListItem = Vue.defineComponent({
   }
 })
 
-
 let app: App | undefined
 let rows: PageTreeRow[] = []
 let moveReviewHandler: (pageId: number, input: MoveLinkReviewInput) => Promise<MoveLinkReviewResponse> = async () => ({
@@ -127,9 +130,14 @@ const settle = async (): Promise<void> => {
   await Vue.nextTick()
 }
 
-const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<string, unknown> = {}) => {
+const mountSelector = async (
+  initialRows: PageTreeRow[],
+  selectorProps: Record<string, unknown> = {},
+  options: { realTree?: boolean; treeFetch?: Parameters<typeof fetchNativePageTree>[0] } = {}
+) => {
   rows = initialRows
-  const fetchPageTree = async (): Promise<PageTreeRow[]> => rows
+  const treeFetch = options.treeFetch
+  const fetchPageTree: typeof fetchNativePageTree = treeFetch ? (_fetchImpl, query) => fetchNativePageTree(treeFetch, query) : async () => rows
   const fetchMoveLinkReview = (_fetchImpl: unknown, pageId: number, input: MoveLinkReviewInput): Promise<MoveLinkReviewResponse> =>
     moveReviewHandler(pageId, input)
   const getErrorMessage = (error: unknown): string => String(error)
@@ -142,15 +150,7 @@ const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<s
     'getErrorMessage',
     'AsyncState',
     executableScript
-  )(
-    Vue.defineComponent,
-    Vue.markRaw,
-    Vue.useId,
-    fetchPageTree,
-    fetchMoveLinkReview,
-    getErrorMessage,
-    AsyncState
-  ) as ComponentOptions
+  )(Vue.defineComponent, Vue.markRaw, Vue.useId, fetchPageTree, fetchMoveLinkReview, getErrorMessage, AsyncState) as ComponentOptions
   mountedSelector.render = render
   const host = document.createElement('div')
   document.body.append(host)
@@ -162,6 +162,7 @@ const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<s
     locale: 'en',
     ...selectorProps
   })
+  if (options.realTree) app.use(createVuetify({ components: { VTreeview } }))
   for (const name of ['v-card', 'v-col', 'v-icon', 'v-progress-circular', 'v-row', 'v-select', 'v-spacer', 'v-text-field', 'v-toolbar', 'vue-scroll'])
     app.component(name, passthrough())
   app.component('v-alert', passthrough())
@@ -173,9 +174,9 @@ const mountSelector = async (initialRows: PageTreeRow[], selectorProps: Record<s
   app.component('v-list-item', VListItem)
   app.component('v-list-item-title', passthrough('span'))
   app.component('v-tooltip', passthrough())
-  app.component('v-treeview', passthrough())
+  if (!options.realTree) app.component('v-treeview', passthrough())
   app.config.globalProperties.$t = translateEnglish
-  app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
+  if (!options.realTree) app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
   const instance = app.mount(host) as unknown as {
     currentLocale: string
     currentPath: string | null
@@ -193,10 +194,169 @@ const page = (id: number, path: string, title: string): PageTreeRow => ({
   parent: 0,
   locale: 'en',
   visibility: 'public',
-  ownerId: null
+  ownerId: null,
+  canEdit: true
 })
 
+const folder = (id: number, path: string, title: string, parent = 0): PageTreeRow => ({
+  id,
+  path,
+  title,
+  isFolder: true,
+  pageId: null,
+  parent,
+  locale: 'en',
+  visibility: 'private',
+  ownerId: 7,
+  canEdit: true
+})
+
+const treeResponse = (items: PageTreeRow[]): Response => new Response(JSON.stringify(items), { headers: { 'Content-Type': 'application/json' } })
+
+const treeItem = (host: HTMLElement, title: string): HTMLElement => {
+  const item = Array.from(host.querySelectorAll<HTMLElement>('.page-selector__tree [role="treeitem"]')).find(
+    candidate => candidate.querySelector('.v-list-item-title')?.textContent === title
+  )
+  if (!item) throw new Error(`Folder "${title}" did not render`)
+  return item
+}
+
 describe('Browse page selector presentation', () => {
+  test('renders asynchronous native folders without toggling and loads an activated folder through the real tree', async () => {
+    const rootReply = Promise.withResolvers<Response>()
+    const childReply = Promise.withResolvers<Response>()
+    const requests: number[] = []
+    let submitted: unknown
+    const { host } = await mountSelector(
+      [],
+      {
+        openHandler: (selection: unknown) => {
+          submitted = selection
+        }
+      },
+      {
+        realTree: true,
+        treeFetch: url => {
+          const parent = Number(new URL(url, 'http://localhost').searchParams.get('parent'))
+          requests.push(parent)
+          if (parent === 0) return rootReply.promise
+          if (parent === 1) return childReply.promise
+          throw new Error(`Unexpected folder request ${parent}`)
+        }
+      }
+    )
+    expect(host.querySelector('.page-selector__tree[role="tree"]')).not.toBeNull()
+    expect(host.querySelectorAll('.page-selector__tree [role="treeitem"]')).toHaveLength(1)
+    expect(requests).toEqual([0])
+
+    rootReply.resolve(treeResponse([folder(1, 'owned-docs', 'Owned documentation'), page(11, 'docs/current', 'Current page')]))
+    await vi.waitFor(() => expect(treeItem(host, 'Owned documentation')).not.toBeNull())
+    expect(requests).toEqual([0])
+
+    treeItem(host, 'Owned documentation').click()
+    await vi.waitFor(() => {
+      expect(requests).toEqual([0, 1])
+      expect(host.querySelector('.page-selector__pages-pane [data-state="loading"]')).not.toBeNull()
+    })
+    treeItem(host, 'Owned documentation').querySelector<HTMLButtonElement>('button')!.click()
+    await settle()
+    treeItem(host, 'Owned documentation').querySelector<HTMLButtonElement>('button')!.click()
+    await settle()
+    treeItem(host, translateEnglish('common:pageSelector.root')).click()
+    await settle()
+    treeItem(host, 'Owned documentation').click()
+    await settle()
+    expect(requests).toEqual([0, 1])
+
+    childReply.resolve(
+      treeResponse([
+        folder(2, 'owned-docs/nested', 'Nested documentation', 1),
+        { ...page(41, 'owned-docs/exact', 'Exact owned page'), pageId: 741, parent: 1, visibility: 'private', ownerId: 7 }
+      ])
+    )
+    await vi.waitFor(() => {
+      expect(treeItem(host, 'Nested documentation')).not.toBeNull()
+      expect(host.querySelector('.page-selector__pages-list [data-value="41"]')?.textContent).toContain('Exact owned page')
+    })
+    expect(host.querySelector('.page-selector__pages-list')?.textContent).not.toContain('Current page')
+    host.querySelector<HTMLButtonElement>('.page-selector__pages-list [data-value="41"]')!.click()
+    await settle()
+    expect(host.querySelector('.page-selector__page--selected')?.textContent).toContain('Exact owned page')
+    expect(host.querySelector('.page-selector__selection-summary')?.textContent).toContain('/en/owned-docs/exact')
+    const select = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === 'Select')
+    expect(select?.disabled).toBe(false)
+    select!.click()
+    await settle()
+    expect(submitted).toEqual({ locale: 'en', path: 'owned-docs/exact', id: 741, visibility: 'private' })
+    expect(requests).toEqual([0, 1])
+  })
+
+  const mismatchedChildren: Array<[string, Partial<PageTreeRow>]> = [
+    ['another canonical branch', { path: 'workspace/private-code' }],
+    ['a deeper descendant instead of a direct child', { path: 'owned-docs/nested/exact' }],
+    ['another private owner at the same path', { ownerId: 8 }],
+    ['another visibility at the same path', { visibility: 'public', ownerId: null }]
+  ]
+  test.each(mismatchedChildren)('refuses %s from a stale native parent and retries only on explicit request', async (_description, changes) => {
+    const firstChild = Promise.withResolvers<Response>()
+    const retryChild = Promise.withResolvers<Response>()
+    const requests: number[] = []
+    let childAttempts = 0
+    const exactPage: PageTreeRow = {
+      ...page(41, 'owned-docs/exact', 'Exact owned page'),
+      pageId: 741,
+      parent: 1,
+      visibility: 'private',
+      ownerId: 7
+    }
+    const { host } = await mountSelector(
+      [],
+      {},
+      {
+        realTree: true,
+        treeFetch: url => {
+          const parent = Number(new URL(url, 'http://localhost').searchParams.get('parent'))
+          requests.push(parent)
+          if (parent === 0) return Promise.resolve(treeResponse([folder(1, 'owned-docs', 'Owned documentation')]))
+          if (parent !== 1) throw new Error(`Unexpected folder request ${parent}`)
+          childAttempts += 1
+          if (childAttempts === 1) return firstChild.promise
+          if (childAttempts === 2) return retryChild.promise
+          throw new Error('The failed folder retried without an explicit request')
+        }
+      }
+    )
+    await vi.waitFor(() => expect(treeItem(host, 'Owned documentation')).not.toBeNull())
+    treeItem(host, 'Owned documentation').click()
+    await vi.waitFor(() => expect(childAttempts).toBe(1))
+    firstChild.resolve(treeResponse([{ ...exactPage, ...changes }]))
+    await vi.waitFor(() => expect(host.querySelector('.page-selector__pages-pane [data-state="error"]')).not.toBeNull())
+    expect(host.querySelector('.page-selector__pages-list')).toBeNull()
+    expect(host.querySelector('[data-selection-state="selected"]')).toBeNull()
+
+    treeItem(host, translateEnglish('common:pageSelector.root')).click()
+    await settle()
+    treeItem(host, 'Owned documentation').click()
+    await settle()
+    treeItem(host, 'Owned documentation').querySelector<HTMLButtonElement>('button')!.click()
+    await settle()
+    treeItem(host, 'Owned documentation').querySelector<HTMLButtonElement>('button')!.click()
+    await settle()
+    expect(requests).toEqual([0, 1])
+    expect(host.querySelector('.page-selector__pages-pane [data-state="error"]')).not.toBeNull()
+
+    const retry = host.querySelector<HTMLButtonElement>('.page-selector__folder-error button')
+    expect(retry).not.toBeNull()
+    retry!.click()
+    retry!.click()
+    await vi.waitFor(() => expect(requests).toEqual([0, 1, 1]))
+    retryChild.resolve(treeResponse([exactPage]))
+    await vi.waitFor(() => expect(host.querySelector('.page-selector__pages-list [data-value="41"]')?.textContent).toContain('Exact owned page'))
+    expect(host.querySelector('.page-selector__folder-error')).toBeNull()
+    expect(host.querySelector('.page-selector__pages-pane [data-state="error"]')).toBeNull()
+    expect(requests).toEqual([0, 1, 1])
+  })
+
   test('keeps current and selected pages distinct and gives an empty folder a visible state', async () => {
     const { host, instance } = await mountSelector([page(11, 'docs/current', 'Current page'), page(12, 'docs/other', 'Another page')])
     const foldersHeading = host.querySelector<HTMLElement>('.page-selector__folders-label')
@@ -260,7 +420,7 @@ describe('Browse page selector presentation', () => {
       reason: 'Automatically included with the moved page.',
       changes: [{ before: '[Current](/en/docs/current)', after: '[Current](/en/docs/archive)' }]
     }
-    const requests: Array<{ pageId: number, input: MoveLinkReviewInput }> = []
+    const requests: Array<{ pageId: number; input: MoveLinkReviewInput }> = []
     moveReviewHandler = async (pageId, input) => {
       requests.push({ pageId, input })
       return {
@@ -275,7 +435,10 @@ describe('Browse page selector presentation', () => {
       message: 'Page has been moved.' as const,
       pageId: 10,
       sourceRevision: '6',
-      updated: [{ id: 21, sourceRevision: '8' }, { id: 23, sourceRevision: '13' }],
+      updated: [
+        { id: 21, sourceRevision: '8' },
+        { id: 23, sourceRevision: '13' }
+      ],
       projections: 'pending' as const
     }
     let submittedMove: {
@@ -294,13 +457,7 @@ describe('Browse page selector presentation', () => {
       sourcePageId: 10,
       sourceSourceRevision: '5',
       sourceVisibility: 'public',
-      openHandler: (selection: {
-        locale: string
-        path: string
-        sourcePageId?: number
-        expectedSourceRevision?: string
-        reviewToken?: string
-      }) => {
+      openHandler: (selection: { locale: string; path: string; sourcePageId?: number; expectedSourceRevision?: string; reviewToken?: string }) => {
         submittedMove = {
           locale: selection.locale,
           path: selection.path,
@@ -310,11 +467,12 @@ describe('Browse page selector presentation', () => {
         }
         return selection.reviewToken ? receipt : undefined
       },
-      onMoveAcknowledged: (value: unknown) => { acknowledgement = value }
+      onMoveAcknowledged: (value: unknown) => {
+        acknowledgement = value
+      }
     })
     const clickButton = async (label: string): Promise<void> => {
-      const button = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-        .find(candidate => candidate.textContent?.trim() === label)
+      const button = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(candidate => candidate.textContent?.trim() === label)
       if (!button) throw new Error(`Button "${label}" did not render`)
       button.click()
       await settle()
@@ -341,12 +499,14 @@ describe('Browse page selector presentation', () => {
       candidate.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
     }
     await settle()
-    const referrerCard = Array.from(host.querySelectorAll('.page-selector__candidate'))
-      .find(card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Referrer page')
+    const referrerCard = Array.from(host.querySelectorAll('.page-selector__candidate')).find(
+      card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Referrer page'
+    )
     expect(referrerCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Release notes](/en/docs/current)')
     expect(referrerCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Release notes](/en/docs/archive)')
-    const selfLinkCard = Array.from(host.querySelectorAll('.page-selector__candidate'))
-      .find(card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Moved page')
+    const selfLinkCard = Array.from(host.querySelectorAll('.page-selector__candidate')).find(
+      card => card.querySelector('.page-selector__candidate-title')?.textContent === 'Moved page'
+    )
     expect(selfLinkCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Current](/en/docs/current)')
     expect(selfLinkCard?.querySelector('.page-selector__diff')?.textContent).toContain('[Current](/en/docs/archive)')
     expect(selfLinkCard?.querySelector('input[type="checkbox"]')).toBeNull()
@@ -358,10 +518,12 @@ describe('Browse page selector presentation', () => {
     expect(confirmationHeading?.id).toBeTruthy()
     expect(confirmation?.getAttribute('aria-labelledby')).toBe(confirmationHeading?.id)
     const confirmationCards = Array.from(confirmation?.querySelectorAll('.page-selector__candidate') ?? [])
-    expect(confirmationCards.map(card => ({
-      title: card.querySelector('.page-selector__candidate-title')?.textContent,
-      location: card.querySelector('.page-selector__candidate-location')?.textContent
-    }))).toEqual([
+    expect(
+      confirmationCards.map(card => ({
+        title: card.querySelector('.page-selector__candidate-title')?.textContent,
+        location: card.querySelector('.page-selector__candidate-location')?.textContent
+      }))
+    ).toEqual([
       { title: 'Referrer page', location: 'en / docs/referrer · revision 7' },
       { title: 'Referrer page', location: 'fr / guides/referrer · revision 12' },
       { title: 'Moved page', location: 'en / docs/current · revision 5' }
@@ -412,12 +574,13 @@ describe('Browse page selector presentation', () => {
       sourcePageId: 10,
       sourceSourceRevision: '5',
       sourceVisibility: 'public',
-      openHandler: async () => { throw moveError }
+      openHandler: async () => {
+        throw moveError
+      }
     })
     const option = host.querySelector<HTMLInputElement>('.page-selector__repair-toggle input')
     expect(option?.checked).toBe(false)
-    const button = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-      .find(candidate => candidate.textContent?.trim() === 'Select')
+    const button = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(candidate => candidate.textContent?.trim() === 'Select')
     expect(button).not.toBeNull()
     button!.click()
     await settle()
@@ -442,8 +605,7 @@ describe('Browse page selector presentation', () => {
         throw new Error('Connection lost')
       }
     })
-    const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-      .find(candidate => candidate.textContent?.trim() === 'Select')
+    const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(candidate => candidate.textContent?.trim() === 'Select')
     if (!submit) throw new Error('Move action did not render')
     submit.click()
     await settle()
@@ -458,8 +620,10 @@ describe('Browse page selector presentation', () => {
     expect(host.querySelector('.page-selector__move-result')).toBeNull()
     expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Refresh page')).toBe(true)
     expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Select')).toBe(false)
-    expect(Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-      .filter(button => !button.disabled)
-      .every(button => button.textContent?.trim() === 'Refresh page')).toBe(true)
+    expect(
+      Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+        .filter(button => !button.disabled)
+        .every(button => button.textContent?.trim() === 'Refresh page')
+    ).toBe(true)
   })
 })

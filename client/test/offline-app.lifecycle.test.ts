@@ -473,7 +473,130 @@ async function settleOffline(pendingPreparations: ReadonlySet<Promise<unknown>>)
   }
 }
 
+describe('passive offline code rendering', () => {
+  it('regenerates local tokens without trusting source spans, active nodes, attributes or unrelated DOM', async () => {
+    const target = document.createElement('div')
+    const unrelated = document.createElement('pre')
+    unrelated.innerHTML = '<code class="language-javascript">const untouched = 9;</code>'
+    document.body.append(unrelated, target)
+    const html = [
+      '<p class="language-javascript arbitrary" style="color:red" onclick="alert(1)">Heading</p>',
+      '<pre class="language-js arbitrary"><code class="language-javascript arbitrary" onmouseover="alert(1)">',
+      '<span class="token keyword arbitrary">ordinaryIdentifier</span>;\nconst safe = "&lt;script&gt;literal&lt;/script&gt;";\n',
+      '<script>alert(1)</script><img src="https://remote.test/image" onerror="alert(1)"><svg><text>hidden</text></svg>',
+      '</code></pre>'
+    ].join('')
+    const { snapshot } = await savedRecord(browserWindow.location.origin, 1, 'Safe code', html)
+    const fetch = vi.fn(async () => {
+      throw new Error('Offline network unavailable')
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await offlineRenderer.renderOfflineHtmlFragment(target, snapshot)
+
+    expect(target.querySelector('code')!.textContent).toBe('ordinaryIdentifier;\nconst safe = "<script>literal</script>";\n')
+    expect(target.querySelector('.token.keyword')!.textContent).toBe('const')
+    expect(target.querySelector('.token.string')!.textContent).toBe('"<script>literal</script>"')
+    expect(target.querySelector('script, img, svg, [style], [onclick], [onmouseover], .arbitrary')).toBeNull()
+    expect(target.querySelector('p')!.attributes.length).toBe(0)
+    expect(unrelated.querySelector('.token')).toBeNull()
+    expect(unrelated.textContent).toBe('const untouched = 9;')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['legacy language-less', '', 'const readable = 1;'],
+    ['unknown grammar', 'language-not-bundled', 'const readable = 1;'],
+    ['invalid language hint', `language-${'x'.repeat(33)}`, 'const readable = 1;'],
+    ['oversized code block', 'language-javascript', 'x'.repeat(8_193)]
+  ])('keeps %s saved code naturally plain and intact', async (_label, languageClass, source) => {
+    const target = document.createElement('div')
+    const { snapshot } = await savedRecord(
+      browserWindow.location.origin,
+      1,
+      'Plain code',
+      `<pre><code class="${languageClass}"><span class="token keyword arbitrary">${source}</span></code></pre>`
+    )
+
+    await offlineRenderer.renderOfflineHtmlFragment(target, snapshot)
+
+    expect(target.querySelector('code')!.textContent).toBe(source)
+    expect(target.querySelector('span')).toBeNull()
+    expect(target.querySelector('.arbitrary')).toBeNull()
+  })
+
+  it('bounds token expansion without rejecting or truncating saved source', async () => {
+    const target = document.createElement('div')
+    const source = 'const x = 1;\n'.repeat(300)
+    const { snapshot } = await savedRecord(browserWindow.location.origin, 1, 'Dense code', `<pre><code class="language-javascript">${source}</code></pre>`)
+
+    await offlineRenderer.renderOfflineHtmlFragment(target, snapshot)
+
+    expect(target.querySelector('code')!.textContent).toBe(source)
+    expect(target.querySelector('.token')).toBeNull()
+  })
+
+  it('leaves later blocks plain once the page highlight character budget is exhausted', async () => {
+    const target = document.createElement('div')
+    const source = `// ${'x'.repeat(7_000)}\nconst readable = 1;\n`
+    const { snapshot } = await savedRecord(
+      browserWindow.location.origin,
+      1,
+      'Many blocks',
+      `<pre><code class="language-javascript">${source}</code></pre>`.repeat(5)
+    )
+
+    await offlineRenderer.renderOfflineHtmlFragment(target, snapshot)
+
+    const blocks = [...target.querySelectorAll('code')]
+    for (const code of blocks) expect(code.textContent).toBe(source)
+    for (const code of blocks.slice(0, 4)) expect(code.querySelector('.token.keyword')!.textContent).toBe('const')
+    expect(blocks[4]!.querySelector('.token')).toBeNull()
+  })
+
+  it('refuses tampered code and unsupported sanitizer provenance before replacing content', async () => {
+    const target = document.createElement('div')
+    target.textContent = 'Already verified content'
+    const { snapshot } = await savedRecord(browserWindow.location.origin, 1, 'Code', '<pre><code class="language-javascript">const safe = 1;</code></pre>')
+    snapshot.content.html = snapshot.content.html.replace('safe', 'tampered')
+
+    await expect(offlineRenderer.renderOfflineHtmlFragment(target, snapshot)).rejects.toMatchObject({ code: 'integrity' })
+    expect(target.textContent).toBe('Already verified content')
+    snapshot.content.sanitizerVersion = 'unsupported' as typeof snapshot.content.sanitizerVersion
+    snapshot.integrity = await offlineRenderer.offlineSnapshotIntegrity(snapshot)
+    await expect(offlineRenderer.renderOfflineHtmlFragment(target, snapshot)).rejects.toBeInstanceOf(offlineRenderer.OfflineRenderError)
+    expect(target.textContent).toBe('Already verified content')
+  })
+})
+
 describe('saved-page reader and library settings lifecycle', () => {
+  it.each(['public', 'private'])('opens %s saved JavaScript with real local tokens and exact source', async audience => {
+    const fixture = await offlineFixture({ privateVault: audience === 'private', unlocked: audience === 'private', privateOnly: audience === 'private' })
+    const source = 'const message = "<script>literal</script>";\nconsole.log(message, 42);\n'
+    const html = `<pre><code class="language-javascript">${source.replaceAll('<', '&lt;')}</code></pre>`
+    const record = await savedRecord(audience === 'private' ? fixture.privateSite : fixture.origin, 1, 'Code reader', html)
+    if (audience === 'private') fixture.state.privateBodies = [record]
+    else fixture.state.publicBodies = [record]
+    const fetch = vi.fn(async () => {
+      throw new Error('Offline network unavailable')
+    })
+    vi.stubGlobal('fetch', fetch)
+    const { host, errors } = await fixture.mount()
+
+    host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
+    await vi.waitFor(() => expect(host.querySelector('.offline-page-body .token.keyword')?.textContent).toBe('const'))
+
+    const code = host.querySelector('.offline-page-body pre > code')!
+    expect(code.textContent).toBe(source)
+    expect(code.querySelector('.token.string')!.textContent).toBe('"<script>literal</script>"')
+    expect(code.querySelector('.token.function')!.textContent).toBe('log')
+    expect(code.querySelector('.token.number')!.textContent).toBe('42')
+    expect(code.querySelector('script')).toBeNull()
+    expect(host.querySelector('#offline-reader-status')!.classList.contains('is-ready')).toBe(true)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(errors).toEqual([])
+  })
+
   it.each([
     ['blank saved-page list', ''],
     ['private title query', 'Private']

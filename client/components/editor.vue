@@ -237,7 +237,7 @@
                 ) {{ $t('editor:offline.keepAsNewDraft') }}
         component.editor-active-editor(
           :is='currentEditor'
-          v-if='currentEditor'
+          v-if='currentEditor && sourceEditorReady'
           :key='editorInstanceKey'
           :save='save'
           :wiki-link-options='currentEditor === `editorMarkdown` || currentEditor === `editorVisualMarkdown` ? wikiLinkOptions : undefined'
@@ -753,6 +753,12 @@ export default defineComponent({
     currentEditor: {
       get(): string { return wikiStore.editor.editor },
       set(value: string) { wikiStore.editor.editor = value }
+    },
+    sourceEditorReady(): boolean {
+      // Source controllers bind immutable actor/document ownership when mounted.
+      // Do not bind them to the anonymous shell while cold authentication settles.
+      return !['editorMarkdown', 'editorAsciidoc', 'editorCode'].includes(this.currentEditor) ||
+        (this.warmAuthenticatedActor && wikiStore.offlineIdentityReady)
     },
     activeModal: {
       get(): string { return wikiStore.editor.activeModal },

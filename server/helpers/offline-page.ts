@@ -390,10 +390,20 @@ export const sanitizeOfflineHtmlFragment = (fragment: string, projection: Offlin
     const canonical = canonicalAnchorUrl(href, resolvedProjection) ?? invalid('The page contains an unsafe link')
     element.setAttribute('href', canonical)
   }
+  // Keep only a bounded language hint on code/pre, never rendered token spans
+  // or arbitrary presentation classes. The offline client tokenizes locally.
+  for (const element of sourceTemplate.content.querySelectorAll('[class]')) {
+    const languageClass =
+      element.localName === 'pre' || element.localName === 'code'
+        ? [...element.classList].find(value => /^language-[a-z0-9][a-z0-9_+.-]{0,31}$/iu.test(value))?.toLowerCase()
+        : undefined
+    element.removeAttribute('class')
+    if (languageClass) element.setAttribute('class', languageClass)
+  }
   const sanitized = String(
     domPurify.sanitize(sourceTemplate.innerHTML, {
       ALLOWED_TAGS: [...ALLOWED_TAGS],
-      ALLOWED_ATTR: ['href'],
+      ALLOWED_ATTR: ['href', 'class'],
       ALLOW_ARIA_ATTR: false,
       ALLOW_DATA_ATTR: false,
       FORBID_ATTR: ['style'],
@@ -406,6 +416,7 @@ export const sanitizeOfflineHtmlFragment = (fragment: string, projection: Offlin
     const tagName = element.tagName.toLowerCase()
     if (!ALLOWED_TAG_SET.has(tagName)) invalid('The page projection contains an unsupported element')
     for (const attribute of element.attributes) {
+      if (attribute.name === 'class' && (tagName === 'pre' || tagName === 'code') && /^language-[a-z0-9][a-z0-9_+.-]{0,31}$/u.test(attribute.value)) continue
       if (attribute.name.toLowerCase() !== 'href' || tagName !== 'a') invalid('The page projection contains an unsupported attribute')
       const canonical = canonicalAnchorUrl(attribute.value, resolvedProjection) ?? invalid('The page projection contains an unsafe link')
       element.setAttribute('href', canonical)

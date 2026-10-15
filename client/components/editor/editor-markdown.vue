@@ -202,7 +202,7 @@ import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
-import { completeSourcePageLink, createSourceAuthoring } from '../../helpers/editor-source-authoring'
+import { completeSourcePageLink, createSourceAuthoring, type SourceAuthoring } from '../../helpers/editor-source-authoring'
 import markdownHelp from './markdown/help.vue'
 import Velocity from 'velocity-animate'
 import { decodeBase64Text } from '../../helpers/base64'
@@ -452,7 +452,7 @@ export default defineComponent({
       editorAdapter: null as EditorAdapterController | null,
       collaborationAbortController: null as AbortController | null,
       imageAuthoring: null as Raw<ReturnType<typeof createSourceImageAuthoring>> | null,
-      sourceAuthoring: null as Raw<ReturnType<typeof createSourceAuthoring>> | null,
+      sourceAuthoring: null as Raw<SourceAuthoring> | null,
       formatState: EMPTY_MARKDOWN_FORMAT_STATE as MarkdownFormatState,
       historyDepth: { undo: 0, redo: 0 },
       tools: FORMATTING_TOOLS,
@@ -756,9 +756,7 @@ export default defineComponent({
         }
         case 'EXTENSION':
           if (typeof opts.text === 'string') {
-            this.insertAtCursor({
-              content: opts.text
-            })
+            this.sourceAuthoring?.insertExtension(opts.text)
           }
           break
       }
