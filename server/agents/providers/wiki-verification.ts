@@ -688,29 +688,18 @@ candidateExtras retains unchanged observations and recommendations. candidate re
       criteria: attachmentScopeCriteria
     }
     const standalone: DecisionBatchRequest = { state: JSON.stringify({ ...scope, evidence: [] }), questions: { [id]: question } }
-    const last = requests.at(-1)
-    const combined: DecisionBatchRequest =
-      last === undefined
-        ? standalone
-        : {
-            state: JSON.stringify({ ...JSON.parse(last.state as string), ...scope }),
-            questions: { ...last.questions, [id]: question }
-          }
+    // Keep the two authority questions in distinct native contexts. Combining
+    // Wiki support/framing policy with file scope makes genuine file descriptions
+    // compete with a Wiki-only evidence requirement; neither verdict may replace
+    // the other.
     try {
-      validateDecisionBatchRequest(combined)
-      if (last === undefined) requests.push(combined)
-      else requests[requests.length - 1] = combined
+      validateDecisionBatchRequest(standalone)
     } catch (error) {
-      if (!(error instanceof AgentRepositoryError) || error.code !== 'INVALID_DECISION_REQUEST') throw error
-      try {
-        validateDecisionBatchRequest(standalone)
-      } catch (scopeError) {
-        if (scopeError instanceof AgentRepositoryError && scopeError.code === 'INVALID_DECISION_REQUEST')
-          throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Complete attachment scope exceeds native verification request bounds', 413)
-        throw scopeError
-      }
-      requests.push(standalone)
+      if (error instanceof AgentRepositoryError && error.code === 'INVALID_DECISION_REQUEST')
+        throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Complete attachment scope exceeds native verification request bounds', 413)
+      throw error
     }
+    requests.push(standalone)
   }
   const plan: WikiVerificationPlan = { requests, originalSources, originalEvidence, checks, literalSupportCount }
   issuedVerificationPlans.set(plan, planSnapshot(plan))

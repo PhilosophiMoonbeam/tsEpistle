@@ -6429,6 +6429,7 @@ export class AxAgentEngine implements AgentEngine {
     input: {
       readonly userRequest: string
       readonly conversation: readonly ChatPromptMessage[]
+      readonly sourceIndexes: readonly number[]
       readonly requestFacets: readonly string[]
       readonly observations: readonly string[]
       readonly repairFeedback: string
@@ -6447,12 +6448,13 @@ export class AxAgentEngine implements AgentEngine {
     const readLiterals = new Map<string, ReadLiteralSnapshot>()
     const sources: WikiSynthesisSource[] = []
     const sourceReads: WikiSynthesisRead[] = []
-    // Keep the admitted user-file window even when textual history compacts.
-    // Disabled native modalities are tool-only references, never content authority;
-    // assistant-generated artifacts enter only after explicit user attachment.
+    // Final attachment authority follows the retained conversation window.
+    // Compacted historical inputs are detached; summaries cannot reattach them.
+    // Assistant artifacts enter only after explicit user attachment.
     const mediaFiles = new Map<string, NonNullable<(typeof request.messages)[number]['attachments']>[number]>()
-    for (const message of request.messages) {
-      if (message.role !== 'user') continue
+    for (const index of input.sourceIndexes) {
+      const message = request.messages[index]
+      if (!message || message.role !== 'user') continue
       for (const file of message.attachments ?? []) {
         const modality = agentMediaInputModality(file.mimeType)
         if (!modality || !provider.mediaInputs?.[modality]) continue
@@ -8754,6 +8756,7 @@ export class AxAgentEngine implements AgentEngine {
               {
                 userRequest: userRequestWithRecentScope(dispatchEvidence),
                 conversation,
+                sourceIndexes,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [],
                 observations,
                 repairFeedback,
@@ -9471,6 +9474,7 @@ export class AxAgentEngine implements AgentEngine {
                 {
                   userRequest: userRequestWithRecentScope(prospectiveEvidence, collection.recent),
                   conversation,
+                  sourceIndexes,
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
                   observations: [
                     ...retainedProposalOutcomeLines(),
@@ -10185,6 +10189,7 @@ export class AxAgentEngine implements AgentEngine {
               {
                 userRequest: userRequestWithRecentScope(preflightEvidence),
                 conversation,
+                sourceIndexes,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
                 observations: [
                   ...attributedLines,
