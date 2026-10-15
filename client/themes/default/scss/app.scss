@@ -2050,6 +2050,17 @@
   --wiki-code-fg: var(--wiki-code-native-fg);
 }
 
+// Resolve the workspace's contrast-safe inks inside the active Vuetify theme.
+// A native reader must not override a nearer, unpublished preset preview.
+html[data-wiki-code-theme='native'] :is(.v-main .contents, .editor-page-canvas.contents, .contents .tiptap) :is(pre, .prismjs):not(.theme-code-preview *),
+.theme-code-preview[data-wiki-code-theme='native'] :is(pre, .prismjs) {
+  --wiki-code-comment: var(--wiki-code-native-comment, var(--wiki-text-muted));
+  --wiki-code-keyword: var(--wiki-code-native-keyword, rgb(var(--v-theme-primary-ink)));
+  --wiki-code-string: var(--wiki-code-native-string, rgb(var(--v-theme-success-ink)));
+  --wiki-code-number: var(--wiki-code-native-number, rgb(var(--v-theme-info-ink)));
+  --wiki-code-function: var(--wiki-code-native-function, rgb(var(--v-theme-secondary-ink)));
+}
+
 [data-wiki-code-theme='paper'] {
   --wiki-code-bg: #f6f8fa;
   --wiki-code-fg: #24292f;

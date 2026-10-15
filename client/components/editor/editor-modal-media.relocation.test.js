@@ -1,9 +1,19 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { describe, expect, test } from '../../../server/test/bun-test.mts'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import * as cheerio from 'cheerio'
+import pug from 'pug'
+import { describe, expect, test, vi } from '../../../server/test/bun-test.mts'
+import { browserWindow, document } from '../../test/browser-dom.mts'
+import { createModalFocusScope } from '../common/modal-focus-scope'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const componentPath = path.join(process.cwd(), 'client/components/editor/editor-modal-media.vue')
+
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
 
 const readMediaScript = () => {
   const source = fs.readFileSync(componentPath, 'utf8')
@@ -271,5 +281,62 @@ describe('editor media upload and thumbnails', () => {
     release([])
     await first
     expect(context.uploading).toBe(false)
+  })
+})
+
+describe('editor media teleported controls', () => {
+  test('keeps the native alignment menu actionable without releasing the modal background', async () => {
+    const descriptor = parse(fs.readFileSync(componentPath, 'utf8'), { filename: componentPath }).descriptor
+    const markup = cheerio.load(pug.render(descriptor.template.content))
+    const alignment = markup('v-select[label="Image alignment"]')
+    expect(alignment).toHaveLength(1)
+    // Exercise the production invocation and Vuetify teleport, not a copied menu configuration.
+    const compiled = compileTemplate({
+      source: alignment.toString(),
+      filename: componentPath,
+      id: 'media-alignment-focus-scope',
+      compilerOptions: { mode: 'function' }
+    })
+    if (compiled.errors.length) throw compiled.errors[0]
+    const { context } = createHarness()
+    const background = document.body.appendChild(document.createElement('button'))
+    const root = document.body.appendChild(document.createElement('div'))
+    root.tabIndex = -1
+    const app = Vue.createApp({
+      data: () => ({ imageAlignment: context.imageAlignment, imageAlignments: context.imageAlignments }),
+      render: new Function('Vue', compiled.code)(Vue)
+    })
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.config.globalProperties.$t = translateEnglish
+    const model = app.mount(root)
+    const scope = createModalFocusScope({
+      root,
+      restoreTarget: background,
+      additionalRoots: context.mediaModalAdditionalRoots,
+      onEscape: () => undefined
+    })
+    try {
+      await Vue.nextTick()
+      const field = root.querySelector('.v-field')
+      expect(field).not.toBeNull()
+      field.dispatchEvent(new browserWindow.MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+      field.dispatchEvent(new browserWindow.MouseEvent('mouseup', { bubbles: true }))
+      field.click()
+      let centered
+      await vi.waitFor(() => {
+        centered = Array.from(document.querySelectorAll('[role="option"]')).find(option => option.textContent.trim() === 'Centered')
+        expect(centered).toBeDefined()
+        expect(centered.closest('.v-overlay').inert).not.toBe(true)
+        expect(centered.closest('[aria-hidden="true"]')).toBeNull()
+        expect(background.inert).toBe(true)
+      })
+      centered.click()
+      await vi.waitFor(() => expect(model.imageAlignment).toBe('center'))
+    } finally {
+      scope.deactivate({ restoreFocus: false })
+      app.unmount()
+      root.remove()
+      background.remove()
+    }
   })
 })

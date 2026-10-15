@@ -434,8 +434,9 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
   }
   const library = libraryComponent(modules)
   modules['./offline-library.vue'] = { default: library }
-  const mount = async (settings = false) => {
-    const props = Vue.reactive({ storage, storageState: 'available', showSettings: true, refreshToken: 0 })
+  const mount = async (settings = false, showSettings = true) => {
+    const notices: string[] = []
+    const props = Vue.reactive({ storage, storageState: 'available', showSettings, refreshToken: 0, onError: (message: string) => notices.push(message) })
     app = Vue.createApp(settings ? settingsComponent(modules) : Vue.defineComponent({ setup: () => () => Vue.h(library, props) }))
     app.provide<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY, {
       reconcile: async () => createOfflineSyncUnavailableResult('No server connection in lifecycle fixture.')
@@ -458,7 +459,7 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
     document.body.append(host)
     app.mount(host)
     await settleLibrary()
-    return { host, props, errors }
+    return { host, props, errors, notices }
   }
   return { origin, privateSite, handle, state, storage, publish, mount, sessionModule, pendingSearches, searchOperations, settle: settleLibrary }
 }
@@ -901,6 +902,26 @@ describe('saved-page reader and library settings lifecycle', () => {
     fireExpiry!()
     await Vue.nextTick()
     expect(host.querySelector('.offline-reader')).toBeNull()
+    expect(errors).toEqual([])
+  })
+
+  it('opens saved pages in profile settings without a false missing-route alert', async () => {
+    const fixture = await offlineFixture()
+    const { host, errors } = await fixture.mount(true)
+    expect(host.querySelector('.offline-settings__notice[role="alert"]')).toBeNull()
+    host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
+    await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Reader A body'))
+    expect(host.querySelector('.offline-settings__notice[role="alert"]')).toBeNull()
+    expect(errors).toEqual([])
+  })
+
+  it('still reports an unsaved reader route in the standalone offline fallback', async () => {
+    const fixture = await offlineFixture()
+    setLocation('/en/unsaved-reader')
+    const { host, notices, errors } = await fixture.mount(false, false)
+    expect(host.querySelector('.offline-reader')).toBeNull()
+    expect(host.querySelectorAll('.page-card')).toHaveLength(2)
+    expect(notices).toEqual(['common:offlineLibrary.pageHasNotBeen'])
     expect(errors).toEqual([])
   })
 

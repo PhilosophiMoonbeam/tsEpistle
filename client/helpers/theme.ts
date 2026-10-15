@@ -171,16 +171,15 @@ const INK_STEPS = Array.from({ length: 21 }, (_, index) => index / 20)
 // moves toward the surface text color in 5% steps until it does. A light
 // primary such as the default amber therefore keeps its hue as a deeper bronze
 // in light mode and stays unchanged in dark mode.
-const createInkColorMap = (colors: ThemeModeColors, surfaces: readonly string[]): Record<string, string> => {
+export const createInkColorMap = (colors: ThemeModeColors, surfaces: readonly string[]): Record<string, string> => {
   const onSurface = contrastForeground(colors.surface)
   // Tonal buttons and chips lay their own ink at Vuetify's 12% activated opacity under the label.
-  const score = (ink: string): number =>
-    Math.min(...[...surfaces, mixHex(colors.surface, ink, 0.12)].map(surface => contrastRatio(ink, surface)))
+  const score = (ink: string): number => Math.min(...[...surfaces, mixHex(colors.surface, ink, 0.12)].map(surface => contrastRatio(ink, surface)))
   const inks: Record<string, string> = {}
   for (const key of WIKI_INK_KEYS) {
     const candidates = INK_STEPS.map(step => mixHex(colors[key], onSurface, step))
-    inks[`${key}-ink`] = candidates.find(candidate => score(candidate) >= 4.5)
-      ?? candidates.reduce((best, candidate) => (score(candidate) > score(best) ? candidate : best))
+    inks[`${key}-ink`] =
+      candidates.find(candidate => score(candidate) >= 4.5) ?? candidates.reduce((best, candidate) => (score(candidate) > score(best) ? candidate : best))
   }
   return inks
 }

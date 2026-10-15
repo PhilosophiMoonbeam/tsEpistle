@@ -1,8 +1,8 @@
-import { CompletionContext, snippet } from '@codemirror/autocomplete'
+import { acceptCompletion, autocompletion, CompletionContext, completionStatus, currentCompletions, snippet, startCompletion } from '@codemirror/autocomplete'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView, runScopeHandlers } from '@codemirror/view'
-import { afterEach, describe, expect, it } from '../../server/test/bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody } from '../test/browser-dom.mts'
 import { BUILTIN_CONTENT_EXTENSIONS } from '../../shared/content-extensions'
 import { onEditorImageProperties, type EditorImagePropertiesRequest } from './editor-image-properties'
@@ -12,9 +12,28 @@ import { sourceTableNavigation } from './editor-source-tables'
 
 const views: EditorView[] = []
 const unsubscribers: Array<() => void> = []
+const rangePrototype = browserWindow.document.createRange().constructor.prototype
+const originalRangeRects = Object.getOwnPropertyDescriptor(rangePrototype, 'getClientRects')
+const originalRangeBounds = Object.getOwnPropertyDescriptor(rangePrototype, 'getBoundingClientRect')
+beforeEach(() => {
+  // Supply JSDOM's missing geometry only; completion filtering and application remain real.
+  const bounds = new browserWindow.DOMRect(0, 0, 100, 20)
+  Object.defineProperty(rangePrototype, 'getClientRects', {
+    configurable: true,
+    value: () => [bounds] as unknown as DOMRectList
+  })
+  Object.defineProperty(rangePrototype, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => bounds
+  })
+})
 afterEach(() => {
   for (const view of views.splice(0)) view.destroy()
   for (const unsubscribe of unsubscribers.splice(0)) unsubscribe()
+  if (originalRangeRects) Object.defineProperty(rangePrototype, 'getClientRects', originalRangeRects)
+  else Reflect.deleteProperty(rangePrototype, 'getClientRects')
+  if (originalRangeBounds) Object.defineProperty(rangePrototype, 'getBoundingClientRect', originalRangeBounds)
+  else Reflect.deleteProperty(rangePrototype, 'getBoundingClientRect')
   resetBody()
 })
 
@@ -53,6 +72,58 @@ describe('native source completion boundaries', () => {
     expect(metadata?.options.map(option => option.label)).toContain('lineshighlight')
     expect(await completeSourceAuthoring(completionContext('```typescript title="incomplete caption CURSOR'), 'markdown', extensionsResponse)).toBeNull()
     expect(await completeSourceAuthoring(completionContext('```text\n<kbCURSOR\n```'), 'markdown', extensionsResponse)).toBeNull()
+  })
+
+  it('offers and applies the real AsciiDoc keyboard snippet for both supported prefixes', async () => {
+    for (const prefix of ['kbd', 'kbd:']) {
+      const source = `:experimental:\n\n${prefix}`
+      const authoring = createSourceAuthoring(
+        'asciidoc',
+        () => true,
+        () => 'owner'
+      )
+      const view = new EditorView({
+        parent: document.body.appendChild(document.createElement('div')),
+        doc: source,
+        extensions: [authoring.extension, autocompletion({ interactionDelay: 0 })]
+      })
+      views.push(view)
+      view.dispatch({ selection: { anchor: source.length } })
+      view.focus()
+      expect(startCompletion(view)).toBe(true)
+      await vi.waitFor(() => {
+        expect(completionStatus(view.state)).toBe('active')
+        expect(currentCompletions(view.state).map(option => option.label)).toEqual(['kbd'])
+      })
+      expect(acceptCompletion(view)).toBe(true)
+      expect(view.state.doc.toString()).toBe(':experimental:\n\nkbd:[Key]')
+      const range = view.state.selection.main
+      expect(view.state.sliceDoc(range.from, range.to)).toBe('Key')
+    }
+  })
+
+  it('excludes the same AsciiDoc prefixes from real completion menus inside literal listings', async () => {
+    for (const prefix of ['kbd', 'kbd:']) {
+      const source = `[source]\n----\n${prefix}\n----`
+      const authoring = createSourceAuthoring(
+        'asciidoc',
+        () => true,
+        () => 'owner'
+      )
+      const view = new EditorView({
+        parent: document.body.appendChild(document.createElement('div')),
+        doc: source,
+        extensions: [authoring.extension, autocompletion()]
+      })
+      views.push(view)
+      view.dispatch({ selection: { anchor: source.lastIndexOf('\n') } })
+      view.focus()
+      expect(startCompletion(view)).toBe(true)
+      expect(completionStatus(view.state)).toBe('pending')
+      await vi.waitFor(() => expect(completionStatus(view.state)).toBeNull())
+      expect(currentCompletions(view.state)).toEqual([])
+      expect(view.state.doc.toString()).toBe(source)
+    }
   })
 })
 

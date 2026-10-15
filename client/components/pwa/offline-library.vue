@@ -1079,7 +1079,7 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
         if (!currentLoad()) return false
       }
     }
-    if (!props.navigateOnOpen && !requested && window.location.pathname !== '/' && window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
+    if (!props.showSettings && !props.navigateOnOpen && !requested && window.location.pathname !== '/' && window.location.pathname !== OFFLINE_DOCUMENT_PATH) {
       emit('error', t('common:offlineLibrary.pageHasNotBeen'))
     }
     return true

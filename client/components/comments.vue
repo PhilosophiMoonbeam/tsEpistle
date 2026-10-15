@@ -146,7 +146,6 @@
         size="large"
         v-for='cm of orderedComments'
         :key='`comment-` + cm.id'
-        :id='`comment-post-id-` + cm.id'
         )
         template(v-slot:icon)
           v-avatar(color='primary', aria-hidden='true')
@@ -155,6 +154,7 @@
         v-card.comments-post-card(
           variant='flat'
           tag='article'
+          :id='`comment-post-id-` + cm.id'
           :aria-labelledby='`comment-author-${cm.id}`'
         )
           v-card-text

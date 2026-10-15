@@ -48,7 +48,7 @@ const requestJson = async <T>(
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { ...notificationHeaders(ownerId), ...(body ? { 'Content-Type': 'application/json' } : {}) },
-    ...(body ? { method: 'PATCH', body: JSON.stringify(body) } : {}),
+    ...(body ? { method: 'PATCH', body: JSON.stringify({ preferences: body }) } : {}),
     ...(signal ? { signal } : {})
   })
   let payload: unknown

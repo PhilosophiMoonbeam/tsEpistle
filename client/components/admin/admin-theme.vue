@@ -653,6 +653,7 @@ import {
 } from "../../../shared/theme-palettes.ts";
 import {
   applyWikiThemeColors,
+  createInkColorMap,
   contrastRatio,
   contrastForeground,
 } from "../../helpers/theme.ts";
@@ -787,10 +788,20 @@ const previewStyle = computed(() => ({
   "--specimen-leading": String(Number(draft.value?.reading.lineHeight) || 1.68),
   "--specimen-width": (Number(draft.value?.reading.copyWidth) || 101) + "ch",
 }));
-const codePreviewStyle = computed(() => ({
-  "--wiki-code-native-bg": previewColors.value.surface,
-  "--wiki-code-native-fg": foreground(previewColors.value.surface),
-}));
+const codePreviewStyle = computed(() => {
+  const colors = previewColors.value;
+  const inks = createInkColorMap(colors, [colors.surface]);
+  const ink = foreground(colors.surface);
+  return {
+    "--wiki-code-native-bg": colors.surface,
+    "--wiki-code-native-fg": ink,
+    "--wiki-code-native-comment": ink,
+    "--wiki-code-native-keyword": inks["primary-ink"],
+    "--wiki-code-native-string": inks["success-ink"],
+    "--wiki-code-native-number": inks["info-ink"],
+    "--wiki-code-native-function": inks["secondary-ink"],
+  };
+});
 const contrastChecks = computed(() =>
   (
     [
