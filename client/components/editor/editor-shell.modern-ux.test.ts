@@ -16,6 +16,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
+import * as imagePropertiesHelpers from '../../helpers/editor-image-properties'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
@@ -2291,4 +2292,159 @@ describe('modern editor shell interaction contract', () => {
     expect(template).toMatch(/v-alert\.editor-bootstrap-notice[\s\S]*v-if='bootstrapNotice'/)
     expect(template).toContain('{{ bootstrapNotice }}')
   })
+})
+
+describe('source image properties focus lifecycle', () => {
+  const invocation = shellMarkup('v-dialog').filter((_index, element) => shellMarkup(element).attr('aria-labelledby') === 'editor-image-properties-title')
+  if (invocation.length !== 1) throw new Error('Image properties dialog invocation is missing or ambiguous')
+  const template = compileTemplate({
+    source: invocation.toString(),
+    filename: shellPath,
+    id: 'editor-image-properties-owner-test',
+    compilerOptions: { mode: 'function' }
+  })
+  if (template.errors.length) throw template.errors[0]
+  const render = new Function('Vue', template.code)(Vue)
+  const imagePath = join(process.cwd(), 'client/components/editor/editor-image-properties.vue')
+  const imageSfc = parse(readFileSync(imagePath, 'utf8'), { filename: imagePath }).descriptor
+  if (!imageSfc.script || !imageSfc.template) throw new Error('Image properties component is incomplete')
+  const imageTemplate = compileTemplate({
+    source: imageSfc.template.content,
+    filename: imagePath,
+    id: 'editor-image-properties-form-test',
+    preprocessLang: imageSfc.template.lang,
+    compilerOptions: { mode: 'function' }
+  })
+  if (imageTemplate.errors.length) throw imageTemplate.errors[0]
+  const imageAst = ts.createSourceFile(imagePath, imageSfc.script.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const imageScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+    imageAst.statements
+      .filter(statement => !ts.isImportDeclaration(statement))
+      .map(statement => statement.getText(imageAst))
+      .join('\n')
+      .replace('export default defineComponent', 'return defineComponent')
+  )
+  const imageOptions = new Function('defineComponent', ...Object.keys(imagePropertiesHelpers), imageScript)(
+    Vue.defineComponent,
+    ...Object.values(imagePropertiesHelpers)
+  )
+  const behavior = new Function('markRaw', `${executableShellBehavior}\nreturn shellBehavior`)(Vue.markRaw)
+  const settle = async () => {
+    for (let pass = 0; pass < 6; pass++) {
+      await Promise.resolve()
+      await Vue.nextTick()
+    }
+  }
+  const mount = async () => {
+    let finishLeave: (() => void) | undefined
+    const host = document.body.appendChild(document.createElement('div'))
+    const sourceHost = document.body.appendChild(document.createElement('div'))
+    const view = new EditorView({
+      state: EditorState.create({ doc: '![Owned raster](/owned-raster.png)' }),
+      parent: sourceHost
+    })
+    const app = Vue.createApp({
+      data: () => ({
+        imagePropertiesRequest: null,
+        imagePropertiesGeneration: 0,
+        imagePropertiesAbortCleanup: null,
+        imagePropertiesReturnFocus: null,
+        imagePropertiesOwnerKey: 'owned-source-session'
+      }),
+      methods: behavior.methods,
+      render
+    })
+    app.use(
+      createVuetify({
+        components: vuetifyComponents,
+        directives: vuetifyDirectives,
+        defaults: {
+          VDialog: {
+            transition: {
+              component: Vue.Transition,
+              css: false,
+              onLeave: (_element: Element, done: () => void) => {
+                finishLeave = done
+              }
+            }
+          }
+        }
+      })
+    )
+    app.config.globalProperties.$t = translateEnglish
+    app.component('EditorImageProperties', { ...imageOptions, render: new Function('Vue', imageTemplate.code)(Vue) })
+    const context = app.mount(host) as unknown as {
+      imagePropertiesOwnerKey: string
+      openImageProperties: (request: imagePropertiesHelpers.EditorImagePropertiesRequest) => void
+    }
+    modalUnmounts.push(() => {
+      app.unmount()
+      view.destroy()
+      sourceHost.remove()
+      host.remove()
+    })
+    view.focus()
+    const abort = new AbortController()
+    context.openImageProperties({
+      properties: { src: '/owned-raster.png', alt: 'Owned raster', width: '', height: '', align: '', styles: [] },
+      signal: abort.signal,
+      apply: () => {
+        abort.abort()
+        return true
+      }
+    })
+    await settle()
+    const field = document.querySelector<HTMLInputElement>('[role="dialog"] input')
+    if (!field) throw new Error('Image dialog did not render')
+    field.focus()
+    return {
+      context,
+      view,
+      field,
+      leave: async () => {
+        await settle()
+        expect(finishLeave).toBeDefined()
+        expect(view.hasFocus).toBe(false)
+        finishLeave!()
+        await settle()
+      }
+    }
+  }
+  for (const action of ['Close image properties', 'Cancel', 'Apply changes']) {
+    test(`${action} restores the actual invoking source only after the overlay leaves`, async () => {
+      const { view, leave } = await mount()
+      if (action === 'Apply changes') {
+        const alt = document.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!
+        alt.value = 'Updated owned raster'
+        alt.dispatchEvent(new Event('input', { bubbles: true }))
+        await settle()
+      }
+      const button = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+        button => button.getAttribute('aria-label') === action || button.textContent?.trim() === action
+      )
+      if (!button) throw new Error(`${action} is missing`)
+      button.click()
+      await leave()
+      expect(view.hasFocus).toBe(true)
+    })
+  }
+  test('does not return focus into a replaced source owner', async () => {
+    const { context, view, leave } = await mount()
+    context.imagePropertiesOwnerKey = 'replacement-source-session'
+    document.querySelector<HTMLButtonElement>('button[aria-label="Close image properties"]')!.click()
+    await leave()
+    expect(view.hasFocus).toBe(false)
+  })
+  for (const unavailable of ['disconnected', 'inert', 'hidden', 'read-only']) {
+    test(`does not focus a source that became ${unavailable} during the dialog`, async () => {
+      const { view, leave } = await mount()
+      if (unavailable === 'disconnected') view.dom.remove()
+      if (unavailable === 'inert') view.dom.setAttribute('inert', '')
+      if (unavailable === 'hidden') view.dom.setAttribute('aria-hidden', 'true')
+      if (unavailable === 'read-only') view.contentDOM.setAttribute('contenteditable', 'false')
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close image properties"]')!.click()
+      await leave()
+      expect(view.hasFocus).toBe(false)
+    })
+  }
 })

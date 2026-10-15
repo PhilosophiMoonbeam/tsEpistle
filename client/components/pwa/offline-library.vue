@@ -157,6 +157,7 @@ const clock = ref(Date.now())
 const listScrollTop = ref<number | null>(null)
 const historyMode = ref<ReaderHistoryMode>('none')
 const focusAfterRemove = ref<FocusAfterRemove | null>(null)
+let initialStoragePending = props.storage === null && props.storageState === 'checking'
 let loadToken = 0
 let searchRequestId = 0
 let readerToken = 0
@@ -1447,7 +1448,8 @@ const removeMissingPage = async (page: OfflinePagePolicyRecord): Promise<void> =
   }
 }
 
-const invalidateLocalProjection = (): void => {
+const invalidateLocalProjection = (preserveInitialRoute = false): void => {
+  initialStoragePending = false
   const key = readerOpenerKey.value ?? selectedKey.value
   const opener = readerOpener.value
   ++loadToken
@@ -1491,7 +1493,7 @@ const invalidateLocalProjection = (): void => {
   readerOpenerKey.value = null
   historyMode.value = 'none'
   focusAfterRemove.value = null
-  clearOfflineSelector()
+  if (!preserveInitialRoute) clearOfflineSelector()
   if (key || opener) void restoreReaderFocus(key, opener)
 }
 
@@ -1581,7 +1583,14 @@ watch(searchQuery, () => {
 watch(
   () => [props.storage, props.storageState, props.refreshToken],
   (value, previous) => {
-    if (previous && (value[0] !== previous[0] || value[1] !== 'available')) invalidateLocalProjection()
+    if (previous && (value[0] !== previous[0] || value[1] !== 'available')) {
+      // Storage opening is not an identity change. Keep the requested article
+      // until the first corpus can resolve it or report that it was not saved.
+      const initialAvailability = initialStoragePending &&
+        previous[0] === null && previous[1] === 'checking' &&
+        value[0] !== null && value[1] === 'available'
+      invalidateLocalProjection(initialAvailability)
+    }
     void refreshReadingVault()
     void loadRecords()
   }
