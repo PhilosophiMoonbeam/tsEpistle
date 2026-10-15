@@ -1552,7 +1552,7 @@
       "disposition": "adapt",
       "state": "completed",
       "workstream": "scarlett-sync/identity",
-      "contract": "Implemented bounded optional OIDC/LDAP/SAML location/jobTitle/pronouns, absent-versus-explicit-empty semantics, strict opt-in OIDC/SAML verified-email claims before create/link/update, and native self/admin/API/export pronouns. Native PostgreSQL account reconciliation, real signed Node-SAML parsing and self/admin UI save/reload/clear checks passed. The compatible maintained security-patched XML parser is pinned without a shim. No live external identity-provider login or credential change is claimed; existing maintained authentication configuration and user security fields were preserved.",
+      "contract": "Implemented bounded optional OIDC/LDAP/SAML location/jobTitle claims, absent-versus-explicit-empty semantics and strict opt-in OIDC/SAML verified-email claims before create/link/update. Native PostgreSQL account reconciliation and real signed Node-SAML parsing passed. The compatible maintained security-patched XML parser is pinned without a shim. The admitted profile-claim scope is limited to location/jobTitle; account identity/security, concurrency and supported self/admin workflows are retained. No live external identity-provider login or credential change is claimed; existing maintained authentication configuration and user security fields were preserved.",
       "lastReviewed": "2026-10-15"
     },
     {

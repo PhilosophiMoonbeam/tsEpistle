@@ -240,7 +240,7 @@ make_plan() {
       case "$probe" in
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
-        native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-user-pronouns-column|native-links-grid-registration) ;;
+        native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -759,12 +759,16 @@ verify_postconditions() {
             AND replace(pg_get_indexdef(idx.oid,2,true),'\"','')='userId';")"
         [[ "$result" == 1 ]] || die "Postcondition failed: $probe (bounded audience lookup index)"
         ;;
-      native-user-pronouns-column)
+      native-account-profile-schema)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
-          SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='users'
-            AND column_name='pronouns' AND data_type='character varying' AND character_maximum_length=255
-            AND is_nullable='NO' AND column_default='''''::character varying';")"
-        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (bounded non-null profile column with empty default)"
+          SELECT
+            (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema()
+              AND table_name='users' AND column_name IN ('location','jobTitle') AND data_type='character varying')
+            || '|' || (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema()
+              AND table_name='users' AND column_name='pronouns')
+            || '|' || (SELECT count(*) FROM authentication WHERE jsonb_typeof(config::jsonb)='object'
+              AND jsonb_exists_any(config::jsonb, ARRAY['mappingPronouns','pronounsClaim']));")"
+        [[ "$result" == '2|0|0' ]] || die "Postcondition failed: $probe (supported fields retained; retired field and mappings removed)"
         ;;
       native-links-grid-registration)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
@@ -792,10 +796,10 @@ table_hash() {
     if jq -e '.pendingMigrations | index("tsepistle-000048-scarlett-native-adaptations.js") != null' "$PLAN_FILE" >/dev/null; then
       excluded_user_columns+=("'reduceMotion'" "'underlineLinks'" "'contentTextSize'" "'communicationLocale'")
     fi
-    if jq -e '.pendingMigrations | index("tsepistle-000059-user-pronouns.js") != null' "$PLAN_FILE" >/dev/null; then
+    if jq -e '.pendingMigrations | index("tsepistle-000061-retire-profile-field.js") != null' "$PLAN_FILE" >/dev/null; then
       excluded_user_columns+=("'pronouns'")
     fi
-    # Additive columns change row JSON, not the pre-existing account data being fenced.
+    # Planned column changes must not weaken the fence around retained account data.
     local excluded_columns
     excluded_columns="$(IFS=,; printf '%s' "${excluded_user_columns[*]}")"
     psql_live -Atc "COPY (SELECT (to_jsonb(t) - ARRAY[$excluded_columns]::text[])::text FROM users t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1

@@ -9,7 +9,6 @@
           <template v-if="!reviewing">
             <p class="account-create-intro">{{ $t('admin:usersCreate.createPersonsAccountChoose') }}</p>
             <div class="account-create-fields"><v-text-field v-model="profile.name" :label="$t('admin:usersCreate.displayName')" autocomplete="off" variant="outlined" maxlength="255" :disabled="saving" /><v-text-field v-model="profile.email" :label="$t('admin:usersCreate.emailAddress')" type="email" autocomplete="off" variant="outlined" maxlength="255" :disabled="saving" /><v-select v-model="providerKey" :label="$t('admin:usersCreate.signProvider')" :items="providers" item-title="title" item-value="key" variant="outlined" :disabled="saving" /><v-text-field v-model="profile.timezone" :label="$t('admin:usersCreate.timeZone')" variant="outlined" :hint="$t('admin:usersCreate.leaveBlankUseCurrent')" persistent-hint :disabled="saving" /></div>
-            <v-text-field v-model="profile.pronouns" :label="$t('admin:usersCreate.pronouns', { defaultValue: 'Pronouns' })" autocomplete="off" variant="outlined" maxlength="255" :disabled="saving" />
             <div class="account-create-provider"><v-icon :icon="local ? 'mdi-key-outline' : 'mdi-domain'" /><div><strong>{{ local ? $t('admin:usersCreate.temporaryPasswordFirstSign') : $t('admin:usersCreate.authenticationStays', { title: (provider?.title || 'the identity provider'), interpolation: { escapeValue: false } }) }}</strong><p>{{ local ? $t('admin:usersCreate.shareTemporaryPasswordPerson') : $t('admin:usersCreate.preCreatesMatchingAccount') }}</p></div></div>
             <template v-if="local"><v-text-field v-model="password" :label="$t('admin:usersCreate.temporaryPassword')" :type="showPassword ? 'text' : 'password'" autocomplete="new-password" variant="outlined" :hint="passwordHint" persistent-hint :disabled="saving"><template #append-inner><password-visibility-toggle v-model:visible="showPassword" :field="$t('admin:usersCreate.temporaryPassword2')" /></template></v-text-field><v-checkbox v-model="mustChangePassword" :label="$t('admin:usersCreate.requireNewPasswordFirst')" hide-details :disabled="saving" /></template>
             <div class="account-create-section"><h3>{{ $t('admin:usersCreate.membership') }}</h3><p>{{ $t('admin:usersCreate.chooseOnlyAccessPerson') }}</p><div class="account-create-groups"><label v-for="group in assignableGroups" :key="group.id" :class="{ selected: profile.groups.includes(group.id) }"><input v-model="profile.groups" type="checkbox" :value="group.id" :disabled="saving" /><span><strong>{{ group.name }}</strong><small>{{ $t('admin:usersCreate.permissionsCount', { count: group.permissions.length }) }}{{ group.isSystem ? ` ${$t('admin:usersCreate.systemGroup')}` : '' }}</small></span></label></div><p v-if="!profile.groups.length" class="account-create-hint">{{ $t('admin:usersCreate.noGroupsSelectedAccount') }}</p><details v-if="selectedPermissions.length" class="account-create-permissions"><summary>{{ $t('admin:usersCreate.combinedPermissions', { selectedPermissionsCount: selectedPermissions.length, interpolation: { escapeValue: false } }) }}</summary><ul><li v-for="permission in selectedPermissions" :key="permission">{{ permission }}</li></ul></details></div>
@@ -19,7 +18,6 @@
           <template v-else>
             <div class="account-create-identity"><span aria-hidden="true">{{ profile.name.trim().slice(0,1).toUpperCase() }}</span><div><h3>{{ profile.name }}</h3><p>{{ profile.email }}</p></div></div>
             <dl class="account-create-summary"><div><dt>{{ $t('admin:usersCreate.signProvider') }}</dt><dd>{{ provider?.title }}</dd></div><div><dt>{{ $t('admin:usersCreate.membership') }}</dt><dd>{{ selectedGroups.map(group => group.name).join(', ') || $t('admin:usersCreate.noGroups') }}</dd></div><div><dt>{{ $t('admin:usersCreate.emailOwnership') }}</dt><dd>{{ isVerified ? $t('admin:usersCreate.confirmedYou') : $t('admin:usersCreate.unverified') }}</dd></div><div v-if="local"><dt>{{ $t('admin:usersCreate.firstSign') }}</dt><dd>{{ mustChangePassword ? $t('admin:usersCreate.mustChooseNewPassword') : $t('admin:usersCreate.usesSuppliedPassword') }}</dd></div><div><dt>{{ $t('admin:usersCreate.emailDelivery') }}</dt><dd>{{ $t('admin:usersCreate.noEmailSentDuring') }}</dd></div></dl>
-            <dl v-if="profile.pronouns" class="account-create-summary"><div><dt>{{ $t('admin:usersCreate.pronouns', { defaultValue: 'Pronouns' }) }}</dt><dd>{{ profile.pronouns }}</dd></div></dl>
             <p class="account-create-hint">{{ $t('admin:usersCreate.accountWillActiveUnverified') }}</p>
             <v-textarea v-model="reason" :label="$t('admin:usersCreate.administrativeReason')" variant="outlined" rows="2" maxlength="1000" :hint="$t('admin:usersCreate.n31000Characters')" persistent-hint :disabled="saving" />
           </template>
@@ -39,8 +37,8 @@ import PasswordVisibilityToggle from '@/components/common/password-visibility-to
 import { accountProfileIssues, type AccountCreationOptions, type AccountProfileDraft } from '../../../shared/account-policy.ts'
 import { fetchAccountCreationOptions, createAccount, accountRequestStatus } from '../../helpers/account-api.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
-const emptyProfile = (): AccountProfileDraft => ({ name: '', email: '', location: '', jobTitle: '', pronouns: '', timezone: '', groups: [] })
-const emptyCreationBaseline = () => ({ name: '', email: '', pronouns: '', timezone: '', groups: [] as number[], providerKey: 'local', isVerified: false, mustChangePassword: true })
+const emptyProfile = (): AccountProfileDraft => ({ name: '', email: '', location: '', jobTitle: '', timezone: '', groups: [] })
+const emptyCreationBaseline = () => ({ name: '', email: '', timezone: '', groups: [] as number[], providerKey: 'local', isVerified: false, mustChangePassword: true })
 export default {
   mixins: [passwordPolicyMixin],
   components: { AsyncState, PasswordVisibilityToggle }, props: { modelValue: { type: Boolean, default: false } }, emits: ['update:modelValue', 'created'],
@@ -56,7 +54,6 @@ export default {
     modified(): boolean {
       return this.profile.name !== this.pristine.name ||
         this.profile.email !== this.pristine.email ||
-        this.profile.pronouns !== this.pristine.pronouns ||
         this.profile.timezone !== this.pristine.timezone ||
         this.profile.groups.length !== this.pristine.groups.length ||
         this.profile.groups.some(id => !this.pristine.groups.includes(id)) ||

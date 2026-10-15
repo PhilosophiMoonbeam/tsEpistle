@@ -104,7 +104,7 @@ describe('GraphQL profile transport results', () => {
     const result = await graphql({
       schema,
       source:
-        'mutation { users { updateProfile(name: "Human", location: "", jobTitle: "", pronouns: "they/them", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
+        'mutation { users { updateProfile(name: "Human", location: "", jobTitle: "", timezone: "UTC", dateFormat: "", appearance: "light") { responseResult { succeeded errorCode slug message } } } }',
       contextValue: { req: { user: humanPrincipal, get: () => '7' }, res: {} }
     })
     expect(result.errors).toBeUndefined()
@@ -123,16 +123,8 @@ describe('GraphQL profile transport results', () => {
       expect.objectContaining({
         requester: humanPrincipal,
         expectedAccountId: '7',
-        input: expect.objectContaining({ pronouns: 'they/them' })
+        input: expect.objectContaining({ name: 'Human' })
       })
     )
-    operations.getProfile.mockResolvedValue({ id: 7, pronouns: 'they/them' })
-    const profile = await graphql({
-      schema,
-      source: '{ users { profile { id pronouns } } }',
-      contextValue: { req: { user: humanPrincipal }, res: {} }
-    })
-    expect(profile.errors).toBeUndefined()
-    expect(profile.data).toEqual({ users: { profile: { id: 7, pronouns: 'they/them' } } })
   })
 })

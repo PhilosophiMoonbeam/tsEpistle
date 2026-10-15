@@ -37,7 +37,6 @@ interface AccountRow {
   adminRevision: string
   location: string
   jobTitle: string
-  pronouns: string
   timezone: string
   createdAt: string
   updatedAt: string
@@ -84,19 +83,16 @@ const reasonValue = (value: unknown): string =>
   typeof value === 'string' && value.trim().length >= 3 && value.trim().length <= 1000
     ? value.trim()
     : fail('Add an administrative reason of 3–1,000 characters.')
-const profileValue = (value: unknown, allowUnsetTimezone = false, currentPronouns = ''): AccountProfileDraft => {
+const profileValue = (value: unknown, allowUnsetTimezone = false): AccountProfileDraft => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Enter account profile details.')
   const v = value as Record<string, unknown>
   if (['name', 'email', 'location', 'jobTitle', 'timezone'].some(key => typeof v[key] !== 'string') || !Array.isArray(v.groups))
     return fail('Enter valid profile details and groups.')
-  if (v.pronouns !== undefined && (typeof v.pronouns !== 'string' || v.pronouns.length > 255))
-    return fail('Pronouns must be a string of at most 255 characters.')
   const profile: AccountProfileDraft = {
     name: String(v.name).trim(),
     email: String(v.email).trim().toLowerCase(),
     location: String(v.location).trim(),
     jobTitle: String(v.jobTitle).trim(),
-    pronouns: typeof v.pronouns === 'string' ? v.pronouns.trim() : currentPronouns,
     timezone: String(v.timezone),
     groups: v.groups as number[]
   }
@@ -156,7 +152,6 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
     email: row.email,
     location: row.location ?? '',
     jobTitle: row.jobTitle ?? '',
-    pronouns: row.pronouns,
     timezone: row.timezone,
     groups: membership.map(group => group.id)
   })
@@ -410,7 +405,6 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
             name: next.name,
             location: next.location,
             jobTitle: next.jobTitle,
-            pronouns: next.pronouns,
             ...presentation,
             password,
             isActive: true,
@@ -582,7 +576,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       }
       return mutate(requester, id, input, async (tx, row, workspace, actor) => {
         if (!workspace.capabilities.edit) return fail(workspace.capabilities.explanation, 403)
-        const next = profileValue(input.profile, false, row.pronouns)
+        const next = profileValue(input.profile)
         if (password) await assertSavedPassword(tx, input.password)
         if (password && !workspace.capabilities.password) return fail('Use the account’s identity provider or your own profile to change this password.', 403)
         if (next.groups.some(groupId => !workspace.availableGroups.some(group => group.id === groupId && group.canAssign)))
@@ -608,7 +602,6 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
             email: next.email,
             location: next.location,
             jobTitle: next.jobTitle,
-            pronouns: next.pronouns,
             timezone: next.timezone,
             ...presentation,
             ...(password ? { password } : {}),

@@ -48,7 +48,6 @@ type UserMutation {
     passwordRaw: String
     providerKey: String!
     groups: [Int]!
-    pronouns: String
     timezone: String
     dateFormat: String
     timeFormat: String
@@ -65,7 +64,6 @@ type UserMutation {
     location: String
     timeFormat: String
     jobTitle: String
-    pronouns: String
     timezone: String
     dateFormat: String
     appearance: String
@@ -106,7 +104,6 @@ type UserMutation {
     timeFormat: String
     location: String!
     jobTitle: String!
-    pronouns: String
     timezone: String!
     dateFormat: String!
     appearance: String!
@@ -164,7 +161,6 @@ type User {
   isVerified: Boolean!
   location: String!
   jobTitle: String!
-  pronouns: String
   timezone: String!
   dateFormat: String!
   appearance: String!
@@ -187,7 +183,6 @@ type UserProfile {
   isVerified: Boolean!
   location: String!
   jobTitle: String!
-  pronouns: String
   timezone: String!
   dateFormat: String!
   appearance: String!

@@ -71,7 +71,7 @@ const snapshot: AccountWorkspace = {
   sessionsRevokedAt: null,
   privateOwnershipBlocksDeletion: false,
   contributionCounts: { pagesCreated: 0, pagesAuthored: 0, comments: 0, assets: 0 },
-  profile: { name: 'Alex', email: 'alex@example.invalid', location: 'Before', jobTitle: '', pronouns: 'they/them', timezone: 'UTC', groups: [3] },
+  profile: { name: 'Alex', email: 'alex@example.invalid', location: 'Before', jobTitle: '', timezone: 'UTC', groups: [3] },
   fingerprint: 'version-one',
   availableGroups: [{ id: 3, name: 'Authors', permissions: ['read:pages'], canAssign: true, isSystem: false }],
   capabilities: { edit: true, password: true, delete: true, actions: ['deactivate', 'end-sessions'], explanation: '' },
@@ -153,11 +153,10 @@ describe('account creation cancellation', () => {
     expect(window.confirm).not.toHaveBeenCalled()
     expect(state.$emit).toHaveBeenCalledWith('update:modelValue', false)
   })
-  for (const field of ['pronouns', 'timezone', 'verification', 'forced-password', 'provider'] as const) {
+  for (const field of ['timezone', 'verification', 'forced-password', 'provider'] as const) {
     it(`protects a ${field}-only draft until discard is accepted`, async () => {
       const { state, window } = arrangeCreation()
       await state.loadOptions()
-      if (field === 'pronouns') state.profile.pronouns = 'they/them'
       if (field === 'timezone') state.profile.timezone = 'America/New_York'
       if (field === 'verification') state.isVerified = true
       if (field === 'forced-password') state.mustChangePassword = false
@@ -180,11 +179,9 @@ describe('account workspace review and recovery', () => {
     const { state } = arrange()
     await state.reload()
     state.draft.location = ''
-    state.draft.pronouns = ''
     state.draft.groups.push(4)
     expect(state.saved.profile.location).toBe('Before')
     expect(state.saved.profile.groups).toEqual([3])
-    expect(state.saved.profile.pronouns).toBe('they/them')
     expect(state.dirty).toBe(true)
     expect(state.actionLocked).toBe(true)
     state.open('deactivate')
@@ -230,7 +227,7 @@ describe('account workspace review and recovery', () => {
     try {
       await settle()
       state.draft.location = ''
-      state.draft.pronouns = 'she/her'
+      state.draft.jobTitle = 'Editor'
       state.open('profile')
       state.reason = 'Remove old location'
       transport.saveAccountProfile.mockRejectedValueOnce(Object.assign(new Error('Account changed'), { status: 409 }))
@@ -241,8 +238,8 @@ describe('account workspace review and recovery', () => {
       expect(state.dialog).toBe(true)
       expect(state.draft.location).toBe('')
       expect(state.saved.profile.location).toBe('Before')
-      expect(state.draft.pronouns).toBe('she/her')
-      expect(state.saved.profile.pronouns).toBe('they/them')
+      expect(state.draft.jobTitle).toBe('Editor')
+      expect(state.saved.profile.jobTitle).toBe('')
       expect(state.reason).toBe('Remove old location')
       expect(state.conflict).toBe(true)
       expect(state.busy).toBe(false)

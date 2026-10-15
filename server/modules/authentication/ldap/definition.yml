@@ -132,9 +132,3 @@ props:
     default: ''
     hint: Optional; when configured, a missing directory attribute clears the local value.
     order: 31
-  mappingPronouns:
-    type: String
-    title: Pronouns Field Mapping
-    default: ''
-    hint: Optional; when configured, a missing directory attribute clears the local value.
-    order: 32

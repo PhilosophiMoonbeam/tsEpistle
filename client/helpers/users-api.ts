@@ -142,7 +142,6 @@ export type Profile = {
   isVerified: boolean
   location: string
   jobTitle: string
-  pronouns: string
   timezone: string
   dateFormat: string
   timeFormat: UserTimeFormat
@@ -163,7 +162,6 @@ type ProfileUpdateInput = {
   handle: string
   location: string
   jobTitle: string
-  pronouns?: string
   timezone: string
   dateFormat: string
   timeFormat: UserTimeFormat
@@ -189,8 +187,6 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     typeof payload.isVerified !== 'boolean' ||
     typeof payload.location !== 'string' ||
     typeof payload.jobTitle !== 'string' ||
-    typeof payload.pronouns !== 'string' ||
-    payload.pronouns.length > 255 ||
     typeof payload.timezone !== 'string' ||
     typeof payload.dateFormat !== 'string' ||
     typeof payload.appearance !== 'string' ||
@@ -220,7 +216,6 @@ function normalizeProfile(payload: unknown, fallbackMessage: string): Profile {
     isVerified: payload.isVerified,
     location: payload.location,
     jobTitle: payload.jobTitle,
-    pronouns: payload.pronouns,
     timezone: payload.timezone,
     dateFormat: payload.dateFormat,
     timeFormat,

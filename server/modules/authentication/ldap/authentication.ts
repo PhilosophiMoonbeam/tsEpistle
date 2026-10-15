@@ -69,11 +69,7 @@ const plugin: AuthenticationPlugin = {
                 email: String(_.get(profile, conf.mappingEmail, '')).split(',')[0],
                 displayName: _.get(profile, conf.mappingDisplayName, '???'),
                 picture: _.get(profile, `_raw.${conf.mappingPicture}`, ''),
-                providerProfile: mappedProviderProfile(
-                  profile,
-                  { location: conf.mappingLocation, jobTitle: conf.mappingJobTitle, pronouns: conf.mappingPronouns },
-                  true
-                )
+                providerProfile: mappedProviderProfile(profile, { location: conf.mappingLocation, jobTitle: conf.mappingJobTitle }, true)
               }
             })
             // map users LDAP groups to wiki groups with the same name, and remove any groups that don't match LDAP

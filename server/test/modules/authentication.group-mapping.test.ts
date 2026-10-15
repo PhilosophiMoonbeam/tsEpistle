@@ -334,10 +334,10 @@ describe('federated profile claim admission', () => {
   })
 
   it('OIDC reads authenticated ID-token claims when UserInfo is skipped', async () => {
-    await run('oidc', undefined, vi.fn(), { requireVerifiedEmail: true, pronounsClaim: 'pronouns', skipUserProfile: true })
+    await run('oidc', undefined, vi.fn(), { requireVerifiedEmail: true, locationClaim: 'place', skipUserProfile: true })
     processProfile.mockClear()
     const callback = vi.fn()
-    const payload = Buffer.from(JSON.stringify({ sub: 'subject', email: 'person@example.invalid', email_verified: true, pronouns: 'they/them' })).toString(
+    const payload = Buffer.from(JSON.stringify({ sub: 'subject', email: 'person@example.invalid', email_verified: true, place: 'London' })).toString(
       'base64url'
     )
     await verify(
@@ -353,23 +353,22 @@ describe('federated profile claim admission', () => {
       callback
     )
     expect(callback.mock.calls[0]?.[0]).toBeNull()
-    expect(processProfile.mock.calls[0]?.[0].profile).toMatchObject({ email: 'person@example.invalid', providerProfile: { pronouns: 'they/them' } })
+    expect(processProfile.mock.calls[0]?.[0].profile).toMatchObject({ email: 'person@example.invalid', providerProfile: { location: 'London' } })
   })
 
   for (const kind of ['oidc', 'saml', 'ldap']) {
     it(`${kind} projects only configured bounded profile text`, async () => {
-      const mappings =
-        kind === 'oidc'
-          ? { locationClaim: 'place', jobTitleClaim: 'title', pronounsClaim: 'pronouns' }
-          : { mappingLocation: 'place', mappingJobTitle: 'title', mappingPronouns: 'pronouns' }
-      await run(kind, undefined, vi.fn(), mappings, { title: '', pronouns: 'x'.repeat(300), isSystem: true })
+      const mappings = kind === 'oidc' ? { locationClaim: 'place', jobTitleClaim: 'title' } : { mappingLocation: 'place', mappingJobTitle: 'title' }
+      await run(kind, undefined, vi.fn(), mappings, { title: '', isSystem: true })
       expect(processProfile.mock.calls[0]?.[0].profile.providerProfile).toEqual({
         ...(kind === 'ldap' ? { location: '' } : {}),
-        jobTitle: '',
-        pronouns: 'x'.repeat(255)
+        jobTitle: ''
       })
       processProfile.mockClear()
-      await run(kind, undefined, vi.fn(), {}, { location: 'Ignored', jobTitle: 'Ignored', pronouns: 'Ignored' })
+      await run(kind, undefined, vi.fn(), mappings, { place: 'x'.repeat(300), title: ' Editor ', isSystem: true })
+      expect(processProfile.mock.calls[0]?.[0].profile.providerProfile).toEqual({ location: 'x'.repeat(255), jobTitle: 'Editor' })
+      processProfile.mockClear()
+      await run(kind, undefined, vi.fn(), {}, { location: 'Ignored', jobTitle: 'Ignored' })
       expect(processProfile.mock.calls[0]?.[0].profile.providerProfile).toEqual({})
     })
   }
@@ -453,47 +452,45 @@ describe('authenticated SAML empty profile attributes', () => {
   const mappings = {
     requireVerifiedEmail: true,
     mappingLocation: 'place',
-    mappingJobTitle: 'attributes.title',
-    mappingPronouns: 'attributes["urn:example:pronouns"]'
+    mappingJobTitle: 'attributes["urn:example:jobTitle"]'
   }
-  const pronounsAttribute = (values: string): string => `<saml:Attribute Name="urn:example:pronouns">${values}</saml:Attribute>`
+  const jobTitleAttribute = (values: string): string => `<saml:Attribute Name="urn:example:jobTitle">${values}</saml:Attribute>`
 
   it('projects only one authenticated empty text value while preserving absent or ambiguous fields and unrelated claims', async () => {
-    const stable =
-      '<saml:Attribute Name="place"><saml:AttributeValue>London</saml:AttributeValue></saml:Attribute><saml:Attribute Name="title"><saml:AttributeValue>Editor</saml:AttributeValue></saml:Attribute>'
+    const stable = '<saml:Attribute Name="place"><saml:AttributeValue>London</saml:AttributeValue></saml:Attribute>'
     const empty = '<saml:AttributeValue xsi:type="xs:string"/>'
     const cases: { name: string; attribute: string; extra?: string; clears: boolean; present: boolean }[] = [
       { name: 'absent', attribute: '', clears: false, present: false },
-      { name: 'single typed empty', attribute: pronounsAttribute(empty), clears: true, present: true },
-      { name: 'single untyped empty', attribute: pronounsAttribute('<saml:AttributeValue/>'), clears: true, present: true },
+      { name: 'single typed empty', attribute: jobTitleAttribute(empty), clears: true, present: true },
+      { name: 'single untyped empty', attribute: jobTitleAttribute('<saml:AttributeValue/>'), clears: true, present: true },
       {
         name: 'single whitespace text',
-        attribute: pronounsAttribute('<saml:AttributeValue xsi:type="xs:string"> </saml:AttributeValue>'),
+        attribute: jobTitleAttribute('<saml:AttributeValue xsi:type="xs:string"> </saml:AttributeValue>'),
         clears: true,
         present: true
       },
-      { name: 'multiple values', attribute: pronounsAttribute(empty + empty), clears: false, present: true },
-      { name: 'duplicate attributes', attribute: pronounsAttribute(empty) + pronounsAttribute(empty), clears: false, present: true },
+      { name: 'multiple values', attribute: jobTitleAttribute(empty + empty), clears: false, present: true },
+      { name: 'duplicate attributes', attribute: jobTitleAttribute(empty) + jobTitleAttribute(empty), clears: false, present: true },
       {
         name: 'duplicate statements',
-        attribute: pronounsAttribute(empty),
-        extra: `<saml:AttributeStatement>${pronounsAttribute(empty)}</saml:AttributeStatement>`,
+        attribute: jobTitleAttribute(empty),
+        extra: `<saml:AttributeStatement>${jobTitleAttribute(empty)}</saml:AttributeStatement>`,
         clears: false,
         present: true
       },
-      { name: 'missing value', attribute: pronounsAttribute(''), clears: false, present: false },
-      { name: 'nil', attribute: pronounsAttribute('<saml:AttributeValue xsi:nil="true" xsi:type="xs:string"/>'), clears: false, present: true },
-      { name: 'nontext type', attribute: pronounsAttribute('<saml:AttributeValue xsi:type="xs:integer"/>'), clears: false, present: true },
-      { name: 'structured value', attribute: pronounsAttribute('<saml:AttributeValue><saml:Other/></saml:AttributeValue>'), clears: false, present: true },
+      { name: 'missing value', attribute: jobTitleAttribute(''), clears: false, present: false },
+      { name: 'nil', attribute: jobTitleAttribute('<saml:AttributeValue xsi:nil="true" xsi:type="xs:string"/>'), clears: false, present: true },
+      { name: 'nontext type', attribute: jobTitleAttribute('<saml:AttributeValue xsi:type="xs:integer"/>'), clears: false, present: true },
+      { name: 'structured value', attribute: jobTitleAttribute('<saml:AttributeValue><saml:Other/></saml:AttributeValue>'), clears: false, present: true },
       {
         name: 'shadowed schema namespace',
-        attribute: pronounsAttribute('<saml:AttributeValue xmlns:xs="urn:not-schema" xsi:type="xs:string"/>'),
+        attribute: jobTitleAttribute('<saml:AttributeValue xmlns:xs="urn:not-schema" xsi:type="xs:string"/>'),
         clears: false,
         present: true
       },
       {
         name: 'nil whitespace CDATA',
-        attribute: pronounsAttribute('<saml:AttributeValue xsi:nil="true"><![CDATA[ ]]></saml:AttributeValue>'),
+        attribute: jobTitleAttribute('<saml:AttributeValue xsi:nil="true"><![CDATA[ ]]></saml:AttributeValue>'),
         clears: false,
         present: true
       }
@@ -501,15 +498,15 @@ describe('authenticated SAML empty profile attributes', () => {
     for (const fixture of cases) {
       processProfile.mockClear()
       const profile = await parseSignedProfile(signedResponse(stable + fixture.attribute, fixture.extra))
-      expect(Object.hasOwn(profile.attributes as object, 'urn:example:pronouns'), fixture.name).toBe(fixture.present)
+      expect(Object.hasOwn(profile.attributes as object, 'urn:example:jobTitle'), fixture.name).toBe(fixture.present)
       if (fixture.name === 'single typed empty') {
         // This is the installed parser's actual lost-character-property representation.
-        expect(Object.hasOwn(profile, 'urn:example:pronouns')).toBe(true)
-        expect(profile['urn:example:pronouns']).toBeUndefined()
+        expect(Object.hasOwn(profile, 'urn:example:jobTitle')).toBe(true)
+        expect(profile['urn:example:jobTitle']).toBeUndefined()
         const parsed = profile.getAssertion?.() as {
           Assertion: { AttributeStatement: { Attribute: { $: { Name: string }; AttributeValue: object[] }[] }[] }
         }
-        const value = parsed.Assertion.AttributeStatement[0]?.Attribute.find(attribute => attribute.$.Name === 'urn:example:pronouns')?.AttributeValue[0]
+        const value = parsed.Assertion.AttributeStatement[0]?.Attribute.find(attribute => attribute.$.Name === 'urn:example:jobTitle')?.AttributeValue[0]
         if (!value) throw new Error('Expected the authenticated empty AttributeValue.')
         // Assert scalars only: nested asymmetric matchers can mutate Bun's
         // dependency-owned assertion tree before the production consumer runs.
@@ -527,26 +524,26 @@ describe('authenticated SAML empty profile attributes', () => {
           email: 'person@example.invalid',
           displayName: 'Person',
           picture: 'https://wiki.example.invalid/avatar.png',
-          providerProfile: { location: 'London', jobTitle: 'Editor', ...(fixture.clears ? { pronouns: '' } : {}) }
+          providerProfile: { location: 'London', ...(fixture.clears ? { jobTitle: '' } : {}) }
         }
       })
       expect(await membershipNames()).toEqual(['Writers'])
     }
   })
 
-  it('clears all three configured text columns and still rejects unverified or tampered assertions', async () => {
+  it('clears both configured text columns and still rejects unverified or tampered assertions', async () => {
     const response = signedResponse(
-      '<saml:Attribute Name="place"><saml:AttributeValue xsi:type="xs:string"/></saml:Attribute><saml:Attribute Name="title"><saml:AttributeValue xsi:type="xs:string"/></saml:Attribute>' +
-        pronounsAttribute('<saml:AttributeValue xsi:type="xs:string"/>')
+      '<saml:Attribute Name="place"><saml:AttributeValue xsi:type="xs:string"/></saml:Attribute>' +
+        jobTitleAttribute('<saml:AttributeValue xsi:type="xs:string"/>')
     )
     const profile = await parseSignedProfile(response)
     const callback = vi.fn()
     await run('saml', undefined, callback, mappings, profile)
     expect(callback.mock.calls[0]?.[0]).toBeNull()
-    expect(processProfile.mock.calls[0]?.[0].profile.providerProfile).toEqual({ location: '', jobTitle: '', pronouns: '' })
+    expect(processProfile.mock.calls[0]?.[0].profile.providerProfile).toEqual({ location: '', jobTitle: '' })
 
     await expect(parseSignedProfile(response.replace('person@example.invalid', 'attacker@example.invalid'))).rejects.toThrow('Invalid signature')
-    const unverifiedResponse = signedResponse(pronounsAttribute('<saml:AttributeValue/>'), '', 'false')
+    const unverifiedResponse = signedResponse(jobTitleAttribute('<saml:AttributeValue/>'), '', 'false')
     processProfile.mockClear()
     const rejected = vi.fn()
     await run('saml', ['Readers'], rejected, mappings, await parseSignedProfile(unverifiedResponse))

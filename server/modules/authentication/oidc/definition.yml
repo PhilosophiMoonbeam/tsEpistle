@@ -105,12 +105,6 @@ props:
     default: ''
     hint: Optional; absent claims preserve the local value and empty text clears it.
     order: 16
-  pronounsClaim:
-    type: String
-    title: Pronouns Claim
-    default: ''
-    hint: Optional; absent claims preserve the local value and empty text clears it.
-    order: 17
   requireVerifiedEmail:
     type: Boolean
     title: Require Verified Email

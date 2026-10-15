@@ -574,7 +574,7 @@ This is an ordinary feature/adaptation cutover, not an Enterprise Release, publi
 
 ### Native implementation and observed behavior
 
-- Locale-scoped glossary CRUD, race-safe aliases/relations, redacted authorized documentation, actual reactive picking and reader autolinking; atomic passage discussions, current-authority history/focus and opted-in durable notifications; bounded federated claims and native pronouns.
+- Locale-scoped glossary CRUD, race-safe aliases/relations, redacted authorized documentation, actual reactive picking and reader autolinking; atomic passage discussions, current-authority history/focus and opted-in durable notifications; bounded federated location/job-title claims and strict opt-in verified-email policies.
 - Canonical-preserving plain/legacy storage options, atomic enabled-target admission, real local Git commit/push/rejected-push/retry and serialized operation behavior; source/visual authoring, lossless image properties, links-grid and explicit inline math.
 - Installed fork-key coverage, authorized dashboard signals, Unicode folder children and reviewed selected navigation repair. Native/Paper/Midnight previews and actual public/private offline snapshots use passive local tokens.
 - Real browser verification exposed and repaired native integration defects: cold first discussion mount, boxless thread focus, notification envelope serialization, source readiness/insertion, media overlay ownership, post-dialog editor focus, Native palette scoping and initial offline-storage route invalidation. After-proofs ran against immutable application images, not browser/DOM hotpatches.

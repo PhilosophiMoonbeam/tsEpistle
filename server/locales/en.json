@@ -7027,7 +7027,6 @@
       "displayName": "Display name",
       "emailAddress": "Email address",
       "roleJobTitle": "Role or job title",
-      "pronouns": "Pronouns",
       "location": "Location",
       "timeZone": "Time zone",
       "groupMembership": "Group membership",
@@ -7678,7 +7677,6 @@
       "opensNewTab": "Opens in a new tab"
     },
     "usersCreate": {
-      "pronouns": "Pronouns",
       "permissionsCount_one": "{{count}} permission",
       "permissionsCount_other": "{{count}} permissions",
       "chooseEnabledSignProvider": "Choose an enabled sign-in provider.",
@@ -10163,7 +10161,6 @@
       "title": "Comments"
     },
     "jobTitle": "Job Title",
-    "pronouns": "Pronouns",
     "location": "Location",
     "subtitle": "My personal info",
     "timezone": "Timezone",
@@ -10229,7 +10226,6 @@
     "issues": {
       "nameRequired": "Enter a display name.",
       "nameTooLong": "Use 255 characters or fewer.",
-      "pronounsTooLong": "Use 255 characters or fewer.",
       "handleInvalid": "Use 3–32 letters, numbers, underscores or hyphens."
     },
     "dock": {
