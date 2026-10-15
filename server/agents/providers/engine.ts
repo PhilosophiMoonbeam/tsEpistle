@@ -3194,9 +3194,11 @@ const assessDraft = (
       if (!group.evidenceIds.some(evidenceId => seenCitationIds.has(evidenceId)))
         issues.push(`The final answer does not cite validated evidence for research task ${group.title}.`)
     }
-    for (const group of pendingSemanticSupport ? [] : coverage.recentGroups) {
-      const missing = group.evidenceIds.filter(evidenceId => !claims.some(claim => claim.pageEvidenceId === evidenceId && claim.supported))
-      if (missing.length > 0) issues.push(`The final answer does not cite every page returned by pages.listRecent: ${missing.join(', ')}.`)
+    if (!pendingSemanticSupport && nativeDraft?.allRequestFacetsUnresolved !== true) {
+      for (const group of coverage.recentGroups) {
+        const missing = group.evidenceIds.filter(evidenceId => !claims.some(claim => claim.pageEvidenceId === evidenceId && claim.supported))
+        if (missing.length > 0) issues.push(`The final answer does not cite every page returned by pages.listRecent: ${missing.join(', ')}.`)
+      }
     }
     for (const group of coverage.conflictGroups) {
       const missing = group.evidenceIds.filter(evidenceId => !seenCitationIds.has(evidenceId))
@@ -3516,6 +3518,7 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
 
 interface NativeDraft {
   readonly answer: WikiSynthesisAnswer
+  readonly allRequestFacetsUnresolved: boolean
   readonly inputMediaSources?: readonly WikiSynthesisInputMedia[]
   readonly evidence: ReadonlyMap<string, CitationEvidence>
   readonly readSources: ReadonlyMap<string, WikiVerificationSource>
@@ -6547,6 +6550,7 @@ export class AxAgentEngine implements AgentEngine {
         // still requires independent complete-source Jev proof before publication.
         nativeDraft = {
           answer,
+          allRequestFacetsUnresolved: input.requestFacets.length > 0 && answer.unresolvedFacets.length === input.requestFacets.length,
           inputMediaSources,
           evidence: sourceEvidence,
           readSources,
@@ -8993,8 +8997,8 @@ export class AxAgentEngine implements AgentEngine {
                 semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index => canonicalJson(nativeDraft.answer.claims[index]!)))
               }
               result = { ...result, rootNativeDraft: verifiedDraft }
-              // Factual truth and answer coverage are independent verdicts.
-              // A truthful but incomplete answer remains entirely unpublished.
+              // Every published claim still needs complete-source proof.
+              // An explicitly unresolved request can retain verified partial findings.
               assessment = assessDraft(
                 assessableContent,
                 assessmentEvidence,
@@ -9057,7 +9061,11 @@ export class AxAgentEngine implements AgentEngine {
                 if (maxTokens !== undefined && totalTokens > maxTokens)
                   throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Coverage exceeded the admitted run token limit', 429)
                 coverageOutputLimited = audit.turn.finishReason === 'length'
-                if (audit.verdict !== 'complete' || coverageOutputLimited) {
+                if (
+                  coverageOutputLimited ||
+                  (audit.verdict !== 'complete' &&
+                    !(audit.verdict === 'incomplete' && coverage.recentGroups.length > 0 && nativeDraft.allRequestFacetsUnresolved))
+                ) {
                   coverageAuditFeedback = audit.feedback
                   assessment = { ...assessment, valid: false, issues: [...assessment.issues, `Requested coverage: ${audit.verdict}.`] }
                   result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }

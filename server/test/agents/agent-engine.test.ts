@@ -10978,21 +10978,22 @@ describe('request-derived evidence coverage', () => {
     }
   )
 
-  it.each(['missing row', 'unresolved detail', 'unclosed window'] as const)(
-    'keeps a declared recent recap with %s evidence-limited after a complete audit',
+  it.each(['missing row', 'declared partial missing row', 'unresolved detail', 'unclosed window'] as const)(
+    'keeps a declared recent recap with %s evidence-limited after its coverage audit',
     async failure => {
       const userRequest = 'Summarize the 10 most recently updated Wiki pages and name each review owner.'
       const metadata = `<wiki-request-plan>${JSON.stringify({
         facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
       })}</wiki-request-plan>`
-      const claims = (failure === 'missing row' ? recentRows.slice(0, 1) : recentRows).map(row => ({
+      const missingRow = failure === 'missing row' || failure === 'declared partial missing row'
+      const claims = (missingRow ? recentRows.slice(0, 1) : recentRows).map(row => ({
         evidenceId: row.citation.evidenceId,
         statement: row.content
       }))
       const answer = (input: Readonly<AxChatRequest>) =>
         synthesisFixtureAnswer(input, {
           claims,
-          unresolvedFacets: failure === 'unresolved detail' ? [0] : []
+          unresolvedFacets: failure === 'unresolved detail' || failure === 'declared partial missing row' ? [0] : []
         })
       const fixture = questionFixture(
         'native',
@@ -11002,7 +11003,22 @@ describe('request-derived evidence coverage', () => {
           requestedLimit: 10,
           exhausted: failure !== 'unclosed window',
           pages: recentRows
-        })
+        }),
+        [],
+        {
+          coverage: async () => ({
+            results: [
+              {
+                index: 0,
+                content: JSON.stringify({
+                  verdict: failure === 'declared partial missing row' ? 'incomplete' : 'complete',
+                  feedback: failure === 'declared partial missing row' ? 'A returned page has no admitted summary.' : ''
+                }),
+                finishReason: 'stop'
+              }
+            ]
+          })
+        }
       )
       const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 2_048 })
       expect(result.executionLimit?.reason).toBe('evidence')
@@ -11012,9 +11028,12 @@ describe('request-derived evidence coverage', () => {
         expect(fixture.event.mock.calls.filter(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toHaveLength(0)
         expect(published).not.toContain(recentRows[0]!.content)
       } else {
+        const publishedRows = failure === 'declared partial missing row' ? recentRows.slice(0, 1) : recentRows
         expect(result.executionLimit?.publication).toBe('partial')
-        expect(result.citations?.map(citation => citation.evidenceId)).toEqual(recentRows.map(row => row.citation.evidenceId))
-        expect(published).toContain('## Evidence limits')
+        expect(result.citations?.map(citation => citation.evidenceId)).toEqual(publishedRows.map(row => row.citation.evidenceId))
+        for (const row of publishedRows) expect(visibleWikiText(published)).toContain(row.content)
+        for (const row of recentRows.filter(row => !publishedRows.includes(row))) expect(visibleWikiText(published)).not.toContain(row.content)
+        if (failure !== 'unclosed window') expect(published).toContain(userRequest.slice(0, -1))
       }
     }
   )
