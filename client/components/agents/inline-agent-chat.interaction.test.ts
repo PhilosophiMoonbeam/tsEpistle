@@ -2252,6 +2252,47 @@ describe('Inline Agent panel semantics', () => {
     expect(descriptions.every(description => history?.contains(description) && !description.hidden)).toBe(true)
   })
 
+  for (const viewportWidth of [1280, 1760]) {
+    it(`keeps non-modal panels keyboard reachable and restores their own trigger at ${viewportWidth}px`, async () => {
+      const state = loadGoalLockState(null)
+      const mounted = mountInlineAgent(state, { viewportWidth })
+      const history = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
+      const memory = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__memory-toggle')
+      if (!history || !memory) throw new Error('Panel triggers did not render')
+      for (const button of [history, memory]) {
+        vi.spyOn(button, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
+      }
+      memory.click()
+      await settle()
+      const memoryPanel = mounted.root.querySelector<HTMLElement>('.inline-agent__side--memory')
+      if (!memoryPanel) throw new Error('Memory panel did not render')
+      expect(document.activeElement).toBe(memoryPanel)
+      history.focus()
+      expect(document.activeElement).toBe(history)
+      memoryPanel.focus()
+      const child = document.createElement('input')
+      child.addEventListener('keydown', event => event.preventDefault())
+      memoryPanel.append(child)
+      child.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
+      expect(state.memoryOpen.value).toBe(true)
+      child.remove()
+      memoryPanel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
+      expect(state.memoryOpen.value).toBe(false)
+      expect(document.activeElement).toBe(memory)
+      history.click()
+      await settle()
+      const historyPanel = mounted.root.querySelector<HTMLElement>('.inline-agent__side--history')
+      if (!historyPanel) throw new Error('History panel did not render')
+      expect(document.activeElement).toBe(historyPanel)
+      historyPanel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await settle()
+      expect(mounted.root.querySelector('.inline-agent__side--history')).toBeNull()
+      expect(document.activeElement).toBe(history)
+    })
+  }
+
   it('keeps panels exclusive across viewport changes and stops observing after teardown', async () => {
     const state = loadGoalLockState(null)
     const mounted = mountInlineAgent(state, { viewportWidth: 1023 })

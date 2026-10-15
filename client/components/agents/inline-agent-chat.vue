@@ -26,7 +26,8 @@
       :aria-labelledby="historyHeadingId"
       :aria-describedby="historyDescriptionId"
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
-      :tabindex="panelMode === 'modal' ? -1 : undefined"
+      tabindex="-1"
+      @keydown="handleNonModalPanelKeydown"
     >
       <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
         <v-btn
@@ -531,7 +532,8 @@
       :aria-labelledby="memoryHeadingId"
       :aria-describedby="memoryDescriptionId"
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
-      :tabindex="panelMode === 'modal' ? -1 : undefined"
+      tabindex="-1"
+      @keydown="handleNonModalPanelKeydown"
     >
       <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
         <v-tooltip location="bottom" :text="historyToggleBlocked ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.history')">
@@ -1355,13 +1357,13 @@ const preparePanelTriggerRestore = (kind: 'history' | 'memory'): void => {
   pendingPanelFocusKind = kind
 }
 const closeHistory = (): void => {
-  const closingKind = panelMode.value === 'modal' && historyOpen.value ? 'history' : null
+  const closingKind = historyOpen.value ? 'history' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   historyOpen.value = false
 }
 const closeMemory = (): void => {
   if (memoryMutationBusy.value) return
-  const closingKind = panelMode.value === 'modal' && memoryOpen.value ? 'memory' : null
+  const closingKind = memoryOpen.value ? 'memory' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   memoryOpen.value = false
 }
@@ -1410,12 +1412,17 @@ const reconcilePanelMode = (): void => {
 }
 const closePanels = (): void => {
   if (memoryOpen.value && memoryMutationBusy.value) return
-  const closingKind = panelMode.value === 'modal'
-    ? historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
-    : null
+  const closingKind = historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   historyOpen.value = false
   memoryOpen.value = false
+}
+const handleNonModalPanelKeydown = (event: KeyboardEvent): void => {
+  if (panelMode.value === 'modal' || event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229) return
+  if (activeOwnedOverlayRoots('.agent-owned-overlay').length > 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  closePanels()
 }
 const openClearUnfiledHistory = (): void => {
   if (!networkActionAllowed()) return
@@ -1717,12 +1724,21 @@ watch(discardDraftOpen, async (open, _previous, onCleanup) => {
     onEscape: () => resolveDraftDiscard(false)
   })
 })
-watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode]) => {
+watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [previousHistory, previousMemory]) => {
   const kind = history ? 'history' : memory ? 'memory' : null
   if (!kind || mode !== 'modal') {
     panelFocusScope?.deactivate({ restoreFocus: false })
     panelFocusScope = null
     panelFocusKind = null
+    if (kind) {
+      const newlyOpened = history ? !previousHistory : !previousMemory
+      await nextTick()
+      const currentKind = historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
+      if (panelMode.value !== 'modal' && currentKind === kind && (newlyOpened || document.activeElement === document.body)) {
+        const root = kind === 'history' ? historyPanel.value : memoryPanel.value
+        root?.focus({ preventScroll: true })
+      }
+    }
     return
   }
   if (panelFocusScope && panelFocusKind === kind) return
@@ -2481,7 +2497,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   width: min(100%, var(--agent-conversation-width));
   min-height: 0;
   box-sizing: border-box;
-  flex: 1 1 auto;
+  /* Keep intrinsic welcome content in flow so short viewports can scroll
+     every starter above the sticky dock instead of shrinking behind it. */
+  flex: 1 0 auto;
   /* Starters sit at the middle of the space between the greeting and the
      composer, raised by a small bias toward the greeting. Their gap above
      matches the bottom padding minus the bias; the extra top padding
