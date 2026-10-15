@@ -134,8 +134,7 @@ const validateEntries = (entries: Iterable<unknown>): void => {
 }
 
 const validateRequest = (request: DecisionRequest): void => {
-  if (!plain(request) || Object.keys(request).some(key => !['state', 'instructions', 'criteria'].includes(key)))
-    throw invalid('INVALID_DECISION_REQUEST', 400)
+  if (!plain(request) || Object.keys(request).some(key => !['state', 'instructions', 'criteria'].includes(key))) throw invalid('INVALID_DECISION_REQUEST', 400)
   validateQuestion({ instructions: request.instructions, criteria: request.criteria })
   validateEntries([request.state, request.instructions, ...Object.values(request.criteria)])
   if (Buffer.byteLength(JSON.stringify(request)) > MAX_REQUEST_BYTES - 8_192) throw invalid('INVALID_DECISION_REQUEST', 400)
@@ -200,14 +199,24 @@ export const decisionCostMicros = (cost: DecisionResult['estimatedCost']): numbe
 export class DecisionProviderFailure extends AgentRepositoryError {
   readonly providerId: string
   readonly providerRevision: number
+  readonly providerStatus: number | null
   readonly usage: DecisionResult['usage'] | null
   readonly latencyMs: number
   readonly estimatedCost: DecisionResult['estimatedCost']
   readonly estimatedCostMicros: number | null
-  constructor(code: string, snapshot: DecisionProviderRuntime, usage: DecisionResult['usage'] | null, latencyMs: number, status?: number) {
+  constructor(
+    code: string,
+    snapshot: DecisionProviderRuntime,
+    usage: DecisionResult['usage'] | null,
+    latencyMs: number,
+    status?: number,
+    providerStatus?: number
+  ) {
     super(code, 'Decision provider request could not be completed', status ?? (code === 'DECISION_ABORTED' ? 499 : 502))
     this.providerId = snapshot.id
     this.providerRevision = snapshot.revision
+    this.providerStatus =
+      typeof providerStatus === 'number' && Number.isInteger(providerStatus) && providerStatus >= 300 && providerStatus <= 599 ? providerStatus : null
     this.usage = usage
     this.latencyMs = latencyMs
     try {
@@ -386,6 +395,7 @@ export class DecisionProviderClient {
     let responseModel: string | undefined
     let answers: DecisionBatchResult['answers'] | undefined
     let payloadDispatched = false
+    let providerStatus: number | undefined
     let preDispatchRejected = false
     let preDispatchFailure: unknown
     // These identifiers cross the server boundary in checks/results. A custom
@@ -443,6 +453,7 @@ export class DecisionProviderClient {
         signal
       )
       if (!response.ok || response.status >= 300) {
+        providerStatus = response.status
         await response.body?.cancel().catch(() => {})
         throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider request failed', 502)
       }
@@ -672,7 +683,8 @@ export class DecisionProviderClient {
         snapshot,
         usage,
         Math.max(0, performance.now() - started),
-        failure instanceof AgentRepositoryError && code === failure.code ? failure.status : undefined
+        failure instanceof AgentRepositoryError && code === failure.code ? failure.status : undefined,
+        providerStatus
       )
     }
   }

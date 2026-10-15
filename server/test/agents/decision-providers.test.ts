@@ -482,13 +482,30 @@ describe('decision provider protocols', () => {
       })
     })
     const error = await client.execute(native, 'fixture-private', request).catch(value => value)
-    expect(error).toMatchObject({ code: 'DECISION_PROVIDER_UNAVAILABLE', usage: null })
+    expect(error).toMatchObject({ code: 'DECISION_PROVIDER_UNAVAILABLE', providerStatus: 302, usage: null })
     expect(error.message).not.toContain('fixture-private')
     expect(calls).toBe(1)
     const batchError = await client.executeBatch(native, 'fixture-private', batchRequest).catch((value: unknown) => value)
-    expect(batchError).toMatchObject({ code: 'DECISION_PROVIDER_UNAVAILABLE', usage: null })
+    expect(batchError).toMatchObject({ code: 'DECISION_PROVIDER_UNAVAILABLE', providerStatus: 302, usage: null })
     expect(JSON.stringify(batchError)).not.toContain('fixture-private')
     expect(calls).toBe(2)
+  })
+
+  it('preserves a rate-limit status without retrying, exposing the error body, or inventing usage', async () => {
+    let calls = 0
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch(() => {
+        calls++
+        return new Response('private-provider-detail fixture-private', { status: 429 })
+      })
+    })
+    const failure = await client.executeBatch(native, 'fixture-private', batchRequest).catch((value: unknown) => value)
+    expect(failure).toBeInstanceOf(DecisionProviderFailure)
+    expect(failure).toMatchObject({ code: 'DECISION_PROVIDER_UNAVAILABLE', status: 502, providerStatus: 429, usage: null })
+    expect(JSON.stringify(failure)).not.toContain('fixture-private')
+    expect(JSON.stringify(failure)).not.toContain('private-provider-detail')
+    expect(calls).toBe(1)
   })
 
   it('bounds response bodies even without Content-Length', async () => {
@@ -524,7 +541,10 @@ describe('decision provider protocols', () => {
 
 describe('native decision batches', () => {
   it('preserves each question distribution at inclusive rounding boundaries without conflating confidence or duplicating request usage', async () => {
-    for (const probabilities of [{ simple: 0.79, complex: 0.2 }, { simple: 0.81, complex: 0.2 }]) {
+    for (const probabilities of [
+      { simple: 0.79, complex: 0.2 },
+      { simple: 0.81, complex: 0.2 }
+    ]) {
       let calls = 0
       const client = new DecisionProviderClient({
         resolve: publicDns,
@@ -637,13 +657,14 @@ describe('native decision batches', () => {
         return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
       })
     })
-    const failure = await client.executeBatch(
-      { ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest,
-      { onPreDispatch: async () => {
-        expect(dnsAdmitted).toBe(true)
-        throw new Error('private-source-guard-detail')
-      } }
-    ).catch((value: unknown) => value)
+    const failure = await client
+      .executeBatch({ ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest, {
+        onPreDispatch: async () => {
+          expect(dnsAdmitted).toBe(true)
+          throw new Error('private-source-guard-detail')
+        }
+      })
+      .catch((value: unknown) => value)
     expect(failure).toMatchObject({ code: 'DECISION_PRE_DISPATCH_REJECTED' })
     expect(failure).not.toBeInstanceOf(DecisionProviderFailure)
     expect(String(failure)).not.toContain('private-source-guard-detail')
@@ -662,13 +683,13 @@ describe('native decision batches', () => {
       })
     })
     const controller = new AbortController()
-    const pending = client.executeBatch(
-      { ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest,
-      { signal: controller.signal, onPreDispatch: async () => {
+    const pending = client.executeBatch({ ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest, {
+      signal: controller.signal,
+      onPreDispatch: async () => {
         entered.resolve()
         await Promise.withResolvers<never>().promise
-      } }
-    )
+      }
+    })
     await entered.promise
     controller.abort('private-cancellation-detail')
     const failure = await pending.catch((value: unknown) => value)
@@ -708,7 +729,17 @@ describe('native decision batches', () => {
         throw new Error('No request may be dispatched')
       })
     })
-    for (const ids of [[], ['', 'evidence'], [' effort'], ['effort\n'], ['__proto__'], ['constructor'], ['prototype'], ['x'.repeat(256)], Array.from({ length: 256 }, (_, index) => `q${index}`)]) {
+    for (const ids of [
+      [],
+      ['', 'evidence'],
+      [' effort'],
+      ['effort\n'],
+      ['__proto__'],
+      ['constructor'],
+      ['prototype'],
+      ['x'.repeat(256)],
+      Array.from({ length: 256 }, (_, index) => `q${index}`)
+    ]) {
       const questions = Object.fromEntries(ids.map(id => [id, batchRequest.questions.effort!]))
       await expect(client.executeBatch(native, 'fixture', { state: batchRequest.state, questions })).rejects.toMatchObject({ code: 'INVALID_DECISION_REQUEST' })
     }
@@ -719,7 +750,10 @@ describe('native decision batches', () => {
 
 describe('decision validation and cost semantics', () => {
   it('preserves both inclusive rounding boundaries without treating probabilities as confidence', () => {
-    for (const probabilities of [{ simple: 0.79, complex: 0.2 }, { simple: 0.81, complex: 0.2 }]) {
+    for (const probabilities of [
+      { simple: 0.79, complex: 0.2 },
+      { simple: 0.81, complex: 0.2 }
+    ]) {
       const result = normalizeDecisionAnswer({ ...answer, probabilities }, request.criteria)
       expect(result.probabilities).toEqual(probabilities)
       expect(result.confidence).toBe(0.6)

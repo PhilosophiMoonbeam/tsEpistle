@@ -94,6 +94,11 @@ allowing attachment statements to satisfy missing Wiki facts or recent-page
 obligations. Ownership, input capability and payload authority are rechecked
 before count, dispatch and publication; model perception remains fallible.
 
+Failed native verification records only its local failure code and, when received,
+the bounded upstream HTTP status in `model.turn.verification.failure`. Provider
+bodies and credentials remain redacted. Missing usage retains conservative
+exposure rather than manufacturing a zero-cost receipt.
+
 ### Context window and accounting
 
 Gemini input admission uses native Files token counting. Other supported model paths retain the application's conservative serialized-size/full-window exposure guard; these are **estimated admission units, not measured prompt tokens**. Large valid inline images/PDFs can consequently be rejected in small configured windows. OpenAI Responses and Anthropic do have separate input-token-count APIs; this implementation does not claim otherwise or call private Ax serializer internals to fabricate a wire-faithful count. Actual inference receipts settle usage after complete output.
