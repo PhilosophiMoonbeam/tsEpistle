@@ -109,6 +109,11 @@ error class / transport code in `model.turn.verification.failure`. Provider bodi
 messages, stacks, credentials and raw causes remain redacted. Missing usage retains
 conservative exposure rather than manufacturing a zero-cost receipt.
 
+The guarded decision transport uses the resolver's single-address connection path
+on Bun. Public DNS validation/pinning remains mandatory for every connection;
+disabling automatic address-family racing does not enable request retries or
+permit a rejected DNS address.
+
 ### Context window and accounting
 
 Gemini input admission uses native Files token counting. Other supported model paths retain the application's conservative serialized-size/full-window exposure guard; these are **estimated admission units, not measured prompt tokens**. Large valid inline images/PDFs can consequently be rejected in small configured windows. OpenAI Responses and Anthropic do have separate input-token-count APIs; this implementation does not claim otherwise or call private Ax serializer internals to fabricate a wire-faithful count. Actual inference receipts settle usage after complete output.
