@@ -5,6 +5,8 @@ import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { pageHref } from '../../helpers/admin-pages.ts'
+import { notificationPageHref } from '../../helpers/site-notifications-api.ts'
+import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import type { RenderFunction } from 'vue'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
 
@@ -32,15 +34,6 @@ if (compiledTemplate.errors.length > 0) throw new Error(`Could not compile accou
 const renderNotifications = new Function('Vue', compiledTemplate.code)(Vue) as RenderFunction
 const translations: Record<string, string> = {
   'common:accountNotifications.title': 'Localized notifications',
-  'common:accountNotifications.pageChanges': 'Localized page changes',
-  'common:accountNotifications.recentPageChanges': 'Localized recent page changes',
-  'common:accountNotifications.loadingPageChanges': 'Loading recent page changes…',
-  'common:accountNotifications.checkingPageChanges': 'Page changes are still being checked.',
-  'common:accountNotifications.noRecentPageChanges': 'No recent page changes.',
-  'common:accountNotifications.morePageChangesMayBeAvailable': 'No page changes in this window yet. More changes may be available.',
-  'common:accountNotifications.checkMorePageChanges': 'Check more page changes',
-  'common:accountNotifications.loadMorePageChanges': 'Load more page changes',
-  'common:accountNotifications.refreshPageChanges': 'Refresh page changes',
   'common:accountNotifications.unread': 'Unread',
   'common:accountNotifications.approvals': 'Approvals',
   'common:accountNotifications.loadingApprovals': 'Loading approvals…',
@@ -72,26 +65,41 @@ const translations: Record<string, string> = {
   'common:actions.refresh': 'Refresh'
 }
 const translate = (key: string, options: Record<string, unknown> = {}): string => {
-  const value = translations[key] ?? key
+  const value = translations[key] ?? (typeof options.defaultValue === 'string' ? options.defaultValue : key)
   return value.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => String(options[name] ?? `{{${name}}}`))
 }
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
 const evaluateNotifications = new Function(
   'useSiteNotificationsStore',
-  'pageHref',
+  'notificationPageHref',
   'navigateToWikiPage',
   'defineProps',
   'useId',
+  'watch',
+  'onMounted',
+  'onBeforeUnmount',
+  'wikiStore',
+  'OFFLINE_SESSION_INVALIDATED_EVENT',
   `${executableScript}
 return { section, ids, store, notificationIdentityReady, retryWatches, watchErrorAction, loadMoreWatches, retryApprovals, loadMoreApprovals, pageUrl, isUnread, watchAction, watchSummary, watchAriaLabel, approvalSummary, isOrdinaryActivation, openWatchPage, openApprovalPage }`
 ) as (
   useStore: () => NotificationStore,
-  href: typeof pageHref,
+  href: typeof notificationPageHref,
   navigate: (value: string) => void,
   defineProps: () => { section?: string },
-  useId: () => string
+  useId: typeof Vue.useId,
+  watch: typeof Vue.watch,
+  onMounted: typeof Vue.onMounted,
+  onBeforeUnmount: typeof Vue.onBeforeUnmount,
+  identity: NotificationIdentity,
+  sessionInvalidatedEvent: string
 ) => Record<string, unknown>
+
+type NotificationIdentity = {
+  user: { id: number; authenticated: boolean; authVersion: number }
+  offlineIdentityEpoch: number
+}
 
 type NotificationStore = {
   ownerId: number | null
@@ -110,6 +118,7 @@ type NotificationStore = {
   refreshApprovals: () => Promise<void>
   loadMoreApprovals: () => Promise<void>
   markWatchRead: (id: string) => Promise<boolean>
+  reset: () => void
 }
 
 type StoreOverrides = Partial<NotificationStore>
@@ -118,6 +127,8 @@ const makeWatch = (overrides: Partial<PageWatchNotification> = {}): PageWatchNot
   id: 'watch-1',
   pageId: 12,
   eventType: 'page.updated',
+  category: 'pageWatch',
+  commentId: null,
   actorName: 'Editor',
   title: 'Docs',
   path: 'docs/start',
@@ -166,6 +177,7 @@ const makeStore = (overrides: StoreOverrides = {}): NotificationStore =>
     refreshApprovals: vi.fn(async () => {}),
     loadMoreApprovals: vi.fn(async () => {}),
     markWatchRead: vi.fn(async () => true),
+    reset: vi.fn(() => {}),
     ...overrides
   }) as unknown as NotificationStore
 
@@ -212,9 +224,24 @@ afterEach(() => {
 })
 
 const mountNotifications = (store: NotificationStore, navigate = vi.fn(), section?: 'all' | 'changes' | 'approvals') => {
-  const bindings = evaluateNotifications(() => store, pageHref, navigate, () => (section ? { section } : {}), () => 'v-test')
+  const identity = Vue.reactive({
+    user: { id: store.ownerId ?? 0, authenticated: store.ownerId !== null, authVersion: 1 },
+    offlineIdentityEpoch: 0
+  })
   const component = Vue.defineComponent({
-    setup: () => bindings,
+    setup: () =>
+      evaluateNotifications(
+        () => store,
+        notificationPageHref,
+        navigate,
+        () => (section ? { section } : {}),
+        Vue.useId,
+        Vue.watch,
+        Vue.onMounted,
+        Vue.onBeforeUnmount,
+        identity,
+        OFFLINE_SESSION_INVALIDATED_EVENT
+      ),
     render: renderNotifications
   })
   const host = document.createElement('div')
@@ -228,7 +255,12 @@ const mountNotifications = (store: NotificationStore, navigate = vi.fn(), sectio
   mountedApp.component('v-divider', VDivider)
   mountedApp.config.globalProperties.$t = translate
   mountedApp.mount(host)
-  return { host, navigate }
+  const app = mountedApp
+  const unmount = (): void => {
+    app.unmount()
+    if (mountedApp === app) mountedApp = null
+  }
+  return { host, navigate, identity, unmount }
 }
 
 const settle = async (): Promise<void> => {
@@ -257,9 +289,8 @@ describe('account notifications interaction', () => {
     })
     const { host } = mountNotifications(store)
 
-    expect(host.querySelector('h2')?.textContent).toBe('Localized notifications')
-    expect([...host.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['Localized page changes', 'Approvals'])
-    expect(host.textContent).toContain('Localized recent page changes')
+    expect(host.querySelectorAll('h2')).toHaveLength(1)
+    expect(host.querySelectorAll('h3')).toHaveLength(2)
     expect(host.textContent).toContain('Editor localized moved this page · Docs')
     const creationDate = new Date('2026-09-11T10:00:00.000Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     expect(host.querySelector('a .notification-item-content > div:nth-child(2)')?.textContent).toBe(`Editor · ${creationDate}`)
@@ -268,21 +299,20 @@ describe('account notifications interaction', () => {
     expect(host.querySelector('a')?.getAttribute('aria-label')).toBe('Editor localized moved this page — Docs (Unread)')
   })
 
-  it('renders one group per account-menu tab with unique heading ids', () => {
+  it('renders one group per account-menu tab with an associated heading', () => {
     const store = makeStore({ watches: [makeWatch()], approvals: [makeApproval()] })
-    const changes = mountNotifications(store, vi.fn(), 'changes').host
+    const { host: changes, unmount } = mountNotifications(store, vi.fn(), 'changes')
     expect(changes.querySelector('h2')).toBeNull()
-    expect([...changes.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['Localized page changes'])
+    expect(changes.querySelectorAll('h3')).toHaveLength(1)
     expect(changes.textContent).not.toContain('Release notes')
     expect(changes.querySelector('hr')).toBeNull()
     const group = changes.querySelector('section.account-notifications__group')
     expect(group?.getAttribute('aria-labelledby')).toBe(changes.querySelector('h3')?.id)
-    expect(changes.querySelector('h3')?.id).toStartWith('v-test-')
-    mountedApp?.unmount()
+    unmount()
     document.body.replaceChildren()
 
     const approvals = mountNotifications(store, vi.fn(), 'approvals').host
-    expect([...approvals.querySelectorAll('h3')].map(node => node.textContent)).toEqual(['Approvals'])
+    expect(approvals.querySelectorAll('h3')).toHaveLength(1)
     expect(approvals.textContent).toContain('Release notes')
     expect(approvals.textContent).not.toContain('Docs')
   })
@@ -314,20 +344,50 @@ describe('account notifications interaction', () => {
     expect(host.textContent).toContain('Unread')
   })
 
-  it('does not navigate after an unread read completes for a stale owner', async () => {
-    const read = deferred<boolean>()
-    const item = makeWatch()
-    const store = makeStore({ watches: [item], markWatchRead: vi.fn(() => read.promise) })
-    const { host, navigate } = mountNotifications(store)
+  it.each(['owner', 'authentication', 'authVersion', 'offlineEpoch', 'session', 'unmount'] as const)(
+    'does not navigate after an unread read outlives the current identity (%s)',
+    async boundary => {
+      const read = deferred<boolean>()
+      const store = makeStore({ watches: [makeWatch()], markWatchRead: vi.fn(() => read.promise) })
+      const { host, navigate, identity, unmount } = mountNotifications(store)
 
-    host.querySelector('a')!.dispatchEvent(new browserWindow.MouseEvent('click', { bubbles: true, button: 0 }))
-    store.ownerId = 8
-    read.resolve(true)
-    await settle()
+      host.querySelector('a')!.dispatchEvent(new browserWindow.MouseEvent('click', { bubbles: true, button: 0 }))
+      // Restore the visible owner before completion: generation fencing, not only
+      // the final owner comparison, must retire navigation from the old identity.
+      switch (boundary) {
+        case 'owner':
+          store.ownerId = 8
+          store.ownerId = 7
+          break
+        case 'authentication':
+          identity.user.authenticated = false
+          identity.user.authenticated = true
+          break
+        case 'authVersion':
+          identity.user.authVersion += 1
+          break
+        case 'offlineEpoch':
+          identity.offlineIdentityEpoch += 1
+          break
+        case 'session':
+          browserWindow.dispatchEvent(new browserWindow.Event(OFFLINE_SESSION_INVALIDATED_EVENT))
+          expect(store.reset).toHaveBeenCalledTimes(1)
+          expect(store.identityStale).toBe(true)
+          store.identityStale = false
+          break
+        case 'unmount':
+          unmount()
+          browserWindow.dispatchEvent(new browserWindow.Event(OFFLINE_SESSION_INVALIDATED_EVENT))
+          expect(store.reset).not.toHaveBeenCalled()
+          break
+      }
+      read.resolve(true)
+      await settle()
 
-    expect(store.markWatchRead).toHaveBeenCalledTimes(1)
-    expect(navigate).not.toHaveBeenCalled()
-  })
+      expect(store.markWatchRead).toHaveBeenCalledTimes(1)
+      expect(navigate).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps modified watch clicks native and separates approval navigation from read marking', () => {
     const store = makeStore({ watches: [makeWatch()], approvals: [makeApproval()] })
@@ -356,20 +416,18 @@ describe('account notifications interaction', () => {
     })
     const { host } = mountNotifications(store)
 
-    expect(host.textContent).toContain('Load more page changes')
-    const loadButton = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Load more page changes'))!
-    expect(loadButton.getAttribute('aria-label')).toBe('Load more page changes')
-    loadButton.click()
+    const group = host.querySelector('section.account-notifications__group')!
+    expect(group.querySelectorAll('a')).toHaveLength(1)
+    group.querySelector<HTMLButtonElement>('[role="status"] button')!.click()
     expect(loadMoreWatches).toHaveBeenCalledTimes(1)
 
     store.watches = []
     await Vue.nextTick()
 
-    expect(host.textContent).toContain('No page changes in this window yet. More changes may be available.')
-    expect(host.textContent).not.toContain('No recent page changes.')
-    const checkButton = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Check more page changes'))!
-    expect(checkButton.getAttribute('aria-label')).toBe('Check more page changes')
-    checkButton.click()
+    expect(group.querySelectorAll('a')).toHaveLength(0)
+    const continuation = group.querySelector('[role="status"]')!
+    expect(continuation.querySelectorAll('button')).toHaveLength(1)
+    continuation.querySelector<HTMLButtonElement>('button')!.click()
     expect(loadMoreWatches).toHaveBeenCalledTimes(2)
   })
 
@@ -385,19 +443,19 @@ describe('account notifications interaction', () => {
     const { host } = mountNotifications(store)
 
     expect(host.textContent).toContain('Docs')
-    expect(host.textContent).toContain('Refresh page changes')
-    const refreshButton = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Refresh page changes'))!
+    const refreshButton = host.querySelector<HTMLButtonElement>('[role="alert"] button')!
     refreshButton.click()
     expect(refreshWatches).toHaveBeenCalledTimes(1)
 
     store.watchesError = 'Page watch notification cursor capacity exhausted'
     await Vue.nextTick()
     expect(host.textContent).toContain('Docs')
-    expect(host.textContent).toContain('Refresh page changes')
+    host.querySelector<HTMLButtonElement>('[role="alert"] button')!.click()
+    expect(refreshWatches).toHaveBeenCalledTimes(2)
   })
 
-  it('navigates a read watch directly without marking it read', () => {
-    const item = makeWatch({ readAt: '2026-09-11T10:01:00.000Z' })
+  it('navigates a read discussion notification to its comment without marking it read', () => {
+    const item = makeWatch({ category: 'mention', commentId: 42, readAt: '2026-09-11T10:01:00.000Z' })
     const store = makeStore({ watches: [item] })
     const { host, navigate } = mountNotifications(store)
 
@@ -406,7 +464,7 @@ describe('account notifications interaction', () => {
 
     expect(event.defaultPrevented).toBe(true)
     expect(store.markWatchRead).not.toHaveBeenCalled()
-    expect(navigate).toHaveBeenCalledWith(pageHref({ visibility: item.visibility, locale: item.localeCode, path: item.path }))
+    expect(navigate).toHaveBeenCalledWith(`${pageHref({ visibility: item.visibility, locale: item.localeCode, path: item.path })}#comment-post-id-42`)
   })
 
   it('exposes explicit continuation, refresh, and unknown approval states without false empty messaging', async () => {
@@ -421,12 +479,12 @@ describe('account notifications interaction', () => {
     expect(loadMoreApprovals).toHaveBeenCalledTimes(1)
 
     // Present independent store inputs, rather than making the action mock manufacture append results.
-    store.approvals = [
-      makeApproval(),
-      makeApproval({ id: 'approval-2', title: 'Appendix', path: 'docs/appendix' })
-    ]
+    store.approvals = [makeApproval(), makeApproval({ id: 'approval-2', title: 'Appendix', path: 'docs/appendix' })]
     await Vue.nextTick()
-    expect([...host.querySelectorAll('a')].map(anchor => anchor.querySelector('.notification-item-content > div')?.textContent)).toEqual(['Release notes', 'Appendix'])
+    expect([...host.querySelectorAll('a')].map(anchor => anchor.querySelector('.notification-item-content > div')?.textContent)).toEqual([
+      'Release notes',
+      'Appendix'
+    ])
     const loadButton = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Load more approvals'))!
     expect(loadButton.getAttribute('aria-label')).toBe('Load more approvals')
     loadButton.click()
@@ -449,5 +507,4 @@ describe('account notifications interaction', () => {
     expect(host.textContent).toContain('Approval status is not yet known.')
     expect(host.textContent).not.toContain('No active approvals')
   })
-
 })

@@ -71,7 +71,11 @@ describe('scheduled storage dispatch', () => {
     expect(current.state).toMatchObject({
       status: 'operational',
       message: '',
-      lastOperation: stateBeforeStaleJob.lastOperation
+      lastOperation: {
+        targetKey: 'disk',
+        handler: 'sync',
+        outcome: 'succeeded'
+      }
     })
   })
   it('propagates failed synchronization so scheduler observations do not report success', async () => {

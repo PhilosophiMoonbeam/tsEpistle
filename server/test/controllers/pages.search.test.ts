@@ -10,6 +10,8 @@ vi.mockModule('../../operations/page-locale-relations.ts', import.meta.url, () =
   unlinkPageLocaleRelation: vi.fn()
 }))
 vi.mockModule('../../operations/page-watching.ts', import.meta.url, () => ({
+  getNotificationPreferences: vi.fn(),
+  updateNotificationPreferences: vi.fn(),
   getPageWatchState: vi.fn(),
   listPageWatchNotifications: vi.fn(),
   markPageWatchNotificationRead: vi.fn(),

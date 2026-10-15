@@ -72,6 +72,8 @@ const componentOptions = new Function(
   'StatusIndicator',
   'SiteBanner',
   'NavSidebar',
+  'GlossaryReader',
+  'DiscussionAnnotations',
   'Prism',
   'ClipboardJS',
   'wikiStore',
@@ -86,6 +88,8 @@ const componentOptions = new Function(
   (...values: unknown[]) => Object.assign({}, ...values),
   () => () => {},
   { t: () => '' },
+  componentStub,
+  componentStub,
   componentStub,
   componentStub,
   componentStub,
@@ -307,10 +311,12 @@ describe('reader page approval submission', () => {
       calls.push([input, init])
       attempt += 1
       if (attempt === 2) return Promise.resolve(new Response('{}', { status: 200 }))
-      return Promise.resolve(new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      }))
+      return Promise.resolve(
+        new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
     }) as typeof fetch
     try {
       const vm = makeVm({
@@ -426,10 +432,12 @@ describe('reader page approval submission', () => {
         vm.pageId = 43
         await nextTick()
       }
-      request.resolve(new Response(JSON.stringify({ approval: { id: 'late-approval', assigneeId: 9 } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      }))
+      request.resolve(
+        new Response(JSON.stringify({ approval: { id: 'late-approval', assigneeId: 9 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
       expect(await read).toBe(false)
       expect(vm.approvalAuthorityReady).toBe(false)
       expect(vm.approvalAuthorityReadyKey).toBeNull()
@@ -449,15 +457,19 @@ describe('reader page approval submission', () => {
       calls.push([input, init])
       attempt += 1
       if (attempt === 1) {
-        return Promise.resolve(new Response(JSON.stringify({ error: 'Transition outcome is unknown' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' }
-        }))
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'Transition outcome is unknown' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
       }
-      return Promise.resolve(new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      }))
+      return Promise.resolve(
+        new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
     }) as typeof fetch
     try {
       const vm = makeVm()
@@ -488,15 +500,19 @@ describe('reader page approval submission', () => {
       calls.push([input, init])
       attempt += 1
       if (attempt === 1) {
-        return Promise.resolve(new Response(JSON.stringify({ error: 'Approval outcome is unknown' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' }
-        }))
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'Approval outcome is unknown' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
       }
-      return Promise.resolve(new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      }))
+      return Promise.resolve(
+        new Response(JSON.stringify({ approval: { id: 'approval-42', assigneeId: 9 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
     }) as typeof fetch
     try {
       const vm = makeVm()

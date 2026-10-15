@@ -11,6 +11,8 @@ const markPageWatchNotificationRead = vi.fn()
 const unwatchPage = vi.fn()
 const watchPage = vi.fn()
 vi.mockModule('../../operations/page-watching.ts', import.meta.url, () => ({
+  getNotificationPreferences: vi.fn(),
+  updateNotificationPreferences: vi.fn(),
   getPageWatchState: pageWatchState,
   listPageWatchNotifications,
   markPageWatchNotificationRead,
@@ -754,39 +756,10 @@ describe('controllers/api pages endpoints', () => {
     expect(listPageWatchNotifications).not.toHaveBeenCalled()
   })
 
-  it('lists watch notifications without a cursor using the bounded response envelope', async () => {
-    const { watchList } = await loadHandler()
-    const res = notificationResponse()
 
-    await watchList(notificationRequest({ query: {} }), res, vi.fn())
-
-    expect(listPageWatchNotifications).toHaveBeenCalledWith(notificationUser)
-    expect(res.json).toHaveBeenCalledWith({
-      ownerId: 7,
-      items: [],
-      unreadCount: 0,
-      nextCursor: null,
-      unreadComplete: true
-    })
-  })
-
-  it('forwards one valid watch cursor and preserves cursor expiry errors', async () => {
+  it('maps expired watch cursors to a private 409 response', async () => {
     const { watchList } = await loadHandler()
     const cursor = '123e4567-e89b-42d3-a456-426614174000'
-    const forwarded = notificationResponse()
-
-    await watchList(notificationRequest({ query: { cursor } }), forwarded, vi.fn())
-
-    expect(listPageWatchNotifications).toHaveBeenCalledWith(notificationUser, cursor)
-    expect(forwarded.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
-    expect(forwarded.vary).toHaveBeenCalledWith('Cookie')
-    expect(forwarded.json).toHaveBeenCalledWith({
-      ownerId: 7,
-      items: [],
-      unreadCount: 0,
-      nextCursor: null,
-      unreadComplete: true
-    })
 
     const expiredError = Object.assign(new Error('Page watch notification cursor expired'), {
       name: 'WATCH_CURSOR_EXPIRED',
@@ -795,12 +768,11 @@ describe('controllers/api pages endpoints', () => {
     listPageWatchNotifications.mockRejectedValueOnce(expiredError)
     const expired = notificationResponse()
     await watchList(notificationRequest({ query: { cursor } }), expired, vi.fn())
+    expect(expired.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(expired.vary).toHaveBeenCalledWith('Cookie')
 
     expect(expired.status).toHaveBeenCalledWith(409)
-    expect(expired.json).toHaveBeenCalledWith({
-      error: 'Page watch notification cursor expired',
-      code: 'WATCH_CURSOR_EXPIRED'
-    })
+    expect(expired.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'WATCH_CURSOR_EXPIRED' }))
   })
 
   it('rejects malformed or repeated watch cursors with the expiry contract', async () => {

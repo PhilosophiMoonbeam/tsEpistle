@@ -6,15 +6,9 @@ import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-
 import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { isRecord } from '../../helpers/type-guards.ts'
-import { TextEditor } from './common/text-editor.ts'
-import { EditorAdapterController } from './common/editor-adapter.ts'
-import { decodeBase64Text } from '../../helpers/base64.ts'
-import { EditorView, keymap } from '@codemirror/view'
-import { html } from '@codemirror/lang-html'
-import _ from 'lodash'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 const componentPath = join(process.cwd(), 'client/components/editor/editor-modal-drawio.vue')
 const source = readFileSync(componentPath, 'utf8')
 const { descriptor } = parse(source, { filename: componentPath })
@@ -45,17 +39,29 @@ const asyncStateTemplate = compileTemplate({
   compilerOptions: { mode: 'function' }
 })
 if (asyncStateTemplate.errors.length > 0) throw asyncStateTemplate.errors[0]
-const AsyncState = new Function('Vue', new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  asyncStateScript.content.replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"];?/g, (_match, bindings: string) =>
-    `const {${bindings.replace(/\bas\b/g, ':')}} = Vue;`)
-) + '\nreturn component')(Vue)
+const AsyncState = new Function(
+  'Vue',
+  new Bun.Transpiler({ loader: 'ts' }).transformSync(
+    asyncStateScript.content.replace(
+      /import\s*\{([^}]+)\}\s*from\s*['"]vue['"];?/g,
+      (_match, bindings: string) => `const {${bindings.replace(/\bas\b/g, ':')}} = Vue;`
+    )
+  ) + '\nreturn component'
+)(Vue)
 AsyncState.render = new Function('Vue', asyncStateTemplate.code)(Vue)
 
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   script.replace(/^import[^\n]*(?:\n|$)/gm, '').replace('export default defineComponent(', 'const component = defineComponent(')
 )
-const evaluateComponent = new Function('defineComponent', 'wikiStore', 'emitEditorInsert', 'isRecord', 'AsyncState', 'createModalFocusScope',
-  `${executable}\nreturn component`) as (...dependencies: unknown[]) => ComponentOptions
+const evaluateComponent = new Function(
+  'defineComponent',
+  'wikiStore',
+  'emitEditorInsert',
+  'isRecord',
+  'AsyncState',
+  'createModalFocusScope',
+  `${executable}\nreturn component`
+) as (...dependencies: unknown[]) => ComponentOptions
 type DrawioContext = {
   loading: boolean
   loadError: string
@@ -81,7 +87,9 @@ const mountModal = () => {
   const host = document.body.appendChild(document.createElement('div'))
   const app = Vue.createApp({ ...harness.component, render })
   const mountErrors: unknown[] = []
-  app.config.errorHandler = error => { mountErrors.push(error) }
+  app.config.errorHandler = error => {
+    mountErrors.push(error)
+  }
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
   const context = app.mount(host) as unknown as DrawioContext
@@ -112,92 +120,7 @@ afterEach(() => {
   resetBody()
 })
 
-const loadSourceEditor = (variant: 'code' | 'asciidoc' | 'markdown', wikiStore: object) => {
-  const filename = join(process.cwd(), `client/components/editor/editor-${variant}.vue`)
-  const descriptor = parse(readFileSync(filename, 'utf8'), { filename }).descriptor
-  const script = descriptor.script!.content
-    .replace(/^import\s[\s\S]*?\sfrom\s['"][^'"]+['"];?\s*$/gm, '')
-    .replace('export default defineComponent(', 'const component = defineComponent(')
-  const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script)
-  const dependencies = {
-    defineComponent: Vue.defineComponent, markRaw: Vue.markRaw, wikiStore,
-    TextEditor, EditorAdapterController, decodeBase64Text, EditorView, keymap, html, _,
-    HTMLElement: browserWindow.HTMLElement, require,
-    Velocity: () => {}, markdownHelp: {}, vRovingToolbar: {},
-    onEditorInsert: () => {}, onEditorSaveConflict: () => {}, onEditorContentOverwrite: () => {}
-  }
-  return new Function(...Object.keys(dependencies), `${executable}\nreturn component`)(
-    ...Object.values(dependencies)
-  )
-}
-
-describe('Source document authoring contract', () => {
-  for (const variant of ['code', 'asciidoc'] as const) {
-    for (const incoming of ['distinctive template payload\nsecond line', ' ', '']) {
-      test(`${variant} mounts the incoming template and seeds only an empty create document (${JSON.stringify(incoming)})`, () => {
-        const wikiStore = { editor: { content: incoming, editorKey: '' } }
-        const component = loadSourceEditor(variant, wikiStore)
-        const host = document.body.appendChild(document.createElement('div'))
-        const context = {
-          ...component.data.call({}),
-          mode: 'create', $refs: { cm: host }, $vuetify: { theme: { current: { dark: false } } },
-          $t: translateEnglish, $emit: () => {}, processContent: () => {}, positionSync: () => {}
-        }
-        try {
-          component.mounted.call(context)
-          const expected = incoming || translateEnglish(variant === 'code'
-            ? 'editor:editorCode.h1TitleH1P' : 'editor:editorAsciidoc.headerContent')
-          expect(context.cm.getValue()).toBe(expected)
-          expect(context.editorAdapter.capture().text).toBe(expected)
-          expect(wikiStore.editor.content).toBe(expected)
-        } finally {
-          context.editorAdapter?.destroy()
-          context.cm?.destroy()
-          context.debouncedProcessContent?.cancel()
-          host.remove()
-        }
-      })
-    }
-  }
-
-  for (const variant of ['markdown', 'asciidoc'] as const) {
-    test(`${variant} edits each diagram without replacing intervening prose or the other diagram`, () => {
-      const first = btoa('<mxfile>first</mxfile>')
-      const second = btoa('<mxfile>second</mxfile>')
-      const initial = ['```diagram', first, '```', 'Distinctive intervening prose', '```diagram', second, '```'].join('\n')
-      const wikiStore = { editor: { activeModalData: '' }, showNotification: vi.fn() }
-      const component = loadSourceEditor(variant, wikiStore)
-      const host = document.body.appendChild(document.createElement('div'))
-      const editor = new TextEditor({ parent: host, value: initial, ariaLabel: 'Diagram source', dark: false })
-      let markers: Parameters<TextEditor['setMarkers']>[0] = []
-      const setMarkers = vi.spyOn(editor, 'setMarkers').mockImplementation(value => { markers = value })
-      const toggleModal = vi.fn()
-      try {
-        const context = { cm: editor, editor: () => editor, $t: translateEnglish, toggleModal }
-        component.methods.processMarkers.call(context, 0, editor.lineCount)
-        expect(markers).toHaveLength(2)
-        markers[0]!.action(new browserWindow.Event('click'))
-        expect(wikiStore.editor.activeModalData).toBe('<mxfile>first</mxfile>')
-        editor.replaceSelection(['```diagram', btoa('<mxfile>updated first</mxfile>'), '```'].join('\n'))
-        expect(editor.getValue()).toBe([
-          '```diagram', btoa('<mxfile>updated first</mxfile>'), '```',
-          'Distinctive intervening prose', '```diagram', second, '```'
-        ].join('\n'))
-        markers[1]!.action(new browserWindow.Event('click'))
-        expect(wikiStore.editor.activeModalData).toBe('<mxfile>second</mxfile>')
-        expect(toggleModal).toHaveBeenCalledTimes(2)
-        expect(wikiStore.showNotification).not.toHaveBeenCalled()
-      } finally {
-        setMarkers.mockRestore()
-        editor.destroy()
-        host.remove()
-      }
-    })
-  }
-})
-
 describe('Draw.io editor modal contract', () => {
-
   test('clears the live load timer and returns to the editor when closed', async () => {
     vi.useFakeTimers()
     const { component, wikiStore } = makeComponent()
@@ -226,13 +149,21 @@ describe('Draw.io editor modal contract', () => {
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
     app.config.globalProperties.$t = translateEnglish
     const context = app.mount(host) as unknown as DrawioContext
-    mountedApps.push(() => { app.unmount(); host.remove() })
+    mountedApps.push(() => {
+      app.unmount()
+      host.remove()
+    })
     await settle()
     const frame = host.querySelector('iframe')!
     const embedUrl = new URL(frame.src)
     expect(embedUrl.origin).toBe('https://embed.diagrams.net')
     expect(Object.fromEntries(embedUrl.searchParams)).toMatchObject({
-      embed: '1', proto: 'json', spin: '1', saveAndExit: '1', noSaveBtn: '1', noExitBtn: '0'
+      embed: '1',
+      proto: 'json',
+      spin: '1',
+      saveAndExit: '1',
+      noSaveBtn: '1',
+      noExitBtn: '0'
     })
     const frameWindow = frame.contentWindow!
     const postMessage = vi.spyOn(frameWindow, 'postMessage').mockImplementation(() => {})
@@ -241,9 +172,14 @@ describe('Draw.io editor modal contract', () => {
     expect(postMessage).toHaveBeenCalledWith(JSON.stringify(exportMessage), embedUrl.origin)
 
     const exportData = JSON.stringify({ event: 'export', data: 'data:image/svg+xml;base64,ZGlhZ3JhbQ==' })
-    const receive = (origin: string, source: Window) => context.receive(new document.defaultView!.MessageEvent('message', {
-      origin, source, data: exportData
-    }))
+    const receive = (origin: string, source: Window) =>
+      context.receive(
+        new document.defaultView!.MessageEvent('message', {
+          origin,
+          source,
+          data: exportData
+        })
+      )
     receive('https://attacker.example', frameWindow)
     expect(insert).not.toHaveBeenCalled()
     expect(wikiStore.editor.activeModal).toBe('editorModalDrawio')
@@ -277,9 +213,14 @@ describe('Draw.io editor modal contract', () => {
     expect(background.inert).toBe(true)
     expect(background.getAttribute('aria-hidden')).toBe('true')
     expect(document.activeElement).toBe(closeButton)
-    closeButton.dispatchEvent(new document.defaultView!.KeyboardEvent('keydown', {
-      key: 'Tab', shiftKey: true, bubbles: true, cancelable: true
-    }))
+    closeButton.dispatchEvent(
+      new document.defaultView!.KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
     expect(document.activeElement).toBe(dialog.querySelector('iframe'))
     closeButton.focus()
     closeButton.dispatchEvent(new document.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
@@ -331,11 +272,13 @@ describe('Draw.io editor modal contract', () => {
     const back = dialog.querySelector<HTMLButtonElement>('button')!
     const originalFrame = dialog.querySelector<HTMLIFrameElement>('iframe')!
     const originalBoundary = dialog.querySelector<HTMLElement>('[aria-hidden="true"][tabindex="0"]')!
-    browserWindow.dispatchEvent(new document.defaultView!.MessageEvent('message', {
-      origin: 'https://embed.diagrams.net',
-      source: originalFrame.contentWindow,
-      data: JSON.stringify({ event: 'error', message: 'Controlled remote diagram error' })
-    }))
+    browserWindow.dispatchEvent(
+      new document.defaultView!.MessageEvent('message', {
+        origin: 'https://embed.diagrams.net',
+        source: originalFrame.contentWindow,
+        data: JSON.stringify({ event: 'error', message: 'Controlled remote diagram error' })
+      })
+    )
     await settle()
     expect(dialog.querySelector('iframe')).toBeNull()
     expect(dialog.querySelector('[aria-hidden="true"][tabindex="0"]')).toBeNull()

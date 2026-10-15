@@ -16,20 +16,55 @@ const source = fs.readFileSync(path.join(import.meta.dir, 'page.vue'), 'utf8')
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)?.[1]
 if (!script) throw new Error('page.vue script block was not found')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  script.replace(/^import[\s\S]*?from\s+["'][^"']+["']\s*$/gm, '').replace('export default defineComponent({', 'const pageComponent = defineComponent({') + '\nreturn pageComponent'
+  script.replace(/^import[\s\S]*?from\s+["'][^"']+["']\s*$/gm, '').replace('export default defineComponent({', 'const pageComponent = defineComponent({') +
+    '\nreturn pageComponent'
 )
 const componentStub = {}
 const component = new Function(
-  'defineComponent', 'h', 'markRaw', 'mergeProps', 'useGoTo', 'i18next',
-  'AsyncState', 'PageBrandingMark', 'StatusIndicator', 'SiteBanner', 'NavSidebar',
-  'Prism', 'ClipboardJS', 'hydrateContentExtensions', 'selectMermaidRenderHosts', 'trackPageOutline', 'boot',
-  'siteLangs', 'UTILITY_TOOLTIP_GAP',
+  'defineComponent',
+  'h',
+  'markRaw',
+  'mergeProps',
+  'useGoTo',
+  'i18next',
+  'AsyncState',
+  'PageBrandingMark',
+  'StatusIndicator',
+  'SiteBanner',
+  'NavSidebar',
+  'GlossaryReader',
+  'DiscussionAnnotations',
+  'Prism',
+  'ClipboardJS',
+  'hydrateContentExtensions',
+  'selectMermaidRenderHosts',
+  'trackPageOutline',
+  'boot',
+  'siteLangs',
+  'UTILITY_TOOLTIP_GAP',
   executableScript
 )(
-  Vue.defineComponent, Vue.h, Vue.markRaw, Vue.mergeProps, () => () => {}, { t: (key: string) => key },
-  componentStub, componentStub, componentStub, componentStub, componentStub,
-  Prism, ClipboardJS, hydrateContentExtensions, selectMermaidRenderHosts, trackPageOutline, boot,
-  [], UTILITY_TOOLTIP_GAP
+  Vue.defineComponent,
+  Vue.h,
+  Vue.markRaw,
+  Vue.mergeProps,
+  () => () => {},
+  { t: (key: string) => key },
+  componentStub,
+  componentStub,
+  componentStub,
+  componentStub,
+  componentStub,
+  componentStub,
+  componentStub,
+  Prism,
+  ClipboardJS,
+  hydrateContentExtensions,
+  selectMermaidRenderHosts,
+  trackPageOutline,
+  boot,
+  [],
+  UTILITY_TOOLTIP_GAP
 ) as {
   data: () => Record<string, unknown>
   methods: Record<string, (this: ReaderContentVm, ...args: unknown[]) => unknown>
@@ -85,7 +120,9 @@ const readerContent = (emptyBlocks = false): HTMLElement => {
     ...component.data(),
     $refs: { container },
     $vuetify: { theme: { current: { dark: false } } },
-    $nextTick: async (callback: () => void) => { callback() },
+    $nextTick: async (callback: () => void) => {
+      callback()
+    },
     tocFlattened: []
   } as ReaderContentVm
   for (const [name, method] of Object.entries(component.methods)) vm[name] = method.bind(vm)
@@ -114,7 +151,9 @@ const hover = (element: Element, relatedTarget: EventTarget | null = null): void
 describe('reader code copy interactions', () => {
   it.each([true, false])('acknowledges inline click, not hover or ambient time (copy succeeds: %s)', async succeeds => {
     let resolve!: () => void
-    const pendingCopy = new Promise<void>(done => { resolve = done })
+    const pendingCopy = new Promise<void>(done => {
+      resolve = done
+    })
     const writeText = vi.fn(() => pendingCopy)
     Object.defineProperty(browserWindow.navigator, 'clipboard', { configurable: true, value: { writeText } })
     Object.defineProperty(document, 'execCommand', { configurable: true, value: () => succeeds })

@@ -1,7 +1,7 @@
 import type { SiteConfig } from '../env.d.ts'
 import { normalizeThemeColors } from '../../shared/theme-colors.ts'
 import { normalizeCodeTheme, normalizeReaderLayout } from '../../shared/theme-policy.ts'
-import product from '../../package.json'
+import { description, product, releaseDate } from '../../package.json'
 import { offlineLogoPath, rememberOfflineLogo } from './offline-branding.ts'
 import { isUserDateFormat, isUserTimeFormat, isUserTimezone, type UserPresentationDefaults } from '../../shared/user-presentation.ts'
 
@@ -119,13 +119,13 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
       logoUrl: offlineLogoPath(saved.logoUrl, window.location.origin) ?? '',
       logoEffect: null,
       product: {
-        ...product.product,
+        ...product,
         independentFork: true,
-        description: product.description,
+        description,
         revision,
-        date: `${product.releaseDate}`,
+        date: `${releaseDate}`,
         upstreamBase: 'Wiki.js 2.5.314',
-        sourceUrl: `${product.product.sourceRepository}/tree/${revision}`
+        sourceUrl: `${product.sourceRepository}/tree/${revision}`
       },
       availableEditors: [],
       featurePageRatings: false,
