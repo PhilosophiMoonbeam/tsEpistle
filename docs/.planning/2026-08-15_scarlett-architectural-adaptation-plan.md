@@ -563,3 +563,30 @@ The fork-native adaptation program is implemented through the release-candidate 
 No Scarlett runtime tree, reset migration history, Quasar/Tailwind/Lit application shell, Drizzle authority, or second content source was imported. The useful upstream behavior was reimplemented against the fork’s existing policy, persistence, editor, Vue/Vuetify, and release contracts.
 
 The frozen release candidate `2acb93b8c565f0d5fd0b5d5a21b38b90190b406a` passed the complete [Build + Publish matrix](https://github.com/PhilosophiMoonbeam/wiki/actions/runs/31916989321) on 2026-08-16: quality and production build gates; page-index benchmarks on PostgreSQL 15–18; retained Wiki.js 2 upgrades on PostgreSQL 15–18; PostgreSQL 15/18 multi-instance recovery; Helm install/upgrade/rollback; browser, accessibility, and runtime-performance journeys on PostgreSQL 15–18; AMD64 and ARM64 image publication; and Linux and Windows bundles. Preview and release publication remained correctly skipped because the revision was not tagged.
+
+## Scarlett intake completion (2026-10-15, Development Sprint)
+
+This is an ordinary feature/adaptation cutover, not an Enterprise Release, publication, attestation or certification milestone.
+
+- Frozen upstream frontier: `75f5bf047521341b5aa370833d50256bb24493d1`. All **49** newer commits are recorded: the initial 48 through `ac0b3a371b8abd5266a148a5094029980ccc849a`, plus the late navigation commit. The initial frozen rubric was bulk-classified with Jev and all 44 flagged units were manually checked; the supplemental patch was reviewed independently under the same rubric.
+- Dispositions: 23 native rewrite admissions, 19 already-native retentions, six rejections and one conditional coherence assessment. The conditional case reused proven native PubSub invalidation and corrected per-request theme data; it did not introduce an epoch API.
+- The ledger now covers 492 commits and 143 candidates: 107 completed, 36 closed, none active. Historical baseline, audit and checkpoint identities remain unchanged.
+
+### Native implementation and observed behavior
+
+- Locale-scoped glossary CRUD, race-safe aliases/relations, redacted authorized documentation, actual reactive picking and reader autolinking; atomic passage discussions, current-authority history/focus and opted-in durable notifications; bounded federated claims and native pronouns.
+- Canonical-preserving plain/legacy storage options, atomic enabled-target admission, real local Git commit/push/rejected-push/retry and serialized operation behavior; source/visual authoring, lossless image properties, links-grid and explicit inline math.
+- Installed fork-key coverage, authorized dashboard signals, Unicode folder children and reviewed selected navigation repair. Native/Paper/Midnight previews and actual public/private offline snapshots use passive local tokens.
+- Real browser verification exposed and repaired native integration defects: cold first discussion mount, boxless thread focus, notification envelope serialization, source readiness/insertion, media overlay ownership, post-dialog editor focus, Native palette scoping and initial offline-storage route invalidation. After-proofs ran against immutable application images, not browser/DOM hotpatches.
+- Contextual owner-menu stacks, UUID/ltree authority, automatic custom-menu rewrites and the upstream highlighting/editor shell remain rejected. Authorized Browse is not a substitute parity claim for contextual menus.
+
+### Qualification and local deployment
+
+- All 639 ordinary test files were qualified in appropriate environments: 627 in the native runtime container and 12 host-dependent files with the required development executables/writable fixtures. Ordinary mode did not exercise the 82 native PostgreSQL branches; 242 cases across 14 selected native PostgreSQL files passed separately.
+- Applicable shared/server/client typechecks, scoped format/lint, dependency/license/OpenAPI checks, host/application-image builds and bundle budgets passed. Actual-data migration rehearsal preserved all original rows across 118 tables/1,139 original columns and the five additive migration postconditions.
+- Feature revision `65c42d1442855a2a70e006b4b1efb3f529cfc3d6`, image `local/tsepistle:scarlett-native-guarded-ui`, was deployed by replacing only maintained service `wiki`. A protected paired PostgreSQL/complete-data/configuration/secret recovery point was retained; unique writable-layer uploads were restored before start.
+- PostgreSQL identity/start time, named volumes, network identity/aliases, ports, user, restart/security settings, environment, configuration/secret file bytes, original page sources, user security fields, groups and operational storage/authentication settings were preserved. The locale catalog's observation timestamp refreshed normally; it is not operator configuration.
+- The real canonical-tailnet reader exercised owned page/term creation, glossary autolinking/details/authorized documentation, passive Prism code and an explicit fraction. Owned rows were deleted with current revisions; original business counts/source hashes remained intact and normal owned smoke history was retained. The maintained disabled-discussion policy was deliberately not enabled.
+
+Live external IdP logins and a multi-replica maintained rollout were not performed; real signed SAML/native account cases, two-process configuration coherence and PostgreSQL Git contention covered those boundaries without changing provider credentials. A short pipe-encoded WebM fixture is rejected identically by both the prior and current native images while its host case passes; that unchanged limitation was not hidden by weakening media admission.
+

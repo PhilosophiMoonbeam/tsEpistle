@@ -1511,9 +1511,9 @@
       ],
       "category": "catalog",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/catalog",
-      "contract": "Native integer/revision catalog, race-safe Unicode shared name namespace, symmetric relations, current documentation authority/unlocks, full lazy CRUD/reader linking; no sites model or ignored-path global grants. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion. Frozen assessment covers all 48 commits from 6dc3c3b10fce4bd745396dce89ef122b09fd3bc4 through ac0b3a371b8abd5266a148a5094029980ccc849a: 24 feature, 14 fix, 4 mixed, 2 dependency/tooling and 4 documentation/static units; no prefilter removals or judgment failures. Main manually confirmed all 44 flagged units against native surfaces, including all 11 truncated states; four high-confidence documentation/static units use existing metadata/verdicts without unflagged raw-patch rereads. This records frozen assessment facts and decisions, not final UI/deployment certification. Snapshot source: intake report generated 2026-10-14T23:05:55.409Z; lastFetchedAt uses the actual matching scarlett FETCH_HEAD modification clock, 2026-10-14T23:00:02.201Z. Preserve the reviewed native permission picker and per-locale navigation rather than transplanting the mixed glossary commit’s duplicate library/menu model.",
+      "contract": "Implemented native integer/revision catalog, race-safe Unicode shared name namespace, symmetric relations, current documentation authority/unlocks, lazy CRUD and reader linking; no sites model or ignored-path global grants. Native PostgreSQL races/redaction and real UI stale-draft recovery, locale/alias lookup, reactive authorized documentation picker and reader autolinking passed. The maintained tailnet completed owned term/page creation, authorized documentation display and cleanup on feature revision 65c42d1442855a2a70e006b4b1efb3f529cfc3d6. Frozen initial assessment covers all 48 commits from 6dc3c3b10fce4bd745396dce89ef122b09fd3bc4 through ac0b3a371b8abd5266a148a5094029980ccc849a: 24 feature, 14 fix, 4 mixed, 2 dependency/tooling and 4 documentation/static units; no prefilter removals or judgment failures. Main manually confirmed all 44 flagged units against native surfaces, including all 11 truncated states; four high-confidence documentation/static units use existing metadata/verdicts without unflagged raw-patch rereads. Snapshot source: intake report generated 2026-10-14T23:05:55.409Z; the initial matching scarlett FETCH_HEAD modification clock was 2026-10-14T23:00:02.201Z. The supplemental 49th commit is recorded separately under native-reviewed-navigation-move-repair. Native permission picking and per-locale navigation remain authoritative rather than the mixed glossary commit's duplicate library/menu model.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1525,9 +1525,9 @@
       ],
       "category": "community",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/community",
-      "contract": "Atomic multi-passage root annotations/current-page resolution, safe re-anchor, native discussion UI/history; no upstream sample accounts. Password/private/hidden/provider/publication authority retained. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented atomic multi-passage root annotations/current-page resolution, safe quote re-anchoring and owner-fenced My discussions; no upstream sample accounts. Password/private/hidden/provider/publication authority is retained. Native PostgreSQL authorization/revision cases and actual reader capture, note/post, resolve/reopen, passage return and contribution-link focus passed. Cold first-click composition uses the same mounted native Comments component for initial and subsequent navigation; thread IDs target focusable comment articles rather than boxless timeline wrappers. Final immutable-image cold capture posted one real quote/note atomically. The maintained installation's disabled discussion policy was preserved, not enabled for smoke.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1537,9 +1537,9 @@
       ],
       "category": "community",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/community",
-      "contract": "Extend existing outbox/jobs/receipts/owner-fenced inbox; new channels default off, bounded reauthorized recipients, no excerpts/global handle directory; actual discussion links and profile controls. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Extended existing durable outbox/jobs/receipts and owner-fenced inbox with five independently opted-in in-app/email categories, current-recipient reauthorization, actor skipping and mention/reply/watch precedence; no excerpts or global handle directory. Native PostgreSQL audience cases and real A/B notification delivery, read-owner 409/204 fencing, deletion visibility, actual profile save/reload/restoration and default-off channels passed. Browser writes use the canonical preferences envelope. Existing maintained preferences, watches and disabled discussion policy remain unchanged.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1550,9 +1550,9 @@
       ],
       "category": "identity",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/identity",
-      "contract": "Bounded optional OIDC/LDAP/SAML location/jobTitle/pronouns plus strict opt-in OIDC/SAML verified claims before create/link/update; full self/admin/GraphQL pronouns contracts. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented bounded optional OIDC/LDAP/SAML location/jobTitle/pronouns, absent-versus-explicit-empty semantics, strict opt-in OIDC/SAML verified-email claims before create/link/update, and native self/admin/API/export pronouns. Native PostgreSQL account reconciliation, real signed Node-SAML parsing and self/admin UI save/reload/clear checks passed. The compatible maintained security-patched XML parser is pinned without a shim. No live external identity-provider login or credential change is claimed; existing maintained authentication configuration and user security fields were preserved.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1564,9 +1564,9 @@
       ],
       "category": "storage",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/storage",
-      "contract": "Opt-in plain/legacy heading and root README ingestion, no valid/invalid OKF reinterpretation or egress rename; native PostgreSQL Git fences, retained import replay and atomic ordinary-writer durable mutation integration. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented opt-in plain/legacy leading-heading and root README ingestion without valid/invalid OKF reinterpretation or canonical egress renaming. Native PostgreSQL per-target Git fences, retained import replay and atomically admitted ordinary-writer durable target mutations remain authoritative, including paused targets. Real disk/Git import, heading-only/AsciiDoc preservation, successful root README-to-home mapping, collision/malformed-OKF refusal, actual bare-remote blob/commit equality, rejected push with retained local commit, successful native retry and concurrent sync 202/409 passed. Native PostgreSQL locking/namespace/lease cases passed separately. Offline Git policy was explicitly enabled only in an internally networked disposable runtime; maintained storage configuration was preserved.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1576,9 +1576,9 @@
       ],
       "category": "authoring",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/authoring",
-      "contract": "Safe bounded typed cards, disabled-source recovery, no-JS semantic server rendering, lazy lifecycle and actual picker/form insertion. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented disabled-by-default bounded typed links-grid cards, local raster/safe-target validation, exact disabled-source recovery, semantic no-JavaScript server rendering and native picker/form insertion. Actual source insertion at a mid-line boundary and over a selection, atomic undo/redo, revision-fenced save, reopen, loaded raster and desktop/mobile reader output passed; unsafe targets/images were refused without source mutation. Existing extension authority and lifecycle conventions remain the sole implementation.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1588,9 +1588,9 @@
       ],
       "category": "authoring",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/authoring",
-      "contract": "Native CodeMirror extension/fence/kbd completion, real table/code insertion and non-stealing table keyboard navigation. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented native CodeMirror extension/fence/kbd completions, table/code insertion and non-stealing table-cell keyboard navigation. Actual Markdown, AsciiDoc and raw-HTML editors passed cold readiness, insertion, Tab/Shift-Tab/row growth, native saves and reader reloads. AsciiDoc kbd: completion is narrowly unfiltered only for its bounded macro result and remains absent in literal/source blocks. Source owner, IME, read-only, collaboration and stale-capture fences are retained.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1600,9 +1600,9 @@
       ],
       "category": "authoring",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/authoring",
-      "contract": "Shared native dialog and dirty-field patch semantics across Markdown/AsciiDoc/raw HTML/Tiptap; dimensions/alignment/framing preserved round-trip. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented shared native image properties and dirty-field patches across Markdown/AsciiDoc/raw HTML/Tiptap, preserving dimensions, alignment, framing and unrelated authored bytes. Actual five-format editing, native saves/reloads, invalid/stale apply refusal and opaque visual-Markdown source preservation passed. Media alignment uses the existing owned-overlay convention. The source properties host now closes through its model and restores only the current owner/generation's invoking editor after leave; real Close/Cancel/Apply each restored functional CodeMirror typing/undo, including narrow layout. Existing scrim/focus trapping is retained without claiming native inert attributes on that properties dialog.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1612,9 +1612,9 @@
       ],
       "category": "authoring",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/authoring",
-      "contract": "Tiptap commands with IME/read-only/collaboration/source preservation; reuse native keyboard mark. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented the native Tiptap slash menu and commands in both visual formats, with local keyboard/pointer interaction, atomic undo, IME/read-only/collaboration gates and opaque-source preservation. Actual table/header insertion, Escape/Tab focus, invalid code/list/selection contexts, lossless image properties, native save and reader/reopen checks passed. The existing native keyboard mark and shared content envelope remain authoritative; no second editor framework or upstream menu stack was imported.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1624,9 +1624,9 @@
       ],
       "category": "rendering",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/rendering",
-      "contract": "Shared raw-TeX backtick-delimited inline syntax in native KaTeX/MathJax and editor previews, preserving existing formats/gates. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented shared raw-TeX backtick-delimited inline syntax in native KaTeX/MathJax and editor previews, preserving currencies, ordinary code and existing format/feature gates. Both actual rendering engines and native editor/reader fraction output passed with local MathJax v4 chemistry/font dependencies. The maintained canonical-tailnet reader rendered a real fraction from the owned smoke source without renderer-policy changes.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1637,9 +1637,9 @@
       ],
       "category": "administration",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/administration",
-      "contract": "Installed current fork-key presence/provenance without translation claims; assets bytes/count and visible comments only under current full system authority. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented truthful installed nonblank fork-key coverage/provenance without translation claims, plus current-authority asset count/bytes and visible nonblank comment statistics. Installed English coverage was observed as 9819/9819 known keys while unavailable upstream catalog status remained unknown. Real full-admin counts and delegated manage-navigation-only null statistics passed alongside native PostgreSQL cases. Maintained startup changed only localeCatalog.observedAt among existing setting values, a normal catalog observation refresh, not user configuration.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1649,9 +1649,9 @@
       ],
       "category": "appearance",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/appearance",
-      "contract": "Bounded Prism theme selection with real preview, reader/offline application and race-safe cleanup; not upstream highlighting stack. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented reviewed Native/Paper/Midnight Prism appearance using the native highlighting stack, isolated draft light/dark preview and reader/offline application. Actual published presets, stale-policy conflict, draft-palette isolation and contrast checks passed. Genuine page-and-worker-offline public/private snapshots retained exact code and fresh passive local tokens/colors without hooks/network/HTML-string injection. Library settings no longer report a false missing article; initial asynchronous storage opening preserves a requested canonical article until its useful unavailable state is resolved, while later privacy/identity invalidations still clear stale projections.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1661,9 +1661,9 @@
       ],
       "category": "reader",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/reader",
-      "contract": "Reuse native authorized Unicode/locale tree for genuine folder-only/missing pages; no private metadata or duplicate browse model. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Implemented genuine folder-only/missing-page children through the existing authorized Unicode/locale tree, without a duplicate browse authority. Actual Unicode child listing, private/sibling withholding, guest no-query behavior, existing password surface and offline-clear/reconnect transitions passed. Native parent/locale/owner/visibility validation and current reactive tree lookup also repair authorized page selection without stale regenerated-node identities.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1673,9 +1673,9 @@
       ],
       "category": "operations",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/operations",
-      "contract": "Alpine Tini subreaper wraps existing Bun entrypoint, preserving user/CMD/health/signal handling. Actual old-image orphan zombie reproduced; final built-image reaping/signal proof pending. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "contract": "Packaged Tini runs as PID 1/subreaper around the existing Bun entrypoint, preserving native user/CMD/health and signal behavior. Actual prior-image orphan-zombie failure and built-image adoption/reaping plus graceful SIGTERM exit zero were exercised. The same qualified entrypoint is deployed with user 1000:1000; no PostgreSQL or unrelated service was recreated.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1743,9 +1743,9 @@
       ],
       "category": "operations",
       "disposition": "conditional",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/operations",
-      "contract": "Main is verifying the actual distributed reloadConfig path before deciding whether native replica coherence already supersedes this upstream correction or requires adaptation. No configuration-epoch symbol or proven cross-replica invalidation is asserted. General/theme writes must retain existing configuration authority and must not be declared coherently propagated without evidence; final disposition remains pending.",
+      "contract": "Conditional assessment resolved by exercising the existing PostgreSQL PubSub reloadConfig path with two real Bun processes; no configuration-epoch API or duplicate invalidation mechanism was justified. Fixed startup-captured theme colors to read current configuration per request. Real fresh HTTP palette change/restore proved current bootstrap data, while native general/theme authority and optimistic revision fences remained intact. Existing maintained configuration, provider/key material and enabled capabilities were preserved during the application-only deployment.",
       "lastReviewed": "2026-10-15"
     },
     {
@@ -1810,9 +1810,9 @@
       ],
       "category": "navigation",
       "disposition": "adapt",
-      "state": "active",
+      "state": "completed",
       "workstream": "scarlett-sync/navigation-move-repair",
-      "contract": "Supplemental accepted native rewrite: only explicit administrator-reviewed repair of selected supported custom-navigation targets AFTER an actual public page move. Preserve native global navigation authority independently of page-move permission, current page protection and revision checks, exact old/new public identity and locale, labels/icons/item IDs/order/audience, and existing fingerprint/reason/history/runtime invalidation conventions. Review is cancellable without navigation writes and commit rechecks current authority, page revision/destination and navigation fingerprint under race-safe locking; stale reviews conflict rather than overwrite. No new permissions, owner-menu tables or menu-stack port. Reject upstream default automatic create/restore/delete/import/title/folder mutations and menu-orphan policy, UUID/ltree SQL and contextual owner-menu transplant because they conflict with reviewed static native policy, current global authority and regenerated integer tree IDs, not because of implementation size. Contextual curated menus and owner-relative menu stacks remain intentional not-admitted capabilities; authorized Browse is not parity for them. Accepted adaptation remains active pending implementation and Main's final full UI and deployed-runtime proof; this entry does not close any of the original 15 active workstreams.",
+      "contract": "Implemented only explicit administrator-reviewed repair of selected supported custom-navigation targets after a real public page move. Native global navigation authority remains independent of page-move permission; signed current-principal/authVersion reviews fence history, old/new public identity/locale, page/protection/revision and navigation fingerprint under native locking. Actual move left navigation unchanged; real UI began unchecked and committed exactly one selection, preserving labels/icons/item IDs/order/audience and unselected targets. Forged/foreign/duplicate/stale, unauthenticated and newly protected requests were refused without policy mutation; fresh-policy restoration and 25 native PostgreSQL cases passed. Upstream automatic create/restore/delete/import/title/folder mutations, orphan-menu policy, UUID/ltree SQL, contextual owner menus and menu stacks remain explicitly not admitted. Authorized Browse is not claimed as parity for those rejected contextual-menu capabilities.",
       "lastReviewed": "2026-10-15"
     }
   ],
