@@ -87,7 +87,7 @@ const samlProviderProfile = (profile: Profile, mappings: Record<keyof ProviderPr
   if (typeof profile.getAssertion !== 'function') return result
   const { Assertion: assertion } = profile.getAssertion() as { Assertion: SamlAssertionElement }
   if (!assertion || !Array.isArray(assertion.AttributeStatement)) return result
-  for (const field of ['location', 'jobTitle', 'pronouns'] as const) {
+  for (const field of ['location', 'jobTitle'] as const) {
     const mapping = mappings[field]
     if (typeof mapping !== 'string' || !mapping.trim()) continue
     const mapped: unknown = _.get(profile, mapping)
@@ -320,8 +320,7 @@ const plugin: AuthenticationPlugin = {
                 picture: _.get(profile, conf.mappingPicture, ''),
                 providerProfile: samlProviderProfile(profile, {
                   location: conf.mappingLocation,
-                  jobTitle: conf.mappingJobTitle,
-                  pronouns: conf.mappingPronouns
+                  jobTitle: conf.mappingJobTitle
                 })
               }
             })

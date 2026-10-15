@@ -1,7 +1,7 @@
 import type { Profile } from '../../helpers/users-api.ts'
 
 /** Fields saved through `PATCH /_api/users/profile`. */
-export const PROFILE_DETAIL_FIELDS = ['name', 'handle', 'location', 'jobTitle', 'pronouns', 'timezone', 'dateFormat', 'timeFormat', 'appearance'] as const
+export const PROFILE_DETAIL_FIELDS = ['name', 'handle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'timeFormat', 'appearance'] as const
 /** Fields saved through `PATCH /_api/users/profile/preferences`. */
 export const PROFILE_PREFERENCE_FIELDS = ['reduceMotion', 'underlineLinks', 'contentTextSize', 'communicationLocale'] as const
 
@@ -9,7 +9,7 @@ export type ProfileDetailField = (typeof PROFILE_DETAIL_FIELDS)[number]
 export type ProfilePreferenceField = (typeof PROFILE_PREFERENCE_FIELDS)[number]
 export type ProfileDraftField = ProfileDetailField | ProfilePreferenceField
 export type ProfileDraft = Pick<Profile, ProfileDraftField>
-export type ProfileDraftIssue = 'nameRequired' | 'nameTooLong' | 'handleInvalid' | 'pronounsTooLong'
+export type ProfileDraftIssue = 'nameRequired' | 'nameTooLong' | 'handleInvalid'
 
 const DRAFT_FIELDS: readonly ProfileDraftField[] = [...PROFILE_DETAIL_FIELDS, ...PROFILE_PREFERENCE_FIELDS]
 const NAME_MAX_LENGTH = 255
@@ -21,7 +21,6 @@ export const snapshotProfileDraft = (profile: ProfileDraft): ProfileDraft => ({
   handle: profile.handle,
   location: profile.location,
   jobTitle: profile.jobTitle,
-  pronouns: profile.pronouns,
   timezone: profile.timezone,
   dateFormat: profile.dateFormat,
   timeFormat: profile.timeFormat,
@@ -48,16 +47,13 @@ export const restoreProfileDraft = (target: ProfileDraft, saved: ProfileDraft): 
   Object.assign(target, snapshotProfileDraft(saved))
 }
 
-export const profileDraftIssues = (
-  draft: Pick<ProfileDraft, 'name' | 'handle' | 'pronouns'>
-): Partial<Record<'name' | 'handle' | 'pronouns', ProfileDraftIssue>> => {
-  const issues: Partial<Record<'name' | 'handle' | 'pronouns', ProfileDraftIssue>> = {}
+export const profileDraftIssues = (draft: Pick<ProfileDraft, 'name' | 'handle'>): Partial<Record<'name' | 'handle', ProfileDraftIssue>> => {
+  const issues: Partial<Record<'name' | 'handle', ProfileDraftIssue>> = {}
   const name = draft.name.trim()
   if (!name) issues.name = 'nameRequired'
   else if (name.length > NAME_MAX_LENGTH) issues.name = 'nameTooLong'
   const handle = draft.handle.trim()
   if (handle && !MENTION_HANDLE.test(handle)) issues.handle = 'handleInvalid'
-  if (draft.pronouns.length > 255) issues.pronouns = 'pronounsTooLong'
   return issues
 }
 

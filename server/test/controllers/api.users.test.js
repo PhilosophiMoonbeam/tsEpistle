@@ -1,6 +1,6 @@
 const ActualRouter = (await import('express')).default.Router
 let mountedRouter
-const workspace = () => ({ id: 42, fingerprint: 'account-version', profile: { name: 'Alice', email: 'alice@example.com', location: '', jobTitle: '', pronouns: 'they/them', timezone: 'UTC', groups: [3] }, isActive: true, isVerified: false, twoFactor: 'off', capabilities: { edit: true } })
+const workspace = () => ({ id: 42, fingerprint: 'account-version', profile: { name: 'Alice', email: 'alice@example.com', location: '', jobTitle: '', timezone: 'UTC', groups: [3] }, isActive: true, isVerified: false, twoFactor: 'off', capabilities: { edit: true } })
 const accounts = { creationOptions: vi.fn(), create: vi.fn(), inspect: vi.fn(), updateProfile: vi.fn(), remove: vi.fn(), act: vi.fn(), prepareWelcome: vi.fn(), finishWelcome: vi.fn() }
 vi.mockModule('../../operations/account-administration.ts', import.meta.url, () => ({ accountAdministration: () => accounts }))
 beforeEach(() => {
@@ -92,23 +92,22 @@ describe('controllers/api users endpoints', () => {
                 })
               })
             }),
-            select: vi.fn().mockReturnValue({
-              whereNotNull: vi.fn().mockReturnValue({
-                orderBy: vi.fn().mockReturnValue({
-                  limit: vi.fn().mockResolvedValue([
-                    {
-                      id: 42,
-                      name: 'Alice',
-                      lastLoginAt: '2026-01-03T00:00:00.000Z',
-                      email: 'hidden@example.com'
-                    },
-                    {
-                      id: 77,
-                      name: 'Bob',
-                      lastLoginAt: '2026-01-02T00:00:00.000Z'
-                    }
-                  ])
-                })
+            select: vi.fn().mockReturnThis(),
+            whereNotNull: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue([
+                  {
+                    id: 42,
+                    name: 'Alice',
+                    lastLoginAt: '2026-01-03T00:00:00.000Z',
+                    email: 'hidden@example.com'
+                  },
+                  {
+                    id: 77,
+                    name: 'Bob',
+                    lastLoginAt: '2026-01-02T00:00:00.000Z'
+                  }
+                ])
               })
             }),
             findById: vi.fn().mockResolvedValue({
@@ -119,7 +118,6 @@ describe('controllers/api users endpoints', () => {
               providerId: 'provider-42',
               location: 'Tallinn',
               jobTitle: 'Architect',
-              pronouns: 'they/them',
               timezone: 'Europe/Tallinn',
               dateFormat: 'YYYY-MM-DD',
               timeFormat: '24h',
@@ -199,9 +197,9 @@ describe('controllers/api users endpoints', () => {
 
 
   it('creates admin users for authorized requests', async () => {
-    const { create } = await loadHandler(), user = { permissions: ['write:users'] }, body = { providerKey: 'local', email: 'alice@example.com', passwordRaw: 'temporary-secret', name: 'Alice', pronouns: ' she/her ', groups: [3], mustChangePassword: true, sendWelcomeEmail: false, ignored: true }, res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const { create } = await loadHandler(), user = { permissions: ['write:users'] }, body = { providerKey: 'local', email: 'alice@example.com', passwordRaw: 'temporary-secret', name: 'Alice', groups: [3], mustChangePassword: true, sendWelcomeEmail: false, ignored: true }, res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     await create({ user, body }, res)
-    expect(accounts.create).toHaveBeenCalledWith(user, expect.objectContaining({ fingerprint: 'creation-version', providerKey: 'local', password: body.passwordRaw, profile: expect.objectContaining({ name: 'Alice', email: body.email, pronouns: 'she/her', groups: [3] }), mustChangePassword: true }))
+    expect(accounts.create).toHaveBeenCalledWith(user, expect.objectContaining({ fingerprint: 'creation-version', providerKey: 'local', password: body.passwordRaw, profile: expect.objectContaining({ name: 'Alice', email: body.email, groups: [3] }), mustChangePassword: true }))
     expect(accounts.create.mock.calls[0][1]).not.toHaveProperty('ignored'); expect(global.WIKI.models.users.sendWelcomeEmail).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ succeeded: true, message: 'User created successfully' })
   })
@@ -405,27 +403,11 @@ describe('controllers/api users endpoints', () => {
     expect(result.body).toMatchObject({
       id: 42, name: 'Alice', email: 'alice@example.com', groups: ['Administrators', 'Editors'], pagesTotal: 3,
       reduceMotion: true, underlineLinks: true, contentTextSize: 'larger', communicationLocale: 'fr-CA',
-      pronouns: 'they/them',
     })
     expect(result.body).not.toHaveProperty('password')
     expect(result.body).not.toHaveProperty('tfaSecret')
   })
 
-
-  it.each([
-    { label: 'null', pronouns: null },
-    { label: 'boolean', pronouns: false },
-    { label: 'array', pronouns: [] },
-    { label: 'over limit', pronouns: 'x'.repeat(256) }
-  ])('rejects malformed or oversized profile pronouns before account writes ($label)', async ({ pronouns }) => {
-    const { updateProfile } = await loadHandler()
-    const body = { name: 'Alice', handle: 'alice', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', timeFormat: 'locale', appearance: 'light', pronouns }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-    await updateProfile({ user: { id: 42 }, body, get: () => '42' }, res, vi.fn())
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
-    expect(global.WIKI.models.users.refreshToken).not.toHaveBeenCalled()
-  })
 
   it.each([
     [{ appearance: 'dark' }, { id: 42, appearance: 'dark' }],
@@ -817,7 +799,6 @@ describe('controllers/api users endpoints', () => {
       providerIs2FACapable: true,
       location: 'Tallinn',
       jobTitle: 'Architect',
-      pronouns: 'they/them',
       timezone: 'Europe/Tallinn',
       dateFormat: 'YYYY-MM-DD',
       timeFormat: '24h',
@@ -865,6 +846,7 @@ describe('controllers/api users endpoints', () => {
 
   it('returns 404 when the requested user detail is missing', async () => {
     global.WIKI.models.users.query.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
       findById: vi.fn().mockResolvedValue(null)
     })
     const { detail } = await loadHandler()
@@ -892,6 +874,7 @@ describe('controllers/api users endpoints', () => {
   it('forwards unexpected user detail failures to next', async () => {
     const next = vi.fn()
     global.WIKI.models.users.query.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
       findById: vi.fn().mockRejectedValue(new Error('detail db down'))
     })
     const { detail } = await loadHandler()
@@ -1022,7 +1005,6 @@ describe('controllers/api users endpoints', () => {
       underlineLinks: true,
       contentTextSize: 'larger',
       communicationLocale: 'fr-CA',
-      pronouns: 'they/them',
       groups: ['Administrators', 'Editors'],
       pagesTotal: 3
     })

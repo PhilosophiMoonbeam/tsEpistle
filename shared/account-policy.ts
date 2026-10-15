@@ -58,7 +58,6 @@ export interface AccountProfileDraft {
   email: string
   location: string
   jobTitle: string
-  pronouns: string
   timezone: string
   groups: number[]
 }
@@ -89,7 +88,6 @@ export const accountProfileIssues = (profile: AccountProfileDraft): string[] => 
   if (profile.name.trim().length < 2 || profile.name.trim().length > 255) issues.push('Display name must contain 2–255 characters.')
   if (profile.email.length > 255 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) issues.push('Enter a valid email address.')
   if (profile.location.length > 255 || profile.jobTitle.length > 255) issues.push('Location and job title must be at most 255 characters.')
-  if (profile.pronouns.length > 255) issues.push('Pronouns must be at most 255 characters.')
   try {
     if (!profile.timezone || profile.timezone.length > 100) throw new Error()
     new Intl.DateTimeFormat('en', { timeZone: profile.timezone })

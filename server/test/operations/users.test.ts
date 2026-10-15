@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 const adminWorkspace = () => ({
   id: 10,
   fingerprint: 'reviewed-version',
-  profile: { name: 'User', email: 'user@example.test', location: '', jobTitle: '', pronouns: 'they/them', timezone: 'UTC', groups: [2] },
+  profile: { name: 'User', email: 'user@example.test', location: '', jobTitle: '', timezone: 'UTC', groups: [2] },
   capabilities: { edit: true },
   isActive: true
 })
@@ -39,7 +39,6 @@ const installWiki = (overrides: Record<string, unknown> = {}) => {
     email: 'user@example.test',
     name: 'User',
     providerKey: 'local',
-    pronouns: 'they/them',
     providerId: null,
     password: '',
     tfaSecret: '',
@@ -68,7 +67,7 @@ const installWiki = (overrides: Record<string, unknown> = {}) => {
       authentication: {},
       pages: { query: vi.fn() },
       users: {
-        query: () => ({ findById }),
+        query: () => ({ findById, select: vi.fn().mockReturnThis() }),
         createNewUser: vi.fn(),
         deleteUser: vi.fn(),
         login: vi.fn(),
@@ -200,7 +199,7 @@ describe('self-service profile identity', () => {
           ? () =>
               operations.default.updateProfile({
                 ...identity,
-                input: { name: 'Account A draft', location: '', jobTitle: '', pronouns: 'she/her', timezone: 'UTC', dateFormat: '', appearance: 'light' }
+                input: { name: 'Account A draft', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', appearance: 'light' }
               })
           : kind === 'preferences'
             ? () => operations.default.updateProfilePreferences({ ...identity, input: { appearance: 'dark' } })
@@ -245,7 +244,7 @@ describe('self-service profile identity', () => {
       operations.default.updateProfile({
         requester,
         expectedAccountId: 10,
-        input: { name: 'Changed', location: '', jobTitle: '', pronouns: ' she/her ', timezone: 'UTC', dateFormat: '', appearance: 'light' },
+        input: { name: 'Changed', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', appearance: 'light' },
         response
       })
     ).resolves.toBeUndefined()
@@ -255,7 +254,6 @@ describe('self-service profile identity', () => {
       id: 10,
       name: 'Changed',
       jobTitle: '',
-      pronouns: 'she/her',
       location: '',
       timezone: 'UTC',
       dateFormat: '',
@@ -263,28 +261,6 @@ describe('self-service profile identity', () => {
     })
     expect(refreshToken).toHaveBeenCalledWith(10)
     expect(response.cookie).toHaveBeenCalledWith('jwt', 'replacement-jwt', expect.any(Object))
-  })
-
-  it('omits absent pronouns from a self-service update and rejects malformed or oversized values before persistence', async () => {
-    const { updateUser, refreshToken } = installWiki()
-    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
-    const response = { cookie: vi.fn(), set: vi.fn() }
-    const input = { name: 'User', location: '', jobTitle: '', timezone: 'UTC', dateFormat: '', appearance: 'light' }
-    await operations.default.updateProfile({ requester, expectedAccountId: 10, input, response })
-    expect(updateUser).toHaveBeenCalledWith({ id: 10, ...input })
-    updateUser.mockClear()
-    refreshToken.mockClear()
-    response.cookie.mockClear()
-    for (const pronouns of [null, false, [], 'x'.repeat(256)]) {
-      await expect(operations.default.updateProfile({ requester, expectedAccountId: 10, input: { ...input, pronouns }, response })).rejects.toMatchObject({
-        name: 'INVALID_INPUT'
-      })
-    }
-    expect(updateUser).not.toHaveBeenCalled()
-    expect(refreshToken).not.toHaveBeenCalled()
-    expect(response.cookie).not.toHaveBeenCalled()
-    await operations.default.updateProfile({ requester, expectedAccountId: 10, input: { ...input, pronouns: '' }, response })
-    expect(updateUser).toHaveBeenCalledWith(expect.objectContaining({ id: 10, pronouns: '' }))
   })
 })
 describe('profile preferences operation', () => {

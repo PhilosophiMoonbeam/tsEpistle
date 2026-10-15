@@ -188,12 +188,6 @@ props:
     default: ''
     hint: Optional; absent claims preserve the local value and empty text clears it.
     order: 47
-  mappingPronouns:
-    type: String
-    title: Pronouns Field Mapping
-    default: ''
-    hint: Optional; absent claims preserve the local value and empty text clears it.
-    order: 48
   requireVerifiedEmail:
     type: Boolean
     title: Require Verified Email

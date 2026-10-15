@@ -500,21 +500,6 @@ describe('User aggregate transactions', () => {
     })
   })
 
-  test('persists pronouns, preserves omitted profile data and supports explicit clearing', async () => {
-    const database = createAggregateDatabase([
-      { id: 10, email: 'old@example.test', name: 'Unchanged', providerKey: 'local', pronouns: 'they/them', location: 'Local', jobTitle: 'Editor' }
-    ])
-    installAggregateDatabase(database)
-    await User.updateUser({ id: 10, pronouns: ' she/her ' })
-    expect(database.state.users[0]).toMatchObject({ pronouns: 'she/her', name: 'Unchanged', location: 'Local', jobTitle: 'Editor' })
-    await User.updateUser({ id: 10, appearance: 'dark' })
-    expect(database.state.users[0]?.pronouns).toBe('she/her')
-    await User.updateUser({ id: 10, pronouns: '' })
-    expect(database.state.users[0]?.pronouns).toBe('')
-    await expect(User.updateUser({ id: 10, pronouns: 'x'.repeat(256) })).rejects.toThrow()
-    expect(database.state.users[0]?.pronouns).toBe('')
-  })
-
   test('provider registration persists only allowlisted bounded optional claims', async () => {
     const database = createAggregateDatabase()
     installAggregateDatabase(database)
@@ -524,10 +509,10 @@ describe('User aggregate transactions', () => {
         id: 'subject',
         email: 'new@example.test',
         displayName: 'New User',
-        providerProfile: { location: '', jobTitle: ['invalid'], pronouns: 'x'.repeat(300), isSystem: true, appearance: 'dark' }
+        providerProfile: { location: 'x'.repeat(300), jobTitle: ['invalid'], isSystem: true, appearance: 'dark' }
       }
     })
-    expect(database.state.users[0]).toMatchObject({ location: '', pronouns: 'x'.repeat(255), isSystem: false })
+    expect(database.state.users[0]).toMatchObject({ location: 'x'.repeat(255), isSystem: false })
     expect(database.state.users[0]?.jobTitle).toBeUndefined()
     expect(database.state.memberships.map(membership => membership.groupId)).toEqual([9])
   })

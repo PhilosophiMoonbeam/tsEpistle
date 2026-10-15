@@ -53,7 +53,7 @@ const plugin: OidcPlugin = {
                 email: _.get(rawClaims, conf.emailClaim),
                 displayName: _.get(rawClaims, conf.displayNameClaim, ''),
                 picture: picture,
-                providerProfile: mappedProviderProfile(rawClaims, { location: conf.locationClaim, jobTitle: conf.jobTitleClaim, pronouns: conf.pronounsClaim })
+                providerProfile: mappedProviderProfile(rawClaims, { location: conf.locationClaim, jobTitle: conf.jobTitleClaim })
               }
             })
             if (conf.mapGroups) {

@@ -20,11 +20,9 @@ interface LastLoginUser {
   lastLoginAt: unknown
 }
 const profileFields = ['name', 'handle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'timeFormat', 'appearance'] as const
-type ProfileInput = Record<(typeof profileFields)[number], string> & { pronouns?: string }
+type ProfileInput = Record<(typeof profileFields)[number], string>
 
-const isProfileInput = (value: Record<string, unknown>): value is ProfileInput =>
-  profileFields.every(field => typeof value[field] === 'string') &&
-  (value.pronouns === undefined || (typeof value.pronouns === 'string' && value.pronouns.length <= 255))
+const isProfileInput = (value: Record<string, unknown>): value is ProfileInput => profileFields.every(field => typeof value[field] === 'string')
 
 const requestBody = (req: Request): Record<string, unknown> => {
   const body: unknown = req.body
@@ -219,7 +217,6 @@ router.post('/', async (req, res) => {
     'passwordRaw',
     'name',
     'groups',
-    'pronouns',
     'timezone',
     'dateFormat',
     'timeFormat',
@@ -373,7 +370,6 @@ router.get('/profile', async (req, res, next) => {
         'pictureUrl',
         'location',
         'jobTitle',
-        'pronouns',
         'timezone',
         'dateFormat',
         'timeFormat',
@@ -398,9 +394,9 @@ router.get('/profile', async (req, res, next) => {
 
 router.patch('/profile', async (req, res, next) => {
   const body = requestBody(req)
-  const input = _.pick(body, [...profileFields, 'pronouns'])
+  const input = _.pick(body, profileFields)
   if (!isProfileInput(input)) {
-    return res.status(400).json({ error: 'Profile fields must be strings; pronouns must be at most 255 characters' })
+    return res.status(400).json({ error: 'Profile fields must be strings' })
   }
   try {
     await userOperations.updateProfile({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), input, response: res })
@@ -457,7 +453,6 @@ router.put('/:id', async (req, res) => {
     'groups',
     'location',
     'jobTitle',
-    'pronouns',
     'timezone',
     'dateFormat',
     'timeFormat',

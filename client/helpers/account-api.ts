@@ -26,8 +26,6 @@ const record = (v: unknown) =>
 const profile = (v: unknown): v is AccountProfileDraft =>
   isRecord(v) &&
   ['name', 'email', 'location', 'jobTitle', 'timezone'].every(field => typeof v[field] === 'string') &&
-  typeof v.pronouns === 'string' &&
-  v.pronouns.length <= 255 &&
   Array.isArray(v.groups) &&
   v.groups.every(id => Number.isSafeInteger(id) && id > 0)
 const workspace = (v: unknown) =>

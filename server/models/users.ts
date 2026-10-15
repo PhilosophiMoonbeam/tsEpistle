@@ -219,7 +219,6 @@ interface UpdateUserOptions {
   groups?: number[]
   location?: string
   jobTitle?: string
-  pronouns?: string
   timezone?: string
   dateFormat?: string
   timeFormat?: UserTimeFormat
@@ -240,7 +239,6 @@ interface UserPatch {
   password?: string
   location?: string
   jobTitle?: string
-  pronouns?: string
   timezone?: string
   dateFormat?: string
   timeFormat?: UserTimeFormat
@@ -298,7 +296,6 @@ export default class User extends Model {
   declare tfaSecret: string | null
   declare jobTitle: string
   declare location: string
-  declare pronouns: string
   declare timezone: string
   declare dateFormat: string
   declare timeFormat: UserTimeFormat
@@ -342,7 +339,6 @@ export default class User extends Model {
         tfaSecret: { type: ['string', 'null'] },
         jobTitle: { type: 'string' },
         location: { type: 'string' },
-        pronouns: { type: 'string', maxLength: 255 },
         pictureUrl: { type: ['string', 'null'] },
         timezone: { type: 'string' },
         dateFormat: { type: 'string' },
@@ -1236,7 +1232,6 @@ export default class User extends Model {
     groups,
     location,
     jobTitle,
-    pronouns,
     timezone,
     dateFormat,
     timeFormat,
@@ -1252,7 +1247,6 @@ export default class User extends Model {
     if (underlineLinks !== undefined && typeof underlineLinks !== 'boolean') throw new wiki.Error.InputInvalid()
     if (contentTextSize !== undefined && !UserContentTextSizeSchema.safeParse(contentTextSize).success) throw new wiki.Error.InputInvalid()
     if (communicationLocale !== undefined && !UserCommunicationLocaleSchema.safeParse(communicationLocale).success) throw new wiki.Error.InputInvalid()
-    if (pronouns !== undefined && (typeof pronouns !== 'string' || pronouns.trim().length > 255)) throw new wiki.Error.InputInvalid()
     return wiki.models.knex.transaction(async trx => {
       const usr = await wiki.models.users.query(trx).findById(id).forUpdate()
       if (!usr) {
@@ -1320,9 +1314,6 @@ export default class User extends Model {
       }
       if (typeof jobTitle === 'string' && jobTitle !== usr.jobTitle) {
         usrData.jobTitle = _.trim(jobTitle)
-      }
-      if (typeof pronouns === 'string' && pronouns !== usr.pronouns) {
-        usrData.pronouns = pronouns.trim()
       }
       if (typeof timezone === 'string' && !_.isEmpty(timezone) && timezone !== usr.timezone) {
         usrData.timezone = timezone

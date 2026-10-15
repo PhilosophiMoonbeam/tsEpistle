@@ -284,10 +284,10 @@
       "recovery": "paired",
       "rollback": "fix-forward-or-restore",
       "rehearsalPostconditions": [
-        "native-user-pronouns-column"
+        "native-account-profile-schema"
       ],
       "runtimePostconditions": [
-        "native-user-pronouns-column"
+        "native-account-profile-schema"
       ]
     },
     "tsepistle-000060-links-grid.js": {
@@ -303,6 +303,21 @@
       ],
       "runtimePostconditions": [
         "native-links-grid-registration"
+      ]
+    },
+    "tsepistle-000061-retire-profile-field.js": {
+      "persistentState": "destructive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-account-profile-schema"
+      ],
+      "runtimePostconditions": [
+        "native-account-profile-schema"
       ]
     }
   }

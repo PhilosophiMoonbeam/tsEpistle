@@ -92,7 +92,6 @@ const translations: Record<string, string> = {
   'profile:mentionHandle': 'Identifiant de mention',
   'profile:location': 'Lieu',
   'profile:jobTitle': 'Profession',
-  'profile:pronouns': 'Pronoms',
   'profile:timezone': 'Fuseau horaire',
   'profile:dateFormat': 'Format de date',
   'profile:timeFormat': 'Format horaire',
@@ -138,7 +137,6 @@ const profile = (overrides: Partial<Profile> = {}): Profile => ({
   isVerified: true,
   location: '',
   jobTitle: '',
-  pronouns: '',
   timezone: 'Europe/Paris',
   dateFormat: '',
   timeFormat: 'locale',
@@ -451,13 +449,6 @@ describe('profile workspace contracts', () => {
     expect(name.value).toBe('Example Reader')
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
 
-    const pronouns = field(host, translations['profile:pronouns']!)
-    await fill(pronouns, 'they/them')
-    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
-    expect((await press(pronouns, 'Escape')).defaultPrevented).toBe(true)
-    expect(pronouns.value).toBe('')
-    expect(dockText(host)).toBe(translations['profile:dock.clean'])
-
     const reduceMotion = field(host, translations['profile:reduceMotion']!)
     reduceMotion.click()
     await settle()
@@ -484,33 +475,32 @@ describe('profile workspace contracts', () => {
     const { host, fetch, store } = await mount()
     await fill(field(host, translations['profile:mentionHandle']!), '  New_Handle ')
     await fill(field(host, translations['profile:displayName']!), ' Renamed Reader ')
-    await fill(field(host, translations['profile:pronouns']!), ' they/them ')
+    await fill(field(host, translations['profile:jobTitle']!), ' Archivist ')
     fetch.mockResolvedValueOnce(response({ message: 'Profile saved' }))
     saveButton(host).click()
     await settle()
     expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(1)
     expect(requestsTo(fetch, '/_api/users/profile/preferences')).toHaveLength(0)
     const body = JSON.parse(requestsTo(fetch, '/_api/users/profile')[0]![1]!.body as string)
-    expect(body).toMatchObject({ name: ' Renamed Reader ', handle: '  New_Handle ', pronouns: ' they/them ', appearance: 'light', timezone: 'Europe/Paris' })
+    expect(body).toMatchObject({ name: ' Renamed Reader ', handle: '  New_Handle ', jobTitle: ' Archivist ', appearance: 'light', timezone: 'Europe/Paris' })
     expect(field(host, translations['profile:mentionHandle']!).value).toBe('new_handle')
-    expect(field(host, translations['profile:pronouns']!).value).toBe('they/them')
+    expect(field(host, translations['profile:jobTitle']!).value).toBe('Archivist')
     expect(store.user.name).toBe('Renamed Reader')
     expect(store.refreshAuth).toHaveBeenCalledTimes(1)
     expect(store.showNotification).toHaveBeenCalledWith(expect.objectContaining({ style: 'success' }))
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
 
     await fill(field(host, translations['profile:location']!), 'Lyon')
-    await fill(field(host, translations['profile:pronouns']!), '')
     field(host, translations['profile:reduceMotion']!).click()
     await settle()
-    expect(dockText(host)).toBe('3 modifications non enregistrées')
+    expect(dockText(host)).toBe('2 modifications non enregistrées')
     fetch.mockResolvedValueOnce(response({ message: 'Profile saved' }))
     fetch.mockRejectedValueOnce(new Error('Preferences unavailable'))
     store.showNotification.mockClear()
     saveButton(host).click()
     await settle()
     expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(2)
-    expect(JSON.parse(requestsTo(fetch, '/_api/users/profile')[1]![1]!.body as string).pronouns).toBe('')
+    expect(JSON.parse(requestsTo(fetch, '/_api/users/profile')[1]![1]!.body as string).location).toBe('Lyon')
     expect(JSON.parse(requestsTo(fetch, '/_api/users/profile/preferences')[0]![1]!.body as string)).toEqual({
       reduceMotion: true,
       underlineLinks: false,
@@ -526,7 +516,6 @@ describe('profile workspace contracts', () => {
   test('invalidates the loaded account draft immediately when the authenticated account changes', async () => {
     const { host, fetch, store } = await mount()
     await fill(field(host, translations['profile:displayName']!), 'Account A unsaved draft')
-    await fill(field(host, translations['profile:pronouns']!), 'they/them')
     const accountB = profile({ id: 74, name: 'Account B', handle: 'account_b' })
     fetch.mockImplementation(async (url: string) => {
       if (url === '/_api/users/profile') return response(accountB)
@@ -538,7 +527,6 @@ describe('profile workspace contracts', () => {
     await settle()
 
     expect(field(host, translations['profile:displayName']!).value).toBe('Account B')
-    expect(field(host, translations['profile:pronouns']!).value).toBe('')
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
     saveButton(host).click()
     await settle()
@@ -612,13 +600,10 @@ describe('profile workspace contracts', () => {
     }
   })
 
-  test.each([
-    ['mention handle', 'profile:mentionHandle', 'no spaces', 'Use 3–32 letters, numbers, underscores or hyphens.'],
-    ['pronouns', 'profile:pronouns', 'x'.repeat(256), 'Use 255 characters or fewer.']
-  ])('blocks saving invalid %s and focuses the affected field', async (_label, key, value, message) => {
+  test('blocks saving an invalid mention handle and focuses the affected field', async () => {
     const { host, fetch } = await mount()
-    const input = field(host, translations[key]!)
-    await fill(input, value)
+    const input = field(host, translations['profile:mentionHandle']!)
+    await fill(input, 'no spaces')
     expect(dockText(host)).toBe(translations['profile:dock.fixOne'])
     const save = saveButton(host)
     expect(save.getAttribute('aria-disabled')).toBe('true')
@@ -628,7 +613,7 @@ describe('profile workspace contracts', () => {
     await settle()
     expect(fetch.mock.calls).toHaveLength(requests)
     expect(document.activeElement).toBe(input)
-    expect(host.textContent).toContain(message)
+    expect(host.textContent).toContain('Use 3–32 letters, numbers, underscores or hyphens.')
   })
 
   test('guards leaving with unsaved changes and restores the saved theme on discard or unmount', async () => {

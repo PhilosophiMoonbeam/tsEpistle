@@ -76,7 +76,6 @@ suite('PostgreSQL account security transactions', () => {
       table.string('providerKey')
       table.string('location')
       table.string('jobTitle')
-      table.string('pronouns', 255).notNullable().defaultTo('')
       table.string('pictureUrl')
       table.string('password')
       table.boolean('tfaIsActive').notNullable().defaultTo(false)
@@ -153,7 +152,7 @@ suite('PostgreSQL account security transactions', () => {
   })
 
   it('preserves unmapped profile values and local avatar overrides while clearing mapped empty text', async () => {
-    await db('users').where({ id: 10 }).update({ location: 'Local', jobTitle: 'Editor', pronouns: 'they/them', pictureUrl: 'internal' })
+    await db('users').where({ id: 10 }).update({ location: 'Local', jobTitle: 'Editor', pictureUrl: 'internal' })
     await db('userAvatars').insert({ id: 10, origin: 'upload', data: Buffer.from('local-avatar') })
     await User.updateProviderProfile({
       userId: 10,
@@ -161,17 +160,16 @@ suite('PostgreSQL account security transactions', () => {
       name: 'Provider Name',
       picture: 'https://provider.invalid/avatar',
       pictureData: undefined,
-      providerProfile: { jobTitle: '', pronouns: 'x'.repeat(300) }
+      providerProfile: { jobTitle: '' }
     })
     expect(await db('users').where({ id: 10 }).first()).toMatchObject({
       location: 'Local',
       jobTitle: '',
-      pronouns: 'x'.repeat(255),
       pictureUrl: 'internal',
       name: 'Provider Name'
     })
     await User.updateProviderProfile({ userId: 10, email: 'tfa@example.test', name: 'Provider Name', picture: undefined, pictureData: undefined })
-    expect(await db('users').where({ id: 10 }).first()).toMatchObject({ location: 'Local', jobTitle: '', pronouns: 'x'.repeat(255), pictureUrl: 'internal' })
+    expect(await db('users').where({ id: 10 }).first()).toMatchObject({ location: 'Local', jobTitle: '', pictureUrl: 'internal' })
     expect((await db('userAvatars').where({ id: 10 }).first()).data).toEqual(Buffer.from('local-avatar'))
   })
 
@@ -181,7 +179,7 @@ suite('PostgreSQL account security transactions', () => {
   ])('does not link or update a protected provider account: %j', async flags => {
     await db('users')
       .where({ id: 10 })
-      .update({ ...flags, providerId: null, pronouns: 'local' })
+      .update({ ...flags, providerId: null, location: 'Local' })
     await expect(
       User.updateProviderProfile({
         userId: 10,
@@ -190,10 +188,10 @@ suite('PostgreSQL account security transactions', () => {
         picture: undefined,
         pictureData: undefined,
         providerId: 'provider-subject',
-        providerProfile: { pronouns: '' }
+        providerProfile: { location: '' }
       })
     ).rejects.toThrow()
-    expect(await db('users').where({ id: 10 }).first()).toMatchObject({ providerId: null, email: 'tfa@example.test', name: 'TFA User', pronouns: 'local' })
+    expect(await db('users').where({ id: 10 }).first()).toMatchObject({ providerId: null, email: 'tfa@example.test', name: 'TFA User', location: 'Local' })
   })
 
   it('lets only one concurrent valid setup completion consume and enable the account', async () => {
