@@ -114,7 +114,7 @@ import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
-import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
+import { createSourceAuthoring, type SourceAuthoring } from '../../helpers/editor-source-authoring'
 import type { Element } from 'domhandler'
 import type { ContentInsertOptions, LineInsertOptions, MarkupOptions, MultiLineInsertOptions, PageLinkTarget } from './common/editor-types'
 import DOMPurify from 'dompurify'
@@ -200,7 +200,7 @@ export default defineComponent({
       cm: null as TextEditorHandle | null,
       editorAdapter: null as EditorAdapterController | null,
       imageAuthoring: null as Raw<ReturnType<typeof createSourceImageAuthoring>> | null,
-      sourceAuthoring: null as Raw<ReturnType<typeof createSourceAuthoring>> | null,
+      sourceAuthoring: null as Raw<SourceAuthoring> | null,
       debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: Boolean(this.mdAndUp),
