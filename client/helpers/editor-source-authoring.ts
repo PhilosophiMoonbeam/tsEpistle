@@ -289,6 +289,8 @@ export async function completeSourceAuthoring(
     return match
       ? {
           from: line.from + match.index,
+          // The optional colon belongs to the replacement, not the completion label.
+          filter: false,
           options: [snippetCompletion(`kbd:[\${Key}]`, { label: 'kbd', detail: 'Keyboard key macro (requires :experimental:)' })]
         }
       : null

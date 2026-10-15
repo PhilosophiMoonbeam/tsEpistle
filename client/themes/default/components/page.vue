@@ -3,7 +3,6 @@
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
     nav-header(v-if='!printView', reserve-actions, :glossary-available='glossaryAvailable')
     glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', @access='setGlossaryAccess')
-    discussion-annotations(v-if='!printView', :page-id='pageId', :content-root='readerContentRoot', :enabled='commentsEnabled && commentsPerms.read && !commentsExternal', @compose='composePassage', @thread='$emit(`focus-thread`, $event)')
     //- Decorative: a live progressbar would announce every scroll step.
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
@@ -243,6 +242,8 @@
                 state='empty'
                 :title='$t(`common:page.noContent`)'
               )
+            .page-annotations-panel(v-if='!printView', v-show='selectedPageView === `article`')
+              discussion-annotations(:page-id='pageId', :content-root='readerContentRoot', :enabled='commentsEnabled && commentsPerms.read && !commentsExternal', @compose='composePassage', @thread='$emit(`focus-thread`, $event)')
             section.page-links-panel.contents#page-links(v-if='linksActive', role='tabpanel', aria-labelledby='page-view-links-tab', tabindex='-1')
               slot(name='links', :page-id='pageId', :locale='locale', :source-revision='sourceRevision')
             section.comments-container#discussion(v-if='!printView && ((commentsExternal && !linksActive) || (!commentsExternal && discussionMounted && commentsEnabled && commentsPerms.read))', v-show='commentsExternal || selectedPageView === `talk`', role='tabpanel', :aria-labelledby='commentsExternal ? `discussion-title` : `page-view-talk-tab`')

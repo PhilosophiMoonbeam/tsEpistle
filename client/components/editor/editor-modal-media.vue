@@ -224,6 +224,7 @@
             v-select.mt-3(
               v-model='imageAlignment'
               :items='imageAlignments'
+              :menu-props='{ contentClass: `editor-media-owned-overlay` }'
               variant="outlined"
               single-line
               color='primary'
