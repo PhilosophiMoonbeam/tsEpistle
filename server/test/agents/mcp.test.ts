@@ -3,9 +3,10 @@ import { request as httpRequest } from 'node:http'
 import express, { type RequestHandler } from 'express'
 import createKnex, { type Knex } from 'knex'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from '../bun-test.mts'
 
 import { createWikiMcpController } from '../../agents/mcp.ts'
+import type { WikiLineSnapshotV1 } from '../../agents/patch/wiki-line-patch.ts'
 import { decideProposal } from '../../agents/proposals/execution.ts'
 import { up as createKnowledgeProjectionStore } from '../../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchStore } from '../../db/migrations/tsepistle-000027-knowledge-search.ts'
@@ -169,6 +170,7 @@ describe('Wiki MCP transport', () => {
   let db: Knex
   let server: ReturnType<express.Express['listen']>
   let client: Client | undefined
+  let getPage: Mock<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>
   let movePage: ReturnType<typeof vi.fn>
   let authorizeMutation: ReturnType<typeof vi.fn>
   let listRelated: ReturnType<typeof vi.fn>
@@ -286,6 +288,20 @@ describe('Wiki MCP transport', () => {
         ? { pages: [page], truncated: offset + 1 < pages.length, nextOffset: offset + 1 < pages.length ? offset + 1 : null }
         : { pages: [], truncated: false, nextOffset: null }
     })
+    getPage = vi.fn(async input => {
+      const id = Number(input.id)
+      const page =
+        id === 43
+          ? { id: 43, path: 'docs/next', title: 'Next', content: '# Next\n', sourceRevision: '9', updatedAt: '2026-08-25T00:00:00.000Z' }
+          : id === 44
+            ? { id: 44, path: 'docs/following', title: 'Following', content: '# Following\n', sourceRevision: '10', updatedAt: '2026-08-26T00:00:00.000Z' }
+            : publicPage
+      return {
+        ...publicPage,
+        description: '',
+        ...page
+      }
+    })
     const app = express()
     authenticate = vi.fn((req, _res, next) => {
       if (activeApiKey === null) {
@@ -318,20 +334,7 @@ describe('Wiki MCP transport', () => {
         searchTags: vi.fn(),
         listTags: vi.fn(),
         discover: vi.fn(),
-        get: vi.fn(async input => {
-          const id = Number(input.id)
-          const page =
-            id === 43
-              ? { id: 43, path: 'docs/next', title: 'Next', content: '# Next\n', sourceRevision: '9', updatedAt: '2026-08-25T00:00:00.000Z' }
-              : id === 44
-                ? { id: 44, path: 'docs/following', title: 'Following', content: '# Following\n', sourceRevision: '10', updatedAt: '2026-08-26T00:00:00.000Z' }
-                : publicPage
-          return {
-            ...publicPage,
-            description: '',
-            ...page
-          }
-        }),
+        get: getPage,
         getByPath: vi.fn(async input => {
           if (input.path !== publicPage.path || input.locale !== publicPage.locale || input.visibility !== publicPage.visibility)
             throw new errors.PageNotFound()
@@ -601,6 +604,101 @@ describe('Wiki MCP transport', () => {
     expect(listRelated).toHaveBeenNthCalledWith(2, expect.objectContaining({ offset: 1 }))
   })
 
+  it.each(['full', 'continued'] as const)('prepares a pending patch proposal from a %s snapshot across independent modern MCP requests', async mode => {
+    const source = '# Start\n\nContext.\n\nKeep this section.\n\nReplicas: 17\n'
+    getPage.mockResolvedValue({ ...publicPage, content: source })
+    const port = (server.address() as AddressInfo).port
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'test-api-token' }
+    })
+    client = new Client(
+      { name: 'wiki-mcp-patch-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
+    await client.connect(transport)
+    expect(client.getProtocolEra()).toBe('modern')
+
+    const first = await client.callTool({
+      name: 'wiki_read_page_for_patch',
+      arguments: {
+        pageId: 42,
+        previousSnapshotToken: null,
+        ...(mode === 'continued' ? { ranges: [{ startLine: 1, endLine: 1 }] } : {})
+      }
+    })
+    expect(first.isError).not.toBe(true)
+    let snapshot = first.structuredContent as unknown as WikiLineSnapshotV1
+    if (mode === 'continued') {
+      expect(snapshot.disclosed.map(range => [range.startLine, range.endLine])).toEqual([[1, 1]])
+      const continued = await client.callTool({
+        name: 'wiki_read_page_for_patch',
+        arguments: {
+          pageId: 42,
+          ranges: [{ startLine: 7, endLine: 7 }],
+          previousSnapshotToken: snapshot.snapshotToken
+        }
+      })
+      expect(continued.isError).not.toBe(true)
+      snapshot = continued.structuredContent as unknown as WikiLineSnapshotV1
+      expect(snapshot.disclosed.map(range => [range.startLine, range.endLine])).toEqual([
+        [1, 1],
+        [7, 7]
+      ])
+    }
+    const line = snapshot.disclosed.flatMap(range => range.lines).find(item => item.number === 7)!
+    expect(line.text).toBe('Replicas: 17')
+    const prepared = await client.callTool({
+      name: 'wiki_prepare_page_patch',
+      arguments: {
+        requestId: '00000000-0000-4000-8000-000000000103',
+        patch: {
+          version: 'wiki-line-patch-v1',
+          snapshotToken: snapshot.snapshotToken,
+          baseDocumentTag: snapshot.documentTag,
+          resultFinalNewline: snapshot.finalNewline,
+          operations: [
+            {
+              kind: 'replace',
+              range: { start: { line: line.number, tag: line.tag }, end: { line: line.number, tag: line.tag } },
+              lines: ['Replicas: 19']
+            }
+          ]
+        }
+      }
+    })
+    expect(prepared.isError).not.toBe(true)
+    expect(prepared.structuredContent).toMatchObject({
+      actionName: 'pages.preparePatch',
+      status: 'pending',
+      diffHash: expect.stringMatching(/^[a-f0-9]{64}$/u)
+    })
+    const result = prepared.structuredContent as { proposalId: string; approvalId: string }
+    const proposal = await db('agentProposals').where({ id: result.proposalId }).first()
+    expect(proposal).toMatchObject({
+      sourceKind: 'mcp',
+      requesterApiKeyId: 9,
+      requesterRequestId: '00000000-0000-4000-8000-000000000103',
+      actionName: 'pages.preparePatch',
+      pageId: 42,
+      status: 'pending',
+      patchFormat: 'wiki-line-patch-v1'
+    })
+    expect(proposal.diff).toContain('-Replicas: 17\n+Replicas: 19\n')
+    expect(JSON.parse(proposal.operation)).toMatchObject({
+      kind: 'patch',
+      operationInput: { id: 42, content: '# Start\n\nContext.\n\nKeep this section.\n\nReplicas: 19\n', expectedSourceRevision: '8' }
+    })
+    expect(await db('agentApprovals').where({ id: result.approvalId, proposalId: result.proposalId }).first()).toMatchObject({
+      status: 'pending',
+      requesterApiKeyId: 9
+    })
+    expect(await db('agentActionExecutions')).toEqual([])
+    expect(authorizeMutation).not.toHaveBeenCalled()
+  })
+
   it('prepares and applies a proposal with API-key and live human authority', async () => {
     const port = (server.address() as AddressInfo).port
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
@@ -711,7 +809,7 @@ describe('Wiki MCP transport', () => {
     })
   })
 
-  it('keeps MCP proposals bound to their API-key/group authority', async () => {
+  it('keeps patch snapshots and proposals bound to their exact API key even in the same group', async () => {
     const port = (server.address() as AddressInfo).port
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'test-api-token' }
@@ -724,16 +822,48 @@ describe('Wiki MCP transport', () => {
       }
     )
     await client.connect(transport)
-    const prepared = await client.callTool({
-      name: 'wiki_prepare_page_move',
-      arguments: {
-        requestId: '00000000-0000-4000-8000-000000000100',
-        pageId: 42,
-        sourceRevision: '8',
-        destinationPath: 'docs/next',
-        destinationLocale: 'en'
-      }
+    const read = await client.callTool({
+      name: 'wiki_read_page_for_patch',
+      arguments: { pageId: 42, previousSnapshotToken: null }
     })
+    expect(read.isError).not.toBe(true)
+    const snapshot = read.structuredContent as unknown as WikiLineSnapshotV1
+    const continuationInput = {
+      pageId: 42,
+      ranges: [{ startLine: 1, endLine: 1 }],
+      previousSnapshotToken: snapshot.snapshotToken
+    }
+    const continued = await client.callTool({
+      name: 'wiki_read_page_for_patch',
+      arguments: continuationInput
+    })
+    expect(continued.isError).not.toBe(true)
+    expect(continued.structuredContent).toMatchObject({
+      page: snapshot.page,
+      revision: snapshot.revision,
+      documentTag: snapshot.documentTag,
+      disclosed: snapshot.disclosed
+    })
+    const line = snapshot.disclosed[0]!.lines[0]!
+    const patch = {
+      version: 'wiki-line-patch-v1',
+      snapshotToken: snapshot.snapshotToken,
+      baseDocumentTag: snapshot.documentTag,
+      resultFinalNewline: snapshot.finalNewline,
+      operations: [
+        {
+          kind: 'replace',
+          range: { start: { line: line.number, tag: line.tag }, end: { line: line.number, tag: line.tag } },
+          lines: ['# Start revised']
+        }
+      ]
+    }
+    const prepared = await client.callTool({
+      name: 'wiki_prepare_page_patch',
+      arguments: { requestId: '00000000-0000-4000-8000-000000000100', patch }
+    })
+    expect(prepared.isError).not.toBe(true)
+    expect(prepared.structuredContent).toMatchObject({ status: 'pending' })
     const proposalResult = JSON.parse(String(Reflect.get(prepared.content[0] ?? {}, 'text'))) as { proposalId: string; approvalId: string }
     const before = {
       proposal: await db('agentProposals')
@@ -745,7 +875,7 @@ describe('Wiki MCP transport', () => {
     }
 
     await client.close()
-    activeApiKey = { apiKeyId: 10, groupId: 4, bearerToken: 'other-api-token' }
+    activeApiKey = { apiKeyId: 10, groupId: 3, bearerToken: 'other-api-token' }
     const otherTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'other-api-token' }
     })
@@ -757,6 +887,22 @@ describe('Wiki MCP transport', () => {
       }
     )
     await client.connect(otherTransport)
+    const deniedRead = await client.callTool({
+      name: 'wiki_read_page_for_patch',
+      arguments: continuationInput
+    })
+    expect(deniedRead.isError).toBe(true)
+    expect(JSON.parse(String(Reflect.get(deniedRead.content[0] ?? {}, 'text')))).toMatchObject({
+      code: 'MCP_ACTION_FAILED'
+    })
+    const deniedPrepare = await client.callTool({
+      name: 'wiki_prepare_page_patch',
+      arguments: { requestId: '00000000-0000-4000-8000-000000000104', patch }
+    })
+    expect(deniedPrepare.isError).toBe(true)
+    expect(JSON.parse(String(Reflect.get(deniedPrepare.content[0] ?? {}, 'text')))).toMatchObject({
+      code: 'MCP_ACTION_FAILED'
+    })
     const denied = await client.callTool({
       name: 'wiki_apply_page_proposal',
       arguments: {
@@ -773,6 +919,9 @@ describe('Wiki MCP transport', () => {
         .where({ proposalId: proposalResult.proposalId })
         .first('requesterUserId', 'requesterApiKeyId', 'status', 'inputHash', 'operationSha256', 'approvedByUserId')
     }).toEqual(before)
+    expect(await db('agentProposals').pluck('id')).toEqual([proposalResult.proposalId])
+    expect(await db('agentActionExecutions')).toEqual([])
+    expect(authorizeMutation).not.toHaveBeenCalled()
     expect(movePage).not.toHaveBeenCalled()
   })
 

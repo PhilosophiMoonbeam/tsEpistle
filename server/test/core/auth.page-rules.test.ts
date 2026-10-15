@@ -1,12 +1,12 @@
-
 import { describe, expect, it } from '../bun-test.mts'
 import auth from '../../core/auth.ts'
 import type { PageRuleAuthority } from '../../helpers/group-access.ts'
+import type { GroupRuleMatch } from '../../../shared/group-policy.ts'
 
 type PageRule = {
   deny: boolean
   locales?: string[]
-  match: 'START' | 'END' | 'REGEX' | 'TAG' | 'EXACT'
+  match: GroupRuleMatch
   path: string
   roles: string[]
 }
@@ -48,13 +48,13 @@ describe('page-rule authorization contract', () => {
     requester: TestUser,
     groups: PageRuleAuthority['groups'] = [],
     tagAliases: Readonly<Record<string, string | null>> = {}
-  ): PageRuleAuthority => Object.freeze({
-    requester,
-    permissions: Object.freeze([...requester.permissions]),
-    groups: Object.freeze(groups),
-    tagAliases: Object.freeze({ ...tagAliases })
-  })
-
+  ): PageRuleAuthority =>
+    Object.freeze({
+      requester,
+      permissions: Object.freeze([...requester.permissions]),
+      groups: Object.freeze(groups),
+      tagAliases: Object.freeze({ ...tagAliases })
+    })
 
   it('denies missing principals, absent global permissions, and pages without a matching rule', () => {
     const noPermissions = user([1], [])
@@ -89,10 +89,7 @@ describe('page-rule authorization contract', () => {
   })
 
   it('uses the most specific matching path across groups regardless of group order', () => {
-    const groups = [
-      group(1, [rule({ deny: true, path: 'docs' })]),
-      group(2, [rule({ path: 'docs/public' })])
-    ]
+    const groups = [group(1, [rule({ deny: true, path: 'docs' })]), group(2, [rule({ path: 'docs/public' })])]
     const firstRequester = user([1, 2])
     const secondRequester = user([2, 1])
 
@@ -118,12 +115,29 @@ describe('page-rule authorization contract', () => {
     expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, [allowExact, denyPrefix])]))).toBe(true)
   })
 
+  it('ranks subtree above raw prefix and below exact rules at equal specificity in either order', () => {
+    const requester = user()
+    const denyPrefix = rule({ match: 'START', path: page.path, deny: true })
+    const allowSubtree = rule({ match: 'SUBTREE', path: page.path })
+    const denyExact = rule({ match: 'EXACT', path: page.path, deny: true })
+
+    for (const rules of [
+      [denyPrefix, allowSubtree],
+      [allowSubtree, denyPrefix]
+    ]) {
+      expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, rules)]))).toBe(true)
+    }
+    for (const rules of [
+      [allowSubtree, denyExact],
+      [denyExact, allowSubtree]
+    ]) {
+      expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, rules)]))).toBe(false)
+    }
+  })
+
   it('applies locale, tag, role, and empty-authority snapshot constraints', () => {
     const groups = {
-      first: group(1, [
-        rule({ locales: ['fr'] }),
-        rule({ match: 'TAG', path: 'published', roles: ['write:pages'] })
-      ]),
+      first: group(1, [rule({ locales: ['fr'] }), rule({ match: 'TAG', path: 'published', roles: ['write:pages'] })]),
       second: group(2, [rule({ match: 'TAG', path: 'published' })])
     }
     const firstRequester = user([{ id: 1 }])
@@ -139,10 +153,7 @@ describe('page-rule authorization contract', () => {
 
   it('treats an invalid regular expression as non-matching instead of breaking access', () => {
     const requester = user()
-    const matchingAuthority = authorityFor(requester, [group(1, [
-      rule({ match: 'REGEX', path: '[invalid' }),
-      rule({ match: 'EXACT', path: page.path })
-    ])])
+    const matchingAuthority = authorityFor(requester, [group(1, [rule({ match: 'REGEX', path: '[invalid' }), rule({ match: 'EXACT', path: page.path })])])
 
     expect(auth.checkPageAccess(requester, ['read:pages'], page, matchingAuthority)).toBe(true)
 
@@ -150,4 +161,3 @@ describe('page-rule authorization contract', () => {
     expect(auth.checkPageAccess(requester, ['read:pages'], page, invalidOnlyAuthority)).toBe(false)
   })
 })
-

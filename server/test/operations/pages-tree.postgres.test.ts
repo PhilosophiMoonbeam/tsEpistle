@@ -1,5 +1,6 @@
 import knexModule, { type Knex } from 'knex'
 import auth, { loadPageRuleAuthority } from '../../core/auth.ts'
+import { createApiPrincipal } from '../../helpers/api-principal.ts'
 import type pagesOperations from '../../operations/pages.ts'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
@@ -123,6 +124,56 @@ suite('PostgreSQL Browse page access', () => {
     readPaths = new Set()
     writePaths = new Set()
     readTags = new Set()
+  })
+  it('loads saved subtree authority for user membership and API groups without widening path or principal boundaries', async () => {
+    await db('groups')
+      .where('id', 1)
+      .update({
+        pageRules: JSON.stringify([
+          { match: 'SUBTREE', path: 'docs/public', deny: false, roles: ['read:pages'], locales: ['en'] },
+          { match: 'SUBTREE', path: 'docs/public/restricted', deny: true, roles: ['read:pages'], locales: ['en'] }
+        ])
+      })
+    const apiRequester = createApiPrincipal(17, 1, ['read:pages'])
+    for (const principal of [requester, apiRequester]) {
+      // Loading the stored policy is the regression boundary: the old loader rejects SUBTREE.
+      const authority = await loadPageRuleAuthority(principal)
+      for (const [path, allowed] of [
+        ['docs/public', true],
+        ['docs/public/guide', true],
+        ['docs/publicity', false],
+        ['docs/public/restricted', false],
+        ['docs/public/restricted/secret', false],
+        ['docs/public/restricted-extra', true]
+      ] as const) {
+        expect(auth.checkPageAccess(principal, ['read:pages'], { path, locale: 'en' }, authority)).toBe(allowed)
+      }
+      expect(auth.checkPageAccess(principal, ['read:pages'], { path: 'docs/public', locale: 'fr' }, authority)).toBe(false)
+      expect(auth.checkPageAccess(principal, ['write:pages'], { path: 'docs/public', locale: 'en' }, authority)).toBe(false)
+      const otherPrincipal = principal === requester ? apiRequester : requester
+      expect(auth.checkPageAccess(otherPrincipal, ['read:pages'], { path: 'docs/public', locale: 'en' }, authority)).toBe(false)
+    }
+    const unassignedApi = createApiPrincipal(18, 99, ['read:pages'])
+    for (const principal of [undefined, unassignedApi]) {
+      const authority = await loadPageRuleAuthority(principal)
+      expect(authority.groups).toEqual([])
+      expect(auth.checkPageAccess(principal, ['read:pages'], { path: 'docs/public', locale: 'en' }, authority)).toBe(false)
+    }
+  })
+  it('rejects malformed saved authority rules rather than accepting unknown matches or invalid subtree fields', async () => {
+    const validRule = { match: 'SUBTREE', path: 'docs/public', deny: false, roles: ['read:pages'], locales: ['en'] }
+    for (const invalid of [
+      { ...validRule, match: 'UNKNOWN' },
+      { ...validRule, path: null },
+      { ...validRule, deny: 'false' },
+      { ...validRule, roles: ['read:pages', null] },
+      { ...validRule, locales: [17] }
+    ]) {
+      await db('groups')
+        .where('id', 1)
+        .update({ pageRules: JSON.stringify([invalid]) })
+      await expect(loadPageRuleAuthority(requester)).rejects.toThrow('Authentication authority')
+    }
   })
   it('omits denied page metadata and only includes the current principal’s private pages', async () => {
     await seed(1, 'allowed')

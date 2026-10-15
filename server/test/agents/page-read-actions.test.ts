@@ -137,9 +137,15 @@ const setup = (
   }
   registerPageReadActions(kernel, pageReadDependencies)
   const validatePageEvidence = createPageEvidenceValidator(pageReadDependencies)
-  const execute = (name: AgentActionName, input: unknown, knowledgeContext?: AgentKnowledgeContext, executionAuth: RequestAuthContext<Express.User> = auth) =>
+  const execute = (
+    name: AgentActionName,
+    input: unknown,
+    knowledgeContext?: AgentKnowledgeContext,
+    executionAuth: RequestAuthContext<Express.User> = auth,
+    executionRequestId = requestId
+  ) =>
     kernel.execute({
-      authority: createActionAuthority(name, requestId, executionAuth, admission),
+      authority: createActionAuthority(name, executionRequestId, executionAuth, admission),
       actionCallId,
       input,
       ...(knowledgeContext ? { knowledgeContext } : {}),
@@ -1215,7 +1221,7 @@ describe('permission-safe page read actions', () => {
     })
   })
 
-  it('issues signed bounded patch snapshots and unions disclosures for the same request', async () => {
+  it('unions bounded patch disclosures only within the same agent run', async () => {
     const source = 'one\ntwo\nthree\n'
     const { execute } = setup({ get: async () => page({ content: source }) })
     const first = (await execute('pages.readForPatch', { pageId: 42, ranges: [{ startLine: 1, endLine: 1 }] })) as {
@@ -1228,15 +1234,19 @@ describe('permission-safe page read actions', () => {
       documentTag: expect.stringMatching(/^[a-f0-9]{12}$/),
       disclosed: [{ startLine: 1, endLine: 1 }]
     })
-    const second = (await execute('pages.readForPatch', {
+    const continuationInput = {
       pageId: 42,
       ranges: [{ startLine: 3, endLine: 3 }],
       previousSnapshotToken: first.snapshotToken
-    })) as { disclosed: Array<{ startLine: number; endLine: number }> }
+    }
+    const second = (await execute('pages.readForPatch', continuationInput)) as { disclosed: Array<{ startLine: number; endLine: number }> }
     expect(second.disclosed.map(range => [range.startLine, range.endLine])).toEqual([
       [1, 1],
       [3, 3]
     ])
+    await expect(
+      Promise.resolve(execute('pages.readForPatch', continuationInput, undefined, auth, '00000000-0000-4000-8000-000000000003'))
+    ).rejects.toMatchObject({ code: 'STALE_SNAPSHOT' })
   })
 
   it('rejects patch snapshots for non-Markdown pages', async () => {
