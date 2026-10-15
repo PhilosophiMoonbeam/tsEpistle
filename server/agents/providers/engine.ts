@@ -7542,7 +7542,14 @@ export class AxAgentEngine implements AgentEngine {
               requestBytes: Buffer.byteLength(JSON.stringify(nativeRequest)),
               confidenceFloor: 0.8,
               literalSupportCount,
-              failure: failed ? { code: failed.code, providerStatus: failed.providerStatus } : null
+              failure: failed
+                ? {
+                    code: failed.code,
+                    providerStatus: failed.providerStatus,
+                    nativeErrorName: failed.nativeErrorName,
+                    transportErrorCode: failed.transportErrorCode
+                  }
+                : null
             }
           })
           if (

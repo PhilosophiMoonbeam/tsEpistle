@@ -508,6 +508,45 @@ describe('decision provider protocols', () => {
     expect(calls).toBe(1)
   })
 
+  for (const mode of ['malformed-json', 'failed-stream'] as const) {
+    it(`keeps only safe native identifiers after a successful HTTP response with ${mode}`, async () => {
+      let calls = 0
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => {
+          calls++
+          const body =
+            mode === 'malformed-json'
+              ? 'private-provider-detail fixture-private'
+              : new ReadableStream({
+                  start(controller) {
+                    controller.error(
+                      Object.assign(new TypeError('private-provider-detail fixture-private'), {
+                        code: 'fixture-private',
+                        cause: Object.assign(new Error('private-provider-detail fixture-private'), { code: 'UND_ERR_SOCKET' })
+                      })
+                    )
+                  }
+                })
+          return new Response(body, { headers: { 'content-type': 'application/json' } })
+        })
+      })
+      const failure = await client.executeBatch(native, 'fixture-private', batchRequest).catch((value: unknown) => value)
+      expect(failure).toBeInstanceOf(DecisionProviderFailure)
+      expect(failure).toMatchObject({
+        code: 'DECISION_PROVIDER_FAILED',
+        status: 502,
+        providerStatus: 200,
+        nativeErrorName: mode === 'malformed-json' ? 'SyntaxError' : 'TypeError',
+        transportErrorCode: mode === 'malformed-json' ? null : 'UND_ERR_SOCKET',
+        usage: null
+      })
+      expect(JSON.stringify(failure)).not.toContain('fixture-private')
+      expect(JSON.stringify(failure)).not.toContain('private-provider-detail')
+      expect(calls).toBe(1)
+    })
+  }
+
   it('bounds response bodies even without Content-Length', async () => {
     const client = new DecisionProviderClient({ resolve: publicDns, fetch: fakeFetch(() => new Response('x'.repeat(256 * 1_024 + 1))) })
     await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({ code: 'INVALID_DECISION_RESPONSE' })

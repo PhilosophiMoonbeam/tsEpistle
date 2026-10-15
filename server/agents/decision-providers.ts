@@ -195,11 +195,41 @@ export const decisionCostMicros = (cost: DecisionResult['estimatedCost']): numbe
   return micros
 }
 
+const SAFE_NATIVE_ERROR_NAMES = new Set(['Error', 'TypeError', 'SyntaxError', 'RangeError', 'AggregateError', 'AbortError', 'TimeoutError'])
+const SAFE_TRANSPORT_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EPROTO',
+  'ETIMEDOUT',
+  'CERT_HAS_EXPIRED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'ERR_INVALID_ARG_TYPE',
+  'ERR_INVALID_STATE',
+  'ERR_ENCODING_INVALID_ENCODED_DATA',
+  'ERR_ZLIB_INITIALIZATION_FAILED',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_RES_CONTENT_LENGTH_MISMATCH',
+  'UND_ERR_NOT_SUPPORTED',
+  'Z_BUF_ERROR',
+  'Z_DATA_ERROR'
+])
+
 /** Safe failures retain independently measured usage even when classification is rejected. */
 export class DecisionProviderFailure extends AgentRepositoryError {
   readonly providerId: string
   readonly providerRevision: number
   readonly providerStatus: number | null
+  readonly nativeErrorName: string | null
+  readonly transportErrorCode: string | null
   readonly usage: DecisionResult['usage'] | null
   readonly latencyMs: number
   readonly estimatedCost: DecisionResult['estimatedCost']
@@ -210,15 +240,27 @@ export class DecisionProviderFailure extends AgentRepositoryError {
     usage: DecisionResult['usage'] | null,
     latencyMs: number,
     status?: number,
-    providerStatus?: number
+    providerStatus?: number,
+    nativeError?: unknown
   ) {
     super(code, 'Decision provider request could not be completed', status ?? (code === 'DECISION_ABORTED' ? 499 : 502))
     this.providerId = snapshot.id
     this.providerRevision = snapshot.revision
     this.providerStatus =
-      typeof providerStatus === 'number' && Number.isInteger(providerStatus) && providerStatus >= 300 && providerStatus <= 599 ? providerStatus : null
+      typeof providerStatus === 'number' && Number.isInteger(providerStatus) && providerStatus >= 100 && providerStatus <= 599 ? providerStatus : null
     this.usage = usage
     this.latencyMs = latencyMs
+    this.nativeErrorName = null
+    this.transportErrorCode = null
+    // Retain fixed identifiers, never provider text, stacks, or raw causes.
+    // A bounded walk also handles fetch's AggregateError without cycle state.
+    for (let cause = nativeError, depth = 0; cause instanceof Error && depth < 4; depth++) {
+      if (this.nativeErrorName === null && SAFE_NATIVE_ERROR_NAMES.has(cause.name)) this.nativeErrorName = cause.name
+      const transportCode = 'code' in cause ? cause.code : undefined
+      if (this.transportErrorCode === null && typeof transportCode === 'string' && SAFE_TRANSPORT_ERROR_CODES.has(transportCode))
+        this.transportErrorCode = transportCode
+      cause = cause.cause ?? (cause instanceof AggregateError ? cause.errors[0] : undefined)
+    }
     try {
       this.estimatedCost = estimateDecisionCost(snapshot.config.pricing, usage)
       this.estimatedCostMicros = decisionCostMicros(this.estimatedCost)
@@ -452,8 +494,8 @@ export class DecisionProviderClient {
         } satisfies UndiciRequestInit) as unknown as Promise<Response>,
         signal
       )
+      providerStatus = response.status
       if (!response.ok || response.status >= 300) {
-        providerStatus = response.status
         await response.body?.cancel().catch(() => {})
         throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider request failed', 502)
       }
@@ -684,7 +726,8 @@ export class DecisionProviderClient {
         usage,
         Math.max(0, performance.now() - started),
         failure instanceof AgentRepositoryError && code === failure.code ? failure.status : undefined,
-        providerStatus
+        providerStatus,
+        failure
       )
     }
   }

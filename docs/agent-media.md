@@ -94,10 +94,11 @@ allowing attachment statements to satisfy missing Wiki facts or recent-page
 obligations. Ownership, input capability and payload authority are rechecked
 before count, dispatch and publication; model perception remains fallible.
 
-Failed native verification records only its local failure code and, when received,
-the bounded upstream HTTP status in `model.turn.verification.failure`. Provider
-bodies and credentials remain redacted. Missing usage retains conservative
-exposure rather than manufacturing a zero-cost receipt.
+Failed native verification records its local failure code, received HTTP status
+(including a successful status with an unreadable body), and allowlisted native
+error class / transport code in `model.turn.verification.failure`. Provider bodies,
+messages, stacks, credentials and raw causes remain redacted. Missing usage retains
+conservative exposure rather than manufacturing a zero-cost receipt.
 
 ### Context window and accounting
 
