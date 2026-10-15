@@ -156,16 +156,16 @@ const agentDiscoveryVisibility = (query: Knex.QueryBuilder): void => {
 export const lockSkillAdmissionPrincipal = async (transaction: Knex.Transaction, userIdValue: number): Promise<readonly number[]> => {
   const userId = UserIdSchema.parse(userIdValue)
   await transaction('groups').select('id').orderBy('id').forShare()
-  const owner = await transaction('users').where({ id: userId }).forShare().first('id')
+  // Take the final owner lock before reading memberships. Concurrent live
+  // authorization and admission must not both hold SHARE and then upgrade.
+  const ownerLock = transaction('users').where({ id: userId })
+  if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') ownerLock.forNoKeyUpdate()
+  else ownerLock.forUpdate()
+  const owner = await ownerLock.first('id')
   if (!owner) throw new SkillValidationError('Authenticated user is required')
   const rows = (await transaction('userGroups').where({ userId }).orderBy('groupId').select('groupId')) as Array<{ groupId: number | string }>
   const groupIds = rows.map(row => Number(row.groupId))
   if (!groupIds.every(groupId => Number.isSafeInteger(groupId) && groupId > 0)) throw new SkillValidationError('Authenticated user groups are invalid')
-  const ownerLock = transaction('users').where({ id: userId })
-  if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') ownerLock.forNoKeyUpdate()
-  else ownerLock.forUpdate()
-  const locked = await ownerLock.first('id')
-  if (!locked) throw new SkillValidationError('Authenticated user is required')
   return [...new Set(groupIds)].sort((left, right) => left - right)
 }
 
@@ -598,5 +598,4 @@ export class SkillRuntime {
       .where('preferences.ownerId', principal.userId)
       .orderBy('preferences.ordinal') as Promise<PreferredSkill[]>
   }
-
 }

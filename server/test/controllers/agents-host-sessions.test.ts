@@ -19,7 +19,7 @@ import { persistProposal, type PersistedProposal } from '../../agents/proposals/
 import pageErrors from '../../helpers/error.ts'
 import operationErrors from '../../operations/errors.ts'
 import type pageOperations from '../../operations/pages.ts'
-import { AgentMediaProviderRegistry } from '../../agents/media-providers.ts'
+import { AgentMediaProviderRegistry, assertAgentMediaBinding } from '../../agents/media-providers.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
 import { selectAgentGoalTokenBudget } from '../../agents/goals.ts'
@@ -473,6 +473,7 @@ describe('ordinary-origin agent session API', () => {
   let engineFailure: unknown = null
   let engineContextLimit: AgentEngineResult['contextLimit']
   const runtimeLogs: unknown[] = []
+  const requestLogs: unknown[] = []
   const auxiliaryRuntimes = new Set<AgentProductRuntime>()
   const auxiliaryCoordinators = new Set<AgentRunCoordinator>()
   const trackAuxiliaryRuntime = <T extends AgentProductRuntime>(candidate: T): T => {
@@ -707,6 +708,7 @@ describe('ordinary-origin agent session API', () => {
     engineFailure = null
     engineContextLimit = undefined
     runtimeLogs.length = 0
+    requestLogs.length = 0
     ;({ db, destroy: destroyDatabase } = await createAgentMediaTestDatabase(postgresConnection))
     await createTables(db)
     await addAgentMedia(db)
@@ -822,6 +824,7 @@ describe('ordinary-origin agent session API', () => {
     })
     app.use(
       createAgentsHostController({
+        logger: { error: (error: unknown) => requestLogs.push(error) },
         auth: {
           async loadPageRuleAuthority(requester, transaction) {
             await assetAuthorityHook?.(transaction)
@@ -3095,6 +3098,173 @@ describe('ordinary-origin agent session API', () => {
       })
     )
   })
+
+  it('keeps unexpected database errors internal while preserving typed public errors', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    let databaseError: unknown
+    sessionConfigurationHook = async transaction => {
+      try {
+        await transaction.raw('SELECT ? FROM "agent_request_failure_missing_table"', ['postgresql://fixture:private-provider-token@invalid/database'])
+      } catch (error) {
+        databaseError = error
+        throw error
+      }
+    }
+    const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+    expect(response.status).toBe(500)
+    const publicFailure = await response.json()
+    expect(publicFailure.error).toBe('AGENT_REQUEST_FAILED')
+    expect(JSON.stringify(publicFailure)).not.toMatch(/agent_request_failure_missing_table|private-provider-token|postgresql:\/\//u)
+    expect(databaseError).toBeInstanceOf(Error)
+
+    for (const status of [409, 503]) {
+      sessionConfigurationHook = async () => {
+        throw new AgentRepositoryError('PROFILE_RESOLUTION_CHANGED', status >= 500 ? 'private-provider-token' : 'Provider configuration changed', status)
+      }
+      const typed = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
+      expect(typed.status).toBe(status)
+      const publicTyped = await typed.json()
+      expect(publicTyped.error).toBe('PROFILE_RESOLUTION_CHANGED')
+      expect(JSON.stringify(publicTyped)).not.toContain('private-provider-token')
+    }
+  })
+
+  ;(postgresConnection ? it : it.skip)(
+    'serializes live media authorization with same-key HTTP replay and changed input without a principal-lock deadlock',
+    async () => {
+      await enableTestMedia()
+      const imageProvider = (await mediaRegistry.list({ id: 7, authVersion: 1 })).find(provider => provider.config.kind === 'image')!
+      const sessionId = randomUUID()
+      await insertAccountingSession(sessionId)
+      const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+      const input = {
+        clientRequestId: randomUUID(),
+        expectedSessionVersion: 1,
+        profileResolutionToken: 'test',
+        content: 'Answer while live authorization runs.',
+        generationTools: ['image']
+      }
+      const post = (body: unknown) =>
+        fetch(`${baseUrl}/_api/agents/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10_000)
+        })
+      // These are watchdogs, not scheduling delays: real PostgreSQL lock waits
+      // and HTTP sockets cannot be advanced with fake timers. Barriers below
+      // advance only after promises or pg_blocking_pids observe the real edge.
+      const bounded = async <T>(promise: Promise<T>, label: string): Promise<T> => {
+        let timer: NodeJS.Timeout | undefined
+        try {
+          return await Promise.race([
+            promise,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error(`${label} did not finish`)), 10_000)
+            })
+          ])
+        } finally {
+          clearTimeout(timer)
+        }
+      }
+      const waitForBlockedBackend = async (blockers: readonly number[], excluded: readonly number[] = []): Promise<number> => {
+        const deadline = performance.now() + 3_000
+        do {
+          const waiting = await db('pg_stat_activity')
+            .where('datname', db.raw('current_database()'))
+            .whereRaw('pid <> pg_backend_pid()')
+            .whereRaw('pg_blocking_pids(pid) && ?::integer[]', [blockers])
+            .whereNotIn('pid', [...excluded])
+            .first<{ pid: number }>('pid')
+          if (waiting) return waiting.pid
+        } while (performance.now() < deadline)
+        throw new Error('Expected the request to reach the held PostgreSQL authorization boundary')
+      }
+      const engineEntered = Promise.withResolvers<void>()
+      const authorize = Promise.withResolvers<void>()
+      revokeMediaInEngine = async () => {
+        engineEntered.resolve()
+        await bounded(authorize.promise, 'live authorization release')
+        // The real provider factory performs this authorization in its own
+        // transaction immediately before dispatch, outside coordinator locks.
+        await assertAgentMediaBinding(db, 7, 'image', imageProvider.profileVersionId!)
+      }
+      let holder: Knex.Transaction | undefined
+      let worker: Promise<boolean> | undefined
+      let changed: Promise<Response> | undefined
+      try {
+        const admitted = await post(input)
+        expect(admitted.status).toBe(202)
+        const admission = (await admitted.json()) as { run: { id: string } }
+        const accepted = await db('agentRuns').where({ id: admission.run.id }).first('clientRequestSha256', 'providerProfileVersionId')
+        worker = runtime.runOnce()
+        await bounded(engineEntered.promise, 'engine entry')
+        expect((await db('agentRuns').where({ id: admission.run.id }).first('status')).status).toBe('running')
+        const replay = await post(input)
+        expect(replay.status).toBe(202)
+        expect(await replay.json()).toMatchObject({ run: { id: admission.run.id }, replayed: true })
+
+        holder = await db.transaction()
+        await holder.raw('LOCK TABLE "userGroups" IN ACCESS EXCLUSIVE MODE')
+        const { rows } = await holder.raw<{ rows: Array<{ pid: number }> }>('SELECT pg_backend_pid() AS pid')
+        const holderPid = rows[0]!.pid
+        authorize.resolve()
+        const workerPid = await waitForBlockedBackend([holderPid])
+        changed = post({ ...input, content: `${input.content} Changed.` })
+        // Before the fix both transactions reached memberships holding SHARE
+        // on users, then deadlocked upgrading after this barrier was released.
+        // With the final owner lock first, admission waits on the worker instead.
+        const admissionPid = await waitForBlockedBackend([holderPid, workerPid], [workerPid])
+        expect(admissionPid).not.toBe(workerPid)
+        await holder.commit()
+        holder = undefined
+        const mismatch = await bounded(changed, 'changed-input admission')
+        expect(mismatch.status).toBe(409)
+        expect(await mismatch.json()).toMatchObject({ error: 'RUN_IDEMPOTENCY_MISMATCH' })
+        expect(await bounded(worker, 'live worker settlement')).toBe(true)
+        expect(await db('agentRuns').where({ id: admission.run.id }).first('clientRequestSha256', 'providerProfileVersionId')).toEqual(accepted)
+        expect(
+          normalizeAccountingRow(await db('agentRuns').where({ id: admission.run.id }).first('status', 'inputTokens', 'outputTokens', 'totalTokens'))
+        ).toEqual({
+          status: 'succeeded',
+          inputTokens: 3,
+          outputTokens: 5,
+          totalTokens: 8
+        })
+        expect(await db('agentRuns').where({ sessionId })).toHaveLength(1)
+        expect(await db('agentMessages').where({ sessionId })).toHaveLength(2)
+        expect(await db('agentQuotaReservations').where({ runId: admission.run.id })).toHaveLength(1)
+        expect(
+          normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: admission.run.id }).first('status', 'consumedTokens', 'consumedCostMicros'))
+        ).toEqual({
+          status: 'consumed',
+          consumedTokens: 8,
+          consumedCostMicros: 8
+        })
+        expect(
+          normalizeAccountingRow(
+            await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'reservedCostMicros', 'consumedTokens', 'consumedCostMicros')
+          )
+        ).toEqual({
+          reservedTokens: 0,
+          reservedCostMicros: 0,
+          consumedTokens: 8,
+          consumedCostMicros: 8
+        })
+        expect(await db('agentEvents').where({ runId: admission.run.id, type: 'run.queued' })).toHaveLength(1)
+        expect(await db('agentEvents').where({ runId: admission.run.id, type: 'run.completed' })).toHaveLength(1)
+        expect(requestLogs).toEqual([])
+        expect(runtimeLogs).toEqual([])
+      } finally {
+        authorize.resolve()
+        if (holder) await holder.rollback()
+        await bounded(Promise.allSettled([...(worker ? [worker] : []), ...(changed ? [changed] : [])]), 'concurrency cleanup')
+      }
+    },
+    30_000
+  )
 
   it('retains complete owned reads once across cached followups, preserves historical versions, and rejects corrupt receipts', async () => {
     const ownedSession = randomUUID()
@@ -5492,6 +5662,7 @@ describe('ordinary-origin agent API routing', () => {
     })
     app.use(
       createAgentsHostController({
+        logger: console,
         auth: {
           authenticate(req, _res, next) {
             ordinaryAuthCalls += 1

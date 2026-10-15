@@ -92,6 +92,7 @@ describe('independent media provider administration over HTTP', () => {
     })
     app.use(
       createAgentsHostController({
+        logger: console,
         auth: {
           authenticate(req, _res, next) {
             req.authContext = { kind: 'user', userId: ownerId, ownershipUserId: ownerId, principal: { id: ownerId } }

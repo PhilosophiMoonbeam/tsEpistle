@@ -79,6 +79,7 @@ describe('agents-host skill administration', () => {
     })
     app.use(
       createAgentsHostController({
+        logger: console,
         auth: {
           authenticate(req, _res, next) {
             req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
