@@ -12,6 +12,11 @@ import {
 import { storageRecord, storageTargetView, type StorageConfigurationRow } from '../repositories/storage-configuration.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
+import { nativeStorageMutationConfigurationKey } from '../helpers/storage-configuration-key.ts'
+import { lockAssetMutationFence } from '../helpers/asset-location-lock.ts'
+import { lockSearchIndex } from '../helpers/search-contract.ts'
+import { assertStorageTargetPathsAvailable } from '../helpers/storage-path-admission.ts'
+import { rebindAssetRelocationConfiguration } from '../jobs/asset-relocation.ts'
 import errors from './errors.ts'
 
 const stable = (value: unknown): string =>
@@ -115,6 +120,10 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
       const parsed = schema.safeParse(input)
       if (!parsed.success) return fail('Provide a complete storage draft, current review and administrative reason.')
       const publish = async (tx: Knex.Transaction) => {
+        // Match canonical writer order before state() acquires target UPDATE locks.
+        // These fences retain absent page/asset paths through publication commit.
+        await lockAssetMutationFence(tx)
+        await lockSearchIndex(tx, true)
         const current = await state(tx, requester, true),
           draft = parsed.data
         if (await tx('storageOperations').whereIn('state', ['queued', 'running', 'interrupted']).first('id'))
@@ -126,6 +135,19 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
           current.rows.some(row => !draft.targets.some(d => d.key === row.key))
         )
           return fail('Include each current storage target exactly once.')
+        const assertDestinationChangeAllowed = async (original: StorageConfigurationRow, next: StorageConfigurationRow): Promise<boolean> => {
+          if (nativeStorageMutationConfigurationKey(original) === nativeStorageMutationConfigurationKey(next)) return false
+          // state() owns ordered target UPDATE locks. Canonical admission holds SHARE
+          // locks through commit, so no admitted old-destination work can pass this check.
+          const outstanding = await tx('durableJobs')
+            .where({ type: 'storage-mutation', version: 1 })
+            .whereNot('state', 'succeeded')
+            .whereRaw("??::jsonb ->> 'targetKey' = ?", ['payload', original.key])
+            .first('id')
+          if (outstanding)
+            return fail('Canonical storage changes are still outstanding. Restore access to the existing destination and let them finish before disabling or changing its destination or mode.', 409)
+          return true
+        }
         const changes: StorageConfigurationEvent['targets'] = []
         for (const target of draft.targets) {
           const original = current.rows.find(row => row.key === target.key)!,
@@ -142,6 +164,9 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
             )
               return fail('An unavailable target may only be disabled.')
             if (original.isEnabled) {
+              const next = { ...original, isEnabled: false }
+              await rebindAssetRelocationConfiguration(tx, original, next)
+              await assertDestinationChangeAllowed(original, next)
               await tx('storage').where('key', target.key).update({ isEnabled: false })
               changes.push({ key: target.key, fields: ['isEnabled'] })
             }
@@ -198,6 +223,11 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
           for (const key of ['isEnabled', 'mode', 'syncInterval'] as const)
             if ((key === 'syncInterval' ? syncInterval : target[key]) !== original[key]) fields.push(key)
           if (!fields.length) continue
+          const next = { ...original, isEnabled: target.isEnabled, mode: target.mode, syncInterval, config }
+          await rebindAssetRelocationConfiguration(tx, original, next)
+          const destinationChanged = await assertDestinationChangeAllowed(original, next)
+          if (next.isEnabled && destinationChanged)
+            await assertStorageTargetPathsAvailable(tx, next)
           await tx('storage')
             .where('key', target.key)
             .update({ isEnabled: target.isEnabled, mode: target.mode, syncInterval, config: JSON.stringify(config) })

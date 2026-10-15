@@ -4,6 +4,9 @@ import type { DurableJob, DurableJobHandler } from '../core/durable-jobs.ts'
 import { DurableJobStore } from '../core/durable-jobs.ts'
 import { isRecord } from '../models/moduleTypes.ts'
 import { withAssetLocationLocks } from '../helpers/asset-location-lock.ts'
+import { nativeStorageMutationConfigurationKey, storageConfigurationKey } from '../helpers/storage-configuration-key.ts'
+import type { StorageConfigurationRow } from '../repositories/storage-configuration.ts'
+import errors from '../operations/errors.ts'
 interface AssetRelocationPayload {
   operationId: string
   effectId: string
@@ -121,6 +124,97 @@ const readPayload = (payload: unknown): AssetRelocationPayload => {
     targetConfigurationRevision: readString('targetConfigurationRevision'),
     authorName: readString('authorName'),
     authorEmail: readString('authorEmail')
+  }
+}
+
+const immutablePayloadFields = [
+  'operationId', 'effectId', 'assetId', 'sourcePath', 'destinationPath', 'sourceHash', 'destinationHash',
+  'contentSha256', 'targetKey', 'authorName', 'authorEmail'
+] as const
+
+const payloadMatchesLedger = (payload: AssetRelocationPayload, effect: RelocationEffectRow, operation: RelocationOperationRow): boolean =>
+  payload.effectId === effect.id &&
+  payload.operationId === operation.id &&
+  effect.operationId === operation.id &&
+  operation.assetId === effect.assetId &&
+  payload.assetId === effect.assetId &&
+  payload.sourcePath === effect.sourcePath &&
+  payload.destinationPath === effect.destinationPath &&
+  payload.contentSha256 === effect.contentSha256 &&
+  payload.targetKey === effect.targetKey &&
+  payload.targetConfigurationRevision === effect.targetConfigurationRevision &&
+  payload.sourceHash === operation.sourceHash &&
+  payload.destinationHash === operation.destinationHash &&
+  payload.contentSha256 === operation.contentSha256 &&
+  operation.sourcePath === effect.sourcePath &&
+  operation.destinationPath === effect.destinationPath
+
+type RelocationConfiguration = Pick<StorageConfigurationRow, 'key' | 'isEnabled' | 'mode' | 'syncInterval' | 'config'>
+interface RelocationConfigurationJobRow {
+  id: string
+  type: string
+  version: number
+  payload: string
+  state: string
+}
+
+const configurationTransitionBlocked = (): Error => new errors.ApplicationError(
+  'Outstanding asset relocation must retain its known destination and configuration history. Restore the existing target before retrying this change.',
+  { status: 409, code: 'ASSET_RELOCATION_CONFIGURATION_CONFLICT' }
+)
+
+/**
+ * An authorized control-plane transition, under asset → search → target fences.
+ * Existing relocation hashes are rebound only from the exact known original configuration.
+ * This does not reinterpret unknown historical hashes or alter receipts/leases/retry policy.
+ */
+export const rebindAssetRelocationConfiguration = async (
+  transaction: Knex.Transaction,
+  original: RelocationConfiguration,
+  next: RelocationConfiguration
+): Promise<void> => {
+  const effects = await transaction<RelocationEffectRow>(effectsTable).where('targetKey', original.key)
+    .whereNot('status', 'succeeded').orderBy('id').forUpdate()
+  if (effects.length === 0) return
+  if (original.key !== next.key || nativeStorageMutationConfigurationKey(original) !== nativeStorageMutationConfigurationKey(next)) {
+    throw configurationTransitionBlocked()
+  }
+  const oldRevision = storageConfigurationKey(original)
+  const nextRevision = storageConfigurationKey(next)
+  const transitions: Array<{ effect: RelocationEffectRow; job: RelocationConfigurationJobRow; rawPayload: Record<string, unknown> }> = []
+  for (const effect of effects) {
+    const operation = await transaction<RelocationOperationRow>(operationsTable).where('id', effect.operationId).forUpdate().first()
+    const job = await transaction<RelocationConfigurationJobRow>('durableJobs').where('id', effect.jobId).forUpdate().first()
+    if (!operation || !job || job.type !== 'asset-relocation' || job.version !== 1 ||
+      effect.targetConfigurationRevision !== oldRevision || job.state === 'succeeded') throw configurationTransitionBlocked()
+    let rawPayload: unknown
+    let payload: AssetRelocationPayload
+    try {
+      rawPayload = JSON.parse(job.payload)
+      payload = readPayload(rawPayload)
+    } catch {
+      throw configurationTransitionBlocked()
+    }
+    if (!isRecord(rawPayload) || payload.targetConfigurationRevision !== oldRevision || !payloadMatchesLedger(payload, effect, operation)) {
+      throw configurationTransitionBlocked()
+    }
+    const existingReceipt = await transaction<RelocationEffectRow>(effectsTable)
+      .where('operationId', effect.operationId).where('targetKey', effect.targetKey)
+      .where('targetConfigurationRevision', nextRevision).whereNot('id', effect.id).first('id')
+    if (existingReceipt) throw configurationTransitionBlocked()
+    transitions.push({ effect, job, rawPayload })
+  }
+  if (nextRevision === oldRevision) return
+  const now = new Date()
+  for (const transition of transitions) {
+    const updatedEffect = await transaction(effectsTable)
+      .where({ id: transition.effect.id, jobId: transition.job.id, targetConfigurationRevision: oldRevision })
+      .update({ targetConfigurationRevision: nextRevision, updatedAt: now })
+    if (updatedEffect !== 1) throw configurationTransitionBlocked()
+    // The deduplication key remains the immutable admission identity, not a new operation.
+    const updatedJob = await transaction('durableJobs').where({ id: transition.job.id, type: 'asset-relocation', version: 1 })
+      .update({ payload: JSON.stringify({ ...transition.rawPayload, targetConfigurationRevision: nextRevision }), updatedAt: now })
+    if (updatedJob !== 1) throw configurationTransitionBlocked()
   }
 }
 
@@ -300,7 +394,8 @@ const recordEffectFailure = async (knex: Knex, effect: RelocationEffectRow, job:
 export const createAssetRelocationHandler =
   (): DurableJobHandler =>
   async (job, { knex, signal }) => {
-    const payload = readPayload(job.payload)
+    const claimedPayload = readPayload(job.payload)
+    let payload = claimedPayload
     return withAssetLocationLocks(
       ['assets'],
       async assertHeld => {
@@ -315,6 +410,16 @@ export const createAssetRelocationHandler =
         try {
           await knex.transaction(async transaction => {
             await requireCurrentLease(transaction, job)
+            const stored = await transaction<RelocationConfigurationJobRow>('durableJobs')
+              .where('id', job.id).where('type', job.type).where('version', job.version).where('state', 'running')
+              .where('leaseOwner', job.leaseOwner).where('leaseToken', job.leaseToken)
+              .where('leaseExpiresAt', '>', new Date()).first('payload')
+            if (!stored || job.type !== 'asset-relocation' || job.version !== 1) throw new Error('Asset relocation durable lease is no longer current')
+            const persistedPayload = readPayload(JSON.parse(stored.payload))
+            if (immutablePayloadFields.some(field => persistedPayload[field] !== claimedPayload[field])) {
+              throw new AssetRelocationIntegrityError('Asset relocation claim does not match its persisted intent')
+            }
+            payload = persistedPayload
             effect = await transaction<RelocationEffectRow>(effectsTable)
               .where({ id: payload.effectId, operationId: payload.operationId, jobId: job.id })
               .forUpdate()
@@ -328,20 +433,7 @@ export const createAssetRelocationHandler =
             if (effect.status === 'superseded') throw new Error('Asset relocation effect has an unresolved superseded state')
             operation = await transaction<RelocationOperationRow>(operationsTable).where({ id: payload.operationId }).forUpdate().first()
             if (!operation) throw new AssetRelocationIntegrityError('Asset relocation operation is missing')
-            if (
-              operation.assetId !== effect.assetId ||
-              payload.assetId !== effect.assetId ||
-              payload.sourcePath !== effect.sourcePath ||
-              payload.destinationPath !== effect.destinationPath ||
-              payload.contentSha256 !== effect.contentSha256 ||
-              payload.targetKey !== effect.targetKey ||
-              payload.targetConfigurationRevision !== effect.targetConfigurationRevision ||
-              payload.sourceHash !== operation.sourceHash ||
-              payload.destinationHash !== operation.destinationHash ||
-              payload.contentSha256 !== operation.contentSha256 ||
-              operation.sourcePath !== effect.sourcePath ||
-              operation.destinationPath !== effect.destinationPath
-            ) {
+            if (!payloadMatchesLedger(payload, effect, operation)) {
               throw new AssetRelocationIntegrityError('Asset relocation effect integrity check failed')
             }
             const asset = await transaction<AssetRow>('assets').where({ id: effect.assetId }).forUpdate().first('id', 'hash')
