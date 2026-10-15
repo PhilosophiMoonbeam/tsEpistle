@@ -44,7 +44,7 @@ import { wikiStore } from '@/store/index.ts'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
-import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
+import { createSourceAuthoring, type SourceAuthoring } from '../../helpers/editor-source-authoring'
 import type { ContentInsertOptions, LineInsertOptions, MultiLineInsertOptions } from './common/editor-types'
 import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
 import { EditorAdapterController } from './common/editor-adapter'
@@ -72,7 +72,7 @@ export default defineComponent({
       editorAdapter: null as EditorAdapterController | null,
       cm: null as TextEditorHandle | null,
       imageAuthoring: null as Raw<ReturnType<typeof createSourceImageAuthoring>> | null,
-      sourceAuthoring: null as Raw<ReturnType<typeof createSourceAuthoring>> | null,
+      sourceAuthoring: null as Raw<SourceAuthoring> | null,
       cursorPos: { ch: 0, line: 0 } as TextPosition
     }
   },
