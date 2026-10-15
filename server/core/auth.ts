@@ -1,4 +1,5 @@
 import type { AuthenticationRuntime } from '../../shared/authentication-policy.ts'
+import type { GroupRuleMatch } from '../../shared/group-policy.ts'
 import { accountSessionIsCurrent, sessionVersion } from '../helpers/account-session.ts'
 import { tagAliasMap, type TagIdentity } from '../helpers/tag-aliases.ts'
 import type { SystemRequester } from '../helpers/system-authority.ts'
@@ -31,7 +32,6 @@ import {
 export type { PageRuleAuthority, PageRuleRequesterBinding } from '../helpers/group-access.ts'
 
 type UnknownRecord = Record<string, unknown>
-type PageRuleMatch = 'START' | 'END' | 'REGEX' | 'TAG' | 'EXACT'
 
 interface GroupRecord extends UnknownRecord {
   id: number
@@ -42,7 +42,7 @@ interface GroupRecord extends UnknownRecord {
 interface PageRule {
   deny: boolean
   locales?: string[]
-  match: PageRuleMatch
+  match: GroupRuleMatch
   path: string
   roles: string[]
 }
@@ -94,7 +94,6 @@ interface JwtUser extends Express.User {
   groups: number[]
   permissions?: string[]
 }
-
 
 interface AuthenticationError extends Error {
   code: string
@@ -198,18 +197,6 @@ interface WikiContext extends UnknownRecord {
   startedAt: DateTime
 }
 
-interface RuleState {
-  deny: boolean
-  match: PageRuleMatch | false
-  specificity: string
-}
-
-interface RuleApplication {
-  checkState: RuleState
-  higherPriority?: PageRuleMatch[]
-  rule: PageRule
-}
-
 interface EffectivePermissions {
   comments: { read: boolean; write: boolean; manage: boolean }
   pages: { read: boolean; write: boolean; manage: boolean; delete: boolean; script: boolean; style: boolean }
@@ -249,7 +236,6 @@ interface AuthService {
   strategyStatus: Record<string, AuthenticationRuntime>
   subscribeToEvents(): void
   validApiKeys: number[]
-  _applyPageRuleSpecificity(application: RuleApplication): RuleState
 }
 
 const isRecord = (value: unknown): value is UnknownRecord => typeof value === 'object' && value !== null
@@ -323,8 +309,8 @@ const loadCurrentUser = (wiki: WikiContext, id: unknown): UserLookup =>
     .modifyGraph('groups', builder => {
       builder.select('groups.id', 'permissions')
     })
-const authorityMatches = (value: unknown): value is PageRuleMatch =>
-  value === 'START' || value === 'END' || value === 'REGEX' || value === 'TAG' || value === 'EXACT'
+const authorityMatches = (value: unknown): value is GroupRuleMatch =>
+  value === 'START' || value === 'SUBTREE' || value === 'END' || value === 'REGEX' || value === 'TAG' || value === 'EXACT'
 
 const authorityArray = (value: unknown, field: string): unknown[] => {
   if (Array.isArray(value)) return value
@@ -352,12 +338,7 @@ const authorityRule = (value: unknown): PageRule => {
     deny = value.deny,
     roles = value.roles,
     locales = value.locales
-  if (
-    (id !== undefined && typeof id !== 'string') ||
-    !authorityMatches(match) ||
-    typeof path !== 'string' ||
-    typeof deny !== 'boolean'
-  )
+  if ((id !== undefined && typeof id !== 'string') || !authorityMatches(match) || typeof path !== 'string' || typeof deny !== 'boolean')
     throw new Error('Authentication authority page rule is invalid')
   const parsedRoles = authorityStrings(roles, 'page rule roles'),
     parsedLocales = locales === undefined ? [] : authorityStrings(locales, 'page rule locales')
@@ -432,60 +413,53 @@ const selectedGroupIds = async (requester: AccessUser | undefined, transaction: 
   const binding = pageRuleRequesterBinding(requester)
   if (binding.kind === 'anonymous') return []
   if (binding.kind === 'apiKey') return [binding.groupId]
-  const rows = await transaction<{ groupId: unknown }>('userGroups')
-    .select('groupId')
-    .where('userId', binding.userId)
-    .orderBy('groupId')
+  const rows = await transaction<{ groupId: unknown }>('userGroups').select('groupId').where('userId', binding.userId).orderBy('groupId')
   const ids = rows.map(row => row.groupId)
-  if (!ids.every((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)) throw new Error('Authentication authority membership is invalid')
+  if (!ids.every((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0))
+    throw new Error('Authentication authority membership is invalid')
   return [...new Set(ids)].sort((left, right) => left - right)
 }
 
 const loadPageRuleAuthorityInTransaction = async (requester: AccessUser | undefined, transaction: Knex.Transaction): Promise<PageRuleAuthority> => {
   const groupIds = await selectedGroupIds(requester, transaction)
-  const tagRows = await transaction<AuthorityTagRow>('tags')
-    .select('id', 'tag', 'redirectToId', 'isArchived')
-    .orderBy('id')
-    .forShare()
+  const tagRows = await transaction<AuthorityTagRow>('tags').select('id', 'tag', 'redirectToId', 'isArchived').orderBy('id').forShare()
   const groupRows =
     groupIds.length === 0
       ? []
-      : await transaction<AuthorityGroupRow>('groups')
-          .select('id', 'name', 'permissions', 'pageRules')
-          .whereIn('id', groupIds)
-          .orderBy('id')
-          .forShare()
+      : await transaction<AuthorityGroupRow>('groups').select('id', 'name', 'permissions', 'pageRules').whereIn('id', groupIds).orderBy('id').forShare()
   return authoritySnapshot(requester, groupRows, tagRows)
 }
 
-export const loadPageRuleAuthority = async (
-  requester: AccessUser | undefined,
-  transaction?: Knex.Transaction
-): Promise<PageRuleAuthority> => {
+export const loadPageRuleAuthority = async (requester: AccessUser | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority> => {
   const wiki = getWiki()
   if (transaction) return loadPageRuleAuthorityInTransaction(requester, transaction)
-  return wiki.models.knex.transaction(
-    current => loadPageRuleAuthorityInTransaction(requester, current),
-    { isolationLevel: 'repeatable read' }
-  )
+  return wiki.models.knex.transaction(current => loadPageRuleAuthorityInTransaction(requester, current), { isolationLevel: 'repeatable read' })
 }
-
 
 const validAuthority = (value: unknown): value is PageRuleAuthority => {
   if (!isRecord(value) || Array.isArray(value)) return false
   if (value.requester !== undefined && (!isRecord(value.requester) || Array.isArray(value.requester))) return false
   if (!Array.isArray(value.permissions) || !value.permissions.every(permission => typeof permission === 'string')) return false
-  if (!Array.isArray(value.groups) || !value.groups.every(group => {
-    if (!isRecord(group) || Array.isArray(group) || typeof group.id !== 'number' || !Number.isSafeInteger(group.id) || group.id < 1) return false
-    if (group.name !== undefined && typeof group.name !== 'string') return false
-    if (group.permissions !== undefined && (!Array.isArray(group.permissions) || !group.permissions.every(permission => typeof permission === 'string'))) return false
-    return Array.isArray(group.pageRules) && group.pageRules.every(rule => {
-      if (!isRecord(rule) || Array.isArray(rule) || !authorityMatches(rule.match) || typeof rule.path !== 'string' || typeof rule.deny !== 'boolean') return false
-      if (rule.id !== undefined && typeof rule.id !== 'string') return false
-      if (!Array.isArray(rule.roles) || !rule.roles.every(role => typeof role === 'string')) return false
-      return rule.locales === undefined || (Array.isArray(rule.locales) && rule.locales.every(locale => typeof locale === 'string'))
+  if (
+    !Array.isArray(value.groups) ||
+    !value.groups.every(group => {
+      if (!isRecord(group) || Array.isArray(group) || typeof group.id !== 'number' || !Number.isSafeInteger(group.id) || group.id < 1) return false
+      if (group.name !== undefined && typeof group.name !== 'string') return false
+      if (group.permissions !== undefined && (!Array.isArray(group.permissions) || !group.permissions.every(permission => typeof permission === 'string')))
+        return false
+      return (
+        Array.isArray(group.pageRules) &&
+        group.pageRules.every(rule => {
+          if (!isRecord(rule) || Array.isArray(rule) || !authorityMatches(rule.match) || typeof rule.path !== 'string' || typeof rule.deny !== 'boolean')
+            return false
+          if (rule.id !== undefined && typeof rule.id !== 'string') return false
+          if (!Array.isArray(rule.roles) || !rule.roles.every(role => typeof role === 'string')) return false
+          return rule.locales === undefined || (Array.isArray(rule.locales) && rule.locales.every(locale => typeof locale === 'string'))
+        })
+      )
     })
-  })) return false
+  )
+    return false
   const aliases = value.tagAliases
   return isRecord(aliases) && !Array.isArray(aliases) && Object.values(aliases).every(alias => alias === null || typeof alias === 'string')
 }
@@ -495,8 +469,7 @@ const validAccessPage = (value: unknown): value is AccessPage => {
   if (value.locale !== undefined && typeof value.locale !== 'string') return false
   return (
     value.tags === undefined ||
-    (Array.isArray(value.tags) &&
-      value.tags.every(tag => isRecord(tag) && !Array.isArray(tag) && typeof tag.tag === 'string' && tag.tag.length > 0))
+    (Array.isArray(value.tags) && value.tags.every(tag => isRecord(tag) && !Array.isArray(tag) && typeof tag.tag === 'string' && tag.tag.length > 0))
   )
 }
 const verifyUserToken = (wiki: WikiContext, token: string, allowExpired = false): JwtUser | null => {
@@ -788,16 +761,6 @@ const auth: AuthService = {
   checkExclusiveAccess(user, includePermissions = [], excludePermissions = []) {
     const permissions = getPermissions(user)
     return includePermissions.some(permission => permissions.includes(permission)) && !excludePermissions.some(permission => permissions.includes(permission))
-  },
-
-  _applyPageRuleSpecificity({ rule, checkState, higherPriority = [] }) {
-    if (rule.path.length === checkState.specificity.length) {
-      if (checkState.match !== false && higherPriority.includes(checkState.match)) return checkState
-      if (rule.match === checkState.match && checkState.deny && !rule.deny) return checkState
-    } else if (rule.path.length < checkState.specificity.length) {
-      return checkState
-    }
-    return { deny: rule.deny, match: rule.match, specificity: rule.path }
   },
 
   async reloadGroups() {

@@ -425,10 +425,14 @@ const requesterFor = async (resolveRequester: PageReadActionDependencies['resolv
   if (!requester) throw new ActionKernelError('AUTHENTICATION_REQUIRED', 'The action principal no longer exists', 401)
   return requester
 }
+const relatedRequesterScope = (authority: ActionAuthority): string =>
+  authority.requester.kind === 'user' ? `user:${authority.requester.userId}` : `api-key:${authority.requester.apiKeyId}:group:${authority.requester.groupId}`
+
+// Stateless MCP reads and proposals have independent request IDs; agent snapshots remain run-bound.
 export const snapshotRequesterScope = (authority: ActionAuthority): string =>
-  authority.requester.kind === 'user'
-    ? `request:${authority.requestId}:user:${authority.requester.userId}`
-    : `request:${authority.requestId}:api-key:${authority.requester.apiKeyId}:group:${authority.requester.groupId}`
+  authority.transport === 'mcp' && authority.requester.kind === 'apiKey'
+    ? `mcp:${relatedRequesterScope(authority)}`
+    : `request:${authority.requestId}:${relatedRequesterScope(authority)}`
 
 const RelatedCursorPayloadSchema = z.strictObject({
   version: z.literal(2),
@@ -439,8 +443,6 @@ const RelatedCursorPayloadSchema = z.strictObject({
   offset: z.number().int().nonnegative()
 })
 type RelatedCursorPayload = z.infer<typeof RelatedCursorPayloadSchema>
-const relatedRequesterScope = (authority: ActionAuthority): string =>
-  authority.requester.kind === 'user' ? `user:${authority.requester.userId}` : `api-key:${authority.requester.apiKeyId}:group:${authority.requester.groupId}`
 const invalidRelatedCursor = (): never => {
   throw new ActionKernelError('INVALID_RELATED_CURSOR', 'Related-page cursor is invalid or does not match this traversal', 400)
 }
