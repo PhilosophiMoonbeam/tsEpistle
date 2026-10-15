@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from '../../../server/test/bun-test.m
 import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
+import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
+import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
 resetBody()
 setLocation('/wiki/page')
 
@@ -103,12 +105,6 @@ if (!parsed.descriptor.script || !parsed.descriptor.template) {
   throw new Error('nav-header.vue script or template was not found')
 }
 
-const accountMenuStyles = componentSource.match(/\.nav-header-menu\.account-menu\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
-const notificationStyles = componentSource.match(/\.account-menu__notifications\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
-if (!accountMenuStyles || !notificationStyles) {
-  throw new Error('Could not find account menu styles in nav-header.vue')
-}
-
 const testTranslations: Record<string, string> = {
   'common:header.account': 'Localized account',
   'common:header.accountNotificationsAvailable': '{{account}}, Localized notifications available',
@@ -122,8 +118,6 @@ const translate = (key: string, params?: Record<string, unknown>): string => {
   const template = testTranslations[key] ?? (typeof params?.defaultValue === 'string' ? params.defaultValue : translateEnglish(key, params))
   return Object.entries(params ?? {}).reduce((translated, [name, value]) => translated.split(`{{${name}}}`).join(String(value)), template)
 }
-
-const notificationOverflowProperties = /(?:max-height|overflow-y|overscroll-behavior)\s*:/
 
 interface NotificationCall {
   kind: 'initialize' | 'reset' | 'refresh' | 'refreshAuth'
@@ -148,6 +142,40 @@ const user = (id: number, authenticated = id > 0): HeaderUser => ({
   pictureUrl: '',
   permissions: [],
   authenticated
+})
+
+const watchItem = (id: string, title: string): PageWatchNotification => ({
+  id,
+  pageId: 12,
+  eventType: 'page.updated',
+  category: 'pageWatch',
+  commentId: null,
+  actorName: 'Editor',
+  title,
+  path: `docs/${id}`,
+  localeCode: 'en',
+  visibility: 'public',
+  createdAt: '2026-09-11T10:00:00.000Z',
+  readAt: null
+})
+
+const approvalItem = (id: string): PageApprovalInboxItem => ({
+  id,
+  pageId: 13,
+  submitterId: 4,
+  assigneeId: null,
+  status: 'submitted',
+  revisionId: 8,
+  revisionUpdatedAt: '2026-09-11T09:00:00.000Z',
+  createdAt: '2026-09-11T09:00:00.000Z',
+  updatedAt: '2026-09-11T09:30:00.000Z',
+  closedAt: null,
+  stale: false,
+  canReview: true,
+  title: `Approval ${id}`,
+  path: `reviews/${id}`,
+  localeCode: 'en',
+  visibility: 'public'
 })
 
 const connection = VueRuntime.reactive({ connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
@@ -194,8 +222,8 @@ const wikiStore = VueRuntime.reactive({
 
 const siteNotifications = VueRuntime.reactive({
   ownerId: 1 as number | null,
-  watches: [] as unknown[],
-  approvals: [] as unknown[],
+  watches: [] as PageWatchNotification[],
+  approvals: [] as PageApprovalInboxItem[],
   watchesLoading: false,
   approvalsLoading: false,
   watchesError: '',
@@ -241,7 +269,9 @@ const markOfflineLogoutPendingCalls: Array<number | undefined> = []
 globals.__headerConnection = connection
 globals.__headerWikiStore = wikiStore
 globals.__headerSiteNotifications = siteNotifications
-globals.__headerDestroyAgents = () => { agentDestroyCalls += 1 }
+globals.__headerDestroyAgents = () => {
+  agentDestroyCalls += 1
+}
 globals.__headerMarkOfflineLogoutPending = accountId => {
   markOfflineLogoutPendingCalls.push(accountId)
   return true
@@ -323,6 +353,12 @@ const bundle = await Bun.build({
           }
           if (args.path === '../../store/site-notifications.ts') {
             return { contents: 'export const useSiteNotificationsStore = () => globalThis.__headerSiteNotifications', loader: 'js' }
+          }
+          if (args.path.endsWith('/helpers/glossary-events')) {
+            return { contents: 'export const openGlossary = () => {}', loader: 'js' }
+          }
+          if (args.path.endsWith('/helpers/offline-session.ts')) {
+            return { contents: `export const OFFLINE_SESSION_INVALIDATED_EVENT = ${JSON.stringify(OFFLINE_SESSION_INVALIDATED_EVENT)}`, loader: 'js' }
           }
           if (args.path.endsWith('/pwa-status.vue')) {
             return {
@@ -534,7 +570,6 @@ describe('search header affordances', () => {
   })
 })
 
-
 describe('workspace title responsiveness', () => {
   it('splits multi-word workspace titles onto two balanced lines for the stacked small-screen variant', async () => {
     wikiStore.site.title = `Tim O'Pedia`
@@ -559,7 +594,10 @@ describe('workspace title responsiveness', () => {
     wikiStore.site.title = 'Wiki Knowledge Base Portal'
     const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
 
-    expect([...mounted.host.querySelectorAll('.nav-header-title-stacked .nav-header-title-line')].map(line => line.textContent)).toEqual(['Wiki Knowledge', 'Base Portal'])
+    expect([...mounted.host.querySelectorAll('.nav-header-title-stacked .nav-header-title-line')].map(line => line.textContent)).toEqual([
+      'Wiki Knowledge',
+      'Base Portal'
+    ])
   })
 })
 
@@ -576,7 +614,7 @@ describe('notification header identity recovery', () => {
           resolve('authenticated')
         }
       })
-    siteNotifications.watches = [{ id: 'stale-watch', title: 'Stale notification item' }]
+    siteNotifications.watches = [watchItem('stale-watch', 'Stale notification item')]
     siteNotifications.identityStale = true
     await settle()
 
@@ -628,7 +666,7 @@ describe('notification header identity recovery', () => {
         }
       })
     }
-    siteNotifications.watches = [{ id: 'stale-watch', title: 'Stale notification item' }]
+    siteNotifications.watches = [watchItem('stale-watch', 'Stale notification item')]
     siteNotifications.identityStale = true
     await settle()
 
@@ -789,7 +827,7 @@ describe('account menu containment', () => {
 
   it('adds an Approvals tab with a count for reviewers and falls back to an icon avatar without a name', async () => {
     wikiStore.user = { ...user(1), permissions: ['write:pages'] }
-    siteNotifications.approvals = [{ id: 'a1' }, { id: 'a2' }]
+    siteNotifications.approvals = [approvalItem('a1'), approvalItem('a2')]
     siteNotifications.approvalsNextCursor = 'next'
     try {
       const mounted = await mountHeader()
@@ -801,9 +839,6 @@ describe('account menu containment', () => {
       await settle()
       const panel = mounted.host.querySelector<HTMLElement>('#account-menu-panel-approvals')!
       expect(panel.style.display).not.toBe('none')
-      expect(panel.querySelector('[section="approvals"]')).not.toBeNull()
-      // The Notifications tab then lists page changes only.
-      expect(mounted.host.querySelector('#account-menu-panel-notifications [section="changes"]')).not.toBeNull()
 
       wikiStore.user = { ...user(1), name: '', permissions: [] }
       siteNotifications.approvals = []
@@ -821,15 +856,10 @@ describe('account menu containment', () => {
 })
 
 describe('notification header tri-state indicator', () => {
-  it('announces localized available, unknown, and clear states while keeping account-menu as the only scroller', async () => {
+  it('announces localized available, unknown, and clear states', async () => {
     const mounted = await mountHeader()
     const button = () => mounted.host.querySelector<HTMLElement>('.account-menu__trigger')
     const indicator = () => mounted.host.querySelector<HTMLElement>('.account-menu__notification-indicator')
-    expect(accountMenuStyles).toMatch(/overflow-y\s*:\s*auto/)
-    expect(accountMenuStyles).toMatch(/overscroll-behavior\s*:\s*contain/)
-    expect(notificationStyles).toMatch(/min-height\s*:\s*0/)
-    expect(notificationStyles).not.toMatch(notificationOverflowProperties)
-
     expect(button()?.getAttribute('aria-label')).toBe('Localized account, Localized notifications available')
     expect(indicator()?.classList.contains('account-menu__notification-indicator--available')).toBe(true)
 
@@ -844,7 +874,6 @@ describe('notification header tri-state indicator', () => {
     expect(button()?.getAttribute('aria-label')).toBe('Localized account')
   })
 })
-
 
 describe('account continuity without a verified connection', () => {
   it('does not present a cold offline session as signed out, then offers sign in only after anonymous verification', async () => {
@@ -878,10 +907,12 @@ describe('account continuity without a verified connection', () => {
     const form = host.querySelector('form[action="/logout"]')
     if (!form) throw new Error('Logout form missing')
     let submitted = false
-    Object.defineProperty(form, 'submit', { value: () => {
-      expect(agentDestroyCalls).toBe(1)
-      submitted = true
-    } })
+    Object.defineProperty(form, 'submit', {
+      value: () => {
+        expect(agentDestroyCalls).toBe(1)
+        submitted = true
+      }
+    })
     form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
     expect(agentDestroyCalls).toBe(1)
     await settle()

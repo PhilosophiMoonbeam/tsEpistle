@@ -76,8 +76,10 @@ const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
 // The 67fb328c3 local build measured 13,637.6 KiB; all initial/lazy limits remain unchanged.
 // Independent media controls have a user-approved 24 KiB aggregate allowance:
 // maintained image 13,653.2 KiB; clean media Docker build 13,671.3 KiB.
+// Scarlett native adaptations have a user-approved 256 KiB aggregate allowance;
+// the first host build measured 13,856.5 KiB. Initial/largest/lazy caps are unchanged.
 // Retain a fixed aggregate ceiling and every initial-load/lazy budget.
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_678 * KiB
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_934 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source

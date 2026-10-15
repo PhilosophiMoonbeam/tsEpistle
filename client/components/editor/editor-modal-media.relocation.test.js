@@ -58,6 +58,8 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
     stopLoading: owner => loading.push(`stop:${owner}`),
     showError: error => errors.push(error),
     showNotification: notification => notifications.push(notification),
+    user: { authenticated: true, id: 7 },
+    offlineIdentityEpoch: 0,
     editor: {
       editorKey: 'markdown',
       media: {
@@ -66,7 +68,7 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
         folderTree: []
       }
     },
-    page: { visibility: 'public' }
+    page: { id: 42, locale: 'en', path: 'media', visibility: 'public' }
   }
   const relocationCalls = []
   const component = loadMediaComponent({
@@ -125,7 +127,11 @@ describe('editor media relocation admission state', () => {
     expect(harness.context.isAssetActionable(7)).toBe(false)
     expect(harness.notifications).toEqual([
       { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' },
-      { message: 'Relocation is still pending. Open the receipt to inspect its status; no automatic retry will be attempted.', style: 'warning', icon: 'clock-outline' }
+      {
+        message: 'Relocation is still pending. Open the receipt to inspect its status; no automatic retry will be attempted.',
+        style: 'warning',
+        icon: 'clock-outline'
+      }
     ])
     expect(harness.relocationCalls).toHaveLength(1)
 
@@ -178,9 +184,7 @@ describe('editor media relocation admission state', () => {
     expect(harness.context.currentFileId).toBeNull()
     expect(harness.context.isAssetActionable(7)).toBe(false)
     expect(harness.errors).toEqual([workerError])
-    expect(harness.notifications).toEqual([
-      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' }
-    ])
+    expect(harness.notifications).toEqual([{ message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' }])
     expect(harness.relocationCalls).toHaveLength(1)
   })
 
@@ -206,7 +210,9 @@ describe('editor media relocation admission state', () => {
     const refreshError = new Error('canonical asset refresh unavailable')
     const failedRefresh = createHarness({
       waitForRelocation: async () => succeeded,
-      fetchAssets: async () => { throw refreshError },
+      fetchAssets: async () => {
+        throw refreshError
+      },
       fetchAssetFolders: async () => []
     })
     const oldAssets = failedRefresh.context.assets
@@ -251,7 +257,9 @@ describe('editor media upload and thumbnails', () => {
         getFiles: () => [{ setMetadata: () => undefined }],
         processFiles: () => {
           processCalls++
-          return new Promise(resolve => { release = resolve })
+          return new Promise(resolve => {
+            release = resolve
+          })
         }
       }
     }

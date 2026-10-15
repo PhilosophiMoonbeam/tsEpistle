@@ -50,6 +50,8 @@ vi.mockModule('../../helpers/page-access.ts', import.meta.url, () => ({
 }))
 vi.mockModule('../../helpers/page-field-projection.ts', import.meta.url, () => ({ canViewRestrictedPageFields, projectPageFields }))
 vi.mockModule('../../operations/page-watching.ts', import.meta.url, () => ({
+  getNotificationPreferences: vi.fn(),
+  updateNotificationPreferences: vi.fn(),
   getPageWatchState: vi.fn(),
   listPageWatchNotifications: vi.fn(),
   markPageWatchNotificationRead: vi.fn(),

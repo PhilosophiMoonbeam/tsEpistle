@@ -12,7 +12,9 @@ const SECOND_CURSOR = '00000000-0000-4000-8000-000000000002'
 const watchItem = (id: string, title: string, readAt: string | null = null): PageWatchNotification => ({
   id,
   pageId: 12,
-  eventType: 'page-updated',
+  eventType: 'page.updated',
+  category: 'pageWatch',
+  commentId: null,
   actorName: 'Editor',
   title,
   path: `docs/${id}`,

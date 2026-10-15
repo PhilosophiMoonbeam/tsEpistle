@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { describe, expect, test, vi } from '../../server/test/bun-test.mts'
 import { parseWikiNavigationDocument, type WikiPagePayload } from '../helpers/wiki-navigation'
+import { focusDiscussionThread } from '../helpers/discussion-annotation-events'
 
 type NavigationOptions = {
   popState?: boolean
@@ -23,6 +24,7 @@ type NavigationVm = {
   hardNavigate: (destination: URL, popState?: boolean) => void
   updateDocumentMetadata: (title: string, description: string, url: URL) => void
   restoreScroll: (destination: URL, savedScrollY?: number) => void
+  focusHashThread: () => void
 }
 
 type WikiPageComponentOptions = {
@@ -34,6 +36,7 @@ type WikiPageComponentOptions = {
   methods: {
     navigate: (this: NavigationVm, destination: URL, options?: NavigationOptions) => Promise<void>
     handleHashChange: (this: NavigationVm) => void
+    focusHashThread: (this: NavigationVm) => void
   }
 }
 
@@ -111,6 +114,7 @@ const loadComponent = (fetchResponse: Response) => {
     'parseWikiNavigationDocument',
     'wikiStore',
     'fetch',
+    'focusDiscussionThread',
     'requestAnimationFrame',
     `${executableScript}\nreturn wikiPageComponent`
   ) as (...dependencies: unknown[]) => WikiPageComponentOptions
@@ -131,6 +135,7 @@ const loadComponent = (fetchResponse: Response) => {
     parseWikiNavigationDocument,
     {},
     fetch,
+    focusDiscussionThread,
     (callback: FrameRequestCallback) => {
       callback(0)
       return 1
@@ -157,7 +162,7 @@ const response = (options: { url: string; headers?: HeadersInit; body?: string }
   }
 }
 
-const navigationVm = (): NavigationVm => ({
+const navigationVm = (component = loadComponent(new Response()).component): NavigationVm => ({
   currentUrl: window.location.href,
   navigationSequence: 0,
   navigationAbortController: null,
@@ -170,7 +175,10 @@ const navigationVm = (): NavigationVm => ({
   saveCurrentHistoryScroll: vi.fn(),
   hardNavigate: vi.fn(),
   updateDocumentMetadata: vi.fn(),
-  restoreScroll: vi.fn()
+  restoreScroll: vi.fn(),
+  focusHashThread() {
+    component.methods.focusHashThread.call(this)
+  }
 })
 
 const navigate = async (fetchResponse: Response): Promise<NavigationVm> => {
