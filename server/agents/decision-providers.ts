@@ -317,6 +317,9 @@ const pinnedDispatcher = (resolve: typeof lookup): Agent => {
   const existing = dispatchers.get(resolve)
   if (existing) return existing
   const dispatcher = new Agent({
+    // Bun's multi-address custom lookup can time out against a reachable origin.
+    // Keep DNS pinning on its single-address path, without retrying an HTTP call.
+    autoSelectFamily: false,
     keepAliveTimeout: 30_000,
     keepAliveMaxTimeout: 60_000,
     connect: {
