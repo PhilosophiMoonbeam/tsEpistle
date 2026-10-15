@@ -1,10 +1,4 @@
-import {
-  searchUsers,
-  fetchLastLogins,
-  updateProfilePreferences,
-  uploadProfileAvatar,
-  removeProfileAvatar
-} from './users-api.ts'
+import { searchUsers, fetchLastLogins, fetchProfile, updateProfilePreferences, uploadProfileAvatar, removeProfileAvatar } from './users-api.ts'
 
 function createJsonResponse(payload, ok = true) {
   return {
@@ -78,6 +72,46 @@ describe('users api helper', () => {
     await expect(Promise.resolve(fetchLastLogins(fetchImpl, 'Bad last logins payload'))).rejects.toThrow('Bad last logins payload')
   })
 
+  test('reads bounded pronouns as required profile data without losing other editable fields', async () => {
+    const payload = {
+      id: 42,
+      email: 'alice@example.test',
+      name: 'Alice',
+      handle: 'alice',
+      providerKey: 'local',
+      providerName: 'Local',
+      pictureUrl: null,
+      isSystem: false,
+      isVerified: true,
+      location: 'Tallinn',
+      jobTitle: 'Architect',
+      pronouns: 'they/them',
+      timezone: 'UTC',
+      dateFormat: '',
+      timeFormat: 'locale',
+      appearance: 'light',
+      reduceMotion: false,
+      underlineLinks: false,
+      contentTextSize: 'default',
+      communicationLocale: null,
+      createdAt: '',
+      updatedAt: '',
+      lastLoginAt: '',
+      groups: [],
+      pagesTotal: 0
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+    expect(await fetchProfile(fetchImpl)).toEqual(payload)
+    for (const pronouns of [undefined, null, false, [], 'x'.repeat(256)]) {
+      fetchImpl.mockResolvedValueOnce(createJsonResponse({ ...payload, pronouns }))
+      await expect(fetchProfile(fetchImpl)).rejects.toThrow('Profile response is invalid')
+    }
+    fetchImpl.mockResolvedValueOnce(createJsonResponse({ ...payload, pronouns: '' }))
+    expect((await fetchProfile(fetchImpl)).pronouns).toBe('')
+    fetchImpl.mockResolvedValueOnce(createJsonResponse({ ...payload, pronouns: 'x'.repeat(255) }))
+    expect((await fetchProfile(fetchImpl)).pronouns).toBe('x'.repeat(255))
+  })
+
   test.each([{ appearance: 'dark' }, { fontFamily: 'roboto-flex' }, { appearance: 'system', fontFamily: 'newsreader' }])(
     'updates profile preferences with the exact REST payload: %o',
     async input => {
@@ -105,9 +139,7 @@ describe('users api helper', () => {
   })
 
   test.each(['token', 'jwt'])('rejects otherwise-valid profile preference responses containing %s', async credential => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      createJsonResponse({ message: 'Profile preferences updated successfully.', [credential]: 'unexpected' })
-    )
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Profile preferences updated successfully.', [credential]: 'unexpected' }))
 
     await expect(updateProfilePreferences(fetchImpl, 42, { appearance: 'system' }, 'Bad preferences response')).rejects.toThrow('Bad preferences response')
   })
@@ -183,7 +215,9 @@ describe('users api helper', () => {
 
   test('rejects malformed avatar mutation responses and preserves API errors', async () => {
     const malformed = vi.fn().mockResolvedValue(createJsonResponse({ message: 'done', pictureUrl: 'internal', token: 'unexpected' }))
-    await expect(uploadProfileAvatar(malformed, 42, new File([Buffer.from('avatar')], 'avatar.png'), 'Bad avatar response')).rejects.toThrow('Bad avatar response')
+    await expect(uploadProfileAvatar(malformed, 42, new File([Buffer.from('avatar')], 'avatar.png'), 'Bad avatar response')).rejects.toThrow(
+      'Bad avatar response'
+    )
 
     const failed = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Avatar image is invalid or could not be decoded.' }, false))
     await expect(removeProfileAvatar(failed, 42)).rejects.toThrow('Avatar image is invalid or could not be decoded.')

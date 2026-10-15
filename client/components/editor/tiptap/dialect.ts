@@ -16,6 +16,74 @@ import { Mark } from '@tiptap/core'
 import { Subscript } from '@tiptap/extension-subscript'
 import { Superscript } from '@tiptap/extension-superscript'
 import { Base64 } from 'js-base64'
+import { isSafeEditorImageSource, normalizeEditorImageDimension } from '../../../helpers/editor-image-properties.ts'
+import { findSourceImage } from '../../../helpers/editor-image-source.ts'
+
+const IMAGE_HTML_ATTRIBUTES: Record<string, true> = {
+  src: true,
+  alt: true,
+  title: true,
+  width: true,
+  height: true,
+  class: true,
+  id: true,
+  style: true
+}
+
+/** Only represent syntax whose complete attribute set the native image node can retain. */
+export function parseSupportedWikiImageSource(source: string): Record<string, string | null> | null {
+  const raw = source.trim()
+  const parsed = findSourceImage(raw, 0, raw.length, 'markdown')
+  if (!parsed || parsed.source !== raw || !isSafeEditorImageSource(parsed.properties.src)) return null
+  if (/^<img\b[^>]*\/?>$/i.test(raw) && typeof document !== 'undefined') {
+    const template = document.createElement('template')
+    template.innerHTML = raw
+    const image = template.content.firstChild
+    if (!(image instanceof HTMLImageElement) || template.content.childNodes.length !== 1) return null
+    if ([...image.attributes].some(attribute => !IMAGE_HTML_ATTRIBUTES[attribute.name])) return null
+    if (!isSafeEditorImageSource(image.getAttribute('src') ?? '')) return null
+    const attrs: Record<string, string | null> = {}
+    for (const attribute of image.attributes) attrs[attribute.name] = attribute.value
+    for (const dimension of ['width', 'height']) {
+      if (attrs[dimension] && normalizeEditorImageDimension(attrs[dimension]!) === null) return null
+    }
+    if (attrs.style) {
+      // Non-dimensional CSS stays opaque, not partially interpreted and dropped.
+      if (
+        attrs.style
+          .split(';')
+          .filter(value => value.trim())
+          .some(value => {
+            const declaration = /^\s*(width|height)\s*:\s*(.*?)\s*(?:!important)?\s*$/i.exec(value)
+            return !declaration || normalizeEditorImageDimension(declaration[2] ?? '') === null
+          })
+      )
+        return null
+    }
+    return attrs
+  }
+  const attrs: Record<string, string | null> = {
+    src: parsed.properties.src,
+    alt: parsed.properties.alt,
+    title: parsed.title ?? null,
+    width: parsed.properties.width || null,
+    height: parsed.properties.height || null
+  }
+  const suffix = /\{([^}\n]*)\}$/.exec(raw)?.[1]
+  if (suffix !== undefined) {
+    if (!/^(?:\s*(?:\.[A-Za-z_][\w-]*|#[A-Za-z_][\w-]*|(?:class|id)=(?:"[^"]*"|'[^']*')))*\s*$/.test(suffix)) return null
+    const classes: string[] = []
+    for (const match of suffix.matchAll(/(?:^|\s)(?:\.([\w-]+)|#([\w-]+)|(class|id)=(?:"([^"]*)"|'([^']*)'))/g)) {
+      if (match[1]) classes.push(match[1])
+      else if (match[2]) attrs.id = match[2]
+      else if (match[3] === 'class') classes.push(match[4] ?? match[5] ?? '')
+      else attrs.id = match[4] ?? match[5] ?? null
+    }
+    if (classes.length) attrs.class = classes.join(' ')
+  }
+  if ([attrs.width, attrs.height].some(value => value && normalizeEditorImageDimension(value) === null)) return null
+  return attrs
+}
 
 export type WikiSourceKind = 'abbreviation' | 'attributes' | 'footnote' | 'html' | 'image-size' | 'math' | 'multiline-table'
 
@@ -29,11 +97,11 @@ const SOURCE_KINDS: Record<WikiSourceKind, true> = {
   'multiline-table': true
 }
 
-export function encodeWikiSource (source: string): string {
+export function encodeWikiSource(source: string): string {
   return Base64.toBase64(source, true)
 }
 
-export function decodeWikiSource (source: unknown): string {
+export function decodeWikiSource(source: unknown): string {
   if (typeof source !== 'string' || source.length === 0) return ''
   try {
     return Base64.fromBase64(source)
@@ -42,13 +110,11 @@ export function decodeWikiSource (source: unknown): string {
   }
 }
 
-function sourceKind (value: unknown): WikiSourceKind {
-  return typeof value === 'string' && value in SOURCE_KINDS
-    ? value as WikiSourceKind
-    : 'html'
+function sourceKind(value: unknown): WikiSourceKind {
+  return typeof value === 'string' && value in SOURCE_KINDS ? (value as WikiSourceKind) : 'html'
 }
 
-function sourceAttributes (attrString: string): Record<string, string> {
+function sourceAttributes(attrString: string): Record<string, string> {
   const result: Record<string, string> = {}
   for (const match of attrString.matchAll(/([A-Za-z][\w-]*)="([^"]*)"/g)) {
     result[match[1]!] = match[2] ?? ''
@@ -70,36 +136,43 @@ export const WikiSourceBlock = Node.create({
   selectable: true,
   draggable: true,
 
-  addAttributes () {
+  addAttributes() {
     return {
       kind: { default: 'html', rendered: false },
       source: { default: '', rendered: false }
     }
   },
 
-  parseHTML () {
-    return [{
-      tag: 'wiki-source-block',
-      getAttrs: element => ({
-        kind: sourceKind(element.getAttribute('data-kind')),
-        source: element.getAttribute('data-source') ?? ''
-      })
-    }]
+  parseHTML() {
+    return [
+      {
+        tag: 'wiki-source-block',
+        getAttrs: element => ({
+          kind: sourceKind(element.getAttribute('data-kind')),
+          source: element.getAttribute('data-source') ?? ''
+        })
+      }
+    ]
   },
 
-  renderHTML ({ node, HTMLAttributes }) {
+  renderHTML({ node, HTMLAttributes }) {
     const kind = sourceKind(node.attrs.kind)
     const source = decodeWikiSource(node.attrs.source)
-    return ['wiki-source-block', mergeAttributes(HTMLAttributes, {
-      'data-kind': kind,
-      'data-source': node.attrs.source,
-      'data-wiki-source': 'block',
-      contenteditable: 'false'
-    }), ['span', { class: 'wiki-source-label' }, kind], ['code', {}, source]]
+    return [
+      'wiki-source-block',
+      mergeAttributes(HTMLAttributes, {
+        'data-kind': kind,
+        'data-source': node.attrs.source,
+        'data-wiki-source': 'block',
+        contenteditable: 'false'
+      }),
+      ['span', { class: 'wiki-source-label' }, kind],
+      ['code', {}, source]
+    ]
   },
 
   ...sourceBlockMarkdown,
-  renderMarkdown (node: JSONContent) {
+  renderMarkdown(node: JSONContent) {
     return decodeWikiSource(node.attrs?.source)
   }
 })
@@ -118,37 +191,43 @@ export const WikiSourceInline = Node.create({
   atom: true,
   selectable: true,
 
-  addAttributes () {
+  addAttributes() {
     return {
       kind: { default: 'html', rendered: false },
       source: { default: '', rendered: false }
     }
   },
 
-  parseHTML () {
-    return [{
-      tag: 'wiki-source-inline',
-      getAttrs: element => ({
-        kind: sourceKind(element.getAttribute('data-kind')),
-        source: element.getAttribute('data-source') ?? ''
-      })
-    }]
+  parseHTML() {
+    return [
+      {
+        tag: 'wiki-source-inline',
+        getAttrs: element => ({
+          kind: sourceKind(element.getAttribute('data-kind')),
+          source: element.getAttribute('data-source') ?? ''
+        })
+      }
+    ]
   },
 
-  renderHTML ({ node, HTMLAttributes }) {
+  renderHTML({ node, HTMLAttributes }) {
     const kind = sourceKind(node.attrs.kind)
     const source = decodeWikiSource(node.attrs.source)
-    return ['wiki-source-inline', mergeAttributes(HTMLAttributes, {
-      'data-kind': kind,
-      'data-source': node.attrs.source,
-      'data-wiki-source': 'inline',
-      contenteditable: 'false',
-      title: `${kind}: ${source}`
-    }), source]
+    return [
+      'wiki-source-inline',
+      mergeAttributes(HTMLAttributes, {
+        'data-kind': kind,
+        'data-source': node.attrs.source,
+        'data-wiki-source': 'inline',
+        contenteditable: 'false',
+        title: `${kind}: ${source}`
+      }),
+      source
+    ]
   },
 
   ...sourceInlineMarkdown,
-  renderMarkdown (node: JSONContent) {
+  renderMarkdown(node: JSONContent) {
     return decodeWikiSource(node.attrs?.source)
   }
 })
@@ -157,11 +236,11 @@ export const Keyboard = Mark.create({
   name: 'keyboard',
   inclusive: false,
 
-  parseHTML () {
+  parseHTML() {
     return [{ tag: 'kbd' }]
   },
 
-  renderHTML ({ HTMLAttributes }) {
+  renderHTML({ HTMLAttributes }) {
     return ['kbd', mergeAttributes(HTMLAttributes), 0]
   },
 
@@ -180,11 +259,11 @@ export const Keyboard = Mark.create({
     }
   },
 
-  parseMarkdown (token: MarkdownToken, helpers: MarkdownParseHelpers) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     return helpers.applyMark('keyboard', helpers.parseInline(token.tokens ?? []))
   },
 
-  renderMarkdown (node: JSONContent, helpers: MarkdownRendererHelpers) {
+  renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
     return `<kbd>${helpers.renderChildren(node)}</kbd>`
   }
 })
@@ -204,10 +283,10 @@ export const WikiSubscript = Subscript.extend({
       }
     }
   },
-  parseMarkdown (token: MarkdownToken, helpers: MarkdownParseHelpers) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     return helpers.applyMark('subscript', helpers.parseInline(token.tokens ?? []))
   },
-  renderMarkdown (node: JSONContent, helpers: MarkdownRendererHelpers) {
+  renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
     return `~${helpers.renderChildren(node)}~`
   }
 })
@@ -227,10 +306,10 @@ export const WikiSuperscript = Superscript.extend({
       }
     }
   },
-  parseMarkdown (token: MarkdownToken, helpers: MarkdownParseHelpers) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     return helpers.applyMark('superscript', helpers.parseInline(token.tokens ?? []))
   },
-  renderMarkdown (node: JSONContent, helpers: MarkdownRendererHelpers) {
+  renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
     return `^${helpers.renderChildren(node)}^`
   }
 })
@@ -240,7 +319,7 @@ type DefinitionItem = {
   definitions: string[]
 }
 
-function tokenizeDefinitionList (source: string): { raw: string, items: DefinitionItem[] } | undefined {
+function tokenizeDefinitionList(source: string): { raw: string; items: DefinitionItem[] } | undefined {
   const lines = source.split('\n')
   if (!lines[0]?.trim() || !/^:\s+/.test(lines[1] ?? '')) return undefined
 
@@ -285,14 +364,14 @@ export const DefinitionDescription = Node.create({
   renderHTML: ({ HTMLAttributes }) => ['dd', mergeAttributes(HTMLAttributes), 0]
 })
 
-function definitionAncestorDepth (position: ResolvedPos, name: string): number {
+function definitionAncestorDepth(position: ResolvedPos, name: string): number {
   for (let depth = position.depth; depth > 0; depth -= 1) {
     if (position.node(depth).type.name === name) return depth
   }
   return -1
 }
 
-function definitionChildPosition (parent: ProseMirrorNode, parentPosition: number, index: number): number {
+function definitionChildPosition(parent: ProseMirrorNode, parentPosition: number, index: number): number {
   let position = parentPosition + 1
   for (let childIndex = 0; childIndex < index; childIndex += 1) {
     position += parent.child(childIndex).nodeSize
@@ -300,7 +379,7 @@ function definitionChildPosition (parent: ProseMirrorNode, parentPosition: numbe
   return position
 }
 
-function firstDefinitionTextblockPosition (node: ProseMirrorNode, nodePosition: number): number | null {
+function firstDefinitionTextblockPosition(node: ProseMirrorNode, nodePosition: number): number | null {
   if (node.isTextblock) return nodePosition + 1
 
   let position = nodePosition + 1
@@ -314,7 +393,7 @@ function firstDefinitionTextblockPosition (node: ProseMirrorNode, nodePosition: 
   return null
 }
 
-function setDefinitionCursor (editor: Editor, position: number): boolean {
+function setDefinitionCursor(editor: Editor, position: number): boolean {
   const { state, view } = editor
   if (position < 0 || position > state.doc.content.size) return false
   const $position = state.doc.resolve(position)
@@ -323,7 +402,7 @@ function setDefinitionCursor (editor: Editor, position: number): boolean {
   return true
 }
 
-function handleDefinitionListEnter (editor: Editor): boolean {
+function handleDefinitionListEnter(editor: Editor): boolean {
   const { state, view } = editor
   const { selection } = state
   if (!selection.empty) return false
@@ -335,11 +414,7 @@ function handleDefinitionListEnter (editor: Editor): boolean {
   const listPosition = $from.before(listDepth)
 
   const termDepth = definitionAncestorDepth($from, 'definitionTerm')
-  if (
-    termDepth === listDepth + 1 &&
-    $from.parent.type.name === 'definitionTerm' &&
-    $from.parentOffset === $from.parent.content.size
-  ) {
+  if (termDepth === listDepth + 1 && $from.parent.type.name === 'definitionTerm' && $from.parentOffset === $from.parent.content.size) {
     const termIndex = $from.index(listDepth)
     if (termIndex + 1 >= list.childCount || list.child(termIndex + 1).type.name !== 'definitionDescription') return false
     const description = list.child(termIndex + 1)
@@ -354,7 +429,8 @@ function handleDefinitionListEnter (editor: Editor): boolean {
     $from.depth !== descriptionDepth + 1 ||
     $from.parent.type.name !== 'paragraph' ||
     $from.parentOffset !== $from.parent.content.size
-  ) return false
+  )
+    return false
 
   const description = $from.node(descriptionDepth)
   if (description.lastChild !== $from.parent) return false
@@ -367,9 +443,7 @@ function handleDefinitionListEnter (editor: Editor): boolean {
     return setDefinitionCursor(editor, termPosition + 1)
   }
 
-  const isEmptyFinalDescription = description.childCount === 1 &&
-    description.firstChild?.type.name === 'paragraph' &&
-    description.firstChild.content.size === 0
+  const isEmptyFinalDescription = description.childCount === 1 && description.firstChild?.type.name === 'paragraph' && description.firstChild.content.size === 0
   if (isEmptyFinalDescription) {
     const paragraph = state.schema.nodes.paragraph.createAndFill()
     if (!paragraph) return false
@@ -413,7 +487,7 @@ function handleDefinitionListEnter (editor: Editor): boolean {
 export const DefinitionListKeyboard = Extension.create({
   name: 'definitionListKeyboard',
   priority: 1100,
-  addKeyboardShortcuts () {
+  addKeyboardShortcuts() {
     return { Enter: () => handleDefinitionListEnter(this.editor) }
   }
 })
@@ -423,11 +497,11 @@ export const DefinitionList = Node.create({
   group: 'block',
   content: '(definitionTerm definitionDescription+)+',
 
-  parseHTML () {
+  parseHTML() {
     return [{ tag: 'dl' }]
   },
 
-  renderHTML ({ HTMLAttributes }) {
+  renderHTML({ HTMLAttributes }) {
     return ['dl', mergeAttributes(HTMLAttributes), 0]
   },
 
@@ -437,29 +511,25 @@ export const DefinitionList = Node.create({
     start: source => source.search(/^[^\n]+\n:\s+/m),
     tokenize: source => {
       const result = tokenizeDefinitionList(source)
-      return result
-        ? { type: 'definitionList', raw: result.raw, items: result.items }
-        : undefined
+      return result ? { type: 'definitionList', raw: result.raw, items: result.items } : undefined
     }
   },
 
-  parseMarkdown (token: MarkdownToken, helpers: MarkdownParseHelpers) {
-    const items = Array.isArray(token.items) ? token.items as DefinitionItem[] : []
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
+    const items = Array.isArray(token.items) ? (token.items as DefinitionItem[]) : []
     const content: JSONContent[] = []
     for (const item of items) {
       const termTokens = helpers.tokenizeInline?.(item.term) ?? [{ type: 'text', raw: item.term, text: item.term }]
       content.push(helpers.createNode('definitionTerm', {}, helpers.parseInline(termTokens)))
       for (const definition of item.definitions) {
         const definitionTokens = helpers.tokenizeInline?.(definition) ?? [{ type: 'text', raw: definition, text: definition }]
-        content.push(helpers.createNode('definitionDescription', {}, [
-          helpers.createNode('paragraph', {}, helpers.parseInline(definitionTokens))
-        ]))
+        content.push(helpers.createNode('definitionDescription', {}, [helpers.createNode('paragraph', {}, helpers.parseInline(definitionTokens))]))
       }
     }
     return helpers.createNode('definitionList', {}, content)
   },
 
-  renderMarkdown (node: JSONContent, helpers: MarkdownRendererHelpers) {
+  renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
     const lines: string[] = []
     for (const child of node.content ?? []) {
       if (child.type === 'definitionTerm') {
@@ -475,15 +545,15 @@ export const DefinitionList = Node.create({
   }
 })
 
-function blockPlaceholder (kind: WikiSourceKind, source: string): string {
+function blockPlaceholder(kind: WikiSourceKind, source: string): string {
   return `:::wikiSourceBlock {kind="${kind}" source="${encodeWikiSource(source)}"} :::`
 }
 
-function inlinePlaceholder (kind: WikiSourceKind, source: string): string {
+function inlinePlaceholder(kind: WikiSourceKind, source: string): string {
   return `[wikiSourceInline kind="${kind}" source="${encodeWikiSource(source)}"]`
 }
 
-function protectInlineSource (line: string): string {
+function protectInlineSource(line: string): string {
   let result = ''
   let index = 0
 
@@ -499,6 +569,15 @@ function protectInlineSource (line: string): string {
     }
 
     const source = line.slice(index)
+    const image = findSourceImage(source, 0, 0, 'markdown')?.source
+    if (image) {
+      // The native image is a block node. Extended inline syntax stays opaque rather
+      // than introducing invalid block children into paragraphs, lists or tables.
+      const extended = source.startsWith('<') || /\{[^}]*\}$|\s=/.test(image)
+      result += !extended && parseSupportedWikiImageSource(image) ? image : inlinePlaceholder(source.startsWith('<') ? 'html' : 'image-size', image)
+      index += image.length
+      continue
+    }
     if (source.startsWith('[[')) {
       const wikiLink = /^\[\[[^[\]\r\n]+\]\]/u.exec(source)?.[0]
       if (wikiLink) {
@@ -507,7 +586,7 @@ function protectInlineSource (line: string): string {
         continue
       }
     }
-    const candidates: Array<{ kind: WikiSourceKind, match: RegExpMatchArray | null }> = [
+    const candidates: Array<{ kind: WikiSourceKind; match: RegExpMatchArray | null }> = [
       { kind: 'html', match: source.match(/^<!--[\s\S]*?-->/) },
       { kind: 'image-size', match: source.match(/^!\[[^\]\n]*\]\([^\n)]*(?:\s=\d*(?:x\d*)?|\s+\d+x\d+)[^\n)]*\)/) },
       { kind: 'footnote', match: source.match(/^\[\^[^\]\n]+\]/) },
@@ -531,15 +610,15 @@ function protectInlineSource (line: string): string {
   return result
 }
 
-function isFence (line: string): RegExpMatchArray | null {
+function isFence(line: string): RegExpMatchArray | null {
   return line.match(/^\s{0,3}(`{3,}|~{3,})/)
 }
 
-export function prepareTiptapMarkdown (source: string): string {
+export function prepareTiptapMarkdown(source: string): string {
   const lines = source.replace(/\r\n/g, '\n').split('\n')
   const output: string[] = []
   let index = 0
-  let fence: { marker: string, length: number } | null = null
+  let fence: { marker: string; length: number } | null = null
 
   while (index < lines.length) {
     const line = lines[index] ?? ''
@@ -590,6 +669,11 @@ export function prepareTiptapMarkdown (source: string): string {
       continue
     }
 
+    if (parseSupportedWikiImageSource(line)) {
+      output.push(line)
+      index += 1
+      continue
+    }
     if (/^\s*<!--/.test(line) || /^\s*<(?!\/?kbd(?:\s|>))[A-Za-z][A-Za-z0-9-]*(?:\s|>)/.test(line)) {
       const captured = [line]
       index += 1
@@ -621,7 +705,7 @@ export function prepareTiptapMarkdown (source: string): string {
   return output.join('\n')
 }
 
-function sourceNodeHtml (display: 'block' | 'inline', kind: WikiSourceKind, source: string): string {
+function sourceNodeHtml(display: 'block' | 'inline', kind: WikiSourceKind, source: string): string {
   const tag = `wiki-source-${display}`
   const encoded = encodeWikiSource(source)
   return `<${tag} data-kind="${kind}" data-source="${encoded}"></${tag}>`
@@ -685,7 +769,7 @@ const SUPPORTED_HTML_TAGS: Record<string, true> = {
   ul: true
 }
 
-export function prepareTiptapHtml (source: string): string {
+export function prepareTiptapHtml(source: string): string {
   if (!source || typeof document === 'undefined') return source
   const withoutComments = source.replace(/<!--[\s\S]*?-->/g, comment => sourceNodeHtml('block', 'html', comment))
   const template = document.createElement('template')
@@ -694,8 +778,9 @@ export function prepareTiptapHtml (source: string): string {
   for (const element of elements) {
     if (!element.isConnected && !template.content.contains(element)) continue
     const tag = element.tagName.toLowerCase()
-    if (tag in SUPPORTED_HTML_TAGS || tag.startsWith('wiki-source-')) continue
-    const display = tag in HTML_BLOCK_TAGS ? 'block' : 'inline'
+    const unsupportedImage = tag === 'img' && !parseSupportedWikiImageSource(element.outerHTML)
+    if (!unsupportedImage && (tag in SUPPORTED_HTML_TAGS || tag.startsWith('wiki-source-'))) continue
+    const display = tag in HTML_BLOCK_TAGS || unsupportedImage ? 'block' : 'inline'
     const replacement = document.createElement(`wiki-source-${display}`)
     replacement.setAttribute('data-kind', 'html')
     replacement.setAttribute('data-source', encodeWikiSource(element.outerHTML))
@@ -704,7 +789,7 @@ export function prepareTiptapHtml (source: string): string {
   return template.innerHTML
 }
 
-export function restoreTiptapHtmlSources (source: string): string {
+export function restoreTiptapHtmlSources(source: string): string {
   if (!source || typeof document === 'undefined') return source
   const template = document.createElement('template')
   template.innerHTML = source

@@ -1,6 +1,16 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards.ts'
-import type { PageApprovalInbox, PageApprovalInboxItem, PageWatchNotification, PageWatchNotificationList } from '../../shared/site-notifications.ts'
+import type {
+  NotificationPreferences,
+  NotificationPreferencesResponse,
+  PageApprovalInbox,
+  PageApprovalInboxItem,
+  PageWatchNotification,
+  PageWatchNotificationList
+} from '../../shared/site-notifications.ts'
+import { NOTIFICATION_CATEGORIES } from '../../shared/site-notifications.ts'
+import type { MyDiscussionsPage } from '../../shared/discussion-annotations.ts'
+import { pageHref } from './admin-pages.ts'
 
 type NotificationApiError = Error & { status?: number; code?: string }
 
@@ -26,11 +36,19 @@ const notificationHeaders = (ownerId: number): Record<string, string> => {
   return { Accept: 'application/json', 'X-Notification-Owner': String(ownerId) }
 }
 
-const requestJson = async <T>(path: string, ownerId: number, valid: (value: unknown) => value is T, fallback: string, signal?: AbortSignal): Promise<T> => {
+const requestJson = async <T>(
+  path: string,
+  ownerId: number,
+  valid: (value: unknown) => value is T,
+  fallback: string,
+  signal?: AbortSignal,
+  body?: NotificationPreferences
+): Promise<T> => {
   const response = await sameOriginJsonFetch(window.fetch.bind(window), path, {
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: notificationHeaders(ownerId),
+    headers: { ...notificationHeaders(ownerId), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    ...(body ? { method: 'PATCH', body: JSON.stringify(body) } : {}),
     ...(signal ? { signal } : {})
   })
   let payload: unknown
@@ -55,6 +73,8 @@ const isPageWatchNotification = (value: unknown): value is PageWatchNotification
   typeof value.id === 'string' &&
   Number.isSafeInteger(value.pageId) &&
   typeof value.eventType === 'string' &&
+  (value.category === 'pageWatch' || NOTIFICATION_CATEGORIES.some(category => category === value.category)) &&
+  (value.commentId === null || (Number.isSafeInteger(value.commentId) && Number(value.commentId) > 0)) &&
   typeof value.actorName === 'string' &&
   typeof value.title === 'string' &&
   typeof value.path === 'string' &&
@@ -137,4 +157,62 @@ export const markPageWatchNotificationRead = async (ownerId: number, id: string,
     }
     throw Object.assign(apiError(payload, 'Watch notification could not be marked read.'), { status: response.status })
   }
+}
+
+export const notificationIdentityInvalidated = (error: unknown): boolean =>
+  isRecord(error) && (error.code === 'NOTIFICATION_OWNER_CHANGED' || error.name === 'NOTIFICATION_OWNER_CHANGED' || error.status === 401)
+
+const isPreferencesResponse = (value: unknown): value is NotificationPreferencesResponse => {
+  if (!isRecord(value) || !isOwnerId(value.ownerId) || !isRecord(value.preferences)) return false
+  const preferences = value.preferences
+  return NOTIFICATION_CATEGORIES.every(category => {
+    const channels = preferences[category]
+    return isRecord(channels) && typeof channels.inApp === 'boolean' && typeof channels.email === 'boolean'
+  })
+}
+
+export const fetchNotificationPreferences = (ownerId: number, signal?: AbortSignal): Promise<NotificationPreferencesResponse> =>
+  requestJson('/_api/pages/notifications/preferences', ownerId, isPreferencesResponse, 'Notification preferences could not be loaded.', signal)
+
+export const updateNotificationPreferences = (
+  ownerId: number,
+  preferences: NotificationPreferences,
+  signal?: AbortSignal
+): Promise<NotificationPreferencesResponse> =>
+  requestJson('/_api/pages/notifications/preferences', ownerId, isPreferencesResponse, 'Notification preferences could not be saved.', signal, preferences)
+
+const isMyDiscussionsPage = (value: unknown): value is MyDiscussionsPage & { ownerId: number } => {
+  if (!isRecord(value) || !isOwnerId(value.ownerId) || !Array.isArray(value.items)) return false
+  if (!(value.nextCursor === null || (typeof value.nextCursor === 'string' && value.nextCursor.length > 0))) return false
+  return value.items.every(item => {
+    if (
+      !isRecord(item) ||
+      !isOwnerId(item.id) ||
+      !Number.isSafeInteger(item.replyTo) ||
+      Number(item.replyTo) < 0 ||
+      typeof item.content !== 'string' ||
+      !isTimestamp(item.createdAt) ||
+      !isTimestamp(item.updatedAt) ||
+      !isRecord(item.page)
+    )
+      return false
+    return (
+      isOwnerId(item.page.id) &&
+      typeof item.page.title === 'string' &&
+      typeof item.page.path === 'string' &&
+      typeof item.page.locale === 'string' &&
+      isVisibility(item.page.visibility)
+    )
+  })
+}
+
+export const fetchMyDiscussions = (ownerId: number, cursor?: string | null, signal?: AbortSignal): Promise<MyDiscussionsPage> => {
+  const query = new URLSearchParams({ limit: '30' })
+  if (cursor) query.set('cursor', cursor)
+  return requestJson(`/_api/comments/mine?${query}`, ownerId, isMyDiscussionsPage, 'Your discussions could not be loaded.', signal)
+}
+
+export const notificationPageHref = (item: Pick<PageWatchNotification, 'visibility' | 'localeCode' | 'path'> & { commentId?: number | null }): string => {
+  const path = pageHref({ visibility: item.visibility, locale: item.localeCode, path: item.path })
+  return item.commentId ? `${path}#comment-post-id-${item.commentId}` : path
 }

@@ -27,9 +27,12 @@
             size='large'
             :prepend-icon='$vuetify.locale.isRtl ? "mdi-arrow-right" : "mdi-arrow-left"'
           ) {{ $t('newpage.goback') }}
+        AuthorizedFolderChildren(:locale='locale', :path='path')
 </template>
 
 <script setup lang='ts'>
+import AuthorizedFolderChildren from './common/authorized-folder-children.vue'
+
 const {
   locale = 'en',
   path = 'home'

@@ -4,6 +4,7 @@ import { errorStatus, objectValue, type NextFunction, type Request, type Respons
 import { readDiscussionWorkspace, writeDiscussionWorkspace } from '../../operations/discussion-settings.ts'
 import { discussionModeration } from '../../operations/discussion-moderation.ts'
 import commentOperations from '../../operations/comments.ts'
+import { discussionAnnotations } from '../../operations/discussion-annotations.ts'
 
 const router = express.Router()
 
@@ -31,27 +32,81 @@ const handleCommentError = (err: unknown, res: Response, next: NextFunction): vo
   if (status !== undefined && status >= 400 && status < 500) {
     const message = err instanceof Error ? err.message : String(err)
     const retryAfterMilliseconds = typeof err === 'object' && err !== null ? Reflect.get(err, 'retryAfterMilliseconds') : undefined
-    if (status === 429 && typeof retryAfterMilliseconds === 'number' && Number.isFinite(retryAfterMilliseconds)) res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMilliseconds / 1000))))
+    if (status === 429 && typeof retryAfterMilliseconds === 'number' && Number.isFinite(retryAfterMilliseconds))
+      res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMilliseconds / 1000))))
     res.status(status).json({ error: message || 'Request Failed' })
     return
   }
   next(err)
 }
 
-router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next() })
+router.use((_req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  next()
+})
 const fail = (res: Response, error: unknown) => {
   const status = errorStatus(error) ?? 500
   if (status >= 500) (WIKI as unknown as { logger: { warn(error: unknown): void } }).logger.warn(error)
-  res.status(status).json({ error: status >= 500 ? 'Discussion request failed. Try again or check server logs.' : error instanceof Error ? error.message : String(error) })
+  res
+    .status(status)
+    .json({ error: status >= 500 ? 'Discussion request failed. Try again or check server logs.' : error instanceof Error ? error.message : String(error) })
 }
-router.get('/workspace', async (req, res) => { try { res.json(await readDiscussionWorkspace(req.user)) } catch (error) { fail(res, error) } })
-router.put('/workspace', async (req, res) => { try { res.json(await writeDiscussionWorkspace(req.user, req.body, req.body?.fingerprint)) } catch (error) { fail(res, error) } })
-router.get('/moderation', async (req, res) => { try { res.json(await discussionModeration().list(req.user, req.query)) } catch (error) { fail(res, error) } })
-router.get('/moderation/:id', async (req, res) => { try { res.json(await discussionModeration().inspect(req.user, Number(req.params.id))) } catch (error) { fail(res, error) } })
-router.patch('/moderation/:id', async (req, res) => { try { res.json(await discussionModeration().moderate(req.user, Number(req.params.id), req.body ?? {})) } catch (error) { fail(res, error) } })
-router.get('/closed-pages', async (req, res) => { try { res.json(await discussionModeration().closedPages(req.user, req.query)) } catch (error) { fail(res, error) } })
-router.get('/page-policy/:id', async (req, res) => { try { res.json(await discussionModeration().policy(req.user, Number(req.params.id))) } catch (error) { fail(res, error) } })
-router.patch('/page-policy/:id', async (req, res) => { try { res.json(await discussionModeration().setPolicy(req.user, Number(req.params.id), req.body ?? {})) } catch (error) { fail(res, error) } })
+router.get('/workspace', async (req, res) => {
+  try {
+    res.json(await readDiscussionWorkspace(req.user))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+router.put('/workspace', async (req, res) => {
+  try {
+    res.json(await writeDiscussionWorkspace(req.user, req.body, req.body?.fingerprint))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+router.get('/moderation', async (req, res) => {
+  try {
+    res.json(await discussionModeration().list(req.user, req.query))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+router.get('/moderation/:id', async (req, res) => {
+  try {
+    res.json(await discussionModeration().inspect(req.user, Number(req.params.id)))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+router.patch('/moderation/:id', async (req, res) => {
+  try {
+    res.json(await discussionModeration().moderate(req.user, Number(req.params.id), req.body ?? {}))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+router.get('/closed-pages', async (req, res) => {
+  try {
+    res.json(await discussionModeration().closedPages(req.user, req.query))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+router.get('/page-policy/:id', async (req, res) => {
+  try {
+    res.json(await discussionModeration().policy(req.user, Number(req.params.id)))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+router.patch('/page-policy/:id', async (req, res) => {
+  try {
+    res.json(await discussionModeration().setPolicy(req.user, Number(req.params.id), req.body ?? {}))
+  } catch (error) {
+    fail(res, error)
+  }
+})
 router.get('/availability/:id', async (req, res, next) => {
   const pageId = parsePositiveInteger(req.params.id)
   if (pageId === null) return res.status(400).json({ error: 'Choose a valid page.' })
@@ -106,6 +161,32 @@ router.get('/mentions', async (req, res, next) => {
   }
 })
 
+router.get('/mine', async (req, res) => {
+  if (!requireCommentRequester(req, res)) return
+  const ownerId = req.user.id
+  if (typeof ownerId !== 'number' || !Number.isSafeInteger(ownerId) || ownerId < 1 || ownerId === 2)
+    return res.status(401).json({ error: 'Sign in to see your discussions.' })
+  if (req.get('X-Notification-Owner') !== String(ownerId))
+    return res.status(409).json({ error: 'The signed-in account changed. Reload your discussions.', code: 'NOTIFICATION_OWNER_CHANGED' })
+  try {
+    res.json({ ownerId, ...(await discussionAnnotations().mine(req.user, req.query as Record<string, unknown>, req.sessionID)) })
+  } catch (error) {
+    fail(res, error)
+  }
+})
+
+router.get('/annotations', async (req, res) => {
+  const pageId = parsePositiveInteger(req.query.pageId)
+  if (pageId === null) return res.status(400).json({ error: 'Choose a valid page.' })
+  if (!requireCommentRequester(req, res)) return
+  try {
+    const { pageId: _pageId, ...input } = req.query
+    res.json(await discussionAnnotations().pageAnnotations(req.user, pageId, input as Record<string, unknown>, req.sessionID))
+  } catch (error) {
+    fail(res, error)
+  }
+})
+
 router.get('/', async (req, res, next) => {
   const pageId = parsePositiveInteger(req.query && req.query.pageId)
   if (pageId === null) {
@@ -125,7 +206,8 @@ router.post('/', async (req, res, next) => {
   const input = typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {}
   try {
     const id = await commentOperations.create({
-      requester: req.user, sessionId: req.sessionID,
+      requester: req.user,
+      sessionId: req.sessionID,
       ip: req.ip ?? '',
       input
     })
@@ -145,6 +227,17 @@ router.get('/:id', async (req, res, next) => {
     next(err)
   }
 })
+router.patch('/:id/annotations/:annotationId', async (req, res) => {
+  const id = parsePositiveInteger(req.params.id),
+    annotationId = parsePositiveInteger(req.params.annotationId)
+  if (id === null || annotationId === null) return res.status(400).json({ error: 'Choose a valid comment and annotation.' })
+  if (!requireCommentRequester(req, res)) return
+  try {
+    res.json(await discussionAnnotations().changeState(req.user, id, annotationId, req.body, req.sessionID))
+  } catch (error) {
+    fail(res, error)
+  }
+})
 
 router.patch('/:id', async (req, res, next) => {
   const id = parsePositiveInteger(req.params && req.params.id)
@@ -152,7 +245,8 @@ router.patch('/:id', async (req, res, next) => {
   if (!requireCommentRequester(req, res)) return
   try {
     const render = await commentOperations.update({
-      requester: req.user, sessionId: req.sessionID,
+      requester: req.user,
+      sessionId: req.sessionID,
       ip: req.ip ?? '',
       input: { id, content: objectValue(req.body, 'content') }
     })

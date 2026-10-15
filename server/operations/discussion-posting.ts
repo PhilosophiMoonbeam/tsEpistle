@@ -8,9 +8,19 @@ import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
 import { isCommentWebhookPageEligible } from '../core/webhooks.ts'
 import type { CommentWebhookAction } from '../../shared/webhook-events.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
+import { validateDiscussionAnnotations } from './discussion-annotations.ts'
 const { ApplicationError } = errors
 const POST_IDENTITY_LOCK = 72401642
-export interface DiscussionPostInput { pageId: number; replyTo: number; content: string; render: string; user: { id: number; name: string; email: string; ip: string }; requester: PagePrincipal; sessionId: string }
+export interface DiscussionPostInput {
+  pageId: number
+  replyTo: number
+  content: string
+  render: string
+  user: { id: number; name: string; email: string; ip: string }
+  requester: PagePrincipal
+  sessionId: string
+  annotations?: unknown
+}
 interface Dependencies {
   db: Knex
   fallbackFeatures(): Record<string, unknown>
@@ -45,18 +55,33 @@ const anonymousCanReadDiscussion = async (
     (ownerId !== null && (typeof ownerId !== 'number' || !Number.isSafeInteger(ownerId) || ownerId < 1)) ||
     typeof path !== 'string' ||
     typeof localeCode !== 'string'
-  ) return false
+  )
+    return false
   const visibilityRecord: PageVisibilityRecord = { visibility, ownerId, path, localeCode, tags: page.tags }
   const authority = await deps.loadPageRuleAuthority(anonymousCommentReader, transaction)
   const context = pageAuthorizationContext(visibilityRecord)
-  return context !== null &&
+  return (
+    context !== null &&
     canReadPage(anonymousCommentReader, visibilityRecord, authority) &&
     getCommentPageAccessRuntime().auth.checkPageAccess(anonymousCommentReader, ['read:comments'], context, authority)
+  )
 }
 export const createDiscussionPostingStore = (deps: Dependencies) => ({
   async post(input: DiscussionPostInput): Promise<number> {
     rejectApiPrincipalMutation(input.requester)
-    if (!Number.isSafeInteger(input.pageId) || input.pageId < 1 || input.pageId > 2147483647 || !Number.isSafeInteger(input.replyTo) || input.replyTo < 0 || input.replyTo > 2147483647 || typeof input.content !== 'string' || input.content.trim().length < 2 || input.content.length > 50000) throw new ApplicationError('Choose a page and enter a comment of 2 to 50,000 characters.', { status: 400 })
+    if (
+      !Number.isSafeInteger(input.pageId) ||
+      input.pageId < 1 ||
+      input.pageId > 2147483647 ||
+      !Number.isSafeInteger(input.replyTo) ||
+      input.replyTo < 0 ||
+      input.replyTo > 2147483647 ||
+      typeof input.content !== 'string' ||
+      input.content.trim().length < 2 ||
+      input.content.length > 50000
+    )
+      throw new ApplicationError('Choose a page and enter a comment of 2 to 50,000 characters.', { status: 400 })
+    const annotations = validateDiscussionAnnotations(input.annotations, input.replyTo)
     return deps.db.transaction(async tx => {
       const page = await tx('pages').where('id', input.pageId).forShare().first()
       if (!page) throw new ApplicationError('Page not found.', { status: 404 })
@@ -67,7 +92,12 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
       if (!deps.canPost(input.requester, page, authority)) throw new ApplicationError('You cannot post comments on this page.', { status: 403 })
       const protection = await tx('pageAccessPasswords').where('pageId', page.id).first()
       if (protection && !managesSystem(input.requester)) {
-        const grant = input.sessionId && await tx('pageUnlockGrants').where({ pageId: page.id, sessionId: input.sessionId, userId: principalId(input.requester), passwordVersion: protection.version }).where('expiresAt', '>', new Date()).first('id')
+        const grant =
+          input.sessionId &&
+          (await tx('pageUnlockGrants')
+            .where({ pageId: page.id, sessionId: input.sessionId, userId: principalId(input.requester), passwordVersion: protection.version })
+            .where('expiresAt', '>', new Date())
+            .first('id'))
         if (!grant) throw new ApplicationError('Unlock this page before joining its discussion.', { status: 403, code: 'PAGE_LOCKED' })
       }
       const identity = input.user.id === 2 ? `guest:${input.user.ip || 'unknown'}` : `user:${input.user.id}`
@@ -76,10 +106,12 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
       await tx.raw('SELECT pg_advisory_xact_lock_shared(?)', [DISCUSSION_SETTINGS_LOCK])
       const providers = await tx('commentProviders').orderBy('key').forShare().select('key', 'isEnabled', 'config')
       const featureRow = await tx('settings').where('key', 'features').forShare().first('value')
-      const enabled = providers.filter(row => row.isEnabled), flags = featureRow?.value ?? deps.fallbackFeatures()
+      const enabled = providers.filter(row => row.isEnabled),
+        flags = featureRow?.value ?? deps.fallbackFeatures()
       if (!flags.featurePageComments) throw new ApplicationError('Discussions are currently paused.', { status: 409 })
       if (enabled.length !== 1 || enabled[0].key !== 'default') throw new ApplicationError('Built-in discussions are not the active provider.', { status: 409 })
-      if ((await tx('pageDiscussionPolicy').where('pageId', page.id).first('closed'))?.closed) throw new ApplicationError('This discussion is closed to new comments.', { status: 409 })
+      if ((await tx('pageDiscussionPolicy').where('pageId', page.id).first('closed'))?.closed)
+        throw new ApplicationError('This discussion is closed to new comments.', { status: 409 })
       let normalizedReplyTo = 0
       if (input.replyTo > 0) {
         const seen = new Set<number>()
@@ -98,23 +130,66 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
         }
       }
       const minDelay = Number(enabled[0].config.minDelay)
-      if (!Number.isSafeInteger(minDelay) || minDelay < 0 || minDelay > 86400) throw new ApplicationError('Discussion settings need administrator attention.', { status: 409 })
+      if (!Number.isSafeInteger(minDelay) || minDelay < 0 || minDelay > 86400)
+        throw new ApplicationError('Discussion settings need administrator attention.', { status: 409 })
       const latestQuery = tx('comments').where('authorId', input.user.id)
       if (input.user.id === 2) latestQuery.where('ip', input.user.ip)
       const latest = await latestQuery.orderBy('createdAt', 'desc').first('createdAt')
       const retryAfterMilliseconds = latest ? new Date(latest.createdAt).valueOf() + minDelay * 1000 - Date.now() : 0
-      if (retryAfterMilliseconds > 0) throw Object.assign(new ApplicationError('Please wait before posting another comment.', { status: 429 }), { retryAfterMilliseconds })
+      if (retryAfterMilliseconds > 0)
+        throw Object.assign(new ApplicationError('Please wait before posting another comment.', { status: 429 }), { retryAfterMilliseconds })
       // No third-party spam request for private or password-protected pages.
       // Page and policy locks remain held until the bounded check and insert finish.
       if (page.visibility === 'public' && !protection) await deps.checkSpam({ page, comment: input, providerConfig: enabled[0].config })
       const createdAt = new Date()
       const timestamp = createdAt.toISOString()
-      const [row] = await tx('comments').insert({ content: input.content.trim(), render: input.render, replyTo: normalizedReplyTo, pageId: page.id, authorId: input.user.id, name: input.user.name, email: input.user.email, ip: input.user.ip, isHidden: false, createdAt: timestamp, updatedAt: timestamp }).returning(['id', 'isHidden'])
+      const [row] = await tx('comments')
+        .insert({
+          content: input.content.trim(),
+          render: input.render,
+          replyTo: normalizedReplyTo,
+          pageId: page.id,
+          authorId: input.user.id,
+          name: input.user.name,
+          email: input.user.email,
+          ip: input.user.ip,
+          isHidden: false,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        })
+        .returning(['id', 'isHidden'])
       const commentId = Number(row.id)
+      if (annotations.length > 0) {
+        await tx('commentAnnotations').insert(
+          annotations.map((annotation, position) => ({
+            commentId,
+            position,
+            note: annotation.note,
+            anchor: annotation.anchor,
+            revision: 1,
+            resolvedAt: null,
+            resolvedById: null,
+            createdAt,
+            updatedAt: createdAt
+          }))
+        )
+      }
+      if (row.isHidden === false || row.isHidden === 0) {
+        await writeOutboxEvent(tx, {
+          type: 'discussion.comment-created',
+          version: 1,
+          aggregateType: 'comment',
+          aggregateId: commentId,
+          createdAt,
+          payload: { pageId: Number(page.id), commentId, actorId: input.user.id }
+        })
+      }
       const eligibilityProtection = await tx('pageAccessPasswords').where('pageId', page.id).first('pageId')
-      if ((row.isHidden === false || row.isHidden === 0) &&
+      if (
+        (row.isHidden === false || row.isHidden === 0) &&
         (flags.featurePageComments === true || flags.featurePageComments === 1) &&
-        await anonymousCanReadDiscussion(page, Boolean(eligibilityProtection), createdAt, tx, deps)) {
+        (await anonymousCanReadDiscussion(page, Boolean(eligibilityProtection), createdAt, tx, deps))
+      ) {
         const action: CommentWebhookAction = 'created'
         await writeOutboxEvent(tx, {
           type: `comment.${action}`,

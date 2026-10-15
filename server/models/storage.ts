@@ -3,9 +3,10 @@ import type { Knex } from 'knex'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createStorageRuntimeQueue } from '../helpers/storage-runtime-queue.ts'
-import { storageConfigurationKey } from '../helpers/storage-configuration-key.ts'
+import { nativeStorageMutationConfigurationKey, storageConfigurationKey } from '../helpers/storage-configuration-key.ts'
 import { storageTargetPausedOffline } from '../helpers/storage-offline-policy.ts'
 import type { StorageRuntimeTarget } from '../operations/storage-actions.ts'
+import type { StorageMutationDispatch, StorageMutationPayload } from '../jobs/storage-mutations.ts'
 import fs from 'fs-extra'
 import _ from 'lodash'
 import * as yaml from 'js-yaml'
@@ -116,16 +117,6 @@ interface AssetRelocationRequest extends StorageAssetRelocation {
   targetConfigurationRevision: string
 }
 
-type StoragePageEvent =
-  | { event: 'created'; page: WrittenStoragePage }
-  | { event: 'updated'; page: WrittenStoragePage }
-  | { event: 'deleted'; page: DeletedStoragePage }
-  | { event: 'renamed'; page: RenamedStoragePage }
-
-type StorageAssetEvent =
-  | { event: 'uploaded'; asset: UploadedStorageAsset }
-  | { event: 'deleted'; asset: DeletedStorageAsset }
-  | { event: 'renamed'; asset: RenamedStorageAsset }
 interface StoragePlugin extends Record<string, unknown> {
   init(): Promise<unknown>
   created(page: WrittenStoragePage): Promise<unknown>
@@ -137,6 +128,7 @@ interface StoragePlugin extends Record<string, unknown> {
   assetRenamed(asset: RenamedStorageAsset): Promise<unknown>
   assetRelocated?(asset: AssetRelocationRequest): Promise<unknown>
   getLocalLocation(asset: StorageAssetIdentity): Promise<StorageLocalLocation | void>
+  withMutationTurn?(work: (dispatch: StorageMutationDispatch) => Promise<void>, signal: AbortSignal): Promise<void>
 }
 
 interface RuntimeStoragePlugin extends StoragePlugin {
@@ -462,8 +454,33 @@ export default class Storage extends Model {
       // -> Delete removed targets
       for (const target of dbTargets) {
         if (!diskTargets.some(candidate => candidate.key === target.key)) {
-          await wiki.models.storage.query().where('key', target.key).del()
-          wiki.logger.info(`Removed target ${target.key} because it is no longer present in the modules folder: [ OK ]`)
+          const removed = await wiki.models.knex.transaction(async transaction => {
+            const current = await wiki.models.storage.query(transaction).findById(target.key).forUpdate()
+            if (!current) return false
+            const pendingQuery = transaction('durableJobs')
+              .where(identity => identity.where({ type: 'storage-mutation', version: 1 }).orWhere({ type: 'asset-relocation', version: 1 }))
+              .whereNot('state', 'succeeded')
+            const client = transaction.client.config.client
+            if (client === 'pg' || client === 'postgres' || client === 'postgresql') {
+              pendingQuery.whereRaw("payload::jsonb ->> 'targetKey' = ?", [target.key])
+            } else {
+              pendingQuery.whereRaw("json_extract(payload, '$.targetKey') = ?", [target.key])
+            }
+            if (await pendingQuery.first('id')) {
+              const state: StorageState = {
+                status: 'error',
+                message: 'Storage module is unavailable; restore the module to reconcile pending canonical mutations.',
+                lastAttempt: new Date().toISOString(),
+                ...(current.state?.lastOperation === undefined ? {} : { lastOperation: current.state.lastOperation })
+              }
+              await current.$query(transaction).patch({ state })
+              return false
+            }
+            await current.$query(transaction).delete()
+            return true
+          })
+          if (removed) wiki.logger.info(`Removed target ${target.key} because it is no longer present in the modules folder: [ OK ]`)
+          else wiki.logger.warn(`Retained unavailable target ${target.key} while canonical storage intent remains pending.`)
         }
       }
     } catch (err) {
@@ -488,17 +505,18 @@ export default class Storage extends Model {
     }
   }
 
-  private static async initializeTargets(stopped: Promise<unknown>[]): Promise<void> {
+  private static async initializeTargets(stopped: Promise<unknown>[], retryTargetKey?: string): Promise<void> {
     const wiki = getWiki()
-    const nextTargets = await wiki.models.storage.query().where('isEnabled', true).orderBy('key')
-    const previousTargets = this.activeTargets
-    this.activeTargets = []
-    this.targets = nextTargets
+    const targetQuery = wiki.models.storage.query().where('isEnabled', true).orderBy('key')
+    const nextTargets = await (retryTargetKey ? targetQuery.where({ key: retryTargetKey }) : targetQuery)
+    const previousTargets = retryTargetKey ? this.activeTargets.filter(target => target.key === retryTargetKey) : this.activeTargets
+    this.activeTargets = retryTargetKey ? this.activeTargets.filter(target => target.key !== retryTargetKey) : []
+    this.targets = retryTargetKey ? [...(this.targets ?? []).filter(target => target.key !== retryTargetKey), ...nextTargets] : nextTargets
     try {
       const scheduler = wiki.scheduler
       if (scheduler === undefined) throw new Error('WIKI scheduler is not initialized')
       // -> Stop and delete existing jobs
-      const previousJobs = _.remove(scheduler.jobs, job => job.name === 'sync-storage')
+      const previousJobs = retryTargetKey ? [] : _.remove(scheduler.jobs, job => job.name === 'sync-storage')
       for (const job of previousJobs) stopped.push(job.stop())
       for (const target of previousTargets) {
         try {
@@ -509,7 +527,7 @@ export default class Storage extends Model {
       }
 
       // -> Initialize targets
-      for (const target of this.targets) {
+      for (const target of nextTargets) {
         const scheduled: StorageJob[] = []
         try {
           if (storageTargetPausedOffline(wiki.config, target.key)) {
@@ -526,7 +544,8 @@ export default class Storage extends Model {
           target.runtimeGeneration = randomUUID()
           target.fn = Object.assign(_.cloneDeep(readStoragePlugin(await import(source), source)), {
             config: _.cloneDeep(target.config),
-            mode: target.mode
+            mode: target.mode,
+            targetKey: target.key
           })
           await target.fn.init()
 
@@ -576,6 +595,7 @@ export default class Storage extends Model {
           } catch (statusError) {
             wiki.logger.warn(statusError)
           }
+          if (retryTargetKey) throw err
         }
       }
     } catch (err) {
@@ -584,95 +604,95 @@ export default class Storage extends Model {
     }
   }
 
-  static async pageEvent(payload: StoragePageEvent): Promise<void> {
-    return this.runtimeQueue.run(() => this.dispatchPageEvent(payload))
-  }
-
-  private static async dispatchPageEvent(payload: StoragePageEvent): Promise<void> {
-    const wiki = getWiki()
-    for (const target of this.activeTargets) {
-      if (storageTargetPausedOffline(wiki.config, target.key)) continue
-      try {
-        switch (payload.event) {
-          case 'created':
-            await target.fn.created(payload.page)
-            break
-          case 'updated':
-            await target.fn.updated(payload.page)
-            break
-          case 'deleted':
-            await target.fn.deleted(payload.page)
-            break
-          case 'renamed':
-            await target.fn.renamed(payload.page)
-            break
+  static async performMutation(input: StorageMutationPayload, work: (dispatch: StorageMutationDispatch) => Promise<void>, signal: AbortSignal): Promise<void> {
+    const stopped: Promise<unknown>[] = []
+    try {
+      return await this.runtimeQueue.run(async () => {
+        signal.throwIfAborted()
+        if (storageTargetPausedOffline(getWiki().config, input.targetKey)) throw new Error('Remote storage mutation is paused in offline mode')
+        if (!getWiki().data.storage?.some(definition => definition.key === input.targetKey && definition.isAvailable)) {
+          throw new Error('Storage module is unavailable; pending canonical mutations require the configured module.')
         }
-        await recordTargetState(target, 'operational')
-      } catch (err) {
-        wiki.logger.warn(err)
+        let target = this.activeTargets.find(candidate => candidate.key === input.targetKey)
+        if (!target) {
+          const configured = await this.query().findById(input.targetKey)
+          if (!configured?.isEnabled || nativeStorageMutationConfigurationKey(configured) !== input.targetConfigurationRevision) {
+            throw new Error('Storage mutation target configuration changed')
+          }
+          await this.initializeTargets(stopped, input.targetKey)
+          target = this.activeTargets.find(candidate => candidate.key === input.targetKey)
+        }
+        if (!target) throw new Error(`Storage mutation target ${input.targetKey} is not active`)
+        if (nativeStorageMutationConfigurationKey(target) !== input.targetConfigurationRevision)
+          throw new Error('Storage mutation target configuration changed')
         try {
-          await recordTargetState(target, 'warning', errorMessage(err))
-        } catch (statusError) {
-          wiki.logger.warn(statusError)
+          if (target.key === 'git') {
+            if (target.fn.quarantined === true) await target.fn.init()
+            signal.throwIfAborted()
+            if (!target.fn.withMutationTurn) throw new Error('Git storage mutation turn is unavailable')
+            await target.fn.withMutationTurn(work, signal)
+          } else {
+            await work({
+              writePage: page => target!.fn.updated(page),
+              writeAsset: asset => target!.fn.assetUploaded(asset),
+              removePath: asset => target!.fn.assetDeleted(asset)
+            })
+          }
+          signal.throwIfAborted()
+          await recordTargetState(target, 'operational', '', undefined, true)
+        } catch (error) {
+          try {
+            await recordTargetState(target, 'error', errorMessage(error), undefined, true)
+          } catch (statusError) {
+            getWiki().logger.warn(statusError)
+          }
+          throw error
         }
-      }
-    }
-  }
-
-  static async assetEvent(payload: StorageAssetEvent): Promise<void> {
-    return this.runtimeQueue.run(() => this.dispatchAssetEvent(payload))
-  }
-
-  private static async dispatchAssetEvent(payload: StorageAssetEvent): Promise<void> {
-    const wiki = getWiki()
-    for (const target of this.activeTargets) {
-      if (storageTargetPausedOffline(wiki.config, target.key)) continue
-      try {
-        switch (payload.event) {
-          case 'uploaded':
-            await target.fn.assetUploaded(payload.asset)
-            break
-          case 'deleted':
-            await target.fn.assetDeleted(payload.asset)
-            break
-          case 'renamed':
-            await target.fn.assetRenamed(payload.asset)
-            break
-        }
-        await recordTargetState(target, 'operational')
-      } catch (err) {
-        wiki.logger.warn(err)
-        try {
-          await recordTargetState(target, 'warning', errorMessage(err))
-        } catch (statusError) {
-          wiki.logger.warn(statusError)
-        }
-      }
+      })
+    } finally {
+      for (const result of await Promise.allSettled(stopped)) if (result.status === 'rejected') getWiki().logger.warn(result.reason)
     }
   }
   static async reconcileAssetRelocation(input: AssetRelocationRequest): Promise<void> {
-    return this.runtimeQueue.run(async () => {
-      if (!input.targetKey || !input.targetConfigurationRevision) throw new Error('Asset relocation target identity is invalid')
-      const target = this.activeTargets.find(candidate => candidate.key === input.targetKey)
-      if (!target) throw new Error(`Asset relocation target ${input.targetKey} is not active`)
-      if (storageTargetPausedOffline(getWiki().config, target.key)) throw new Error('Remote asset relocation is paused in offline mode')
-      if (storageConfigurationKey(target) !== input.targetConfigurationRevision) {
-        throw new Error(`Asset relocation target ${input.targetKey} configuration changed`)
-      }
-      const relocate = target.fn.assetRelocated
-      if (typeof relocate !== 'function') throw new Error(`Asset relocation is unsupported by storage target ${input.targetKey}`)
-      try {
-        await relocate.call(target.fn, input)
-        await recordTargetState(target, 'operational', '', undefined, true)
-      } catch (error) {
-        try {
-          await recordTargetState(target, 'error', errorMessage(error), undefined, true)
-        } catch (statusError) {
-          getWiki().logger.warn(statusError)
+    const stopped: Promise<unknown>[] = []
+    try {
+      return await this.runtimeQueue.run(async () => {
+        if (!input.targetKey || !input.targetConfigurationRevision) throw new Error('Asset relocation target identity is invalid')
+        if (storageTargetPausedOffline(getWiki().config, input.targetKey)) throw new Error('Remote asset relocation is paused in offline mode')
+        if (!getWiki().data.storage?.some(definition => definition.key === input.targetKey && definition.isAvailable)) {
+          throw new Error('Storage module is unavailable; pending asset relocation requires the configured module.')
         }
-        throw error
-      }
-    })
+        let target = this.activeTargets.find(candidate => candidate.key === input.targetKey)
+        if (!target) {
+          const configured = await this.query().findById(input.targetKey)
+          if (!configured?.isEnabled || storageConfigurationKey(configured) !== input.targetConfigurationRevision) {
+            throw new Error(`Asset relocation target ${input.targetKey} configuration changed`)
+          }
+          await this.initializeTargets(stopped, input.targetKey)
+          target = this.activeTargets.find(candidate => candidate.key === input.targetKey)
+        }
+        if (!target) throw new Error(`Asset relocation target ${input.targetKey} is not active`)
+        if (storageConfigurationKey(target) !== input.targetConfigurationRevision) {
+          throw new Error(`Asset relocation target ${input.targetKey} configuration changed`)
+        }
+        const relocate = target.fn.assetRelocated
+        if (typeof relocate !== 'function') throw new Error(`Asset relocation is unsupported by storage target ${input.targetKey}`)
+        try {
+          if (target.key === 'git' && target.fn.quarantined === true) await target.fn.init()
+          await relocate.call(target.fn, input)
+          await recordTargetState(target, 'operational', '', undefined, true)
+        } catch (error) {
+          try {
+            await recordTargetState(target, 'error', errorMessage(error), undefined, true)
+          } catch (statusError) {
+            getWiki().logger.warn(statusError)
+          }
+          throw error
+        }
+      })
+    } finally {
+      for (const result of await Promise.allSettled(stopped)) if (result.status === 'rejected') getWiki().logger.warn(result.reason)
+    }
   }
 
   static async getLocalLocations(input: { asset: StorageAssetIdentity }): Promise<Array<{ location: StorageLocalLocation; key: string }>> {
@@ -744,10 +764,14 @@ export default class Storage extends Model {
       const target = this.activeTargets.find(candidate => candidate.key === targetKey && candidate.runtimeGeneration === generation)
       if (!target || !isStorageAction(target.fn.sync)) return false
       if (storageTargetPausedOffline(getWiki().config, target.key)) return false
+      if (!getWiki().data.storage?.some(definition => definition.key === target.key && definition.isAvailable)) return false
+      const startedAt = new Date().toISOString()
       try {
-        await target.fn.sync.call(target.fn)
-        await recordTargetState(target, 'operational', '', undefined, true)
-        return true
+        const result = await target.fn.sync.call(target.fn)
+        const summary = actionSummary(target.key, 'sync', startedAt, new Date().toISOString(), result)
+        const stateStatus = summary.outcome === 'partial' ? 'warning' : summary.outcome === 'failed' ? 'error' : 'operational'
+        await recordTargetState(target, stateStatus, stateStatus === 'operational' ? '' : summary.message, summary, true)
+        return summary.outcome === 'succeeded'
       } catch (error) {
         try {
           await recordTargetState(target, 'error', errorMessage(error), undefined, true)

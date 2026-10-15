@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "6dc3c3b10fce4bd745396dce89ef122b09fd3bc4",
-    "recordedAt": "2026-09-28T23:53:30.000Z",
-    "lastFetchedAt": "2026-09-28T23:36:57Z",
+    "recordedTip": "75f5bf047521341b5aa370833d50256bb24493d1",
+    "recordedAt": "2026-10-15T02:23:01.000Z",
+    "lastFetchedAt": "2026-10-15T02:14:32+00:00",
     "auditBaseline": "b5b4b0880ae26f4b137242267b6674b51af8688c",
     "candidateBaseline": "249758e3f923a77e1b62d26a47e142c312642a5f",
     "historicalReview": {
@@ -1501,6 +1501,319 @@
       "workstream": "scarlett-sync/reader",
       "contract": "Supersede upstream's render-only relink with an explicitly opted-in, bounded canonical-source repair: the move dialog reviews exact source edits for supported Markdown inline links, enabled wikilinks and quoted HTML anchors on at most 20 selected public-namespace referrers whose current source the requester may read and edit. The rewrite matches the Markdown HTML setting and emits non-default locale routes explicitly even without namespacing. A short-lived session-bound review token fences original and destination identity, revisions, source digests, rendering settings and selection; the moved page's supported self-links are included from canonical source even without its own link-index receipt. Commit rechecks authority, unlocks, selected referrers' current link-index receipts, approval and collaboration state under one target/referrer transaction, writing canonical revisions, history and durable projection events. A reviewed move to the unchanged location is rejected like an ordinary move. Ordinary unchecked moves do not rewrite referrer source. The incoming-link index is not exhaustive, and unsupported or unselected links remain for manual repair; existing reader broken-link presentation is not an authorization-aware missing-page oracle.",
       "lastReviewed": "2026-09-29"
+    },
+    {
+      "id": "native-locale-glossary",
+      "commits": [
+        "f4c60a2e1a3719dfe3b18e6455ca7c09aa124e2b",
+        "38e743609ecdd0bb91e7b9f1ea67734cad02793d",
+        "5c3aa5b9bea2db16c53c1f65860f79f1a4dde52f"
+      ],
+      "category": "catalog",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/catalog",
+      "contract": "Native integer/revision catalog, race-safe Unicode shared name namespace, symmetric relations, current documentation authority/unlocks, full lazy CRUD/reader linking; no sites model or ignored-path global grants. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion. Frozen assessment covers all 48 commits from 6dc3c3b10fce4bd745396dce89ef122b09fd3bc4 through ac0b3a371b8abd5266a148a5094029980ccc849a: 24 feature, 14 fix, 4 mixed, 2 dependency/tooling and 4 documentation/static units; no prefilter removals or judgment failures. Main manually confirmed all 44 flagged units against native surfaces, including all 11 truncated states; four high-confidence documentation/static units use existing metadata/verdicts without unflagged raw-patch rereads. This records frozen assessment facts and decisions, not final UI/deployment certification. Snapshot source: intake report generated 2026-10-14T23:05:55.409Z; lastFetchedAt uses the actual matching scarlett FETCH_HEAD modification clock, 2026-10-14T23:00:02.201Z. Preserve the reviewed native permission picker and per-locale navigation rather than transplanting the mixed glossary commit’s duplicate library/menu model.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-anchored-discussions",
+      "commits": [
+        "b1d2d11f59bba12a746aa03de347afe467563bcd",
+        "deb99c5b9b9701234304e555b4ae1638ff318564",
+        "2a06aba3b2563b70a94e4be40a56fff89a98d607"
+      ],
+      "category": "community",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/community",
+      "contract": "Atomic multi-passage root annotations/current-page resolution, safe re-anchor, native discussion UI/history; no upstream sample accounts. Password/private/hidden/provider/publication authority retained. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-opted-in-notifications",
+      "commits": [
+        "9e36597965e698e26412ecca3a2f209789961c08"
+      ],
+      "category": "community",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/community",
+      "contract": "Extend existing outbox/jobs/receipts/owner-fenced inbox; new channels default off, bounded reauthorized recipients, no excerpts/global handle directory; actual discussion links and profile controls. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-federated-profile-policy",
+      "commits": [
+        "7f942b2d5ef11439bec0dd99ba5a4b6289492c7a",
+        "074fb786795b0c263e99ff4556dc122d2cf2a8a2"
+      ],
+      "category": "identity",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/identity",
+      "contract": "Bounded optional OIDC/LDAP/SAML location/jobTitle/pronouns plus strict opt-in OIDC/SAML verified claims before create/link/update; full self/admin/GraphQL pronouns contracts. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-storage-ingestion-git-ha",
+      "commits": [
+        "807401332923dfb6d7c65283e88a2dd5bebcf43a",
+        "68f498af31952ef68c3ab0353eff2cc63ca67a1a",
+        "77b1ec1ae83cbca93fe7721194411e3eeb540136"
+      ],
+      "category": "storage",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/storage",
+      "contract": "Opt-in plain/legacy heading and root README ingestion, no valid/invalid OKF reinterpretation or egress rename; native PostgreSQL Git fences, retained import replay and atomic ordinary-writer durable mutation integration. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-links-grid",
+      "commits": [
+        "381f4c9df7d7a445bc14f88bc924c29ff6bfffa5"
+      ],
+      "category": "authoring",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/authoring",
+      "contract": "Safe bounded typed cards, disabled-source recovery, no-JS semantic server rendering, lazy lifecycle and actual picker/form insertion. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-source-authoring",
+      "commits": [
+        "cf411e543f5db9c4555897370dc5797d161f8b56"
+      ],
+      "category": "authoring",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/authoring",
+      "contract": "Native CodeMirror extension/fence/kbd completion, real table/code insertion and non-stealing table keyboard navigation. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-lossless-image-properties",
+      "commits": [
+        "a3706d900eb412f113e6150a666288ff67c7025e"
+      ],
+      "category": "authoring",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/authoring",
+      "contract": "Shared native dialog and dirty-field patch semantics across Markdown/AsciiDoc/raw HTML/Tiptap; dimensions/alignment/framing preserved round-trip. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-visual-slash-authoring",
+      "commits": [
+        "2831596193fba079dfa6aa5bb060ce754f676eaf"
+      ],
+      "category": "authoring",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/authoring",
+      "contract": "Tiptap commands with IME/read-only/collaboration/source preservation; reuse native keyboard mark. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-explicit-inline-math",
+      "commits": [
+        "ad598942a54169aee10592bd4a097ad26089bb95"
+      ],
+      "category": "rendering",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/rendering",
+      "contract": "Shared raw-TeX backtick-delimited inline syntax in native KaTeX/MathJax and editor previews, preserving existing formats/gates. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-locale-dashboard-signals",
+      "commits": [
+        "a60578139ba50e07c22f2bab27391a0da14b7144",
+        "907774b1a7f143bbced418a91f7bdfba410df97d"
+      ],
+      "category": "administration",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/administration",
+      "contract": "Installed current fork-key presence/provenance without translation claims; assets bytes/count and visible comments only under current full system authority. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-code-appearance",
+      "commits": [
+        "ac0b3a371b8abd5266a148a5094029980ccc849a"
+      ],
+      "category": "appearance",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/appearance",
+      "contract": "Bounded Prism theme selection with real preview, reader/offline application and race-safe cleanup; not upstream highlighting stack. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-authorized-folder-children",
+      "commits": [
+        "26ba03716a35ecd16672eec59c21f2f25dd38f9e"
+      ],
+      "category": "reader",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/reader",
+      "contract": "Reuse native authorized Unicode/locale tree for genuine folder-only/missing pages; no private metadata or duplicate browse model. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-application-child-reaping",
+      "commits": [
+        "680cb0a2affb0186a810e12c7f01590ce633dd9d"
+      ],
+      "category": "operations",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/operations",
+      "contract": "Alpine Tini subreaper wraps existing Bun entrypoint, preserving user/CMD/health/signal handling. Actual old-image orphan zombie reproduced; final built-image reaping/signal proof pending. Accepted native rewrite remains active pending Main’s final full UI and deployed-runtime proof; foundation qualification is not completion.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "retained-native-rendering-reader",
+      "commits": [
+        "9712cbfefc25f2b55cfc6295c9342d06a72a3923",
+        "4a542e44491a0342a5f6362f213cdf0396428906",
+        "dd8f8ee7121a5ebf6d49f5ce61c102eb4f12d11f",
+        "034faa402c396117183256118faa90752feb796d",
+        "d41b2f24e74e177abf20b3e87bc17fa8385468ab",
+        "c8bd8cdee5f61ba6b49b9b117c046b4f651d435c"
+      ],
+      "category": "rendering",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "scarlett-sync/rendering",
+      "contract": "Retain native reviewed rerender utilities and source/revision/lease-fenced last-good publication; no unsafe render clearing. Native AsciiDoc renderer does not hard-unset section numbering; document attributes remain effective. Upstream Twemoji package/API mismatch not present in native pinned path. Native offline gates already prevent locale/update network calls; preserve reviewed behavior. Native reviewed safe Markdown footer already retained; do not reintroduce raw upstream injection. Native reader intentionally fixes two-level ToC; upstream configurable-default bug does not apply. Native pushState/popstate navigation already preserves history; no upstream replace fix transplant.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "retained-native-upgrade-identities",
+      "commits": [
+        "523473c9514a44b291c193c5f87df1fc4d261f36",
+        "5e205f1ab5b9e76ee0bb4a3c2b44eeacb9aca37f",
+        "556397100345ea9777378b77152aaec61dac9c7c",
+        "0a5392dc744fc52d72b8ed19354fcc812bfbdd76"
+      ],
+      "category": "storage",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "scarlett-sync/storage",
+      "contract": "Retained in-place Wiki.js2 upgrade uses native locale/page identity; no upstream2-to3 mapping or release announcements. Upstream2-to3 import rename scheme is not native upgrade protocol; preserve retained canonical identities. Upstream ky import timeout path is absent; do not add alternate HTTP/import client. Upstream2-to3 import batch implementation is not fork path; retain native bounded in-place upgrade.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "retained-native-account-asset-authority",
+      "commits": [
+        "dc72657e9f7b76f3c15ad6b51cc6e2d82a13a322",
+        "34412de5330452dc418efe8089d124b27bb222ed",
+        "52532cc2e6d060b97171c7e42ecce9be68957fb9"
+      ],
+      "category": "security",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "scarlett-sync/security",
+      "contract": "Native reviewed login workspace and same-origin redirect validation already enforce stronger contract. Native asset ingress authorizes before buffering; preserve existing streaming/owner/provider boundaries. Native disabled-account reset/auth-version gates already block banned resets.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "retained-native-durable-claims",
+      "commits": [
+        "cbe261cfeb3f7636f8e8fbe613970ed4b6ceb2c4"
+      ],
+      "category": "operations",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "scarlett-sync/operations",
+      "contract": "Native PostgreSQL-owned durable claims/capacity and continuations already provide stronger concurrency behavior.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "conditional-native-configuration-coherence",
+      "commits": [
+        "a2ca67fd5db9c36e0ea3ffa30ac74936f0fb9f19"
+      ],
+      "category": "operations",
+      "disposition": "conditional",
+      "state": "active",
+      "workstream": "scarlett-sync/operations",
+      "contract": "Main is verifying the actual distributed reloadConfig path before deciding whether native replica coherence already supersedes this upstream correction or requires adaptation. No configuration-epoch symbol or proven cross-replica invalidation is asserted. General/theme writes must retain existing configuration authority and must not be declared coherently propagated without evidence; final disposition remains pending.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "retained-native-unicode-navigation",
+      "commits": [
+        "b868bf7b7f3bff89341da3fdacd7aa5cba395f97",
+        "c626e286db946648522f7bf9c53c5476ec6a346d"
+      ],
+      "category": "reader",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "scarlett-sync/reader",
+      "contract": "Native Unicode pageTree/path identity already avoids upstream ltree encoding issue; no schema rewrite. Retain reviewed per-locale navigation plus dynamic authorized Browse and searchable permission picker, not duplicate per-folder menu lifecycle.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "retained-native-editor-reading-preferences",
+      "commits": [
+        "55988a85026c2978f4664c35bbc4ba9b06474e11",
+        "b114a5fa65832395a48c280965b6c8eb022bae1c",
+        "c69078c54d331701842f90d22104ebee78b5a801"
+      ],
+      "category": "authoring",
+      "disposition": "supersede",
+      "state": "closed",
+      "workstream": "scarlett-sync/authoring",
+      "contract": "Native Tiptap list/table commands already avoid upstream visual renderer defects; preserve actual source round-trip and exercise new authoring flow. Retain native AES-GCM/AAD-bound encrypted unsaved drafts, not upstream cleartext IndexedDB buffers. Retain native bounded copy measure/user reading preferences, not coarse centered/full-width switch.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "rejected-upstream-build-dependency-transplant",
+      "commits": [
+        "89eb5da8fb1da6c452421f0795f5512310ff3f0e",
+        "26368c8e9252ccf463921433ec007f97a2551d0b"
+      ],
+      "category": "tooling",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/tooling",
+      "contract": "Keep independent fork build/release workflow, no upstream organization CI transplant. Keep current tested fork dependency pins, no indiscriminate lockfile/provider/engine update.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "rejected-upstream-documentation-static-units",
+      "commits": [
+        "ba12798381c51efbd779d4801bdf218e72ccc763",
+        "1df9edd1fe32b7e81f12bbe8e664ef162b1f839b",
+        "c10bc4dadc71a4c037afdeb47c4e994db5fe5d74",
+        "d71fff4e14ad366651cc81a63feaac0f6f923297"
+      ],
+      "category": "documentation",
+      "disposition": "reject",
+      "state": "closed",
+      "workstream": "scarlett-sync/documentation",
+      "contract": "Frozen high-confidence documentation/static metadata and verdicts only: notifications specification, README, SECURITY and CONTRIBUTING changes do not introduce executable behavior. Retain fork documentation, security policy and contribution identity; no upstream descriptive-policy or static-asset transplant. Notification behavior is separately accepted under native-opted-in-notifications.",
+      "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "native-reviewed-navigation-move-repair",
+      "commits": [
+        "75f5bf047521341b5aa370833d50256bb24493d1"
+      ],
+      "category": "navigation",
+      "disposition": "adapt",
+      "state": "active",
+      "workstream": "scarlett-sync/navigation-move-repair",
+      "contract": "Supplemental accepted native rewrite: only explicit administrator-reviewed repair of selected supported custom-navigation targets AFTER an actual public page move. Preserve native global navigation authority independently of page-move permission, current page protection and revision checks, exact old/new public identity and locale, labels/icons/item IDs/order/audience, and existing fingerprint/reason/history/runtime invalidation conventions. Review is cancellable without navigation writes and commit rechecks current authority, page revision/destination and navigation fingerprint under race-safe locking; stale reviews conflict rather than overwrite. No new permissions, owner-menu tables or menu-stack port. Reject upstream default automatic create/restore/delete/import/title/folder mutations and menu-orphan policy, UUID/ltree SQL and contextual owner-menu transplant because they conflict with reviewed static native policy, current global authority and regenerated integer tree IDs, not because of implementation size. Contextual curated menus and owner-relative menu stacks remain intentional not-admitted capabilities; authorized Browse is not parity for them. Accepted adaptation remains active pending implementation and Main's final full UI and deployed-runtime proof; this entry does not close any of the original 15 active workstreams.",
+      "lastReviewed": "2026-10-15"
     }
   ],
   "coverage": [
@@ -4176,6 +4489,398 @@
       "candidateIds": [
         "split-broken-link-rendering-and-source-rewrite"
       ]
+    },
+    {
+      "commit": "9712cbfefc25f2b55cfc6295c9342d06a72a3923",
+      "candidateIds": [
+        "retained-native-rendering-reader"
+      ],
+      "classification": "native-retained",
+      "reason": "Retain native reviewed rerender utilities and source/revision/lease-fenced last-good publication; no unsafe render clearing."
+    },
+    {
+      "commit": "ba12798381c51efbd779d4801bdf218e72ccc763",
+      "candidateIds": [
+        "rejected-upstream-documentation-static-units"
+      ],
+      "classification": "rejected",
+      "reason": "High-confidence documentation/static metadata and verdict; no executable behavior to transplant."
+    },
+    {
+      "commit": "9e36597965e698e26412ecca3a2f209789961c08",
+      "candidateIds": [
+        "native-opted-in-notifications"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "1df9edd1fe32b7e81f12bbe8e664ef162b1f839b",
+      "candidateIds": [
+        "rejected-upstream-documentation-static-units"
+      ],
+      "classification": "rejected",
+      "reason": "High-confidence documentation/static metadata and verdict; no executable behavior to transplant."
+    },
+    {
+      "commit": "c10bc4dadc71a4c037afdeb47c4e994db5fe5d74",
+      "candidateIds": [
+        "rejected-upstream-documentation-static-units"
+      ],
+      "classification": "rejected",
+      "reason": "High-confidence documentation/static metadata and verdict; no executable behavior to transplant."
+    },
+    {
+      "commit": "d71fff4e14ad366651cc81a63feaac0f6f923297",
+      "candidateIds": [
+        "rejected-upstream-documentation-static-units"
+      ],
+      "classification": "rejected",
+      "reason": "High-confidence documentation/static metadata and verdict; no executable behavior to transplant."
+    },
+    {
+      "commit": "89eb5da8fb1da6c452421f0795f5512310ff3f0e",
+      "candidateIds": [
+        "rejected-upstream-build-dependency-transplant"
+      ],
+      "classification": "rejected",
+      "reason": "Keep independent fork build/release workflow, no upstream organization CI transplant."
+    },
+    {
+      "commit": "26368c8e9252ccf463921433ec007f97a2551d0b",
+      "candidateIds": [
+        "rejected-upstream-build-dependency-transplant"
+      ],
+      "classification": "rejected",
+      "reason": "Keep current tested fork dependency pins, no indiscriminate lockfile/provider/engine update."
+    },
+    {
+      "commit": "4a542e44491a0342a5f6362f213cdf0396428906",
+      "candidateIds": [
+        "retained-native-rendering-reader"
+      ],
+      "classification": "native-retained",
+      "reason": "Native AsciiDoc renderer does not hard-unset section numbering; document attributes remain effective. Upstream Twemoji package/API mismatch not present in native pinned path."
+    },
+    {
+      "commit": "a3706d900eb412f113e6150a666288ff67c7025e",
+      "candidateIds": [
+        "native-lossless-image-properties"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "523473c9514a44b291c193c5f87df1fc4d261f36",
+      "candidateIds": [
+        "retained-native-upgrade-identities"
+      ],
+      "classification": "native-retained",
+      "reason": "Retained in-place Wiki.js2 upgrade uses native locale/page identity; no upstream2-to3 mapping or release announcements."
+    },
+    {
+      "commit": "55988a85026c2978f4664c35bbc4ba9b06474e11",
+      "candidateIds": [
+        "retained-native-editor-reading-preferences"
+      ],
+      "classification": "native-retained",
+      "reason": "Native Tiptap list/table commands already avoid upstream visual renderer defects; preserve actual source round-trip and exercise new authoring flow."
+    },
+    {
+      "commit": "a60578139ba50e07c22f2bab27391a0da14b7144",
+      "candidateIds": [
+        "native-locale-dashboard-signals"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "deb99c5b9b9701234304e555b4ae1638ff318564",
+      "candidateIds": [
+        "native-anchored-discussions"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "b1d2d11f59bba12a746aa03de347afe467563bcd",
+      "candidateIds": [
+        "native-anchored-discussions"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "cbe261cfeb3f7636f8e8fbe613970ed4b6ceb2c4",
+      "candidateIds": [
+        "retained-native-durable-claims"
+      ],
+      "classification": "native-retained",
+      "reason": "Native PostgreSQL-owned durable claims/capacity and continuations already provide stronger concurrency behavior."
+    },
+    {
+      "commit": "dd8f8ee7121a5ebf6d49f5ce61c102eb4f12d11f",
+      "candidateIds": [
+        "retained-native-rendering-reader"
+      ],
+      "classification": "native-retained",
+      "reason": "Native offline gates already prevent locale/update network calls; preserve reviewed behavior."
+    },
+    {
+      "commit": "381f4c9df7d7a445bc14f88bc924c29ff6bfffa5",
+      "candidateIds": [
+        "native-links-grid"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "26ba03716a35ecd16672eec59c21f2f25dd38f9e",
+      "candidateIds": [
+        "native-authorized-folder-children"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "f4c60a2e1a3719dfe3b18e6455ca7c09aa124e2b",
+      "candidateIds": [
+        "native-locale-glossary"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "b868bf7b7f3bff89341da3fdacd7aa5cba395f97",
+      "candidateIds": [
+        "retained-native-unicode-navigation"
+      ],
+      "classification": "native-retained",
+      "reason": "Native Unicode pageTree/path identity already avoids upstream ltree encoding issue; no schema rewrite."
+    },
+    {
+      "commit": "5e205f1ab5b9e76ee0bb4a3c2b44eeacb9aca37f",
+      "candidateIds": [
+        "retained-native-upgrade-identities"
+      ],
+      "classification": "native-retained",
+      "reason": "Upstream2-to3 import rename scheme is not native upgrade protocol; preserve retained canonical identities."
+    },
+    {
+      "commit": "38e743609ecdd0bb91e7b9f1ea67734cad02793d",
+      "candidateIds": [
+        "native-locale-glossary"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "5c3aa5b9bea2db16c53c1f65860f79f1a4dde52f",
+      "candidateIds": [
+        "native-locale-glossary"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "680cb0a2affb0186a810e12c7f01590ce633dd9d",
+      "candidateIds": [
+        "native-application-child-reaping"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "034faa402c396117183256118faa90752feb796d",
+      "candidateIds": [
+        "retained-native-rendering-reader"
+      ],
+      "classification": "native-retained",
+      "reason": "Native reviewed safe Markdown footer already retained; do not reintroduce raw upstream injection."
+    },
+    {
+      "commit": "dc72657e9f7b76f3c15ad6b51cc6e2d82a13a322",
+      "candidateIds": [
+        "retained-native-account-asset-authority"
+      ],
+      "classification": "native-retained",
+      "reason": "Native reviewed login workspace and same-origin redirect validation already enforce stronger contract."
+    },
+    {
+      "commit": "7f942b2d5ef11439bec0dd99ba5a4b6289492c7a",
+      "candidateIds": [
+        "native-federated-profile-policy"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "907774b1a7f143bbced418a91f7bdfba410df97d",
+      "candidateIds": [
+        "native-locale-dashboard-signals"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "556397100345ea9777378b77152aaec61dac9c7c",
+      "candidateIds": [
+        "retained-native-upgrade-identities"
+      ],
+      "classification": "native-retained",
+      "reason": "Upstream ky import timeout path is absent; do not add alternate HTTP/import client."
+    },
+    {
+      "commit": "0a5392dc744fc52d72b8ed19354fcc812bfbdd76",
+      "candidateIds": [
+        "retained-native-upgrade-identities"
+      ],
+      "classification": "native-retained",
+      "reason": "Upstream2-to3 import batch implementation is not fork path; retain native bounded in-place upgrade."
+    },
+    {
+      "commit": "a2ca67fd5db9c36e0ea3ffa30ac74936f0fb9f19",
+      "candidateIds": [
+        "conditional-native-configuration-coherence"
+      ],
+      "classification": "conditional-review",
+      "reason": "Distributed reloadConfig behavior remains under Main’s investigation; neither native-retained coherence nor an adaptation is established yet."
+    },
+    {
+      "commit": "2a06aba3b2563b70a94e4be40a56fff89a98d607",
+      "candidateIds": [
+        "native-anchored-discussions"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "074fb786795b0c263e99ff4556dc122d2cf2a8a2",
+      "candidateIds": [
+        "native-federated-profile-policy"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "34412de5330452dc418efe8089d124b27bb222ed",
+      "candidateIds": [
+        "retained-native-account-asset-authority"
+      ],
+      "classification": "native-retained",
+      "reason": "Native asset ingress authorizes before buffering; preserve existing streaming/owner/provider boundaries."
+    },
+    {
+      "commit": "52532cc2e6d060b97171c7e42ecce9be68957fb9",
+      "candidateIds": [
+        "retained-native-account-asset-authority"
+      ],
+      "classification": "native-retained",
+      "reason": "Native disabled-account reset/auth-version gates already block banned resets."
+    },
+    {
+      "commit": "cf411e543f5db9c4555897370dc5797d161f8b56",
+      "candidateIds": [
+        "native-source-authoring"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "b114a5fa65832395a48c280965b6c8eb022bae1c",
+      "candidateIds": [
+        "retained-native-editor-reading-preferences"
+      ],
+      "classification": "native-retained",
+      "reason": "Retain native AES-GCM/AAD-bound encrypted unsaved drafts, not upstream cleartext IndexedDB buffers."
+    },
+    {
+      "commit": "2831596193fba079dfa6aa5bb060ce754f676eaf",
+      "candidateIds": [
+        "native-visual-slash-authoring"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "c69078c54d331701842f90d22104ebee78b5a801",
+      "candidateIds": [
+        "retained-native-editor-reading-preferences"
+      ],
+      "classification": "native-retained",
+      "reason": "Retain native bounded copy measure/user reading preferences, not coarse centered/full-width switch."
+    },
+    {
+      "commit": "807401332923dfb6d7c65283e88a2dd5bebcf43a",
+      "candidateIds": [
+        "native-storage-ingestion-git-ha"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "68f498af31952ef68c3ab0353eff2cc63ca67a1a",
+      "candidateIds": [
+        "native-storage-ingestion-git-ha"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "77b1ec1ae83cbca93fe7721194411e3eeb540136",
+      "candidateIds": [
+        "native-storage-ingestion-git-ha"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "d41b2f24e74e177abf20b3e87bc17fa8385468ab",
+      "candidateIds": [
+        "retained-native-rendering-reader"
+      ],
+      "classification": "native-retained",
+      "reason": "Native reader intentionally fixes two-level ToC; upstream configurable-default bug does not apply."
+    },
+    {
+      "commit": "c8bd8cdee5f61ba6b49b9b117c046b4f651d435c",
+      "candidateIds": [
+        "retained-native-rendering-reader"
+      ],
+      "classification": "native-retained",
+      "reason": "Native pushState/popstate navigation already preserves history; no upstream replace fix transplant."
+    },
+    {
+      "commit": "c626e286db946648522f7bf9c53c5476ec6a346d",
+      "candidateIds": [
+        "retained-native-unicode-navigation"
+      ],
+      "classification": "native-retained",
+      "reason": "Retain reviewed per-locale navigation plus dynamic authorized Browse and searchable permission picker, not duplicate per-folder menu lifecycle."
+    },
+    {
+      "commit": "ad598942a54169aee10592bd4a097ad26089bb95",
+      "candidateIds": [
+        "native-explicit-inline-math"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "ac0b3a371b8abd5266a148a5094029980ccc849a",
+      "candidateIds": [
+        "native-code-appearance"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Accepted fork-native adaptation; final full UI and deployment proof remains pending."
+    },
+    {
+      "commit": "75f5bf047521341b5aa370833d50256bb24493d1",
+      "candidateIds": [
+        "native-reviewed-navigation-move-repair"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Supplemental commit, parent ac0b3a371b8abd5266a148a5094029980ccc849a; subject feat: navigation menus automations + admin options; committedAt 2026-10-14T20:06:22-04:00. Main's local://scarlett-late-navigation-assessment.json applies the unchanged frozen rubric: feature_candidate 0.96, mixed 0.04, confidence 0.95, sensitive_behavior 0.97; classification input was truncated to 96000 of 170551 substantive characters. Full substantive manual review is recorded by agent://LateNavigationAssessment; generated Drizzle snapshots, generated icon inventory and static icon artwork were explicitly excluded, not treated as executable scope. Adapt only administrator-reviewed post-move custom-target repair under native authority and current policy, not contextual menu automation. Initial 48-commit assessment remains valid; this supplemental 1 makes 49 newly assessed commits and 492 total coverage entries, with 143 candidates: 16 active, 36 closed and 91 completed. All previous 142 candidates and their states remain unchanged; pending implementation/UI/deployment proof is not completion. Assessor observed upstream/scarlett fast-forward fetch reflog at 2026-10-15T02:14:32+00:00 resolving to this SHA; upstream.lastFetchedAt records that actual fetch observation, not script generatedAt. No other new commit was found at that observation; this is a frozen-frontier fact, not a claim about future upstream changes."
     }
   ]
 }

@@ -11,6 +11,7 @@ import developerFlagsRouter from './developer-flags.ts'
 import extensionsRouter from './extensions.ts'
 import editorsRouter from './editors.ts'
 import groupsRouter from './groups.ts'
+import glossaryRouter from './glossary.ts'
 import localesRouter from './locales.ts'
 import loggingRouter from './logging.ts'
 import mailRouter from './mail.ts'
@@ -57,6 +58,7 @@ router.use('/extensions', extensionsRouter)
 router.use('/utilities', utilitiesRouter)
 router.use('/locales', localesRouter)
 router.use('/groups', groupsRouter)
+router.use('/glossary', glossaryRouter)
 router.use('/editors', editorsRouter)
 router.use('/users', usersRouter)
 router.use('/pages', pageLinksRouter)

@@ -64,6 +64,14 @@
             @click='insertMention(candidate)'
             @mouseenter='mentionIndex = candidateIndex'
           )
+      section.my-4(v-if='annotationDrafts.length', aria-label='Passages attached to this discussion')
+        p.text-body-small These passages and Markdown notes will be published with this root discussion (up to eight). They are not private notes.
+        v-card.my-3(v-for='(passage, index) in annotationDrafts', :key='index', variant='outlined')
+          v-card-text
+            blockquote.text-body-small {{ passage.anchor.exact }}
+            .text-label-small.my-2(v-if='passage.anchor.heading') {{ passage.anchor.heading }}
+            v-textarea(v-model='passage.note', label='Passage note (Markdown)', :maxlength='5000', counter='5000', rows='2', auto-grow, variant='outlined', :disabled='isPosting', @input='noteComposerInput')
+            v-btn(size='small', variant='text', :disabled='isPosting', @click='removeAnnotationDraft(index)') Remove passage
       v-row.comments-guest-fields.mt-2(density="compact", v-if='!isAuthenticated')
         v-col(cols='12', lg='6')
           v-text-field(
@@ -180,7 +188,17 @@
             .comments-post-name.text-body-small(:id='`comment-author-${cm.id}`'): strong {{cm.authorName}}
             .comments-post-date.text-label-small {{ $helpers.formatMoment(cm.createdAt, 'from') }} #[em(v-if='cm.createdAt !== cm.updatedAt') - {{$t('common:comments.modified', { reldate: $helpers.formatMoment(cm.updatedAt, 'from') })}}]
             .comments-post-content.mt-3(v-if='commentEditId !== cm.id', v-html='cm.render')
-            form.comments-post-editcontent.mt-3(v-else, novalidate, @submit.prevent='updateComment')
+            section.mt-3(v-if='cm.annotations.length', aria-label='Thread passages')
+              v-card.my-2(v-for='annotation in cm.annotations', :key='annotation.id', variant='outlined')
+                v-card-text
+                  blockquote.text-body-small {{ annotation.anchor.exact }}
+                  .text-body-small.mt-2(v-html='annotationNotes[annotation.id]')
+                  .d-flex.flex-wrap.align-center.ga-2.mt-2
+                    span.text-label-small {{ annotation.resolvedAt ? 'Resolved' : 'Open' }}
+                    v-btn(size='small', variant='text', @click='jumpToAnnotation(annotation.anchor)') Find passage
+                    v-btn(v-if='canChangeAnnotation(cm)', size='small', variant='text', :disabled='!authorityReady || connectionBlocked || changingAnnotationId !== 0', :loading='changingAnnotationId === annotation.id', @click='changeAnnotationState(cm, annotation)') {{ annotation.resolvedAt ? 'Reopen' : 'Resolve' }}
+                  p.text-body-small.mt-2(v-if='annotationErrors[annotation.id]', role='status', aria-live='polite') {{ annotationErrors[annotation.id] }}
+            form.comments-post-editcontent.mt-3(v-if='commentEditId === cm.id', novalidate, @submit.prevent='updateComment')
               v-textarea(
                 variant="outlined"
                 auto-grow
@@ -251,6 +269,10 @@ import validateValues from '../../shared/validation'
 import { getErrorMessage, showNotification } from '../helpers/root-ui-store'
 import { pwaState, retryServerConnection } from '../helpers/pwa'
 import AsyncState from '@/components/common/async-state.vue'
+import type { DiscussionAnnotation, DiscussionAnnotationAnchor, DiscussionAnnotationInput } from '../../shared/discussion-annotations.ts'
+import { changeDiscussionAnnotation, isDiscussionAnchor } from '../helpers/discussion-annotations-api.ts'
+import { discussionAnnotationsChanged, jumpDiscussionAnnotation, onComposeDiscussionAnnotation, onFocusDiscussionThread } from '../helpers/discussion-annotation-events.ts'
+import { renderSafeMarkdown } from '../helpers/safe-markdown.ts'
 
 type CommentWithInitials = CommentRow & {
   initials: string
@@ -308,6 +330,7 @@ type ComposerSnapshot = {
   guestName: string
   guestEmail: string
   revision: number
+  annotations: DiscussionAnnotationInput[]
 }
 
 export default defineComponent({
@@ -333,6 +356,12 @@ export default defineComponent({
       componentGeneration: 1,
       transportGeneration: 0,
       newcomment: '',
+      annotationDrafts: [] as DiscussionAnnotationInput[],
+      annotationErrors: {} as Record<number, string>,
+      changingAnnotationId: 0,
+      annotationGeneration: 0,
+      requestedCommentId: 0,
+      removeAnnotationSubscriptions: [] as Array<() => void>,
       replyTo: 0,
       replyAuthor: '',
       mentionCandidates: [] as MentionCandidate[],
@@ -380,7 +409,7 @@ export default defineComponent({
       const id = wikiStore.user.id
       return this.isAuthenticated && Number.isSafeInteger(id) && id > 0 ? id : 0
     },
-    contextKey(): string { return `${this.ownerId}:${this.pageId}` },
+    contextKey(): string { return `${this.ownerId}:${wikiStore.user.authVersion}:${this.pageId}` },
     permissions(): CommentPermissions { return wikiStore.page.effectivePermissions.comments },
     pwaConnectionState(): string { return pwaState.connectionState },
     connectionUnavailable(): boolean {
@@ -419,6 +448,11 @@ export default defineComponent({
     },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     userDisplayName(): string { return wikiStore.user.name },
+    annotationNotes(): Record<number, string> {
+      const notes: Record<number, string> = {}
+      for (const comment of this.comments) for (const annotation of comment.annotations) notes[annotation.id] = renderSafeMarkdown(annotation.note)
+      return notes
+    },
     activeMentionOptionId(): string | undefined {
       const candidate = this.mentionCandidates[this.mentionIndex]
       return candidate ? `mention-option-${candidate.id}` : undefined
@@ -475,7 +509,37 @@ export default defineComponent({
       flush: 'sync'
     }
   },
+  mounted () {
+    this.ensureContext()
+    this.removeAnnotationSubscriptions = [
+      onComposeDiscussionAnnotation((pageId, anchor) => {
+        if (pageId !== this.pageId || !isDiscussionAnchor(anchor)) return
+        this.ensureContext()
+        if (!this.permissions.write || this.connectionBlocked) return
+        if (this.replyTo > 0 || this.annotationDrafts.length >= 8 || this.isPosting) {
+          showNotification(wikiStore, { style: 'warning', message: this.replyTo > 0 ? 'Cancel the reply before attaching a passage to a root discussion.' : 'Attach at most eight passages before posting.', icon: 'alert' })
+          return
+        }
+        this.annotationDrafts.push({ anchor: { ...anchor }, note: '' })
+        this.noteComposerInput()
+        this.hasIntersected = true
+        if (!this.authorityReady && !this.fetchController) void this.fetch(true)
+        const context = this.captureContext()
+        this.$nextTick(() => { if (this.isCurrentContext(context)) this.newCommentTextarea()?.focus() })
+      }),
+      onFocusDiscussionThread((pageId, commentId) => {
+        if (pageId !== this.pageId || !Number.isSafeInteger(commentId) || commentId < 1) return
+        this.ensureContext()
+        this.requestedCommentId = commentId
+        this.hasIntersected = true
+        void this.fetch(true)
+      })
+    ]
+  },
   beforeUnmount () {
+    for (const remove of this.removeAnnotationSubscriptions) remove()
+    this.removeAnnotationSubscriptions = []
+    this.annotationGeneration += 1
     this.componentGeneration += 1
     this.transportGeneration += 1
     this.fetchGeneration += 1
@@ -493,12 +557,49 @@ export default defineComponent({
     wikiStore.stopLoading('comments-delete')
   },
   methods: {
+    removeAnnotationDraft (index: number): void {
+      if (this.isPosting) return
+      this.annotationDrafts.splice(index, 1)
+      this.noteComposerInput()
+    },
+    jumpToAnnotation (anchor: DiscussionAnnotationAnchor): void {
+      jumpDiscussionAnnotation(this.pageId, anchor)
+    },
+    canChangeAnnotation (comment: CommentWithInitials): boolean {
+      return this.isAuthenticated && this.ownerId > 0 && (comment.authorId === this.ownerId || this.permissions.manage)
+    },
+    async changeAnnotationState (comment: CommentWithInitials, annotation: DiscussionAnnotation): Promise<void> {
+      if (!this.canChangeAnnotation(comment) || !this.authorityReady || this.connectionBlocked || this.changingAnnotationId !== 0) return
+      const context = this.captureContext()
+      const generation = ++this.annotationGeneration
+      this.changingAnnotationId = annotation.id
+      this.annotationErrors[annotation.id] = ''
+      try {
+        const updated = await changeDiscussionAnnotation(comment.id, annotation.id, annotation.revision, annotation.resolvedAt === null)
+        if (!this.isCurrentContext(context) || generation !== this.annotationGeneration) return
+        const current = this.comments.find(item => item.id === comment.id)
+        if (current) current.annotations = current.annotations.map(item => item.id === updated.id ? updated : item)
+        discussionAnnotationsChanged(context.pageId)
+      } catch (error) {
+        if (!this.isCurrentContext(context) || generation !== this.annotationGeneration) return
+        const kind = this.commentErrorKind(error)
+        this.annotationErrors[annotation.id] = kind === 'conflict'
+          ? 'This annotation changed. Its current state has been reloaded; review it before trying again.'
+          : this.commentErrorMessage(error)
+        if (kind === 'auth' || kind === 'permission' || kind === 'not-found') this.setAuthorityFailure(error)
+        // Read current state after conflicts or uncertain transport outcomes; never replay a mutation.
+        await this.fetch(true)
+        if (this.isCurrentContext(context) && generation === this.annotationGeneration) discussionAnnotationsChanged(context.pageId)
+      } finally {
+        if (this.isCurrentIdentityContext(context) && generation === this.annotationGeneration) this.changingAnnotationId = 0
+      }
+    },
     rotateContext (value: string): void {
       const pageId = this.pageId
       const ownerId = this.ownerId
       const firstContext = this.activeContextKey.length === 0
       const pageChanged = !firstContext && this.activePageId !== pageId
-      const ownerChanged = !firstContext && this.activeOwnerId !== ownerId
+      const ownerChanged = !firstContext && (this.activeOwnerId !== ownerId || (!pageChanged && this.activeContextKey !== value))
       if (!firstContext && !pageChanged && !ownerChanged && this.activeContextKey === value) return
 
       this.activeContextKey = value
@@ -533,6 +634,11 @@ export default defineComponent({
       this.hasLoadedOnce = false
       this.fetchError = ''
       this.newcomment = ''
+      this.annotationDrafts = []
+      this.annotationErrors = {}
+      this.changingAnnotationId = 0
+      this.annotationGeneration += 1
+      this.requestedCommentId = 0
       this.guestName = ''
       this.guestEmail = ''
       this.composerRevision += 1
@@ -700,6 +806,10 @@ export default defineComponent({
       })
     },
     startReply (comment: CommentWithInitials): void {
+      if (this.annotationDrafts.length) {
+        showNotification(wikiStore, { style: 'warning', message: 'Post or remove the attached passages before replying. Passages belong to root discussions.', icon: 'alert' })
+        return
+      }
       if (!this.commentReady) return
       const context = this.captureContext()
       this.replyTo = comment.id
@@ -728,13 +838,13 @@ export default defineComponent({
     },
     focusRequestedComment (expectedContext?: CommentContext): void {
       const context = expectedContext ?? this.captureContext()
-      const anchor = window.location.hash
+      const anchor = this.requestedCommentId > 0 ? `#comment-post-id-${this.requestedCommentId}` : window.location.hash
       if (!/^#comment-post-id-[1-9]\d*$/.test(anchor)) return
       this.$nextTick(() => {
-        if (!this.isCurrentContext(context)) return
-        const target = document.querySelector<HTMLElement>(anchor)
+        if (!this.isCurrentContext(context) || (this.requestedCommentId > 0 && anchor !== `#comment-post-id-${this.requestedCommentId}`)) return
+        const target = (this.$el as HTMLElement).querySelector<HTMLElement>(anchor)
         if (target) {
-          void this.goTo(anchor, this.scrollOptions(250))
+          void this.goTo(target, this.scrollOptions(250))
           target.setAttribute('tabindex', '-1')
           target.focus({ preventScroll: true })
         } else if (this.reportedUnavailableAnchor !== anchor) {
@@ -800,6 +910,7 @@ export default defineComponent({
     clearComposerIfUnchanged (snapshot: ComposerSnapshot): boolean {
       if (!this.composerMatches(snapshot)) return false
       this.newcomment = ''
+      this.annotationDrafts = []
       this.guestName = ''
       this.guestEmail = ''
       this.replyTo = 0
@@ -912,10 +1023,18 @@ export default defineComponent({
       const refreshed = await this.fetch(false)
       if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
       const reconciled = refreshed && this.comments.some(comment =>
-        comment.content === snapshot.content && comment.replyTo === snapshot.replyTo
+        comment.content === snapshot.content && comment.replyTo === snapshot.replyTo &&
+        comment.annotations.length === snapshot.annotations.length &&
+        comment.annotations.every((item, index) => {
+          const original = snapshot.annotations[index]!
+          return item.note === original.note && item.anchor.exact === original.anchor.exact &&
+            item.anchor.prefix === original.anchor.prefix && item.anchor.suffix === original.anchor.suffix &&
+            item.anchor.heading === original.anchor.heading && item.anchor.offset === original.anchor.offset
+        })
       )
       if (reconciled) {
         this.clearComposerIfUnchanged(snapshot)
+        discussionAnnotationsChanged(context.pageId)
         wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.commentWasFoundAfter'),
@@ -943,6 +1062,7 @@ export default defineComponent({
         content: this.newcomment,
         guestName: this.guestName,
         guestEmail: this.guestEmail,
+        annotations: this.replyTo === 0 ? this.annotationDrafts.map(passage => ({ anchor: { ...passage.anchor }, note: passage.note })) : [],
         revision: this.composerRevision
       }
       const rules: CommentValidationRules = {
@@ -994,10 +1114,12 @@ export default defineComponent({
           replyTo: snapshot.replyTo,
           content: snapshot.content,
           guestName: snapshot.guestName,
-          guestEmail: snapshot.guestEmail
+          guestEmail: snapshot.guestEmail,
+          annotations: snapshot.annotations
         })
         if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
         const cleared = this.clearComposerIfUnchanged(snapshot)
+        discussionAnnotationsChanged(context.pageId)
         wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.postSuccess'),
@@ -1158,6 +1280,7 @@ export default defineComponent({
       try {
         await deleteComment(window.fetch.bind(window), commentId)
         if (!this.isCurrentContext(context) || generation !== this.deleteGeneration || this.commentToDelete?.id !== commentId) return
+        discussionAnnotationsChanged(context.pageId)
         wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.deleteSuccess'),

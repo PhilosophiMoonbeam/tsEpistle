@@ -1,3 +1,4 @@
+import { mappedProviderProfile } from '../provider-profile.ts'
 import { synchronizeProviderGroups } from '../../../helpers/authentication-provisioning.ts'
 import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin } from '../../types.ts'
 
@@ -67,7 +68,12 @@ const plugin: AuthenticationPlugin = {
                 id: userId,
                 email: String(_.get(profile, conf.mappingEmail, '')).split(',')[0],
                 displayName: _.get(profile, conf.mappingDisplayName, '???'),
-                picture: _.get(profile, `_raw.${conf.mappingPicture}`, '')
+                picture: _.get(profile, `_raw.${conf.mappingPicture}`, ''),
+                providerProfile: mappedProviderProfile(
+                  profile,
+                  { location: conf.mappingLocation, jobTitle: conf.mappingJobTitle, pronouns: conf.mappingPronouns },
+                  true
+                )
               }
             })
             // map users LDAP groups to wiki groups with the same name, and remove any groups that don't match LDAP
@@ -89,7 +95,7 @@ const plugin: AuthenticationPlugin = {
             cb(null, user)
           } catch (err: unknown) {
             if (wiki.config.flags.ldapdebug) {
-              wiki.logger.warn('LDAP LOGIN ERROR (c2): ', err)
+              wiki.logger.warn('LDAP LOGIN ERROR (c2): Authentication failed.')
             }
             cb(asError(err))
           }

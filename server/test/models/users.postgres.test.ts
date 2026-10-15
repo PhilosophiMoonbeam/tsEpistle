@@ -11,7 +11,9 @@ const suite = connection ? describe : describe.skip
 const authErrors = {
   AuthTFAFailed: class extends Error {},
   AuthTFAInvalid: class extends Error {},
-  AuthValidationTokenInvalid: class extends Error {}
+  AuthValidationTokenInvalid: class extends Error {},
+  AuthAccountBanned: class extends Error {},
+  UserNotFound: class extends Error {}
 }
 const previousWiki = (globalThis as typeof globalThis & { WIKI?: unknown }).WIKI
 const wikiRuntime = {
@@ -72,6 +74,10 @@ suite('PostgreSQL account security transactions', () => {
       table.string('name')
       table.string('providerId')
       table.string('providerKey')
+      table.string('location')
+      table.string('jobTitle')
+      table.string('pronouns', 255).notNullable().defaultTo('')
+      table.string('pictureUrl')
       table.string('password')
       table.boolean('tfaIsActive').notNullable().defaultTo(false)
       table.string('tfaSecret')
@@ -84,6 +90,11 @@ suite('PostgreSQL account security transactions', () => {
       table.string('sessionsRevokedAt')
       table.string('createdAt')
       table.string('updatedAt')
+    })
+    await db.schema.createTable('userAvatars', table => {
+      table.integer('id').primary().references('id').inTable('users').onDelete('CASCADE')
+      table.binary('data')
+      table.string('origin')
     })
     await db.schema.createTable('userKeys', table => {
       table.increments('id')
@@ -132,12 +143,57 @@ suite('PostgreSQL account security transactions', () => {
   afterAll(async () => {
     if (db) {
       await db.schema.dropTableIfExists('settings')
+      await db.schema.dropTableIfExists('userAvatars')
       await db.schema.dropTableIfExists('userKeys')
       await db.schema.dropTableIfExists('users')
       await db.destroy()
     }
     if (previousWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
     else (globalThis as typeof globalThis & { WIKI: unknown }).WIKI = previousWiki
+  })
+
+  it('preserves unmapped profile values and local avatar overrides while clearing mapped empty text', async () => {
+    await db('users').where({ id: 10 }).update({ location: 'Local', jobTitle: 'Editor', pronouns: 'they/them', pictureUrl: 'internal' })
+    await db('userAvatars').insert({ id: 10, origin: 'upload', data: Buffer.from('local-avatar') })
+    await User.updateProviderProfile({
+      userId: 10,
+      email: 'tfa@example.test',
+      name: 'Provider Name',
+      picture: 'https://provider.invalid/avatar',
+      pictureData: undefined,
+      providerProfile: { jobTitle: '', pronouns: 'x'.repeat(300) }
+    })
+    expect(await db('users').where({ id: 10 }).first()).toMatchObject({
+      location: 'Local',
+      jobTitle: '',
+      pronouns: 'x'.repeat(255),
+      pictureUrl: 'internal',
+      name: 'Provider Name'
+    })
+    await User.updateProviderProfile({ userId: 10, email: 'tfa@example.test', name: 'Provider Name', picture: undefined, pictureData: undefined })
+    expect(await db('users').where({ id: 10 }).first()).toMatchObject({ location: 'Local', jobTitle: '', pronouns: 'x'.repeat(255), pictureUrl: 'internal' })
+    expect((await db('userAvatars').where({ id: 10 }).first()).data).toEqual(Buffer.from('local-avatar'))
+  })
+
+  it.each([
+    { isActive: false, isSystem: false },
+    { isActive: true, isSystem: true }
+  ])('does not link or update a protected provider account: %j', async flags => {
+    await db('users')
+      .where({ id: 10 })
+      .update({ ...flags, providerId: null, pronouns: 'local' })
+    await expect(
+      User.updateProviderProfile({
+        userId: 10,
+        email: 'changed@example.test',
+        name: 'Changed',
+        picture: undefined,
+        pictureData: undefined,
+        providerId: 'provider-subject',
+        providerProfile: { pronouns: '' }
+      })
+    ).rejects.toThrow()
+    expect(await db('users').where({ id: 10 }).first()).toMatchObject({ providerId: null, email: 'tfa@example.test', name: 'TFA User', pronouns: 'local' })
   })
 
   it('lets only one concurrent valid setup completion consume and enable the account', async () => {
@@ -159,8 +215,9 @@ suite('PostgreSQL account security transactions', () => {
     expect(observations.afterLoginCalls).toBe(1)
     expect(observations.afterLoginTransactionCompletions).toEqual([1])
 
-    await expect(User.loginTFA({ securityCode: generated.token, continuationToken: setupToken, setup: true }, context))
-      .rejects.toBeInstanceOf(authErrors.AuthValidationTokenInvalid)
+    await expect(User.loginTFA({ securityCode: generated.token, continuationToken: setupToken, setup: true }, context)).rejects.toBeInstanceOf(
+      authErrors.AuthValidationTokenInvalid
+    )
     expect(await db('userKeys').where({ kind: 'tfaSetup', token: setupToken })).toHaveLength(0)
     expect(await db('users').where('id', 10).first()).toMatchObject({ tfaIsActive: true })
     expect(observations.transactionCompletions).toBe(1)
@@ -172,13 +229,15 @@ suite('PostgreSQL account security transactions', () => {
     const previousRevocation = '2000-01-01T00:00:00.000Z'
     const oldPassword = 'old-password-123!'
     const newPassword = 'new-password-123!'
-    await db('users').where('id', 10).update({
-      password: await bcrypt.hash(oldPassword, 4),
-      authVersion: 7,
-      sessionsRevokedAt: previousRevocation,
-      mustChangePwd: true,
-      isVerified: false
-    })
+    await db('users')
+      .where('id', 10)
+      .update({
+        password: await bcrypt.hash(oldPassword, 4),
+        authVersion: 7,
+        sessionsRevokedAt: previousRevocation,
+        mustChangePwd: true,
+        isVerified: false
+      })
     await db('userKeys').update({ kind, authVersion: 7 })
 
     if (kind === 'resetPwd') {
@@ -189,10 +248,9 @@ suite('PostgreSQL account security transactions', () => {
       const previousRefreshToken = usersModel.refreshToken
       Object.assign(usersModel, { refreshToken: async () => ({ token: 'signed-jwt' }) })
       try {
-        await User.loginChangePassword(
-          { continuationToken: setupToken, newPassword },
-          { req: { logIn: (_user: unknown, _options: unknown, callback: () => void) => callback() } } as never
-        )
+        await User.loginChangePassword({ continuationToken: setupToken, newPassword }, {
+          req: { logIn: (_user: unknown, _options: unknown, callback: () => void) => callback() }
+        } as never)
       } finally {
         usersModel.refreshToken = previousRefreshToken
       }

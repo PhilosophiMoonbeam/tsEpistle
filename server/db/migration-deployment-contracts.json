@@ -229,6 +229,81 @@
       "runtimePostconditions": [
         "authorized-current-media-version-bindings-and-retained-credentials"
       ]
+    },
+    "tsepistle-000056-glossary.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-glossary-schema"
+      ],
+      "runtimePostconditions": [
+        "native-glossary-schema"
+      ]
+    },
+    "tsepistle-000057-discussion-annotations.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-discussion-annotations-schema"
+      ],
+      "runtimePostconditions": [
+        "native-discussion-annotations-schema"
+      ]
+    },
+    "tsepistle-000058-discussion-notifications.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-discussion-notifications-schema"
+      ],
+      "runtimePostconditions": [
+        "native-discussion-notifications-schema"
+      ]
+    },
+    "tsepistle-000059-user-pronouns.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-user-pronouns-column"
+      ],
+      "runtimePostconditions": [
+        "native-user-pronouns-column"
+      ]
+    },
+    "tsepistle-000060-links-grid.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "native-links-grid-registration"
+      ],
+      "runtimePostconditions": [
+        "native-links-grid-registration"
+      ]
     }
   }
 }

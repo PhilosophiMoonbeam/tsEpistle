@@ -1059,7 +1059,9 @@
 
   img:not(.emoji) {
     max-width: 100%;
-    height: auto;
+    &:not([height]) {
+      height: auto;
+    }
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-panel-radius, 12px);
     background: var(--wiki-surface-sunken);
@@ -1073,6 +1075,7 @@
     }
 
     &.align-right,
+    &.align-abstopright,
     &.image-style-align-right {
       position: relative;
       z-index: 1;
@@ -1124,6 +1127,31 @@
       font-size: .8125rem;
       line-height: 1.5;
       text-align: center;
+    }
+  }
+
+  .imageblock {
+    &.align-left {
+      float: inline-start;
+      margin-inline: 0 var(--wiki-space-4, 1rem);
+    }
+
+    &.align-right,
+    &.align-abstopright {
+      position: relative;
+      z-index: 1;
+      float: inline-end;
+      margin-inline: var(--wiki-space-4, 1rem) 0;
+    }
+
+    &.align-center {
+      text-align: center;
+      margin-inline: auto;
+    }
+
+    &.align-center img {
+      display: block;
+      margin-inline: auto;
     }
   }
 
@@ -1960,6 +1988,179 @@
       scroll-behavior: auto !important;
       transition-duration: .001ms !important;
       animation-duration: .001ms !important;
+    }
+  }
+}
+
+// Managed image properties apply to native img nodes, AsciiDoc role wrappers,
+// and the local-only media dialog's Vuetify image. Unrecognized classes remain
+// independent; these selectors never replace the source class attribute.
+:is(.v-main .contents, .editor-page-canvas.contents, .contents .tiptap) {
+  img.wiki-image-border,
+  .imageblock.wiki-image-border img {
+    border: 2px solid var(--wiki-surface-border-strong);
+  }
+
+  img.wiki-image-rounded,
+  .imageblock.wiki-image-rounded img {
+    border-radius: var(--wiki-radius-xl, 1.5rem);
+  }
+
+  img.wiki-image-shadow,
+  .imageblock.wiki-image-shadow img {
+    box-shadow: var(--wiki-shadow-md);
+  }
+
+  @media print {
+    img.wiki-image-shadow,
+    .imageblock.wiki-image-shadow img {
+      box-shadow: none;
+    }
+  }
+}
+
+.v-img.wiki-image-border {
+  border: 2px solid var(--wiki-surface-border-strong);
+}
+
+.v-img.wiki-image-rounded {
+  border-radius: var(--wiki-radius-xl, 1.5rem);
+}
+
+.v-img.wiki-image-shadow {
+  box-shadow: var(--wiki-shadow-md);
+}
+
+// Closed, bundled Prism presets. Attribute scopes, rather than injected style
+// nodes, keep unpublished previews isolated and leave nothing behind on teardown.
+[data-wiki-code-theme='native'] {
+  // Resolve native surface colors at the code block, not at html: a reader's
+  // light/dark theme tokens live below html and can change without navigation.
+  --wiki-code-bg: initial;
+  --wiki-code-fg: initial;
+  --wiki-code-comment: initial;
+  --wiki-code-keyword: initial;
+  --wiki-code-string: initial;
+  --wiki-code-number: initial;
+  --wiki-code-function: initial;
+}
+
+.theme-code-preview[data-wiki-code-theme='native'] {
+  --wiki-code-bg: var(--wiki-code-native-bg);
+  --wiki-code-fg: var(--wiki-code-native-fg);
+}
+
+[data-wiki-code-theme='paper'] {
+  --wiki-code-bg: #f6f8fa;
+  --wiki-code-fg: #24292f;
+  --wiki-code-comment: #57606a;
+  --wiki-code-keyword: #953800;
+  --wiki-code-string: #116329;
+  --wiki-code-number: #0550ae;
+  --wiki-code-function: #6639ba;
+}
+
+[data-wiki-code-theme='midnight'] {
+  --wiki-code-bg: #161b22;
+  --wiki-code-fg: #e6edf3;
+  --wiki-code-comment: #a5b2bf;
+  --wiki-code-keyword: #ffab70;
+  --wiki-code-string: #a5d6a7;
+  --wiki-code-number: #79c0ff;
+  --wiki-code-function: #d2a8ff;
+}
+
+.theme-code-preview {
+  min-inline-size: 0;
+  margin-block: var(--wiki-space-6, 1.5rem);
+
+  pre {
+    max-inline-size: 100%;
+    overflow-x: auto;
+    margin-block-start: .75rem;
+    padding: 1rem;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-panel-radius, 12px);
+    font: .875rem / 1.65 var(--wiki-font-mono);
+    white-space: pre;
+    text-align: start;
+
+    > code {
+      font: inherit;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-accent-ink);
+      outline-offset: 2px;
+    }
+  }
+}
+
+@media screen {
+  :is(.v-main .contents, .editor-page-canvas.contents, .contents .tiptap, .theme-code-preview) :is(pre, .prismjs) {
+    color: var(--wiki-code-fg, inherit);
+    background: var(--wiki-code-bg, var(--wiki-surface-sunken));
+    text-shadow: none;
+
+    code,
+    .token {
+      background: transparent;
+      color: inherit;
+      text-shadow: none;
+    }
+
+    .token.comment,
+    .token.prolog,
+    .token.doctype,
+    .token.cdata {
+      color: var(--wiki-code-comment, inherit);
+      font-style: italic;
+    }
+
+    .token.keyword,
+    .token.atrule,
+    .token.tag {
+      color: var(--wiki-code-keyword, inherit);
+      font-weight: 650;
+    }
+
+    .token.string,
+    .token.char,
+    .token.attr-value,
+    .token.regex {
+      color: var(--wiki-code-string, inherit);
+    }
+
+    .token.number,
+    .token.boolean,
+    .token.constant,
+    .token.symbol {
+      color: var(--wiki-code-number, inherit);
+    }
+
+    .token.function,
+    .token.class-name,
+    .token.builtin {
+      color: var(--wiki-code-function, inherit);
+    }
+
+    .line-numbers-rows {
+      border-inline-end-color: currentColor;
+
+      > span::before {
+        color: var(--wiki-code-comment, inherit);
+      }
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  :is(.v-main .contents, .editor-page-canvas.contents, .contents .tiptap, .theme-code-preview) :is(pre, .prismjs) {
+    color: CanvasText;
+    background: Canvas;
+
+    .token {
+      color: inherit !important;
     }
   }
 }

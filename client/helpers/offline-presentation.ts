@@ -1,6 +1,6 @@
 import type { SiteConfig } from '../env.d.ts'
 import { normalizeThemeColors } from '../../shared/theme-colors.ts'
-import { normalizeReaderLayout } from '../../shared/theme-policy.ts'
+import { normalizeCodeTheme, normalizeReaderLayout } from '../../shared/theme-policy.ts'
 import product from '../../package.json'
 import { offlineLogoPath, rememberOfflineLogo } from './offline-branding.ts'
 import { isUserDateFormat, isUserTimeFormat, isUserTimezone, type UserPresentationDefaults } from '../../shared/user-presentation.ts'
@@ -27,6 +27,7 @@ export function rememberOfflinePresentation(appearance = ''): void {
         title: publicPresentationTitle(siteConfig.title),
         themeColors: siteConfig.themeColors,
         readerLayout: siteConfig.readerLayout,
+        codeTheme: normalizeCodeTheme(siteConfig.codeTheme),
         lang: siteConfig.lang,
         rtl: siteConfig.rtl,
         appearance,
@@ -107,6 +108,7 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
       darkMode: false,
       themeColors: normalizeThemeColors(saved.themeColors),
       readerLayout: normalizeReaderLayout(saved.readerLayout),
+      codeTheme: normalizeCodeTheme(saved.codeTheme),
       tocPosition: 'left',
       lang: typeof saved.lang === 'string' && /^[a-zA-Z0-9-]{2,35}$/.test(saved.lang) ? saved.lang : 'en',
       rtl: saved.rtl === true,

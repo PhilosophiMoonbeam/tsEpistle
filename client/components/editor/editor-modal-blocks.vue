@@ -130,6 +130,25 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                       v-select(v-model='gallery.fit', :items='galleryFits', :label='$t(`editor:editorModalBlocks.thumbnailFit`)')
                     v-col(cols='12', sm='4')
                       v-select(v-model='gallery.aspectRatio', :items='galleryAspectRatios', :label='$t(`editor:editorModalBlocks.tileShape`)')
+                template(v-else-if='selectedKey === `links-grid`')
+                  v-alert.mb-5(type='info', variant='tonal', density='compact')
+                    | Create 1–50 named links. Images must be local PNG, JPEG, GIF, WebP, or AVIF assets; icons come from the approved set.
+                  v-card.mb-4(v-for='(card, cardIndex) in linksGrid.cards', :key='card.id', variant='outlined', role='group', :aria-label='`Link card ${cardIndex + 1}`')
+                    v-card-title.d-flex.align-center.text-body-large
+                      span Link card {{ cardIndex + 1 }}
+                      v-spacer
+                      v-btn(icon, size='small', :disabled='linksGrid.cards.length === 1', :aria-label='`Remove link card ${cardIndex + 1}`', @click='removeLinkCard(cardIndex)')
+                        v-icon mdi-delete-outline
+                    v-card-text
+                      v-text-field(v-model='card.title', label='Link title', counter='200', maxlength='200', required)
+                      v-text-field.mt-4(v-model='card.url', label='Destination URL', hint='Local path, HTTPS, HTTP, mailto, or tel. No credentials.', persistent-hint, counter='2048', maxlength='2048', required)
+                      v-textarea.mt-4(v-model='card.description', label='Description (optional)', counter='1000', maxlength='1000', rows='2', auto-grow)
+                      v-text-field.mt-4(v-model='card.image', label='Local image path (optional)', hint='For example /uploads/guide.webp. Remote images and SVG are not supported.', persistent-hint, counter='2048', maxlength='2048')
+                      v-select.mt-4(v-model='card.icon', :items='linksGridIcons', label='Approved icon', hide-details)
+                      v-textarea.mt-4(v-model='card.tagsText', label='Tags (optional)', hint='One tag per line, up to 8 tags of 40 characters each.', persistent-hint, rows='2', auto-grow)
+                  v-btn.mb-5(ref='addLinkCardButton', variant='outlined', :disabled='linksGrid.cards.length >= 50', @click='addLinkCard')
+                    v-icon(start) mdi-plus
+                    | Add link card
                 template(v-else-if='selectedKey === `index`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | {{ $t(`editor:editorModalBlocks.resultsLoadEachReader`) }}
@@ -423,6 +442,10 @@ import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { fetchContentExtensions, type ContentExtensionStatus } from '../../helpers/content-extensions-api'
 import {
   KROKI_DIAGRAM_TYPES,
+  LINKS_GRID_ICONS,
+  LINKS_GRID_STARTER,
+  type LinksGridContentExtensionCard,
+  type LinksGridContentExtensionEnvelope,
   parseContentExtensionEnvelope,
   serializeContentExtensionFence,
   type ContentExtensionKey
@@ -434,10 +457,20 @@ type TabHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 type TabPanelForm = { id: number, label: string, content: string, headingLevel: TabHeadingLevel | null }
 type FactKind = 'text' | 'yes' | 'no'
 type InfoboxFactForm = { id: number, label: string, value: string, kind: FactKind }
+type LinksGridCardForm = { id: number, title: string, url: string, description: string, image: string, icon: keyof typeof LINKS_GRID_ICONS | '', tagsText: string }
 let nextFormItemId = 0
 const createGalleryImage = (): GalleryImageForm => ({ id: ++nextFormItemId, src: '', alt: '', caption: '' })
 const createTabPanel = (label: string, content = ''): TabPanelForm => ({ id: ++nextFormItemId, label, content, headingLevel: null })
 const createInfoboxFact = (): InfoboxFactForm => ({ id: ++nextFormItemId, label: '', value: '', kind: 'text' })
+const createLinkCard = (card?: LinksGridContentExtensionCard): LinksGridCardForm => ({
+  id: ++nextFormItemId,
+  title: card?.title ?? '',
+  url: card?.url ?? '',
+  description: card?.description ?? '',
+  image: card?.image ?? '',
+  icon: card?.icon ?? '',
+  tagsText: card?.tags?.join('\n') ?? ''
+})
 const CORRECTION_LEVELS = markRaw([
   { title: 'editor:editorModalBlocks.lowL', value: 'L' },
   { title: 'editor:editorModalBlocks.mediumM', value: 'M' },
@@ -496,6 +529,10 @@ const readYoutubeVideoId = (source: string): string | null => {
   }
 }
 const defaultIndexPath = (): string => wikiStore.page.path.split('/').slice(0, -1).join('/')
+const insertionOwner = (): string => JSON.stringify([
+  wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch,
+  wikiStore.page.id, wikiStore.page.locale, wikiStore.page.path, wikiStore.editor.editorKey
+])
 
 export default defineComponent({
   data() {
@@ -506,6 +543,8 @@ export default defineComponent({
       loadError: '',
       submitError: '',
       loadRequestId: 0,
+      owner: insertionOwner(),
+      disposed: false,
       returnFocus: null as HTMLElement | null,
       qr: {
         value: '',
@@ -519,6 +558,8 @@ export default defineComponent({
         fit: 'cover' as 'cover' | 'contain',
         aspectRatio: 'square' as 'square' | 'natural'
       },
+      linksGrid: { cards: LINKS_GRID_STARTER.props.cards.map(card => createLinkCard(card)) },
+      linksGridIcons: [{ title: 'None', value: '' }, ...Object.keys(LINKS_GRID_ICONS).map(icon => ({ title: icon, value: icon }))],
       index: {
         path: defaultIndexPath(),
         locale: wikiStore.page.locale || 'en',
@@ -609,6 +650,7 @@ export default defineComponent({
     }
   },
   computed: {
+    currentOwner(): string { return insertionOwner() },
     extensionOptions(): Array<{ title: string, value: ContentExtensionKey }> {
       return this.extensions.map(extension => ({
         title: `${extension.title}${extension.isEnabled && extension.compatible ? '' : ` ${this.$t('editor:editorModalBlocks.unavailable')}`}`,
@@ -644,6 +686,14 @@ export default defineComponent({
       if (this.selectedKey === 'gallery') {
         return this.gallery.images.length >= 1 && this.gallery.images.length <= 50 && this.gallery.images.every(image =>
           image.src.length >= 1 && image.alt.length >= 1 && image.alt.length <= 200 && image.caption.length <= 300
+        )
+      }
+      if (this.selectedKey === 'links-grid') {
+        return this.linksGrid.cards.length >= 1 && this.linksGrid.cards.length <= 50 && this.linksGrid.cards.every(card =>
+          card.title.trim().length > 0 && card.title.length <= 200 && card.url.length > 0 && card.url.length <= 2048 &&
+          card.description.length <= 1000 && card.image.length <= 2048 &&
+          card.tagsText.split('\n').filter(tag => tag.length > 0).length <= 8 &&
+          card.tagsText.split('\n').filter(tag => tag.length > 0).every(tag => tag.trim().length > 0 && tag.length <= 40)
         )
       }
       if (this.selectedKey === 'index') {
@@ -693,7 +743,7 @@ export default defineComponent({
       if (this.selectedKey === 'plantuml') {
         return this.plantuml.source.length >= 1 && this.plantuml.source.length <= 50000 && this.plantuml.caption.length <= 300
       }
-      return Number.isFinite(this.map.latitude) && this.map.latitude >= -90 && this.map.latitude <= 90 &&
+      return this.selectedKey === 'map' && Number.isFinite(this.map.latitude) && this.map.latitude >= -90 && this.map.latitude <= 90 &&
         Number.isFinite(this.map.longitude) && this.map.longitude >= -180 && this.map.longitude <= 180 &&
         Number.isInteger(this.map.zoom) && this.map.zoom >= 1 && this.map.zoom <= 19 &&
         Number.isInteger(this.map.height) && this.map.height >= 240 && this.map.height <= 800 &&
@@ -725,6 +775,14 @@ export default defineComponent({
       this.gallery.images.splice(index, 1)
       this.$nextTick(() => this.focusControl(this.$refs.addGalleryButton))
     },
+    addLinkCard () {
+      if (this.linksGrid.cards.length < 50) this.linksGrid.cards.push(createLinkCard())
+    },
+    removeLinkCard (index: number) {
+      if (this.linksGrid.cards.length <= 1) return
+      this.linksGrid.cards.splice(index, 1)
+      this.$nextTick(() => this.focusControl(this.$refs.addLinkCardButton))
+    },
     addTabPanel () {
       if (this.tabs.panels.length < 12) this.tabs.panels.push(createTabPanel(this.$t('editor:editorModalBlocks.panel2', { panels: this.tabs.panels.length + 1, interpolation: { escapeValue: false } })))
     },
@@ -743,7 +801,24 @@ export default defineComponent({
       this.infobox.facts.splice(index, 1)
       this.$nextTick(() => this.focusControl(this.$refs.addFactButton))
     },
-    extensionInput (): Record<string, unknown> {
+    extensionInput (): Record<string, unknown> | LinksGridContentExtensionEnvelope {
+      if (this.selectedKey === 'links-grid') {
+        const envelope: LinksGridContentExtensionEnvelope = {
+          key: LINKS_GRID_STARTER.key,
+          version: LINKS_GRID_STARTER.version,
+          props: {
+            cards: this.linksGrid.cards.map(card => ({
+              title: card.title,
+              url: card.url,
+              ...(card.description ? { description: card.description } : {}),
+              ...(card.image ? { image: card.image } : {}),
+              ...(card.icon ? { icon: card.icon } : {}),
+              ...(card.tagsText ? { tags: card.tagsText.split('\n').filter(tag => tag.length > 0) } : {})
+            }))
+          }
+        }
+        return envelope
+      }
       if (this.selectedKey === 'qr') {
         return {
           key: 'qr',
@@ -900,6 +975,7 @@ export default defineComponent({
           }
         }
       }
+      if (this.selectedKey !== 'map') throw new Error('This content extension has no authoring form.')
       return {
         key: 'map',
         version: 1,
@@ -931,7 +1007,7 @@ export default defineComponent({
     },
     insertExtension () {
       this.submitError = ''
-      if (!this.canInsertActive || !this.canSubmit) return
+      if (this.disposed || this.owner !== this.currentOwner || !this.canInsertActive || !this.canSubmit) return
       try {
         const input = this.extensionInput()
         const envelope = parseContentExtensionEnvelope(input)
@@ -942,11 +1018,23 @@ export default defineComponent({
       }
     }
   },
+  watch: {
+    currentOwner: {
+      flush: 'sync',
+      handler() {
+        this.disposed = true
+        this.loadRequestId += 1
+        this.extensions = []
+        if (wikiStore.editor.activeModal === 'editorModalBlocks') this.close()
+      }
+    }
+  },
   mounted () {
     this.returnFocus = document.activeElement as HTMLElement | null
     void this.loadExtensions()
   },
   beforeUnmount () {
+    this.disposed = true
     this.loadRequestId += 1
     const returnFocus = this.returnFocus
     this.$nextTick(() => {

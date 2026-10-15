@@ -425,6 +425,7 @@ Contract:
 - deduplication groups rapid edits without dropping the final state;
 - notification delivery is asynchronous and idempotent;
 - email and in-app channels are independently configurable;
+- explicitly enabled page-deletion preferences select their own category and channels even for existing watchers; other events retain legacy watch channels, and deleted-scope delivery/read authorization remains mandatory;
 - deletion and account removal clean watches portably.
 
 Use transactional page events and durable jobs. Do not send email inside the page transaction.

@@ -157,6 +157,7 @@ export const projectUserExport = (row: unknown): RecordValue => {
     ...optional('providerKey', string(source.providerKey)),
     ...optional('jobTitle', string(source.jobTitle)),
     ...optional('location', string(source.location)),
+    ...optional('pronouns', string(source.pronouns)),
     ...optional('pictureUrl', string(source.pictureUrl)),
     ...optional('timezone', string(source.timezone)),
     ...optional('dateFormat', string(source.dateFormat)),

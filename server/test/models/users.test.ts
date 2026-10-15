@@ -500,6 +500,38 @@ describe('User aggregate transactions', () => {
     })
   })
 
+  test('persists pronouns, preserves omitted profile data and supports explicit clearing', async () => {
+    const database = createAggregateDatabase([
+      { id: 10, email: 'old@example.test', name: 'Unchanged', providerKey: 'local', pronouns: 'they/them', location: 'Local', jobTitle: 'Editor' }
+    ])
+    installAggregateDatabase(database)
+    await User.updateUser({ id: 10, pronouns: ' she/her ' })
+    expect(database.state.users[0]).toMatchObject({ pronouns: 'she/her', name: 'Unchanged', location: 'Local', jobTitle: 'Editor' })
+    await User.updateUser({ id: 10, appearance: 'dark' })
+    expect(database.state.users[0]?.pronouns).toBe('she/her')
+    await User.updateUser({ id: 10, pronouns: '' })
+    expect(database.state.users[0]?.pronouns).toBe('')
+    await expect(User.updateUser({ id: 10, pronouns: 'x'.repeat(256) })).rejects.toThrow()
+    expect(database.state.users[0]?.pronouns).toBe('')
+  })
+
+  test('provider registration persists only allowlisted bounded optional claims', async () => {
+    const database = createAggregateDatabase()
+    installAggregateDatabase(database)
+    await User.processProfile({
+      providerKey: 'oidc',
+      profile: {
+        id: 'subject',
+        email: 'new@example.test',
+        displayName: 'New User',
+        providerProfile: { location: '', jobTitle: ['invalid'], pronouns: 'x'.repeat(300), isSystem: true, appearance: 'dark' }
+      }
+    })
+    expect(database.state.users[0]).toMatchObject({ location: '', pronouns: 'x'.repeat(255), isSystem: false })
+    expect(database.state.users[0]?.jobTitle).toBeUndefined()
+    expect(database.state.memberships.map(membership => membership.groupId)).toEqual([9])
+  })
+
   test.each([
     [
       'administrative creation',
@@ -610,15 +642,17 @@ describe('User aggregate transactions', () => {
         } as never)
     ]
   ])('keeps a one-time token usable when the protected %s patch fails', async (_label, kind, mutate) => {
-    const database = createAggregateDatabase([{
-      id: 10,
-      isActive: true,
-      isVerified: false,
-      mustChangePwd: true,
-      password: 'old-password',
-      authVersion: 7,
-      sessionsRevokedAt: '2000-01-01T00:00:00.000Z'
-    }])
+    const database = createAggregateDatabase([
+      {
+        id: 10,
+        isActive: true,
+        isVerified: false,
+        mustChangePwd: true,
+        password: 'old-password',
+        authVersion: 7,
+        sessionsRevokedAt: '2000-01-01T00:00:00.000Z'
+      }
+    ])
     database.state.tokens = [{ id: 1, userId: 10, kind, token: 'account-token' }]
     database.failUserPatch = true
     installAggregateDatabase(database)
@@ -650,15 +684,17 @@ describe('User aggregate transactions', () => {
 
   test('commits token consumption and password mutation together on success', async () => {
     const previousRevocation = '2000-01-01T00:00:00.000Z'
-    const database = createAggregateDatabase([{
-      id: 10,
-      isActive: true,
-      password: 'old-password',
-      authVersion: 7,
-      sessionsRevokedAt: previousRevocation,
-      mustChangePwd: true,
-      isVerified: false
-    }])
+    const database = createAggregateDatabase([
+      {
+        id: 10,
+        isActive: true,
+        password: 'old-password',
+        authVersion: 7,
+        sessionsRevokedAt: previousRevocation,
+        mustChangePwd: true,
+        isVerified: false
+      }
+    ])
     database.state.tokens = [{ id: 1, userId: 10, kind: 'resetPwd', token: 'reset-token' }]
     installAggregateDatabase(database)
 
@@ -704,24 +740,28 @@ const tfaErrors = {
 
 const createTfaDatabase = (userValues: Row = {}): TfaDatabase => ({
   state: {
-    users: [{
-      id: 10,
-      isActive: true,
-      tfaIsActive: false,
-      tfaSecret: 'test-secret',
-      authVersion: 0,
-      mustChangePwd: false,
-      groups: [],
-      ...userValues
-    }],
-    userKeys: [{
-      id: 1,
-      userId: 10,
-      kind: 'tfaSetup',
-      token: 'setup-token',
-      authVersion: 0,
-      validUntil: '2999-01-01T00:00:00.000Z'
-    }]
+    users: [
+      {
+        id: 10,
+        isActive: true,
+        tfaIsActive: false,
+        tfaSecret: 'test-secret',
+        authVersion: 0,
+        mustChangePwd: false,
+        groups: [],
+        ...userValues
+      }
+    ],
+    userKeys: [
+      {
+        id: 1,
+        userId: 10,
+        kind: 'tfaSetup',
+        token: 'setup-token',
+        authVersion: 0,
+        validUntil: '2999-01-01T00:00:00.000Z'
+      }
+    ]
   },
   commits: 0,
   expectedCode: '123456',
@@ -755,10 +795,7 @@ const installTfaDatabase = (database: TfaDatabase): void => {
       })
     }
   }
-  const validateToken = async (
-    { kind, token }: { kind: string; token: string },
-    transaction?: TfaTransaction
-  ): Promise<User> => {
+  const validateToken = async ({ kind, token }: { kind: string; token: string }, transaction?: TfaTransaction): Promise<User> => {
     if (!transaction) throw new Error('TFA token validation was not bound to the transaction')
     database.tokenValidationTransactions.push(transaction)
     const tokenIndex = transaction.state.userKeys.findIndex(candidate => candidate.kind === kind && candidate.token === token)
@@ -804,16 +841,16 @@ describe('User.loginTFA setup transactions', () => {
     const database = createTfaDatabase()
     installTfaDatabase(database)
 
-    await expect(User.loginTFA({ securityCode: '000000', continuationToken: 'setup-token', setup: true }, context))
-      .rejects.toBeInstanceOf(tfaErrors.AuthTFAFailed)
+    await expect(User.loginTFA({ securityCode: '000000', continuationToken: 'setup-token', setup: true }, context)).rejects.toBeInstanceOf(
+      tfaErrors.AuthTFAFailed
+    )
 
     expect(database.state.userKeys).toHaveLength(1)
     expect(database.state.users[0]).toMatchObject({ tfaIsActive: false })
     expect(database.commits).toBe(0)
     expect(database.afterLoginCalls).toBe(0)
 
-    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
-      .resolves.toEqual(database.afterLoginResult)
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context)).resolves.toEqual(database.afterLoginResult)
 
     expect(database.state.userKeys).toEqual([])
     expect(database.state.users[0]).toMatchObject({ tfaIsActive: true })
@@ -827,10 +864,10 @@ describe('User.loginTFA setup transactions', () => {
     const database = createTfaDatabase()
     installTfaDatabase(database)
 
-    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
-      .resolves.toEqual(database.afterLoginResult)
-    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
-      .rejects.toBeInstanceOf(tfaErrors.AuthValidationTokenInvalid)
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context)).resolves.toEqual(database.afterLoginResult)
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context)).rejects.toBeInstanceOf(
+      tfaErrors.AuthValidationTokenInvalid
+    )
 
     expect(database.state.userKeys).toEqual([])
     expect(database.state.users[0]).toMatchObject({ tfaIsActive: true })
@@ -842,8 +879,9 @@ describe('User.loginTFA setup transactions', () => {
     const database = createTfaDatabase({ tfaIsActive: true })
     installTfaDatabase(database)
 
-    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
-      .rejects.toBeInstanceOf(tfaErrors.AuthValidationTokenInvalid)
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context)).rejects.toBeInstanceOf(
+      tfaErrors.AuthValidationTokenInvalid
+    )
 
     expect(database.state.userKeys).toHaveLength(1)
     expect(database.state.users[0]).toMatchObject({ tfaIsActive: true })
@@ -856,8 +894,9 @@ describe('User.loginTFA setup transactions', () => {
     database.failEnable = true
     installTfaDatabase(database)
 
-    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
-      .rejects.toThrow('forced TFA activation failure')
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context)).rejects.toThrow(
+      'forced TFA activation failure'
+    )
 
     expect(database.state.userKeys).toHaveLength(1)
     expect(database.state.users[0]).toMatchObject({ tfaIsActive: false })
@@ -878,13 +917,23 @@ describe('User.loginTFA setup transactions', () => {
     }
     let loginCalls = 0
     let cookieCalls = 0
-    const result = await User.loginTFA(
-      { securityCode: '123456', continuationToken: 'setup-token', setup: true },
-      {
-        req: { login: () => { loginCalls += 1 }, logIn: () => { loginCalls += 1 }, body: {}, params: {} },
-        res: { cookie: () => { cookieCalls += 1 } }
-      } as never
-    )
+    const result = await User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, {
+      req: {
+        login: () => {
+          loginCalls += 1
+        },
+        logIn: () => {
+          loginCalls += 1
+        },
+        body: {},
+        params: {}
+      },
+      res: {
+        cookie: () => {
+          cookieCalls += 1
+        }
+      }
+    } as never)
 
     expect(result).toEqual(database.afterLoginResult)
     expect(database.state.userKeys).toEqual([])
@@ -1004,13 +1053,14 @@ describe('User account mail delivery', () => {
     // Localization captures WIKI at module load; import only after this isolated mail runtime is configured.
     const { createMailRuntime } = await import('../../core/mail.ts')
     const mail = createMailRuntime(wiki as never, {
-      createTransport: () => ({
-        sendMail: async (message: { subject: string; text?: string; html?: string }) => {
-          sent.push(message)
-          return { accepted: ['user@example.test'] }
-        },
-        close: () => {}
-      }) as never,
+      createTransport: () =>
+        ({
+          sendMail: async (message: { subject: string; text?: string; html?: string }) => {
+            sent.push(message)
+            return { accepted: ['user@example.test'] }
+          },
+          close: () => {}
+        }) as never,
       resolveLogo: async () => '',
       localization: {
         resolveMailLocale: async () => ({ locale: 'en', siteLocale: 'en', direction: 'ltr' }),

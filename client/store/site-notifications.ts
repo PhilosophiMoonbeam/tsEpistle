@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../shared/site-notifications.ts'
-import { fetchPageApprovalInbox, fetchPageWatchNotifications, markPageWatchNotificationRead } from '../helpers/site-notifications-api.ts'
+import {
+  fetchPageApprovalInbox,
+  fetchPageWatchNotifications,
+  markPageWatchNotificationRead,
+  notificationIdentityInvalidated
+} from '../helpers/site-notifications-api.ts'
 
 interface NotificationStoreState {
   ownerId: number | null
@@ -60,14 +65,6 @@ const errorMessage = (error: unknown): string => {
   return 'Notifications could not be loaded.'
 }
 
-const errorCode = (error: unknown): string | undefined => {
-  if (typeof error !== 'object' || error === null) return undefined
-  const code = Reflect.get(error, 'code')
-  if (typeof code === 'string') return code
-  const name = Reflect.get(error, 'name')
-  return typeof name === 'string' ? name : undefined
-}
-
 const validOwnerId = (ownerId: number | null | undefined): number | null =>
   typeof ownerId === 'number' && Number.isSafeInteger(ownerId) && ownerId > 0 ? ownerId : null
 
@@ -109,11 +106,6 @@ const invalidateIdentity = (store: NotificationStore, ownerId: number, generatio
   state.approvals = undefined
   clearSourceState(store)
   store.identityStale = true
-}
-
-const identityInvalidated = (error: unknown): boolean => {
-  if (errorCode(error) === 'NOTIFICATION_OWNER_CHANGED') return true
-  return typeof error === 'object' && error !== null && Reflect.get(error, 'status') === 401
 }
 
 const appendWatches = (store: NotificationStore, items: readonly PageWatchNotification[]): void => {
@@ -221,22 +213,22 @@ export const useSiteNotificationsStore = defineStore('site-notifications', {
       this.watchesError = ''
       source.promise = fetchPageWatchNotifications(ownerId, undefined, controller.signal)
         .then(result => {
-          if (!isCurrent(this, ownerId, generation)) return
+          if (!isCurrent(this, ownerId, generation) || state.watches !== source) return
           this.watches = result.items
           this.watchesNextCursor = result.nextCursor
           this.watchesUnreadComplete = result.unreadComplete
           state.watchesLoaded = true
         })
         .catch(error => {
-          if (!isCurrent(this, ownerId, generation)) return
-          if (identityInvalidated(error)) {
+          if (!isCurrent(this, ownerId, generation) || state.watches !== source) return
+          if (notificationIdentityInvalidated(error)) {
             invalidateIdentity(this, ownerId, generation)
             return
           }
           this.watchesError = errorMessage(error)
         })
         .finally(() => {
-          if (!isCurrent(this, ownerId, generation)) return
+          if (!isCurrent(this, ownerId, generation) || state.watches !== source) return
           this.watchesLoading = false
           if (state.watches === source) state.watches = undefined
         })
@@ -259,22 +251,22 @@ export const useSiteNotificationsStore = defineStore('site-notifications', {
       this.watchesError = ''
       source.promise = fetchPageWatchNotifications(ownerId, cursor, controller.signal)
         .then(result => {
-          if (!isCurrent(this, ownerId, generation)) return
+          if (!isCurrent(this, ownerId, generation) || state.watches !== source) return
           appendWatches(this, result.items)
           this.watchesNextCursor = result.nextCursor
           this.watchesUnreadComplete = result.unreadComplete
           state.watchesLoaded = true
         })
         .catch(error => {
-          if (!isCurrent(this, ownerId, generation)) return
-          if (identityInvalidated(error)) {
+          if (!isCurrent(this, ownerId, generation) || state.watches !== source) return
+          if (notificationIdentityInvalidated(error)) {
             invalidateIdentity(this, ownerId, generation)
             return
           }
           this.watchesError = errorMessage(error)
         })
         .finally(() => {
-          if (!isCurrent(this, ownerId, generation)) return
+          if (!isCurrent(this, ownerId, generation) || state.watches !== source) return
           this.watchesLoading = false
           if (state.watches === source) state.watches = undefined
         })
@@ -302,7 +294,7 @@ export const useSiteNotificationsStore = defineStore('site-notifications', {
         })
         .catch(error => {
           if (!isCurrent(this, ownerId, generation)) return
-          if (identityInvalidated(error)) {
+          if (notificationIdentityInvalidated(error)) {
             invalidateIdentity(this, ownerId, generation)
             return
           }
@@ -339,7 +331,7 @@ export const useSiteNotificationsStore = defineStore('site-notifications', {
         })
         .catch(error => {
           if (!isCurrent(this, ownerId, generation)) return
-          if (identityInvalidated(error)) {
+          if (notificationIdentityInvalidated(error)) {
             invalidateIdentity(this, ownerId, generation)
             return
           }
@@ -366,7 +358,7 @@ export const useSiteNotificationsStore = defineStore('site-notifications', {
         await markPageWatchNotificationRead(ownerId, id, controller.signal)
       } catch (error) {
         if (isCurrent(this, ownerId, generation)) {
-          if (identityInvalidated(error)) invalidateIdentity(this, ownerId, generation)
+          if (notificationIdentityInvalidated(error)) invalidateIdentity(this, ownerId, generation)
           else this.watchesError = errorMessage(error)
         }
         return false
@@ -376,6 +368,10 @@ export const useSiteNotificationsStore = defineStore('site-notifications', {
       if (!isCurrent(this, ownerId, generation)) return false
       const item = this.watches.find(candidate => candidate.id === id)
       if (item && item.readAt === null) item.readAt = new Date().toISOString()
+      // A list already in flight may predate this mutation. Replace it rather
+      // than coalescing the post-write refresh into an obsolete snapshot.
+      state.watches?.controller.abort()
+      state.watches = undefined
       await this.refreshWatches()
       return isCurrent(this, ownerId, generation)
     },

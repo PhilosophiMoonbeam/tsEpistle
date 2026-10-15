@@ -5,6 +5,9 @@ import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import createKnex from 'knex'
 import { load } from 'js-yaml'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addLeaseToken } from '../db/migrations/2.5.158.ts'
+import { up as createAssetRelocation } from '../db/migrations/tsepistle-000037-asset-relocation.ts'
 
 const originalWiki = global.WIKI
 
@@ -40,6 +43,28 @@ describe('page creation editor availability', () => {
   const arrange = async available => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), 'wiki-editor-availability-'))
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    await createDurableJobs(db)
+    await addLeaseToken(db)
+    await db.schema.createTable('assetFolders', table => {
+      table.increments('id').primary()
+      table.string('name').notNullable()
+      table.string('slug').notNullable()
+      table.integer('parentId').nullable().references('id').inTable('assetFolders')
+    })
+    await db.schema.createTable('assets', table => {
+      table.increments('id').primary()
+      table.string('filename').notNullable()
+      table.string('hash').notNullable()
+      table.integer('folderId').nullable().references('id').inTable('assetFolders')
+    })
+    await createAssetRelocation(db)
+    await db.schema.createTable('storage', table => {
+      table.string('key').primary()
+      table.boolean('isEnabled').notNullable()
+      table.string('mode').notNullable()
+      table.string('syncInterval').notNullable()
+      table.json('config').notNullable()
+    })
     await db.schema.createTable('pages', table => {
       table.increments('id')
       table.string('path').notNullable()
@@ -127,7 +152,7 @@ describe('page creation editor availability', () => {
       Error: { PageDuplicateCreate: Error, PageEmptyContent: Error, PageIllegalPath: Error, PageNotFound: Error },
       events: { inbound: new EventEmitter(), outbound: new EventEmitter() },
       logger: { warn: vi.fn() },
-      models: { knex: db, pages: {}, tags: {}, pageHistory: {}, storage: { pageEvent: vi.fn(async () => undefined) } }
+      models: { knex: db, pages: {}, tags: {}, pageHistory: {} }
     }
     const { default: Page } = await vi.importFresh('../models/pages.ts', import.meta.url)
     Page.knex(db)

@@ -64,7 +64,7 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
-RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg 'qpdf>=11.9.1-r0' ffmpeg && \
+RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg 'qpdf>=11.9.1-r0' ffmpeg tini && \
     qpdf --version && ffmpeg -version && ffprobe -version && \
     mkdir -p /wiki /logs /wiki/data/content /wiki/data/repo && \
     chown -R bun:bun /wiki /logs
@@ -88,4 +88,6 @@ EXPOSE 3000
 EXPOSE 3443
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:3000/healthz || exit 1
+# Reap orphaned helpers while preserving Bun's entrypoint and graceful signal handling.
+ENTRYPOINT ["/sbin/tini", "-s", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["sh", "-ec", "case \"$(uname -m)\" in x86_64) grep -qw sse4_2 /proc/cpuinfo || { echo 'Sharp requires an x64 CPU with SSE4.2' >&2; exit 78; } ;; aarch64) ;; *) echo \"Unsupported runtime architecture: $(uname -m)\" >&2; exit 78 ;; esac; exec bun server/index.ts"]

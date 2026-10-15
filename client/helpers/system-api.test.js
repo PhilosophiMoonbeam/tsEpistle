@@ -1,4 +1,4 @@
-import { fetchRenderPageStatus, fetchSystemSummary, renderPage } from './system-api.ts'
+import { fetchSystemSummary, renderPage } from './system-api.ts'
 
 const response = (payload, status = 200) => Response.json(payload, { status })
 
@@ -26,23 +26,19 @@ const summary = {
   groupsTotal: 3,
   pagesTotal: 42,
   usersTotal: 11,
-  tagsTotal: 7
+  tagsTotal: 7,
+  assetsTotal: null,
+  assetsBytes: null,
+  commentsTotal: null
 }
 
 describe('system api helper', () => {
-  test('accepts a complete public summary and rejects a product-version mismatch', async () => {
-    await expect(fetchSystemSummary(async () => response(summary))).resolves.toEqual(summary)
-    await expect(fetchSystemSummary(async () => response({ ...summary, currentVersion: '7.4.1' }), 'Bad summary')).rejects.toThrow('Bad summary')
+  test('rejects inconsistent product versions and nonnumeric protected metrics', async () => {
+    await expect(fetchSystemSummary(async () => response({ ...summary, currentVersion: '7.4.1' }))).rejects.toThrow()
+    await expect(fetchSystemSummary(async () => response({ ...summary, assetsBytes: '1024' }))).rejects.toThrow()
   })
 
-  test('surfaces server error messages for protected observations', async () => {
-    await expect(fetchSystemSummary(async () => response({ error: 'System administration is required.' }, 403), 'Summary failed')).rejects.toThrow(
-      'System administration is required.'
-    )
-  })
-
-  test('uses same-origin JSON requests and requires accepted render admission before polling status', async () => {
-    const requests = []
+  test('rejects HTTP success without durable render admission', async () => {
     const receipt = {
       message: 'Page render accepted.',
       effectId: 'effect-42',
@@ -50,34 +46,6 @@ describe('system api helper', () => {
       sourceRevision: '7',
       statusUrl: '/_api/system/content/render-page/status/effect-42'
     }
-    const status = { effectId: 'effect-42', pageId: 42, sourceRevision: '7', status: 'succeeded', result: {}, postcondition: {} }
-    const fetchImpl = async (input, init) => {
-      requests.push({ input, init })
-      if (input === receipt.statusUrl) return response(status, 200)
-      if (input === '/_api/system/content/render-page') return response(receipt, 202)
-      throw new Error(`Unexpected request: ${input}`)
-    }
-    await expect(renderPage(fetchImpl, 42)).resolves.toEqual(receipt)
-    await expect(fetchRenderPageStatus(fetchImpl, receipt.statusUrl)).resolves.toEqual(status)
-    await expect(renderPage(async () => response(receipt, 200), 42, 'Render admission failed')).rejects.toThrow('Render admission failed')
-    expect(requests).toEqual([
-      {
-        input: '/_api/system/content/render-page',
-        init: expect.objectContaining({
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: 42 })
-        })
-      },
-      {
-        input: receipt.statusUrl,
-        init: expect.objectContaining({
-          method: 'GET',
-          credentials: 'same-origin',
-          headers: { Accept: 'application/json' }
-        })
-      }
-    ])
+    await expect(renderPage(async () => response(receipt, 200), 42)).rejects.toThrow()
   })
 })

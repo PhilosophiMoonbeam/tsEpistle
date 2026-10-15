@@ -1,5 +1,6 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { up as upNotificationPreferences } from '../../db/migrations/tsepistle-000058-discussion-notifications.ts'
 
 let knex: Knex
 let page: { id: number; title: string; visibility: 'public'; ownerId: null; path: string; localeCode: string; tags: never[] }
@@ -44,6 +45,15 @@ beforeEach(async () => {
     pool: { min: 1, max: 1 },
     useNullAsDefault: true
   })
+  await knex.schema.createTable('users', table => {
+    table.integer('id').primary()
+    table.boolean('isActive').notNullable().defaultTo(true)
+    table.string('email').notNullable()
+  })
+  await knex('users').insert([
+    { id: 7, email: user.email },
+    { id: 8, email: 'other@example.test' }
+  ])
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
     table.string('title').notNullable()
@@ -51,6 +61,9 @@ beforeEach(async () => {
     table.string('localeCode').notNullable()
     table.string('visibility').notNullable()
     table.integer('ownerId').nullable()
+    table.boolean('isPublished').notNullable().defaultTo(true)
+    table.dateTime('publishStartDate').nullable()
+    table.dateTime('publishEndDate').nullable()
   })
   await knex.schema.createTable('tags', table => {
     table.integer('id').primary()
@@ -71,6 +84,7 @@ beforeEach(async () => {
   await knex.schema.createTable('pageWatchNotifications', table => {
     table.string('id').primary()
     table.integer('userId').notNullable()
+    table.string('eventId').nullable()
     table.integer('pageId').notNullable()
     table.string('eventType').notNullable()
     table.string('actorName').notNullable()
@@ -80,6 +94,51 @@ beforeEach(async () => {
     table.string('visibility').notNullable()
     table.dateTime('createdAt').notNullable()
     table.dateTime('readAt').nullable()
+  })
+  await upNotificationPreferences(knex)
+  await knex.schema.createTable('outboxEvents', table => {
+    table.string('id').primary()
+    table.string('type').notNullable()
+    table.text('payload').notNullable()
+  })
+  await knex.schema.createTable('pageHistory', table => {
+    table.integer('id').primary()
+    table.string('title').notNullable()
+  })
+  await knex.schema.createTable('deletedPageRecovery', table => {
+    table.integer('pageId').primary()
+    table.integer('deletionVersionId').notNullable()
+    table.text('securityContext').notNullable()
+  })
+  await knex.schema.createTable('comments', table => {
+    table.integer('id').primary()
+    table.integer('pageId').notNullable()
+    table.integer('authorId').notNullable()
+    table.integer('replyTo').notNullable().defaultTo(0)
+    table.string('name').notNullable()
+    table.text('content').notNullable()
+    table.boolean('isHidden').notNullable().defaultTo(false)
+  })
+  await knex.schema.createTable('settings', table => {
+    table.string('key').primary()
+    table.text('value').notNullable()
+  })
+  await knex('settings').insert({ key: 'features', value: JSON.stringify({ featurePageComments: true }) })
+  await knex.schema.createTable('commentProviders', table => {
+    table.string('key').primary()
+    table.boolean('isEnabled').notNullable()
+  })
+  await knex('commentProviders').insert({ key: 'default', isEnabled: true })
+  await knex.schema.createTable('pageAccessPasswords', table => {
+    table.integer('pageId').primary()
+    table.integer('version').notNullable()
+  })
+  await knex.schema.createTable('pageUnlockGrants', table => {
+    table.integer('pageId').notNullable()
+    table.integer('userId').notNullable()
+    table.string('sessionId').notNullable()
+    table.integer('passwordVersion').notNullable()
+    table.dateTime('expiresAt').notNullable()
   })
   page = { id: 42, title: 'Getting Started', visibility: 'public', ownerId: null, path: 'docs/start', localeCode: 'en', tags: [] }
   await knex('pages').insert({
@@ -118,6 +177,197 @@ afterEach(async () => {
 })
 
 describe('page watching operations', () => {
+  it('reads default-off owner preferences and patches only requested channels on the current account', async () => {
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+    const initial = await operations.getNotificationPreferences(user)
+    expect(initial.ownerId).toBe(7)
+    expect(Object.values(initial.preferences).every(channels => !channels.inApp && !channels.email)).toBe(true)
+    await operations.updateNotificationPreferences(user, { preferences: { mention: { inApp: true, email: true } } })
+    const changed = await operations.updateNotificationPreferences(user, { preferences: { mention: { email: false }, commentReply: { inApp: true } } })
+    expect(changed.preferences.mention).toEqual({ inApp: true, email: false })
+    expect(changed.preferences.commentReply).toEqual({ inApp: true, email: false })
+    expect(await knex('userNotificationPreferences').where('userId', 8)).toEqual([])
+    for (const payload of [
+      { ownerId: 8, preferences: { mention: { email: true } } },
+      { preferences: { unknown: { email: true } } },
+      { preferences: { mention: { email: 'true' } } },
+      { preferences: { mention: { sms: true } } },
+      { preferences: { mention: {} } }
+    ])
+      await expect(operations.updateNotificationPreferences(user, payload)).rejects.toMatchObject({ status: 400 })
+    await knex('users').where('id', 7).update({ isActive: false })
+    await expect(operations.updateNotificationPreferences(user, { preferences: { mention: { email: true } } })).rejects.toMatchObject({ status: 401 })
+    expect((await knex('userNotificationPreferences').where({ userId: 7, category: 'mention' }).first()).emailEnabled).toBe(0)
+  })
+
+  it('projects discussion routing only after current-session unlock and owns the read transition', async () => {
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+    user.permissions.push('read:comments')
+    await knex('comments').insert({ id: 301, pageId: page.id, authorId: 8, name: 'Other', content: 'Protected discussion text' })
+    await knex('pageWatchNotifications').insert({
+      ...notificationRow('mention-entry'),
+      category: 'mention',
+      commentId: 301,
+      eventType: 'discussion.comment-created'
+    })
+    await knex('pageAccessPasswords').insert({ pageId: page.id, version: 2 })
+    await knex('pageUnlockGrants').insert({
+      pageId: page.id,
+      userId: user.id,
+      sessionId: 'unlocked-session',
+      passwordVersion: 2,
+      expiresAt: new Date(Date.now() + 60_000)
+    })
+    expect((await operations.listPageWatchNotifications(user, undefined, 'locked-session')).items).toEqual([])
+    await operations.markPageWatchNotificationRead(user, 'mention-entry', 'locked-session')
+    expect((await knex('pageWatchNotifications').where('id', 'mention-entry').first()).readAt).toBeNull()
+    const unlocked = await operations.listPageWatchNotifications(user, undefined, 'unlocked-session')
+    expect(unlocked.items).toEqual([expect.objectContaining({ category: 'mention', commentId: 301, readAt: null })])
+    expect(JSON.stringify(unlocked)).not.toContain('Protected discussion text')
+    await operations.markPageWatchNotificationRead({ ...user, id: 8 } as Express.User, 'mention-entry', 'unlocked-session')
+    expect((await knex('pageWatchNotifications').where('id', 'mention-entry').first()).readAt).toBeNull()
+    await operations.markPageWatchNotificationRead(user, 'mention-entry', 'unlocked-session')
+    expect((await knex('pageWatchNotifications').where('id', 'mention-entry').first()).readAt).not.toBeNull()
+    await knex('comments').where('id', 301).update({ isHidden: true })
+    expect((await operations.listPageWatchNotifications(user, undefined, 'unlocked-session')).items).toEqual([])
+  })
+
+  it.each([
+    ['pageCreated', 'future'],
+    ['pageCreated', 'expired'],
+    ['mention', 'future'],
+    ['mention', 'expired']
+  ] as const)('reauthorizes %s inbox visibility and read state after its publication window becomes %s', async (category, boundary) => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-06-15T12:00:00.000Z'))
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+    user.permissions.push('read:comments')
+    await knex('comments').insert({ id: 301, pageId: page.id, authorId: 8, name: 'Other', content: 'Withheld discussion text' })
+    const row = {
+      ...notificationRow('window-entry'),
+      category,
+      commentId: category === 'mention' ? 301 : null,
+      eventType: category === 'mention' ? 'discussion.comment-created' : 'page.created'
+    }
+    await knex('pageWatchNotifications').insert(row)
+    expect((await operations.listPageWatchNotifications(user)).items).toEqual([expect.objectContaining({ id: 'window-entry', category })])
+    await knex('pages')
+      .where('id', page.id)
+      .update({
+        publishStartDate: boundary === 'future' ? '2026-06-16T12:00:00.000Z' : null,
+        publishEndDate: boundary === 'expired' ? '2026-06-14T12:00:00.000Z' : null
+      })
+    const hidden = await operations.listPageWatchNotifications(user)
+    expect(hidden.items).toEqual([])
+    expect(JSON.stringify(hidden)).not.toContain(page.title)
+    expect(JSON.stringify(hidden)).not.toContain('Withheld discussion text')
+    expect(await knex('pageWatchNotifications').where('id', row.id)).toEqual([])
+    await knex('pageWatchNotifications').insert(row)
+    await operations.markPageWatchNotificationRead(user, row.id)
+    expect(await knex('pageWatchNotifications').where('id', row.id)).toEqual([])
+  })
+
+  it('reads opted-in deletion routing against current authority, not vanished page metadata or stale permissions', async () => {
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+    await knex('outboxEvents').insert({
+      id: 'deleted-event',
+      type: 'page.deleted',
+      payload: JSON.stringify({ pageId: 42, title: 'Deleted title', path: 'docs/deleted', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] })
+    })
+    await knex('pageHistory').insert({ id: 501, title: 'Current deletion title' })
+    await knex('deletedPageRecovery').insert({
+      pageId: 42,
+      deletionVersionId: 501,
+      securityContext: JSON.stringify({
+        version: 1,
+        former: { path: 'docs/deleted', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] },
+        protection: null
+      })
+    })
+    await knex('pageWatchNotifications').insert({
+      ...notificationRow('deleted-entry'),
+      eventId: 'deleted-event',
+      eventType: 'page.deleted',
+      category: 'pageDeleted',
+      commentId: null
+    })
+    await knex('pages').where('id', 42).delete()
+    expect((await operations.listPageWatchNotifications(user)).items).toEqual([
+      expect.objectContaining({ category: 'pageDeleted', commentId: null, title: 'Current deletion title', path: 'docs/deleted' })
+    ])
+    expect((await operations.listPageWatchNotifications({ ...user, permissions: [] } as Express.User)).items).toEqual([])
+    expect(await knex('pageWatchNotifications').where({ id: 'deleted-entry', userId: user.id })).toEqual([])
+  })
+
+  it.each(['protected', 'future', 'expired'] as const)(
+    'projects a current replacement title and withholds %s replacements and unknown deletion scopes',
+    async change => {
+      const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+      vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-06-15T12:00:00.000Z'))
+      await knex('outboxEvents').insert({
+        id: 'replacement-event',
+        type: 'page.deleted',
+        payload: JSON.stringify({ pageId: 42, title: 'Stale event title', path: 'docs/start', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] })
+      })
+      await knex('pageHistory').insert({ id: 501, title: 'Last deleted title' })
+      await knex('deletedPageRecovery').insert({
+        pageId: 42,
+        deletionVersionId: 501,
+        securityContext: JSON.stringify({
+          version: 1,
+          former: { path: 'docs/start', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] },
+          protection: null
+        })
+      })
+      await knex('pages').where('id', 42).delete()
+      await knex('pages').insert({
+        id: 99,
+        title: 'Authorized replacement',
+        path: 'docs/start',
+        localeCode: 'en',
+        visibility: 'public',
+        ownerId: null,
+        isPublished: true
+      })
+      await knex('pageWatchNotifications').insert({
+        ...notificationRow('replacement-entry'),
+        eventId: 'replacement-event',
+        eventType: 'page.deleted',
+        category: 'pageDeleted',
+        commentId: null
+      })
+      const visible = await operations.listPageWatchNotifications(user)
+      expect(visible.items).toEqual([expect.objectContaining({ pageId: 42, title: 'Authorized replacement', path: 'docs/start', category: 'pageDeleted' })])
+      expect(JSON.stringify(visible)).not.toContain('Stale event title')
+      if (change === 'protected') await knex('pageAccessPasswords').insert({ pageId: 99, version: 1 })
+      else
+        await knex('pages')
+          .where('id', 99)
+          .update({
+            publishStartDate: change === 'future' ? '2026-06-16T12:00:00.000Z' : null,
+            publishEndDate: change === 'expired' ? '2026-06-14T12:00:00.000Z' : null
+          })
+      expect((await operations.listPageWatchNotifications(user)).items).toEqual([])
+      expect(await knex('pageWatchNotifications').where('id', 'replacement-entry')).toEqual([])
+      await knex('pageWatchNotifications').insert({
+        ...notificationRow('replacement-read-entry'),
+        eventId: 'replacement-event',
+        eventType: 'page.deleted',
+        category: 'pageDeleted',
+        commentId: null
+      })
+      await operations.markPageWatchNotificationRead(user, 'replacement-read-entry')
+      expect(await knex('pageWatchNotifications').where('id', 'replacement-read-entry')).toEqual([])
+      await knex('pageWatchNotifications').insert({
+        ...notificationRow('unknown-entry'),
+        eventId: 'replacement-event',
+        eventType: 'page.deleted',
+        category: 'pageDeleted',
+        commentId: null
+      })
+      await knex('deletedPageRecovery').where('pageId', 42).delete()
+      expect((await operations.listPageWatchNotifications(user)).items).toEqual([])
+    }
+  )
   it('subscribes idempotently, reports state, and unsubscribes', async () => {
     const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
 
@@ -166,7 +416,10 @@ describe('page watching operations', () => {
     await knex('pageWatchNotifications').insert(notificationRow('foreign-notification', { userId: 8 }))
     await operations.markPageWatchNotificationRead(user, 'foreign-notification')
     expect(await knex('pageWatchNotifications').where({ id: 'foreign-notification', userId: 8 }).first()).toMatchObject({ readAt: null })
-    expect(await operations.listPageWatchNotifications(user)).toMatchObject({ unreadCount: 1 })
+    expect(await operations.listPageWatchNotifications(user)).toMatchObject({
+      unreadCount: 1,
+      items: [expect.objectContaining({ category: 'pageWatch', commentId: null })]
+    })
     await operations.markPageWatchNotificationRead(user, 'notification-1')
     expect((await knex('pageWatchNotifications').where({ id: 'notification-1', userId: 7 }).first()).readAt).not.toBeNull()
     expect(await operations.listPageWatchNotifications(user)).toMatchObject({ unreadCount: 0 })

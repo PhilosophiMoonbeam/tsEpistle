@@ -24,7 +24,7 @@ export default {
     async flags(_obj: unknown, _args: Record<string, unknown>, context: ResolverContext) {
       return getDeveloperFlagsWorkspaceStore().legacyList(systemRequester(context.req))
     },
-    info: systemOperations.getInfo
+    info: (_obj: unknown, _args: Record<string, unknown>, context: ResolverContext) => systemOperations.getInfo(context.req.user)
   },
   SystemMutation: {
     async updateFlags() {

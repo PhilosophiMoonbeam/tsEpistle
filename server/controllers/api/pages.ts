@@ -8,7 +8,15 @@ import { canReadPage, canWritePage, managesSystem, principalId, type PageVisibil
 import { isApiPrincipal } from '../../helpers/api-principal.ts'
 import { canViewRestrictedPageFields, projectPageFields } from '../../helpers/page-field-projection.ts'
 import type { PageRuleAuthority } from '../../helpers/group-access.ts'
-import { getPageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage } from '../../operations/page-watching.ts'
+import {
+  getNotificationPreferences,
+  getPageWatchState,
+  listPageWatchNotifications,
+  markPageWatchNotificationRead,
+  unwatchPage,
+  updateNotificationPreferences,
+  watchPage
+} from '../../operations/page-watching.ts'
 import { getPageApproval, listApprovalInbox, submitPageApproval, transitionApproval } from '../../operations/approvals.ts'
 import { assertPageUnlocked, getPageProtection, removePageProtection, setPageProtection, unlockPage } from '../../operations/page-protection.ts'
 import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
@@ -954,6 +962,28 @@ router.post('/:id/approval', async (req, res, next) => {
   }
 })
 
+router.get('/notifications/preferences', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
+  if (requireNotificationOwner(req, res) === null) return
+  try {
+    res.json(await getNotificationPreferences(req.user))
+  } catch (err) {
+    sendNotificationOperationError(res, next, err, 'Notification preferences unavailable')
+  }
+})
+
+router.patch('/notifications/preferences', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
+  if (requireNotificationOwner(req, res) === null) return
+  try {
+    res.json(await updateNotificationPreferences(req.user, req.body))
+  } catch (err) {
+    sendNotificationOperationError(res, next, err, 'Notification preferences could not be saved')
+  }
+})
+
 router.get('/watches/notifications', async (req, res, next) => {
   res.set('Cache-Control', 'private, no-store')
   res.vary('Cookie')
@@ -961,7 +991,7 @@ router.get('/watches/notifications', async (req, res, next) => {
   const cursor = watchCursor(req, res)
   if (cursor === null) return
   try {
-    res.json(cursor === undefined ? await listPageWatchNotifications(req.user) : await listPageWatchNotifications(req.user, cursor))
+    res.json(await listPageWatchNotifications(req.user, cursor, req.sessionID))
   } catch (err) {
     sendNotificationOperationError(res, next, err, 'Watch notifications unavailable')
   }
@@ -972,7 +1002,7 @@ router.patch('/watches/notifications/:notificationId/read', async (req, res, nex
   res.vary('Cookie')
   if (requireNotificationOwner(req, res) === null) return
   try {
-    await markPageWatchNotificationRead(req.user, String(req.params.notificationId || ''))
+    await markPageWatchNotificationRead(req.user, String(req.params.notificationId || ''), req.sessionID)
     res.sendStatus(204)
   } catch (err) {
     next(err)

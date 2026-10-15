@@ -16,7 +16,7 @@ import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { publicSiteBanner } from '../shared/site-banner.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
-import { normalizeReaderLayout } from '../shared/theme-policy.ts'
+import { normalizeCodeTheme, normalizeReaderLayout } from '../shared/theme-policy.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { parseAgentOperationalLimits } from './agents/config.ts'
 import type { AgentOperationalLimits } from './agents/config.ts'
@@ -107,6 +107,7 @@ interface MasterConfig extends Record<string, unknown> {
   theming: {
     colors?: unknown
     reading?: unknown
+    codeTheme?: unknown
     darkMode: boolean
     theme: string
     tocPosition?: string
@@ -391,18 +392,23 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     const providerFactory = new AgentProviderFactory(wiki.models.knex, secrets)
     utilityModel = new AgentUtilityModel(providerFactory)
     providerConformance = new AgentProviderConformanceRunner(wiki.models.knex, providerFactory, providerRegistry)
-    agentRuntime = new AgentProductRuntime(wiki.models.knex, providerRegistry, new AxAgentEngine(providerFactory, actionSessions, undefined, { externalMcp, decisionProviders }), {
-      router,
-      authorizeMedia: ownerId =>
-        assertWikiAgentMediaAccess(ownerId, { enabled: wiki.config.agents.enabled, providerEnabled: wiki.config.agents.provider.enabled }),
-      workerId: `http-${workerIdentity}`,
-      globalConcurrency: agentLimits.provider.globalConcurrency,
-      perUserConcurrency: agentLimits.provider.perUserConcurrency,
-      utilityModel,
-      orchestration: agentLimits.orchestration,
-      goals: agentLimits.goals,
-      logger: wiki.logger
-    })
+    agentRuntime = new AgentProductRuntime(
+      wiki.models.knex,
+      providerRegistry,
+      new AxAgentEngine(providerFactory, actionSessions, undefined, { externalMcp, decisionProviders }),
+      {
+        router,
+        authorizeMedia: ownerId =>
+          assertWikiAgentMediaAccess(ownerId, { enabled: wiki.config.agents.enabled, providerEnabled: wiki.config.agents.provider.enabled }),
+        workerId: `http-${workerIdentity}`,
+        globalConcurrency: agentLimits.provider.globalConcurrency,
+        perUserConcurrency: agentLimits.provider.perUserConcurrency,
+        utilityModel,
+        orchestration: agentLimits.orchestration,
+        goals: agentLimits.goals,
+        logger: wiki.logger
+      }
+    )
     wiki.agentRuntime = agentRuntime
   }
   const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${workerIdentity}`, utilityModel, {
@@ -602,8 +608,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     ...(viteOrigin === undefined ? {} : { origin: viteOrigin })
   })
 
-  const themeColors = normalizeThemeColors(wiki.config.theming.colors)
   app.use(async (_req, res, next) => {
+    const themeColors = normalizeThemeColors(wiki.config.theming.colors)
     const branding = await resolveActiveBranding(wiki.models.knex, wiki.config.logoUrl)
     // Presentation only: JWT appearance claims may predate a saved preference.
     const profile =
@@ -620,6 +626,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       backgroundColor: themeColors.light.background,
       tocPosition: wiki.config.theming.tocPosition || 'left',
       readerLayout: normalizeReaderLayout(wiki.config.theming.reading),
+      codeTheme: normalizeCodeTheme(wiki.config.theming.codeTheme),
       lang: wiki.config.lang.code,
       localeRevision: wiki.config.lang.revision || wiki.product.revision,
       rtl: wiki.config.lang.rtl,

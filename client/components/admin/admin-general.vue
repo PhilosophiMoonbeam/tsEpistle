@@ -335,6 +335,18 @@
               </div>
             </div>
             <div class="general-setting-group">
+              <h3>{{ labels.featureGlossary }}</h3>
+              <v-switch
+                v-model="draft.featureGlossary"
+                :label="$t('admin:general.enableGlossary', { defaultValue: 'Enable glossary' })"
+                color="primary"
+                inset
+                :disabled="locked"
+                :hint="$t('admin:general.glossaryAvailabilityHint', { defaultValue: 'Turning this off hides the glossary and refuses glossary changes without deleting terms. Turning it back on restores access under the existing permissions.' })"
+                persistent-hint
+              />
+            </div>
+            <div class="general-setting-group">
               <h3>{{ $t('admin:general.pageEditingActions') }}</h3>
               <p>
                 {{ $t('admin:general.chooseHowAuthorsReach') }}

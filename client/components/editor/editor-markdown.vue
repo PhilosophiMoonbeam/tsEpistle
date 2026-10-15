@@ -194,20 +194,22 @@
 
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType } from 'vue'
+import type { Raw } from 'vue'
 import { useDisplay } from 'vuetify'
 import * as _ from 'lodash-es'
 import type { DebouncedFunc } from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
+import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
+import { completeSourcePageLink, createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import markdownHelp from './markdown/help.vue'
-import { searchPages } from '../../helpers/pages-api'
 import Velocity from 'velocity-animate'
 import { decodeBase64Text } from '../../helpers/base64'
 
 /* global siteConfig, siteLangs */
 
-import { autocompletion, insertCompletionText, pickedCompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete'
+import { autocompletion, type CompletionContext } from '@codemirror/autocomplete'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorView, keymap } from '@codemirror/view'
 import {
@@ -273,7 +275,7 @@ const ADMONITION_KINDS = [
 
 const SIDEBAR_TOOLS: FormattingToolId[] = ['link', 'assets', 'diagram', 'contentExtension', 'definitionList', 'abbreviation']
 const MOBILE_MENU_TOOLS: MobileMenuEntry[] = [
-  'link', 'assets', 'diagram', 'contentExtension', 'definitionList', 'abbreviation',
+  'link', 'assets', 'diagram', 'contentExtension', 'definitionList', 'abbreviation', 'codeBlock', 'table',
   'divider',
   'strikethrough', 'highlight', 'blockquote', 'inlineCode', 'unorderedList', 'orderedList'
 ]
@@ -449,6 +451,8 @@ export default defineComponent({
       editorDisposed: false,
       editorAdapter: null as EditorAdapterController | null,
       collaborationAbortController: null as AbortController | null,
+      imageAuthoring: null as Raw<ReturnType<typeof createSourceImageAuthoring>> | null,
+      sourceAuthoring: null as Raw<ReturnType<typeof createSourceAuthoring>> | null,
       formatState: EMPTY_MARKDOWN_FORMAT_STATE as MarkdownFormatState,
       historyDepth: { undo: 0, redo: 0 },
       tools: FORMATTING_TOOLS,
@@ -475,7 +479,7 @@ export default defineComponent({
         {
           id: 'structure',
           labelKey: 'editor:markup.structureGroup',
-          tools: ['heading', 'blockquote', 'unorderedList', 'orderedList', 'horizontalBar']
+          tools: ['heading', 'blockquote', 'unorderedList', 'orderedList', 'horizontalBar', 'codeBlock', 'table']
         }
       ]
     },
@@ -646,6 +650,12 @@ export default defineComponent({
         case 'keyboardKey':
           this.toggleMarkup({ start: '<kbd>', end: '</kbd>' })
           break
+        case 'codeBlock':
+          this.sourceAuthoring?.insertCodeBlock()
+          break
+        case 'table':
+          this.sourceAuthoring?.insertTable()
+          break
         case 'blockquote':
           this.insertBeforeEachLine({ content: '> ' })
           break
@@ -716,6 +726,7 @@ export default defineComponent({
       this.previewRevision += 1
     },
     toggleModal(key: string) {
+      if (key === 'editorModalMedia' && !this.activeModal && this.imageAuthoring?.open()) return
       this.activeModal = (this.activeModal === key) ? '' : key
       this.helpShown = false
     },
@@ -728,16 +739,9 @@ export default defineComponent({
     handleEditorInsert(opts: EditorInsertPayload) {
       const cm = requireEditor(this.cm)
       switch (opts.kind) {
-        case 'IMAGE': {
-          let img = `![${opts.text}](${opts.path})`
-          if (opts.align && opts.align !== '') {
-            img += `{.align-${opts.align}}`
-          }
-          this.insertAtCursor({
-            content: img
-          })
+        case 'IMAGE':
+          this.imageAuthoring?.insert(opts)
           break
-        }
         case 'BINARY':
           this.insertAtCursor({
             content: `[${opts.text}](${opts.path})`
@@ -1157,42 +1161,28 @@ export default defineComponent({
 
 
     this.debouncedProcessContent = _.debounce((newContent: string) => this.processContent(newContent), 600)
-    const completePageLink = async (context: CompletionContext) => {
-      const prefix = context.matchBefore(/\[[^\]]+\]\($/)
-      if (!prefix) return null
-      const title = prefix.text.slice(1, -2)
-      try {
-        const response = await searchPages(window.fetch.bind(window), title, { locale: this.locale })
-        return {
-          from: context.pos,
-          options: response.results.map(result => {
-            const href = `${result.visibility === 'private' ? '/_private' : ''}/${result.visibility === 'private' || siteLangs.length > 0 ? `${encodeURIComponent(result.locale)}/` : ''}${result.path.split('/').map(encodeURIComponent).join('/')}`
-            return {
-              label: `${href} - ${result.title}`,
-              apply: (view: EditorView, completion: Completion, from: number, to: number) => {
-                // Match the normal completion prefix at every cursor before consuming its own closer.
-                const insertion = insertCompletionText(view.state, `${href})`, from, to)
-                const insertions = view.state.changes(insertion.changes)
-                const closers: Array<{ from: number; to: number }> = []
-                insertions.iterChanges((_fromA, toA, _fromB, toB) => {
-                  if (view.state.sliceDoc(toA, toA + 1) === ')') closers.push({ from: toB, to: toB + 1 })
-                }, true)
-                view.dispatch(
-                  { ...insertion, changes: insertions, annotations: pickedCompletion.of(completion) },
-                  { changes: closers, sequential: true }
-                )
-              }
-            }
-          })
-        }
-      } catch {
-        return null
-      }
-    }
+    const completionOwner = `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    const completePageLink = (context: CompletionContext) => completeSourcePageLink(
+      context, this.locale, siteLangs.length > 0,
+      () => wikiStore.user.authenticated && !this.editorDisposed && this.collaborationStatus?.state !== 'conflict' &&
+        completionOwner === `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    )
+    this.imageAuthoring = markRaw(createSourceImageAuthoring(
+      'markdown',
+      () => wikiStore.user.authenticated && !this.editorDisposed && this.collaborationStatus?.state !== 'conflict',
+      () => `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    ))
+    this.sourceAuthoring = markRaw(createSourceAuthoring(
+      'markdown',
+      () => wikiStore.user.authenticated && !this.editorDisposed && this.collaborationStatus?.state !== 'conflict',
+      () => `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    ))
 
     const extensions = [
+      this.imageAuthoring?.extension ?? [],
+      this.sourceAuthoring.extension,
       markdownEditorInputTheme,
-      autocompletion({ override: [completePageLink] }),
+      autocompletion({ override: [completePageLink, this.sourceAuthoring.complete] }),
       keymap.of([
         { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
         { key: 'Mod-s', run: () => { this.save(); return true } },
@@ -1352,6 +1342,10 @@ export default defineComponent({
   },
   beforeUnmount() {
     this.editorDisposed = true
+    this.imageAuthoring?.destroy()
+    this.imageAuthoring = null
+    this.sourceAuthoring?.destroy()
+    this.sourceAuthoring = null
     const adapter = this.editorAdapter
     if (adapter) {
       this.$emit('editor-adapter-clear', adapter)

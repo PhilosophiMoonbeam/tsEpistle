@@ -98,7 +98,7 @@ props:
     type: Boolean
     title: Always Locale Namespace
     default: false
-    hint: 'Whether to put content from the primary language into a subfolder.'
+    hint: 'Non-Markdown exports only: put primary-language content into a locale subfolder. Markdown always retains canonical locale paths.'
     order: 40
   gitBinaryPath:
     type: String
@@ -106,16 +106,28 @@ props:
     default: ''
     hint: Optional - Absolute path to the Git binary, when not available in PATH. Leave empty to use the default PATH location (recommended).
     order: 50
+  stripLeadingH1:
+    type: Boolean
+    title: Strip leading external document heading
+    default: false
+    hint: 'Ingestion only: remove a leading Markdown H1 or header-free AsciiDoc title from plain or legacy sources when body content remains. Canonical OKF and reserved concepts are never changed.'
+    order: 60
+  mapReadmeToHome:
+    type: Boolean
+    title: Import root README as home
+    default: false
+    hint: 'Ingestion only: map plain or legacy Markdown/AsciiDoc README at the repository or locale root to home. Nested README and OKF stay unchanged; ambiguous home sources are refused. Exports retain canonical paths.'
+    order: 61
 actions:
   - handler: syncUntracked
     label: Add Untracked Changes
-    hint: Output all content from the DB to the local Git repository to ensure all untracked content is saved. If you enabled Git after content was created or you temporarily disabled Git, you'll want to execute this action to add the missing untracked changes.
+    hint: Export public DB content to canonical local Git paths and commit missing files. The working copy must be settled first; pending uncommitted mutations are never overwritten by this action. Useful after enabling Git for existing content.
   - handler: sync
     label: Force Sync
-    hint: Will trigger an immediate sync operation, regardless of the current sync schedule. The sync direction is respected.
+    hint: Trigger an immediate sync operation regardless of the schedule. The configured direction is respected; pending working-copy mutations must be recovered first, and unseen remote history is never force-overwritten.
   - handler: importAll
     label: Import Everything
     hint: Will import all content currently in the local Git repository, regardless of the latest commit state. Useful for importing content from the remote repository created before git was enabled.
   - handler: purge
     label: Purge Local Repository
-    hint: Clear the local working copy and clone it again from the remote. Replaced or unrelated working copies reattach automatically, so use this only when Git can no longer recover the repository. The remote is not modified.
+    hint: Reinitialize a clean working copy from the remote. Pending imports, uncommitted mutations, and unpublished commits must be recovered first; they are never discarded by this action. The remote is not modified.

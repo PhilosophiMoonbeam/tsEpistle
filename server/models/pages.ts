@@ -47,8 +47,9 @@ import type { PageFeatures } from '../../shared/page-features.ts'
 import { authorizePageBrandingAssignment } from '../helpers/asset-branding.ts'
 import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
 import { pageRequiresUnlock } from '../operations/page-protection.ts'
-import { assertAssetLocationReservations, lockAssetLocation } from '../helpers/asset-location-lock.ts'
-import { okfFilePath } from '../okf/format.ts'
+import { lockAssetMutationFence } from '../helpers/asset-location-lock.ts'
+import { assertNoStorageAssetAtPagePaths } from '../helpers/storage-path-admission.ts'
+import { enqueuePageStorageMutation } from '../jobs/storage-mutations.ts'
 
 type UnknownRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is UnknownRecord => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -173,7 +174,7 @@ interface CreatePageOptions {
     requester?: Express.User
     sessionId: string
   }
-  skipStorage?: boolean
+  skipStorage?: boolean | undefined
 }
 
 interface UpdatePageOptions {
@@ -207,7 +208,7 @@ interface UpdatePageOptions {
     requester?: Express.User
     sessionId: string
   }
-  skipStorage?: boolean
+  skipStorage?: boolean | undefined
 }
 
 interface ChangeVisibilityOptions {
@@ -215,7 +216,7 @@ interface ChangeVisibilityOptions {
   visibility: PageVisibility
   user: PageUser
   confirmPublication?: boolean
-  skipStorage?: boolean
+  skipStorage?: boolean | undefined
   expectedSourceRevision?: string
 }
 
@@ -249,7 +250,7 @@ type MovePageOptions = (
   destinationPath: string
   destinationLocale: string
   user: PageUser
-  skipStorage?: boolean
+  skipStorage?: boolean | undefined
   expectedSourceRevision?: string
   okfProducer?: string
   reviewToken?: string
@@ -278,7 +279,7 @@ type DeletePageOptions = (
     }
 ) & {
   user?: PageUser
-  skipStorage?: boolean
+  skipStorage?: boolean | undefined
   expectedSourceRevision?: string
 }
 interface RestoreDeletedPageOptions {
@@ -350,34 +351,6 @@ interface PageVersionOptions {
   transaction?: Knex.Transaction
 }
 
-interface PageRenameDetails {
-  id: number
-  hash: string
-  path: string
-  localeCode: string
-  title: string
-  description: string
-  contentType: string
-  visibility: PageVisibility
-  isPublished: boolean | number
-  safeContent: string
-  destinationPath: string
-  destinationLocaleCode: string
-  destinationHash: string
-}
-
-interface StorageRenameDetails extends PageRenameDetails {
-  authorName: string
-  authorEmail: string
-  updatedAt: string
-  tags: Tag[]
-  moveAuthorId: number
-  moveAuthorName: string
-  moveAuthorEmail: string
-}
-
-type StoragePageEvent = { event: 'created' | 'updated' | 'deleted'; page: Page } | { event: 'renamed'; page: StorageRenameDetails }
-
 interface EditorDefinition {
   key: string
   contentType: string
@@ -437,9 +410,6 @@ interface PagesWikiContext {
     }
     pages: typeof Page
     renderers?: { getRenderingPipeline(contentType: string): Promise<Array<{ key: string; config: unknown }>> }
-    storage: {
-      pageEvent(event: StoragePageEvent): Promise<unknown>
-    }
     tags: typeof Tag
   }
   scheduler: {
@@ -513,36 +483,6 @@ const parseStoredJson = (value: unknown): unknown => {
   }
 }
 
-const assertNoStorageAssetCollision = async (transaction: Knex.Transaction, storagePath: string): Promise<void> => {
-  try {
-    await lockAssetLocation(transaction, storagePath)
-    await assertAssetLocationReservations(transaction, [storagePath])
-  } catch (error: unknown) {
-    if (isRecord(error) && Reflect.get(error, 'status') === 409) throw pageRecoveryCollision()
-    throw error
-  }
-
-  const pathParts = storagePath.split('/')
-  const filename = pathParts.pop()
-  if (!filename) throw pageRecoveryCollision()
-  let parentId: number | null = null
-  for (const slug of pathParts) {
-    const folderQuery = transaction('assetFolders').where({ slug })
-    if (parentId === null) folderQuery.whereNull('parentId')
-    else folderQuery.where({ parentId })
-    const folder = (await folderQuery.first('id')) as { id: number } | undefined
-    if (!folder) return
-    parentId = Number(folder.id)
-  }
-  const assetQuery = transaction('assets').where({ filename })
-  if (parentId === null) {
-    assetQuery.where((query: Knex.QueryBuilder) => query.whereNull('folderId').orWhere('folderId', 0))
-  } else {
-    assetQuery.where({ folderId: parentId })
-  }
-  if (await assetQuery.first('id')) throw pageRecoveryCollision()
-}
-
 const assertRecoveryPath = (value: unknown): string => {
   if (
     typeof value !== 'string' ||
@@ -583,6 +523,7 @@ const pageAccessContext = (
   })
 
 const lockPageForMutation = async (transaction: Knex.Transaction, page: Page): Promise<Tag[] | undefined> => {
+  await lockAssetMutationFence(transaction, true)
   await lockSearchIndex(transaction, false)
   await lockSearchPage(transaction, page.id)
   const locked = (await transaction('pages').where({ id: page.id }).forUpdate().first()) as
@@ -700,7 +641,7 @@ interface CanonicalPageCommitInput {
   page: Page
   user: PageUser
   historyPage: Record<string, unknown>
-  patch: Record<string, unknown>
+  patch: Partial<Page>
   historyAction: string
   eventType: string
   eventPage: Pick<Page, 'id' | 'title' | 'path' | 'localeCode' | 'visibility' | 'ownerId' | 'tags'>
@@ -708,19 +649,23 @@ interface CanonicalPageCommitInput {
   previousLocation?: ReturnType<typeof projectionLocation>
   expectedUpdatedAt?: boolean
   tagsChanged?: boolean
+  skipStorage?: boolean | undefined
 }
 
 const saveCanonicalPageRevision = async (input: CanonicalPageCommitInput): Promise<void> => {
+  await assertNoStorageAssetAtPagePaths(input.transaction, {
+    path: input.patch.path ?? input.page.path,
+    localeCode: input.patch.localeCode ?? input.page.localeCode,
+    contentType: input.patch.contentType ?? input.page.contentType,
+    visibility: input.patch.visibility ?? input.page.visibility
+  })
   await wiki.models.pageHistory.addVersion({
     ...input.historyPage,
     action: input.historyAction,
     versionDate: input.page.updatedAt,
     transaction: input.transaction
   } as PageVersionOptions)
-  let query = wiki.models.pages
-    .query(input.transaction)
-    .patch(input.patch as Partial<Page>)
-    .where({ id: input.page.id })
+  let query = wiki.models.pages.query(input.transaction).patch(input.patch).where({ id: input.page.id })
   if (input.expectedUpdatedAt) query = query.where('updatedAt', input.page.updatedAt)
   if (input.page.sourceRevision !== undefined) query = query.where('sourceRevision', input.page.sourceRevision)
   const changedRows = await query
@@ -737,6 +682,12 @@ const saveCanonicalPageRevision = async (input: CanonicalPageCommitInput): Promi
   }
   await writePageOutboxEvent(input.transaction, input.eventType, input.eventPage, input.user)
   await enqueueCurrentPageProjections(input.transaction, input.page.id, input.projectionAction, input.previousLocation)
+  await enqueuePageStorageMutation(input.transaction, {
+    pageId: input.page.id,
+    previous: input.page,
+    author: input.user,
+    skipStorage: input.skipStorage
+  })
 }
 const pageHasActiveApproval = async (database: Knex | Knex.Transaction, pageId: number): Promise<boolean> =>
   (await database('pageApprovalRequests').where({ pageId }).whereIn('status', ['submitted', 'approved', 'changes-requested']).first('id')) !== undefined
@@ -773,7 +724,6 @@ interface PageTreeInsertRow {
 
 interface MigratedPageIdentity {
   readonly previous: Page
-  readonly destinationHash: string
 }
 
 const PAGE_TREE_REBUILD_LOCK_ID = 0x574b5452
@@ -1147,6 +1097,7 @@ export default class Page extends Model {
     await authorizeBrandingAssignment(branding, opts)
 
     await wiki.models.knex.transaction(async transaction => {
+      await lockAssetMutationFence(transaction, true)
       await lockSearchIndex(transaction, false)
       const inserted = await wiki.models.pages.query(transaction).insert({
         authorId: opts.user.id,
@@ -1195,8 +1146,10 @@ export default class Page extends Model {
       if (opts.visibility === 'public' && !hasPagePermission(opts.user, ['write:pages'], canonicalContext, authority)) {
         throw new errors.ApplicationError('You do not have permission to create this page.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
       }
+      await assertNoStorageAssetAtPagePaths(transaction, inserted)
       await enqueueCurrentPageProjections(transaction, inserted.id, 'create')
       await writePageOutboxEvent(transaction, 'page.created', inserted, opts.user)
+      await enqueuePageStorageMutation(transaction, { pageId: inserted.id, author: opts.user, skipStorage: opts.skipStorage })
     })
     const page = await wiki.models.pages.getPageFromDb({
       path: opts.path,
@@ -1214,13 +1167,6 @@ export default class Page extends Model {
     await wiki.models.pages.rebuildTree()
 
     if (page.visibility === 'public') {
-      if (!opts.skipStorage) {
-        await wiki.models.storage.pageEvent({
-          event: 'created',
-          page
-        })
-      }
-
       await wiki.models.pages.reconnectLinks({
         locale: page.localeCode,
         path: page.path,
@@ -1514,7 +1460,8 @@ export default class Page extends Model {
         projectionAction: opts.action === 'restored' ? 'restore' : willMove ? 'move' : 'update',
         ...(willMove ? { previousLocation: projectionLocation(ogPage) } : {}),
         expectedUpdatedAt: opts.expectedUpdatedAt !== undefined,
-        tagsChanged
+        tagsChanged,
+        skipStorage: opts.skipStorage
       })
     })
     let page: Page | undefined
@@ -1568,39 +1515,6 @@ export default class Page extends Model {
     } else {
       await wiki.models.pages.deletePageFromCache(page.hash)
       wiki.events.outbound.emit('deletePageFromCache', page.hash)
-    }
-
-    if (page.visibility === 'public') {
-      if (willMove) {
-        const renamedPage: PageRenameDetails = {
-          ...page,
-          hash: ogPage.hash,
-          path: ogPage.path,
-          localeCode: ogPage.localeCode,
-          destinationPath,
-          destinationLocaleCode: destinationLocale,
-          destinationHash
-        }
-        if (!opts.skipStorage) {
-          await deliverAfterPageCommit('renamed-page storage delivery', () =>
-            wiki.models.storage.pageEvent({
-              event: 'renamed',
-              page: {
-                ...renamedPage,
-                authorName: page!.authorName,
-                authorEmail: page!.authorEmail,
-                updatedAt: page!.updatedAt,
-                tags: page!.tags,
-                moveAuthorId: opts.user.id,
-                moveAuthorName: opts.user.name,
-                moveAuthorEmail: opts.user.email
-              }
-            })
-          )
-        }
-      } else if (!opts.skipStorage) {
-        await wiki.models.storage.pageEvent({ event: 'updated', page })
-      }
     }
 
     if (willMove) {
@@ -1672,6 +1586,12 @@ export default class Page extends Model {
         path: page.path
       })
       if (collision) throw new wiki.Error.PagePathCollision()
+      await assertNoStorageAssetAtPagePaths(transaction, {
+        path: page.path,
+        localeCode: page.localeCode,
+        contentType: page.contentType,
+        visibility: opts.visibility
+      })
       const historyPage = {
         ...page,
         tags: authorizationTags,
@@ -1705,6 +1625,7 @@ export default class Page extends Model {
         opts.user
       )
       await enqueueCurrentPageProjections(transaction, page.id, 'visibility', projectionLocation(page))
+      await enqueuePageStorageMutation(transaction, { pageId: page.id, previous: page, author: opts.user, skipStorage: opts.skipStorage })
     })
     await wiki.models.pages.deletePageFromCache(page.hash)
     wiki.events.outbound.emit('deletePageFromCache', page.hash)
@@ -1714,18 +1635,12 @@ export default class Page extends Model {
     if (!updated) throw new wiki.Error.PageNotFound()
 
     if (updated.visibility === 'public') {
-      if (!opts.skipStorage) {
-        await wiki.models.storage.pageEvent({ event: 'created', page: updated })
-      }
       await wiki.models.pages.reconnectLinks({
         locale: updated.localeCode,
         path: updated.path,
         mode: 'create'
       })
     } else {
-      if (!opts.skipStorage) {
-        await wiki.models.storage.pageEvent({ event: 'deleted', page })
-      }
       await wiki.models.pages.reconnectLinks({
         locale: page.localeCode,
         path: page.path,
@@ -1751,6 +1666,7 @@ export default class Page extends Model {
     if (collision) throw new wiki.Error.PagePathCollision()
 
     await wiki.models.knex.transaction(async transaction => {
+      await lockAssetMutationFence(transaction, true)
       await lockSearchIndex(transaction, false)
       await lockSearchPage(transaction, page.id)
       await wiki.models.pageHistory.addVersion({
@@ -1954,6 +1870,12 @@ export default class Page extends Model {
         if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
         throw new wiki.Error.PageUpdateForbidden()
       }
+      await assertNoStorageAssetAtPagePaths(transaction, {
+        path: ogPage.path,
+        localeCode: ogPage.localeCode,
+        contentType: targetContentType,
+        visibility: ogPage.visibility
+      })
       const historyPage = {
         ...ogPage,
         tags: authorizationTags,
@@ -1988,6 +1910,7 @@ export default class Page extends Model {
       if (changedRows !== 1) throw pageUpdateConflict()
       await writePageOutboxEvent(transaction, 'page.updated', ogPage, opts.user)
       await enqueueCurrentPageProjections(transaction, ogPage.id, 'convert')
+      await enqueuePageStorageMutation(transaction, { pageId: ogPage.id, previous: ogPage, author: opts.user })
     })
     const page = await wiki.models.pages.getPageFromDb(ogPage.id)
     if (!page) {
@@ -1997,12 +1920,6 @@ export default class Page extends Model {
     await wiki.models.pages.deletePageFromCache(page.hash)
     wiki.events.outbound.emit('deletePageFromCache', page.hash)
 
-    if (page.visibility === 'public') {
-      await wiki.models.storage.pageEvent({
-        event: 'updated',
-        page
-      })
-    }
     await notifyCollaboration(page.id)
   }
 
@@ -2103,6 +2020,12 @@ export default class Page extends Model {
         ownerId: page.ownerId
       })
       if (destinationPage) throw new wiki.Error.PagePathCollision()
+      await assertNoStorageAssetAtPagePaths(transaction, {
+        path: opts.destinationPath,
+        localeCode: opts.destinationLocale,
+        contentType: page.contentType,
+        visibility: page.visibility
+      })
       const historyPage = {
         ...page,
         tags: authorizationTags,
@@ -2144,12 +2067,7 @@ export default class Page extends Model {
         opts.user
       )
       await enqueueCurrentPageProjections(transaction, page.id, 'move', projectionLocation(page))
-    })
-    let movedPage: Page | undefined
-    await deliverAfterPageCommit('committed page refresh', async () => {
-      const current = await wiki.models.pages.getPageFromDb(page.id)
-      if (!current) throw new wiki.Error.PageNotFound()
-      movedPage = current
+      await enqueuePageStorageMutation(transaction, { pageId: page.id, previous: page, author: opts.user, skipStorage: opts.skipStorage })
     })
     for (const hash of new Set([page.hash, destinationHash])) {
       await deliverAfterPageCommit('cache eviction', () => wiki.models.pages.deletePageFromCache(hash))
@@ -2161,27 +2079,6 @@ export default class Page extends Model {
     }
     await deliverAfterPageCommit('page-tree rebuild', () => wiki.models.pages.rebuildTree())
     if (page.visibility === 'public') {
-      if (!opts.skipStorage && movedPage) {
-        await deliverAfterPageCommit('renamed-page storage delivery', () =>
-          wiki.models.storage.pageEvent({
-            event: 'renamed',
-            page: {
-              ...movedPage!,
-              hash: page.hash,
-              path: page.path,
-              localeCode: page.localeCode,
-              destinationPath: opts.destinationPath,
-              destinationLocaleCode: opts.destinationLocale,
-              destinationHash,
-              moveAuthorId: opts.user.id,
-              moveAuthorName: opts.user.name,
-              moveAuthorEmail: opts.user.email
-            }
-          })
-        )
-      }
-      if (!opts.skipStorage && !movedPage)
-        wiki.logger.warn('Page move committed; renamed-page storage delivery remains pending because the committed page could not be loaded.')
       await deliverAfterPageCommit('old-route link-state refresh', () =>
         wiki.models.pages.reconnectLinks({ locale: page.localeCode, path: page.path, mode: 'delete' })
       )
@@ -2273,18 +2170,13 @@ export default class Page extends Model {
       })
       await writePageOutboxEvent(transaction, 'page.deleted', page, user)
       await wiki.models.pages.query(transaction).delete().where('id', page.id)
+      await enqueuePageStorageMutation(transaction, { pageId: page.id, previous: page, author: user, skipStorage: opts.skipStorage })
     })
     await notifyCollaboration(page.id)
     await wiki.models.pages.deletePageFromCache(page.hash)
     wiki.events.outbound.emit('deletePageFromCache', page.hash)
     await wiki.models.pages.rebuildTree()
     if (page.visibility === 'public') {
-      if (!opts.skipStorage) {
-        await wiki.models.storage.pageEvent({
-          event: 'deleted',
-          page
-        })
-      }
       await wiki.models.pages.reconnectLinks({
         locale: page.localeCode,
         path: page.path,
@@ -2324,6 +2216,7 @@ export default class Page extends Model {
     let restoredOwnerId: number | null = null
     try {
       await wiki.models.knex.transaction(async transaction => {
+        await lockAssetMutationFence(transaction, true)
         await lockSearchIndex(transaction, false)
         await lockSearchPage(transaction, opts.pageId)
         if (transaction.client.config.client === 'pg') {
@@ -2482,12 +2375,16 @@ export default class Page extends Model {
           .forUpdate()
           .first('id')) as { id: number } | undefined
         if (pageCollision) throw pageRecoveryCollision()
-        if (visibility === 'public') {
-          const storagePath =
-            history.contentType === 'markdown'
-              ? okfFilePath(destinationLocale, destinationPath)
-              : `${destinationLocale}/${destinationPath}${pageHelper.getFileExtension(history.contentType)}`
-          await assertNoStorageAssetCollision(transaction, storagePath)
+        try {
+          await assertNoStorageAssetAtPagePaths(transaction, {
+            path: destinationPath,
+            localeCode: destinationLocale,
+            contentType: history.contentType,
+            visibility
+          })
+        } catch (error: unknown) {
+          if (isRecord(error) && Reflect.get(error, 'status') === 409) throw pageRecoveryCollision()
+          throw error
         }
 
         const rawExtra = parseStoredJson(history.extra)
@@ -2574,6 +2471,7 @@ export default class Page extends Model {
         restoredPage.tags = restoredTags
         await enqueueCurrentPageProjections(transaction, opts.pageId, 'restore')
         await writePageOutboxEvent(transaction, 'page.restored', restoredPage, opts.user)
+        await enqueuePageStorageMutation(transaction, { pageId: restoredPage.id, author: opts.user })
         restoredVisibility = visibility
         restoredOwnerId = ownerId
       })
@@ -2595,7 +2493,6 @@ export default class Page extends Model {
     wiki.events.outbound.emit('deletePageFromCache', page.hash)
     await wiki.models.pages.rebuildTree()
     if (page.visibility === 'public') {
-      await wiki.models.storage.pageEvent({ event: 'created', page })
       await wiki.models.pages.reconnectLinks({ locale: page.localeCode, path: page.path, mode: 'create' })
     }
     await notifyCollaboration(page.id, true)
@@ -2838,6 +2735,7 @@ export default class Page extends Model {
 
   static async acquireLocaleMigrationLocks(transaction: Knex.Transaction): Promise<void> {
     // Drain projection workers before the batch's table lock and dependent-page admissions.
+    await lockAssetMutationFence(transaction, true)
     await lockSearchIndex(transaction, true)
     await transaction.raw('SELECT pg_advisory_xact_lock(?)', [PAGE_TREE_REBUILD_LOCK_ID])
     await transaction.raw('LOCK TABLE "pages" IN SHARE ROW EXCLUSIVE MODE')
@@ -2865,6 +2763,12 @@ export default class Page extends Model {
           locale: targetLocale,
           visibility: page.visibility,
           ownerId: page.ownerId
+        })
+        await assertNoStorageAssetAtPagePaths(transaction, {
+          path: page.path,
+          localeCode: targetLocale,
+          contentType: page.contentType,
+          visibility: page.visibility
         })
         await wiki.models.pageHistory.addVersion({
           ...page,
@@ -2911,9 +2815,10 @@ export default class Page extends Model {
 
         await writePageOutboxEvent(transaction, 'page.moved', { ...page, localeCode: targetLocale }, user)
         await enqueueCurrentPageProjections(transaction, page.id, 'move', projectionLocation(page))
+        await enqueuePageStorageMutation(transaction, { pageId: page.id, previous: page, author: user })
         cacheHashes.add(page.hash)
         cacheHashes.add(destinationHash)
-        migratedPages.push({ previous: page, destinationHash })
+        migratedPages.push({ previous: page })
       }
       await replacePageTree(transaction)
       return { pages: migratedPages, cacheHashes: [...cacheHashes] }
@@ -2923,26 +2828,9 @@ export default class Page extends Model {
       await wiki.models.pages.deletePageFromCache(hash)
       wiki.events.outbound.emit('deletePageFromCache', hash)
     }
-    for (const { previous, destinationHash } of migration.pages) {
+    for (const { previous } of migration.pages) {
       const updated = await wiki.models.pages.getPageFromDb(previous.id)
       if (!updated) throw new wiki.Error.PageNotFound()
-      if (updated.visibility === 'public') {
-        await wiki.models.storage.pageEvent({
-          event: 'renamed',
-          page: {
-            ...updated,
-            hash: previous.hash,
-            path: previous.path,
-            localeCode: previous.localeCode,
-            destinationPath: updated.path,
-            destinationLocaleCode: updated.localeCode,
-            destinationHash,
-            moveAuthorId: user.id,
-            moveAuthorName: user.name,
-            moveAuthorEmail: user.email
-          }
-        })
-      }
       await notifyCollaboration(updated.id, true)
     }
     return migration.pages.length
@@ -3093,6 +2981,7 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
   const collaboration = new CollaborationRoomStore(wiki.models.knex)
   const committed = await wiki.models.knex.transaction(async transaction => {
     const pageIds = [...new Set([opts.id!, ...token.selected.map(selected => selected.id)])].sort((left, right) => left - right)
+    await lockAssetMutationFence(transaction, true)
     await lockSearchIndex(transaction, false)
     for (const pageId of pageIds) await lockSearchPage(transaction, pageId)
     const lockedRows = await transaction('pages').select('id').whereIn('id', pageIds).orderBy('id', 'asc').forUpdate()
@@ -3261,7 +3150,8 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
       eventType: 'page.moved',
       eventPage: { ...currentTarget, path: destinationPath, localeCode: opts.destinationLocale, title: movedTitle },
       projectionAction: 'move',
-      previousLocation: projectionLocation(currentTarget)
+      previousLocation: projectionLocation(currentTarget),
+      skipStorage: opts.skipStorage
     })
 
     const updated: Array<{ id: number; sourceRevision: string }> = []
@@ -3294,7 +3184,8 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
         },
         eventType: 'page.updated',
         eventPage: change.page,
-        projectionAction: 'update'
+        projectionAction: 'update',
+        skipStorage: opts.skipStorage
       })
       const revisionRow = await transaction('pages').select('sourceRevision').where({ id: change.page.id }).forUpdate().first()
       if (!revisionRow) throw pageMoveReviewStale()
@@ -3342,34 +3233,6 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
       wiki.events.outbound.emit('deletePageFromCache', hash)
     } catch (error) {
       wiki.logger.warn(`Page move committed; cache eviction notification remains pending: ${String(error)}`)
-    }
-  }
-  if (!opts.skipStorage) {
-    await deliver('renamed-page storage delivery', async () => {
-      const movedPage = await wiki.models.pages.getPageFromDb(committed.pageId)
-      if (!movedPage || movedPage.visibility !== 'public') return
-      return wiki.models.storage.pageEvent({
-        event: 'renamed',
-        page: {
-          ...movedPage,
-          hash: committed.previousHash,
-          path: committed.oldTarget.path,
-          localeCode: committed.oldTarget.locale,
-          destinationPath: committed.newTarget.path,
-          destinationLocaleCode: committed.newTarget.locale,
-          destinationHash: committed.destinationHash,
-          moveAuthorId: opts.user.id,
-          moveAuthorName: opts.user.name,
-          moveAuthorEmail: opts.user.email
-        }
-      })
-    })
-    for (const item of committed.updated) {
-      await deliver('referrer storage delivery', async () => {
-        const updatedPage = await wiki.models.pages.getPageFromDb(item.id)
-        if (!updatedPage || updatedPage.visibility !== 'public') return
-        return wiki.models.storage.pageEvent({ event: 'updated', page: updatedPage })
-      })
     }
   }
   await deliver('old-route link-state refresh', () =>

@@ -106,12 +106,15 @@
 <script lang='ts'>
 /* global siteLangs, siteConfig */
 import { defineComponent, markRaw } from 'vue'
+import type { Raw } from 'vue'
 import { useDisplay } from 'vuetify'
 import i18next from 'i18next'
 import * as _ from 'lodash-es'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
+import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
+import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import type { Element } from 'domhandler'
 import type { ContentInsertOptions, LineInsertOptions, MarkupOptions, MultiLineInsertOptions, PageLinkTarget } from './common/editor-types'
 import DOMPurify from 'dompurify'
@@ -149,7 +152,7 @@ type FormattingAction = {
   readonly color?: string
 } & (
   | { readonly kind: 'markup' | 'line' | 'modal'; readonly value: string }
-  | { readonly kind: 'link'; readonly value?: never }
+  | { readonly kind: 'link' | 'code' | 'table'; readonly value?: never }
 )
 
 const formattingActions: Readonly<Record<'emphasis' | 'script' | 'blocks' | 'insert', readonly FormattingAction[]>> = {
@@ -172,6 +175,8 @@ const formattingActions: Readonly<Record<'emphasis' | 'script' | 'blocks' | 'ins
   insert: [
     { kind: 'link', icon: 'mdi-link-plus', label: 'editor:markup.insertLink' },
     { kind: 'modal', value: 'editorModalMedia', icon: 'mdi-folder-multiple-image', label: 'editor:markup.insertAssets' },
+    { kind: 'code', icon: 'mdi-code-braces', label: 'editor:markup.insertCodeBlock' },
+    { kind: 'table', icon: 'mdi-table', label: 'editor:markup.tableHelper' },
     { kind: 'modal', value: 'editorModalDrawio', icon: 'mdi-chart-multiline', label: 'editor:markup.insertDiagram' }
   ]
 }
@@ -194,6 +199,8 @@ export default defineComponent({
     return {
       cm: null as TextEditorHandle | null,
       editorAdapter: null as EditorAdapterController | null,
+      imageAuthoring: null as Raw<ReturnType<typeof createSourceImageAuthoring>> | null,
+      sourceAuthoring: null as Raw<ReturnType<typeof createSourceAuthoring>> | null,
       debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: Boolean(this.mdAndUp),
@@ -262,6 +269,12 @@ export default defineComponent({
         case 'link':
           this.insertLink()
           break
+        case 'code':
+          this.sourceAuthoring?.insertCodeBlock()
+          break
+        case 'table':
+          this.sourceAuthoring?.insertTable()
+          break
       }
     },
     focusEditor () {
@@ -291,6 +304,7 @@ export default defineComponent({
       this.previewRequestId += 1
     },
     toggleModal(key: string) {
+      if (key === 'editorModalMedia' && !this.activeModal && this.imageAuthoring?.open()) return
       this.activeModal = this.activeModal === key ? '' : key
     },
     handleEditorSaveConflict() {
@@ -302,7 +316,7 @@ export default defineComponent({
     handleEditorInsert(opts: EditorInsertPayload) {
       switch (opts.kind) {
         case 'IMAGE':
-          this.insertAtCursor({ content: `image::${opts.path}[${opts.text}]` })
+          this.imageAuthoring?.insert(opts)
           break
         case 'BINARY':
           this.insertAtCursor({ content: `link:${opts.path}[${opts.text}]` })
@@ -478,6 +492,14 @@ export default defineComponent({
     if (!(container instanceof HTMLElement)) {
       throw new Error(this.$t('editor:editorAsciidoc.asciidocEditorHostUnavailable'))
     }
+    this.imageAuthoring = markRaw(createSourceImageAuthoring(
+      'asciidoc', () => wikiStore.user.authenticated,
+      () => `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    ))
+    this.sourceAuthoring = markRaw(createSourceAuthoring(
+      'asciidoc', () => wikiStore.user.authenticated,
+      () => `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    ))
     const cm = new TextEditor({
       parent: container,
       ariaLabel: this.$t('editor:editorAsciidoc.asciidocSource'),
@@ -485,6 +507,8 @@ export default defineComponent({
       value: wikiStore.editor.content,
       direction: 'ltr',
       extensions: [
+        this.imageAuthoring.extension,
+        this.sourceAuthoring.extension,
         keymap.of([
           { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
           { key: 'Mod-b', run: () => { this.toggleMarkup({ start: '**' }); return true } },
@@ -525,6 +549,10 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount() {
+    this.imageAuthoring?.destroy()
+    this.imageAuthoring = null
+    this.sourceAuthoring?.destroy()
+    this.sourceAuthoring = null
     const adapter = this.editorAdapter
     if (adapter) {
       this.$emit('editor-adapter-clear', adapter)

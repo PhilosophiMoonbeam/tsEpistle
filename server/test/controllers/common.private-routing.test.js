@@ -141,6 +141,18 @@ describe('common page routing', () => {
     expect(profileResponse.render).toHaveBeenCalledWith('unauthorized', { action: 'view' })
   })
 
+  it('preserves normalized native private-route interpretation after locale extraction without hiding incomplete or nested public paths', async () => {
+    const { view } = await handlers()
+    const user = { id: 42, permissions: [] }
+    for (const path of ['/_private/fr/notes', '/en/_private/fr/notes', '/en/%5Fprivate/fr/notes']) {
+      await view({ ...request(user), path }, response(), vi.fn())
+      expect(global.WIKI.models.pages.getPage).toHaveBeenLastCalledWith({ path: 'notes', locale: 'fr', visibility: 'private', ownerId: 42 })
+    }
+    for (const path of ['_private/fr', 'section/_private/fr/notes']) {
+      await view({ ...request(user), path: `/en/${path}` }, response(), vi.fn())
+      expect(global.WIKI.models.pages.getPage).toHaveBeenLastCalledWith({ path, locale: 'en', visibility: 'public', ownerId: null })
+    }
+  })
   it('redirects owners and administrators to distinct private routes', async () => {
     const { byId } = await handlers()
     const ownerResponse = response()
@@ -175,7 +187,7 @@ describe('common page routing', () => {
     const writerHistory = response()
     await history(missing('/h/en/guides/new-guide', writer), writerHistory)
     expect(writerHistory.status).toHaveBeenCalledWith(404)
-    expect(writerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history', createHref: '/e/en/guides/new-guide' })
+    expect(writerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history', createHref: '/e/en/guides/new-guide', folderLocale: 'en', folderPath: 'guides/new-guide' })
     expect(writerHistory.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(writerHistory.vary).toHaveBeenCalledWith('Cookie')
     expect(global.WIKI.auth.getEffectivePermissions).toHaveBeenLastCalledWith(
@@ -186,12 +198,12 @@ describe('common page routing', () => {
 
     const writerSource = response()
     await source(missing('/s/en/guides/new-guide', writer), writerSource)
-    expect(writerSource.render).toHaveBeenCalledWith('notfound', { action: 'source', createHref: '/e/en/guides/new-guide' })
+    expect(writerSource.render).toHaveBeenCalledWith('notfound', { action: 'source', createHref: '/e/en/guides/new-guide', folderLocale: 'en', folderPath: 'guides/new-guide' })
 
     const readerHistory = response()
     await history(missing('/h/en/guides/new-guide', reader), readerHistory)
     expect(readerHistory.status).toHaveBeenCalledWith(404)
-    expect(readerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history' })
+    expect(readerHistory.render).toHaveBeenCalledWith('notfound', { action: 'history', folderLocale: 'en', folderPath: 'guides/new-guide' })
     expect(readerHistory.render.mock.calls[0][1]).not.toHaveProperty('createHref')
     expect(readerHistory.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(readerHistory.vary).toHaveBeenCalledWith('Cookie')
@@ -220,10 +232,59 @@ describe('common page routing', () => {
       expect(res.status).toHaveBeenCalledWith(404)
       expect(res.render).toHaveBeenCalledWith(template, template === 'new'
         ? { path: 'guides/new-guide', locale: 'en' }
-        : { action: 'view' })
+        : { action: 'view', folderLocale: 'en', folderPath: 'guides/new-guide' })
       expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
       expect(res.vary).toHaveBeenCalledWith('Cookie')
     }
+  })
+
+  it('offers canonical folder browsing only for genuinely absent public pages', async () => {
+    const { view } = await handlers()
+    const user = { id: 6, permissions: ['read:pages'] }
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: false, manage: false },
+      history: { read: true },
+      source: { read: true }
+    })
+    global.WIKI.models.pages.getPage.mockResolvedValue(undefined)
+    const missingResponse = response()
+    await view({ ...request(user), path: '/fr/café/日本語', originalUrl: '/fr/café/日本語' }, missingResponse, vi.fn())
+    expect(missingResponse.render).toHaveBeenCalledWith('notfound', {
+      action: 'view', folderLocale: 'fr', folderPath: 'café/日本語'
+    })
+
+    const privateResponse = response()
+    await view({ ...request(user), path: '/_private/en/café/日本語' }, privateResponse, vi.fn())
+    expect(privateResponse.render).toHaveBeenCalledWith('notfound', { action: 'view' })
+
+    global.WIKI.models.pages.getPage.mockResolvedValue({ ...privatePage, visibility: 'public', ownerId: null })
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: false, write: false, manage: false },
+      history: { read: false },
+      source: { read: false }
+    })
+    const deniedResponse = response()
+    await view({ ...request(user), path: '/en/café/日本語' }, deniedResponse, vi.fn())
+    expect(deniedResponse.render).toHaveBeenCalledWith('unauthorized', { action: 'view' })
+
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: false, manage: false },
+      history: { read: true },
+      source: { read: true }
+    })
+    global.WIKI.models.knex.mockImplementation(table => {
+      const query = {
+        where: vi.fn(() => query),
+        first: vi.fn(async () => table === 'pageAccessPasswords' ? { pageId: 7, version: 1 } : undefined),
+        delete: vi.fn(async () => 0)
+      }
+      return query
+    })
+    const lockedResponse = response()
+    await view({ ...request(user), path: '/en/café/日本語', originalUrl: '/en/café/日本語' }, lockedResponse, vi.fn())
+    expect(lockedResponse.status).toHaveBeenCalledWith(401)
+    expect(lockedResponse.render).toHaveBeenCalledWith('page-unlock', expect.objectContaining({ pageId: 7 }))
+    expect(lockedResponse.render.mock.calls[0][1]).not.toHaveProperty('folderPath')
   })
 
   it('renders the by-ID inspection route only for system administrators', async () => {

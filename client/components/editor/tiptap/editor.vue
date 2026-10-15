@@ -93,6 +93,16 @@
         v-btn.editor-tiptap-source-trigger.editor-tool(v-if='hasSourceSelection', variant='text', size='small', @click='openSourceDialog')
           v-icon(start) mdi-code-block-tags
           | {{ $t('editor:markup.editSource') }}
+        v-btn.editor-tiptap-tool.editor-tool(
+          variant='text'
+          size='small'
+          icon
+          :disabled='!editor?.isEditable || hasSourceSelection'
+          :aria-label='$t(`editor:markup.imageProperties`)'
+          @click='openImageProperties'
+        )
+          v-icon mdi-image-edit-outline
+          v-tooltip(activator='parent', location='bottom') {{ $t('editor:markup.imageProperties') }}
     .editor-tiptap-markdown-tools(
       v-if='format === `markdown`'
       role='toolbar'
@@ -216,6 +226,7 @@ import {
   type JSONContent
 } from '@tiptap/vue-3'
 import { defineComponent, markRaw, type PropType, type Raw } from 'vue'
+import { NodeSelection, type Transaction } from '@tiptap/pm/state'
 import { wikiStore } from '@/store/index.ts'
 import EditorConflict from './conflict.vue'
 import {
@@ -246,6 +257,17 @@ import {
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../../helpers/editor-insert-events'
 import { contentExtensionFenceBody } from '../../../helpers/content-extension-insertion'
+import {
+  EDITOR_IMAGE_STYLE_CLASSES,
+  mergeEditorImageClasses,
+  normalizeEditorImageDimension,
+  requestEditorImageProperties,
+  validateEditorImagePatch,
+  type EditorImageAlignment,
+  type EditorImagePropertyPatch,
+  type EditorImageStyle
+} from '../../../helpers/editor-image-properties.ts'
+import { installTiptapSlashMenu } from './slash-menu.ts'
 import { EditorAdapterController } from '../common/editor-adapter'
 import { FORMATTING_TOOLS, toolTooltip, type FormattingToolId } from '../common/formatting-tools'
 import { vRovingToolbar } from '../common/roving-toolbar'
@@ -354,6 +376,8 @@ export default defineComponent({
     return {
       editorAdapter: null as EditorAdapterController | null,
       editor: null as Raw<Editor> | null,
+      disposeSlashMenu: null as (() => void) | null,
+      imageRequest: null as Raw<AbortController> | null,
       stats: { characters: 0, words: 0 } as VisualEditorStats,
       toolbarVersion: 0,
       tools: FORMATTING_TOOLS,
@@ -460,6 +484,83 @@ export default defineComponent({
     }
   },
   methods: {
+    openImageProperties () {
+      const editor = this.editor
+      if (!editor || editor.isDestroyed || !editor.isEditable || editor.view.composing) return
+      if (editor.isActive('wikiSourceBlock') || editor.isActive('wikiSourceInline')) return
+      this.imageRequest?.abort()
+      const request = new AbortController()
+      this.imageRequest = markRaw(request)
+      const selected = editor.state.selection
+      const original = selected instanceof NodeSelection && selected.node.type.name === 'image' ? selected.node : null
+      let position = selected.from
+      let bookmark = selected.getBookmark()
+      let invalid = false
+      const content = selected.content()
+      const attrs = original?.attrs ?? {}
+      const classes = String(attrs.class ?? '').split(/\s+/)
+      const alignment = classes.find(value => /^align-(left|center|right|abstopright)$/.test(value))?.slice(6) ?? ''
+      const style = document.createElement('img').style
+      style.cssText = String(attrs.style ?? '')
+      const onTransaction = ({ transaction }: { transaction: Transaction }) => {
+        if (!transaction.docChanged) return
+        const mapped = transaction.mapping.mapResult(position, 1)
+        position = mapped.pos
+        bookmark = bookmark.map(transaction.mapping)
+        if (mapped.deleted) invalid = true
+        if (original && !editor.state.doc.nodeAt(position)?.eq(original)) invalid = true
+        if (!original && !bookmark.resolve(editor.state.doc).content().eq(content)) invalid = true
+      }
+      editor.on('transaction', onTransaction)
+      const onDestroy = () => request.abort()
+      editor.on('destroy', onDestroy)
+      request.signal.addEventListener('abort', () => {
+        editor.off('transaction', onTransaction)
+        editor.off('destroy', onDestroy)
+      }, { once: true })
+      requestEditorImageProperties({
+        signal: request.signal,
+        properties: {
+          src: String(attrs.src ?? ''),
+          alt: String(attrs.alt ?? ''),
+          width: style.width || String(attrs.width ?? ''),
+          height: style.height || String(attrs.height ?? ''),
+          align: alignment as EditorImageAlignment,
+          styles: (Object.keys(EDITOR_IMAGE_STYLE_CLASSES) as EditorImageStyle[]).filter(value => classes.includes(EDITOR_IMAGE_STYLE_CLASSES[value]))
+        },
+        apply: (patch: EditorImagePropertyPatch) => {
+          if (request.signal.aborted || invalid || editor !== this.editor || editor.isDestroyed ||
+            !editor.isEditable || editor.view.composing || !validateEditorImagePatch(patch)) return false
+          const current = original ? editor.state.doc.nodeAt(position) : null
+          if (original && !current?.eq(original)) return false
+          const updated = { ...(current?.attrs ?? {}) }
+          for (const name of ['src', 'alt'] as const) if (patch[name] !== undefined) updated[name] = patch[name]
+          if (!original && (!updated.src || !validateEditorImagePatch({ src: String(updated.src) }))) return false
+          if (patch.align !== undefined || patch.styles !== undefined) updated.class = mergeEditorImageClasses(String(updated.class ?? ''), patch) || null
+          const nextStyle = document.createElement('img').style
+          nextStyle.cssText = String(updated.style ?? '')
+          for (const name of ['width', 'height'] as const) if (patch[name] !== undefined) {
+            const value = normalizeEditorImageDimension(patch[name]!)!
+            updated[name] = value || null
+            nextStyle.removeProperty(name)
+            if (value) nextStyle.setProperty(name, /^\d+$/.test(value) ? `${value}px` : value)
+          }
+          if (patch.width !== undefined || patch.height !== undefined) updated.style = nextStyle.cssText || null
+          if (original) {
+            editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, updated, original.marks))
+          } else {
+            const insertion = bookmark.resolve(editor.state.doc)
+            if (!insertion.content().eq(content)) return false
+            const image = editor.schema.nodes.image?.create(updated)
+            if (!image) return false
+            editor.view.dispatch(editor.state.tr.setSelection(insertion).replaceSelectionWith(image))
+          }
+          request.abort()
+          editor.commands.focus()
+          return true
+        }
+      })
+    },
     toolLabel (toolId: FormattingToolId): string {
       return String(this.$t(FORMATTING_TOOLS[toolId].labelKey))
     },
@@ -644,13 +745,29 @@ export default defineComponent({
       this.editor?.commands.insertContent(content)
     },
     handleEditorInsert (opts: EditorInsertPayload) {
-      if (!this.editor) return
+      if (!this.editor || this.editor.isDestroyed || !this.editor.isEditable || this.editor.view.composing) return
       switch (opts.kind) {
         case 'IMAGE':
           if (typeof opts.path === 'string') {
-            this.editor.chain().focus().setImage({
-              src: opts.path,
-              alt: typeof opts.text === 'string' ? opts.text : undefined
+            const patch: EditorImagePropertyPatch = {
+              src: opts.path, alt: typeof opts.text === 'string' ? opts.text : '',
+              width: opts.width, height: opts.height, align: opts.align as EditorImageAlignment | undefined, styles: opts.styles
+            }
+            if (!validateEditorImagePatch(patch)) return
+            const style = document.createElement('img').style
+            for (const name of ['width', 'height'] as const) if (patch[name]) {
+              const value = normalizeEditorImageDimension(patch[name]!)!
+              style.setProperty(name, /^\d+$/.test(value) ? `${value}px` : value)
+            }
+            this.editor.chain().focus().insertContent({
+              type: 'image',
+              attrs: {
+                src: patch.src, alt: patch.alt,
+                width: patch.width ? normalizeEditorImageDimension(patch.width) : null,
+                height: patch.height ? normalizeEditorImageDimension(patch.height) : null,
+                class: mergeEditorImageClasses('', patch) || null,
+                style: style.cssText || null
+              }
             }).run()
           }
           break
@@ -743,6 +860,22 @@ export default defineComponent({
       }
     })
     this.editor = markRaw(editor)
+    this.disposeSlashMenu = installTiptapSlashMenu(editor, [
+      { id: 'paragraph', label: String(this.$t('editor:markup.paragraph')), keywords: 'text paragraph', run: chain => chain.setParagraph() },
+      ...([1, 2, 3] as const).map(level => ({
+        id: `heading-${level}`,
+        label: String(this.$t('editor:markup.heading', { level })),
+        keywords: `heading h${level}`,
+        run: (chain: ReturnType<Editor['chain']>) => chain.setHeading({ level })
+      })),
+      { id: 'bullet-list', label: this.toolLabel('unorderedList'), keywords: 'bullet list unordered', run: chain => chain.toggleBulletList() },
+      { id: 'ordered-list', label: this.toolLabel('orderedList'), keywords: 'number ordered list', run: chain => chain.toggleOrderedList() },
+      { id: 'task-list', label: this.toolLabel('taskList'), keywords: 'check task to-do list', run: chain => chain.toggleTaskList() },
+      { id: 'blockquote', label: this.toolLabel('blockquote'), keywords: 'quote blockquote', run: chain => chain.toggleBlockquote() },
+      { id: 'code', label: this.toolLabel('codeBlock'), keywords: 'code block', run: chain => chain.setCodeBlock({ language: 'plaintext' }) },
+      { id: 'table', label: String(this.$t('editor:markup.insertTable')), keywords: 'table grid', run: chain => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }) },
+      { id: 'rule', label: this.toolLabel('horizontalBar'), keywords: 'horizontal rule divider', run: chain => chain.setHorizontalRule() }
+    ], String(this.$t('editor:markup.insertTools')), String(this.$t('editor:markup.noMatchingCommands')))
     const adapter = new EditorAdapterController({
       readText: () => serializeVisualEditorData(this.format, editor),
       writeText: text => {
@@ -771,6 +904,10 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount () {
+    this.disposeSlashMenu?.()
+    this.disposeSlashMenu = null
+    this.imageRequest?.abort()
+    this.imageRequest = null
     const adapter = this.editorAdapter
     if (adapter) {
       this.$emit('editor-adapter-clear', adapter)
@@ -872,6 +1009,44 @@ export default defineComponent({
   &-source-trigger {
     border-radius: var(--wiki-control-radius) !important;
     text-transform: none;
+  }
+
+  &-slash-menu {
+    position: fixed;
+    z-index: 20;
+    width: min(280px, calc(100vw - 16px));
+    max-height: min(320px, calc(100dvh - 16px));
+    overflow-y: auto;
+    padding: var(--wiki-space-1);
+    color: var(--editor-on-surface);
+    background: var(--editor-surface);
+    border: 1px solid var(--editor-border);
+    border-radius: var(--wiki-control-radius);
+    box-shadow: var(--wiki-shadow-sm);
+
+    &[hidden] { display: none; }
+
+    button {
+      display: block;
+      width: 100%;
+      padding: var(--wiki-space-2) var(--wiki-space-3);
+      border-radius: var(--wiki-radius-xs);
+      text-align: start;
+      overflow-wrap: anywhere;
+
+      &.is-active, &:hover {
+        background: rgba(var(--v-theme-primary), .12);
+      }
+      &:focus-visible {
+        outline: 2px solid var(--editor-primary);
+        outline-offset: -2px;
+      }
+    }
+
+    [role='status'] {
+      padding: var(--wiki-space-3);
+      color: var(--editor-muted);
+    }
   }
 
   &-markdown-tools {

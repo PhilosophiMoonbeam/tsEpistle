@@ -1,6 +1,12 @@
+const discussionSettings = await import('../../operations/discussion-settings.ts')
 const persistProviders = vi.fn().mockResolvedValue({ warnings: [] })
 const assertUnlocked = vi.fn().mockResolvedValue(undefined)
-vi.mockModule('../../operations/discussion-settings.ts', import.meta.url, () => ({ writeLegacyDiscussionProviders: persistProviders, readDiscussionWorkspace: vi.fn(), writeDiscussionWorkspace: vi.fn() }))
+vi.mockModule('../../operations/discussion-settings.ts', import.meta.url, () => ({
+  ...discussionSettings,
+  writeLegacyDiscussionProviders: persistProviders,
+  readDiscussionWorkspace: vi.fn(),
+  writeDiscussionWorkspace: vi.fn()
+}))
 vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ assertPageUnlocked: assertUnlocked }))
 vi.mockModule('express', import.meta.url, () => {
   const routers = []
@@ -40,18 +46,59 @@ const authorityFor = requester => ({
 })
 
 const rateLimitKnex = () => {
-  const rows = new Map()
-  return {
-    raw: vi.fn(async (_query, [key, expire, now]) => {
-      const current = rows.get(key)
-      const startsNewWindow = current === undefined || current.expire === null || current.expire <= now
-      const row = startsNewWindow
-        ? { points: 1, expire }
-        : { points: current.points + 1, expire: current.expire }
-      rows.set(key, row)
-      return { rows: [row] }
-    })
+  const counters = new Map()
+  const tables = {
+    commentProviders: [{ key: 'default', isEnabled: true }],
+    settings: [{ key: 'features', value: { featurePageComments: true } }],
+    pages: [{ id: 17, title: 'Guide', localeCode: 'en', path: 'guide', visibility: 'public', ownerId: null, isPublished: true }],
+    pageTags: [], tags: [], pageAccessPasswords: [], pageUnlockGrants: [],
+    comments: [{ id: 31, pageId: 17, replyTo: 0, isHidden: false }],
+    commentAnnotations: [{
+      id: 41, commentId: 31, position: 0, note: '**A passage note**',
+      anchor: { exact: 'Useful guide', prefix: '', suffix: '', heading: null, offset: 0 },
+      revision: 1, resolvedAt: null, resolvedById: null,
+      createdAt: new Date('2026-08-30T00:00:00.000Z'), updatedAt: new Date('2026-08-30T00:00:00.000Z'),
+      internalField: 'do-not-return'
+    }]
   }
+  const knex = table => {
+    if (!(table in tables)) throw new Error(`Unexpected discussion table: ${table}`)
+    let rows = tables[table].map(row => ({ ...row, ...Object.fromEntries(Object.entries(row).map(([key, value]) => [`${table}.${key}`, value])) }))
+    const project = columns => rows.map(row => columns.length
+      ? Object.fromEntries(columns.map(column => [column.split('.').at(-1), row[column]]))
+      : Object.fromEntries(Object.entries(row).filter(([key]) => !key.includes('.'))))
+    const query = {
+      where(column, value) {
+        const entries = typeof column === 'object' ? Object.entries(column) : [[column, value]]
+        rows = rows.filter(row => entries.every(([key, expected]) => row[key] === expected))
+        return query
+      },
+      whereIn(column, values) { rows = rows.filter(row => values.includes(row[column])); return query },
+      join(other, left, right) {
+        rows = rows.flatMap(row => tables[other].map(item => ({
+          ...row, ...Object.fromEntries(Object.entries(item).map(([key, value]) => [`${other}.${key}`, value]))
+        })).filter(item => item[left] === item[right]))
+        return query
+      },
+      forShare() { return query },
+      orderBy(column) { rows.sort((a, b) => a[column] < b[column] ? -1 : a[column] > b[column] ? 1 : 0); return query },
+      first(...columns) { return Promise.resolve(project(columns)[0]) },
+      select(...columns) { return Promise.resolve(project(columns)) },
+      then(resolve, reject) { return Promise.resolve(project([])).then(resolve, reject) }
+    }
+    return query
+  }
+  knex.tables = tables
+  knex.transaction = callback => callback(knex)
+  knex.raw = vi.fn(async (sql, [key, expire, now]) => {
+    if (sql.trimStart().startsWith('SELECT')) return { rows: [] }
+    const current = counters.get(key)
+    const startsNewWindow = current === undefined || current.expire === null || current.expire <= now
+    const row = startsNewWindow ? { points: 1, expire } : { points: current.points + 1, expire: current.expire }
+    counters.set(key, row)
+    return { rows: [row] }
+  })
+  return knex
 }
 
 describe('controllers/api comments endpoints', () => {
@@ -455,6 +502,12 @@ describe('controllers/api comments endpoints', () => {
       expect(dto).not.toHaveProperty('ip')
       expect(dto).not.toHaveProperty('authorEmail')
       expect(dto).not.toHaveProperty('authorIP')
+      expect(dto.annotations).toEqual([{
+        id: 41, commentId: 31, position: 0, note: '**A passage note**',
+        anchor: { exact: 'Useful guide', prefix: '', suffix: '', heading: null, offset: 0 },
+        revision: 1, resolvedAt: null, resolvedById: null,
+        createdAt: '2026-08-30T00:00:00.000Z', updatedAt: '2026-08-30T00:00:00.000Z'
+      }])
     }
     expect(next).not.toHaveBeenCalled()
   })

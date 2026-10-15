@@ -6,16 +6,11 @@ import _ from 'lodash'
 import pageHelper from '../../../helpers/page.ts'
 
 import { wiki, type WikiUser } from '../../types.ts'
-import type {
-  StorageFileIdentityExpectation,
-  StorageFileHandle,
-  StorageRootHandle,
-  StorageWalkEntry
-} from '../local-filesystem.ts'
+import type { StorageFileIdentityExpectation, StorageFileHandle, StorageRootHandle, StorageWalkEntry } from '../local-filesystem.ts'
 import { isStorageGitMetadataPath } from '../internal-path.ts'
 import { OKF_MAX_DOCUMENT_BYTES, parseOkfFilePath } from '../../../okf/format.ts'
 import type { StorageImportResult, StoragePageProcessResult } from '../types.ts'
-import { classifyStoragePageDocument } from '../page-document.ts'
+import { classifyStoragePageImport, type StoragePageIngestionOptions } from '../page-document.ts'
 import { IMPORT_MAX_ASSET_BYTES, IMPORT_MAX_ENTRIES, ImportBudget, boundedImportAssetLimit } from '../import-budget.ts'
 
 const mime = mimeTypesModule.lookup
@@ -25,6 +20,7 @@ interface ImportSource {
   moduleName: 'DISK' | 'GIT'
   maxAssetBytes?: number
   admission?: StorageImportAdmission
+  ingestion?: StoragePageIngestionOptions
 }
 
 export interface ImportFile {
@@ -57,6 +53,7 @@ interface ImportPageSource {
   relPath: string
   user: WikiUser
   source?: StorageFileHandle
+  ingestion?: StoragePageIngestionOptions
 }
 
 interface ImportAssetSource {
@@ -69,35 +66,31 @@ interface ImportAssetSource {
   source?: StorageFileHandle
 }
 
-function toError (value: unknown): Error {
+function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
 
-function errorCode (value: unknown): string | undefined {
+function errorCode(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || !('code' in value)) return undefined
   const code = value.code
   return typeof code === 'string' ? code : undefined
 }
 
-export function isImportSourceMissing (value: unknown): boolean {
+export function isImportSourceMissing(value: unknown): boolean {
   return errorCode(value) === 'ENOENT'
 }
 
-function importAssetLimit (override?: number): number {
+function importAssetLimit(override?: number): number {
   const configured = override ?? wiki.config.uploads.maxFileSize
   return boundedImportAssetLimit(configured ?? IMPORT_MAX_ASSET_BYTES)
 }
-export async function collectStorageEntries (
-  root: StorageRootHandle,
-  options: StorageInventoryOptions = {}
-): Promise<StorageImportAdmission> {
+export async function collectStorageEntries(root: StorageRootHandle, options: StorageInventoryOptions = {}): Promise<StorageImportAdmission> {
   const budget = options.budget ?? new ImportBudget()
   const entries: StorageWalkEntry[] = []
   const filesByPath = new Map<string, StorageWalkEntry>()
   const files: StorageImportFile[] = []
   const assetLimit = options.maxAssetBytes === undefined ? undefined : importAssetLimit(options.maxAssetBytes)
-  const shouldSkip = (relativePath: string): boolean =>
-    isStorageGitMetadataPath(relativePath) || options.shouldSkip?.(relativePath) === true
+  const shouldSkip = (relativePath: string): boolean => isStorageGitMetadataPath(relativePath) || options.shouldSkip?.(relativePath) === true
 
   const admit = (entry: StorageWalkEntry): void => {
     budget.reserve(entry.kind === 'file' ? entry.identity.size : 0)
@@ -129,11 +122,7 @@ export async function collectStorageEntries (
   return { root, budget, entries, filesByPath, files }
 }
 
-export async function validateStoragePaths (
-  root: StorageRootHandle,
-  paths: readonly string[],
-  admission?: StorageImportAdmission
-): Promise<void> {
+export async function validateStoragePaths(root: StorageRootHandle, paths: readonly string[], admission?: StorageImportAdmission): Promise<void> {
   const seen = new Set<string>()
   for (const relativePath of paths) {
     if (!relativePath || seen.has(relativePath)) continue
@@ -154,8 +143,51 @@ export async function validateStoragePaths (
   }
 }
 
+/** Reject ambiguous README/home inventories before the first database write. */
+export async function assertStorageImportIdentities(
+  admission: StorageImportAdmission,
+  ingestion: StoragePageIngestionOptions = {},
+  moduleName: 'DISK' | 'GIT'
+): Promise<void> {
+  if (ingestion.mapReadmeToHome !== true) return
+  const identities = new Map<string, { source: string; mapped: boolean }>()
+  for (const item of admission.files) {
+    if (!item.contentType) continue
+    const relativePath = item.file.relPath
+    const original = pageHelper.getPagePath(relativePath)
+    const canonical = parseOkfFilePath(relativePath)
+    let identity = canonical === null ? original : { locale: canonical.locale, path: canonical.pagePath }
+    let mapped = false
+    if (/^readme$/iu.test(original.path) && (item.contentType === 'markdown' || item.contentType === 'asciidoc')) {
+      const source = await admission.root.openFile(relativePath, item.file.stats)
+      try {
+        const imported = classifyStoragePageImport(
+          {
+            rawDocument: await source.readBounded(OKF_MAX_DOCUMENT_BYTES),
+            contentType: item.contentType,
+            locale: original.locale,
+            pagePath: original.path,
+            importer: moduleName === 'DISK' ? 'import:disk' : 'import:git'
+          },
+          relativePath,
+          ingestion
+        )
+        identity = imported.identity
+        mapped = identity.path === 'home'
+      } finally {
+        await source.close()
+      }
+    }
+    const key = `${identity.locale}\0${identity.path.normalize('NFC').toLowerCase()}`
+    const previous = identities.get(key)
+    if (previous !== undefined && (mapped || previous.mapped)) {
+      throw new Error(`Ambiguous home import: ${previous.source} and ${relativePath} resolve to the same home page`)
+    }
+    identities.set(key, { source: relativePath, mapped })
+  }
+}
 
-async function stageAsset (source: StorageFileHandle, maxBytes: number): Promise<{ directory: string; path: string }> {
+async function stageAsset(source: StorageFileHandle, maxBytes: number): Promise<{ directory: string; path: string }> {
   const directory = await mkdtemp(path.join(tmpdir(), 'wiki-storage-import-'))
   try {
     await chmod(directory, 0o700)
@@ -174,18 +206,12 @@ async function stageAsset (source: StorageFileHandle, maxBytes: number): Promise
   }
 }
 
-
 const plugin = {
   assetFolders: null as Record<number, string> | null,
 
-  async importFromDisk ({
-    root,
-    moduleName,
-    maxAssetBytes,
-    admission
-  }: ImportSource): Promise<StorageImportResult[]> {
+  async importFromDisk({ root, moduleName, maxAssetBytes, admission, ingestion = {} }: ImportSource): Promise<StorageImportResult[]> {
     const assetLimit = importAssetLimit(maxAssetBytes)
-    const plan = admission ?? await collectStorageEntries(root, { maxAssetBytes: assetLimit })
+    const plan = admission ?? (await collectStorageEntries(root, { maxAssetBytes: assetLimit }))
     if (plan.root !== root) throw new Error('Storage import admission belongs to a different root')
     for (const item of plan.files) {
       if (item.contentType) {
@@ -196,6 +222,7 @@ const plugin = {
         throw new RangeError(`Imported asset exceeds ${assetLimit} bytes: ${item.file.relPath}`)
       }
     }
+    await assertStorageImportIdentities(plan, ingestion, moduleName)
 
     const rootUser = await wiki.models.users.getRootUser()
     const results: StorageImportResult[] = []
@@ -211,7 +238,8 @@ const plugin = {
             root,
             contentType: item.contentType,
             moduleName,
-            source
+            source,
+            ingestion
           })
           results.push({ kind: 'page', ...pageResult })
           if (!pageResult.ok) {
@@ -248,21 +276,34 @@ const plugin = {
     return results
   },
 
-  async processPage ({ user, root, relPath, contentType, moduleName, source }: ImportPageSource & { moduleName: 'DISK' | 'GIT' }): Promise<StoragePageProcessResult> {
+  async processPage({
+    user,
+    root,
+    relPath,
+    contentType,
+    moduleName,
+    source,
+    ingestion = {}
+  }: ImportPageSource & { moduleName: 'DISK' | 'GIT' }): Promise<StoragePageProcessResult> {
     const normalizedRelPath = relPath.replace(/\\/g, '/')
     const contentPath = pageHelper.getPagePath(normalizedRelPath)
-    const secureSource = source ?? await root.openFile(normalizedRelPath)
+    const secureSource = source ?? (await root.openFile(normalizedRelPath))
     const closeSource = source === undefined
     try {
       const itemContents = await secureSource.readBounded(OKF_MAX_DOCUMENT_BYTES)
       const okfProducer = moduleName === 'DISK' ? 'import:disk' : 'import:git'
-      const document = classifyStoragePageDocument({
-        rawDocument: itemContents,
-        contentType,
-        locale: contentPath.locale,
-        pagePath: contentPath.path,
-        importer: okfProducer
-      })
+      const imported = classifyStoragePageImport(
+        {
+          rawDocument: itemContents,
+          contentType,
+          locale: contentPath.locale,
+          pagePath: contentPath.path,
+          importer: okfProducer
+        },
+        normalizedRelPath,
+        ingestion
+      )
+      const document = imported.document
       if (document.format === 'okf_invalid') {
         return {
           relPath: normalizedRelPath,
@@ -273,7 +314,7 @@ const plugin = {
           error: document.diagnostics.join('; ') || 'Invalid OKF document'
         }
       }
-      let pageIdentity = contentPath
+      let pageIdentity = imported.identity
       if (document.format === 'okf_valid') {
         const canonicalIdentity = parseOkfFilePath(normalizedRelPath)
         if (canonicalIdentity === null) {
@@ -346,7 +387,7 @@ const plugin = {
     }
   },
 
-  async resolveAssetFolder (relPath: string): Promise<number | null> {
+  async resolveAssetFolder(relPath: string): Promise<number | null> {
     if (!this.assetFolders) this.assetFolders = await wiki.models.assetFolders.getAllPaths()
     const assetFolders = this.assetFolders
     const folderPath = path.posix.dirname(relPath.replace(/\\/g, '/'))
@@ -379,10 +420,10 @@ const plugin = {
     return folderId
   },
 
-  async processAsset ({ user, root, relPath, file, moduleName, maxAssetBytes, source }: ImportAssetSource): Promise<void> {
+  async processAsset({ user, root, relPath, file, moduleName, maxAssetBytes, source }: ImportAssetSource): Promise<void> {
     const normalizedRelPath = relPath.replace(/\\/g, '/')
     wiki.logger.info(`(STORAGE/${moduleName}) Asset marked for import: ${normalizedRelPath}`)
-    const secureSource = source ?? await root.openFile(normalizedRelPath, file.stats)
+    const secureSource = source ?? (await root.openFile(normalizedRelPath, file.stats))
     const closeSource = source === undefined
     let stagedDirectory: string | undefined
     try {
@@ -412,7 +453,7 @@ const plugin = {
     }
   },
 
-  clearFolderCache (): void {
+  clearFolderCache(): void {
     this.assetFolders = null
   }
 }

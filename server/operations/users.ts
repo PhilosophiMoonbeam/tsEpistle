@@ -35,6 +35,7 @@ interface UserRecord extends Record<string, unknown> {
   tfaSecret: string
   location?: string
   jobTitle?: string
+  pronouns: string
   timezone?: string
   dateFormat?: string
   appearance?: string
@@ -102,6 +103,7 @@ interface UserQuery extends PromiseLike<UserRecord[]> {
   patch(data: Record<string, unknown>): PatchQuery
 }
 interface CreateUserInput extends Record<string, unknown> {
+  pronouns?: string
   timezone?: string
   dateFormat?: string
   timeFormat?: UserTimeFormat
@@ -115,6 +117,7 @@ interface CreateUserInput extends Record<string, unknown> {
 }
 interface UpdateUserInput extends Record<string, unknown> {
   id: number
+  pronouns?: string
   groups?: number[] | undefined
   dateFormat?: string | undefined
   timeFormat?: UserTimeFormat | undefined
@@ -205,6 +208,12 @@ const groupsValue = (value: unknown): number[] => {
 const optionalString = (input: Record<string, unknown>, key: string): string | undefined => {
   const value = input[key]
   return value === undefined || value === null ? undefined : stringValue(value, key)
+}
+const optionalPronouns = (input: Record<string, unknown>): string | undefined => {
+  if (input.pronouns === undefined) return undefined
+  const pronouns = stringValue(input.pronouns, 'pronouns')
+  if (pronouns.length > 255) throw new ApplicationError('pronouns must be at most 255 characters', { code: 'INVALID_INPUT' })
+  return pronouns.trim()
 }
 const strategyFor = (key: string): AuthStrategy | undefined => {
   const value = wiki.auth.strategies[key]
@@ -298,6 +307,7 @@ const getAdminDetail = async (value: unknown) => {
     providerIs2FACapable: definition?.useForm ?? false,
     location: user.location || '',
     jobTitle: user.jobTitle || '',
+    pronouns: user.pronouns,
     timezone: user.timezone || '',
     dateFormat: user.dateFormat || '',
     timeFormat: user.timeFormat || 'locale',
@@ -320,6 +330,8 @@ const createInput = (value: unknown): CreateUserInput => {
     name: stringValue(input.name, 'name'),
     groups: groupsValue(input.groups)
   }
+  const pronouns = optionalPronouns(input)
+  if (pronouns !== undefined) result.pronouns = pronouns
   const timezone = optionalString(input, 'timezone')
   if (timezone !== undefined) {
     if (timezone !== '' && !isUserTimezone(timezone)) throw new ApplicationError('timezone must be a valid IANA time zone', { code: 'INVALID_INPUT' })
@@ -352,6 +364,8 @@ const updateInput = (value: unknown): UpdateUserInput => {
     const normalized = optionalString(input, field)
     if (normalized !== undefined) result[field] = normalized
   }
+  const pronouns = optionalPronouns(input)
+  if (pronouns !== undefined) result.pronouns = pronouns
   if (input.timeFormat !== undefined) {
     if (!isUserTimeFormat(input.timeFormat)) throw new ApplicationError('timeFormat is not supported', { code: 'INVALID_INPUT' })
     result.timeFormat = input.timeFormat
@@ -372,6 +386,7 @@ const create = async ({ requester, input }: UserRequest): Promise<{ id: number; 
       groups: normalized.groups,
       location: '',
       jobTitle: '',
+      pronouns: normalized.pronouns ?? '',
       timezone: normalized.timezone ?? ''
     },
     ...(normalized.dateFormat === undefined ? {} : { dateFormat: normalized.dateFormat }),
@@ -395,7 +410,8 @@ const update = async ({ requester, input }: UserRequest): Promise<void> => {
     store = accountAdministration(),
     current = await store.inspect(requester, normalized.id)
   const profile = { ...current.profile }
-  for (const key of ['name', 'email', 'location', 'jobTitle', 'timezone'] as const) if (typeof normalized[key] === 'string') profile[key] = normalized[key]
+  for (const key of ['name', 'email', 'location', 'jobTitle', 'pronouns', 'timezone'] as const)
+    if (typeof normalized[key] === 'string') profile[key] = normalized[key]
   if (normalized.groups) profile.groups = normalized.groups
   // Legacy transports have no client review token. Read and pass a current
   // fingerprint so even these writes use the same target guards and CAS boundary.
@@ -515,9 +531,7 @@ const requireProfileUser = async (requester: Express.User | undefined): Promise<
 }
 const requireProfileMutationUser = (requester: Express.User | undefined, expectedAccountId: unknown): Promise<UserRecord> => {
   const userId = requireProfilePrincipal(requester)
-  const expectedId = typeof expectedAccountId === 'string' && /^[1-9]\d*$/.test(expectedAccountId)
-    ? Number(expectedAccountId)
-    : expectedAccountId
+  const expectedId = typeof expectedAccountId === 'string' && /^[1-9]\d*$/.test(expectedAccountId) ? Number(expectedAccountId) : expectedAccountId
   if (typeof expectedId !== 'number' || !Number.isSafeInteger(expectedId) || expectedId < 1) {
     throw new ApplicationError('The profile account identity is required.', { code: 'INVALID_PROFILE_ACCOUNT', status: 400 })
   }
@@ -556,6 +570,7 @@ const updateProfile = async ({ requester, expectedAccountId, input: value, respo
   const name = stringValue(input.name, 'name')
   const handle = input.handle === undefined ? undefined : stringValue(input.handle, 'handle').trim()
   const jobTitle = stringValue(input.jobTitle, 'jobTitle')
+  const pronouns = optionalPronouns(input)
   const location = stringValue(input.location, 'location')
   const timezone = stringValue(input.timezone, 'timezone')
   const dateFormat = stringValue(input.dateFormat, 'dateFormat')
@@ -570,6 +585,7 @@ const updateProfile = async ({ requester, expectedAccountId, input: value, respo
     name: _.trim(name),
     ...(handle === undefined ? {} : { handle }),
     jobTitle: _.trim(jobTitle),
+    ...(pronouns === undefined ? {} : { pronouns }),
     location: _.trim(location),
     timezone,
     dateFormat,
@@ -606,7 +622,15 @@ const updateAvatar = async ({
   return mutateAvatar(user, canonical, response)
 }
 
-const clearAvatar = async ({ requester, expectedAccountId, response }: { requester: Express.User | undefined; expectedAccountId: unknown; response?: Response }): Promise<{ pictureUrl: string | null }> => {
+const clearAvatar = async ({
+  requester,
+  expectedAccountId,
+  response
+}: {
+  requester: Express.User | undefined
+  expectedAccountId: unknown
+  response?: Response
+}): Promise<{ pictureUrl: string | null }> => {
   const user = await requireVerifiedProfileUser(requester, expectedAccountId)
   return mutateAvatar(user, null, response)
 }

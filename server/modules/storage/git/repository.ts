@@ -88,7 +88,7 @@ export const pullRemoteAuthoritative = async (git: GitRepositoryClient, remoteRe
       if (unsettled.length === 0) throw retryError
       const paths = `${unsettled.slice(0, 5).join(', ')}${unsettled.length > 5 ? ', ...' : ''}`
       throw new Error(
-        `(STORAGE/GIT) ${paths} changed on one side and were deleted on the other. The rebase was rolled back, so the repository remains usable. Purge Local Repository takes the remote version; Force Sync in Push mode takes the wiki version.`,
+        `(STORAGE/GIT) ${paths} changed on one side and were deleted on the other. The rebase was rolled back and the working copy was retained. Recover the conflicting history before synchronizing again; automatic synchronization never force-pushes over remote history.`,
         { cause: retryError }
       )
     }
@@ -119,7 +119,7 @@ export const reattachUnrelatedHistory = async (git: GitRepositoryClient, remoteR
     await recoverInterruptedGitOperation(git, logger)
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(
-      `(STORAGE/GIT) The working copy has no history in common with ${remoteObjectId}, and reattaching it failed: ${message}. Purge Local Repository starts again from the remote copy.`,
+      `(STORAGE/GIT) The working copy has no history in common with ${remoteObjectId}, and reattaching it failed: ${message}. The working copy has been retained for recovery.`,
       { cause: error }
     )
   }

@@ -17,6 +17,7 @@
           v-icon.admin-stat__arrow(size='16' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
         strong.admin-stat__value
           template(v-if='summaryLoading || summaryError') —
+          template(v-else-if='stat.key === "assetBytes"') {{ formatBytes(Number(stat.value)) }}
           animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='formatInteger')
         span.admin-stat__hint {{ stat.hint }}
     p.mt-3(v-if='summaryLoading' role='status') {{ $t(`admin:dashboard.inventoryLoading`) }}
@@ -124,6 +125,7 @@ import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
 import { getErrorMessage, loadingStart, loadingStop } from '../../helpers/root-ui-store'
 
 const integerFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
+const byteFormatter = new Intl.NumberFormat(undefined, { style: 'unit', unit: 'byte', maximumFractionDigits: 0 })
 const formatInteger = (value: number): string => integerFormatter.format(Math.round(value))
 
 
@@ -135,7 +137,8 @@ export default {
       summaryLoading: summary?.loading,
       summaryError: summary?.error,
       refreshSummary: () => summary?.refresh(),
-      formatInteger
+      formatInteger,
+      formatBytes: (value: number) => byteFormatter.format(value),
     }
   },
   data() {
@@ -218,9 +221,21 @@ export default {
           icon: 'mdi-account-key-outline',
           to: '/groups',
           permission: ['manage:system', 'manage:groups', 'write:groups']
+        },
+        {
+          key: 'assets', label: 'Assets', value: this.info.assetsTotal,
+          hint: 'Stored files', icon: 'mdi-folder-image', to: '/assets', permission: 'manage:system'
+        },
+        {
+          key: 'assetBytes', label: 'Asset storage', value: this.info.assetsBytes,
+          hint: 'Total stored file bytes', icon: 'mdi-harddisk', to: '/assets', permission: 'manage:system'
+        },
+        {
+          key: 'comments', label: 'Comments', value: this.info.commentsTotal,
+          hint: 'Visible, nonempty discussion contributions', icon: 'mdi-comment-text-outline', to: '/comments', permission: 'manage:system'
         }
       ]
-        .filter((stat) => this.hasPermission(stat.permission))
+        .filter((stat) => this.hasPermission(stat.permission) && (!['assets', 'assetBytes', 'comments'].includes(stat.key) || typeof stat.value === 'number'))
         .map((stat) => ({
           ...stat,
           ariaLabel: this.$t(this.summaryLoading ? 'admin:dashboard.statAriaLoading' : this.summaryError ? 'admin:dashboard.statAriaUnavailable' : 'admin:dashboard.statAriaValue', { label: stat.label, value: stat.value, hint: stat.hint, interpolation: { escapeValue: false } })

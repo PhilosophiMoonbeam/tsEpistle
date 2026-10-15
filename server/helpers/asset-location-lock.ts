@@ -29,6 +29,13 @@ const databaseType = (): string | undefined => {
 
 const noOpAssertHeld: AssertHeld = async () => undefined
 
+/** Join the native asset fence before the canonical search fence; effects remain exclusive by default. */
+export const lockAssetMutationFence = async (transaction: Knex.Transaction, shared = false): Promise<void> => {
+  if (databaseType() !== 'postgres' || typeof transaction.raw !== 'function') return
+  const lock = shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock'
+  await transaction.raw(`SELECT ${lock}(?, ?)`, [ASSET_LOCATION_FENCE, ASSET_LOCATION_FENCE_KEY])
+}
+
 /**
  * Hold the single cross-process asset mutation fence on a pinned PostgreSQL
  * session. Remote storage calls intentionally happen outside a transaction,

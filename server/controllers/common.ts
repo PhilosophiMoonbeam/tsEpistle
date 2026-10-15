@@ -4,6 +4,7 @@ import type { Knex } from 'knex'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { type Request, type Response } from './_types.ts'
 import pageHelper from '../helpers/page.ts'
+import { parsePrivatePagePath } from '../../shared/private-page-route.ts'
 import { prepareReaderAnalytics } from '../helpers/reader-analytics.ts'
 import { canReadPage, canWritePage, managesSystem, pageAuthorizationContext, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
 import _ from 'lodash'
@@ -286,12 +287,10 @@ export default function createCommonController(wiki: CommonWiki): express.Router
 
   const parsePageArgs = (req: Request, stripExt = false): ParsedPageArgs => {
     const parsed = pageHelper.parsePath(req.path, { stripExt })
-    const segments = parsed.path.split('/')
-    const privateLocale = segments[1]
-    if (segments[0] === '_private' && privateLocale && segments.length > 2) {
+    const privatePath = parsePrivatePagePath(parsed.path)
+    if (privatePath) {
       return {
-        locale: privateLocale,
-        path: segments.slice(2).join('/'),
+        ...privatePath,
         visibility: 'private',
         ownerId: principalId(req.user),
         explicitLocale: true
@@ -332,7 +331,9 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     _.set(res.locals, 'pageMeta.title', 'Page Not Found')
     const createHref = await missingPageCreateHref(req, pageArgs)
     protectedResponseHeaders(res)
-    res.status(404).render('notfound', createHref === undefined ? { action } : { action, createHref })
+    const folderScope =
+      pageArgs.visibility === 'public' && !pageHelper.isReservedPath(pageArgs.path) ? { folderLocale: pageArgs.locale, folderPath: pageArgs.path } : {}
+    res.status(404).render('notfound', { action, ...folderScope, ...(createHref === undefined ? {} : { createHref }) })
   }
 
   const requesterGroups = (req: Request): unknown[] => (Array.isArray(req.user?.groups) ? req.user.groups : [])
@@ -1184,7 +1185,10 @@ export default function createCommonController(wiki: CommonWiki): express.Router
           if (effectivePermissions.pages.write) {
             res.status(404).render('new', { path: pageArgs.path, locale: pageArgs.locale })
           } else {
-            res.status(404).render('notfound', { action: 'view' })
+            res.status(404).render('notfound', {
+              action: 'view',
+              ...(!pageHelper.isReservedPath(pageArgs.path) ? { folderLocale: pageArgs.locale, folderPath: pageArgs.path } : {})
+            })
           }
         }
       } catch (err) {

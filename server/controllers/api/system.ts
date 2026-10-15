@@ -5,6 +5,7 @@ import { PageIntegrityScanRequestSchema, PageIntegrityScanResponseSchema } from 
 import { createPageIntegrityOperations } from '../../operations/page-integrity.ts'
 import type { PageIntegrityOperations } from '../../operations/page-integrity.ts'
 import { systemRequester } from '../../helpers/system-authority.ts'
+import { isApiPrincipal } from '../../helpers/api-principal.ts'
 import { getExtensionsWorkspaceStore } from '../../operations/extensions-workspace.ts'
 import systemOperations from '../../operations/system.ts'
 import { getSystemWorkspaceStore } from '../../operations/system-workspace-runtime.ts'
@@ -19,6 +20,13 @@ const getPageIntegrityOperations = () => {
   if (pageIntegrityOperations) return pageIntegrityOperations
   pageIntegrityOperations = createPageIntegrityOperations({ db: getTransportRuntime<PageIntegrityApiRuntime>().models.knex })
   return pageIntegrityOperations
+}
+
+const summaryRequester = (req: Request) => {
+  const requester = systemRequester(req)
+  return isApiPrincipal(requester.user) && requester.apiKey && requester.apiKey.expiresAt !== null
+    ? { ...requester.user, exp: requester.apiKey.expiresAt }
+    : requester.user
 }
 
 const authorized = (req: Request, res: Response, cacheControl = 'no-store'): boolean => {
@@ -103,16 +111,18 @@ router.get('/workspace', async (req, res) => {
 router.get('/info', async (req, res, next) => {
   if (!authorized(req, res)) return
   try {
-    res.json(await systemOperations.getInfo())
+    res.json(await systemOperations.getInfo(summaryRequester(req)))
   } catch (error) {
     next(error)
   }
 })
 
 router.get('/summary', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   if (!summaryAuthorized(req, res)) return
   try {
-    res.json(await systemOperations.getSummary())
+    res.json(await systemOperations.getSummary(summaryRequester(req)))
   } catch (error) {
     next(error)
   }

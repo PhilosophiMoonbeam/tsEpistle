@@ -20,9 +20,11 @@ interface LastLoginUser {
   lastLoginAt: unknown
 }
 const profileFields = ['name', 'handle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'timeFormat', 'appearance'] as const
-type ProfileInput = Record<(typeof profileFields)[number], string>
+type ProfileInput = Record<(typeof profileFields)[number], string> & { pronouns?: string }
 
-const isProfileInput = (value: Record<string, unknown>): value is ProfileInput => profileFields.every(field => typeof value[field] === 'string')
+const isProfileInput = (value: Record<string, unknown>): value is ProfileInput =>
+  profileFields.every(field => typeof value[field] === 'string') &&
+  (value.pronouns === undefined || (typeof value.pronouns === 'string' && value.pronouns.length <= 255))
 
 const requestBody = (req: Request): Record<string, unknown> => {
   const body: unknown = req.body
@@ -217,6 +219,7 @@ router.post('/', async (req, res) => {
     'passwordRaw',
     'name',
     'groups',
+    'pronouns',
     'timezone',
     'dateFormat',
     'timeFormat',
@@ -370,6 +373,7 @@ router.get('/profile', async (req, res, next) => {
         'pictureUrl',
         'location',
         'jobTitle',
+        'pronouns',
         'timezone',
         'dateFormat',
         'timeFormat',
@@ -394,9 +398,9 @@ router.get('/profile', async (req, res, next) => {
 
 router.patch('/profile', async (req, res, next) => {
   const body = requestBody(req)
-  const input = _.pick(body, profileFields)
+  const input = _.pick(body, [...profileFields, 'pronouns'])
   if (!isProfileInput(input)) {
-    return res.status(400).json({ error: 'Profile fields must be strings' })
+    return res.status(400).json({ error: 'Profile fields must be strings; pronouns must be at most 255 characters' })
   }
   try {
     await userOperations.updateProfile({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), input, response: res })
@@ -411,7 +415,12 @@ router.patch('/profile/preferences', async (req, res, next) => {
     return res.status(400).json({ error: 'Profile preferences are invalid' })
   }
   try {
-    await userOperations.updateProfilePreferences({ requester: req.user, expectedAccountId: req.get('X-TsEpistle-Profile-Account'), input: result.data, response: res })
+    await userOperations.updateProfilePreferences({
+      requester: req.user,
+      expectedAccountId: req.get('X-TsEpistle-Profile-Account'),
+      input: result.data,
+      response: res
+    })
     return res.json({ message: 'Profile preferences updated successfully.' })
   } catch (err) {
     return next(err)
@@ -448,6 +457,7 @@ router.put('/:id', async (req, res) => {
     'groups',
     'location',
     'jobTitle',
+    'pronouns',
     'timezone',
     'dateFormat',
     'timeFormat',

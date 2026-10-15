@@ -2,6 +2,9 @@ import { EventEmitter } from 'node:events'
 import createKnex from 'knex'
 import { beforeEach, afterEach, describe, expect, it, vi } from '../bun-test.mts'
 import { createApiPrincipal } from '../../helpers/api-principal.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
+import { up as createAssetRelocation } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
 
 
 const originalWIKI = global.WIKI
@@ -27,6 +30,28 @@ const privatePage = {
 }
 
 const createMutationSchema = async db => {
+  await createDurableJobs(db)
+  await addLeaseToken(db)
+  await db.schema.createTable('assetFolders', table => {
+    table.increments('id').primary()
+    table.string('name').notNullable()
+    table.string('slug').notNullable()
+    table.integer('parentId').nullable().references('id').inTable('assetFolders')
+  })
+  await db.schema.createTable('assets', table => {
+    table.increments('id').primary()
+    table.string('filename').notNullable()
+    table.string('hash').notNullable()
+    table.integer('folderId').nullable().references('id').inTable('assetFolders')
+  })
+  await createAssetRelocation(db)
+  await db.schema.createTable('storage', table => {
+    table.string('key').primary()
+    table.boolean('isEnabled').notNullable()
+    table.string('mode').notNullable()
+    table.string('syncInterval').notNullable()
+    table.json('config').notNullable()
+  })
   const pageColumns = table => {
     table.increments('id').primary()
     table.string('path').notNullable()
@@ -126,10 +151,25 @@ const createMutationSchema = async db => {
 describe('private page mutation existence isolation', () => {
   let Page
 
+  const bindMutationModels = async db => {
+    global.WIKI.config.db.type = 'sqlite'
+    Page.knex(db)
+    global.WIKI.models.knex = db
+    global.WIKI.models.pages = Page
+    const PageHistory = (await import('../../models/pageHistory.ts')).default
+    PageHistory.knex(db)
+    global.WIKI.models.pageHistory = PageHistory
+    const Tag = (await import('../../models/tags.ts')).default
+    Tag.knex(db)
+    global.WIKI.models.tags = Tag
+    return { PageHistory }
+  }
+
   beforeEach(async () => {
     vi.resetModules()
     const mutationOutboxRows = []
     const knex = vi.fn(table => {
+      if (table === 'storage') return { where: () => ({ orderBy: () => ({ forShare: () => ({ select: async () => [] }) }) }) }
       if (table === 'pages') {
         return {
           select: vi.fn().mockReturnThis(),
@@ -206,7 +246,6 @@ describe('private page mutation existence isolation', () => {
         knex,
         pageHistory: { addVersion: vi.fn() },
         pages: {},
-        storage: { pageEvent: vi.fn() },
         tags: {
           associateTags: vi.fn(({ tags, page }) => {
             page.tags = tags.map(tag => ({ tag }))
@@ -225,21 +264,6 @@ describe('private page mutation existence isolation', () => {
     else global.WIKI = originalWIKI
   })
 
-  it('uses the deleting query transaction for comment cleanup', async () => {
-    const transaction = { id: 'delete-transaction' }
-    const where = vi.fn().mockResolvedValue(1)
-    const deleteRelated = vi.fn().mockReturnValue({ where })
-    const commentsQuery = vi.fn().mockReturnValue({ delete: deleteRelated })
-    global.WIKI.models.comments = { query: commentsQuery }
-
-    await Page.beforeDelete({
-      asFindQuery: () => ({ select: vi.fn().mockResolvedValue([{ id: 17 }]) }),
-      transaction
-    })
-
-    expect(commentsQuery).toHaveBeenCalledWith(transaction)
-    expect(where).toHaveBeenCalledWith('pageId', 17)
-  })
 
   const requester = { id: 8, permissions: ['write:pages', 'delete:pages'] }
   it('rejects an API principal before reading or mutating a page', async () => {
@@ -591,12 +615,7 @@ describe('private page mutation existence isolation', () => {
         createdAt: '2026-08-01T00:00:00.000Z',
         updatedAt: '2026-08-14T00:00:00.000Z'
       })
-      Page.knex(db)
-      global.WIKI.models.knex = db
-      global.WIKI.models.pages = Page
-      const PageHistory = (await import('../../models/pageHistory.ts')).default
-      PageHistory.knex(db)
-      global.WIKI.models.pageHistory = PageHistory
+      const { PageHistory } = await bindMutationModels(db)
       vi.spyOn(Page, 'renderPage').mockResolvedValue(undefined)
 
       const mutation = {
@@ -826,7 +845,7 @@ describe('private page mutation existence isolation', () => {
   })
 
   it('preserves OKF generation and trust metadata across visibility-only changes', async () => {
-    const owner = { id: 7, permissions: [] }
+    const owner = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
     const originalExtra = {
       css: '',
       js: '',
@@ -837,49 +856,55 @@ describe('private page mutation existence isolation', () => {
         verified: [{ by: 'human:9', at: '2026-08-02T00:00:00.000Z' }]
       }
     }
-    const originalPage = {
-      ...privatePage,
-      authorId: 7,
-      content: '# Runbook',
-      contentType: 'markdown',
-      description: 'Original description',
-      extra: originalExtra,
-      hash: 'private:7:en:secret',
-      isPublished: false,
-      publishEndDate: '',
-      publishStartDate: '',
-      sourceRevision: '2',
-      title: 'Runbook',
-      updatedAt: '2026-08-14T00:00:00.000Z'
-    }
-    let persistedPage = { ...originalPage }
-    global.WIKI.auth.checkPageAccess.mockReturnValue(true)
-    const patch = vi.fn(value => {
-      persistedPage = { ...persistedPage, ...value }
-      return { where: vi.fn().mockResolvedValue(1) }
-    })
-    const query = vi.fn()
-      .mockReturnValueOnce({ findOne: vi.fn().mockResolvedValue(undefined) })
-      .mockReturnValueOnce({ patch })
-    global.WIKI.models.pages = {
-      query,
-      getPageFromDb: vi.fn().mockResolvedValueOnce(originalPage).mockImplementation(async () => persistedPage),
-      deletePageFromCache: vi.fn(),
-      rebuildTree: vi.fn(),
-      prepareSearchDocument: vi.fn(),
-      reconnectLinks: vi.fn()
-    }
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    try {
+      await createMutationSchema(db)
+      await db('users').insert({ id: 7, name: owner.name, email: owner.email })
+      await db('pages').insert({
+        id: 17,
+        path: 'secret',
+        localeCode: 'en',
+        visibility: 'private',
+        ownerId: 7,
+        authorId: 7,
+        creatorId: 7,
+        content: '# Runbook',
+        contentType: 'markdown',
+        editorKey: 'markdown',
+        description: 'Original description',
+        extra: JSON.stringify(originalExtra),
+        hash: 'private:7:en:secret',
+        isPublished: false,
+        publishEndDate: '',
+        publishStartDate: '',
+        sourceRevision: 2,
+        title: 'Runbook',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-14T00:00:00.000Z'
+      })
+      const { PageHistory } = await bindMutationModels(db)
+      global.WIKI.auth.checkPageAccess.mockReturnValue(true)
+      vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
+      vi.spyOn(Page, 'reconnectLinks').mockResolvedValue(undefined)
 
-    const result = await Page.changeVisibility({
-      id: 17,
-      user: owner,
-      visibility: 'public',
-      confirmPublication: true,
-      skipStorage: true
-    })
+      const result = await Page.changeVisibility({
+        id: 17,
+        user: owner,
+        visibility: 'public',
+        confirmPublication: true,
+        expectedSourceRevision: '2'
+      })
 
-    expect(result.extra).toEqual(originalExtra)
-    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({ extra: originalExtra }))
+      expect(result).toMatchObject({ visibility: 'public', ownerId: null, extra: originalExtra })
+      const persisted = await Page.query().findById(17)
+      expect(persisted.extra).toEqual(originalExtra)
+      expect(persisted.content).toBe('# Runbook')
+      expect(await PageHistory.query().where({ pageId: 17 })).toEqual([
+        expect.objectContaining({ action: 'published', visibility: 'private', ownerId: 7, extra: originalExtra })
+      ])
+    } finally {
+      await db.destroy()
+    }
   })
 
   it('authorizes public creation against normalized object-shaped tag context', () => {
@@ -945,117 +970,57 @@ describe('private page mutation existence isolation', () => {
 
   it('ignores untrusted storage suppression while preserving direct importer suppression', async () => {
     const user = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
-    const createdPage = {
-      id: 18,
-      content: 'Content',
-      localeCode: 'en',
-      ownerId: null,
-      path: 'docs',
-      sourceRevision: '1',
-      renderedSourceRevision: null,
-      title: 'Docs',
-      updatedAt: null,
-      visibility: 'public',
-      isSearchable: true
-    }
-    const duplicateQuery = {
-      select: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
-      })
-    }
-    const latestQuery = {
-      findById: vi.fn().mockReturnValue({
-        select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-15T00:00:00.000Z' })
-      })
-    }
-    const insert = vi.fn().mockResolvedValue(createdPage)
-    const pageQuery = vi.spyOn(Page, 'query')
-    const arrangeCreateQueries = () => {
-      pageQuery
-        .mockReset()
-        .mockReturnValueOnce(duplicateQuery)
-        .mockReturnValueOnce({ insert })
-        .mockReturnValueOnce(latestQuery)
-    }
-    arrangeCreateQueries()
-    vi.spyOn(Page, 'getPageFromDb').mockResolvedValue(createdPage)
-    vi.spyOn(Page, 'renderPage').mockResolvedValue(undefined)
-    vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
-    vi.spyOn(Page, 'reconnectLinks').mockResolvedValue(undefined)
-    global.WIKI.config.editors = { available: ['markdown'] }
-    global.WIKI.auth.checkPageAccess.mockReturnValue(true)
-    const storageFailure = new Error('controlled storage failure')
-    global.WIKI.models.storage.pageEvent.mockRejectedValue(storageFailure)
-    const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
-    const input = {
-      content: 'Content',
-      description: '',
-      editor: 'markdown',
-      isPublished: true,
-      locale: 'en',
-      path: 'docs',
-      tags: [],
-      title: 'Docs',
-      visibility: 'public',
-      skipStorage: true
-    }
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    try {
+      await createMutationSchema(db)
+      await db('users').insert({ id: 7, name: user.name, email: user.email })
+      await db('storage').insert({ key: 'disk', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
+      await db.raw("CREATE TRIGGER reject_storage_admission BEFORE INSERT ON durableJobs BEGIN SELECT RAISE(FAIL, 'controlled storage admission failure'); END")
+      await bindMutationModels(db)
+      vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
+      vi.spyOn(Page, 'reconnectLinks').mockResolvedValue(undefined)
+      global.WIKI.config.editors = { available: ['markdown'] }
+      global.WIKI.auth.checkPageAccess.mockReturnValue(true)
+      const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
+      const input = {
+        content: 'Content',
+        description: '',
+        editor: 'markdown',
+        isPublished: true,
+        locale: 'en',
+        path: 'docs',
+        tags: [],
+        title: 'Docs',
+        visibility: 'public',
+        skipStorage: true
+      }
 
-    await expect(operations.create({ requester: user, input })).rejects.toBe(storageFailure)
-    expect(global.WIKI.models.storage.pageEvent).toHaveBeenCalledTimes(1)
+      await expect(operations.create({ requester: user, input })).rejects.toThrow('controlled storage admission failure')
+      expect(await db('pages')).toEqual([])
+      expect(await db('pageTags')).toEqual([])
+      expect(await db('pageMutationOutbox')).toEqual([])
+      expect(await db('outboxEvents')).toEqual([])
+      expect(await db('durableJobs')).toEqual([])
 
-    arrangeCreateQueries()
-    global.WIKI.models.storage.pageEvent.mockClear()
-    await Page.createPage({ ...input, user })
-    expect(global.WIKI.models.storage.pageEvent).not.toHaveBeenCalled()
+      const imported = await Page.createPage({ ...input, user })
+      expect(await db('pages')).toEqual([expect.objectContaining({ id: imported.id, path: 'docs', content: 'Content' })])
+      expect(await db('durableJobs')).toEqual([])
+      expect(await db('pageMutationOutbox').where({ pageId: imported.id })).toHaveLength(4)
+      expect(await db('outboxEvents').where({ aggregateId: String(imported.id), type: 'page.created' })).toHaveLength(1)
+    } finally {
+      await db.destroy()
+    }
   })
 
   it('rejects a canonical tag transition after real SQLite association and rolls back every write', async () => {
     const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     try {
-      await db.schema.createTable('pages', table => {
-        table.increments('id')
-        table.string('path').notNullable()
-        table.string('localeCode').notNullable()
-        table.string('hash').notNullable()
-        table.string('title').notNullable()
-        table.text('description').notNullable()
-        table.string('visibility').notNullable()
-        table.integer('ownerId').nullable()
-        table.integer('authorId').notNullable()
-        table.integer('creatorId').notNullable()
-        table.string('editorKey').notNullable()
-        table.string('contentType').notNullable()
-        table.boolean('isPublished').notNullable()
-        table.boolean('isSearchable').notNullable().defaultTo(true)
-        table.text('content').notNullable()
-        table.string('publishStartDate').notNullable()
-        table.string('publishEndDate').notNullable()
-        table.string('toc').notNullable()
-        table.text('extra').notNullable()
-        table.bigInteger('sourceRevision').notNullable().defaultTo(1)
-        table.bigInteger('renderedSourceRevision').nullable()
-        table.dateTime('createdAt').nullable()
-        table.dateTime('updatedAt').nullable()
-      })
-      await db.schema.createTable('tags', table => {
-        table.increments('id')
-        table.string('tag').notNullable().unique()
-        table.string('title').notNullable()
-        table.integer('redirectToId').nullable()
-        table.boolean('isArchived').notNullable().defaultTo(false)
-      })
-      await db.schema.createTable('pageTags', table => {
-        table.integer('pageId').notNullable()
-        table.integer('tagId').notNullable()
-        table.primary(['pageId', 'tagId'])
-      })
+      await createMutationSchema(db)
       await db('tags').insert({ id: 1, tag: 'canonical', title: 'Canonical', redirectToId: null, isArchived: false })
       const user = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
       const decisions = []
 
-      Page.knex(db)
-      global.WIKI.models.knex = db
-      global.WIKI.models.pages = Page
+      await bindMutationModels(db)
       global.WIKI.models.tags = {
         associateTags: async ({ tags, page, transaction }) => {
           if (!Array.isArray(tags) || !tags.includes('historical')) throw new Error('normalized historical tag was not associated')
@@ -1159,12 +1124,7 @@ describe('private page mutation existence isolation', () => {
       ])
       const descendant = await db('pages').where({ id: 17 }).first()
       const seededNavigation = await db('pageTree').orderBy('id')
-      Page.knex(db)
-      global.WIKI.models.knex = db
-      global.WIKI.models.pages = Page
-      const Tag = (await import('../../models/tags.ts')).default
-      Tag.knex(db)
-      global.WIKI.models.tags = Tag
+      await bindMutationModels(db)
       vi.spyOn(Page, 'renderPage').mockResolvedValue(undefined)
       // The PostgreSQL worker owns rebuilt navigation; this SQLite scenario
       // exercises creation against genuine pre-existing folder/descendant rows.

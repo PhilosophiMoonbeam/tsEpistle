@@ -101,6 +101,15 @@
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
+          v-btn(
+            v-if='glossaryAvailable && transportVerified'
+            icon
+            rounded='lg'
+            :aria-label='$t(`common:glossary.title`, { defaultValue: `Glossary` })'
+            @click='openGlossaryDirectory'
+          )
+            v-icon(icon='mdi-book-alphabet')
+            v-tooltip(activator='parent', location='bottom', :text='$t(`common:glossary.title`, { defaultValue: `Glossary` })')
           v-btn.nav-header-agent(
             v-if='canEnterAgent && ($vuetify.display.mdAndUp || ($vuetify.display.smAndDown && !$vuetify.display.xs))'
             icon
@@ -501,6 +510,8 @@ import AccountNotifications from './account-notifications.vue'
 import AccountOfflineSummary from './account-offline-summary.vue'
 import ControlBorderBeam from './control-border-beam.vue'
 import { fetchPageLocaleRelations, movePage, type MovePageReceipt } from '../../helpers/pages-api'
+import { openGlossary } from '../../helpers/glossary-events'
+import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import {
@@ -573,6 +584,10 @@ export default defineComponent({
     return { siteNotifications }
   },
   props: {
+    glossaryAvailable: {
+      type: Boolean,
+      default: false
+    },
     dense: {
       type: Boolean,
       default: false
@@ -915,6 +930,7 @@ export default defineComponent({
       void document.fonts.ready.then(() => this.applyNavHeaderTitleFit()).catch(() => {})
     }
     window.addEventListener('keydown', this.handleSearchShortcut)
+    window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, this.invalidateNotificationSession)
     document.addEventListener('visibilitychange', this.handleNotificationVisibility)
     window.addEventListener('focus', this.handleNotificationFocus)
     this.syncSiteNotifications()
@@ -931,6 +947,7 @@ export default defineComponent({
     offPageDuplicate(this.pageDuplicate)
     offPageDelete(this.pageDelete)
     window.removeEventListener('keydown', this.handleSearchShortcut)
+    window.removeEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, this.invalidateNotificationSession)
     document.removeEventListener('visibilitychange', this.handleNotificationVisibility)
     offSearchFocus(this.handleSearchFocusCommand)
     window.removeEventListener('focus', this.handleNotificationFocus)
@@ -943,6 +960,13 @@ export default defineComponent({
     this.navHeaderTitleResizeObserver = null
   },
   methods: {
+    invalidateNotificationSession(): void {
+      this.siteNotifications.reset()
+      this.siteNotifications.identityStale = true
+    },
+    openGlossaryDirectory(): void {
+      if (this.glossaryAvailable && this.transportVerified) openGlossary({ locale: this.locale })
+    },
     runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler']): void {
       this[handler]()
     },

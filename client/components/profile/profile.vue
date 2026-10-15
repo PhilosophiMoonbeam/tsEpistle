@@ -90,6 +90,19 @@
                   autocomplete='organization-title'
                   prepend-inner-icon='mdi-briefcase-outline'
                 )
+              .profile-field(@keydown.esc.capture='revertField(`pronouns`, $event)')
+                v-text-field(
+                  ref='field-pronouns'
+                  v-model='user.pronouns'
+                  :label='$t(`profile:pronouns`, { defaultValue: `Pronouns` })'
+                  :error-messages='issueMessage(`pronouns`)'
+                  :readonly='saving'
+                  variant='outlined'
+                  density='comfortable'
+                  hide-details='auto'
+                  maxlength='255'
+                  autocomplete='off'
+                )
 
           section.profile-section(aria-labelledby='profile-preferences-title')
             header.profile-section__header
@@ -532,7 +545,7 @@ export default {
     dirty (): boolean {
       return this.changedFields.length > 0
     },
-    draftIssues (): Partial<Record<'name' | 'handle', ProfileDraftIssue>> {
+    draftIssues (): Partial<Record<'name' | 'handle' | 'pronouns', ProfileDraftIssue>> {
       return this.user ? profileDraftIssues(this.user) : {}
     },
     issueCount (): number {
@@ -699,11 +712,12 @@ export default {
         wikiStore.stopLoading('profile-refresh')
       }
     },
-    issueMessage (field: 'name' | 'handle'): string[] {
+    issueMessage (field: 'name' | 'handle' | 'pronouns'): string[] {
       const issue = this.draftIssues[field]
       if (!issue) return []
       if (issue === 'nameRequired') return [this.$t('profile:issues.nameRequired', { defaultValue: 'Enter a display name.' })]
       if (issue === 'nameTooLong') return [this.$t('profile:issues.nameTooLong', { defaultValue: 'Use 255 characters or fewer.' })]
+      if (issue === 'pronounsTooLong') return [this.$t('profile:issues.pronounsTooLong', { defaultValue: 'Use 255 characters or fewer.' })]
       return [this.$t('profile:issues.handleInvalid', { defaultValue: 'Use 3–32 letters, numbers, underscores or hyphens.' })]
     },
     /**
@@ -748,7 +762,7 @@ export default {
       event.preventDefault()
       event.returnValue = ''
     },
-    focusField (field: 'name' | 'handle') {
+    focusField (field: 'name' | 'handle' | 'pronouns') {
       this.$nextTick(() => focusComponent(this.$refs[`field-${field}`]))
     },
     openAvatarPicker () {
@@ -829,7 +843,7 @@ export default {
       const generation = this.profileGeneration
       if (!profile || !saved || this.saving || !this.dirty || !this.isProfileCurrent(profile, generation)) return
       if (this.issueCount > 0) {
-        this.focusField(this.draftIssues.name ? 'name' : 'handle')
+        this.focusField(this.draftIssues.name ? 'name' : this.draftIssues.handle ? 'handle' : 'pronouns')
         return
       }
       const draft = snapshotProfileDraft(profile)
@@ -846,6 +860,7 @@ export default {
             handle: draft.handle,
             location: draft.location,
             jobTitle: draft.jobTitle,
+            pronouns: draft.pronouns,
             timezone: draft.timezone,
             dateFormat: draft.dateFormat,
             timeFormat: draft.timeFormat,
@@ -857,7 +872,8 @@ export default {
             name: draft.name.trim(),
             handle: draft.handle.trim().toLowerCase(),
             location: draft.location.trim(),
-            jobTitle: draft.jobTitle.trim()
+            jobTitle: draft.jobTitle.trim(),
+            pronouns: draft.pronouns.trim()
           }
           Object.assign(profile, normalized)
           committed = {

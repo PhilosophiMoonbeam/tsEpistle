@@ -250,6 +250,17 @@ export const hydrateContentExtensions = (root: ParentNode, fetchImpl: FetchLike 
       },
       () => {}
     )
+  const linksGrids = [...root.querySelectorAll<HTMLElement>('.content-extension--links-grid')]
+  if (linksGrids.length > 0)
+    void import('./content-extension-runtimes/links-grid.ts').then(
+      ({ hydrateLinksGrid }) => {
+        if (controller.signal.aborted) return
+        for (const grid of linksGrids) {
+          if (isWithinRoot(root, grid)) cleanups.push(hydrateLinksGrid(grid))
+        }
+      },
+      () => {}
+    )
   const indexes = [...root.querySelectorAll<HTMLElement>('.content-extension--index')]
   if (indexes.length > 0)
     void import('./content-extension-runtimes/index.ts').then(

@@ -2,20 +2,20 @@
 section.account-notifications(:aria-labelledby='section === `all` ? ids.title : undefined')
   h2.account-notifications__title(v-if='section === `all`', :id='ids.title') {{$t('common:accountNotifications.title')}}
   section.account-notifications__group(v-if='section !== `approvals`', :aria-labelledby='ids.changes')
-    h3.account-notifications__heading(:id='ids.changes') {{$t('common:accountNotifications.pageChanges')}}
-    p.account-notifications__description {{$t('common:accountNotifications.recentPageChanges')}}
-    .account-notifications__state(v-if='store.watchesLoading', role='status') {{$t('common:accountNotifications.loadingPageChanges')}}
+    h3.account-notifications__heading(:id='ids.changes') {{$t('common:accountNotifications.activity', { defaultValue: 'Page and discussion activity' })}}
+    p.account-notifications__description {{$t('common:accountNotifications.recentActivity', { defaultValue: 'Recent authorized page changes, replies and mentions.' })}}
+    .account-notifications__state(v-if='store.watchesLoading', role='status') {{$t('common:accountNotifications.loadingActivity', { defaultValue: 'Loading activity…' })}}
     .account-notifications__state.account-notifications__state--error(v-if='store.watchesError', role='alert')
       span {{ store.watchesError }}
       v-btn(size='small', variant='text', color='primary', @click='retryWatches') {{ watchErrorAction($t) }}
     .account-notifications__state(v-if='!store.watchesLoading && !store.watchesError && !notificationIdentityReady()', role='status')
-      span {{$t('common:accountNotifications.checkingPageChanges')}}
+      span {{$t('common:accountNotifications.checkingActivity', { defaultValue: 'Activity status is not yet verified.' })}}
       v-btn(size='small', variant='text', color='primary', @click='retryWatches') {{$t('common:actions.refresh')}}
     .account-notifications__state(v-if='!store.watchesLoading && !store.watchesError && notificationIdentityReady() && store.watches.length === 0 && store.watchesNextCursor !== null', role='status')
-      span {{$t('common:accountNotifications.morePageChangesMayBeAvailable')}}
-      v-btn(size='small', variant='text', color='primary', :aria-label='$t("common:accountNotifications.checkMorePageChanges")', :disabled='store.watchesLoading', @click='loadMoreWatches') {{$t('common:accountNotifications.checkMorePageChanges')}}
-    .account-notifications__state(v-if='!store.watchesLoading && !store.watchesError && notificationIdentityReady() && store.watches.length === 0 && store.watchesNextCursor === null', role='status') {{$t('common:accountNotifications.noRecentPageChanges')}}
-    v-list.account-notifications__list(v-if='store.watches.length > 0', lines='two', density='compact')
+      span {{$t('common:accountNotifications.moreActivityMayBeAvailable', { defaultValue: 'More activity may be available.' })}}
+      v-btn(size='small', variant='text', color='primary', :disabled='store.watchesLoading', @click='loadMoreWatches') {{$t('common:accountNotifications.checkMoreActivity', { defaultValue: 'Check more activity' })}}
+    .account-notifications__state(v-if='!store.watchesLoading && !store.watchesError && notificationIdentityReady() && store.watches.length === 0 && store.watchesNextCursor === null', role='status') {{$t('common:accountNotifications.noRecentActivity', { defaultValue: 'No recent activity to show.' })}}
+    v-list.account-notifications__list(v-if='notificationIdentityReady() && store.watches.length > 0', lines='two', density='compact')
       v-list-item(
         v-for='item in store.watches'
         :key='item.id'
@@ -31,7 +31,7 @@ section.account-notifications(:aria-labelledby='section === `all` ? ids.title : 
         template(v-slot:append='{}')
           span.account-notifications__unread-state(v-if='isUnread(item)') {{$t('common:accountNotifications.unread')}}
     .account-notifications__state(v-if='!store.watchesLoading && !store.watchesError && notificationIdentityReady() && store.watches.length > 0 && store.watchesNextCursor !== null', role='status')
-      v-btn(size='small', variant='text', color='primary', :aria-label='$t("common:accountNotifications.loadMorePageChanges")', :disabled='store.watchesLoading', @click='loadMoreWatches') {{$t('common:accountNotifications.loadMorePageChanges')}}
+      v-btn(size='small', variant='text', color='primary', :disabled='store.watchesLoading', @click='loadMoreWatches') {{$t('common:accountNotifications.loadMoreActivity', { defaultValue: 'Load more activity' })}}
 
   v-divider.my-2(v-if='section === `all`')
 
@@ -48,7 +48,7 @@ section.account-notifications(:aria-labelledby='section === `all` ? ids.title : 
     .account-notifications__state(v-if='!store.approvalsLoading && !store.approvalsError && notificationIdentityReady() && store.approvals.length === 0 && store.approvalsNextCursor !== null', role='status')
       span {{$t('common:accountNotifications.moreApprovalsMayBeAvailable')}}
       v-btn(size='small', variant='text', color='primary', :aria-label='$t("common:accountNotifications.checkMoreApprovals")', :disabled='store.approvalsLoading', @click='loadMoreApprovals') {{$t('common:accountNotifications.checkMoreApprovals')}}
-    v-list.account-notifications__list(v-if='store.approvals.length > 0', lines='two', density='compact')
+    v-list.account-notifications__list(v-if='notificationIdentityReady() && store.approvals.length > 0', lines='two', density='compact')
       v-list-item(
         v-for='item in store.approvals'
         :key='item.id'
@@ -62,8 +62,10 @@ section.account-notifications(:aria-labelledby='section === `all` ? ids.title : 
 </template>
 
 <script setup lang='ts'>
-import { useId } from 'vue'
-import { pageHref } from '../../helpers/admin-pages.ts'
+import { onBeforeUnmount, onMounted, useId, watch } from 'vue'
+import { notificationPageHref } from '../../helpers/site-notifications-api.ts'
+import { wikiStore } from '../../store/index.ts'
+import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
@@ -80,11 +82,30 @@ const ids = {
 
 const store = useSiteNotificationsStore()
 const pendingWatchReads = new Set<string>()
+let identityGeneration = 0
+let disposed = false
+const invalidatePendingNavigation = (): void => {
+  identityGeneration += 1
+  pendingWatchReads.clear()
+}
+const invalidateSession = (): void => {
+  invalidatePendingNavigation()
+  store.reset()
+  store.identityStale = true
+}
+watch(() => [store.ownerId, store.identityStale, wikiStore.user.id, wikiStore.user.authenticated, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch], invalidatePendingNavigation, { flush: 'sync' })
+onMounted(() => window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, invalidateSession))
+onBeforeUnmount(() => {
+  disposed = true
+  invalidatePendingNavigation()
+  window.removeEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, invalidateSession)
+})
 
-type NotificationPageItem = Pick<PageWatchNotification | PageApprovalInboxItem, 'visibility' | 'localeCode' | 'path'>
+type NotificationPageItem = Pick<PageWatchNotification | PageApprovalInboxItem, 'visibility' | 'localeCode' | 'path'> & { commentId?: number | null }
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
-const notificationIdentityReady = (): boolean => store.ownerId !== null && !store.identityStale
+const notificationIdentityReady = (): boolean => store.ownerId !== null && !store.identityStale &&
+  wikiStore.user.authenticated && wikiStore.user.id === store.ownerId
 
 const retryWatches = (): void => {
   void store.refreshWatches()
@@ -112,7 +133,7 @@ const loadMoreApprovals = (): void => {
 }
 
 const pageUrl = (item: NotificationPageItem): string => {
-  return pageHref({ visibility: item.visibility, locale: item.localeCode, path: item.path })
+  return notificationPageHref(item)
 }
 
 const isUnread = (item: PageWatchNotification): boolean => item.readAt === null
@@ -135,6 +156,14 @@ const watchEventKeys: Record<string, string> = {
 const watchActor = (item: PageWatchNotification, t: Translate): string => item.actorName.trim() || t('common:accountNotifications.someone')
 
 const watchAction = (item: PageWatchNotification, t: Translate): string => {
+  const categoryLabels = {
+    pageCreated: 'Page created',
+    pageDeleted: 'Page deleted',
+    watchedPageComment: 'Comment on a watched page',
+    commentReply: 'Reply in your discussion',
+    mention: 'You were mentioned'
+  }
+  if (item.category !== 'pageWatch') return t(`common:accountNotifications.category.${item.category}`, { defaultValue: categoryLabels[item.category] })
   return t(watchEventKeys[item.eventType] ?? 'common:page.watchEventChanged', { actor: watchActor(item, t) })
 }
 
@@ -174,10 +203,15 @@ const isOrdinaryActivation = (event: MouseEvent | KeyboardEvent): boolean => {
 }
 
 const openWatchPage = (event: MouseEvent | KeyboardEvent, item: PageWatchNotification): void => {
+  if (!notificationIdentityReady()) {
+    event.preventDefault()
+    return
+  }
   if (!isOrdinaryActivation(event)) return
   event.preventDefault()
 
   const ownerId = store.ownerId
+  const requestGeneration = identityGeneration
   if (ownerId === null || store.identityStale) return
   const destination = pageUrl(item)
   if (!isUnread(item)) {
@@ -193,16 +227,19 @@ const openWatchPage = (event: MouseEvent | KeyboardEvent, item: PageWatchNotific
     } catch {
       // The store normally handles read failures; preserve navigation for this owner if it does not.
     } finally {
-      pendingWatchReads.delete(item.id)
-      if (store.ownerId === ownerId && !store.identityStale) navigateToWikiPage(destination)
+      if (requestGeneration === identityGeneration) pendingWatchReads.delete(item.id)
+      if (!disposed && requestGeneration === identityGeneration && store.ownerId === ownerId && notificationIdentityReady()) navigateToWikiPage(destination)
     }
   })()
 }
 
 const openApprovalPage = (event: MouseEvent | KeyboardEvent, item: PageApprovalInboxItem): void => {
+  if (!notificationIdentityReady()) {
+    event.preventDefault()
+    return
+  }
   if (!isOrdinaryActivation(event)) return
   event.preventDefault()
-  if (!notificationIdentityReady()) return
   navigateToWikiPage(pageUrl(item))
 }
 </script>

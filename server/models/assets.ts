@@ -19,7 +19,6 @@ import {
   type AssetBrandingAnalysisReservation,
   releaseAssetBrandingAnalysis,
   reserveAssetBrandingAnalysis,
-  stripAssetBrandingMetadata,
   stripAssetBrandingMetadataRecord
 } from '../helpers/asset-branding.ts'
 import type { AssetBrandingMetadata } from '../../shared/page-branding.ts'
@@ -28,6 +27,8 @@ import type { StorageAssetIdentity, StorageLocalLocation } from '../modules/type
 import { isStorageInternalPath, isStorageReservedPath } from '../modules/storage/internal-path.ts'
 import { openStorageRoot, type StorageFileHandle, type StorageRootHandle } from '../modules/storage/local-filesystem.ts'
 import { assertAssetLocationAssetSettled, assertAssetLocationReservations, lockAssetLocation, withAssetLocationLocks } from '../helpers/asset-location-lock.ts'
+import { enqueueAssetStorageMutation } from '../jobs/storage-mutations.ts'
+import { assertNoPublicStoragePageAtPath } from '../helpers/storage-path-admission.ts'
 
 const uploadFlights = new Map<string, Promise<void>>()
 
@@ -59,7 +60,7 @@ interface UploadOptions {
   mode: string
   user: AssetUser
   maxBytes?: number
-  skipStorage?: boolean
+  skipStorage?: boolean | undefined
 }
 
 interface AssetDataRow {
@@ -343,7 +344,8 @@ export default class Asset extends Model {
             const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
             let reservation: AssetBrandingAnalysisReservation | undefined
             try {
-              const persisted = await wiki.models.knex.transaction(async transaction => {
+              await wiki.models.knex.transaction(async transaction => {
+                await assertNoPublicStoragePageAtPath(transaction, opts.assetPath)
                 await lockAssetLocation(transaction, opts.assetPath)
                 await assertAssetLocationReservations(transaction, [opts.assetPath])
                 const current = (await transaction('assets').where({ hash: fileHash }).forUpdate().first('id', 'metadata')) as
@@ -360,14 +362,19 @@ export default class Asset extends Model {
                   .insert(insertedRow)
                   .onConflict('hash')
                   .merge(updatedRow)
-                  .returning('*')) as Asset
+                  .returning('id')) as Asset
                 const metadata = stripAssetBrandingMetadataRecord(current?.metadata)
                 if (branding) metadata.branding = branding
                 await transaction('assets')
                   .where({ id: persistedAsset.id })
                   .update({ metadata: JSON.stringify(metadata) })
                 await transaction('assetData').insert({ id: persistedAsset.id, data: fileBuffer }).onConflict('id').merge({ data: fileBuffer })
-                return { asset: persistedAsset }
+                await enqueueAssetStorageMutation(transaction, {
+                  assetId: persistedAsset.id,
+                  paths: [opts.assetPath],
+                  author: opts.user,
+                  skipStorage: opts.skipStorage
+                })
               })
               await assertHeld?.()
 
@@ -376,20 +383,6 @@ export default class Asset extends Model {
               })
               if (opts.mode === 'upload') await source.root.removeFile(source.relativePath)
 
-              if (!opts.skipStorage) {
-                await wiki.models.storage.assetEvent({
-                  event: 'uploaded',
-                  asset: {
-                    ...persisted.asset,
-                    metadata: stripAssetBrandingMetadata(persisted.asset.metadata),
-                    path: await persisted.asset.getAssetPath(),
-                    data: fileBuffer,
-                    authorId: opts.user.id,
-                    authorName: opts.user.name,
-                    authorEmail: opts.user.email
-                  }
-                })
-              }
               await assertHeld?.()
             } finally {
               releaseAssetBrandingAnalysis(reservation)
@@ -546,7 +539,6 @@ const wiki = WIKI as unknown as {
     assetFolders: typeof AssetFolder
     knex: Knex
     storage: {
-      assetEvent: (event: { event: string; asset: Record<string, unknown> }) => Promise<void>
       getLocalLocations: (event: { asset: StorageAssetIdentity }) => Promise<Array<{ location: StorageLocalLocation; key: string }>>
     }
   }

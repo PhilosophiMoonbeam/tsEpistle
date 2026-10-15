@@ -240,6 +240,7 @@ make_plan() {
       case "$probe" in
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
+        native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-user-pronouns-column|native-links-grid-registration) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -643,6 +644,141 @@ verify_postconditions() {
           [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result legacy operations without preserved copies)"
         fi
         ;;
+      native-glossary-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,max_length,nullable) AS (VALUES
+            ('glossaryTerms','id','integer',NULL,'NO'),
+            ('glossaryTerms','locale','character varying',35,'NO'),
+            ('glossaryTerms','term','character varying',255,'NO'),
+            ('glossaryTerms','expansion','character varying',255,'NO'),
+            ('glossaryTerms','definition','text',NULL,'NO'),
+            ('glossaryTerms','category','character varying',255,'NO'),
+            ('glossaryTerms','documentationPageId','integer',NULL,'YES'),
+            ('glossaryTerms','documentationLabel','character varying',255,'NO'),
+            ('glossaryTerms','references','jsonb',NULL,'NO'),
+            ('glossaryTerms','caseSensitive','boolean',NULL,'NO'),
+            ('glossaryTerms','autoLink','boolean',NULL,'NO'),
+            ('glossaryTerms','revision','integer',NULL,'NO'),
+            ('glossaryTerms','createdAt','timestamp with time zone',NULL,'NO'),
+            ('glossaryTerms','updatedAt','timestamp with time zone',NULL,'NO'),
+            ('glossaryNames','locale','character varying',35,'NO'),
+            ('glossaryNames','key','text',NULL,'NO'),
+            ('glossaryNames','name','character varying',255,'NO'),
+            ('glossaryNames','termId','integer',NULL,'NO'),
+            ('glossaryNames','isAlias','boolean',NULL,'NO'),
+            ('glossaryTermRelations','locale','character varying',35,'NO'),
+            ('glossaryTermRelations','leftId','integer',NULL,'NO'),
+            ('glossaryTermRelations','rightId','integer',NULL,'NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length AND c.is_nullable=e.nullable;")"
+        [[ "$result" == 22 ]] || die "Postcondition failed: $probe ($result/22 columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,name,kind) AS (VALUES
+            ('glossaryTerms','glossary_terms_id_locale_unique','u'),
+            ('glossaryTerms','glossary_terms_revision_positive','c'),
+            ('glossaryNames','glossary_names_locale_key_unique','p'),
+            ('glossaryTermRelations','glossary_relation_order','c')
+          ) SELECT count(*) FROM expected e JOIN pg_class t ON t.relname=e.table_name AND t.relnamespace=current_schema()::regnamespace
+            JOIN pg_constraint c ON c.conrelid=t.oid AND c.conname=e.name AND c.contype::text=e.kind AND c.convalidated;")"
+        [[ "$result" == 4 ]] || die "Postcondition failed: $probe ($result/4 namespace and revision constraints)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND c.contype='f' AND c.convalidated AND (
+            (t.relname='glossaryTerms' AND c.confrelid=to_regclass('pages') AND c.confdeltype='n' AND cardinality(c.conkey)=1) OR
+            (t.relname IN ('glossaryNames','glossaryTermRelations') AND c.confrelid=to_regclass('\"glossaryTerms\"') AND c.confdeltype='c' AND cardinality(c.conkey)=2)
+          );")"
+        [[ "$result" == 4 ]] || die "Postcondition failed: $probe ($result/4 page and locale relation foreign keys)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class idx ON idx.oid=i.indexrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='glossaryNames'
+            AND idx.relname='glossary_names_one_canonical' AND i.indisunique AND i.indisvalid AND i.indnkeyatts=1
+            AND replace(pg_get_indexdef(idx.oid,1,true),'\"','')='termId'
+            AND replace(pg_get_expr(i.indpred,i.indrelid),'\"','')='(NOT isAlias)';")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (canonical name uniqueness)"
+        ;;
+      native-discussion-annotations-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(column_name,data_type,nullable) AS (VALUES
+            ('id','integer','NO'),('commentId','integer','NO'),('position','integer','NO'),
+            ('note','text','NO'),('anchor','jsonb','NO'),('revision','integer','NO'),
+            ('resolvedAt','timestamp with time zone','YES'),('resolvedById','integer','YES'),
+            ('createdAt','timestamp with time zone','NO'),('updatedAt','timestamp with time zone','NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name='commentAnnotations' AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable;")"
+        [[ "$result" == 10 ]] || die "Postcondition failed: $probe ($result/10 columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='commentAnnotations' AND c.convalidated AND (
+            (c.contype='u' AND c.conname='comment_annotations_position_unique') OR
+            (c.contype='c' AND c.conname IN ('comment_annotations_position_check','comment_annotations_revision_check','comment_annotations_note_check','comment_annotations_anchor_check')) OR
+            (c.contype='f' AND c.confrelid=to_regclass('comments') AND c.confdeltype='c') OR
+            (c.contype='f' AND c.confrelid=to_regclass('users') AND c.confdeltype='n') OR c.contype='p'
+          );")"
+        [[ "$result" == 8 ]] || die "Postcondition failed: $probe ($result/8 annotation constraints)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class idx ON idx.oid=i.indexrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='comments' AND idx.relname='comments_author_recent_order'
+            AND i.indisvalid AND i.indnkeyatts=3
+            AND replace(pg_get_indexdef(idx.oid,1,true),'\"','')='authorId'
+            AND replace(pg_get_indexdef(idx.oid,2,true),'\"','')='createdAt'
+            AND replace(pg_get_indexdef(idx.oid,3,true),'\"','')='id';")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (owner contribution ordering index)"
+        ;;
+      native-discussion-notifications-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,max_length,nullable) AS (VALUES
+            ('userNotificationPreferences','userId','integer',NULL,'NO'),
+            ('userNotificationPreferences','category','character varying',32,'NO'),
+            ('userNotificationPreferences','inAppEnabled','boolean',NULL,'NO'),
+            ('userNotificationPreferences','emailEnabled','boolean',NULL,'NO'),
+            ('userNotificationPreferences','updatedAt','timestamp with time zone',NULL,'NO'),
+            ('pageWatchNotifications','category','character varying',32,'YES'),
+            ('pageWatchNotifications','commentId','integer',NULL,'YES')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length AND c.is_nullable=e.nullable;")"
+        [[ "$result" == 7 ]] || die "Postcondition failed: $probe ($result/7 preference and routing columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='userNotificationPreferences'
+            AND column_name IN ('inAppEnabled','emailEnabled') AND column_default='false';")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (new notification channels default off)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='userNotificationPreferences' AND c.convalidated AND (
+            (c.contype='p' AND c.conname='user_notification_preferences_primary' AND cardinality(c.conkey)=2) OR
+            (c.contype='f' AND c.confrelid=to_regclass('users') AND c.confdeltype='c')
+          );")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 owner and category constraints)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class idx ON idx.oid=i.indexrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='userNotificationPreferences'
+            AND idx.relname='user_notification_preferences_audience_lookup' AND i.indisvalid AND i.indnkeyatts=2
+            AND replace(pg_get_indexdef(idx.oid,1,true),'\"','')='category'
+            AND replace(pg_get_indexdef(idx.oid,2,true),'\"','')='userId';")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (bounded audience lookup index)"
+        ;;
+      native-user-pronouns-column)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='users'
+            AND column_name='pronouns' AND data_type='character varying' AND character_maximum_length=255
+            AND is_nullable='NO' AND column_default='''''::character varying';")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (bounded non-null profile column with empty default)"
+        ;;
+      native-links-grid-registration)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='contentExtensions'
+            AND ((column_name='key' AND data_type='character varying' AND is_nullable='NO')
+              OR (column_name='version' AND data_type='integer' AND is_nullable='NO')
+              OR (column_name='isEnabled' AND data_type='boolean' AND is_nullable='NO')
+              OR (column_name='updatedAt' AND data_type='timestamp with time zone' AND is_nullable='NO')
+              OR (column_name='updatedBy' AND data_type='integer' AND is_nullable='YES'));")"
+        [[ "$result" == 5 ]] || die "Postcondition failed: $probe ($result/5 registry columns)"
+        # Existing registry rows retain administrator-managed enablement and version state.
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"contentExtensions\" WHERE key='links-grid';")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (native extension registration)"
+        ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac
   done < <(jq -r --arg phase "$phase" --slurpfile registry "$REPO_ROOT/$CONTRACTS_FILE" \
@@ -651,8 +787,18 @@ verify_postconditions() {
 
 table_hash() {
   local table="$1" sql_table="$1"; [[ "$table" == pageHistory ]] && sql_table='"pageHistory"'
-  if [[ "$table" == users ]] && jq -e '.pendingMigrations | index("tsepistle-000048-scarlett-native-adaptations.js") != null' "$PLAN_FILE" >/dev/null; then
-    psql_live -Atc "COPY (SELECT (to_jsonb(t) - ARRAY['reduceMotion','underlineLinks','contentTextSize','communicationLocale'])::text FROM users t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1
+  if [[ "$table" == users ]]; then
+    local excluded_user_columns=()
+    if jq -e '.pendingMigrations | index("tsepistle-000048-scarlett-native-adaptations.js") != null' "$PLAN_FILE" >/dev/null; then
+      excluded_user_columns+=("'reduceMotion'" "'underlineLinks'" "'contentTextSize'" "'communicationLocale'")
+    fi
+    if jq -e '.pendingMigrations | index("tsepistle-000059-user-pronouns.js") != null' "$PLAN_FILE" >/dev/null; then
+      excluded_user_columns+=("'pronouns'")
+    fi
+    # Additive columns change row JSON, not the pre-existing account data being fenced.
+    local excluded_columns
+    excluded_columns="$(IFS=,; printf '%s' "${excluded_user_columns[*]}")"
+    psql_live -Atc "COPY (SELECT (to_jsonb(t) - ARRAY[$excluded_columns]::text[])::text FROM users t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1
     return
   fi
   psql_live -Atc "COPY (SELECT row_to_json(t)::text FROM $sql_table t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1

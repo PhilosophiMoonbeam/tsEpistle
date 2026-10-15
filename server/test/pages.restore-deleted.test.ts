@@ -37,10 +37,16 @@ let db: Knex
 let Page: typeof PageModel
 let PageHistory: typeof PageHistoryModel
 let pageChanged: ReturnType<typeof vi.fn>
-let pageEvent: ReturnType<typeof vi.fn>
 let outboundEmit: ReturnType<typeof vi.fn>
 
 const installSchema = async (): Promise<void> => {
+  await db.schema.createTable('storage', table => {
+    table.string('key').primary()
+    table.boolean('isEnabled').notNullable()
+    table.string('mode').notNullable()
+    table.string('syncInterval').notNullable()
+    table.json('config').notNullable()
+  })
   await db.schema.createTable('users', table => {
     table.integer('id').primary()
     table.text('email').notNullable()
@@ -177,12 +183,14 @@ const installSchema = async (): Promise<void> => {
   })
 }
 
-const insertDeletedSnapshot = async (options: {
-  readonly visibility?: 'public' | 'private'
-  readonly ownerId?: number | null
-  readonly securityContext?: unknown
-  readonly withRecoveryRow?: boolean
-} = {}): Promise<void> => {
+const insertDeletedSnapshot = async (
+  options: {
+    readonly visibility?: 'public' | 'private'
+    readonly ownerId?: number | null
+    readonly securityContext?: unknown
+    readonly withRecoveryRow?: boolean
+  } = {}
+): Promise<void> => {
   const visibility = options.visibility ?? 'private'
   const ownerId = options.ownerId === undefined ? (visibility === 'private' ? formerOwner.id : null) : options.ownerId
   await db('pageHistory').insert({
@@ -210,13 +218,14 @@ const insertDeletedSnapshot = async (options: {
     createdAt: '2025-01-02T03:04:05.000Z'
   })
   if (options.withRecoveryRow === false) return
-  const securityContext = options.securityContext === undefined
-    ? {
-        version: 1,
-        former: { path: 'guides/identity', localeCode: 'en', visibility, ownerId, tags: [] },
-        protection: protectedVerifier
-      }
-    : options.securityContext
+  const securityContext =
+    options.securityContext === undefined
+      ? {
+          version: 1,
+          former: { path: 'guides/identity', localeCode: 'en', visibility, ownerId, tags: [] },
+          protection: protectedVerifier
+        }
+      : options.securityContext
   await db('deletedPageRecovery').insert({
     pageId: 41,
     deletionVersionId: 700,
@@ -311,7 +320,6 @@ beforeEach(async () => {
   db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
   await installSchema()
   pageChanged = vi.fn(async () => undefined)
-  pageEvent = vi.fn(async () => undefined)
   outboundEmit = vi.fn(() => undefined)
   const checkAccess = vi.fn().mockReturnValue(true)
   const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
@@ -327,8 +335,11 @@ beforeEach(async () => {
       knex: db,
       pages: {},
       pageHistory: {},
-      tags: { associateTags: vi.fn(async ({ page }: { page: { tags?: unknown[] } }) => { page.tags = [] }) },
-      storage: { pageEvent }
+      tags: {
+        associateTags: vi.fn(async ({ page }: { page: { tags?: unknown[] } }) => {
+          page.tags = []
+        })
+      }
     }
   }
   Page = (await vi.importFresh('../models/pages.ts', import.meta.url)).default
@@ -339,9 +350,10 @@ beforeEach(async () => {
   models.pages = Page
   models.pageHistory = PageHistory
   vi.spyOn(Page, 'getPageFromDb').mockImplementation(async input => {
-    const query = typeof input === 'number'
-      ? db('pages').where({ id: input })
-      : db('pages').where({ path: input.path, localeCode: input.locale, visibility: input.visibility, ownerId: input.ownerId })
+    const query =
+      typeof input === 'number'
+        ? db('pages').where({ id: input })
+        : db('pages').where({ path: input.path, localeCode: input.locale, visibility: input.visibility, ownerId: input.ownerId })
     const row = await query.first()
     if (!row) return undefined
     const extra = typeof row.extra === 'string' ? JSON.parse(row.extra) : row.extra
@@ -364,7 +376,14 @@ describe('deleted page restore writer', () => {
     await insertDeletedSnapshot()
     await seedPreviousEffect()
     await db('pageAccessPasswords').insert({ pageId: 41, passwordHash: 'old-hash', version: 1, updatedBy: 7, updatedAt: '2025-01-02T03:04:05.000Z' })
-    await db('pageUnlockGrants').insert({ id: 'stale-grant', pageId: 41, sessionId: 'old-session', userId: 7, passwordVersion: 1, expiresAt: '2025-01-03T03:04:05.000Z' })
+    await db('pageUnlockGrants').insert({
+      id: 'stale-grant',
+      pageId: 41,
+      sessionId: 'old-session',
+      userId: 7,
+      passwordVersion: 1,
+      expiresAt: '2025-01-03T03:04:05.000Z'
+    })
     await db('users').insert([
       { id: admin.id, email: admin.email, isActive: true, isSystem: false },
       { id: formerOwner.id, email: formerOwner.email, isActive: true, isSystem: false }
@@ -402,13 +421,15 @@ describe('deleted page restore writer', () => {
   it('rejects a destination that collides with an asset without making recovery writes', async () => {
     await insertDeletedSnapshot({ visibility: 'public', ownerId: null })
     await seedPreviousEffect()
-    await db('deletedPageRecovery').where({ pageId: 41, deletionVersionId: 700 }).update({
-      securityContext: JSON.stringify({
-        version: 1,
-        former: { path: 'guides/identity', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] },
-        protection: null
+    await db('deletedPageRecovery')
+      .where({ pageId: 41, deletionVersionId: 700 })
+      .update({
+        securityContext: JSON.stringify({
+          version: 1,
+          former: { path: 'guides/identity', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] },
+          protection: null
+        })
       })
-    })
     await db('users').insert({ id: admin.id, email: admin.email, isActive: true, isSystem: false })
     await db('locales').insert({ code: 'en' })
     await db('assetFolders').insert([
@@ -418,14 +439,18 @@ describe('deleted page restore writer', () => {
     await db('assets').insert({ filename: 'identity.md', folderId: 2 })
     const before = await snapshot()
 
-    await expect(Page.restoreDeletedPage(restoreOptions({
-      destination: { path: 'restored/identity', localeCode: 'en' },
-      securityContext: {
-        version: 1,
-        former: { path: 'guides/identity', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] },
-        protection: null
-      }
-    }) as never)).rejects.toMatchObject({
+    await expect(
+      Page.restoreDeletedPage(
+        restoreOptions({
+          destination: { path: 'restored/identity', localeCode: 'en' },
+          securityContext: {
+            version: 1,
+            former: { path: 'guides/identity', localeCode: 'en', visibility: 'public', ownerId: null, tags: [] },
+            protection: null
+          }
+        }) as never
+      )
+    ).rejects.toMatchObject({
       status: 409,
       name: 'PAGE_RECOVERY_COLLISION'
     })
@@ -448,7 +473,14 @@ describe('deleted page restore writer', () => {
       updatedBy: 7,
       updatedAt: '2025-01-02T03:04:05.000Z'
     })
-    await db('pageUnlockGrants').insert({ id: 'stale-grant', pageId: 41, sessionId: 'old-session', userId: 7, passwordVersion: 1, expiresAt: '2025-01-03T03:04:05.000Z' })
+    await db('pageUnlockGrants').insert({
+      id: 'stale-grant',
+      pageId: 41,
+      sessionId: 'old-session',
+      userId: 7,
+      passwordVersion: 1,
+      expiresAt: '2025-01-03T03:04:05.000Z'
+    })
 
     await expect(Page.restoreDeletedPage(restoreOptions() as never)).resolves.toEqual({ pageId: 41, sourceRevision: '9', quarantined: false })
 
@@ -477,9 +509,14 @@ describe('deleted page restore writer', () => {
     const effects = await db('pageMutationOutbox').where({ pageId: 41, sourceRevision: 9 }).orderBy('effectKind')
     expect(effects.map(effect => effect.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
     expect(effects.map(effect => JSON.parse(effect.payload))).toEqual(
-      expect.arrayContaining([expect.objectContaining({ sourceRevision: '9', desiredState: 'present', location: { locale: 'en', path: 'restored/identity', visibility: 'private', ownerId: formerOwner.id } })])
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceRevision: '9',
+          desiredState: 'present',
+          location: { locale: 'en', path: 'restored/identity', visibility: 'private', ownerId: formerOwner.id }
+        })
+      ])
     )
-    expect(pageEvent).not.toHaveBeenCalled()
     expect(pageChanged).toHaveBeenCalledWith(41, true)
   })
 
@@ -489,11 +526,15 @@ describe('deleted page restore writer', () => {
     await db('users').insert({ id: admin.id, email: admin.email, isActive: true, isSystem: false })
     await db('locales').insert({ code: 'en' })
 
-    await expect(Page.restoreDeletedPage(restoreOptions({
-      securityContext: null,
-      legacyQuarantine: true,
-      expectedDeletionRevision: '8'
-    }) as never)).resolves.toEqual({ pageId: 41, sourceRevision: '9', quarantined: true })
+    await expect(
+      Page.restoreDeletedPage(
+        restoreOptions({
+          securityContext: null,
+          legacyQuarantine: true,
+          expectedDeletionRevision: '8'
+        }) as never
+      )
+    ).resolves.toEqual({ pageId: 41, sourceRevision: '9', quarantined: true })
 
     const restoredPage = await db('pages').where({ id: 41 }).first()
     expect(restoredPage).toMatchObject({ id: 41, visibility: 'private', ownerId: admin.id, isPublished: 0, sourceRevision: 9 })

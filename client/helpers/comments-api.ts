@@ -1,5 +1,7 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
+import type { DiscussionAnnotation, DiscussionAnnotationInput } from '../../shared/discussion-annotations.ts'
+import { isDiscussionAnnotation } from './discussion-annotations-api.ts'
 
 type JsonHeaders = {
   get: (name: string) => string | null
@@ -31,14 +33,7 @@ export class CommentApiError extends Error {
   readonly operation: CommentOperation
   readonly cause: unknown
 
-  constructor(
-    message: string,
-    status: number | null,
-    kind: CommentOutcomeKind,
-    operation: CommentOperation,
-    outcome: CommentRequestOutcome,
-    cause?: unknown
-  ) {
+  constructor(message: string, status: number | null, kind: CommentOutcomeKind, operation: CommentOperation, outcome: CommentRequestOutcome, cause?: unknown) {
     super(message)
     this.name = 'CommentApiError'
     this.status = status
@@ -63,6 +58,9 @@ export type CommentRow = {
   authorHandle: string
   createdAt: string
   updatedAt: string
+  authorId?: number
+  pageId?: number
+  annotations: DiscussionAnnotation[]
 }
 
 export type CommentDetails = {
@@ -76,6 +74,7 @@ export type CommentCreateInput = {
   content: string
   guestName: string
   guestEmail: string
+  annotations?: DiscussionAnnotationInput[]
 }
 export type MentionCandidate = {
   id: number
@@ -100,7 +99,12 @@ function normalizeCommentRow(payload: unknown, fallbackMessage: string): Comment
     typeof payload.createdAt !== 'string' ||
     typeof payload.authorHandle !== 'string' ||
     typeof payload.updatedAt !== 'string' ||
-    ('content' in payload && typeof payload.content !== 'string')
+    ('content' in payload && typeof payload.content !== 'string') ||
+    !Array.isArray(payload.annotations) ||
+    payload.annotations.length > 8 ||
+    !payload.annotations.every(isDiscussionAnnotation) ||
+    ('authorId' in payload && (typeof payload.authorId !== 'number' || !Number.isSafeInteger(payload.authorId) || payload.authorId < 1)) ||
+    ('pageId' in payload && (typeof payload.pageId !== 'number' || !Number.isSafeInteger(payload.pageId) || payload.pageId < 1))
   ) {
     throw new Error(fallbackMessage)
   }
@@ -108,6 +112,9 @@ function normalizeCommentRow(payload: unknown, fallbackMessage: string): Comment
     id: normalizePositiveInteger(payload.id, fallbackMessage),
     render: payload.render,
     ...(typeof payload.content === 'string' ? { content: payload.content } : {}),
+    ...(typeof payload.authorId === 'number' ? { authorId: payload.authorId } : {}),
+    ...(typeof payload.pageId === 'number' ? { pageId: payload.pageId } : {}),
+    annotations: payload.annotations as DiscussionAnnotation[],
     replyTo: normalizeNonNegativeInteger(payload.replyTo, fallbackMessage),
     authorHandle: payload.authorHandle,
     authorName: payload.authorName,
@@ -121,8 +128,7 @@ function normalizeMessage(payload: unknown, fallbackMessage: string): CommentSav
   return { message: payload.message }
 }
 
-
-const outcomeFor = (operation: CommentOperation): CommentRequestOutcome => operation === 'read' ? 'rejected' : 'unknown'
+const outcomeFor = (operation: CommentOperation): CommentRequestOutcome => (operation === 'read' ? 'rejected' : 'unknown')
 
 const statusKind = (status: number | null): CommentOutcomeKind => {
   if (status === 401) return 'auth'
@@ -138,13 +144,7 @@ const statusKind = (status: number | null): CommentOutcomeKind => {
 const invalidPayload = (fallbackMessage: string, operation: CommentOperation, cause?: unknown, status: number | null = null): CommentApiError =>
   new CommentApiError(fallbackMessage, status, 'server', operation, outcomeFor(operation), cause)
 
-const normalizePayload = <T>(
-  payload: unknown,
-  fallbackMessage: string,
-  operation: CommentOperation,
-  normalize: () => T,
-  status: number | null = null
-): T => {
+const normalizePayload = <T>(payload: unknown, fallbackMessage: string, operation: CommentOperation, normalize: () => T, status: number | null = null): T => {
   try {
     return normalize()
   } catch (error) {
@@ -210,15 +210,16 @@ async function sendJson<T>(
   return requestJson(
     operation,
     fallbackMessage,
-    () => sameOriginJsonFetch(fetchImpl, path, {
-      method,
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    }),
+    () =>
+      sameOriginJsonFetch(fetchImpl, path, {
+        method,
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }),
     normalize
   )
 }
@@ -227,10 +228,11 @@ export async function fetchComments(fetchImpl: FetchImpl, pageId: number, fallba
   return requestJson(
     'read',
     fallbackMessage,
-    () => sameOriginJsonFetch(fetchImpl, `/_api/comments?pageId=${encodeURIComponent(pageId)}`, {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
-    }),
+    () =>
+      sameOriginJsonFetch(fetchImpl, `/_api/comments?pageId=${encodeURIComponent(pageId)}`, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
+      }),
     payload => {
       if (!Array.isArray(payload)) throw new Error(fallbackMessage)
       return payload.map(row => normalizeCommentRow(row, fallbackMessage))
@@ -238,18 +240,34 @@ export async function fetchComments(fetchImpl: FetchImpl, pageId: number, fallba
   )
 }
 
-export async function fetchMentionCandidates(fetchImpl: FetchImpl, pageId: number, query: string, fallbackMessage = 'Mention search response is invalid'): Promise<MentionCandidate[]> {
+export async function fetchMentionCandidates(
+  fetchImpl: FetchImpl,
+  pageId: number,
+  query: string,
+  fallbackMessage = 'Mention search response is invalid'
+): Promise<MentionCandidate[]> {
   return requestJson(
     'read',
     fallbackMessage,
-    () => sameOriginJsonFetch(fetchImpl, `/_api/comments/mentions?pageId=${encodeURIComponent(pageId)}&q=${encodeURIComponent(query)}`, {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
-    }),
+    () =>
+      sameOriginJsonFetch(fetchImpl, `/_api/comments/mentions?pageId=${encodeURIComponent(pageId)}&q=${encodeURIComponent(query)}`, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
+      }),
     payload => {
       if (!Array.isArray(payload)) throw new Error(fallbackMessage)
       return payload.map(row => {
-        if (!isRecord(row) || typeof row.id !== 'number' || !Number.isSafeInteger(row.id) || row.id < 1 || typeof row.handle !== 'string' || !/^[a-z0-9_-]{3,32}$/.test(row.handle) || typeof row.name !== 'string' || !row.name) throw new Error(fallbackMessage)
+        if (
+          !isRecord(row) ||
+          typeof row.id !== 'number' ||
+          !Number.isSafeInteger(row.id) ||
+          row.id < 1 ||
+          typeof row.handle !== 'string' ||
+          !/^[a-z0-9_-]{3,32}$/.test(row.handle) ||
+          typeof row.name !== 'string' ||
+          !row.name
+        )
+          throw new Error(fallbackMessage)
         return { id: row.id, handle: row.handle, name: row.name }
       })
     }
@@ -257,28 +275,21 @@ export async function fetchMentionCandidates(fetchImpl: FetchImpl, pageId: numbe
 }
 
 export async function createComment(fetchImpl: FetchImpl, input: CommentCreateInput, fallbackMessage = 'Comment creation failed'): Promise<{ id: number }> {
-  return sendJson(
-    fetchImpl,
-    '/_api/comments',
-    'POST',
-    input,
-    fallbackMessage,
-    'create',
-    payload => {
-      if (!isRecord(payload)) throw new Error(fallbackMessage)
-      return { id: normalizePositiveInteger(payload.id, fallbackMessage) }
-    }
-  )
+  return sendJson(fetchImpl, '/_api/comments', 'POST', input, fallbackMessage, 'create', payload => {
+    if (!isRecord(payload)) throw new Error(fallbackMessage)
+    return { id: normalizePositiveInteger(payload.id, fallbackMessage) }
+  })
 }
 
 export async function fetchComment(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment response is invalid'): Promise<CommentDetails> {
   return requestJson(
     'read',
     fallbackMessage,
-    () => sameOriginJsonFetch(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
-    }),
+    () =>
+      sameOriginJsonFetch(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
+      }),
     payload => {
       if (!isRecord(payload) || typeof payload.content !== 'string') throw new Error(fallbackMessage)
       return { id: normalizePositiveInteger(payload.id, fallbackMessage), content: payload.content }
@@ -287,29 +298,22 @@ export async function fetchComment(fetchImpl: FetchImpl, id: number, fallbackMes
 }
 
 export async function updateComment(fetchImpl: FetchImpl, id: number, content: string, fallbackMessage = 'Comment update failed'): Promise<{ render: string }> {
-  return sendJson(
-    fetchImpl,
-    `/_api/comments/${encodeURIComponent(id)}`,
-    'PATCH',
-    { content },
-    fallbackMessage,
-    'update',
-    payload => {
-      if (!isRecord(payload) || typeof payload.render !== 'string') throw new Error(fallbackMessage)
-      return { render: payload.render }
-    }
-  )
+  return sendJson(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, 'PATCH', { content }, fallbackMessage, 'update', payload => {
+    if (!isRecord(payload) || typeof payload.render !== 'string') throw new Error(fallbackMessage)
+    return { render: payload.render }
+  })
 }
 
 export async function deleteComment(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment deletion failed'): Promise<CommentSaveResponse> {
   return requestJson(
     'delete',
     fallbackMessage,
-    () => sameOriginJsonFetch(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
-    }),
+    () =>
+      sameOriginJsonFetch(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
+      }),
     payload => normalizeMessage(payload, fallbackMessage)
   )
 }
@@ -320,7 +324,8 @@ export async function fetchDiscussionAvailability(fetchImpl: FetchImpl, pageId: 
     'Discussion availability could not be loaded.',
     () => sameOriginJsonFetch(fetchImpl, '/_api/comments/availability/' + pageId, { credentials: 'same-origin', headers: { Accept: 'application/json' } }),
     value => {
-      if (!isRecord(value) || typeof value.enabled !== 'boolean' || typeof value.closed !== 'boolean' || typeof value.canPost !== 'boolean') throw new Error('Discussion availability response is invalid.')
+      if (!isRecord(value) || typeof value.enabled !== 'boolean' || typeof value.closed !== 'boolean' || typeof value.canPost !== 'boolean')
+        throw new Error('Discussion availability response is invalid.')
       return { enabled: value.enabled, closed: value.closed, canPost: value.canPost }
     }
   )

@@ -30,6 +30,8 @@ export interface DurableJob<Payload = Record<string, unknown>>
   createdAt: Date
   updatedAt: Date
   completedAt: Date | null
+  /** In-memory admission accounting for retained storage contention; never persisted in payloads. */
+  attemptsBeforeClaim?: number
 }
 
 export interface EnqueueDurableJob {
@@ -55,6 +57,18 @@ export interface RunDurableJobsOptions extends Omit<ClaimDurableJobs, 'supported
 }
 
 export type DurableJobHandler = (job: DurableJob, context: { knex: Knex; signal: AbortSignal }) => Promise<void>
+
+/** Only storage-mutation@1 may defer an admitted canonical write without exhausting it. */
+export class DurableJobDeferral extends Error {
+  readonly contention: boolean
+  constructor(cause: unknown, contention = false) {
+    super(cause instanceof Error ? cause.message : 'Storage target reconciliation failed', { cause })
+    this.name = 'DurableJobDeferral'
+    this.contention = contention
+  }
+}
+
+const isRetainedStorageMutation = (job: Pick<DurableJob, 'type' | 'version'>): boolean => job.type === 'storage-mutation' && job.version === 1
 
 const tableName = 'durableJobs'
 const defaultLeaseMs = 30_000
@@ -108,7 +122,7 @@ const deserializeJob = (row: DurableJobRow): DurableJob => {
 const applyEligiblePredicate = (query: Knex.QueryBuilder, now: Date): Knex.QueryBuilder =>
   query
     .where('nextRunAt', '<=', now)
-    .whereRaw('?? < ??', ['attempts', 'maxAttempts'])
+    .where(attempts => attempts.whereRaw('?? < ??', ['attempts', 'maxAttempts']).orWhere({ type: 'storage-mutation', version: 1 }))
     .where((eligible: Knex.QueryBuilder) => {
       eligible.where('state', 'pending').orWhere((expired: Knex.QueryBuilder) => {
         expired.where('state', 'running').andWhere('leaseExpiresAt', '<=', now)
@@ -184,7 +198,11 @@ export class DurableJobStore {
     const supported = parseSupportedIdentities(input.supportedIdentities)
     const leaseExpiresAt = new Date(now.getTime() + leaseMs)
     await applySupportedIdentitiesPredicate(
-      this.knex<DurableJobRow>(tableName).where('state', 'running').where('leaseExpiresAt', '<=', now).whereRaw('?? >= ??', ['attempts', 'maxAttempts']),
+      this.knex<DurableJobRow>(tableName)
+        .where('state', 'running')
+        .where('leaseExpiresAt', '<=', now)
+        .whereRaw('?? >= ??', ['attempts', 'maxAttempts'])
+        .whereNot(identity => identity.where({ type: 'storage-mutation', version: 1 })),
       supported
     ).update({
       state: 'failed',
@@ -195,85 +213,130 @@ export class DurableJobStore {
       completedAt: now,
       updatedAt: now
     })
-    const candidates = (await applySupportedIdentitiesPredicate(applyEligiblePredicate(this.knex<DurableJobRow>(tableName).select('id'), now), supported)
+    const candidates = (await applySupportedIdentitiesPredicate(
+      applyEligiblePredicate(this.knex<DurableJobRow>(tableName).select('id', 'type', 'version', 'attempts'), now),
+      supported
+    )
       .orderBy('nextRunAt', 'asc')
       .orderBy('id', 'asc')
-      .limit(limit * 3)) as Array<Pick<DurableJobRow, 'id'>>
+      .limit(limit * 3)) as Array<Pick<DurableJobRow, 'id' | 'type' | 'version' | 'attempts'>>
 
     const claimed: DurableJob[] = []
     for (const candidate of candidates) {
       if (claimed.length >= limit) break
       const leaseToken = randomUUID()
-      const updated = await applySupportedIdentitiesPredicate(
-        applyEligiblePredicate(this.knex<DurableJobRow>(tableName).where('id', candidate.id), now),
-        supported
-      ).update({
+      const claimQuery = applyEligiblePredicate(this.knex<DurableJobRow>(tableName).where('id', candidate.id), now)
+      if (isRetainedStorageMutation(candidate)) claimQuery.where('attempts', candidate.attempts)
+      const updated = await applySupportedIdentitiesPredicate(claimQuery, supported).update({
         state: 'running',
         leaseOwner: input.workerId,
         leaseToken,
         leaseExpiresAt,
-        attempts: this.knex.raw('?? + 1', ['attempts']),
+        attempts: this.knex.raw('CASE WHEN ?? = ? AND ?? = ? AND ?? >= ?? THEN ?? ELSE ?? + 1 END', [
+          'type',
+          'storage-mutation',
+          'version',
+          1,
+          'attempts',
+          'maxAttempts',
+          'maxAttempts',
+          'attempts'
+        ]),
         updatedAt: now
       })
       if (updated !== 1) continue
       const row = await this.knex<DurableJobRow>(tableName).where({ id: candidate.id, leaseOwner: input.workerId, leaseToken }).first()
-      if (row) claimed.push(deserializeJob(row))
+      if (row) {
+        const job = deserializeJob(row)
+        if (isRetainedStorageMutation(job)) job.attemptsBeforeClaim = candidate.attempts
+        claimed.push(job)
+      }
     }
     return claimed
   }
 
   async extendLease(job: DurableJob, leaseMs = defaultLeaseMs, now = new Date()): Promise<boolean> {
     if (!job.leaseToken) return false
-    const updated = await this.knex<DurableJobRow>(tableName)
-      .where({ id: job.id, leaseOwner: job.leaseOwner, leaseToken: job.leaseToken, state: 'running' })
-      .update({ leaseExpiresAt: new Date(now.getTime() + leaseMs), updatedAt: now })
+    const query = this.knex<DurableJobRow>(tableName).where({
+      id: job.id,
+      type: job.type,
+      version: job.version,
+      leaseOwner: job.leaseOwner,
+      leaseToken: job.leaseToken,
+      state: 'running'
+    })
+    if (isRetainedStorageMutation(job)) query.where('leaseExpiresAt', '>', now)
+    const updated = await query.update({ leaseExpiresAt: new Date(now.getTime() + leaseMs), updatedAt: now })
     return updated === 1
   }
 
   async complete(job: DurableJob, now = new Date()): Promise<boolean> {
     if (!job.leaseToken) return false
-    const updated = await this.knex<DurableJobRow>(tableName)
-      .where({ id: job.id, leaseOwner: job.leaseOwner, leaseToken: job.leaseToken, state: 'running' })
-      .update({
-        state: 'succeeded',
-        leaseOwner: null,
-        leaseToken: null,
-        leaseExpiresAt: null,
-        lastError: null,
-        completedAt: now,
-        updatedAt: now
-      })
+    const query = this.knex<DurableJobRow>(tableName).where({
+      id: job.id,
+      type: job.type,
+      version: job.version,
+      leaseOwner: job.leaseOwner,
+      leaseToken: job.leaseToken,
+      state: 'running'
+    })
+    if (isRetainedStorageMutation(job)) query.where('leaseExpiresAt', '>', now)
+    const updated = await query.update({
+      state: 'succeeded',
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: null,
+      completedAt: now,
+      updatedAt: now
+    })
     return updated === 1
   }
 
   async fail(job: DurableJob, error: unknown, retryDelay = defaultRetryDelay, now = new Date()): Promise<boolean> {
     if (!job.leaseToken) return false
-    const terminal = job.attempts >= job.maxAttempts
+    const deferred = isRetainedStorageMutation(job) && error instanceof DurableJobDeferral
+    const terminal = !deferred && job.attempts >= job.maxAttempts
     const message = (error instanceof Error ? (error.stack ?? error.message) : String(error)).slice(0, 8_000)
-    const updated = await this.knex<DurableJobRow>(tableName)
-      .where({ id: job.id, leaseOwner: job.leaseOwner, leaseToken: job.leaseToken, state: 'running' })
-      .update({
-        state: terminal ? 'failed' : 'pending',
-        leaseOwner: null,
-        leaseToken: null,
-        leaseExpiresAt: null,
-        lastError: message,
-        nextRunAt: terminal ? job.nextRunAt : new Date(now.getTime() + retryDelay(job.attempts)),
-        completedAt: terminal ? now : null,
-        updatedAt: now
-      })
+    const delay = terminal ? 0 : deferred && error.contention ? 1_000 : retryDelay(job.attempts)
+    const boundedDelay = deferred ? Math.min(300_000, Math.max(1_000, Number.isFinite(delay) ? delay : 1_000)) : delay
+    const query = this.knex<DurableJobRow>(tableName).where({
+      id: job.id,
+      type: job.type,
+      version: job.version,
+      leaseOwner: job.leaseOwner,
+      leaseToken: job.leaseToken,
+      state: 'running'
+    })
+    if (isRetainedStorageMutation(job)) query.where('leaseExpiresAt', '>', now)
+    const updated = await query.update({
+      state: terminal ? 'failed' : 'pending',
+      ...(deferred && error.contention ? { attempts: Math.max(0, Math.min(job.attempts, job.attemptsBeforeClaim ?? job.attempts - 1)) } : {}),
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: message,
+      nextRunAt: terminal ? job.nextRunAt : new Date(now.getTime() + boundedDelay),
+      completedAt: terminal ? now : null,
+      updatedAt: now
+    })
     return updated === 1
   }
 
   async cancel(id: string, now = new Date()): Promise<boolean> {
-    const updated = await this.knex<DurableJobRow>(tableName).where('id', id).whereIn('state', ['pending', 'running']).update({
-      state: 'cancelled',
-      leaseOwner: null,
-      leaseToken: null,
-      leaseExpiresAt: null,
-      completedAt: now,
-      updatedAt: now
-    })
+    // A canonical write cannot be cancelled independently of its already-committed data.
+    const updated = await this.knex<DurableJobRow>(tableName)
+      .where('id', id)
+      .whereIn('state', ['pending', 'running'])
+      .whereNot(identity => identity.where({ type: 'storage-mutation', version: 1 }))
+      .update({
+        state: 'cancelled',
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        completedAt: now,
+        updatedAt: now
+      })
     return updated === 1
   }
 
