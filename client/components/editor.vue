@@ -327,7 +327,7 @@ import moment from 'moment-timezone'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component-state.vue'
 import * as _ from 'lodash-es'
-import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage, type PageDetails, type PageWriteInput } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, isPageRenderPending, updatePage, waitForPageRender, type PageDetails, type PageRenderTarget, type PageWriteInput } from '../helpers/pages-api'
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import { wikiStore } from '@/store/index.ts'
 import { translate } from '../modules/localization.ts'
@@ -682,6 +682,7 @@ export default defineComponent({
       imagePropertiesAbortCleanup: null as (() => void) | null,
       imagePropertiesReturnFocus: null as { target: HTMLElement; owner: string; generation: number } | null,
       isSaving: false,
+      renderWaitController: null as AbortController | null,
       editorAdapter: null as EditorAdapter | null,
       editorAdapterUnsubscribe: null as (() => void) | null,
       editorFlushUnsubscribe: null as (() => void) | null,
@@ -715,6 +716,7 @@ export default defineComponent({
       saveFeedback: 'idle' as EditorSaveFeedback,
       lastSavedAt: null as number | null,
       lastSaveKind: 'server' as 'server' | 'device',
+      savedRenderTarget: null as Pick<PageRenderTarget, 'id' | 'sourceRevision'> | null,
       pendingDraftDiscard: null as string | null,
       pendingSubmissionDelete: null as string | null,
       busyRecoveryRow: null as string | null,
@@ -895,7 +897,14 @@ export default defineComponent({
         document.documentElement.lang || undefined
       )
     },
+    renderWaitOwnerKey(): string {
+      return JSON.stringify([
+        this.isAuthenticated, this.accountId, wikiStore.offlineIdentityEpoch,
+        this.lifecycleGeneration, wikiStore.page.id, this.currentEditor, this.editorInstanceKey
+      ])
+    },
     saveStatusText(): string {
+      if (this.renderWaitController !== null) return this.$t('editor:save.waitingForRender')
       if (this.saveFeedback === 'saving') return this.$t('editor:save.saving')
       if (this.saveFeedback === 'failed') return this.$t('editor:save.notSaved')
       const time = this.lastSavedAt === null ? '' : moment(this.lastSavedAt).format('LT')
@@ -904,6 +913,7 @@ export default defineComponent({
       return time ? this.$t('editor:save.savedAt', { time }) : ''
     },
     saveStatusIcon(): string {
+      if (this.renderWaitController !== null) return 'mdi-progress-clock'
       if (this.saveFeedback === 'saving') return 'mdi-progress-upload'
       if (this.saveFeedback === 'failed') return 'mdi-alert-circle-outline'
       if (this.lastSaveKind === 'device' && this.lastSavedAt !== null) return 'mdi-cloud-off-outline'
@@ -975,6 +985,10 @@ export default defineComponent({
     },
   },
   watch: {
+    renderWaitOwnerKey: {
+      flush: 'sync',
+      handler() { this.cancelRenderWait() }
+    },
     imagePropertiesOwnerKey: {
       flush: 'sync',
       handler() { this.closeImageProperties() }
@@ -1100,6 +1114,7 @@ export default defineComponent({
     this.imagePropertiesUnsubscribe?.()
     this.imagePropertiesUnsubscribe = null
     this.lifecycleGeneration += 1
+    this.cancelRenderWait()
     this.offlineMetadataOperation += 1
     this.offlineStorage?.close()
     this.offlineStorage = null
@@ -1709,6 +1724,7 @@ export default defineComponent({
     },
     handleOfflineSessionInvalidated() {
       this.lifecycleGeneration += 1
+      this.cancelRenderWait()
       this.offlineMetadataOperation += 1
       if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
       if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
@@ -1786,6 +1802,7 @@ export default defineComponent({
         pageFeatures: normalizePageFeatures(undefined),
         okf: _.cloneDeep(emptyOkf)
       }
+      this.savedRenderTarget = null
       this.submissionCaptureValues = null
       this.submissionCaptureIdentity = null
       this.offlineCreateIdentity = null
@@ -1947,6 +1964,7 @@ export default defineComponent({
         wikiStore.page.sourceRevision = page.sourceRevision
         return page
       } catch (err) {
+        if (isPageRenderPending(err)) return
         if (
           this.lifecycleGeneration === lifecycleGeneration &&
           this.offlineDraftCoordinator === coordinator &&
@@ -1989,7 +2007,7 @@ export default defineComponent({
     openConflict() {
       emitEditorSaveConflict()
     },
-    async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}): Promise<boolean> {
+    async save({ rethrow = false, overwrite = false, closeAfterSave = false }: { rethrow?: boolean, overwrite?: boolean, closeAfterSave?: boolean } = {}): Promise<boolean> {
       // Saving no longer blocks the editor with an overlay, so a second Save,
       // Ctrl+S or Save and close must not start a parallel write.
       if (this.isSaving) return false
@@ -2010,7 +2028,8 @@ export default defineComponent({
         if (rethrow) throw error
         return false
       }
-      if (this.mode !== 'create' && !this.isDirty) return true
+      const alreadySaved = this.mode !== 'create' && !this.isDirty
+      if (alreadySaved && !closeAfterSave) return true
 
       let capture: EditorSaveCapture
       try {
@@ -2041,6 +2060,7 @@ export default defineComponent({
       let receiptPreparationWarning: string | null = null
       let authoritativePageId: number | null = null
       let authoritativeUpdatedAt: string | undefined
+      let authoritativeSourceRevision = wikiStore.page.sourceRevision
       let persistedVisibility = saveMode === 'create' ? capture.visibility : this.savedState.visibility
       let hydratedPage: PageDetails | undefined
       const routeChanged = saveMode === 'update' && (
@@ -2050,6 +2070,10 @@ export default defineComponent({
       )
 
       try {
+        if (alreadySaved) {
+          this.endSaveFeedback('idle')
+          return await this.navigateToSavedPage(capture)
+        }
         if (this.serverSaveDisabled && coordinator?.isAuthenticatedUser() === true) {
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           if (!(await coordinator.captureThrough(capture.editVersion))) {
@@ -2168,6 +2192,7 @@ export default defineComponent({
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           authoritativePageId = page.id
           authoritativeUpdatedAt = page.updatedAt
+          authoritativeSourceRevision = page.sourceRevision
           this.checkoutDateActive = page.updatedAt || capture.identity.baseUpdatedAt || this.checkoutDateActive
           this.isConflict = false
           wikiStore.editor.id = page.id
@@ -2186,6 +2211,7 @@ export default defineComponent({
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           authoritativePageId = capture.identity.pageId ?? wikiStore.page.id
           authoritativeUpdatedAt = page.updatedAt
+          authoritativeSourceRevision = page.sourceRevision
           wikiStore.page.sourceRevision = page.sourceRevision
           if (capture.visibility !== this.savedState.visibility) {
             try {
@@ -2199,6 +2225,7 @@ export default defineComponent({
               )
               this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
               wikiStore.page.sourceRevision = visibilityPage.sourceRevision
+              authoritativeSourceRevision = visibilityPage.sourceRevision
               persistedVisibility = capture.visibility
             } catch (error) {
               this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
@@ -2249,6 +2276,9 @@ export default defineComponent({
         const currentSnapshot = this.isCurrentSaveSnapshot(capture)
         this.markSaveSnapshotPersisted(capture)
         this.setSavedStateFromCapture(capture, persistedVisibility, hydratedPage)
+        if (authoritativePageId !== null) {
+          this.savedRenderTarget = Object.freeze({ id: authoritativePageId, sourceRevision: authoritativeSourceRevision })
+        }
 
         const saveMessage = postWriteError
           ? this.$t('editor:editor.pageSavedBut', { postWriteError, interpolation: { escapeValue: false } })
@@ -2278,13 +2308,10 @@ export default defineComponent({
             safety?.safe !== false
           )
         }
-        if (saveMode === 'create') {
-          if (canNavigateAfterSave()) {
-            this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
-            this.exitConfirmed = true
-            const scope = capture.visibility === 'private' ? '/_private' : ''
-            window.location.assign(`${scope}/${capture.locale}/${capture.path}`)
-          }
+        if (saveMode === 'create' || closeAfterSave) {
+          const canNavigate = saveMode === 'create' ? canNavigateAfterSave() : !receiptPreparationWarning && !postWriteError && currentSnapshot
+          const navigated = canNavigate && await this.navigateToSavedPage(capture, saveMode === 'create')
+          if (closeAfterSave) return navigated
         } else if (routeChanged && postWriteError === null) {
           if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
           this.navigationTimer = window.setTimeout(() => {
@@ -2364,30 +2391,93 @@ export default defineComponent({
         if (rethrow) throw error
         return false
       } finally {
-        this.isSaving = false
-        if (this.saveFeedback === 'saving') this.endSaveFeedback('idle')
-        this.notifySafetyChanged()
+        if (this.lifecycleGeneration === capturedLifecycleGeneration) {
+          this.isSaving = false
+          if (this.saveFeedback === 'saving') this.endSaveFeedback('idle')
+          this.notifySafetyChanged()
+        }
       }
     },
     async saveAndClose(): Promise<boolean> {
-      if (this.discardPending) return false
-      if (this.isSaving) return false
-      const capturedAuthenticated = this.isAuthenticated
-      const capturedAccountId = this.accountId
-      const capturedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
-      const capturedLifecycleGeneration = this.lifecycleGeneration
-      const wasCreate = wikiStore.editor.mode === 'create'
+      if (this.discardPending || this.isSaving) return false
       try {
-        if (!(await this.save({ rethrow: true }))) return false
-        if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
-        if (!wasCreate) {
-          await this.exit()
-          if (!this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) return false
-        }
-        return true
-      } catch (err) {
-        // Error is already handled
+        return await this.save({ rethrow: true, closeAfterSave: true })
+      } catch {
+        // Mutation failures are already handled; readiness failures never resubmit the write.
         return false
+      }
+    },
+    cancelRenderWait() {
+      if (this.renderWaitController === null) return
+      this.renderWaitController.abort()
+      this.renderWaitController = null
+    },
+    async navigateToSavedPage(capture: EditorSaveCapture, requireReloadSafety = false): Promise<boolean> {
+      const expectedAuthenticated = this.isAuthenticated
+      const expectedAccountId = this.accountId
+      const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
+      const expectedLifecycleGeneration = this.lifecycleGeneration
+      const coordinator = this.offlineDraftCoordinator
+      const savedState = this.savedState
+      const expected = {
+        id: this.savedRenderTarget?.id ?? capture.identity.pageId ?? wikiStore.page.id,
+        sourceRevision: this.savedRenderTarget?.sourceRevision ?? wikiStore.page.sourceRevision,
+        locale: savedState.locale,
+        path: savedState.path,
+        visibility: savedState.visibility
+      }
+      const currentActor = (): boolean =>
+        this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, expectedLifecycleGeneration) &&
+        this.offlineDraftCoordinator === coordinator && wikiStore.page.id === expected.id
+      const canNavigate = (): boolean => {
+        if (!currentActor() || !this.editorAdapterSafety.ready) return false
+        let adapter: EditorAdapterCapture | undefined
+        try {
+          adapter = this.editorAdapter?.capture()
+        } catch {
+          return false
+        }
+        return (
+          !expectedAuthenticated ||
+          (wikiStore.authRefreshSettled && !wikiStore.authRefreshPending && wikiStore.offlineIdentityReady)
+        ) &&
+          wikiStore.page.sourceRevision === expected.sourceRevision &&
+          this.savedState === savedState &&
+          !this.isDirty &&
+          (!adapter || (adapter.editVersion === capture.editVersion && adapter.text === capture.content)) &&
+          this.activeModal === '' && !this.dialogUnsaved && !this.dialogProps && !this.dialogEditorSelector &&
+          !this.discardPending && !this.collaborationDiscarded && !this.isConflict &&
+          !this.offlineDraftBusy && !this.offlineDraftMutationBlocked && !this.serverSaveDisabled &&
+          this.offlineConnectionState === 'online' &&
+          !this.editorAdapterSafety.mergeDirty &&
+          this.editorAdapterSafety.collaborationBacklog === 0 &&
+          this.editorAdapterSafety.nonPersisted === false &&
+          coordinator?.hasInFlightWork !== true && coordinator?.hasUnresolvedSubmission !== true &&
+          (!requireReloadSafety || coordinator?.reloadSafetySnapshot.safe !== false)
+      }
+      if (!canNavigate()) return false
+      if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
+      this.navigationTimer = null
+      const controller = markRaw(new AbortController())
+      this.renderWaitController = controller
+      try {
+        await waitForPageRender(window.fetch.bind(window), expected, controller.signal, this.$t('editor:save.renderNotReady'))
+        if (controller.signal.aborted || !canNavigate()) return false
+        this.exitGo()
+        return true
+      } catch (error) {
+        if (!controller.signal.aborted && currentActor()) {
+          const detail = getErrorMessage(error)
+          const notReady = this.$t('editor:save.renderNotReady')
+          wikiStore.showNotification({
+            message: detail === notReady ? notReady : this.$t('editor:editor.pageSavedBut', { postWriteError: detail, interpolation: { escapeValue: false } }),
+            style: 'warning',
+            icon: 'warning'
+          })
+        }
+        return false
+      } finally {
+        if (this.renderWaitController === controller) this.renderWaitController = null
       }
     },
     async saveUnsavedAndClose() {
@@ -2401,6 +2491,7 @@ export default defineComponent({
       }
     },
     async exit() {
+      if (this.renderWaitController !== null) return
       if (this.discardPending) return
       try {
         if (this.editorAdapterSafety.ready) this.captureEditorState()
@@ -2414,6 +2505,10 @@ export default defineComponent({
         this.dialogUnsaved = true
       } else {
         this.discardError = ''
+        if (this.lastSavedAt !== null && this.lastSaveKind === 'server') {
+          await this.saveAndClose()
+          return
+        }
         this.exitGo()
       }
     },
@@ -2586,6 +2681,7 @@ export default defineComponent({
       }
     },
     setCurrentSavedState () {
+      this.savedRenderTarget = Object.freeze({ id: wikiStore.page.id, sourceRevision: wikiStore.page.sourceRevision })
       this.savedState = {
         content: wikiStore.editor.content,
         description: wikiStore.page.description,

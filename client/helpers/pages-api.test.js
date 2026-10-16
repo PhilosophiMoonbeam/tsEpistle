@@ -1,3 +1,5 @@
+import { setImmediate as yieldEventLoop } from 'node:timers/promises'
+
 import {
   buildOkfMetadataPayload,
   deletePage,
@@ -20,7 +22,8 @@ import {
   unlinkPageLocaleRelation,
   updatePage,
   updatePageFeatures,
-  validateOkfMetadataPayload
+  validateOkfMetadataPayload,
+  waitForPageRender
 } from './pages-api.ts'
 
 function createJsonResponse(payload, ok = true) {
@@ -91,6 +94,150 @@ const pagePayload = (okf = missingOkf) => ({
 })
 
 describe('pages api helper', () => {
+  const renderTarget = { id: 7, sourceRevision: '8', locale: 'en', path: 'docs/alpha', visibility: 'private' }
+  const renderResponse = (overrides = {}) => createJsonResponse({ ...renderTarget, excerpt: 'Current rendered content', ...overrides })
+  const renderPendingResponse = () => ({
+    ...createJsonResponse({ error: 'The current render is pending.', code: 'PAGE_RENDER_PENDING' }, false),
+    status: 503
+  })
+
+  test('waits for matching authorized preview output and retries only explicit pending renders', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    try {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(renderPendingResponse())
+        .mockResolvedValueOnce(renderPendingResponse())
+        .mockResolvedValue(renderResponse())
+      let outcome
+      void waitForPageRender(fetchImpl, renderTarget, controller.signal).then(
+        () => {
+          outcome = 'ready'
+        },
+        error => {
+          outcome = error
+        }
+      )
+      // Drain fetch, JSON parsing, normalization, and the race before advancing the next retry.
+      await yieldEventLoop()
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(outcome).toBeUndefined()
+      expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/preview?id=7')
+      expect(fetchImpl.mock.calls[0][1]).toMatchObject({
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+        signal: expect.any(AbortSignal)
+      })
+      for (let elapsed = 0; outcome === undefined && elapsed < 15_000; elapsed += 1_000) {
+        await vi.advanceTimersByTimeAsync(1_000)
+        await yieldEventLoop()
+      }
+      expect(outcome).toBe('ready')
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+    } finally {
+      controller.abort()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  test('preserves typed pending read failures for post-write handling', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(renderPendingResponse())
+    await expect(fetchPage(fetchImpl, 7)).rejects.toMatchObject({ status: 503, code: 'PAGE_RENDER_PENDING' })
+  })
+
+  test('does not poll authorization failures, generic service failures, or a pending code with the wrong status', async () => {
+    for (const [status, code] of [[401], [403], [404], [409, 'PAGE_RENDER_PENDING'], [500], [503], [503, 'OTHER_FAILURE']]) {
+      const fetchImpl = vi.fn().mockResolvedValue({
+        ...createJsonResponse({ error: 'Preview access failed.', ...(code ? { code } : {}) }, false),
+        status
+      })
+      await expect(waitForPageRender(fetchImpl, renderTarget, new AbortController().signal)).rejects.toMatchObject({
+        message: 'Preview access failed.',
+        status
+      })
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  test('rejects previews for any unrelated page, route, visibility, or source revision without polling', async () => {
+    for (const mismatch of [
+      { id: 9 },
+      { locale: 'fr' },
+      { path: 'docs/other' },
+      { visibility: 'public' },
+      { sourceRevision: '7' },
+      { sourceRevision: '9' },
+      { sourceRevision: [8] },
+      { sourceRevision: null }
+    ]) {
+      const fetchImpl = vi.fn().mockResolvedValue(renderResponse(mismatch))
+      await expect(waitForPageRender(fetchImpl, renderTarget, new AbortController().signal, 'Saved revision is not ready')).rejects.toThrow(
+        'Saved revision is not ready'
+      )
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  test('bounds a pending or nonresponsive render wait and aborts its read request', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const pending of [false, true]) {
+        const controller = new AbortController()
+        try {
+          let requestSignal
+          const fetchImpl = vi.fn(async (_url, init) => {
+            requestSignal = init.signal
+            return pending ? renderPendingResponse() : new Promise(() => {})
+          })
+          let outcome
+          void waitForPageRender(fetchImpl, renderTarget, controller.signal, 'Saved page is still not ready').then(
+            () => {
+              outcome = 'ready'
+            },
+            error => {
+              outcome = error
+            }
+          )
+          await yieldEventLoop()
+          await vi.advanceTimersByTimeAsync(14_999)
+          await yieldEventLoop()
+          expect(outcome).toBeUndefined()
+          expect(requestSignal.aborted).toBe(false)
+          await vi.advanceTimersByTimeAsync(1)
+          await yieldEventLoop()
+          expect(outcome).toBeInstanceOf(Error)
+          expect(outcome.message).toBe('Saved page is still not ready')
+          expect(requestSignal.aborted).toBe(true)
+          const readsAtTimeout = fetchImpl.mock.calls.length
+          await vi.advanceTimersByTimeAsync(30_000)
+          await yieldEventLoop()
+          expect(fetchImpl).toHaveBeenCalledTimes(readsAtTimeout)
+        } finally {
+          controller.abort()
+        }
+      }
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  test('cancels an in-flight preview on owner disposal without waiting for the transport', async () => {
+    const controller = new AbortController()
+    let requestSignal
+    const fetchImpl = vi.fn(async (_url, init) => {
+      requestSignal = init.signal
+      return new Promise(() => {})
+    })
+    const waiting = waitForPageRender(fetchImpl, renderTarget, controller.signal)
+    controller.abort()
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' })
+    expect(requestSignal.aborted).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   test('fetches and validates page links payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       createJsonResponse([
@@ -461,14 +608,14 @@ describe('pages api helper', () => {
       okfMetadata: { type: 'Reference', status: 'stable' },
       pageFeatures: customPageFeatures
     })
-    await expect(updatePage(fetchImpl, 7, { pageFeatures: { schemaVersion: 1, linksVisible: true, ratingsAllowed: 'yes', lastEditorVisible: false } }, '8')).rejects.toThrow('Page update failed')
+    await expect(
+      updatePage(fetchImpl, 7, { pageFeatures: { schemaVersion: 1, linksVisible: true, ratingsAllowed: 'yes', lastEditorVisible: false } }, '8')
+    ).rejects.toThrow('Page update failed')
     await expect(updatePage(fetchImpl, 7, {}, '0')).rejects.toThrow('Page update failed')
     await expect(updatePage(fetchImpl, 7, {}, '8', 0)).rejects.toThrow('Page update failed')
   })
   test('updates only page features under the source-revision concurrency contract', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } })
-    )
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } }))
 
     await updatePageFeatures(fetchImpl, 7, customPageFeatures, '8')
 
@@ -483,9 +630,7 @@ describe('pages api helper', () => {
     })
 
     const invalidFetch = vi.fn()
-    await expect(
-      updatePageFeatures(invalidFetch, 7, { ...customPageFeatures, retired: true }, '8')
-    ).rejects.toThrow('Page feature update failed')
+    await expect(updatePageFeatures(invalidFetch, 7, { ...customPageFeatures, retired: true }, '8')).rejects.toThrow('Page feature update failed')
     expect(invalidFetch).not.toHaveBeenCalled()
   })
 
@@ -1096,12 +1241,14 @@ describe('pages api helper', () => {
   })
 
   test('requires reviewed selections to carry a token and verifies move receipt identity', async () => {
-    const reviewFetch = vi.fn().mockResolvedValue(createJsonResponse({
-      schemaVersion: 1,
-      items: [{ id: 21, title: 'Referrer', locale: 'en', path: 'docs/referrer', sourceRevision: '7', eligible: true, changes: [] }],
-      nextCursor: null,
-      coverageNotice: 'Review coverage is bounded.'
-    }))
+    const reviewFetch = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        schemaVersion: 1,
+        items: [{ id: 21, title: 'Referrer', locale: 'en', path: 'docs/referrer', sourceRevision: '7', eligible: true, changes: [] }],
+        nextCursor: null,
+        coverageNotice: 'Review coverage is bounded.'
+      })
+    )
     await expect(
       fetchMoveLinkReview(
         reviewFetch,
@@ -1111,14 +1258,15 @@ describe('pages api helper', () => {
       )
     ).rejects.toThrow('Invalid move review')
 
-    const receiptFetch = vi.fn().mockResolvedValue(createJsonResponse({
-      message: 'Page has been moved.',
-      pageId: 8,
-      sourceRevision: '9',
-      updated: [],
-      projections: 'pending'
-    }))
-    await expect(movePage(receiptFetch, 7, 'en', 'docs/new', '5', 'Invalid move receipt', 'signed-review-token'))
-      .rejects.toThrow('Invalid move receipt')
+    const receiptFetch = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        message: 'Page has been moved.',
+        pageId: 8,
+        sourceRevision: '9',
+        updated: [],
+        projections: 'pending'
+      })
+    )
+    await expect(movePage(receiptFetch, 7, 'en', 'docs/new', '5', 'Invalid move receipt', 'signed-review-token')).rejects.toThrow('Invalid move receipt')
   })
 })

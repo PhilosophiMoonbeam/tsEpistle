@@ -276,6 +276,7 @@ const makeCoordinator = (options: {
   readonly fetchOwner?: () => OwnerKey
   readonly currentValues: () => OfflineEditorDraftValues
   readonly currentIdentity?: () => OfflineEditorDraftIdentity
+  readonly isOnline?: () => boolean
 }): CoordinatorSetup => {
   const changes: OfflineEditorDraftView[] = []
   const fetchCalls = { count: 0 }
@@ -287,7 +288,7 @@ const makeCoordinator = (options: {
     getIdentity: options.currentIdentity ?? (() => identity()),
     getValues: options.currentValues,
     isDirty: () => true,
-    isOnline: () => false,
+    isOnline: options.isOnline ?? (() => false),
     storage: options.storage as unknown as OfflineStorage,
     debounceMs: 10,
     onChange: view => changes.push(view)
@@ -308,6 +309,76 @@ afterEach(() => {
 })
 
 describe('offline editor draft coordinator', () => {
+  it('captures fresh online edits without recovery review, then requires review after reconnecting', async () => {
+    const storage = new InMemoryDraftStorage()
+    let current = values('server text')
+    let online = true
+    const { coordinator } = makeCoordinator({
+      storage,
+      owner: ownerKey(7),
+      currentValues: () => current,
+      isOnline: () => online
+    })
+
+    await expect(coordinator.initialize()).resolves.toMatchObject({ state: null, candidate: null, committed: false })
+    current = values('first live online edit')
+    await expect(coordinator.captureNow()).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('local')
+    expect(coordinator.hasCommittedCurrentValues).toBe(true)
+
+    online = false
+    current = values('edits while disconnected')
+    await expect(coordinator.captureNow()).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('local')
+    online = true
+    await expect(coordinator.markReconnected()).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('needs-review')
+    current = values('later online edit')
+    await expect(coordinator.captureNow()).resolves.toBe(true)
+    expect(coordinator.view.state).toBe('needs-review')
+    coordinator.destroy()
+  })
+
+  it.each([
+    { state: 'local', sameText: false, online: true },
+    { state: 'local', sameText: true, online: true },
+    { state: 'needs-review', sameText: false, online: false },
+    { state: 'needs-review', sameText: true, online: false }
+  ] as const)('requires review for recovered $state edits (matching text: $sameText, online: $online)', async scenario => {
+    const storage = new InMemoryDraftStorage()
+    const owner = ownerKey(7)
+    const saved = values('previous session edits')
+    const writer = makeCoordinator({ storage, owner, currentValues: () => saved }).coordinator
+    await expect(writer.captureNow()).resolves.toBe(true)
+    if (scenario.state === 'needs-review') await expect(writer.markReconnected()).resolves.toBe(true)
+    writer.destroy()
+    invalidateOfflineSession()
+
+    let current = scenario.sameText ? saved : values('server text')
+    const reader = makeCoordinator({
+      storage,
+      owner,
+      currentValues: () => current,
+      isOnline: () => scenario.online
+    }).coordinator
+    const recovered = await reader.initialize()
+    expect(recovered.state).toBe('needs-review')
+    expect(recovered.committed).toBe(true)
+    if (scenario.sameText) {
+      expect(recovered.candidate).toBeNull()
+      expect(reader.hasCommittedCurrentValues).toBe(true)
+    } else {
+      expect(recovered.candidate?.payload).toMatchObject({ content: saved.content, state: 'needs-review' })
+      const restored = await reader.applyDetachedCandidate()
+      expect(restored).not.toBeNull()
+      current = values(restored!.content)
+    }
+    current = values(`${current.content}\ncontinued editing`)
+    await expect(reader.captureNow()).resolves.toBe(true)
+    expect(reader.view.state).toBe('needs-review')
+    reader.destroy()
+  })
+
   it('captures the latest values after debounced rescheduling and advances the CAS revision', async () => {
     vi.useFakeTimers()
     const storage = new InMemoryDraftStorage()

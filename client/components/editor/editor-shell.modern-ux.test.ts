@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
+import moment from 'moment-timezone'
 import { join } from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import * as cheerio from 'cheerio'
 import _ from 'lodash'
 import pug from 'pug'
 import * as ts from 'typescript'
-import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
+import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import '../../test/browser-dom.mts'
 import { OfflineSnapshotSelectorSchema } from '../../../shared/offline.ts'
 import { normalizeAvailableEditors } from '../../../shared/page-editors.ts'
@@ -17,6 +18,7 @@ import { EditorView } from '@codemirror/view'
 import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 import * as imagePropertiesHelpers from '../../helpers/editor-image-properties'
+import { isPageRenderPending, waitForPageRender, type PageRenderTarget } from '../../helpers/pages-api.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
@@ -78,9 +80,18 @@ const ownerUnsavedTemplate = compileTemplate({
 })
 if (ownerUnsavedTemplate.errors.length) throw ownerUnsavedTemplate.errors[0]
 const ownerUnsavedRender = new Function('Vue', ownerUnsavedTemplate.code)(Vue)
+const ownerSaveTemplate = compileTemplate({
+  source: `<div>${shellMarkup('.editor-save-status, .editor-save-action, .editor-save-close-action, .editor-close-action').toString()}</div>`,
+  filename: shellPath,
+  id: 'editor-owner-save-test',
+  compilerOptions: { mode: 'function' }
+})
+if (ownerSaveTemplate.errors.length) throw ownerSaveTemplate.errors[0]
+const ownerSaveRender = new Function('Vue', ownerSaveTemplate.code)(Vue)
 const modalUnmounts: Array<() => void> = []
 afterEach(() => {
   for (const unmount of modalUnmounts.splice(0)) unmount()
+  vi.useRealTimers()
 })
 type OkfState = {
   authority: {
@@ -242,6 +253,7 @@ type ShellContext = {
   editorInstanceKey: number
   offlineConnectionState: string
   isSaving: boolean
+  renderWaitController: AbortController | null
   discardPending: boolean
   discardError: string
   collaborationActive: boolean
@@ -287,6 +299,7 @@ type ShellContext = {
   handleBeforeUnload: (event: BeforeUnloadEvent) => void
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
   saveAndClose: () => Promise<boolean>
+  cancelRenderWait: () => void
   saveUnsavedAndClose: () => Promise<void>
   beginSaveFeedback: () => void
   endSaveFeedback: (outcome: 'saved' | 'device' | 'failed' | 'idle') => void
@@ -298,8 +311,15 @@ type ShellBehavior = {
     offlineDraftMutationBlocked: (this: ShellContext) => boolean
     offlineMutationBlocked: (this: ShellContext) => boolean
     offlineDraftStatusText: (this: ShellContext) => string
+    saveStatusText: (this: ShellContext) => string
+    saveStatusIcon: (this: ShellContext) => string
+    saveActionLabel: (this: ShellContext) => string
+    renderWaitOwnerKey: (this: ShellContext) => string
     sourceEditorReady: (this: { currentEditor: string; warmAuthenticatedActor: boolean }) => boolean
     warmAuthenticatedActor: (this: { isAuthenticated: boolean; accountId: number }) => boolean
+  }
+  watch: {
+    renderWaitOwnerKey: { flush: 'sync'; handler: (this: ShellContext) => void }
   }
   methods: Record<string, (this: ShellContext, ...args: never[]) => unknown>
 }
@@ -315,7 +335,7 @@ type ApiDependencies = {
     isPublic: boolean
   ) => Promise<{ sourceRevision: string }>
   checkPageConflict: (fetcher: typeof fetch, id: number, checkoutDate: string) => Promise<boolean>
-  createPage: (fetcher: typeof fetch, input: PageInput) => Promise<{ id: number; updatedAt: string }>
+  createPage: (fetcher: typeof fetch, input: PageInput) => Promise<{ id: number; updatedAt: string; sourceRevision: string }>
   discardCollaborationDraft: (fetcher: typeof fetch, pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string) => Promise<void>
   fetchPage: (fetcher: typeof fetch, id: number, errorMessage: string) => Promise<{ okf: OkfState; sourceRevision: string; isSearchable?: boolean }>
   updatePage: (
@@ -325,6 +345,7 @@ type ApiDependencies = {
     sourceRevision: string,
     expectedCollaborationGeneration?: number
   ) => Promise<{ sourceRevision: string; updatedAt: string }>
+  waitForPageRender: (fetcher: typeof fetch, expected: PageRenderTarget, signal: AbortSignal, fallbackMessage: string) => Promise<void>
   openOfflineStorage: () => Promise<OfflineStorageHarness>
   siteConfig: { availableEditors: unknown }
   notifyReloadSafetyChanged: () => void
@@ -341,7 +362,7 @@ type TestWindow = {
   }
   clearedTimers: number[]
   scheduledTimers: Array<{ id: number; delay: number | undefined }>
-  clearTimeout: (id: number) => void
+  clearTimeout: (id: number | null | undefined) => void
   setTimeout: (handler: () => void, delay?: number) => number
   fetch: typeof fetch
 }
@@ -370,6 +391,7 @@ const shellMethodsSource = extractShellObjectOption('methods')
 const executableShellBehavior = new Bun.Transpiler({ loader: 'ts' }).transformSync(`
   const shellBehavior = {
     computed: { ${shellComputedSource} },
+    watch: { ${extractShellObjectOption('watch')} },
     methods: { ${shellMethodsSource} }
   }
 `)
@@ -455,7 +477,7 @@ const createTestWindow = (): TestWindow => {
     clearedTimers: [],
     scheduledTimers: [],
     clearTimeout(id) {
-      this.clearedTimers.push(id)
+      if (id !== null && id !== undefined) this.clearedTimers.push(id)
     },
     setTimeout(_handler, delay) {
       const id = nextTimer++
@@ -470,6 +492,14 @@ const createTestWindow = (): TestWindow => {
         })
       )) as unknown as typeof fetch
   }
+}
+
+const mockRenderPreviews = (testWindow: TestWindow, fetchPreview: typeof fetch): void => {
+  const fetchMetadata = testWindow.fetch
+  testWindow.fetch = ((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, testWindow.location.origin)
+    return url.pathname === '/_api/pages/preview' ? fetchPreview(input, init) : fetchMetadata(input, init)
+  }) as typeof fetch
 }
 const createOfflineStorage = (
   automaticSavingEnabled = false,
@@ -501,15 +531,16 @@ const defaultDependencies = (store: EditorStore): ApiDependencies => ({
   },
   changePageVisibility: async () => ({ sourceRevision: 'revision-3' }),
   checkPageConflict: async () => false,
-  createPage: async () => ({ id: 91, updatedAt: '2026-09-03T12:00:00.000Z' }),
+  createPage: async () => ({ id: 91, sourceRevision: 'revision-1', updatedAt: '2026-09-03T12:00:00.000Z' }),
   discardCollaborationDraft: async () => undefined,
   openOfflineStorage: async () => createOfflineStorage(),
   siteConfig: {
     availableEditors: ['markdown', 'visual-markdown', 'ckeditor', 'asciidoc', 'code']
   },
   requestOfflineIdentityBoundary: async () => true,
-  fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: 'revision-4', isSearchable: store.page.isSearchable }),
+  fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: 'revision-2', isSearchable: store.page.isSearchable }),
   updatePage: async () => ({ sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }),
+  waitForPageRender: async () => undefined,
   notifyReloadSafetyChanged: () => undefined
 })
 
@@ -528,6 +559,11 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     'discardCollaborationDraft',
     'fetchPage',
     'updatePage',
+    'waitForPageRender',
+    'isPageRenderPending',
+    'markRaw',
+    'moment',
+    'SAVE_SHORTCUT_LABEL',
     'notifyReloadSafetyChanged',
     'requestOfflineIdentityBoundary',
     'openOfflineStorage',
@@ -556,6 +592,11 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     dependencies.discardCollaborationDraft,
     dependencies.fetchPage,
     dependencies.updatePage,
+    dependencies.waitForPageRender,
+    isPageRenderPending,
+    Vue.markRaw,
+    moment,
+    'Ctrl+S',
     dependencies.notifyReloadSafetyChanged,
     dependencies.requestOfflineIdentityBoundary,
     dependencies.openOfflineStorage,
@@ -582,17 +623,20 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     collaborationBacklog: 0,
     revision: 'test-adapter:0'
   }
-  const context = {
+  const context = Vue.reactive({
     savedState: {} as SavedState,
     navigationTimer: null,
     dialogUnsaved: false,
     saveFeedback: 'idle',
     lastSavedAt: null,
     lastSaveKind: 'server',
+    welcomeMode: false,
+    serverSaveDisabled: false,
     exitConfirmed: false,
     lifecycleGeneration: 0,
     editorInstanceKey: 0,
     isSaving: false,
+    renderWaitController: null,
     discardError: '',
     discardPending: false,
     collaborationActive: store.editor.mode === 'update' && store.editor.editorKey === 'markdown',
@@ -624,7 +668,7 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     progressShown: 0,
     progressHidden: 0,
     $t: translateEnglish
-  } as unknown as ShellContext
+  }) as unknown as ShellContext
 
   const syncAdapterSafety = () => {
     context.editorAdapterSafety = adapter.snapshot()
@@ -769,6 +813,75 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
   return context
 }
 
+const flushSaveUi = async (): Promise<void> => {
+  for (let turn = 0; turn < 40; turn++) await Promise.resolve()
+  await Vue.nextTick()
+}
+
+const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}) => {
+  const context = createShellHarness(store, testWindow, overrides)
+  const behavior = loadShellBehavior(store, testWindow, overrides)
+  for (const name of ['saveStatusText', 'saveStatusIcon', 'saveActionLabel', 'renderWaitOwnerKey'] as const) {
+    Object.defineProperty(context, name, { get: () => behavior.computed[name].call(context) })
+  }
+  let action: Promise<boolean> | undefined
+  const save = context.save
+  const saveAndClose = context.saveAndClose
+  context.save = options => {
+    action = save(options)
+    return action
+  }
+  context.saveAndClose = () => {
+    action = saveAndClose()
+    return action
+  }
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = Vue.createApp({
+    setup: () => context,
+    watch: { renderWaitOwnerKey: behavior.watch.renderWaitOwnerKey },
+    beforeUnmount() {
+      context.lifecycleGeneration++
+      context.cancelRenderWait()
+    },
+    render: ownerSaveRender
+  })
+  app.config.globalProperties.$t = translateEnglish
+  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.mount(host)
+  let mounted = true
+  const unmount = () => {
+    if (!mounted) return
+    mounted = false
+    app.unmount()
+    host.remove()
+  }
+  modalUnmounts.push(unmount)
+  return {
+    context,
+    host,
+    unmount,
+    click(actionName: 'save' | 'close' = 'close'): Promise<boolean> {
+      const button = host.querySelector<HTMLButtonElement>(actionName === 'save' ? '.editor-save-action' : '.editor-save-close-action')
+      if (!button) throw new Error('The editor save action is not mounted')
+      button.click()
+      if (!action) throw new Error('The editor save action did not run')
+      return action
+    }
+  }
+}
+
+const pendingRenderError = () => Object.assign(new Error('The current page render is pending.'), { status: 503, code: 'PAGE_RENDER_PENDING' })
+
+const createRenderPreview = (store: EditorStore, sourceRevision = '2') => ({
+  id: store.page.id,
+  sourceRevision,
+  locale: store.page.locale,
+  path: store.page.path,
+  visibility: store.page.visibility,
+  excerpt: 'Rendered saved content'
+})
+
 const mutableSnapshot = (store: EditorStore): SavedState => ({
   content: store.editor.content,
   description: store.page.description,
@@ -817,6 +930,307 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
+  for (const mode of ['update', 'create'] as const) {
+    test(`mounted ${mode} waits for the saved render before reader navigation and rejects duplicate saves`, async () => {
+      vi.useFakeTimers()
+      const store = Vue.reactive(createStore(mode))
+      if (mode === 'update') store.page.visibility = 'private'
+      const testWindow = createTestWindow()
+      let ready = false
+      let writes = 0
+      let previews = 0
+      mockRenderPreviews(testWindow, (async () => {
+        previews++
+        return Response.json(ready ? createRenderPreview(store) : { error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: ready ? 200 : 503 })
+      }) as typeof fetch)
+      const written = async () => {
+        writes++
+        return { id: mode === 'create' ? 91 : 12, sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      }
+      const mounted = mountSaveActions(store, testWindow, {
+        createPage: written,
+        updatePage: written,
+        fetchPage: async () => {
+          throw pendingRenderError()
+        },
+        waitForPageRender
+      })
+      mounted.context.editorAdapter.replaceText('saved content')
+      const saving = mounted.click(mode === 'create' ? 'save' : 'close')
+      await flushSaveUi()
+
+      expect(previews).toBe(1)
+      expect(writes).toBe(1)
+      expect(testWindow.location.assigned).toEqual([])
+      expect(mounted.host.querySelector('[role="status"]')?.textContent).toContain('Saved. Preparing the page for viewing')
+      expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-action')?.disabled).toBe(true)
+      expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-close-action')?.disabled).toBe(true)
+      expect(await mounted.context.save()).toBe(false)
+      expect(await mounted.context.saveAndClose()).toBe(false)
+      expect(mounted.context.isSaving).toBe(true)
+
+      ready = true
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await saving).toBe(true)
+      expect(previews).toBe(2)
+      expect(writes).toBe(1)
+      expect(mounted.context.isDirty).toBe(false)
+      expect(mounted.context.isSaving).toBe(false)
+      expect(testWindow.location.assigned).toEqual([mode === 'update' ? '/_private/en/persisted-path' : '/en/persisted-path'])
+    })
+  }
+
+  for (const failure of ['timeout', 'forbidden', 'untyped service failure', 'mismatched revision'] as const) {
+    test(`mounted Save and close keeps a persisted save recoverable after ${failure} and retries readiness without rewriting`, async () => {
+      vi.useFakeTimers()
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      let writes = 0
+      let retryReady = false
+      let previews = 0
+      mockRenderPreviews(testWindow, (async () => {
+        previews++
+        if (retryReady) return Response.json(createRenderPreview(store))
+        if (failure === 'timeout') return Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })
+        if (failure === 'forbidden') return Response.json({ error: 'Page access was revoked.' }, { status: 403 })
+        if (failure === 'untyped service failure') return Response.json({ error: 'Rendering service failed.' }, { status: 503 })
+        return Response.json(createRenderPreview(store, '3'))
+      }) as typeof fetch)
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async () => {
+          writes++
+          return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        },
+        fetchPage: async () => {
+          throw pendingRenderError()
+        },
+        waitForPageRender
+      })
+      mounted.context.editorAdapter.replaceText('content that was saved')
+      const saving = mounted.click()
+      await flushSaveUi()
+      if (failure === 'timeout') await vi.advanceTimersByTimeAsync(15_000)
+      expect(await saving).toBe(false)
+      await flushSaveUi()
+
+      expect(writes).toBe(1)
+      expect(mounted.context.savedState.content).toBe('content that was saved')
+      expect(store.editor.content).toBe('content that was saved')
+      expect(mounted.context.isDirty).toBe(false)
+      expect(mounted.context.editorAdapterSafety.nonPersisted).toBe(false)
+      expect(mounted.context.saveFeedback).toBe('saved')
+      expect(mounted.context.isSaving).toBe(false)
+      expect(mounted.context.exitConfirmed).toBe(false)
+      expect(testWindow.location.assigned).toEqual([])
+      expect(testWindow.location.replaced).toEqual([])
+      expect(store.notifications.at(-1)?.style).toBe('warning')
+      expect(mounted.host.querySelector('[role="status"]')?.textContent).not.toContain('Not saved')
+      if (failure !== 'timeout') expect(previews).toBe(1)
+      if (failure === 'forbidden') expect(String(store.notifications.at(-1)?.message)).toContain('Page access was revoked.')
+      if (failure === 'untyped service failure') expect(String(store.notifications.at(-1)?.message)).toContain('Rendering service failed.')
+
+      retryReady = true
+      expect(await mounted.click()).toBe(true)
+      expect(writes).toBe(1)
+      expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+    })
+  }
+
+  for (const change of [
+    'typing',
+    'reverted typing',
+    'metadata',
+    'modal',
+    'offline',
+    'auth refresh',
+    'merge',
+    'collaboration backlog',
+    'revision',
+    'page',
+    'account',
+    'unmount'
+  ] as const) {
+    test(`mounted Save and close does not navigate when ${change} changes during render readiness`, async () => {
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      let release!: (response: Response) => void
+      let previewSignal: AbortSignal | undefined
+      mockRenderPreviews(testWindow, (async (_url, init) => {
+        previewSignal = init?.signal ?? undefined
+        return new Promise<Response>(resolve => {
+          release = resolve
+        })
+      }) as typeof fetch)
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async () => ({ sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }),
+        fetchPage: async () => {
+          throw pendingRenderError()
+        },
+        waitForPageRender
+      })
+      mounted.context.editorAdapter.replaceText('saved content')
+      const saving = mounted.click()
+      await flushSaveUi()
+      expect(previewSignal).toBeDefined()
+      const savedPreview = createRenderPreview(store)
+      if (change === 'typing' || change === 'reverted typing') mounted.context.editorAdapter.replaceText('new unsaved content')
+      if (change === 'reverted typing') mounted.context.editorAdapter.replaceText('saved content')
+      if (change === 'metadata') store.page.title = 'New unsaved title'
+      if (change === 'modal') mounted.context.activeModal = 'editorModalConflict'
+      if (change === 'offline') mounted.context.offlineConnectionState = 'offline'
+      if (change === 'auth refresh') store.authRefreshPending = true
+      if (change === 'merge') mounted.context.editorAdapterSafety.mergeDirty = true
+      if (change === 'collaboration backlog') mounted.context.editorAdapterSafety.collaborationBacklog = 1
+      if (change === 'revision') store.page.sourceRevision = '3'
+      if (change === 'page') store.page.id = 99
+      if (change === 'account') {
+        mounted.context.accountId = 99
+        store.user.id = 99
+        store.offlineIdentityEpoch++
+      }
+      if (change === 'unmount') mounted.unmount()
+      release(Response.json(savedPreview))
+      expect(await saving).toBe(false)
+      expect(testWindow.location.assigned).toEqual([])
+      expect(testWindow.location.replaced).toEqual([])
+      expect(mounted.context.savedState.content).toBe('saved content')
+      if (change === 'typing') {
+        expect(store.editor.content).toBe('new unsaved content')
+        expect(mounted.context.isDirty).toBe(true)
+      }
+      if (change === 'metadata') expect(store.page.title).toBe('New unsaved title')
+      if (change === 'account' || change === 'unmount') expect(previewSignal?.aborted).toBe(true)
+    })
+  }
+
+  test('mounted Create keeps a successful write saved after render timeout and closes later without creating again', async () => {
+    vi.useFakeTimers()
+    const store = Vue.reactive(createStore('create'))
+    const testWindow = createTestWindow()
+    let creates = 0
+    let ready = false
+    mockRenderPreviews(testWindow, (async () =>
+      ready
+        ? Response.json(createRenderPreview(store))
+        : Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })) as typeof fetch)
+    const mounted = mountSaveActions(store, testWindow, {
+      createPage: async () => {
+        creates++
+        return { id: 91, sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      },
+      waitForPageRender
+    })
+    mounted.context.editorAdapter.replaceText('new page saved content')
+    const creating = mounted.click('save')
+    await flushSaveUi()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(await creating).toBe(true)
+    await flushSaveUi()
+    expect(creates).toBe(1)
+    expect(store.page.id).toBe(91)
+    expect(store.editor.mode).toBe('update')
+    expect(mounted.context.isDirty).toBe(false)
+    expect(mounted.context.saveFeedback).toBe('saved')
+    expect(store.editor.content).toBe('new page saved content')
+    expect(store.notifications.at(-1)?.style).toBe('warning')
+    expect(testWindow.location.assigned).toEqual([])
+
+    ready = true
+    expect(await mounted.click()).toBe(true)
+    expect(creates).toBe(1)
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+  })
+
+  test('mounted clean Close after a server save waits for readiness without submitting again', async () => {
+    const store = Vue.reactive(createStore())
+    const testWindow = createTestWindow()
+    let writes = 0
+    let previews = 0
+    let release!: (response: Response) => void
+    mockRenderPreviews(testWindow, (async () => {
+      previews++
+      return new Promise<Response>(resolve => {
+        release = resolve
+      })
+    }) as typeof fetch)
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async () => {
+        writes++
+        return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      },
+      fetchPage: async () => {
+        throw pendingRenderError()
+      },
+      waitForPageRender
+    })
+    mounted.context.editorAdapter.replaceText('saved before ordinary Close')
+    expect(await mounted.click('save')).toBe(true)
+    await flushSaveUi()
+    expect(previews).toBe(0)
+    mounted.host.querySelector<HTMLButtonElement>('.editor-close-action')!.click()
+    await flushSaveUi()
+    expect(previews).toBe(1)
+    expect(writes).toBe(1)
+    expect(testWindow.location.assigned).toEqual([])
+    expect(mounted.context.isSaving).toBe(true)
+
+    release(Response.json(createRenderPreview(store)))
+    await flushSaveUi()
+    expect(writes).toBe(1)
+    expect(mounted.context.isSaving).toBe(false)
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+  })
+
+  test('mounted plain Save acknowledges persisted source while its follow-up reader render is pending', async () => {
+    const store = Vue.reactive(createStore())
+    const testWindow = createTestWindow()
+    let readinessCalls = 0
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async () => ({ sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }),
+      fetchPage: async () => {
+        throw pendingRenderError()
+      },
+      waitForPageRender: async () => {
+        readinessCalls++
+      }
+    })
+    mounted.context.editorAdapter.replaceText('saved without closing')
+    expect(await mounted.click('save')).toBe(true)
+    await flushSaveUi()
+    expect(readinessCalls).toBe(0)
+    expect(mounted.context.isDirty).toBe(false)
+    expect(mounted.context.saveFeedback).toBe('saved')
+    expect(mounted.context.savedState.content).toBe('saved without closing')
+    expect(store.page.okfError).toBeNull()
+    expect(store.notifications.at(-1)?.style).toBe('success')
+    expect(testWindow.location.assigned).toEqual([])
+  })
+
+  test('mounted Save and close retains the genuine mutation-conflict path without waiting for render', async () => {
+    const store = Vue.reactive(createStore())
+    const testWindow = createTestWindow()
+    let readinessCalls = 0
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async () => {
+        throw Object.assign(new Error('The page changed on the server.'), { status: 409 })
+      },
+      waitForPageRender: async () => {
+        readinessCalls++
+      }
+    })
+    mounted.context.editorAdapter.replaceText('unsaved conflicted content')
+    expect(await mounted.click()).toBe(false)
+    await flushSaveUi()
+    expect(readinessCalls).toBe(0)
+    expect(mounted.context.isConflict).toBe(true)
+    expect(mounted.context.isDirty).toBe(true)
+    expect(mounted.context.saveFeedback).toBe('failed')
+    expect(mounted.context.savedState.content).toBe('persisted content')
+    expect(store.editor.content).toBe('unsaved conflicted content')
+    expect(store.notifications.at(-1)?.style).toBe('warning')
+    expect(testWindow.location.assigned).toEqual([])
+  })
+
   test('binds each source controller only after the cold actor boundary is ready and retains owner fencing', async () => {
     const invocation = shellMarkup('component.editor-active-editor').toString()
     const compiled = compileTemplate({
@@ -1525,7 +1939,7 @@ describe('modern editor shell interaction contract', () => {
       },
       fetchPage: async () => ({
         okf: _.cloneDeep(store.page.okf),
-        sourceRevision: 'revision-4',
+        sourceRevision: 'revision-3',
         isSearchable: store.page.isSearchable
       })
     })
@@ -1567,8 +1981,8 @@ describe('modern editor shell interaction contract', () => {
     expect(store.notifications).toHaveLength(1)
     expect(store.notifications[0]?.style).toBe('success')
     expect(store.loadingOwners).toEqual([])
-    expect(testWindow.scheduledTimers).toEqual([{ id: 100, delay: 1000 }])
-    expect(testWindow.clearedTimers).toEqual([100])
+    expect(testWindow.scheduledTimers).toEqual([])
+    expect(testWindow.clearedTimers).toEqual([])
     expect(context.navigationTimer).toBeNull()
     expect(testWindow.location.replaced).toEqual([])
     expect(testWindow.location.assigned).toEqual(['/_private/fr/discarded-path'])
@@ -1619,7 +2033,7 @@ describe('modern editor shell interaction contract', () => {
         createdInput = input
         started()
         await requestRelease
-        return { id: 91, updatedAt: '2026-09-03T12:00:00.000Z' }
+        return { id: 91, sourceRevision: 'revision-1', updatedAt: '2026-09-03T12:00:00.000Z' }
       }
     })
     applyEveryEdit(store)

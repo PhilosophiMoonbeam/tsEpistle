@@ -245,6 +245,10 @@ Transitions:
 
 The advisory timestamp conflict endpoint is not a write guard. `sourceRevision` compare-and-swap remains authoritative. Live Yjs collaboration keeps its existing freshly authorized generation-fenced reconnect path; a recovered local fork is never injected automatically into a shared session.
 
+A device recovery copy is separate from page publication state. Fresh online editing starts with local recovery capture, not **Needs review**; reopening a matching recovery record online or reconnecting still requires review. Notices describe the recovery copy or recovered edits without implying that an already published page is unpublished.
+
+After a successful source write, **Save and close**, creation's automatic reader navigation, and a subsequent clean **Close** wait for the existing authorized page preview to confirm the exact saved page ID, source revision, locale, path and visibility. Only `503 PAGE_RENDER_PENDING` is polled, with cancellation and a 15-second deadline. Failure leaves the saved editor open; retrying a clean save-and-close checks readiness without resubmitting the mutation. New edits, session changes and unresolved recovery or collaboration work prevent stale navigation.
+
 Before service-worker update reload, every active client reports whether it has uncommitted editor memory, a committed draft, or an in-flight/unknown publish. Missing acknowledgement defers reload.
 
 ## 8. Offline library and search UX
