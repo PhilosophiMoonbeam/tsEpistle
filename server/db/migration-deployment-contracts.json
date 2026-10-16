@@ -319,6 +319,21 @@
       "runtimePostconditions": [
         "native-account-profile-schema"
       ]
+    },
+    "tsepistle-000062-personal-mcp-keys.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "personal-mcp-credential-kind-and-owner-schema"
+      ],
+      "runtimePostconditions": [
+        "personal-mcp-credential-kind-and-owner-schema"
+      ]
     }
   }
 }

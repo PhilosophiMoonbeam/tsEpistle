@@ -241,6 +241,7 @@ make_plan() {
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
         native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
+        personal-mcp-credential-kind-and-owner-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -769,6 +770,30 @@ verify_postconditions() {
             || '|' || (SELECT count(*) FROM authentication WHERE jsonb_typeof(config::jsonb)='object'
               AND jsonb_exists_any(config::jsonb, ARRAY['mappingPronouns','pronounsClaim']));")"
         [[ "$result" == '2|0|0' ]] || die "Postcondition failed: $probe (supported fields retained; retired field and mappings removed)"
+        ;;
+      personal-mcp-credential-kind-and-owner-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='apiKeys'
+            AND ((column_name='personalOwnerId' AND data_type='integer' AND is_nullable='YES')
+              OR (column_name='personalAccess' AND data_type='character varying' AND character_maximum_length=16 AND is_nullable='YES'));")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 personal credential columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='apiKeys' AND c.convalidated AND (
+            (c.contype='f' AND c.confrelid=to_regclass('users') AND c.confdeltype='n'
+              AND c.conkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=t.oid AND attname='personalOwnerId')]::smallint[]
+              AND c.confkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=c.confrelid AND attname='id')]::smallint[]) OR
+            (c.contype='c' AND c.conname='api_keys_personal_access_check'
+              AND pg_get_constraintdef(c.oid) LIKE '%personalOwnerId%IS NULL%personalAccess%IS NOT NULL%'
+              AND pg_get_constraintdef(c.oid) LIKE '%personalAccess%IS NULL%read-only%read-write%')
+          );")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 owner deletion and permanent credential-kind constraints)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class idx ON idx.oid=i.indexrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='apiKeys'
+            AND idx.relname='api_keys_personal_owner_idx' AND i.indisvalid AND i.indnkeyatts=1
+            AND pg_get_indexdef(idx.oid,1,true)=quote_ident('personalOwnerId');")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (owner lookup index)"
         ;;
       native-links-grid-registration)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "

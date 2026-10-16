@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { runInNewContext } from 'node:vm'
@@ -186,6 +186,21 @@ async function runLoginSmoke(source: string, scenario: SmokeScenario = {}) {
 }
 
 describe('Compose upgrade command', () => {
+  it('declares recovery and verification for every enforced migration', async () => {
+    const registry = JSON.parse(await readFile('server/db/migration-deployment-contracts.json', 'utf8'))
+    for (const file of await readdir('server/db/migrations')) {
+      const match = /^tsepistle-(\d{6})-.+\.ts$/.exec(file)
+      if (!match || Number(match[1]) < registry.enforceFromSequence) continue
+      const contract = registry.migrations[file.replace(/\.ts$/, '.js')]
+      expect(contract, file).toBeDefined()
+      expect(contract.rollback, file).toBe('fix-forward-or-restore')
+      expect(contract.recovery, file).toBe('paired')
+      expect(contract.rehearsal, file).toBe('required')
+      expect(contract.rehearsalPostconditions.length, file).toBeGreaterThan(0)
+      expect(contract.runtimePostconditions.length, file).toBeGreaterThan(0)
+    }
+  })
+
   it('exposes only the guarded plan/apply interface', async () => {
     const sandbox = await mkdtemp(path.join(tmpdir(), 'compose-upgrade-cli-'))
     try {
