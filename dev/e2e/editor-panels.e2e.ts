@@ -295,10 +295,10 @@ test('asset browser keeps folder, upload, and insertion actions contained', asyn
   await assertControlsContained(page)
   await dialog.getByRole('button', { name: 'Insert', exact: true }).click()
   await expect(dialog).not.toBeVisible()
-  const source = await page
-    .locator('.editor-markdown')
-    .evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getValue())
-  expect(source).toContain('![brand-mark.png](/brand-mark.png)')
+  const preview = page.locator('.editor-markdown-preview-content')
+  if (!(await preview.isVisible())) await page.getByRole('button', { name: 'Show preview', exact: true }).click()
+  const image = preview.getByRole('img', { name: 'brand-mark.png', exact: true })
+  await expect(image).toHaveJSProperty('src', new URL('/brand-mark.png', page.url()).href)
 })
 test('page identity asset results stay within the viewport and scroll internally', async ({ page }) => {
   await openEditor(page, { largeAssetFixture: true })
