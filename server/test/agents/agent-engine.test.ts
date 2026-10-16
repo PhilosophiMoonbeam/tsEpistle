@@ -11086,7 +11086,7 @@ describe('request-derived evidence coverage', () => {
                 { evidenceId: recentRows[0]!.citation.evidenceId, statement: qualified },
                 { evidenceId: recentRows[0]!.citation.evidenceId, statement: unsupported }
               ]
-            : [{ evidenceId: recentRows[0]!.citation.evidenceId, statement: qualified }]),
+            : []),
           { evidenceId: retained.citation.evidenceId, statement: retained.content }
         ],
         unresolvedFacets: []
@@ -11109,7 +11109,7 @@ describe('request-derived evidence coverage', () => {
       mode,
       [
         {
-          metadata: `<wiki-request-plan>${JSON.stringify({
+          metadata: selection === 'all-supported' ? '' : `<wiki-request-plan>${JSON.stringify({
             facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
           })}</wiki-request-plan>`,
           calls: [{ id: 'partially-supported-recent', name: 'pages.listRecent', arguments: { limit: 10 } }]
@@ -11130,17 +11130,14 @@ describe('request-derived evidence coverage', () => {
       expect(published).toContain(retained.content)
       expect(published).toContain(userRequest.slice(0, -1))
       expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
-      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(
-        selection === 'all-supported' ? recentRows.map(row => row.citation.evidenceId) : [retained.citation.evidenceId]
-      )
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual([retained.citation.evidenceId])
     } else {
       expect(published).not.toContain(retained.content)
       expect(result.citations).toBeUndefined()
       if (auditFinish === 'length') expect(result.outputLimited).toBe(true)
       else expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
     }
-    if (selection === 'split-read' || !publishes) expect(published).not.toContain(qualified)
-    else expect(published).toContain(qualified)
+    expect(published).not.toContain(qualified)
     expect(published).not.toContain(unsupported)
     expect(coverage).toHaveBeenCalledTimes(selection === 'all-supported' ? 2 : 1)
     const auditInput = JSON.stringify(coverage.mock.calls.at(-1)![0]!.chatPrompt)
@@ -11152,6 +11149,39 @@ describe('request-derived evidence coverage', () => {
     expect(fixture.event.mock.calls.filter(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toHaveLength(
       publishes ? 1 : 0
     )
+  })
+
+  it('does not turn incidental recent evidence into an incomplete-audit publication exception for other source reads', async () => {
+    const userRequest = 'Explain the sensor calibration procedure.'
+    const fact = 'Calibration requires supervised inspection before live use.'
+    const page = questionReadPage(42, '3', 'Sensor calibration', 'calibration', 'Procedure', 'procedure', fact)
+    const answer = (input: Readonly<AxChatRequest>) =>
+      sourceBoundAnswer(input, [{ evidenceId: 'page:42:revision:3:section:1', sourceText: fact, statement: fact }])
+    const coverage = vi.fn(async () => ({
+      results: [{ index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'Requested coverage remains unestablished.' }), finishReason: 'stop' as const }]
+    }))
+    const fixture = questionFixture(
+      'native',
+      [
+        {
+          metadata: sourcePlan(userRequest),
+          calls: [
+            { id: 'incidental-recent-window', name: 'pages.listRecent', arguments: { limit: 2 } },
+            { id: 'requested-calibration-read', name: 'pages.get', arguments: { id: 42 } }
+          ]
+        },
+        { answer },
+        { answer }
+      ],
+      name => name === 'pages.listRecent' ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows } : page,
+      [],
+      { coverage }
+    )
+    const result = await fixture.execute(userRequest, { maxTurns: 5, maxToolCalls: 2, maxOutputTokens: 2_048 })
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain(fact)
+    expect(result.citations).toBeUndefined()
+    expect(coverage).toHaveBeenCalledTimes(2)
   })
 
   for (const mode of ['native', 'prompt'] as const) {
