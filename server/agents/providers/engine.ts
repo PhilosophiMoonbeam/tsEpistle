@@ -9037,6 +9037,16 @@ export class AxAgentEngine implements AgentEngine {
           ) {
             try {
               let nativeDraft = result.rootNativeDraft
+              // A complete recent-read-only batch remains a bounded recent recap
+              // even when optional model-authored facet metadata omitted that classification.
+              // Incidental recent results beside other source reads do not widen this gate.
+              const recentPublication =
+                coverage.recentGroups.length > 0 ||
+                (contextPlan.observedRecentEvidence &&
+                  nativeDraft.readSources.size > 0 &&
+                  [...nativeDraft.readSources.values()].every(source =>
+                    recentWindows.some(window => window.evidenceIds.includes(source.evidenceId))
+                  ))
               const { plan, evidence, decide } = await prepareWikiVerification(nativeDraft)
               const semanticResults: DecisionBatchResult[] = []
               for (const nativeRequest of plan?.requests ?? []) semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
@@ -9047,7 +9057,7 @@ export class AxAgentEngine implements AgentEngine {
                 !semantic.valid &&
                 plan !== null &&
                 (request.purpose ?? 'root') === 'root' &&
-                coverage.recentGroups.length > 0 &&
+                recentPublication &&
                 result.finishReason !== 'length' &&
                 (rejectedDraftCount >= MAX_ANSWER_REPAIRS || turn + 1 >= maxTurns)
                   ? selectVerifiedRecentDraft(nativeDraft, plan, semantic.nativeSupportedClaimIndexes, contextPlan.requestFacets?.length ?? 1)
@@ -9150,7 +9160,7 @@ export class AxAgentEngine implements AgentEngine {
                   assessment.valid &&
                   plan !== null &&
                   (request.purpose ?? 'root') === 'root' &&
-                  coverage.recentGroups.length > 0 &&
+                  recentPublication &&
                   result.finishReason !== 'length' &&
                   !nativeDraft.allRequestFacetsUnresolved &&
                   (rejectedDraftCount >= MAX_ANSWER_REPAIRS || turn + 1 >= maxTurns)
@@ -9167,7 +9177,7 @@ export class AxAgentEngine implements AgentEngine {
                 if (
                   coverageOutputLimited ||
                   (audit.verdict !== 'complete' &&
-                    !(audit.verdict === 'incomplete' && coverage.recentGroups.length > 0 && nativeDraft.allRequestFacetsUnresolved))
+                    !(audit.verdict === 'incomplete' && recentPublication && nativeDraft.allRequestFacetsUnresolved))
                 ) {
                   coverageAuditFeedback = audit.feedback
                   assessment = { ...assessment, valid: false, issues: [...assessment.issues, `Requested coverage: ${audit.verdict}.`] }
