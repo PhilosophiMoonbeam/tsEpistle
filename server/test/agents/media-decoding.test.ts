@@ -326,6 +326,62 @@ describe('bounded complete Agent audio/video decoding', () => {
     const decoded = await decodeAgentAudioVideo(payload, 'video/webm')
     expect(decoded.durationSeconds).toBeGreaterThanOrEqual(2)
     expect(decoded.durationSeconds).toBeLessThan(2.1)
+
+    // Model legal partial writes from three independent native writers. Sharing
+    // their destination deterministically corrupts records, without a flaky loop.
+    const driver = join(directory, 'fragmented-stats.ts')
+    const fragments = [
+      'printf "agent_audio=96000:" >&"$1"',
+      'printf "agent_video=" >&"$2"',
+      'printf "frame=1\\nout_time_us=" >&"$3"',
+      'printf "%s" "$4" >&"$1"',
+      'printf "%s" "$5" >&"$2"',
+      'printf "250000\\nprogress=end\\n" >&"$3"'
+    ].join('\n')
+    await writeFile(
+      driver,
+      `
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { decodeAgentAudioVideo } from ${JSON.stringify(new URL('../../agents/media-decoding.ts', import.meta.url).href)}
+const payload = await readFile(${JSON.stringify(path)})
+const originalSpawn = Bun.spawn
+let fault
+Bun.spawn = new Proxy(originalSpawn, {
+  apply(target, receiver, args) {
+    const command = args[0]
+    const decoder = command.indexOf('ffmpeg')
+    if (decoder < 0) return Reflect.apply(target, receiver, args)
+    const descriptors = ['-stats_enc_pre:a', '-stats_enc_pre:v', '-progress'].map(option => {
+      const index = command.indexOf(option)
+      assert.notEqual(index, -1)
+      const match = /^pipe:(\\d+)$/.exec(command[index + 1])
+      assert.ok(match)
+      return match[1]
+    })
+    const audio = fault === 'audio' ? 'bad\\n' : '0:1/48000' + (fault === 'audio-eof' ? '' : '\\n')
+    const video = fault === 'video' ? 'bad\\n' : '0:1/4' + (fault === 'video-eof' ? '' : '\\n')
+    // Keep the real launcher, resource limits and OS pipes; replace only the
+    // writer to control fragmentation independently of FFmpeg's scheduling.
+    const writer = [...command.slice(0, decoder), 'bash', '--noprofile', '--norc', '-c', ${JSON.stringify(fragments)}, '--', ...descriptors, audio, video]
+    return Reflect.apply(target, receiver, [writer, args[1]])
+  }
+})
+try {
+  assert.equal((await decodeAgentAudioVideo(payload, 'video/webm')).durationSeconds, 2)
+  for (fault of ['audio', 'video', 'audio-eof', 'video-eof']) {
+    await assert.rejects(decodeAgentAudioVideo(payload, 'video/webm'), error => error.code === 'INVALID_AGENT_MEDIA')
+  }
+} finally {
+  Bun.spawn = originalSpawn
+}
+`,
+      { mode: 0o600 }
+    )
+    const child = spawnSync(process.execPath, [driver], { timeout: 10_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL' })
+    expect(child.error).toBeUndefined()
+    expect(child.stderr.toString()).toBe('')
+    expect(child.status).toBe(0)
   })
 
   it('does not understate decoded samples when WebM duration and monotonic packet timestamps are forged short', async () => {

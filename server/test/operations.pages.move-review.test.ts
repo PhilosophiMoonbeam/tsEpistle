@@ -100,9 +100,22 @@ suite('PostgreSQL reviewed page move authorization', () => {
 
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection, pool: { min: 0, max: 8 } })
-    await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, users CASCADE')
+    await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, assets, "assetFolders", storage, users CASCADE')
     await db.raw(`
       CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL, email text NOT NULL);
+      CREATE TABLE storage (
+        key varchar(255) PRIMARY KEY, "isEnabled" boolean NOT NULL DEFAULT false,
+        mode text NOT NULL DEFAULT 'push' CHECK (mode IN ('sync', 'push', 'pull')),
+        config json, "syncInterval" varchar(255), state json
+      );
+      CREATE TABLE "assetFolders" (
+        id serial PRIMARY KEY, name varchar(255) NOT NULL, slug varchar(255) NOT NULL,
+        "parentId" integer REFERENCES "assetFolders"(id)
+      );
+      CREATE TABLE assets (
+        id serial PRIMARY KEY, filename varchar(255) NOT NULL, hash varchar(255) NOT NULL,
+        "folderId" integer REFERENCES "assetFolders"(id)
+      );
       CREATE TABLE pages (
         id integer PRIMARY KEY, path text NOT NULL, hash text NOT NULL, "localeCode" text NOT NULL,
         title text NOT NULL, description text, content text NOT NULL, render text, toc text,
@@ -198,7 +211,7 @@ suite('PostgreSQL reviewed page move authorization', () => {
   afterAll(async () => {
     globalThis.WIKI = originalWiki as never
     if (db) {
-      await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, users CASCADE')
+      await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, assets, "assetFolders", storage, users CASCADE')
       await db.raw('DROP FUNCTION IF EXISTS test_increment_page_source_revision()')
       await db.destroy()
     }

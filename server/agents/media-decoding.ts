@@ -1,3 +1,4 @@
+import { closeSync } from 'node:fs'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -474,9 +475,7 @@ export const decodeAgentAudioVideo = async (
       child = Bun.spawn(['bash', '--noprofile', '--norc', '-c', LAUNCH, '--', String(remaining), command, ...args], {
         cwd: directory,
         env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1' },
-        stdin: 'ignore',
-        stdout: 'pipe',
-        stderr: 'pipe'
+        stdio: onLine ? ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe']
       })
     } catch {
       return invalid()
@@ -490,8 +489,18 @@ export const decodeAgentAudioVideo = async (
     timer.unref()
     signal.addEventListener('abort', kill, { once: true })
     if (signal.aborted) kill()
+    const statsFds = onLine ? child.stdio.slice(3) : []
     try {
-      const [stdout, stderr, code] = await Promise.all([collect(child.stdout, stdoutLimit, kill, onLine), collect(child.stderr, 8_192, kill), child.exited])
+      const stats = statsFds.map(fd => {
+        if (fd === null) return invalid()
+        return collect(Bun.file(fd).stream(), 0, kill, onLine)
+      })
+      const [stdout, stderr, code] = await Promise.all([
+        collect(child.stdout, stdoutLimit, kill, onLine ? () => true : undefined),
+        collect(child.stderr, 8_192, kill),
+        child.exited,
+        ...stats
+      ])
       signal.throwIfAborted()
       const cpu = Number(child.resourceUsage()?.cpuTime.total)
       if (failed || code !== 0 || child.signalCode !== null || stderr.trim() || !Number.isSafeInteger(cpu) || cpu < 0) return invalid()
@@ -503,6 +512,8 @@ export const decodeAgentAudioVideo = async (
       signal.removeEventListener('abort', kill)
       if (child.exitCode === null) child.kill('SIGKILL')
       await child.exited.catch(() => undefined)
+      // Reading child.stdio transfers ownership of its extra pipe descriptors.
+      for (const fd of statsFds) if (fd !== null) closeSync(fd)
     }
   }
   try {
@@ -674,8 +685,10 @@ export const decodeAgentAudioVideo = async (
         ...inputOptions,
         '-map',
         '0',
-        ...(audioCount ? ['-stats_enc_pre:a', 'pipe:1', '-stats_enc_pre_fmt:a', 'agent_audio={samp}:{pts}:{tb}'] : []),
-        ...(videoCount ? ['-stats_enc_pre:v', 'pipe:1', '-stats_enc_pre_fmt:v', 'agent_video={pts}:{tb}'] : []),
+        // FFmpeg's audio/video stats writers can corrupt a shared AVIO buffer.
+        // Give each writer its own pipe, separate from stdout progress records.
+        ...(audioCount ? ['-stats_enc_pre:a', 'pipe:3', '-stats_enc_pre_fmt:a', 'agent_audio={samp}:{pts}:{tb}'] : []),
+        ...(videoCount ? ['-stats_enc_pre:v', 'pipe:4', '-stats_enc_pre_fmt:v', 'agent_video={pts}:{tb}'] : []),
         '-threads',
         '1',
         '-filter_threads',

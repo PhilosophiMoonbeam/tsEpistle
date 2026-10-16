@@ -8,6 +8,7 @@ import common from '../../helpers/common.ts'
 import { up as jobsMigration } from '../../db/migrations/2.5.130.ts'
 import { up as leaseMigration } from '../../db/migrations/2.5.158.ts'
 import { up as storageMigration, down as storageDown } from '../../db/migrations/tsepistle-000023-storage-administration.ts'
+import { up as relocationMigration } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
 import { storageModuleDefinition } from '../../repositories/storage-configuration.ts'
 import { storageConfigurationKey } from '../../helpers/storage-configuration-key.ts'
 import { createStorageConfigurationStore } from '../../operations/storage-configuration.ts'
@@ -24,7 +25,21 @@ const result = { outcome: 'succeeded', message: 'Operation completed.', counts: 
 suite('Reviewed storage operations on PostgreSQL', () => {
   let db: Knex, configuration: ReturnType<typeof createStorageConfigurationStore>, actions: ReturnType<typeof createStorageActionStore>, jobs: DurableJobStore
   let runtime: StorageRuntimeTarget[], definitions: StorageModuleDefinition[], rawDefinitions: unknown[], offline: boolean, executing: boolean, clock: Date
-  const tables = ['storageOperations', 'durableJobs', 'storage', 'settings', 'userGroups', 'groups', 'users']
+  const originalWiki = globalThis.WIKI
+  const tables = [
+    'assetRelocationEffects',
+    'assetRelocationOperations',
+    'storageOperations',
+    'durableJobs',
+    'assets',
+    'assetFolders',
+    'pages',
+    'storage',
+    'settings',
+    'userGroups',
+    'groups',
+    'users'
+  ]
   const review = () => configuration.inspect(admin)
   const input = async (targetKey: string | null = 'disk', handler = targetKey === null ? 'activate' : 'dump') => ({
     targetKey,
@@ -76,8 +91,19 @@ suite('Reviewed storage operations on PostgreSQL', () => {
     await jobsMigration(db)
     await leaseMigration(db)
     await storageMigration(db)
+    await db.raw(`
+      CREATE TABLE pages (id integer PRIMARY KEY, path text NOT NULL, "localeCode" text NOT NULL, "contentType" text NOT NULL, visibility text NOT NULL);
+      CREATE TABLE "assetFolders" (id integer PRIMARY KEY, slug text NOT NULL, "parentId" integer);
+      CREATE TABLE assets (id integer PRIMARY KEY, filename text NOT NULL, "folderId" integer, hash text NOT NULL);
+    `)
+    await relocationMigration(db)
+    globalThis.WIKI = {
+      config: { db: { type: 'postgres' }, lang: { code: 'en', namespacing: false } },
+      models: { knex: db }
+    } as never
   })
   afterAll(async () => {
+    globalThis.WIKI = originalWiki
     if (db) {
       for (const table of tables) await db.schema.dropTableIfExists(table)
       await db.destroy()

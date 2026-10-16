@@ -6,6 +6,7 @@ import { createAccountAdministrationStore } from '../../operations/account-admin
 import { up, down } from '../../db/migrations/tsepistle-000017-account-administration.ts'
 import { up as groupUp } from '../../db/migrations/tsepistle-000018-group-administration.ts'
 import { up as presentationUp } from '../../db/migrations/tsepistle-000036-user-presentation-defaults.ts'
+import { up as personalMcpUp } from '../../db/migrations/tsepistle-000062-personal-mcp-keys.ts'
 const connection = getPostgresTestConnection('_account_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const admin = { id: 1, authVersion: 0 } as never,
@@ -104,6 +105,7 @@ suite('PostgreSQL account administration', () => {
       t.boolean('isRevoked')
       t.string('expiration')
     })
+    await personalMcpUp(db)
     await db.schema.createTable('navigation', t => {
       t.string('key').primary()
       t.json('config')
