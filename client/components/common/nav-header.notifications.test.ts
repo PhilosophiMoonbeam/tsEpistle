@@ -261,6 +261,7 @@ const globals = globalThis as typeof globalThis & {
   __headerSiteNotifications: typeof siteNotifications
   __headerDestroyAgents: () => void
   __headerMarkOfflineLogoutPending: (accountId?: number) => boolean
+  __headerInvalidateOfflineIdentity: () => Promise<boolean>
   __headerOfflineIdentityCleanupFailureMessage: string
   siteConfig: Record<string, unknown>
   siteLangs: Array<{ code: string; name: string }>
@@ -276,6 +277,7 @@ globals.__headerMarkOfflineLogoutPending = accountId => {
   markOfflineLogoutPendingCalls.push(accountId)
   return true
 }
+globals.__headerInvalidateOfflineIdentity = async () => true
 globals.__headerOfflineIdentityCleanupFailureMessage = 'Offline identity cleanup failed. Reconnect and try again.'
 globals.siteConfig = {
   agentsEnabled: false,
@@ -337,7 +339,7 @@ const bundle = await Bun.build({
             return {
               contents: [
                 'export const wikiStore = globalThis.__headerWikiStore;',
-                'export const invalidateOfflineIdentity = async () => true;',
+                'export const invalidateOfflineIdentity = () => globalThis.__headerInvalidateOfflineIdentity();',
                 'export const markOfflineLogoutPending = accountId => (globalThis.__headerMarkOfflineLogoutPending ? globalThis.__headerMarkOfflineLogoutPending(accountId) : false);',
                 'export const OFFLINE_IDENTITY_CLEANUP_FAILURE_MESSAGE = globalThis.__headerOfflineIdentityCleanupFailureMessage'
               ].join('\n'),
@@ -513,6 +515,7 @@ afterEach(() => {
   for (const restore of browserGlobalRestorations.splice(0).reverse()) restore()
   calls.splice(0)
   agentDestroyCalls = 0
+  globals.__headerInvalidateOfflineIdentity = async () => true
   Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
   wikiStore.site.title = 'Wiki'
   wikiStore.site.search = ''
@@ -902,7 +905,9 @@ describe('account continuity without a verified connection', () => {
     expect(host.querySelector('.account-menu__unverified')).toBeNull()
   })
 
-  it('retires Agent continuity before submitting logout so pagehide cannot restore it', async () => {
+  it('keeps native logout connected through auth retirement and retires Agent continuity before submission', async () => {
+    const boundary = Promise.withResolvers<boolean>()
+    globals.__headerInvalidateOfflineIdentity = () => boundary.promise
     const { host } = await mountHeader()
     const form = host.querySelector('form[action="/logout"]')
     if (!form) throw new Error('Logout form missing')
@@ -910,13 +915,35 @@ describe('account continuity without a verified connection', () => {
     Object.defineProperty(form, 'submit', {
       value: () => {
         expect(agentDestroyCalls).toBe(1)
+        expect(form.isConnected).toBe(true)
         submitted = true
       }
     })
     form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
     expect(agentDestroyCalls).toBe(1)
+    expect(submitted).toBe(false)
+    wikiStore.user = user(0, false)
+    wikiStore.offlineIdentityReady = false
+    await settle()
+    expect(host.querySelector('form[action="/logout"]')).toBe(form)
+    expect(form.isConnected).toBe(true)
+    expect(submitted).toBe(false)
+    boundary.resolve(true)
     await settle()
     expect(submitted).toBe(true)
+  })
+
+  it('does not submit logout when local identity cleanup fails', async () => {
+    globals.__headerInvalidateOfflineIdentity = async () => false
+    const { host } = await mountHeader()
+    const form = host.querySelector('form[action="/logout"]')
+    if (!form) throw new Error('Logout form missing')
+    let submitted = false
+    Object.defineProperty(form, 'submit', { value: () => { submitted = true } })
+    form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(submitted).toBe(false)
+    expect(form.getAttribute('aria-busy')).toBeNull()
   })
 
   it('keeps the warm account visible while pausing server actions and allowing Home', async () => {

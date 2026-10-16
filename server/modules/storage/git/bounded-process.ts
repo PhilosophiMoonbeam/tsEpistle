@@ -313,13 +313,39 @@ export async function observeDirectoryTree(rootPath: string, options: BoundedDir
       throw error
     }
     if (!listed.isDirectory()) throw new BoundedProcessError('monitor', `Git observation encountered a non-directory: ${prefix || '.'}`)
-    let directory
     try {
-      directory = await opendir(directoryPath, { bufferSize: 32 })
+      const directory = await opendir(directoryPath, { bufferSize: 32 })
+      // The iterator closes the directory, but may defer opening/reading until
+      // iteration begins (notably on Bun), so removal can also fail here.
+      for await (const entry of directory) {
+        checkObservationDeadline(options.deadlineAt)
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+        if (options.shouldSkip?.(relativePath)) continue
+        entries += 1
+        if (entries > options.maxEntries) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxEntries}-entry limit`)
+        const childPath = path.join(directoryPath, entry.name)
+        let child
+        try {
+          child = await lstat(childPath)
+        } catch (error: unknown) {
+          if (isMissingEntry(error)) continue
+          throw error
+        }
+        if (child.isSymbolicLink()) throw new BoundedProcessError('monitor', `Git observation encountered a symbolic link: ${relativePath}`)
+        if (child.isDirectory()) {
+          await observe(childPath, relativePath)
+          continue
+        }
+        if (!child.isFile() || !Number.isSafeInteger(child.size) || child.size < 0) {
+          throw new BoundedProcessError('monitor', `Git observation encountered an uninspectable entry: ${relativePath}`)
+        }
+        bytes += child.size
+        if (bytes > options.maxBytes) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxBytes}-byte limit`)
+      }
     } catch (error: unknown) {
       if (!prefix || !isMissingEntry(error)) throw error
-      // A failed open can also mean a directory was replaced by a dangling
-      // symlink. Only a name that is still absent may be treated as removed.
+      // A failed open/read can also mean replacement by a dangling symlink.
+      // Only a name that is still absent may be treated as removed.
       try {
         await lstat(directoryPath)
       } catch (inspectionError: unknown) {
@@ -327,32 +353,6 @@ export async function observeDirectoryTree(rootPath: string, options: BoundedDir
         throw inspectionError
       }
       throw error
-    }
-    // The async iterator closes the directory when iteration ends, including on errors.
-    for await (const entry of directory) {
-      checkObservationDeadline(options.deadlineAt)
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (options.shouldSkip?.(relativePath)) continue
-      entries += 1
-      if (entries > options.maxEntries) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxEntries}-entry limit`)
-      const childPath = path.join(directoryPath, entry.name)
-      let child
-      try {
-        child = await lstat(childPath)
-      } catch (error: unknown) {
-        if (isMissingEntry(error)) continue
-        throw error
-      }
-      if (child.isSymbolicLink()) throw new BoundedProcessError('monitor', `Git observation encountered a symbolic link: ${relativePath}`)
-      if (child.isDirectory()) {
-        await observe(childPath, relativePath)
-        continue
-      }
-      if (!child.isFile() || !Number.isSafeInteger(child.size) || child.size < 0) {
-        throw new BoundedProcessError('monitor', `Git observation encountered an uninspectable entry: ${relativePath}`)
-      }
-      bytes += child.size
-      if (bytes > options.maxBytes) throw new BoundedProcessError('monitor', `Git observation exceeded its ${options.maxBytes}-byte limit`)
     }
   }
 

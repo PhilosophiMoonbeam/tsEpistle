@@ -167,6 +167,8 @@ A persisted monotonically changing `sessionGeneration` fences logout, account sw
 
 On logout start—before waiting for network logout—the client locks account-owned UI, advances `sessionGeneration`, aborts requests, broadcasts invalidation, clears in-memory projections and the draft key, and purges ordinary account drafts. It MUST retain any immutable `publishing` or `outcome-unknown` submission whose request may have committed, but marks it locked and opaque; it remains non-renderable and non-exportable until the same account is verified online and reconciliation completes, or until the user explicitly deletes it. Account switch uses the same boundary. A failed network logout is reported separately and does not unlock local account content.
 
+The native logout POST form remains connected while cleanup is pending, even when a concurrent auth refresh retires the displayed identity. Submission still requires successful local cleanup; a failed cleanup never falls through to network logout.
+
 Cold startup never reconstructs an authenticated session or reading key. A persisted reading vault survives restart but remains locked until the user enters its one-time generated secret; the secret and unwrapped key are never persisted. Locked private records reveal no page metadata. A wrong owner, stale `authVersion`, unavailable key, authentication/tag failure, malformed envelope, incoherent revision pair, or undecryptable ciphertext is opaque and delete-only: it may not be rendered, searched, exported, reconciled, or used to recover server content.
 
 ### 6.2 Draft key lifecycle
@@ -250,6 +252,8 @@ A device recovery copy is separate from page publication state. Fresh online edi
 After a successful source write, **Save and close**, creation's automatic reader navigation, and a subsequent clean **Close** wait for the existing authorized page preview to confirm the exact saved page ID, source revision, locale, path and visibility. Only `503 PAGE_RENDER_PENDING` is polled, with cancellation and a 15-second deadline. Failure leaves the saved editor open; retrying a clean save-and-close checks readiness without resubmitting the mutation. New edits, session changes and unresolved recovery or unpersisted collaboration work prevent stale navigation. Transport updates already covered by the exact durably saved text and edit version may remain queued, but additional queued work during the wait prevents navigation.
 
 The preview transport exposes that application-owned pending condition as a fixed `503` JSON message with `code: "PAGE_RENDER_PENDING"`, after current page authorization and unlock checks. Other backend failures retain the generic API error response; they are neither disclosed nor treated as pending. Post-save local recovery captures settle before reader admission.
+
+Discarding later unsaved edits also waits for that saved page's certified render before returning to an online reader. Discard restores and acknowledges the editor's exact saved baseline without publishing another mutation. A failed or cancelled readiness check leaves those edits discarded, not resurrected in an unsaved-changes dialog; new-page and offline exits retain their existing navigation.
 
 Before service-worker update reload, every active client reports whether it has uncommitted editor memory, a committed draft, or an in-flight/unknown publish. Missing acknowledgement defers reload.
 
