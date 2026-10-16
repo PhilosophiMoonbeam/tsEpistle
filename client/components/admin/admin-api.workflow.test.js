@@ -44,8 +44,8 @@ function component(name, dependencies) {
   return { props: ['loading', 'error', 'enabled'], setup: props => evaluate({ ...Vue, ...dependencies, defineProps: () => props, defineEmits: () => () => {} }), render }
 }
 
-function mount({ bootstrap = snapshot, load, create, revoke, revokePersonal, confirm, toggle, hash = '' } = {}) {
-  const store = Vue.reactive({ user: { id: 1 }, startLoading: vi.fn(), stopLoading: vi.fn(), showNotification: vi.fn(), showError: vi.fn() })
+function mount({ bootstrap = snapshot, load, create, revoke, revokePersonal, confirm, toggle, hash = '', userId = 1 } = {}) {
+  const store = Vue.reactive({ user: { id: userId }, startLoading: vi.fn(), stopLoading: vi.fn(), showNotification: vi.fn(), showError: vi.fn() })
   const config = { agentCsrfToken: 'csrf-account-one' }
   const transport = {
     fetchAdminApiBootstrap: vi.fn(load || (async () => structuredClone(bootstrap))),
@@ -240,8 +240,38 @@ describe('mounted service API-key workspace', () => {
 })
 
 describe('mounted personal MCP oversight', () => {
+  it('preserves a cold personal deep link through account hydration and delayed router resolution without accepting pre-hydration inventory', async () => {
+    for (const hash of ['#personal', '']) {
+      const initialInventory = deferred(), authenticatedInventory = deferred()
+      const mounted = mount({ userId: 0, hash, load: () => initialInventory.promise })
+      await settle()
+      if (!hash) {
+        mounted.route.hash = '#personal'
+        await settle()
+      }
+      expect(mounted.host.querySelector('#api-panel-personal')).toBeNull()
+      mounted.transport.fetchAdminApiBootstrap.mockImplementationOnce(() => authenticatedInventory.promise)
+      mounted.store.user.id = 1
+      await settle()
+      expect(mounted.route.hash).toBe('#personal')
+      expect(mounted.host.querySelector('#api-panel-personal')).toBeNull()
+      authenticatedInventory.resolve(snapshot)
+      await settle()
+      expect(mounted.host.querySelector('#api-tab-personal').getAttribute('aria-selected')).toBe('true')
+      expect(mounted.host.querySelector('#api-panel-personal').style.display).not.toBe('none')
+      initialInventory.resolve({ ...snapshot, personalMcpKeys: [{ ...personal, name: 'Pre-hydration inventory' }] })
+      await settle()
+      expect(mounted.route.hash).toBe('#personal')
+      expect(mounted.host.querySelector('#api-panel-personal').textContent).toContain(personal.name)
+      expect(mounted.host.textContent).not.toContain('Pre-hydration inventory')
+      expect(mounted.errors).toEqual([])
+    }
+  })
+
   it('hides the personal workspace for delegated admins', async () => {
-    const mounted = mount({ bootstrap: { ...snapshot, canManagePersonalMcpKeys: false, personalMcpKeys: [] }, hash: '#personal' })
+    const mounted = mount({ userId: 0, bootstrap: { ...snapshot, canManagePersonalMcpKeys: false, personalMcpKeys: [] }, hash: '#personal' })
+    await settle()
+    mounted.store.user.id = 38
     await settle()
     expect(mounted.host.querySelector('#api-tab-personal')).toBeNull()
     expect(mounted.host.querySelector('#api-panel-personal')).toBeNull()

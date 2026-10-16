@@ -141,7 +141,7 @@ export default {
         this.current = null; this.replacementKey = null; this.isCreateDialogShown = false; this.isRevokeConfirmDialogShown = false; this.disableDialog = false
         this.credentialFlowProtected = false; this.revokeLoading = false; this.isToggleLoading = false; this.connectionLoading = false
         this.keySearch = ''; this.personalSearch = ''; this.keyFilter = 'all'; this.personalFilter = 'all'
-        this.section = 'credentials'
+        // Preserve navigation intent; the fresh bootstrap alone can expose personal inventory.
         void this.loadApiBootstrap(); void this.loadConnections()
       }
     },
@@ -150,7 +150,7 @@ export default {
       if (this.$route.hash !== hash && !(value === 'credentials' && !this.$route.hash)) void this.$router.push({ hash, query: this.$route.query })
     },
     '$route.hash' (hash: string) {
-      this.section = ['connect', 'explore', ...(this.canManagePersonalMcpKeys ? ['personal'] : [])].includes(hash.slice(1)) ? hash.slice(1) : 'credentials'
+      this.section = ['connect', 'explore', ...(this.canManagePersonalMcpKeys || this.loadState === 'loading' ? ['personal'] : [])].includes(hash.slice(1)) ? hash.slice(1) : 'credentials'
     }
   },
   beforeRouteLeave (): boolean { return !this.isCreateDialogShown && !this.credentialFlowProtected && !this.isToggleLoading && !this.revokeLoading },
