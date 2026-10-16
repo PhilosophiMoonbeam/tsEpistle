@@ -495,7 +495,9 @@ describe('controllers/api pages endpoints', () => {
       ownerId: null,
       tags: []
     })
-    global.WIKI.models.pages.updatePage = vi.fn().mockResolvedValue(undefined)
+    global.WIKI.models.pages.updatePage = vi.fn().mockResolvedValue({
+      id: 7, sourceRevision: '9', localeCode: 'en', path: 'docs/alpha', visibility: 'public'
+    })
     global.WIKI.models.pageHistory = {
       getVersion: vi.fn().mockResolvedValue({
         versionId: 3,
@@ -528,7 +530,10 @@ describe('controllers/api pages endpoints', () => {
       expectedSourceRevision: sourceRevision,
       action: 'restored'
     }))
-    expect(res.json).toHaveBeenCalledWith({ message: 'Page version restored successfully.' })
+    expect(res.json).toHaveBeenCalledWith({
+      message: 'Page version restored successfully.',
+      id: 7, sourceRevision: '9', locale: 'en', path: 'docs/alpha', visibility: 'public'
+    })
   })
 
   it('rejects revision restores without a source revision', async () => {

@@ -3364,7 +3364,7 @@ const restoreDeletedPage = async (input: OperationInput): Promise<{ pageId: numb
   })
 }
 
-const restore = async (input: OperationInput): Promise<void> => {
+const restore = async (input: OperationInput): Promise<{ id: number; sourceRevision: string; locale: string; path: string; visibility: PageVisibility }> => {
   const requester = input.requester
   const authority = await authorityFor(input)
   const pageId = positiveInteger(input.pageId, 'pageId')
@@ -3386,7 +3386,7 @@ const restore = async (input: OperationInput): Promise<void> => {
       ? null
       : PageBrandingAssignmentSchema.parse(versionExtra.branding)
     : null
-  await wiki.models.pages.updatePage(
+  const restored = await wiki.models.pages.updatePage(
     withRequester(
       {
         id: pageId,
@@ -3413,6 +3413,13 @@ const restore = async (input: OperationInput): Promise<void> => {
       requester
     )
   )
+  return {
+    id: restored.id,
+    sourceRevision: String(restored.sourceRevision),
+    locale: restored.localeCode,
+    path: restored.path,
+    visibility: restored.visibility
+  }
 }
 
 const getPageTags = (value: unknown): RelatedTagQuery => wiki.models.pages.relatedQuery('tags').for(positiveInteger(value, 'pageId'))

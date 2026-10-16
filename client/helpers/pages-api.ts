@@ -1810,12 +1810,31 @@ export async function restorePageVersion(
   versionId: number,
   expectedSourceRevision: string,
   fallbackMessage = 'Page restore failed'
-): Promise<void> {
-  await sendJson(
+): Promise<PageRenderTarget> {
+  return sendJson(
     fetchImpl,
     `/_api/pages/${encodeURIComponent(pageId)}/history/${encodeURIComponent(versionId)}/restore`,
     'POST',
     { expectedSourceRevision },
-    fallbackMessage
+    fallbackMessage,
+    payload => {
+      if (
+        !isRecord(payload) ||
+        payload.id !== pageId ||
+        !isPositiveSafeInteger(payload.id) ||
+        typeof payload.sourceRevision !== 'string' ||
+        !/^[1-9][0-9]*$/u.test(payload.sourceRevision) ||
+        typeof payload.locale !== 'string' || !payload.locale ||
+        typeof payload.path !== 'string' || !payload.path ||
+        (payload.visibility !== 'public' && payload.visibility !== 'private')
+      ) throw new Error(fallbackMessage)
+      return {
+        id: payload.id,
+        sourceRevision: payload.sourceRevision,
+        locale: payload.locale,
+        path: payload.path,
+        visibility: payload.visibility
+      }
+    }
   )
 }

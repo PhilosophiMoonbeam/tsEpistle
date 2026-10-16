@@ -195,6 +195,9 @@ export const createGlossaryOperations = (deps: Dependencies): GlossaryOperations
       if (userId === null || !context.sessionId) return fail('Sign in to manage the glossary.', 401, 'AUTH_REQUIRED')
     }
     if (userId !== null) {
+      // Security and membership writers lock groups before accounts. Lock the
+      // group set first, then retain current account/membership authority below.
+      await tx('groups').select('id').orderBy('id').forShare()
       const account = await tx<{ id: number; isActive: boolean; authVersion: number }>('users')
         .where({ id: userId })
         .forShare()

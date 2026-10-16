@@ -208,11 +208,12 @@
     )
       v-card.history-restore-dialog
         v-card-title.history-restore-header {{ $t('history:restore.confirmTitle') }}
-        v-card-text.history-restore-text {{ $t('history:restore.confirmText', { date: restoreDateLabel, interpolation: { escapeValue: false } }) }}
+        v-card-text.history-restore-text(v-if='!restoredPage') {{ $t('history:restore.confirmText', { date: restoreDateLabel, interpolation: { escapeValue: false } }) }}
+        v-card-text.history-restore-text(v-else, role='status') {{ restoreError || $t('history:restore.success') }}
         v-card-actions
           v-spacer
-          v-btn(variant='text', @click='isRestoreConfirmDialogShown = false', :disabled='restoreLoading') {{ $t('common:actions.cancel') }}
-          v-btn(color='warning', variant='flat', @click='restoreConfirm', :loading='restoreLoading') {{ $t('history:restore.confirmButton') }}
+          v-btn(variant='text', @click='cancelRestore', :disabled='restoreLoading && !restoredPage') {{ $t('common:actions.cancel') }}
+          v-btn(color='warning', variant='flat', @click='restoreConfirm', :loading='restoreLoading') {{ restoredPage ? $t('history:retry') : $t('history:restore.confirmButton') }}
     page-selector(mode='create', v-model='branchOffOpts.modal', :open-handler='branchOffHandle', :path='branchOffOpts.path', :locale='branchOffOpts.locale')
     nav-footer
     notify
@@ -222,7 +223,7 @@
 <script lang='ts'>
 import { markRaw, onWatcherCleanup } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
-import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'
+import { fetchPageHistory, fetchPageVersion, restorePageVersion, waitForPageRender, type PageRenderTarget, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
 import { getErrorMessage, loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
@@ -392,7 +393,10 @@ export default {
       trailLoaded: false,
       loadingMore: false,
       restoreLoading: false,
-      restoreRedirectTimer: null as number | null,
+      restoreController: null as AbortController | null,
+      restoredPage: null as PageRenderTarget | null,
+      restoreSourceRevision: '',
+      restoreError: '',
       historyRefreshController: null as AbortController | null,
       historyMoreController: null as AbortController | null,
       historyRefreshRequestId: 0,
@@ -409,6 +413,13 @@ export default {
     }
   },
   computed: {
+    restoreContextKey (): string {
+      return JSON.stringify([
+        this.pageId, this.locale, this.path, this.visibility, this.sourceRevision, wikiStore.page.id,
+        wikiStore.user.id, wikiStore.user.authenticated, wikiStore.user.authVersion, wikiStore.user.iat,
+        wikiStore.offlineIdentityEpoch
+      ])
+    },
     fullTrail () {
       const liveTrailItem: PageHistoryTrailItem = {
         versionId: 0,
@@ -514,6 +525,15 @@ export default {
     }
   },
   watch: {
+    restoreContextKey: {
+      flush: 'sync' as const,
+      handler () {
+        this.cancelRestore()
+        this.restoredPage = null
+        this.restoreSourceRevision = ''
+        this.restoreError = ''
+      }
+    },
     trail () {
       this.reconcileSelections()
     },
@@ -537,6 +557,7 @@ export default {
     wikiStore.page.locale = this.locale
     wikiStore.page.path = this.path
     wikiStore.page.visibility = this.visibility === 'private' ? 'private' : 'public'
+    wikiStore.page.sourceRevision = this.sourceRevision
     wikiStore.page.mode = 'history'
     this.cache.push(markRaw({
       action: 'live',
@@ -579,6 +600,7 @@ export default {
     this.historyMoreController?.abort()
     this.sourceVersionController?.abort()
     this.targetVersionController?.abort()
+    this.restoreController?.abort()
     for (const controller of this.activeVersionControllers) controller.abort()
     this.historyRefreshController = null
     this.historyMoreController = null
@@ -589,10 +611,7 @@ export default {
     this.clearDiffSlowTimer()
     this.diffRenderer?.dispose()
     this.diffRenderer = null
-    if (this.restoreRedirectTimer !== null) {
-      window.clearTimeout(this.restoreRedirectTimer)
-      this.restoreRedirectTimer = null
-    }
+    this.restoreController = null
   },
   methods: {
     fetchWithAbort (url: string, init: RequestInit): Promise<Response> {
@@ -766,43 +785,78 @@ export default {
       window.location.assign(getPageDownloadPath(this.locale, this.path, versionId, this.visibility === 'private' ? 'private' : 'public'))
     },
     restore (versionId: number, versionDate: string) {
+      if (this.isUnmounted || this.restoreLoading) return
+      if (versionId !== this.restoreTarget.versionId) this.restoredPage = null
+      this.restoreError = ''
       this.restoreTarget = { versionId, versionDate }
       this.isRestoreConfirmDialogShown = true
     },
+    cancelRestore () {
+      this.restoreRequestId += 1
+      this.restoreController?.abort()
+      this.restoreController = null
+      this.restoreLoading = false
+      this.isRestoreConfirmDialogShown = false
+    },
     async restoreConfirm () {
-      if (this.isUnmounted || this.restoreLoading) return
+      if (this.isUnmounted || this.restoreLoading || !this.isRestoreConfirmDialogShown) return
       const requestId = ++this.restoreRequestId
+      const contextKey = this.restoreContextKey
+      const versionId = this.restoreTarget.versionId
+      const controller = markRaw(new AbortController())
+      this.restoreController = controller
       const isCurrent = (): boolean => Boolean(
         !this.isUnmounted &&
+        !controller.signal.aborted &&
         requestId === this.restoreRequestId &&
-        !this.requestsAbortController.signal.aborted
+        this.restoreController === controller &&
+        contextKey === this.restoreContextKey &&
+        this.isRestoreConfirmDialogShown &&
+        this.restoreTarget.versionId === versionId
       )
       this.restoreLoading = true
+      this.restoreError = ''
       loadingStart(wikiStore, 'history-restore')
       try {
-        await restorePageVersion(this.fetchWithAbort, this.pageId, this.restoreTarget.versionId, this.sourceRevision)
+        if (!this.restoredPage) {
+          const restored = await restorePageVersion(
+            this.fetchWithSignal(controller.signal),
+            this.pageId,
+            versionId,
+            this.restoreSourceRevision || this.sourceRevision
+          )
+          if (!isCurrent()) return
+          this.restoredPage = restored
+          this.restoreSourceRevision = restored.sourceRevision
+          wikiStore.page.sourceRevision = restored.sourceRevision
+        }
+        // Retry only this authorized read after a saved restore; never replay its mutation.
+        await waitForPageRender(window.fetch.bind(window), this.restoredPage, controller.signal, this.$t('history:restore.renderNotReady'))
         if (!isCurrent()) return
         showNotification(wikiStore, {
           style: 'success',
           message: this.$t('history:restore.success'),
           icon: 'check'
         })
+        const privatePrefix = this.restoredPage.visibility === 'private' ? '/_private' : ''
+        window.location.assign(`${privatePrefix}/${this.restoredPage.locale}/${this.restoredPage.path}`)
         this.isRestoreConfirmDialogShown = false
-        this.restoreRedirectTimer = window.setTimeout(() => {
-          if (!isCurrent()) return
-          window.location.assign(this.livePath())
-        }, 1000)
       } catch (error) {
         if (!isCurrent() || isAbortError(error)) return
+        const detail = getErrorMessage(error)
+        const notReady = this.$t('history:restore.renderNotReady')
+        this.restoreError = this.restoredPage && detail !== notReady ? `${notReady} ${detail}` : detail
         showNotification(wikiStore, {
           style: 'red',
-          message: getErrorMessage(error),
+          message: this.restoreError,
           icon: 'alert'
         })
       } finally {
         loadingStop(wikiStore, 'history-restore')
-        if (!isCurrent()) return
-        this.restoreLoading = false
+        if (this.restoreController === controller) {
+          this.restoreController = null
+          this.restoreLoading = false
+        }
       }
     },
     branchOff (versionId: number) {

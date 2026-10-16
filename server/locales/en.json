@@ -10093,6 +10093,7 @@
     },
     "restore": {
       "success": "Revision restored.",
+      "renderNotReady": "This revision was restored, but the page is not ready to view yet. Retry to open it without restoring again.",
       "confirmText": "Restore the page content from {{date}}? This adds a new revision on top of the history. Newer revisions are kept.",
       "confirmTitle": "Restore this revision?",
       "confirmButton": "Restore"

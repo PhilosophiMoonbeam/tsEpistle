@@ -1333,7 +1333,7 @@ export default class Page extends Model {
         })
       : ogPage.hash
     const pageEventType = opts.action === 'restored' ? 'page.restored' : willMove ? 'page.moved' : 'page.updated'
-    await wiki.models.knex.transaction(async transaction => {
+    const restoredIdentity = await wiki.models.knex.transaction(async transaction => {
       const authorizationTags = await lockPageForMutation(transaction, ogPage)
       if (authorizationTags === undefined) {
         if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
@@ -1459,6 +1459,14 @@ export default class Page extends Model {
         tagsChanged,
         skipStorage: opts.skipStorage
       })
+      if (opts.action === 'restored') {
+        const identity = await transaction<Pick<Page, 'id' | 'sourceRevision' | 'localeCode' | 'path' | 'visibility'>>('pages')
+          .select('id', 'sourceRevision', 'localeCode', 'path', 'visibility')
+          .where({ id: ogPage.id })
+          .first()
+        if (!identity) throw new wiki.Error.PageNotFound()
+        return identity
+      }
     })
     let page: Page | undefined
     try {
@@ -1536,6 +1544,8 @@ export default class Page extends Model {
     if (willMove) await deliverAfterPageCommit('updated timestamp refresh', refreshLatestUpdatedAt)
     else await refreshLatestUpdatedAt()
     await notifyCollaboration(page.id, opts.action === 'restored')
+    // A restore receipt identifies its own committed source, never a later writer's refresh.
+    if (restoredIdentity) Object.assign(page, restoredIdentity)
 
     return page
   }

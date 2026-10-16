@@ -176,6 +176,8 @@ Create or move success must not navigate while newer eligible text or nonpersist
 
 Classify stages separately: authoritative no-commit rejection, transport/outcome ambiguity after dispatch, known write success, and optional post-write failure. A failed visibility mutation or refresh cannot rewrite a known successful page write as unknown. Preserve HTTP status even when its response body is malformed.
 
+History restore follows the same separation between a committed source write and its derived render. `POST /_api/pages/:id/history/:versionId/restore` returns the committed `{ id, sourceRevision, locale, path, visibility }` alongside its success message. The identity is captured inside the restore transaction, not from a later page refresh. History opens the live route only after the existing authorized preview certifies that exact receipt. A render failure keeps the saved receipt and updated source revision; Retry checks readiness without posting another restore. Cancellation, page/revision changes, account/session changes, and unmount fence outstanding readiness work.
+
 Acceptance: type B while A publishes—server and receipt contain A and B survives durably; create migration retains B under returned identity/revision; successful write plus follow-up failure remains known success; no reconnect/reload path replays the mutation.
 
 #### C4 — Coherent review, merge, and receipt resolution — high
