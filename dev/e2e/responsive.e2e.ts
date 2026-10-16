@@ -1,4 +1,4 @@
-import { type Dialog, expect, type Locator, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import type { App } from 'vue'
 import { decodeWikiPagePayload, type WikiPagePayload } from '../../client/helpers/wiki-navigation.ts'
 import { installEnabledAgentFixture } from './agent-fixture.ts'
@@ -609,6 +609,9 @@ test.describe('responsive UI quality matrix', () => {
       await expect(page).toHaveURL('/en/visual-markdown-browser')
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
     }
+
+    // The URL changes before reader navigation finishes restoring the page scroll.
+    await expect(page.locator('.page-main')).not.toHaveAttribute('aria-busy', 'true')
 
     const pageEditFab = page.locator('.page-edit-fab')
     if (await pageEditFab.count()) {
@@ -1584,8 +1587,12 @@ test.describe('responsive UI quality matrix', () => {
       }
     }
 
+    const taxonomyReview = page.getByRole('dialog').filter({
+      has: page.getByRole('button', { name: /^Apply\b/i })
+    })
+
     const applyReview = async (action: 'retirement' | 'restoration' | 'merge'): Promise<void> => {
-      const dialog = page.getByRole('dialog')
+      const dialog = taxonomyReview
       await expect(dialog).toBeVisible()
       await acknowledgeAccessIfNeeded(dialog)
       await dialog.getByRole('button', { name: `Apply ${action}`, exact: true }).click()
@@ -1593,14 +1600,19 @@ test.describe('responsive UI quality matrix', () => {
     }
 
     await openAuthenticatedPage(page, '/a/dashboard', '.admin-main')
-    const tagsLink = page.getByRole('link', { name: /Tags\. Topics connecting knowledge\.$/i })
+    const tagsLink = page.getByRole('main').getByRole('link', { name: /^Tags\b/i })
     await expect(tagsLink).toHaveAttribute('href', '/a/tags')
     await tagsLink.click()
     await expect(page).toHaveURL('/a/tags')
 
+    const directoryRow = (tag: string, pressed: boolean) =>
+      page.getByRole('complementary', { name: 'Tag directory', exact: true })
+        .getByRole('button', { pressed })
+        .filter({ has: page.getByText(tag, { exact: true }) })
+
     const directorySearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
     await directorySearch.fill(canonicalTag)
-    const canonicalRow = page.getByRole('button', { name: `${canonicalTitle}, active`, exact: true })
+    const canonicalRow = directoryRow(canonicalTag, false)
     await expect(canonicalRow).toBeVisible()
     await canonicalRow.click()
     await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
@@ -1609,27 +1621,16 @@ test.describe('responsive UI quality matrix', () => {
     const draftLabel = `${canonicalTitle} draft`
     await displayLabel.fill(draftLabel)
     await page.getByRole('button', { name: 'Review changes', exact: true }).click()
-    const draftReview = page.getByRole('dialog')
+    const draftReview = taxonomyReview
     await expect(draftReview).toContainText('Update the display label')
     await expect(draftReview).toContainText(draftLabel)
 
-    const navigationPrompts = new Promise<void>(resolve => {
-      const acceptReviewPrompt = async (dialog: Dialog) => {
-        page.off('dialog', acceptReviewPrompt)
-        const rejectDraftPrompt = async (nextDialog: Dialog) => {
-          page.off('dialog', rejectDraftPrompt)
-          expect(nextDialog.message()).toContain('Discard the unsaved tag changes?')
-          await nextDialog.dismiss()
-          resolve()
-        }
-        page.on('dialog', rejectDraftPrompt)
-        expect(dialog.message()).toContain('Discard the unapplied taxonomy review?')
-        await dialog.accept()
-      }
-      page.on('dialog', acceptReviewPrompt)
-    })
+    const reviewDiscard = page.getByRole('dialog', { name: 'Discard the unapplied taxonomy review?', exact: true })
+    const draftDiscard = page.getByRole('dialog', { name: 'Discard the unsaved tag changes?', exact: true })
     await page.evaluate(() => window.history.back())
-    await navigationPrompts
+    await reviewDiscard.getByRole('button', { name: 'Discard', exact: true }).click()
+    await draftDiscard.getByRole('button', { name: 'Keep editing', exact: true }).click()
+    await expect(draftDiscard).not.toBeVisible()
     await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
     await expect(draftReview).toBeVisible()
     await expect(draftReview).toContainText(draftLabel)
@@ -1640,30 +1641,22 @@ test.describe('responsive UI quality matrix', () => {
 
     const ordinaryDraftLabel = `${canonicalTitle} ordinary draft`
     await displayLabel.fill(ordinaryDraftLabel)
-    const rejectedDirtyNavigation = page.waitForEvent('dialog').then(async dialog => {
-      expect(dialog.type()).toBe('confirm')
-      expect(dialog.message()).toContain('Discard the unsaved tag changes?')
-      await dialog.dismiss()
-    })
     await page.evaluate(() => window.history.back())
-    await rejectedDirtyNavigation
+    await draftDiscard.getByRole('button', { name: 'Keep editing', exact: true }).click()
+    await expect(draftDiscard).not.toBeVisible()
     await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
     await expect(displayLabel).toHaveValue(ordinaryDraftLabel)
     await page.getByRole('button', { name: 'Reset', exact: true }).click()
 
     const canonicalPanel = await showLifecycle()
     await canonicalPanel.getByRole('button', { name: 'Review retirement', exact: true }).click()
-    const canonicalReview = page.getByRole('dialog')
+    const canonicalReview = taxonomyReview
     await expect(canonicalReview).toContainText('Retire this name')
     await acknowledgeAccessIfNeeded(canonicalReview)
 
-    const rejectedReviewNavigation = page.waitForEvent('dialog').then(async dialog => {
-      expect(dialog.type()).toBe('confirm')
-      expect(dialog.message()).toContain('Discard the unapplied taxonomy review?')
-      await dialog.dismiss()
-    })
     await page.evaluate(() => window.history.back())
-    await rejectedReviewNavigation
+    await reviewDiscard.getByRole('button', { name: 'Keep editing', exact: true }).click()
+    await expect(reviewDiscard).not.toBeVisible()
     await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
     await expect(canonicalReview).toBeVisible()
     const preservedAcknowledgement = canonicalReview.getByRole('checkbox', { name: accessAcknowledgement, exact: true })
@@ -1677,7 +1670,7 @@ test.describe('responsive UI quality matrix', () => {
     await selectVocabularyView('Archived names')
     const archivedCanonicalSearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
     await archivedCanonicalSearch.fill(canonicalTag)
-    await expect(page.getByRole('button', { name: `${canonicalTitle}, archived, selected`, exact: true })).toBeVisible()
+    await expect(directoryRow(canonicalTag, true)).toBeVisible()
 
     const aliasPanel = await openLifecycle(aliasSourceId)
     const destinationInput = aliasPanel.getByRole('combobox', { name: 'Canonical destination', exact: true })
@@ -1686,7 +1679,7 @@ test.describe('responsive UI quality matrix', () => {
     await expect(destinationOption).toBeVisible()
     await destinationOption.click()
     await aliasPanel.getByRole('button', { name: 'Review merge', exact: true }).click()
-    await expect(page.getByRole('dialog')).toContainText('Bring two concepts together')
+    await expect(taxonomyReview).toContainText('Bring two concepts together')
     await applyReview('merge')
     await expect(page).toHaveURL(`/a/tags?tag=${aliasDestinationId}`)
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -1699,9 +1692,9 @@ test.describe('responsive UI quality matrix', () => {
     await selectVocabularyView('Aliases')
     const aliasSearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
     await aliasSearch.fill(aliasSourceTag)
-    await expect(page.getByRole('button', { name: `${aliasSourceTitle}, alias, selected`, exact: true })).toBeVisible()
+    await expect(directoryRow(aliasSourceTag, true)).toBeVisible()
     await activeAliasPanel.getByRole('button', { name: 'Review retirement', exact: true }).click()
-    await expect(page.getByRole('dialog')).toContainText('Retire this name')
+    await expect(taxonomyReview).toContainText('Retire this name')
     await applyReview('retirement')
     await expect(page).toHaveURL(`/a/tags?tag=${aliasSourceId}`)
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -1710,13 +1703,13 @@ test.describe('responsive UI quality matrix', () => {
     await selectVocabularyView('Archived names')
     const archivedAliasSearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
     await archivedAliasSearch.fill(aliasSourceTag)
-    await expect(page.getByRole('button', { name: `${aliasSourceTitle}, archived, selected`, exact: true })).toBeVisible()
+    await expect(directoryRow(aliasSourceTag, true)).toBeVisible()
 
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.goto(`/a/tags?tag=${canonicalId}`, { waitUntil: 'domcontentloaded' })
     const restorationPanel = await showLifecycle()
     await restorationPanel.getByRole('button', { name: 'Review restoration', exact: true }).click()
-    await expect(page.getByRole('dialog')).toContainText('Restore this name')
+    await expect(taxonomyReview).toContainText('Restore this name')
     await applyReview('restoration')
     await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
     await page.reload({ waitUntil: 'domcontentloaded' })
