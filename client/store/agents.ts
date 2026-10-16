@@ -482,6 +482,13 @@ export const useAgentsStore = defineStore('agents', {
         this.thread?.session.id === sessionId
       const existingDraft = this.drafts[sessionId]
       const draft = existingDraft ?? emptyAgentDraft()
+      // A reviewed request owns its original hint, not the route's next page.
+      if (draft.currentPageOverride !== undefined) {
+        this.conversationPage = current
+        this.contextTransferController = null
+        this.persistPinnedContext()
+        return true
+      }
       const prior = previous ?? {
         page: current,
         includeCurrentPage: draft.includeCurrentPage,
@@ -689,8 +696,63 @@ export const useAgentsStore = defineStore('agents', {
         (patch.sources !== undefined &&
           patch.sources !== previous.sources &&
           (patch.sources.length !== previous.sources.length || patch.sources.some((source, index) => !sameAgentChatPage(source, previous.sources[index]))))
-      this.drafts[sessionId] = { ...previous, ...patch }
+      const clearPageOverride =
+        (patch.text === '' && previous.text !== '' && patch.currentPageOverride === undefined) ||
+        (patch.includeCurrentPage === true && previous.currentPageOverride === null && patch.currentPageOverride === undefined)
+      const next = { ...previous, ...patch }
+      if (clearPageOverride) delete next.currentPageOverride
+      this.drafts[sessionId] = next
       if (contextChanged && sessionId === this.pinnedSessionId) this.persistPinnedContext()
+    },
+    async restoreRequest(messageId: string): Promise<string | null> {
+      if (!this.isWorkspaceReady() || this.sending || this.sessionMutationBusy) return null
+      const thread = this.thread
+      const message = thread?.messages.find(item => item.id === messageId && item.role === 'user')
+      if (!thread || !message) return null
+      this.cancelContextTransfer()
+      const generation = this.contextTransferGeneration
+      const controller = markRaw(new AbortController())
+      this.contextTransferController = controller
+      const workspaceVersion = this.workspaceVersion
+      const ownerId = this.pinOwnerId
+      const ownerGeneration = this.ownerGeneration
+      const sessionId = thread.session.id
+      // Fail closed even when historical metadata or a source is unavailable.
+      this.updateDraft(sessionId, { includeCurrentPage: false, currentPageOverride: null })
+      const draft = this.drafts[sessionId]
+      const isCurrent = (): boolean =>
+        !controller.signal.aborted &&
+        this.contextTransferGeneration === generation &&
+        this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
+        this.thread?.session.id === sessionId &&
+        this.drafts[sessionId] === draft
+      try {
+        const knowledgeContext = AgentKnowledgeContextSchema.safeParse(message.knowledgeContext)
+        if (!knowledgeContext.success) throw new Error('Historical source context is unavailable.')
+        const sources = await Promise.all(knowledgeContext.data.sources.map(async selector => {
+          const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
+          if (!sameAgentChatPage(source, selector)) throw new Error('Source identity changed.')
+          return source
+        }))
+        if (!isCurrent()) return null
+        this.updateDraft(sessionId, {
+          text: message.content,
+          sources,
+          scope: knowledgeContext.data.scope,
+          includeCurrentPage: message.currentPage != null,
+          currentPageOverride: message.currentPage ? { ...message.currentPage } : null
+        })
+        this.contextTransferNotice = message.currentPage === undefined
+          ? 'A previous source could not be restored. Check access and add it again if needed.'
+          : ''
+        return message.content
+      } catch {
+        if (isCurrent()) this.contextTransferNotice = 'A previous source could not be restored. Check access and add it again if needed.'
+        controller.abort()
+        return null
+      } finally {
+        if (this.contextTransferController === controller) this.contextTransferController = null
+      }
     },
     async newSession(retention: 'temporary' | 'saved', mutationOwner?: number, allowWhileInitializing = false): Promise<boolean> {
       if (this.workspaceDisposed || (!this.isWorkspaceReady() && !(allowWhileInitializing && this.loading && this.initializedWorkspaceVersion === null)))
@@ -1154,11 +1216,13 @@ export const useAgentsStore = defineStore('agents', {
       media?: AgentMediaSubmission,
       onAccepted?: () => void
     ): Promise<boolean> {
-      if (!this.isWorkspaceReady()) return false
+      if (!this.isWorkspaceReady() || this.contextTransferController !== null) return false
       const thread = this.thread
       const trimmed = content.trim()
       const draftSnapshot = JSON.parse(JSON.stringify(this.drafts[thread?.session.id ?? ''] ?? emptyAgentDraft())) as AgentDraft
-      const currentPage = draftSnapshot.includeCurrentPage ? (this.contextPage ?? this.launchPage) : null
+      const currentPage = draftSnapshot.includeCurrentPage
+        ? (draftSnapshot.currentPageOverride === undefined ? this.contextPage ?? this.launchPage : draftSnapshot.currentPageOverride)
+        : null
       const clickedCurrentPage = currentPage ? { ...currentPage } : null
       if (
         !thread ||

@@ -3307,11 +3307,16 @@ describe('bounded root publication accounting', () => {
     expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
   })
 
-  for (const outcome of ['first-accepted', 'repaired', 'exhausted', 'length'] as const) {
+  for (const outcome of ['first-accepted', 'repaired', 'exhausted', 'length', 'recent-partial'] as const) {
     it(`conserves draft and correction exposure when publication is ${outcome}`, async () => {
       const budget = new PublicationBudgetLedger(120_000)
       const accepted = { claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }] } satisfies SynthesisFixtureAnswer
       const rejected = { claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha does not require review.' }] } satisfies SynthesisFixtureAnswer
+      const recentPartial = outcome === 'recent-partial'
+      const userRequest = recentPartial ? 'Summarize the most recently updated Wiki pages.' : 'What does Alpha require?'
+      const partialAnswer: SynthesisFixtureAnswer | undefined = recentPartial
+        ? { claims: [...rejected.claims, { evidenceId: 'page:2:revision:rev-2', statement: 'Beta requires approval.' }] }
+        : undefined
       const nativeUsage = { inputTokens: 2, outputTokens: 1, totalTokens: 3, totalTokensSource: 'reported' as const }
       const nativeCostMicros = 11
       const nativeRuntime = await fixtureDecisionProviders.selectRuntime()
@@ -3338,7 +3343,7 @@ describe('bounded root publication accounting', () => {
           // until the consumer accepts, rejects, or observes its length stop.
           if (attempts === 1) expect(budget.unusedAtDispatch[0]).toBeGreaterThan(512)
         }
-        const answer = outcome === 'exhausted' || (outcome === 'repaired' && attempts === 1) ? rejected : accepted
+        const answer = partialAnswer ?? (outcome === 'exhausted' || (outcome === 'repaired' && attempts === 1) ? rejected : accepted)
         return {
           results: [final
             ? {
@@ -3346,24 +3351,65 @@ describe('bounded root publication accounting', () => {
                 content: synthesisFixtureAnswer(input, answer),
                 ...(outcome === 'length' ? { finishReason: 'length' as const } : {})
               }
-            : { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }],
+            : {
+                index: 0,
+                content: recentPartial
+                  ? `<wiki-request-plan>${JSON.stringify({
+                      facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+                    })}</wiki-request-plan>`
+                  : '',
+                functionCalls: [{
+                  id: 'read-alpha',
+                  type: 'function',
+                  function: {
+                    name: recentPartial ? input.functions!.find(fn => fn.name.includes('recent'))!.name : 'wiki_get_page',
+                    params: recentPartial ? '{"limit":10}' : '{"id":1}'
+                  }
+                }]
+              }],
           modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
         } satisfies AxChatResponse
       })
-      const invoke = vi.fn(async () => ({
-        id: 1,
-        locale: 'en',
-        path: 'alpha',
-        title: 'Alpha',
-        contentType: 'markdown',
-        sourceRevision: 'rev-1',
-        content: 'Alpha requires review.',
-        citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
-        citationSections: []
-      }))
+      const invoke = vi.fn(async () => {
+        const alpha = {
+          id: 1,
+          locale: 'en',
+          path: 'alpha',
+          title: 'Alpha',
+          contentType: 'markdown',
+          sourceRevision: 'rev-1',
+          content: 'Alpha requires review.',
+          citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+          citationSections: []
+        }
+        if (!recentPartial) return alpha
+        return {
+          kind: 'recent-page-evidence',
+          requestedLimit: 10,
+          exhausted: true,
+          pages: [
+            alpha,
+            {
+              ...alpha,
+              id: 2,
+              path: 'beta',
+              title: 'Beta',
+              sourceRevision: 'rev-2',
+              content: 'Beta requires approval.',
+              citation: { evidenceId: 'page:2:revision:rev-2', label: 'Beta', href: '/en/beta' }
+            }
+          ].map(page => ({ ...page, updatedAt: '2026-09-20T09:00:00.000Z', contentTruncated: false, sourceContentCharacters: page.content.length }))
+        }
+      })
       const actions: AgentActionSessionProvider = {
         open: async () => ({
-          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+          functions: [{
+            name: recentPartial ? 'pages.listRecent' : 'pages.get',
+            title: recentPartial ? 'Read recent pages' : 'Read page',
+            description: recentPartial ? 'Read recent pages' : 'Read one page',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read'
+          }],
           invoke,
           validateObservation: async () => true,
           snapshot: async () => ({}),
@@ -3374,14 +3420,21 @@ describe('bounded root publication accounting', () => {
       const text = vi.fn(async () => {})
       const event = vi.fn(async (_type: string, _data: unknown) => {})
       const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal', coverage: async () => ({
-        results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }],
+        results: [{
+          index: 0,
+          content: JSON.stringify({
+            verdict: recentPartial ? 'incomplete' : 'complete',
+            feedback: recentPartial ? 'Alpha has no verified contribution.' : ''
+          }),
+          finishReason: 'stop'
+        }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 3, totalTokens: 12 } }
       }) }), actions, undefined, {
         decisionProviders
       }).execute(
         {
           ...baseRequest(new AbortController().signal),
-          messages: [{ role: 'user', content: 'What does Alpha require?' }],
+          messages: [{ role: 'user', content: userRequest }],
           limits: { maxTokens: budget.maximumTokens, maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 },
           dispatchBudget: budget
         },
@@ -3391,8 +3444,8 @@ describe('bounded root publication accounting', () => {
       expect(attempts).toBe(expectedTurns - 1)
       expect(invoke).toHaveBeenCalledOnce()
       expect(budget.tools).toBe(1)
-      const semanticChecks = outcome === 'length' ? 0 : outcome === 'first-accepted' ? 1 : 2
-      const coverageChecks = outcome === 'first-accepted' || outcome === 'repaired' ? 1 : 0
+      const semanticChecks = recentPartial ? 4 : outcome === 'length' ? 0 : outcome === 'first-accepted' ? 1 : 2
+      const coverageChecks = recentPartial || outcome === 'first-accepted' || outcome === 'repaired' ? 1 : 0
       expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null &&
         'verification' in data && typeof data.verification === 'object' && data.verification !== null &&
         'phase' in data.verification && data.verification.phase === 'coverage_audit')).toHaveLength(coverageChecks)
@@ -3402,6 +3455,16 @@ describe('bounded root publication accounting', () => {
       expect(result.outputTokens).toBe(expectedTurns * 2 + semanticChecks * nativeUsage.outputTokens + coverageChecks * 3)
       expect(result.totalTokens).toBe(budget.consumedTokens)
       expect(result.costMicros).toBe(budget.consumedCostMicros)
+      let recoveredTokens = 0
+      let recoveredCostMicros = 0
+      for (const [type, data] of event.mock.calls) {
+        if (type !== 'model.turn') continue
+        const receipt = data as { totalTokens: number; costMicros: number }
+        recoveredTokens += receipt.totalTokens
+        recoveredCostMicros += receipt.costMicros
+      }
+      expect(recoveredTokens).toBe(result.totalTokens)
+      expect(recoveredCostMicros).toBe(result.costMicros)
       expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
       expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
       expect(budget.closedUnused).toHaveLength(1)
@@ -3416,6 +3479,11 @@ describe('bounded root publication accounting', () => {
       } else if (outcome === 'exhausted') {
         expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
         expect(result.citations).toBeUndefined()
+      } else if (recentPartial) {
+        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+        expect(result.citations?.map(citation => citation.evidenceId)).toEqual(['page:2:revision:rev-2'])
+        expect(visibleWikiText(published)).toContain('Beta requires approval.')
+        expect(visibleWikiText(published)).not.toContain('Alpha requires review.')
       } else {
         expect(result.executionLimit).toBeUndefined()
         expect(result.citations).toEqual([expect.objectContaining({ evidenceId: 'page:1:revision:rev-1' })])

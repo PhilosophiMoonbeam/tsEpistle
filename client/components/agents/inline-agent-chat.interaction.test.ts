@@ -6,6 +6,7 @@ import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { createPinia, type StoreGeneric, storeToRefs } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import { type AgentDraft, emptyAgentDraft } from '../../helpers/agent-draft.ts'
 import { agentAttachmentMimeTypes, agentToolAcceptsImages } from '../../helpers/agent-media.ts'
@@ -108,6 +109,7 @@ const contextPickerComponent = Vue.defineComponent({
   props: {
     draft: { type: Object, required: true },
     currentPage: { type: Object, default: null },
+    currentPageTitle: String,
     disabled: Boolean,
     connectionBlocked: Boolean,
     connectionRetrying: Boolean
@@ -217,7 +219,7 @@ interface LockState {
   emitted: unknown[][]
   pendingStartersFrames: Array<{ callback: (now: number) => void }>
   clearedStartersFrameIds: number[]
-  componentProps: { ownerId: number; pageId: number; pageLocale: string; pagePath: string; pageUpdatedAt: string; resumeSessionId?: string }
+  componentProps: { ownerId: number; pageId: number; pageLocale: string; pagePath: string; pageUpdatedAt: string; pageTitle?: string; resumeSessionId?: string }
 }
 
 const removeSetupMacro = (content: string, macroName: string): string => {
@@ -655,6 +657,41 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
   suggestions: [],
   historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
 })
+const reviewSource = (id: number): WikiSource => ({
+  id, locale: 'en', path: `handbook/source-${id}`, title: `Source ${id}`, description: 'Page description',
+  sourceRevision: '7', updatedAt: timestamp, visibility: 'public', excerpt: 'Authorized page excerpt', excerptTruncated: false
+})
+const reviewThread = (
+  currentPage: TestPageHint | null | undefined,
+  sources: WikiSource[] = []
+): AgentThreadState => {
+  const runId = '00000000-0000-4000-8000-000000000060'
+  const common = { runId, citations: [], createdAt: timestamp, updatedAt: timestamp }
+  return {
+    ...threadFixture(),
+    messages: [
+      {
+        ...common,
+        id: '00000000-0000-4000-8000-000000000061', ordinal: 0, role: 'user', status: 'complete',
+        content: 'What is the dominant color and geometric shape in this uploaded image? Use only the uploaded image, not Wiki pages.',
+        ...(currentPage !== undefined ? { currentPage } : {}),
+        knowledgeContext: {
+          scope: sources.length ? { kind: 'selected' } : { kind: 'all' },
+          sources: sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({ id, locale, path, title, visibility, sourceRevision }))
+        },
+        media: [{
+          id: '00000000-0000-4000-8000-000000000062', kind: 'attachment', filename: 'blue-triangle.png',
+          mimeType: 'image/png', byteLength: 128, available: true, detached: false
+        }]
+      },
+      {
+        ...common,
+        id: '00000000-0000-4000-8000-000000000063', ordinal: 1, role: 'assistant', status: 'failed', content: '',
+        runOutcome: { status: 'failed', errorCode: 'AGENT_CONTEXT_TOO_LARGE' }
+      }
+    ]
+  }
+}
 const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPageHint | null = null, initialThread?: AgentThreadState) => {
   const store = useAgentsStore(createPinia())
   let serverThread = initialThread ?? threadFixture(sessionId, retention)
@@ -663,6 +700,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
   const mediaUpload = { pending: null as Promise<Response> | null }
   const sendResponse = { pending: null as Promise<Response> | null }
   const threadRead = { pending: null as Promise<Response> | null }
+  const sourceResponses = new Map<number, Response | Promise<Response>>()
   const messageInputs: Array<Record<string, unknown>> = []
   const requests: Array<{ method: string; path: string }> = []
   const summary = () => {
@@ -675,6 +713,11 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     const method = init?.method ?? 'GET'
     requests.push({ method, path })
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {}
+    if (path === '/_api/pages/preview') {
+      const response = sourceResponses.get(Number(url.searchParams.get('id')))
+      if (!response) throw new Error('Unexpected source preview')
+      return response
+    }
     if (path === '/_api/agents/skills') return Response.json({ skills: [] })
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
     if (path === '/_api/agents/sessions' && method === 'GET') return authorization.pending ?? Response.json({ sessions: [summary()], nextCursor: null })
@@ -760,7 +803,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     store.closeWorkspace()
     store.$dispose()
   })
-  return { store, state, creations, authorization, mediaUpload, sendResponse, threadRead, messageInputs, requests }
+  return { store, state, creations, authorization, mediaUpload, sendResponse, threadRead, messageInputs, requests, sourceResponses }
 }
 
 const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
@@ -977,6 +1020,194 @@ afterEach(() => {
   document.body.replaceChildren()
   testPwaState.connectionState = 'online'
   vi.useRealTimers()
+})
+describe('Inline Agent historical Review scope', () => {
+  const routePage: TestPageHint = { id: 42, locale: 'en', path: 'handbook/current', observedUpdatedAt: timestamp }
+  const originalPage: TestPageHint = { id: 9, locale: 'en', path: 'handbook/original', observedUpdatedAt: timestamp }
+  const review = (root: HTMLElement): HTMLButtonElement => {
+    const button = root.querySelector<HTMLButtonElement>('.agent-message__recovery button')
+    if (!button) throw new Error('Historical Review control missing')
+    return button
+  }
+  const send = (root: HTMLElement): HTMLButtonElement => {
+    const button = root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    if (!button) throw new Error('Explicit Send control missing')
+    return button
+  }
+
+  it('restores historical file-only exclusion before explicit Send without reuploading its image', async () => {
+    const historical = reviewThread(null)
+    const workspace = realWorkspace('saved', routePage, historical)
+    const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+    await settle()
+    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('true')
+    await workspace.store.openSession(sessionId)
+    await settle()
+
+    review(mounted.root).click()
+    await settle()
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(historical.messages[0].content)
+    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+    expect(mounted.root.querySelector('.agent-composer__media-attachments')).toBeNull()
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).toBeNull()
+
+    send(mounted.root).click()
+    await settle()
+    expect(workspace.messageInputs).toHaveLength(1)
+    expect(workspace.messageInputs[0]).toMatchObject({
+      content: historical.messages[0].content,
+      knowledgeContext: { scope: { kind: 'all' }, sources: [] }
+    })
+    expect(Object.hasOwn(workspace.messageInputs[0], 'currentPage')).toBe(false)
+    expect(workspace.requests.filter(request => request.method === 'POST').map(request => request.path)).toEqual([
+      `/_api/agents/sessions/${sessionId}/messages`
+    ])
+    expect(unloadPrevented()).toBe(false)
+  })
+
+  it('keeps the original included page, all eight explicit sources and scope through navigation and Send', async () => {
+    const sources = [...Array.from({ length: 7 }, (_, index) => reviewSource(index + 1)), { ...reviewSource(42), path: routePage.path }]
+    const historical = reviewThread(originalPage, sources)
+    const workspace = realWorkspace('saved', routePage, historical)
+    for (const source of sources) workspace.sourceResponses.set(source.id, Response.json(source))
+    const state = workspace.state()
+    state.componentProps.pageTitle = 'The currently open route page'
+    const mounted = mountInlineAgent(state, { realThread: true })
+    await settle()
+    await workspace.store.openSession(sessionId)
+    await settle()
+
+    review(mounted.root).click()
+    await settle()
+    const chip = () => mounted.root.querySelector('.agent-context__page-chip')
+    expect(chip()?.getAttribute('aria-pressed')).toBe('true')
+    expect(chip()?.textContent).toContain('en/handbook/original')
+    expect(mounted.root.querySelectorAll('.agent-context__source-label')).toHaveLength(8)
+    expect(workspace.messageInputs).toHaveLength(0)
+
+    workspace.store.setCurrentChatPinned(true)
+    workspace.store.setCurrentPage({ ...routePage, id: 1, path: 'handbook/source-1' })
+    await workspace.store.reconcilePinnedContext()
+    await settle()
+    expect(chip()?.textContent).toContain('en/handbook/original')
+    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).toBeNull()
+    send(mounted.root).click()
+    await settle()
+    expect(workspace.messageInputs).toHaveLength(1)
+    expect(workspace.messageInputs[0]).toMatchObject({
+      currentPage: { id: 9, locale: 'en', path: 'handbook/original', observedUpdatedAt: timestamp },
+      knowledgeContext: { scope: { kind: 'selected' } }
+    })
+    const submittedContext = AgentKnowledgeContextSchema.parse(workspace.messageInputs[0].knowledgeContext)
+    expect(submittedContext.sources.map(source => source.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 42])
+    expect(unloadPrevented()).toBe(false)
+  })
+
+  it('fails closed for unknown historical hint metadata and permits only an explicit page opt-in', async () => {
+    const workspace = realWorkspace('saved', routePage, reviewThread(undefined))
+    const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+    await settle()
+    await workspace.store.openSession(sessionId)
+    await settle()
+    review(mounted.root).click()
+    await settle()
+    const chip = mounted.root.querySelector<HTMLButtonElement>('.agent-context__page-chip')
+    expect(chip?.getAttribute('aria-pressed')).toBe('false')
+    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).not.toBeNull()
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+    chip?.click()
+    await settle()
+    send(mounted.root).click()
+    await settle()
+    expect(workspace.messageInputs[0]?.currentPage).toEqual(routePage)
+  })
+
+  it('does not borrow another run request when the original is outside the historical window', async () => {
+    const historical = reviewThread(originalPage)
+    const unrelated = { ...historical.messages[0], runId: '00000000-0000-4000-8000-000000000070', content: 'Unrelated retained request' }
+    const workspace = realWorkspace('saved', routePage, { ...historical, messages: [unrelated, historical.messages[1]] })
+    const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+    await settle()
+    review(mounted.root).click()
+    await settle()
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
+    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).not.toBeNull()
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+  })
+
+  it('keeps an unsent draft when Review replacement is cancelled, and restores exactly after confirmation', async () => {
+    const historical = reviewThread(null)
+    const workspace = realWorkspace('saved', routePage, historical)
+    workspace.store.updateDraft(sessionId, { text: 'Keep this unsent draft' })
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state, { realThread: true })
+    await settle()
+    review(mounted.root).click()
+    await settle()
+    expect(state.discardDraftOpen.value).toBe(true)
+    state.resolveDraftDiscard(false)
+    await settle()
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep this unsent draft')
+    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('true')
+    review(mounted.root).click()
+    await settle()
+    expect(state.discardDraftOpen.value).toBe(true)
+    state.resolveDraftDiscard(true)
+    await settle()
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(historical.messages[0].content)
+    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+  })
+
+  for (const boundary of ['owner', 'session', 'workspace', 'draft'] as const) {
+    it(`does not commit a late source restoration across a ${boundary} boundary`, async () => {
+      const source = reviewSource(1)
+      const historical = reviewThread(originalPage, [source])
+      const workspace = realWorkspace('saved', routePage, historical)
+      let resolveSource!: (response: Response) => void
+      workspace.sourceResponses.set(source.id, new Promise<Response>(resolve => { resolveSource = resolve }))
+      const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+      await settle()
+      review(mounted.root).click()
+      await settle()
+      expect(workspace.requests.some(request => request.path === '/_api/pages/preview')).toBe(true)
+      expect(send(mounted.root).disabled).toBe(true)
+      expect(await workspace.store.send('Do not send during restoration')).toBe(false)
+      if (boundary === 'owner') workspace.store.destroyWorkspace()
+      else if (boundary === 'session') workspace.store.thread = threadFixture('00000000-0000-4000-8000-000000000004')
+      else if (boundary === 'workspace') workspace.store.closeWorkspace()
+      else workspace.store.updateDraft(sessionId, { text: 'Keep my newer draft' })
+      resolveSource(Response.json(source))
+      await settle()
+      expect(workspace.messageInputs).toHaveLength(0)
+      expect(workspace.store.drafts[sessionId]?.sources ?? []).toEqual([])
+      expect(workspace.store.drafts[sessionId]?.currentPageOverride ?? null).toBeNull()
+      if (boundary === 'draft') expect(workspace.store.drafts[sessionId]?.text).toBe('Keep my newer draft')
+      if (boundary === 'owner') expect(workspace.store.drafts).toEqual({})
+    })
+  }
+
+  for (const unavailable of ['denied', 'wrong-locale'] as const) {
+    it(`does not partially restore or send a request when an original source is ${unavailable}`, async () => {
+      const sources = [reviewSource(1), reviewSource(2)]
+      const workspace = realWorkspace('saved', routePage, reviewThread(originalPage, sources))
+      workspace.sourceResponses.set(1, Response.json(sources[0]))
+      workspace.sourceResponses.set(2, unavailable === 'denied'
+        ? new Response(null, { status: 403 })
+        : Response.json({ ...sources[1], locale: 'fr' }))
+      const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+      await settle()
+      review(mounted.root).click()
+      await settle()
+      expect(mounted.root.querySelectorAll('.agent-context__source-label')).toHaveLength(0)
+      expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+      expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
+      expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).not.toBeNull()
+      expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+    })
+  }
 })
 
 describe('Inline Agent mobile panel controls', () => {

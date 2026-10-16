@@ -706,6 +706,10 @@ candidateExtras retains unchanged observations and recommendations. candidate re
   return plan
 }
 
+/**
+ * Positive indexes require every issued reply to be present and well formed.
+ * Well-formed semantic declines may still leave independent supported claims.
+ */
 export const assessWikiVerificationResults = (
   plan: WikiVerificationPlan,
   results: readonly DecisionBatchResult[] = []
@@ -716,23 +720,32 @@ export const assessWikiVerificationResults = (
   if (!Array.isArray(results)) return { valid: false, issues: ['Wiki verification returned a malformed batch result list.'], nativeSupportedClaimIndexes: [] }
   const issues: string[] = []
   const nativeSupportedClaimIndexes: number[] = []
+  let resultIntegrityValid = true
   if (plan.requests.length === 0) {
     if (Object.keys(plan.checks).length) issues.push('Mechanical Wiki verification cannot contain semantic checks.')
     if (results.length) issues.push('Mechanical Wiki verification cannot consume a native result.')
     return { valid: issues.length === 0, issues, nativeSupportedClaimIndexes }
   }
-  if (results.length !== plan.requests.length) issues.push('Wiki verification returned the wrong number of native batch results.')
+  if (results.length !== plan.requests.length) {
+    resultIntegrityValid = false
+    issues.push('Wiki verification returned the wrong number of native batch results.')
+  }
   const verdicts = new Map<string, { readonly question: DecisionBatchQuestion; readonly answer: unknown }>()
   plan.requests.forEach((request, index) => {
     const answers: unknown = results[index]?.answers
     if (!plain(answers)) {
+      resultIntegrityValid = false
       issues.push(`Wiki verification batch ${index + 1} returned a malformed answer map.`)
       return
     }
     for (const id of Object.keys(answers))
-      if (!Object.hasOwn(request.questions, id)) issues.push(`Wiki verification batch ${index + 1} returned an unexpected verdict: ${id}.`)
+      if (!Object.hasOwn(request.questions, id)) {
+        resultIntegrityValid = false
+        issues.push(`Wiki verification batch ${index + 1} returned an unexpected verdict: ${id}.`)
+      }
     for (const [id, question] of Object.entries(request.questions)) {
       if (!Object.hasOwn(plan.checks, id) || verdicts.has(id)) {
+        resultIntegrityValid = false
         issues.push(`Wiki verification batch ${index + 1} has an unexpected or repeated required predicate: ${id}.`)
         continue
       }
@@ -748,6 +761,7 @@ export const assessWikiVerificationResults = (
           : 'Additional narration'
     const verdict = verdicts.get(id)
     if (!verdict) {
+      resultIntegrityValid = false
       issues.push(`${target}: missing verification verdict.`)
       continue
     }
@@ -760,8 +774,10 @@ export const assessWikiVerificationResults = (
         issues.push(`${target}: uncertain ${answer.choice} verdict (probability must exceed ${confidenceFloor}).`)
       else if (check.kind === 'support') nativeSupportedClaimIndexes.push(check.claimIndex)
     } catch {
+      resultIntegrityValid = false
       issues.push(`${target}: malformed verification verdict.`)
     }
   }
+  if (!resultIntegrityValid) nativeSupportedClaimIndexes.length = 0
   return { valid: issues.length === 0, issues, nativeSupportedClaimIndexes }
 }
