@@ -2577,7 +2577,7 @@ export default defineComponent({
         // resurrect the discarded text on the next capture.
         if (this.editorAdapter) {
           this.editorAdapter.replaceText(this.savedState.content, { detached: true })
-          this.editorAdapter.markPersisted(this.editorAdapter.capture().editVersion)
+          this.editorAdapter.markPersisted?.(this.editorAdapter.capture().editVersion)
         }
         this.dialogUnsaved = false
         this.discardError = ''
