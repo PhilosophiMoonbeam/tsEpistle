@@ -249,6 +249,8 @@ A device recovery copy is separate from page publication state. Fresh online edi
 
 After a successful source write, **Save and close**, creation's automatic reader navigation, and a subsequent clean **Close** wait for the existing authorized page preview to confirm the exact saved page ID, source revision, locale, path and visibility. Only `503 PAGE_RENDER_PENDING` is polled, with cancellation and a 15-second deadline. Failure leaves the saved editor open; retrying a clean save-and-close checks readiness without resubmitting the mutation. New edits, session changes and unresolved recovery or unpersisted collaboration work prevent stale navigation. Transport updates already covered by the exact durably saved text and edit version may remain queued, but additional queued work during the wait prevents navigation.
 
+The preview transport exposes that application-owned pending condition as a fixed `503` JSON message with `code: "PAGE_RENDER_PENDING"`, after current page authorization and unlock checks. Other backend failures retain the generic API error response; they are neither disclosed nor treated as pending. Post-save local recovery captures settle before reader admission.
+
 Before service-worker update reload, every active client reports whether it has uncommitted editor memory, a committed draft, or an in-flight/unknown publish. Missing acknowledgement defers reload.
 
 ## 8. Offline library and search UX

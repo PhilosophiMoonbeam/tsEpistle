@@ -3,6 +3,7 @@ import express from 'express'
 import { type Request, type Response, getTransportRuntime, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
+import errors from '../../operations/errors.ts'
 import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
 import { canReadPage, canWritePage, managesSystem, principalId, type PageVisibility } from '../../helpers/page-access.ts'
 import { isApiPrincipal } from '../../helpers/api-principal.ts'
@@ -661,6 +662,12 @@ router.get('/preview', async (req, res, next) => {
       })
     )
   } catch (err) {
+    if (err instanceof errors.ApplicationError && err.status === 503 && err.name === 'PAGE_RENDER_PENDING') {
+      return res.status(503).json({
+        error: 'The page render is pending for its current source revision. Retry shortly.',
+        code: 'PAGE_RENDER_PENDING'
+      })
+    }
     return sendOperationError(res, next, err, 'Source preview is unavailable')
   }
 })
