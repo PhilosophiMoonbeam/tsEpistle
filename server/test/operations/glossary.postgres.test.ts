@@ -155,6 +155,29 @@ suite('PostgreSQL glossary authority and atomic catalogs', () => {
     expect(await db('glossaryTerms')).toHaveLength(0)
   })
 
+  it('serializes account authority with a groups-first security writer without deadlocking', async () => {
+    const writer = await db.transaction()
+    await writer('groups').select('id').orderBy('id').forUpdate()
+    let reachedGroupLock!: () => void
+    const groupLock = new Promise<void>(resolve => { reachedGroupLock = resolve })
+    const observe = (query: { sql: string }) => {
+      if (query.sql.includes('from "groups"') && query.sql.includes('for share')) reachedGroupLock()
+    }
+    db.on('query', observe)
+    const outcome = operations.access(context, 'en').then(value => value, error => error)
+    try {
+      await groupLock
+      await writer('users').where({ id: 7 }).forUpdate().first()
+      await writer('users').where({ id: 7 }).update({ authVersion: 1 })
+      await writer.commit()
+      expect(await outcome).toMatchObject({ status: 401 })
+    } finally {
+      db.off('query', observe)
+      if (!writer.isCompleted()) await writer.rollback()
+      await outcome
+    }
+  })
+
   it('atomically arbitrates canonical and alias claims across racing saves and keeps the old term on conflict', async () => {
     const results = await Promise.allSettled([
       operations.create(context, term('First', { aliases: ['  CAFÉ  '] })),

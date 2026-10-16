@@ -571,6 +571,71 @@ describe('private page mutation existence isolation', () => {
     expect(result.extra.okf).toMatchObject({ type: 'Reference' })
   })
 
+  it('returns the restore transaction identity even when a newer page is read after commit', async () => {
+    const owner = { id: 7, permissions: [] }
+    const db = createKnex({
+      client: 'better-sqlite3',
+      connection: { filename: ':memory:' },
+      useNullAsDefault: true
+    })
+    try {
+      await createMutationSchema(db)
+      await db('users').insert({ id: 7, name: 'Owner', email: 'owner@example.test' })
+      await db('pages').insert({
+        id: 17,
+        path: 'secret',
+        localeCode: 'en',
+        visibility: 'private',
+        ownerId: 7,
+        authorId: 7,
+        creatorId: 7,
+        editorKey: 'markdown',
+        content: '# Original',
+        contentType: 'markdown',
+        description: '',
+        extra: JSON.stringify({ css: '', js: '' }),
+        hash: 'private:7:en:secret',
+        isPublished: true,
+        publishEndDate: '',
+        publishStartDate: '',
+        sourceRevision: 2,
+        title: 'Original',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-14T00:00:00.000Z'
+      })
+      await bindMutationModels(db)
+      let committedRevision
+      vi.spyOn(Page, 'getPageFromDb').mockImplementationOnce(async id => {
+        const ownWrite = await db('pages').where({ id }).first()
+        expect(ownWrite.content).toBe('# Restored')
+        committedRevision = String(ownWrite.sourceRevision)
+        // Another writer wins after restore's transaction, before its refresh.
+        await db('pages').where({ id }).update({
+          sourceRevision: Number(ownWrite.sourceRevision) + 1,
+          path: 'later',
+          content: '# Later writer'
+        })
+        return Page.query().findById(id)
+      })
+
+      const restored = await Page.updatePage({
+        id: 17,
+        user: owner,
+        content: '# Restored',
+        action: 'restored',
+        expectedSourceRevision: '2'
+      })
+
+      expect(String(restored.sourceRevision)).toBe(committedRevision)
+      expect(restored).toMatchObject({ id: 17, path: 'secret', localeCode: 'en', visibility: 'private' })
+      const latest = await db('pages').where({ id: 17 }).first()
+      expect(String(latest.sourceRevision)).not.toBe(committedRevision)
+      expect(latest).toMatchObject({ path: 'later', content: '# Later writer' })
+    } finally {
+      await db.destroy()
+    }
+  })
+
   it('atomically replaces invalid stored OKF authority with server-owned valid metadata', async () => {
     const owner = { id: 7, permissions: [] }
     const originalExtra = {

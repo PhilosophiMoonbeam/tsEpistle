@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import tfa from 'node-2fa'
 import { adminEmail, adminPassword, authenticateAsAdmin, openSearch, sameOriginHeaders } from './helpers.ts'
+import { waitForPageRender } from '../../client/helpers/pages-api.ts'
 
 type BrowserVisualEditor = {
   commands: {
@@ -825,6 +826,10 @@ test.describe('critical post-install workflows', () => {
     })
     page.on('requestfailed', request => {
       const failure = request.failure()?.errorText || 'unknown failure'
+      // Identity refresh and reader teardown intentionally cancel this read.
+      // Do not mistake that privacy fence for a failed logout or asset load.
+      if (failure === 'net::ERR_ABORTED' && request.method() === 'GET' &&
+        new URL(request.url()).pathname === '/_api/glossary/access') return
       failedRequests.push(`${request.method()} ${request.url()}: ${failure}`)
     })
     page.on('request', request => {
@@ -877,7 +882,7 @@ test.describe('critical post-install workflows', () => {
     await expect(page.locator('.admin-dashboard')).toBeVisible()
     await expect(page.locator('#admin-navigation')).toBeVisible()
     await page.getByRole('button', { name: 'Knowledge', exact: true }).click()
-    await expect(page.getByRole('link', { name: /^Pages\b/ })).toBeVisible()
+    await expect(page.locator('#admin-navigation').getByRole('link', { name: /^Pages\b/ })).toBeVisible()
 
     const sidebarLayout = await page.locator('#admin-navigation').evaluate(navigation => {
       const measure = (label: string) => {
@@ -999,6 +1004,16 @@ test.describe('critical post-install workflows', () => {
     })
 
     try {
+      await waitForPageRender(async url => {
+        const response = await page.request.get(url)
+        return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+      }, {
+        id: privatePage.page.id,
+        sourceRevision: String(privatePage.page.sourceRevision),
+        locale: 'en',
+        path: 'private-sidebar-link',
+        visibility: 'private'
+      }, AbortSignal.timeout(15_000))
       await page.goto('/en/home')
       await page.getByRole('button', { name: 'Browse', exact: true }).click()
       const privateLink = page.getByRole('link', { name: 'Private Sidebar Link', exact: true })

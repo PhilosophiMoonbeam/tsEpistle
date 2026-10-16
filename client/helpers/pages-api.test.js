@@ -1021,10 +1021,11 @@ describe('pages api helper', () => {
   })
 
   test('restores against the page source revision observed when history opened', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page version restored successfully.' }))
+    const receipt = { id: 42, sourceRevision: '9', locale: 'en', path: 'docs/alpha', visibility: 'public' }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page version restored successfully.', ...receipt }))
     const expectedSourceRevision = '8'
 
-    await restorePageVersion(fetchImpl, 42, 9, expectedSourceRevision)
+    expect(await restorePageVersion(fetchImpl, 42, 9, expectedSourceRevision)).toEqual(receipt)
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/42/history/9/restore', {
       method: 'POST',
       credentials: 'same-origin',
@@ -1034,6 +1035,22 @@ describe('pages api helper', () => {
       },
       body: JSON.stringify({ expectedSourceRevision })
     })
+  })
+
+  test.each([
+    { id: 43 },
+    { sourceRevision: undefined },
+    { sourceRevision: '09' },
+    { sourceRevision: 9 },
+    { locale: '' },
+    { path: '' },
+    { visibility: 'unknown' }
+  ])('rejects an unbound restore receipt: %j', async invalid => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      id: 42, sourceRevision: '9', locale: 'en', path: 'docs/alpha', visibility: 'public', ...invalid
+    }))
+    await expect(restorePageVersion(fetchImpl, 42, 9, '8')).rejects.toThrow('Page restore failed')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
   test('fetches paginated revision metadata', async () => {

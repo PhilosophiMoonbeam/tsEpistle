@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { setImmediate as yieldEventLoop } from 'node:timers/promises'
 import { onWatcherCleanup, reactive, watch } from 'vue'
 import { createPinia } from 'pinia'
 import { JSDOM } from 'jsdom'
@@ -7,6 +8,7 @@ import { loadingStart, loadingStop, setLoading } from '../helpers/root-ui-store.
 import { createInstance as createI18nInstance } from 'i18next'
 import englishLocale from '../../server/locales/en.json'
 import { formatRevisionTime, friendlyEditorName, translatedParts } from '../helpers/history-presentation.ts'
+import { restorePageVersion as restoreVersionRequest, waitForPageRender as waitForRenderRequest } from '../helpers/pages-api.ts'
 import { afterEach, beforeEach } from '../../server/test/bun-test.mts'
 
 import { translateEnglish } from '../test/english-translate.mts'
@@ -92,6 +94,7 @@ describe('history revision list and comparison behavior', () => {
       'fetchPageHistory',
       'fetchPageVersion',
       'restorePageVersion',
+      'waitForPageRender',
       'getPageDownloadPath',
       'getPageSourcePath',
       'getErrorMessage',
@@ -112,7 +115,8 @@ describe('history revision list and comparison behavior', () => {
       {},
       dependencies.fetchPageHistory ?? {},
       dependencies.fetchPageVersion ?? {},
-      dependencies.restorePageVersion ?? {},
+      dependencies.restorePageVersion ?? restoreVersionRequest,
+      dependencies.waitForPageRender ?? waitForRenderRequest,
       () => '',
       dependencies.getPageSourcePath ?? (() => ''),
       dependencies.getErrorMessage ?? (error => (error instanceof Error ? error.message : String(error))),
@@ -133,6 +137,9 @@ describe('history revision list and comparison behavior', () => {
       authorId: 1,
       authorName: 'TestAuthor',
       updatedAt: '2026-09-08T10:00:00Z',
+      pageId: 42,
+      sourceRevision: '8',
+      visibility: 'public',
       path: 'home',
       locale: 'en',
       total: 2,
@@ -181,6 +188,22 @@ describe('history revision list and comparison behavior', () => {
         }
       }
     })
+    const context = reactive(Object.fromEntries(
+      ['pageId', 'sourceRevision', 'visibility', 'path', 'locale'].map(key => [key, instance[key]])
+    ))
+    for (const key of Object.keys(context)) {
+      Object.defineProperty(instance, key, {
+        get: () => context[key],
+        set: value => { context[key] = value }
+      })
+    }
+    if (component.watch.restoreContextKey) {
+      ownedWatchers.push(watch(
+        () => instance.restoreContextKey,
+        () => component.watch.restoreContextKey.handler.call(instance),
+        { flush: 'sync' }
+      ))
+    }
 
     ownedInstances.push({ component, instance, wikiStore })
     return { component, instance, wikiStore, renderer }
@@ -723,6 +746,141 @@ describe('history revision list and comparison behavior', () => {
     expectHistoryOwners(wikiStore, 0)
     releaseUnrelatedOwner(wikiStore)
   })
+
+  const restoredTarget = {
+    id: 42, sourceRevision: '9', locale: 'en', path: 'restored', visibility: 'private'
+  }
+  const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), {
+    status, headers: { 'Content-Type': 'application/json' }
+  })
+
+  test('opens a restored page only after its exact committed preview is ready', async () => {
+    const originalWindow = global.window
+    let resolvePreview
+    const assign = vi.fn()
+    const notifications = vi.fn()
+    const fetch = vi.fn((url, init) => {
+      if (init.method === 'POST') return Promise.resolve(jsonResponse(restoredTarget))
+      return new Promise(resolve => { resolvePreview = resolve })
+    })
+    try {
+      global.window = { siteConfig: fixtureSiteConfig, fetch, setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { assign } }
+      const { instance, wikiStore } = createHistoryInstance({
+        isRestoreConfirmDialogShown: true,
+        restoreTarget: { versionId: 2, versionDate: '' }
+      }, { showNotification: notifications })
+      seedUnrelatedOwner(wikiStore)
+      const restore = instance.restoreConfirm()
+      await yieldEventLoop()
+
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+        '/_api/pages/42/history/2/restore', '/_api/pages/preview?id=42'
+      ])
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ expectedSourceRevision: '8' })
+      expect(assign).not.toHaveBeenCalled()
+      expect(notifications).not.toHaveBeenCalled()
+      expect(instance.restoreLoading).toBe(true)
+      expect(instance.restoreSourceRevision).toBe('9')
+      expect(wikiStore.page.sourceRevision).toBe('9')
+      expectHistoryOwners(wikiStore, 1)
+
+      resolvePreview(jsonResponse(restoredTarget))
+      await restore
+      expect(assign).toHaveBeenCalledWith('/_private/en/restored')
+      expect(notifications).toHaveBeenCalledWith(wikiStore, expect.objectContaining({ style: 'success' }))
+      expect(instance.restoreLoading).toBe(false)
+      expectHistoryOwners(wikiStore, 0)
+      releaseUnrelatedOwner(wikiStore)
+    } finally {
+      global.window = originalWindow
+    }
+  })
+
+  test('retains the saved restore after a different preview revision and retries only readiness', async () => {
+    const originalWindow = global.window
+    const assign = vi.fn()
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(restoredTarget))
+      .mockResolvedValueOnce(jsonResponse({ ...restoredTarget, sourceRevision: '10' }))
+      .mockResolvedValueOnce(jsonResponse(restoredTarget))
+      .mockResolvedValueOnce(jsonResponse({ ...restoredTarget, sourceRevision: '11' }))
+      .mockResolvedValueOnce(jsonResponse({ ...restoredTarget, sourceRevision: '11' }))
+    try {
+      global.window = { siteConfig: fixtureSiteConfig, fetch, setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { assign } }
+      const { instance } = createHistoryInstance({
+        isRestoreConfirmDialogShown: true,
+        restoreTarget: { versionId: 2, versionDate: '' }
+      })
+
+      await instance.restoreConfirm()
+      expect(assign).not.toHaveBeenCalled()
+      expect(instance.restoredPage).toEqual(restoredTarget)
+      expect(instance.isRestoreConfirmDialogShown).toBe(true)
+      expect(instance.restoreError).toContain('without restoring again')
+      expect(instance.restoreLoading).toBe(false)
+      instance.cancelRestore()
+      instance.restore(2, '')
+
+      await instance.restoreConfirm()
+      expect(fetch.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1)
+      expect(assign).toHaveBeenCalledTimes(1)
+      expect(assign).toHaveBeenCalledWith('/_private/en/restored')
+
+      instance.restore(1, '')
+      await instance.restoreConfirm()
+      const posts = fetch.mock.calls.filter(([, init]) => init.method === 'POST')
+      expect(posts).toHaveLength(2)
+      expect(JSON.parse(posts[1][1].body)).toEqual({ expectedSourceRevision: '9' })
+    } finally {
+      global.window = originalWindow
+    }
+  })
+
+  test.each(['cancel', 'unmount', 'account', 'session', 'page', 'revision'])(
+    'fences a late restored preview after %s without navigation or notification',
+    async boundary => {
+      const originalWindow = global.window
+      let resolvePreview
+      let previewSignal
+      const assign = vi.fn()
+      const notifications = vi.fn()
+      const fetch = vi.fn((_url, init) => {
+        if (init.method === 'POST') return Promise.resolve(jsonResponse(restoredTarget))
+        previewSignal = init.signal
+        return new Promise(resolve => { resolvePreview = resolve })
+      })
+      try {
+        global.window = { siteConfig: fixtureSiteConfig, fetch, setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { assign } }
+        const { component, instance, wikiStore } = createHistoryInstance({
+          isRestoreConfirmDialogShown: true,
+          restoreTarget: { versionId: 2, versionDate: '' }
+        }, { showNotification: notifications })
+        seedUnrelatedOwner(wikiStore)
+        const restore = instance.restoreConfirm()
+        await yieldEventLoop()
+        expect(previewSignal.aborted).toBe(false)
+
+        if (boundary === 'cancel') instance.cancelRestore()
+        if (boundary === 'unmount') component.beforeUnmount.call(instance)
+        if (boundary === 'account') wikiStore.user.id += 1
+        if (boundary === 'session') wikiStore.offlineIdentityEpoch += 1
+        if (boundary === 'page') instance.pageId += 1
+        if (boundary === 'revision') instance.sourceRevision = '10'
+
+        expect(previewSignal.aborted).toBe(true)
+        await restore
+        resolvePreview(jsonResponse(restoredTarget))
+        await yieldEventLoop()
+        expect(assign).not.toHaveBeenCalled()
+        expect(notifications).not.toHaveBeenCalled()
+        expect(fetch.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1)
+        expectHistoryOwners(wikiStore, 0)
+        releaseUnrelatedOwner(wikiStore)
+      } finally {
+        global.window = originalWindow
+      }
+    }
+  )
 
   test('releases restore ownership on unmount without late notification or navigation', async () => {
     const originalWindow = global.window

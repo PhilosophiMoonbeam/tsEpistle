@@ -1282,8 +1282,8 @@ router.post('/:id/history/:versionId/restore', async (req, res, next) => {
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
   try {
-    await pageOperations.restore({ ...pageOperationContext(req), pageId, versionId, expectedSourceRevision })
-    res.json({ message: 'Page version restored successfully.' })
+    const restored = await pageOperations.restore({ ...pageOperationContext(req), pageId, versionId, expectedSourceRevision })
+    res.json({ message: 'Page version restored successfully.', ...restored })
   } catch (err) {
     sendOperationError(res, next, err, 'Page restore failed')
   }

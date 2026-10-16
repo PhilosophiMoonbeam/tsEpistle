@@ -64,6 +64,8 @@ The upgrade smoke restores the archived fixture unchanged, then normalizes its p
 
 Git synchronization may remove an empty child directory while a bounded filesystem observation is opening or enumerating it. Native regressions must cover deferred iterator `ENOENT`, not only `opendir` rejection; only a confirmed-absent child is tolerated. Root disappearance, replacement, symlinks, other errors, and resource limits remain fail-closed.
 
+Glossary authority acquires group locks in ID order before account and membership locks, matching security-policy and membership writers. Preserve the fresh account/session check after waiting; native concurrency coverage must reject stale authority rather than retry a deadlocked write.
+
 ## Enterprise Release — security review and attestation workflow
 This workflow applies only when a maintainer explicitly activates **Enterprise Release** for a named official beta, production release, or compliance milestone as defined in `AGENTS.md`. Development Sprint is the default: routine development and maintained local-tailnet deployment do not require an immutable source/attestation pair, review record, evidence document, manifest update, release tag, provenance record, or certification artifact.
 
