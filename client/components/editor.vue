@@ -2538,7 +2538,7 @@ export default defineComponent({
       }
     },
     async discardAndExit() {
-      if (this.discardPending) return
+      if (this.discardPending || this.renderWaitController !== null) return
       const capturedAuthenticated = this.isAuthenticated
       const capturedAccountId = this.accountId
       const capturedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
@@ -2548,6 +2548,7 @@ export default defineComponent({
       const collaborationPageId = wikiStore.page.id
       const collaborationCheckoutDate = this.checkoutDateActive
       const collaborationSourceRevision = wikiStore.page.sourceRevision
+      let discarded = false
       this.discardPending = true
       this.discardError = ''
       this.notifySafetyChanged()
@@ -2570,12 +2571,25 @@ export default defineComponent({
         }
         this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         this.restoreCurrentSavedState()
+        discarded = true
+        // Discard is irreversible even if the persisted page is not ready to view.
+        // Keep the editor itself on that baseline so a failed/cancelled wait cannot
+        // resurrect the discarded text on the next capture.
+        if (this.editorAdapter) {
+          this.editorAdapter.replaceText(this.savedState.content, { detached: true })
+          this.editorAdapter.markPersisted(this.editorAdapter.capture().editVersion)
+        }
         this.dialogUnsaved = false
         this.discardError = ''
-        this.exitGo()
+        if (wikiStore.editor.mode !== 'create' && this.offlineConnectionState === 'online') {
+          this.discardPending = false
+          await this.navigateToSavedPage(this.captureSaveSnapshot(), true)
+        } else {
+          this.exitGo()
+        }
       } catch (error) {
         if (this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)) {
-          this.dialogUnsaved = true
+          this.dialogUnsaved = !discarded
           this.discardError = getErrorMessage(error)
           wikiStore.showNotification({
             message: this.discardError,

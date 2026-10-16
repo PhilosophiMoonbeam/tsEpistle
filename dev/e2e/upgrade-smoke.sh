@@ -181,18 +181,41 @@ verify_legacy_login() {
   login_graphql >/dev/null
 }
 
+prepare_fixture_asset() {
+  local asset_hash
+  # Both images reserve .txt for page aliases, so the archived continuity.txt
+  # cannot exercise their public asset route. Normalize only the restored
+  # filename/path identity and bound cache, preserving the original bytes and
+  # artifact hashes without disabling .txt page support.
+  asset_hash=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki \
+    --set=ON_ERROR_STOP=1 --tuples-only --no-align --command="
+      WITH renamed AS (
+        UPDATE assets
+        SET filename = 'continuity.bin', ext = '.bin',
+          hash = encode(sha1(convert_to('continuity.bin', 'UTF8')), 'hex')
+        WHERE filename = 'continuity.txt' AND \"folderId\" IS NULL
+          AND hash = '7a98cdab7d7ca483ab801d78798f23180890f59c'
+        RETURNING hash
+      )
+      SELECT hash FROM renamed")
+  [ "$asset_hash" = '9519c3fab198c33c8e31a87f6452fe112e4fd6e5' ]
+  docker run --rm --user 0 --entrypoint mv -v "$DATA_VOLUME":/data "$WIKI_TEST_IMAGE" \
+    /data/cache/7a98cdab7d7ca483ab801d78798f23180890f59c.dat \
+    "/data/cache/$asset_hash.dat"
+}
+
 assert_fixture_asset_bytes() {
   local asset_sha
   asset_sha=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname=wiki --tuples-only --no-align \
     --command="SELECT encode(sha256(data.data), 'hex')
       FROM \"assetData\" AS data JOIN assets ON assets.id = data.id
-      WHERE assets.filename = 'continuity.txt'")
+      WHERE assets.filename = 'continuity.bin'")
   [ "$asset_sha" = "$FIXTURE_ASSET_SHA256" ]
 }
 
 assert_fixture_asset_download() {
-  local download=$RECOVERY_DIR/continuity.txt
-  wiki_curl --fail --silent --show-error --output "$download" "$WIKI_ORIGIN/continuity.txt"
+  local download=$RECOVERY_DIR/continuity.bin
+  wiki_curl --fail --silent --show-error --output "$download" "$WIKI_ORIGIN/continuity.bin"
   printf '%s  %s\n' "$FIXTURE_ASSET_SHA256" "$download" | sha256sum --check --status
 }
 
@@ -209,7 +232,7 @@ resource_report() {
       'migrationNames', (SELECT json_agg(name ORDER BY id) FROM migrations),
       'fixturePage', (SELECT json_build_object('id', id, 'path', path, 'title', title, 'content', content) FROM pages WHERE path = 'legacy-continuity'),
       'fixtureHistory', (SELECT COUNT(*) FROM \"pageHistory\" WHERE \"pageId\" = (SELECT id FROM pages WHERE path = 'legacy-continuity')),
-      'fixtureAsset', (SELECT COUNT(*) FROM assets WHERE filename = 'continuity.txt')
+      'fixtureAsset', (SELECT COUNT(*) FROM assets WHERE filename = 'continuity.bin')
     );" | jq --compact-output .
 }
 
@@ -317,6 +340,7 @@ docker exec "$DB_CONTAINER" pg_restore --username=wiki --dbname=wiki /tmp/source
 docker run --rm --user 0 --entrypoint tar \
   -v "$DATA_VOLUME":/target -v "$FIXTURE_DIR":/fixtures:ro "$WIKI_TEST_IMAGE" \
   -C /target -xzf "/fixtures/$(basename "$DATA_FIXTURE")"
+prepare_fixture_asset
 
 before_report=$(resource_report)
 assert_fixture_report "$before_report"
