@@ -88,6 +88,8 @@ function forgetSecret() {
   issuedKey.value = ''
   issuedId.value = null
   showKey.value = false
+  error.value = ''
+  notice.value = ''
 }
 
 async function load() {
