@@ -4,12 +4,15 @@ import { readFile } from 'node:fs/promises'
 import {
   AxAssertionError,
   AxGenerateError,
+  axGetRuntimeHookFrame,
+  axRuntimeHookFrame,
   type AxAIService,
   type AxAIServiceOptions,
   type AxChatRequest,
   type AxChatResponse,
   type AxChatResponseResult,
-  type AxFunctionJSONSchema
+  type AxFunctionJSONSchema,
+  type AxRuntimeHookFramedOptions
 } from '@ax-llm/ax'
 import type { MarkdownIt, MarkdownItOptions, Token } from 'markdown-it'
 import * as markdownItModule from 'markdown-it'
@@ -6080,8 +6083,13 @@ export class AxAgentEngine implements AgentEngine {
       readonly guard?: (fragment: string) => string | undefined
     },
     authorizeEvidence?: () => Promise<void>,
-    cachePhase: WikiCachePhase = 'collection'
+    cachePhase: WikiCachePhase = 'collection',
+    generationOptions?: Readonly<
+      Pick<AxAIServiceOptions, 'abortSignal' | 'rateLimiter' | 'tracer' | 'meter' | 'customLabels' | 'traceContext' | 'usageContext'> &
+        AxRuntimeHookFramedOptions
+    >
   ): Promise<TurnResult> {
+    if (generationOptions?.abortSignal) request = { ...request, signal: AbortSignal.any([request.signal, generationOptions.abortSignal]) }
     const admissionStartedAt = performance.now()
     assertCompactionContextFresh(request)
     const limits = deriveAgentProviderResourceLimits(maxOutputTokens)
@@ -6254,6 +6262,23 @@ export class AxAgentEngine implements AgentEngine {
       dispatchedAt = performance.now()
       response = await provider.service.chat(providerRequest, {
         ...wikiProviderCacheOptions(provider, request, cachePhase),
+        // Preserve native run hooks without allowing AxGen to override host
+        // dispatch admission, transport, retries, or publication ownership.
+        ...(generationOptions === undefined
+          ? {}
+          : {
+              rateLimiter: generationOptions.rateLimiter,
+              tracer: generationOptions.tracer,
+              meter: generationOptions.meter,
+              customLabels: generationOptions.customLabels,
+              traceContext: generationOptions.traceContext,
+              usageContext: generationOptions.usageContext,
+              [axRuntimeHookFrame]: axGetRuntimeHookFrame(generationOptions)
+            }),
+        debug: false,
+        verbose: false,
+        excludeContentFromTrace: true,
+        includeRequestBodyInErrors: false,
         stream: streamResponse && provider.capabilities.streaming,
         abortSignal: dispatchSignal,
         functionCallMode: 'native',
@@ -6641,7 +6666,7 @@ export class AxAgentEngine implements AgentEngine {
     let preflightPlan: PublicationSequencePlan | undefined
     let dispatched: TurnResult | undefined
     let dispatchFailure: unknown
-    const admittedChat: AxAIService['chat'] = async generation => {
+    const admittedChat: AxAIService['chat'] = async (generation, generationOptions) => {
       try {
         if (dispatched !== undefined) throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Synthesis permits one admitted dispatch per attempt', 500)
         const generatedPrompt = generation.chatPrompt.map((message, index) =>
@@ -6807,7 +6832,8 @@ export class AxAgentEngine implements AgentEngine {
             await authorizeInputMedia()
             await input.authorizeEvidence()
           },
-          'synthesis'
+          'synthesis',
+          generationOptions
         )
         if (dispatched.performance !== undefined) dispatched = { ...dispatched, performance: { ...dispatched.performance, synthesisFrame } }
         return {
@@ -6931,7 +6957,7 @@ export class AxAgentEngine implements AgentEngine {
     const program = createWikiCoverageProgram({ structured })
     let dispatched: TurnResult | undefined
     let dispatchFailure: unknown
-    const admittedChat: AxAIService['chat'] = async generation => {
+    const admittedChat: AxAIService['chat'] = async (generation, generationOptions) => {
       try {
         if (dispatched !== undefined) throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Coverage permits one admitted dispatch per candidate', 500)
         const generationRequest = { ...generation, model: provider.model }
@@ -6978,7 +7004,8 @@ export class AxAgentEngine implements AgentEngine {
           undefined,
           { request: generationRequest },
           authorizeEvidence,
-          'coverage'
+          'coverage',
+          generationOptions
         )
         return {
           results: [

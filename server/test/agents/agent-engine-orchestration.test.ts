@@ -1,4 +1,5 @@
-import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { axGlobals, type AxAIServiceOptions, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
+import { ProxyTracerProvider } from '@opentelemetry/api'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
@@ -201,6 +202,75 @@ const responseStream = (responses: readonly AxChatResponse[], cancel?: (reason: 
 }
 
 describe('Ax orchestration stages', () => {
+  it('preserves the private native generator tracer at the actual paid synthesis dispatch', async () => {
+    const previousTracer = axGlobals.tracer
+    const inheritedTracer = new ProxyTracerProvider().getTracer('inherited-engine-test')
+    const paidOptions: Readonly<AxAIServiceOptions>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>, options?: Readonly<AxAIServiceOptions>): Promise<AxChatResponse> => {
+      expect(synthesisInputFromRequest(input)).toBeDefined()
+      paidOptions.push(options ?? {})
+      return {
+        results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }), finishReason: 'stop' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+      }
+    })
+    axGlobals.tracer = inheritedTracer
+    try {
+      await new AxAgentEngine(factoryFor(chat), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        { ...baseRequest(new AbortController().signal), limits: { maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 512 } },
+        { text: async () => {}, event: async () => {} }
+      )
+      expect(chat).toHaveBeenCalledOnce()
+      expect(paidOptions[0]?.tracer).toBeDefined()
+      expect(paidOptions[0]?.tracer).not.toBe(inheritedTracer)
+      const span = paidOptions[0]!.tracer!.startSpan('paid-synthesis-privacy')
+      expect(span.isRecording()).toBe(false)
+      span.end()
+      expect(paidOptions[0]).toMatchObject({
+        debug: false,
+        verbose: false,
+        excludeContentFromTrace: true,
+        includeRequestBodyInErrors: false
+      })
+    } finally {
+      axGlobals.tracer = previousTracer
+    }
+  })
+
+  it('honors native generator global cancellation during admission before the next paid synthesis dispatch', async () => {
+    const previousSignal = axGlobals.abortSignal
+    const globalAbort = new AbortController()
+    const hostAbort = new AbortController()
+    const authorizeDispatch = vi.fn(async () => {
+      globalAbort.abort(new Error('Global synthesis cancellation'))
+    })
+    const chat = vi.fn(
+      async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => ({
+        results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }), finishReason: 'stop' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+      })
+    )
+    const text = vi.fn(async () => {})
+    axGlobals.abortSignal = globalAbort.signal
+    try {
+      const execution = new AxAgentEngine(factoryFor(chat), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        {
+          ...baseRequest(hostAbort.signal),
+          authorizeDispatch,
+          limits: { maxTurns: 1, maxToolCalls: 0, maxOutputTokens: 512 }
+        },
+        { text, event: async () => {} }
+      )
+      await expect(execution).rejects.toThrow()
+      expect(authorizeDispatch).toHaveBeenCalledOnce()
+      expect(hostAbort.signal.aborted).toBe(false)
+      expect(chat).not.toHaveBeenCalled()
+      expect(text).not.toHaveBeenCalled()
+    } finally {
+      axGlobals.abortSignal = previousSignal
+    }
+  })
+
   it.each(['fresh', 'stale', 'changed content hash', 'expired', 'revoked', 'outside scope'] as const)(
     'reuses a complete prior read without collector acknowledgement only while current authority remains valid: %s',
     async authority => {

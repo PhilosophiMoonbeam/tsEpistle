@@ -1638,7 +1638,23 @@ describe('Wiki verification strict issued-result composition', () => {
     }
   })
 
-  it('rejects malformed, foreign, missing, extra and internally inconsistent native verdicts', () => {
+  it('retains independently supported claims when valid nonargmax verdicts fail the selected-label or probability gate', () => {
+    const built = buildWikiVerificationPlan(matrixInput())!
+    for (const choice of ['supports', 'contradicts', 'not_supported']) {
+      const verdict = {
+        ...supports,
+        choice,
+        ...(choice === 'supports' ? { probabilities: { supports: 0.01, contradicts: 0.98, not_supported: 0.01 } } : {})
+      }
+      const assessed = assessWikiVerificationResults(built, batchResults(built, { ...acceptedAnswers(built), support_0: verdict }))
+      expect(assessed).toMatchObject({ valid: false, nativeSupportedClaimIndexes: [1] })
+      expect(assessed.issues).toHaveLength(1)
+      expect(assessed.issues[0]).toContain('Claim 1')
+      expect(assessed.issues[0]).toContain(choice === 'supports' ? 'probability must exceed 0.8' : choice)
+    }
+  })
+
+  it('rejects malformed, foreign, missing, extra and invalid-distribution native verdicts', () => {
     const built = buildWikiVerificationPlan(matrixInput())!
     const malformed: readonly unknown[] = [
       null,
@@ -1651,7 +1667,7 @@ describe('Wiki verification strict issued-result composition', () => {
       { ...supports, probabilities: { supports: 1 } },
       { ...supports, probabilities: { supports: 0.98, contradicts: 0.01, not_supported: 0.01, complete: 0 } },
       { ...supports, probabilities: { supports: 1, contradicts: 1, not_supported: 0 } },
-      { ...supports, probabilities: { supports: 0.01, contradicts: 0.98, not_supported: 0.01 } },
+      { ...supports, probabilities: { supports: -0.01, contradicts: 1, not_supported: 0.01 } },
       { ...supports, probabilities: { supports: Infinity, contradicts: 0, not_supported: 0 } }
     ]
     for (const verdict of malformed) {

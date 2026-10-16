@@ -93,9 +93,8 @@ export const normalizeDecisionAnswer = (
     throw invalid()
   const total = labels.reduce((sum, label) => sum + answer.probabilities[label]!, 0)
   if (!Number.isFinite(total) || total <= 0 || Math.abs(total - 1) > 0.01 + Number.EPSILON * labels.length) throw invalid()
-  // Ax accepts rounding tolerance without changing the native distribution.
+  // Native selection is independent of argmax; preserve the rounded distribution.
   const probabilities = answer.probabilities
-  if (labels.some(label => probabilities[label]! > probabilities[answer.choice]! + Number.EPSILON)) throw invalid()
   return { choice: answer.choice, probabilities, confidence: answer.confidence }
 }
 
@@ -392,8 +391,8 @@ export interface DecisionProviderRuntime {
 }
 
 /** Uses Ax native System One and Ax's openai-compatible chat normalization.
- * Legacy /completions is an explicit bounded wire adapter: Ax has no native legacy
- * profile in 25.2.1. No automatic dialect detection or credential-bearing redirects.
+ * Legacy /completions uses an explicit bounded wire adapter.
+ * No automatic dialect detection or credential-bearing redirects.
  */
 export class DecisionProviderClient {
   readonly #options: DecisionProviderTransportOptions
@@ -678,7 +677,7 @@ export class DecisionProviderClient {
               ? { responseFormat: { type: 'json_schema' as const, schema: { name: 'decision', strict: true, schema } } }
               : {})
           },
-          { stream: false, abortSignal: signal }
+          { stream: false, abortSignal: signal, debug: false, verbose: false }
         )
         if (!('results' in response)) {
           await response.cancel().catch(() => {})
@@ -687,7 +686,10 @@ export class DecisionProviderClient {
         const result = response.results[0]
         if (response.results.length !== 1 || result?.finishReason !== 'stop' || typeof result.content !== 'string' || result.functionCalls?.length)
           throw invalid()
-        answers = { decision: normalizeDecisionAnswer(JSON.parse(result.content) as unknown, request.criteria) }
+        const answer = normalizeDecisionAnswer(JSON.parse(result.content) as unknown, request.criteria)
+        // Unlike native choice, this generated classifier explicitly promises argmax.
+        for (const label in answer.probabilities) if (answer.probabilities[label]! > answer.probabilities[answer.choice]! + Number.EPSILON) throw invalid()
+        answers = { decision: answer }
         model = responseModel ?? config.model
       }
       if (!usage || !answers || !safeModelId(model)) throw invalid()

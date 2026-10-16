@@ -1,5 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import { Agent, MockAgent, type Dispatcher } from 'undici/index.js'
+import { axGlobals } from '@ax-llm/ax'
+import { ProxyTracerProvider, type Span } from '@opentelemetry/api'
 import { AgentProviderRegistry } from '../../agents/providers/registry.ts'
 import { createWikiOfflineDispatchAdmission, type WikiOfflineAdmission } from '../../agents/providers/wiki-synthesis-offline-admission.ts'
 import type { AgentSecretRegistry } from '../../agents/providers/secrets.ts'
@@ -118,6 +120,75 @@ describe('offline synthesis measured pricing admission', () => {
     expect(await db('agentQuotaReservations').first()).toMatchObject({ status: 'consumed',
       consumedTokens: summary.unknownExposureTokens, consumedCostMicros: summary.unknownExposureCostMicros })
     mock.assertNoPendingInterceptors()
+  })
+
+  it('isolates private failed native inference from an inherited recording tracer without releasing paid exposure', async () => {
+    const privatePrompt = 'PRIVATE_OFFLINE_PROMPT_DO_NOT_RECORD'
+    const privateFailure = 'PRIVATE_OFFLINE_PROVIDER_ERROR_DO_NOT_RECORD'
+    const priorTracer = axGlobals.tracer
+    const inheritedTracer = new ProxyTracerProvider().getTracer('offline-admission-inherited')
+    const backingTracer = new ProxyTracerProvider().getTracer('offline-admission-span-fixture')
+    const captured: unknown[] = []
+    const inheritedSpans = vi.spyOn(inheritedTracer, 'startSpan').mockImplementation(() => {
+      const span = backingTracer.startSpan('offline-private-native-fixture')
+      vi.spyOn(span, 'isRecording').mockReturnValue(true)
+      vi.spyOn(span, 'recordException').mockImplementation(exception => {
+        captured.push(exception)
+      })
+      vi.spyOn(span, 'setAttribute').mockImplementation((key, value) => {
+        captured.push({ key, value })
+        return span
+      })
+      vi.spyOn(span, 'setAttributes').mockImplementation(attributes => {
+        captured.push(attributes)
+        return span
+      })
+      vi.spyOn(span, 'addEvent').mockImplementation((name, attributes) => {
+        captured.push({ name, attributes })
+        return span
+      })
+      return span
+    })
+    const inheritedActiveSpans = vi.spyOn(inheritedTracer, 'startActiveSpan').mockImplementation(((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (span: Span) => unknown
+      return callback(inheritedTracer.startSpan('offline-private-active-fixture'))
+    }) as typeof inheritedTracer.startActiveSpan)
+    mock
+      .get(origin)
+      .intercept({ path: '/v1/messages', method: 'POST' })
+      .reply(
+        503,
+        {
+          type: 'error',
+          error: { type: 'overloaded_error', message: privateFailure }
+        },
+        { headers: { 'content-type': 'application/json' } }
+      )
+    axGlobals.tracer = inheritedTracer
+    try {
+      const admission = await admit()
+      const privateRequest = { ...request, chatPrompt: [{ role: 'user' as const, content: privatePrompt }] }
+      const options = { stream: false, tracer: new ProxyTracerProvider().getTracer('offline-program-private') }
+      admission.service.validateChatRequest?.(privateRequest, options)
+      await expect(admission.service.chat(privateRequest, options)).rejects.toThrow('Offline inference failed')
+      expect(inheritedSpans.mock.calls.length).toBe(0)
+      expect(inheritedActiveSpans.mock.calls.length).toBe(0)
+      expect(captured).toEqual([])
+      const summary = admission.summary()
+      expect(summary).toMatchObject({ calls: 1, dispatchedCalls: 1, failedCalls: 1, totalTokens: 0, costMicros: 0 })
+      expect(summary.unknownExposureTokens).toBeGreaterThan(8)
+      expect(await db('agentQuotaReservations').first()).toMatchObject({
+        status: 'consumed',
+        consumedTokens: summary.unknownExposureTokens,
+        consumedCostMicros: summary.unknownExposureCostMicros
+      })
+      expect(await db('agentRuns').first()).toMatchObject({ status: 'failed', errorCode: 'OFFLINE_INFERENCE_FAILED' })
+      mock.assertNoPendingInterceptors()
+    } finally {
+      axGlobals.tracer = priorTracer
+      inheritedSpans.mockRestore()
+      inheritedActiveSpans.mockRestore()
+    }
   })
 
   it('denies worst-case admission before HTTP even when cache reads would be free or cheap', async () => {

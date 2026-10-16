@@ -1489,7 +1489,7 @@ describe('Wiki synthesis offline correction admission', () => {
     expect(unadmitted.score).toBe(0)
   })
 
-  it.each(['transport', 'error', 'length', 'invalid length'] as const)(
+  it.each(['transport', 'error', 'length', 'invalid length', 'content_filter'] as const)(
     'does not replay failed offline inference as a schema correction (%s)',
     async failure => {
       const chat = vi.fn(async (): Promise<AxChatResponse> => acceptedReceipt)
@@ -1500,7 +1500,7 @@ describe('Wiki synthesis offline correction admission', () => {
             {
               index: 0,
               content: failure === 'invalid length' ? '{"claims":[' : JSON.stringify(encodeWikiSynthesisAnswer(answer({ unresolvedFacets: [0] }))),
-              finishReason: failure === 'error' ? 'error' : 'length'
+              finishReason: failure === 'error' || failure === 'content_filter' ? failure : 'length'
             }
           ]
         }
