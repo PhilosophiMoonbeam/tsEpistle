@@ -774,7 +774,9 @@ export default defineComponent({
     onSearchEnter(this.handleSearchEnter)
     onSearchExit(this.handleSearchExit)
     void this.$nextTick(this.syncSearchInputA11y)
-    document.addEventListener('focusin', this.captureSearchRestoreTarget, true)
+    // Capture before the header's focus handler opens the reactive modal.
+    // Native browsers can flush that update before dispatching focusin.
+    document.addEventListener('focus', this.captureSearchRestoreTarget, true)
     document.addEventListener('keydown', this.handleSearchKeydown, true)
     if (this.searchIsFocused) void this.activateAgentModal()
     window.addEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
@@ -803,7 +805,7 @@ export default defineComponent({
     offSearchEnter(this.handleSearchEnter)
     offSearchExit(this.handleSearchExit)
     window.removeEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
-    document.removeEventListener('focusin', this.captureSearchRestoreTarget, true)
+    document.removeEventListener('focus', this.captureSearchRestoreTarget, true)
     document.removeEventListener('keydown', this.handleSearchKeydown, true)
     this.deactivateModalLayers(false)
     this.agentResumeSessionId = null

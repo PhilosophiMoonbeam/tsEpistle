@@ -292,7 +292,7 @@ describe('Ask modal accessibility contract', () => {
         state[name] = (...args) => methods[name].call(state, ...args)
       }
       fixtureDocument.addEventListener('keydown', methods.handleSearchKeydown.bind(state), true)
-      fixtureDocument.addEventListener('focusin', methods.captureSearchRestoreTarget.bind(state), true)
+      fixtureDocument.addEventListener('focus', methods.captureSearchRestoreTarget.bind(state), true)
 
       pageOpener.focus()
       methods.activateSearchModal.call(state, pageOpener)

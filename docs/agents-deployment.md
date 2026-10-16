@@ -153,6 +153,8 @@ Gemini run-local native replay retains original signed assistant parts only when
 
 Historical **Review request** restores the original user message by run identity, not a suggested prompt or the current composer's defaults. User-message views expose only the validated frozen page hint, with explicit null for an original exclusion; a recovered included hint stays bound to its original page even after navigation and does not consume an explicit-source slot. Review restores the complete original search scope and reauthorizes every explicit source before replacing the draft. Unavailable or mismatched sources produce a context warning rather than silently dropping sources, and unknown page metadata cannot enable the current page by default. Restoration is owner/session/workspace fenced, never submits a run, and does not reupload authorized historical attachments. Only explicit Send admits a new immutable request.
 
+Native user-message rows intentionally have no run ID. Recovery binds the selected assistant to its canonical adjacent user-message ordinal within the same conversation; missing or mismatched pairs reject restoration rather than choosing a different prompt.
+
 Recovered hint paths and titles remain literal accessible text in labels and tooltips, including slashes, ampersands and markup-shaped titles. Vue retains text/attribute escaping; translation interpolation does not HTML-encode those values a second time.
 
 
