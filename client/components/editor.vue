@@ -2440,7 +2440,7 @@ export default defineComponent({
       const currentActor = (): boolean =>
         this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, expectedLifecycleGeneration) &&
         this.offlineDraftCoordinator === coordinator && wikiStore.page.id === expected.id
-      const canNavigate = (): boolean => {
+      const savedCaptureIsCurrent = (): boolean => {
         if (!currentActor() || this.editorAdapter !== expectedAdapter || !this.editorAdapterSafety.ready) return false
         let adapter: EditorAdapterCapture | undefined
         try {
@@ -2465,10 +2465,13 @@ export default defineComponent({
           (this.editorAdapterSafety.collaborationBacklog === 0 ||
             (adapter !== undefined && this.editorAdapterSafety.collaborationBacklog <= coveredCollaborationBacklog)) &&
           this.editorAdapterSafety.nonPersisted === false &&
-          coordinator?.hasInFlightWork !== true && coordinator?.hasUnresolvedSubmission !== true &&
-          (!requireReloadSafety || coordinator?.reloadSafetySnapshot.safe !== false)
+          coordinator?.hasUnresolvedSubmission !== true
       }
-      if (!canNavigate()) return false
+      const canNavigate = (): boolean =>
+        savedCaptureIsCurrent() &&
+        coordinator?.hasInFlightWork !== true &&
+        (!requireReloadSafety || coordinator?.reloadSafetySnapshot.safe !== false)
+      if (!savedCaptureIsCurrent()) return false
       let previousCollaborationBacklog = this.editorAdapterSafety.collaborationBacklog
       const stopObservingBacklog = expectedAdapter?.onState(safety => {
         if (safety.collaborationBacklog > previousCollaborationBacklog) collaborationBacklogIncreased = true
@@ -2479,6 +2482,9 @@ export default defineComponent({
       const controller = markRaw(new AbortController())
       this.renderWaitController = controller
       try {
+        // Post-save metadata hydration can schedule local recovery after the source save has already completed.
+        if (coordinator?.hasInFlightWork === true && !(await coordinator.captureNow({ editVersion: capture.editVersion }))) return false
+        if (controller.signal.aborted || !canNavigate()) return false
         await waitForPageRender(window.fetch.bind(window), expected, controller.signal, this.$t('editor:save.renderNotReady'))
         if (controller.signal.aborted || !canNavigate()) return false
         this.exitGo()

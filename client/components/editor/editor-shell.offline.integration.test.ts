@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
-import { markRaw, reactive, toRaw } from 'vue'
+import { markRaw, reactive, toRaw, watch } from 'vue'
 import _ from 'lodash'
 import * as ts from 'typescript'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { type DraftKeyContext, OFFLINE_DRAFT_KEY_MAGIC, OFFLINE_KEY_VERSION, type OfflineDraftEnvelopeV1 } from '../../../shared/offline.ts'
 import { type PageBrandingAssignment, PageBrandingAssignmentSchema } from '../../../shared/page-branding.ts'
-import { normalizePageFeatures } from '../../../shared/page-features.ts'
+import { normalizePageFeatures, type PageFeatures } from '../../../shared/page-features.ts'
 import { decryptOfflineDraft, type OfflineDraftKeyHandle, requestDraftKey } from '../../helpers/offline-crypto.ts'
 import {
   OfflineEditorDraftCoordinator,
@@ -25,7 +25,7 @@ import type {
   OfflineSubmissionFinalizationOptions,
   OfflineSubmissionFinalizationResult
 } from '../../helpers/offline-storage.ts'
-import { type PageWriteInput, updatePage } from '../../helpers/pages-api.ts'
+import { isPageRenderPending, type PageWriteInput, updatePage, waitForPageRender } from '../../helpers/pages-api.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const ORIGIN = 'https://wiki.example.test'
@@ -56,10 +56,12 @@ const extractShellObjectOption = (name: string): string => {
 }
 const shellComputedSource = extractShellObjectOption('computed')
 const shellMethodsSource = extractShellObjectOption('methods')
+const shellWatchSource = extractShellObjectOption('watch')
 const executableShellBehavior = new Bun.Transpiler({ loader: 'ts' }).transformSync(`
   const shellBehavior = {
     computed: { ${shellComputedSource} },
-    methods: { ${shellMethodsSource} }
+    methods: { ${shellMethodsSource} },
+    watch: { ${shellWatchSource} }
   }
 `)
 
@@ -95,6 +97,7 @@ type EditorStore = {
     sourceRevision: string
     brandingAssignment: PageBrandingAssignment | null
     brandingView: null
+    pageFeatures: PageFeatures
     okf: OkfState
     okfLoading: boolean
     okfError: string | null
@@ -136,6 +139,7 @@ type AdapterSafety = {
 type Adapter = {
   capture: () => { text: string; editVersion: number }
   snapshot: () => AdapterSafety
+  onState: (listener: (safety: AdapterSafety) => void) => () => void
   markPersisted: (editVersion?: number) => void
   noteTextChange: () => void
   clear: () => void
@@ -146,8 +150,10 @@ type ShellBehavior = {
     isDirty: (this: ShellContext) => boolean
     mode: (this: ShellContext) => string
     offlineDraftMutationBlocked: (this: ShellContext) => boolean
+    offlineDraftSource: (this: ShellContext) => readonly string[]
   }
   methods: Record<string, (this: ShellContext, ...args: unknown[]) => unknown>
+  watch: { offlineDraftSource: (this: ShellContext) => void }
 }
 
 type ShellContext = {
@@ -176,6 +182,8 @@ type ShellContext = {
   safetyRevision: number
   offlineDraftMutationBlocked: boolean
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
+  saveAndClose: () => Promise<boolean>
+  navigateToSavedPage: (capture: { content: string; editVersion: number }, requireReloadSafety?: boolean) => Promise<boolean>
   setupOfflineDraftCoordinator: () => void
   initializeOfflineDrafts: () => Promise<void>
   resolveOfflineSubmission: (resolution: 'discard' | 'continue') => Promise<void>
@@ -208,6 +216,8 @@ const evaluateShellBehavior = (
     'discardCollaborationDraft',
     'fetchPage',
     'updatePage',
+    'isPageRenderPending',
+    'waitForPageRender',
     'notifyReloadSafetyChanged',
     'requestOfflineIdentityBoundary',
     'normalizePageFeatures',
@@ -234,6 +244,8 @@ const evaluateShellBehavior = (
     async () => undefined,
     fetchPage,
     updatePage,
+    isPageRenderPending,
+    waitForPageRender,
     () => undefined,
     () => true,
     normalizePageFeatures,
@@ -433,6 +445,7 @@ const createStore = (): EditorStore => ({
     sourceRevision: '1',
     brandingAssignment: null,
     brandingView: null,
+    pageFeatures: normalizePageFeatures(undefined),
     okf: {
       authority: { state: 'valid', metadata: null, trust: { score: 1 } },
       projection: { state: 'current', value: null }
@@ -486,6 +499,11 @@ const createShellContext = (
   const behavior = evaluateShellBehavior(store, testWindow, fetchPage, options.coordinatorClass)
   let editVersion = 0
   let nonPersisted = true
+  const safetyListeners = new Set<(safety: AdapterSafety) => void>()
+  const emitSafety = (): void => {
+    const safety = adapter.snapshot()
+    for (const listener of safetyListeners) listener(safety)
+  }
   const adapter: Adapter = {
     capture: () => ({ text: store.editor.content, editVersion }),
     snapshot: () => ({
@@ -496,17 +514,24 @@ const createShellContext = (
       collaborationBacklog: 0,
       revision: `adapter:${editVersion}:${nonPersisted ? 1 : 0}`
     }),
+    onState: listener => {
+      safetyListeners.add(listener)
+      return () => safetyListeners.delete(listener)
+    },
     markPersisted: (version = editVersion) => {
       if (version === editVersion) nonPersisted = false
+      emitSafety()
     },
     noteTextChange: () => {
       editVersion += 1
       nonPersisted = true
+      emitSafety()
     },
     clear: () => {
       store.editor.content = ''
       editVersion += 1
       nonPersisted = true
+      emitSafety()
     }
   }
   const context = {
@@ -526,10 +551,15 @@ const createShellContext = (
       scriptJs: store.page.scriptJs,
       brandingAssignment: null,
       brandingView: null,
+      pageFeatures: _.cloneDeep(store.page.pageFeatures),
       okf: _.cloneDeep(store.page.okf)
     },
     navigationTimer: null,
     dialogUnsaved: false,
+    dialogProps: false,
+    dialogEditorSelector: false,
+    renderWaitController: null,
+    savedRenderTarget: null,
     saveFeedback: 'idle',
     lastSavedAt: null,
     lastSaveKind: 'server',
@@ -577,26 +607,40 @@ const createShellContext = (
   Object.defineProperty(host, 'mode', { get: () => behavior.computed.mode.call(host) })
   Object.defineProperty(host, 'isDirty', { get: () => behavior.computed.isDirty.call(host) })
   Object.defineProperty(host, 'offlineDraftMutationBlocked', { get: () => behavior.computed.offlineDraftMutationBlocked.call(host) })
+  adapter.onState(safety => { host.editorAdapterSafety = safety })
+  if (options.reactiveHost) {
+    lifecycleWatchers.push(watch(
+      () => behavior.computed.offlineDraftSource.call(host),
+      () => behavior.watch.offlineDraftSource.call(host)
+    ))
+  }
   return host
 }
 
 // Supply only the storage boundary; capture, crypto, receipts, fences and
 // presentation callbacks all execute the production coordinator implementation.
-const createReactiveShellContext = (store: EditorStore, testWindow: TestWindow, storage: ComposedDraftStorage): ShellContext => {
+const createReactiveShellContext = (
+  store: EditorStore,
+  testWindow: TestWindow,
+  storage: ComposedDraftStorage,
+  fixtureOptions: { debounceMs?: number; hydratedPageFeatures?: PageFeatures } = {}
+): ShellContext => {
   class StoredCoordinator extends OfflineEditorDraftCoordinator {
     constructor(options: ConstructorParameters<typeof OfflineEditorDraftCoordinator>[0]) {
-      super({ ...options, storage: storage as unknown as OfflineStorage, debounceMs: 0 })
+      super({ ...options, storage: storage as unknown as OfflineStorage, debounceMs: fixtureOptions.debounceMs ?? 0 })
       lifecycleCoordinators.push(this)
     }
   }
   return createShellContext(store, testWindow, null, async () => ({
     okf: _.cloneDeep(store.page.okf),
     sourceRevision: store.page.sourceRevision,
+    pageFeatures: _.cloneDeep(fixtureOptions.hydratedPageFeatures ?? store.page.pageFeatures),
     isSearchable: true
   }), { reactiveHost: true, coordinatorClass: StoredCoordinator })
 }
 
 const lifecycleCoordinators: OfflineEditorDraftCoordinator[] = []
+const lifecycleWatchers: Array<() => void> = []
 let previousWindow: unknown
 
 const installWindow = (testWindow: TestWindow): void => {
@@ -606,6 +650,7 @@ const installWindow = (testWindow: TestWindow): void => {
 }
 
 afterEach(() => {
+  for (const stop of lifecycleWatchers.splice(0)) stop()
   for (const coordinator of lifecycleCoordinators.splice(0)) coordinator.destroy()
   invalidateOfflineSession()
   if (previousWindow === undefined) Reflect.deleteProperty(globalThis, 'window')
@@ -616,20 +661,48 @@ afterEach(() => {
 
 describe('composed editor offline submission boundary', () => {
   for (const outcome of ['success', 'unknown'] as const) {
-    test(`Vue-reactive editor exposes durable receipt transitions for a ${outcome} save outcome`, async () => {
+    test(outcome === 'success'
+      ? 'Vue-reactive Save and Close drains pending local recovery before previewing the saved source revision'
+      : 'Vue-reactive editor exposes durable receipt transitions for an unknown save outcome', async () => {
       const storage = new ComposedDraftStorage()
       let updateCalls = 0
       let submittedContent: unknown
+      let submittedPageFeatures: unknown
+      const capturedPageFeatures: PageFeatures = {
+        schemaVersion: 1,
+        linksVisible: true,
+        ratingsAllowed: false,
+        lastEditorVisible: true
+      }
+      const hydratedPageFeatures: PageFeatures = {
+        schemaVersion: 1,
+        linksVisible: false,
+        ratingsAllowed: true,
+        lastEditorVisible: false
+      }
+      const store = reactive(createStore())
+      store.page.pageFeatures = capturedPageFeatures
+      if (outcome === 'success') store.page.path = 'docs/example'
+      const events: string[] = []
+      const previewRequests: Array<{ url: string; method: string; credentials: RequestCredentials | undefined }> = []
+      let releasePreview!: () => void
+      let notifyPreviewStarted!: () => void
+      const previewStarted = new Promise<void>(resolve => { notifyPreviewStarted = resolve })
+      const previewRelease = new Promise<void>(resolve => { releasePreview = resolve })
       let releaseNetwork!: () => void
       let notifyNetworkStarted!: () => void
       const networkStarted = new Promise<void>(resolve => { notifyNetworkStarted = resolve })
       const networkRelease = new Promise<void>(resolve => { releaseNetwork = resolve })
       const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url = String(input)
-        if (url.endsWith('/_api/offline/draft-key')) return keyFetch()
-        if (url.endsWith('/_api/pages/12') && init?.method === 'PUT') {
+        const url = new URL(String(input), ORIGIN)
+        const method = init?.method ?? 'GET'
+        if (url.href === `${ORIGIN}/_api/offline/draft-key` && method === 'POST') return keyFetch()
+        if (url.href === `${ORIGIN}/_api/pages/12` && method === 'PUT') {
           updateCalls += 1
-          submittedContent = JSON.parse(String(init.body)).content
+          const submittedPage = JSON.parse(String(init.body))
+          submittedContent = submittedPage.content
+          submittedPageFeatures = submittedPage.pageFeatures
+          events.push('source-write')
           notifyNetworkStarted()
           await networkRelease
           if (outcome === 'unknown') throw new TypeError('Failed to fetch')
@@ -638,21 +711,77 @@ describe('composed editor offline submission boundary', () => {
             headers: { 'content-type': 'application/json' }
           })
         }
+        if (url.href === `${ORIGIN}/_api/pages/preview?id=12` && method === 'GET') {
+          previewRequests.push({ url: url.href, method, credentials: init?.credentials })
+          events.push('preview-request')
+          notifyPreviewStarted()
+          await previewRelease
+          events.push('preview-ready:2')
+          return new Response(JSON.stringify({
+            id: 12,
+            sourceRevision: '2',
+            locale: 'en',
+            path: 'docs/example',
+            visibility: 'public'
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
         throw new Error(`Unexpected request: ${url}`)
       }
       const testWindow = createTestWindow(fetchImpl as typeof fetch)
+      const assign = testWindow.location.assign.bind(testWindow.location)
+      testWindow.location.assign = url => {
+        events.push('reader-navigation')
+        assign(url)
+      }
       installWindow(testWindow)
-      const store = createStore()
-      const shell = createReactiveShellContext(store, testWindow, storage)
+      // Authoritative feature hydration changes the draft-source signature while
+      // revision/checkout bookkeeping is dirty. Leave the real watcher's debounce
+      // pending; Save and Close must settle it rather than require a second click.
+      const shell = createReactiveShellContext(store, testWindow, storage, {
+        debounceMs: 60_000,
+        hydratedPageFeatures
+      })
       shell.setupOfflineDraftCoordinator()
       await shell.initializeOfflineDrafts()
       const coordinator = shell.offlineDraftCoordinator!
+      let navigationAdmission: Record<string, unknown> | undefined
+      let notifyNavigationStarted!: () => void
+      const navigationStarted = new Promise<void>(resolve => { notifyNavigationStarted = resolve })
+      const navigateToSavedPage = shell.navigateToSavedPage
+      shell.navigateToSavedPage = (capture, requireReloadSafety) => {
+        navigationAdmission = {
+          pendingCapture: coordinator.hasInFlightWork,
+          activeTransition: coordinator.view.inFlight,
+          unresolvedSubmission: coordinator.hasUnresolvedSubmission,
+          receiptCount: [...storage.records.values()].filter(record => record.submissionId !== null).length,
+          dirty: shell.isDirty,
+          exactCapture: shell.editorAdapter.capture().text === capture.content &&
+            shell.editorAdapter.capture().editVersion === capture.editVersion,
+          adapterSafety: shell.editorAdapter.snapshot(),
+          sourceRevision: store.page.sourceRevision,
+          savedRenderTarget: toRaw(shell.savedRenderTarget),
+          checkoutDate: shell.checkoutDateActive,
+          authorizedActor: shell.isAuthenticated && shell.accountId === ACCOUNT_ID &&
+            store.authRefreshSettled && !store.authRefreshPending && store.offlineIdentityReady,
+          blocked: [
+            shell.dialogUnsaved, shell.dialogProps, shell.dialogEditorSelector,
+            shell.activeModal !== '', shell.discardPending, shell.collaborationDiscarded,
+            shell.isConflict, shell.offlineDraftBusy, shell.offlineDraftMutationBlocked,
+            shell.serverSaveDisabled
+          ].some(Boolean),
+          connectionState: shell.offlineConnectionState,
+          requireReloadSafety
+        }
+        notifyNavigationStarted()
+        return navigateToSavedPage(capture, requireReloadSafety)
+      }
 
       expect(await coordinator.captureThrough(0)).toBe(true)
       expect(shell.editorAdapter.snapshot().nonPersisted).toBe(false)
-      const save = shell.save()
+      const save = outcome === 'success' ? shell.saveAndClose() : shell.save()
       await Promise.race([networkStarted, save.then(() => { throw new Error('Save ended before dispatching the prepared receipt') })])
       expect(submittedContent).toBe('A')
+      expect(submittedPageFeatures).toEqual(capturedPageFeatures)
       expect(shell.offlineDraftStatus).toBe('publishing')
       const receipt = [...storage.records.values()].find(record => record.submissionId !== null)!
       expect(receipt).toBeDefined()
@@ -662,17 +791,72 @@ describe('composed editor offline submission boundary', () => {
       })
       expect((await decryptOfflineDraft(handle, receipt)).content).toBe('A')
       releaseNetwork()
+      if (outcome === 'success') {
+        try {
+          await Promise.race([navigationStarted, save.then(() => { throw new Error('Save and Close ended before navigation admission') })])
+          expect(navigationAdmission).toEqual({
+            pendingCapture: true,
+            activeTransition: false,
+            unresolvedSubmission: false,
+            receiptCount: 0,
+            dirty: false,
+            exactCapture: true,
+            adapterSafety: {
+              ready: true,
+              editVersion: 0,
+              nonPersisted: false,
+              mergeDirty: false,
+              collaborationBacklog: 0,
+              revision: 'adapter:0:0'
+            },
+            sourceRevision: '2',
+            savedRenderTarget: { id: 12, sourceRevision: '2' },
+            checkoutDate: '2026-09-03T12:00:00.000Z',
+            authorizedActor: true,
+            blocked: false,
+            connectionState: 'online',
+            requireReloadSafety: false
+          })
+          await Promise.race([previewStarted, save.then(() => { throw new Error('First Save and Close ended without requesting the saved revision preview') })])
+          expect(coordinator.hasInFlightWork).toBe(false)
+          expect(testWindow.location.assigned).toHaveLength(0)
+          expect(events).toEqual(['source-write', 'preview-request'])
+        } finally {
+          releasePreview()
+        }
+      }
 
       expect(await save).toBe(outcome === 'success')
       expect(updateCalls).toBe(1)
       if (outcome === 'success') {
         expect(shell.saveFeedback).toBe('saved')
         expect(shell.isDirty).toBe(false)
-        expect(shell.offlineDraftStatus).toBeNull()
+        expect(shell.offlineDraftError).toBe('')
+        expect(shell.savedState.content).toBe('A')
+        expect(store.editor.content).toBe('A')
+        expect(store.page.pageFeatures).toEqual(hydratedPageFeatures)
+        expect(shell.savedState.pageFeatures).toEqual(hydratedPageFeatures)
         expect(shell.offlineSubmissionCandidates).toHaveLength(0)
         expect(coordinator.hasUnresolvedSubmission).toBe(false)
-        expect(storage.records.size).toBe(0)
+        expect(coordinator.hasInFlightWork).toBe(false)
+        expect(storage.records.has(receipt.recordId)).toBe(false)
+        expect([...storage.records.values()].every(record => record.submissionId === null)).toBe(true)
+        const recovery = await Promise.all([...storage.records.values()].map(record => decryptOfflineDraft(handle, record)))
+        expect(recovery).toMatchObject([{
+          content: 'A',
+          baseSourceRevision: '2',
+          baseUpdatedAt: '2026-09-03T12:00:00.000Z'
+        }])
+        expect(previewRequests).toEqual([{
+          url: `${ORIGIN}/_api/pages/preview?id=12`,
+          method: 'GET',
+          credentials: 'same-origin'
+        }])
+        expect(events).toEqual(['source-write', 'preview-request', 'preview-ready:2', 'reader-navigation'])
+        expect(testWindow.location.assigned).toEqual(['/en/docs/example'])
       } else {
+        expect(previewRequests).toHaveLength(0)
+        expect(testWindow.location.assigned).toHaveLength(0)
         expect(shell.saveFeedback).toBe('failed')
         expect(shell.offlineDraftStatus).toBe('outcome-unknown')
         expect(shell.offlineDraftError).toBe('Failed to fetch')
