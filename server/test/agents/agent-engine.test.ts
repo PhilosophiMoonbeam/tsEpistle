@@ -1801,6 +1801,32 @@ describe('Ax agent engine', () => {
     modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
   })
 
+  it('accepts native null optional fields without discarding a paid source-bound answer', async () => {
+    const fixture = typedRootFixture(input => {
+      const source = synthesisSourcesFromRequest(input)[0]!
+      const output = JSON.parse(
+        synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] })
+      ) as Record<string, unknown>
+      output.attachmentClaims = null
+      output.recommendations = null
+      return typedFixtureReceipt(JSON.stringify(output))
+    })
+    const result = await fixture.execute()
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).toContain(fixture.production)
+    expect(result.executionLimit).toBeUndefined()
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(expectedReadIds(['page:42:revision:1']))
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(result.totalTokens).toBe(fixture.settled.reduce((total, receipt) => total + receipt.totalTokens, 0))
+    const answers = fixture.event.mock.calls
+      .filter(([type]) => type === 'model.turn')
+      .map(([, data]) => questionRecord(data))
+      .filter(turn => turn.outcome === 'answer_rejected' || turn.outcome === 'answer_accepted')
+    expect(answers.map(turn => turn.outcome)).toEqual(['answer_accepted'])
+  })
+
   it.each(['paragraph', 'list-item'] as const)('uses a complete read to prove a concise multi-sentence %s summary', async kind => {
     const physical = 'The deployment ships 20 cases. Release requires an audit. Elapsed times are estimates, not guarantees.'
     const content = `# Deployment\n\n## Cases after audit\n\n${kind === 'list-item' ? '- ' : ''}${physical}\n\nThe warehouse holds 90 pallets.`

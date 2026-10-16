@@ -972,8 +972,15 @@ Source-fact requests do not require recommendations.`)
       return claim as WikiSynthesisAttachmentClaim
     return boundAttachmentClaimSchema.parse(claim)
   }
+  const normalizeOptionalFields = <T extends object>(answer: T): T => {
+    // Native structured schemas encode omitted optional outputs as null.
+    // Canonical answers use absence; required fields still pass ordinary validation.
+    if ('attachmentClaims' in answer && answer.attachmentClaims === null) delete answer.attachmentClaims
+    if ('recommendations' in answer && answer.recommendations === null) delete answer.recommendations
+    return answer
+  }
   const normalizeOutput = <T extends object>(answer: T): T => {
-    const canonical = { ...answer }
+    const canonical = normalizeOptionalFields({ ...answer })
     let claimCount = 0
     if ('claims' in canonical && canonical.claims !== undefined) {
       if (!Array.isArray(canonical.claims)) throw new Error('Synthesis claims must be an array.')
@@ -1017,7 +1024,7 @@ Source-fact requests do not require recommendations.`)
         sample = { version: chunk.version, canonicalBytes: 2, claimsSeen: 0, fields: {} }
         samples.set(chunk.index, sample)
       }
-      const delta = { ...chunk.delta }
+      const delta = normalizeOptionalFields({ ...chunk.delta })
       if (delta.claims !== undefined) delta.claims = delta.claims.map(normalizeEmittedClaim)
       if (delta.attachmentClaims !== undefined) delta.attachmentClaims = delta.attachmentClaims.map(normalizeEmittedAttachmentClaim)
       sample.claimsSeen += (delta.claims?.length ?? 0) + (delta.attachmentClaims?.length ?? 0)
@@ -1044,6 +1051,7 @@ Source-fact requests do not require recommendations.`)
     }
   }
   program.addAssert(answer => {
+    normalizeOptionalFields(answer)
     const safety = validateWikiSynthesisShape(answer)
     if (safety !== true) return safety
     try {

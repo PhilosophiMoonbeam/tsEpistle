@@ -117,6 +117,34 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
+  it('streams source-bound claims when native optional output channels are null', async () => {
+    const wire = JSON.stringify({ ...encodeWikiSynthesisAnswer(answer()), attachmentClaims: null, recommendations: null })
+    const service = new AxMockAIService<string>({
+      features: { functions: false, streaming: true, structuredOutputs: true, structuredOutputModes: ['native'] },
+      chatResponse: async () =>
+        new ReadableStream<AxChatResponse>({
+          start(controller) {
+            controller.enqueue({ results: [{ index: 0, content: wire.slice(0, -1) }] })
+            controller.enqueue({ results: [{ index: 0, content: '}', finishReason: 'stop' }] })
+            controller.close()
+          }
+        })
+    })
+    const claims: WikiSynthesisAnswer['claims'] = []
+    const unresolved: number[] = []
+    for await (const chunk of createWikiSynthesisProgram([source], { facetCount: 2 }).streamingForward(service, input)) {
+      claims.push(...(chunk.delta.claims ?? []))
+      unresolved.push(...(chunk.delta.unresolvedFacets ?? []))
+      expect(chunk.delta.attachmentClaims).toBeUndefined()
+      expect(chunk.delta.recommendations).toBeUndefined()
+    }
+    expect(claims).toEqual(answer().claims)
+    expect(unresolved).toEqual([1])
+    expect(renderWikiSynthesisAnswer({ claims, unresolvedFacets: unresolved, observations: [] })).toBe(
+      `${source.text} [[cite:${source.evidenceId}]]`
+    )
+  })
+
   it('keeps complete untrusted sources ahead of changing turn data with a stable system prompt and supported cache boundary', async () => {
     const encoded = encodeFixtureSources([source])
     const history = 'Earlier user: scope the publication approvals.'
