@@ -11070,9 +11070,16 @@ describe('request-derived evidence coverage', () => {
     ['native', 'not_established', 'stop', 'split-read'],
     ['native', 'incomplete', 'length', 'split-read'],
     ['native', 'incomplete', 'stop', 'all-supported'],
-    ['prompt', 'incomplete', 'stop', 'all-supported']
+    ['prompt', 'incomplete', 'stop', 'all-supported'],
+    ['native', 'incomplete', 'stop', 'all-supported-long'],
+    ['native', 'incomplete', 'stop', 'all-supported-multiline']
   ] as const)('final %s repair respects whole-read proof and %s/%s coverage with %s claims', async (mode, auditVerdict, auditFinish, selection) => {
-    const userRequest = 'Summarize the most recently updated Wiki pages.'
+    const question = 'Summarize the most recently updated Wiki pages.'
+    const instruction = 'INSTRUCTION_BODY_SENTINEL'
+    const userRequest = selection === 'all-supported-long'
+      ? `${question} ${'Preserve the original source constraints and governing qualifications. '.repeat(8)} ${instruction}`
+      : selection === 'all-supported-multiline' ? `${question}\n\n# Context\n${instruction}\nRetain source constraints.` : question
+    const allSupported = selection.startsWith('all-supported')
     const qualified = recentRows[0]!.content
     const unsupported = 'Release 94 does not require a separate review.'
     const retained = recentRows[1]!
@@ -11092,7 +11099,7 @@ describe('request-derived evidence coverage', () => {
         unresolvedFacets: []
       })
     }
-    const feedback = selection === 'all-supported' ? 'Requested recap coverage remains incomplete.' : 'One returned page has no admitted summary.'
+    const feedback = allSupported ? 'Requested recap coverage remains incomplete.' : 'One returned page has no admitted summary.'
     const coverage = vi.fn(async (_input: Readonly<AxChatRequest>) => ({
       results: [
         {
@@ -11110,7 +11117,7 @@ describe('request-derived evidence coverage', () => {
       [
         {
           metadata: selection === 'all-supported' ? '' : `<wiki-request-plan>${JSON.stringify({
-            facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+            facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: allSupported ? 'source' : 'recent-window' }]
           })}</wiki-request-plan>`,
           calls: [{ id: 'partially-supported-recent', name: 'pages.listRecent', arguments: { limit: 10 } }]
         },
@@ -11128,7 +11135,11 @@ describe('request-derived evidence coverage', () => {
     const publishes = auditVerdict === 'incomplete' && auditFinish === 'stop'
     if (publishes) {
       expect(published).toContain(retained.content)
-      expect(published).toContain(userRequest.slice(0, -1))
+      if (userRequest === question) expect(published).toContain(userRequest.slice(0, -1))
+      else {
+        expect(published).not.toContain(instruction)
+        expect(published.length).toBeLessThan(1_000)
+      }
       expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
       expect(result.citations?.map(citation => citation.evidenceId)).toEqual([retained.citation.evidenceId])
     } else {
@@ -11139,7 +11150,7 @@ describe('request-derived evidence coverage', () => {
     }
     expect(published).not.toContain(qualified)
     expect(published).not.toContain(unsupported)
-    expect(coverage).toHaveBeenCalledTimes(selection === 'all-supported' ? 2 : 1)
+    expect(coverage).toHaveBeenCalledTimes(allSupported ? 2 : 1)
     const auditInput = JSON.stringify(coverage.mock.calls.at(-1)![0]!.chatPrompt)
     expect(auditInput).toContain(qualified)
     expect(auditInput).toContain(retained.content)

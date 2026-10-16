@@ -5072,12 +5072,15 @@ const recentExcerptDisclosure = (citationIds: readonly string[], evidenceView: R
     ? '\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.'
     : ''
 const requestEvidenceDisclosure = (facets: readonly RootRequestFacet[] | undefined, unresolved: readonly number[], unestablishedCoverage: boolean): string => {
-  const lines = unestablishedCoverage
-    ? ['Coverage of the requested scope was not established for this answer; the cited findings do not establish that missing information is absent.']
-    : []
+  const coverageLimit = 'Coverage of the requested scope was not established for this answer; the cited findings do not establish that missing information is absent.'
+  const lines = unestablishedCoverage ? [coverageLimit] : []
   for (const index of unresolved) {
     const facet = facets?.[index]
     if (facet === undefined) continue
+    if (facet.quote.length > 240 || /[\r\n]/u.test(facet.quote)) {
+      if (!lines.includes(coverageLimit)) lines.push(coverageLimit)
+      continue
+    }
     const quotedRequest = JSON.stringify(facet.quote).replace(/[\\`*_{}[\]()#+.!|<>]/gu, '\\$&')
     lines.push(
       `Requested detail ${quotedRequest} was not established for this answer from the cited evidence; this is not a claim that the source or Wiki lacks it.`
