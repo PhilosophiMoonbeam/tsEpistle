@@ -950,9 +950,21 @@ describe('modern editor shell interaction contract', () => {
       const mounted = mountSaveActions(store, testWindow, {
         createPage: written,
         updatePage: written,
-        fetchPage: async () => {
-          throw pendingRenderError()
-        },
+        fetchPage: async () => ({
+          sourceRevision: '2',
+          isSearchable: store.page.isSearchable,
+          okf: {
+            ..._.cloneDeep(store.page.okf),
+            authority: {
+              ..._.cloneDeep(store.page.okf.authority),
+              metadata: {
+                type: 'Reference',
+                status: 'stable',
+                generated: { by: 'human:42', at: '2026-09-03T12:00:00.000Z' }
+              }
+            }
+          }
+        }),
         waitForPageRender
       })
       mounted.context.editorAdapter.replaceText('saved content')
