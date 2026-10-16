@@ -54,6 +54,8 @@ Native fixtures must include the current schema and runtime dependencies of the 
 
 Prefer mounted accessible-name/state assertions over scanning every component's source for password-label grammar or caller counts. Dynamic and localized field labels are supported. Controller coverage should use real loopback HTTP when routing, JSON parsing, serialization, status or cache headers are the contract; mock the authoritative store only where database behavior is covered independently.
 
+Administration's structural header, scroll frame, and hero must be available before the shell's first layout. Reserve authorized metric cards and the live-status line while loading; settled responses must still hide withheld totals. Diagnose native layout-shift entries instead of relaxing runtime budgets or masking loading transitions.
+
 Client Lodash consumers use static `lodash-es` imports so unused methods can be tree-shaken. The bounded Vite aliases for shared deep helpers must stay on equivalent same-version implementations. The initial-only Lodash chunk group coalesces utilities already reachable from an entry; keep lazy editor utilities lazy and measure initial, setup, offline, and total transfer sizes rather than accepting an aggregate-only improvement. Moment is deduplicated only where installed versions and dependent ranges agree; do not force different-major peers together merely because a few emitted modules look identical. Preserve Oxc minification, source maps, all bundle budgets, and complete locale/timezone/password/diagram/editor capabilities. Validate the compiled application after changing dependency resolution.
 
 ### Local Docker-backed CI smokes
