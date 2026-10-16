@@ -54,7 +54,7 @@ type OwnedCacheInspection = {
 }
 
 type SavePageOptions = {
-  expiresAt?: string
+  expiresAt?: () => Promise<string>
 }
 
 const OFFLINE_PATH = '/_offline' // Immutable cached bootstrap, not an application destination.
@@ -235,15 +235,8 @@ async function guestReadablePublicPages(page: Page, count: number): Promise<Read
 async function savePageFromReader(page: Page, target: ReaderPageTarget, options: SavePageOptions = {}): Promise<OfflineSnapshotRow> {
   const pageId = await pageIdForPath(page, target.path, target.locale)
   const header = page.locator('.page-header-section')
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
-    try {
-      await header.waitFor({ state: 'visible', timeout: 30_000 })
-      break
-    } catch (error) {
-      if (attempt === 1) throw error
-    }
-  }
+  await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
+  await header.waitFor({ state: 'visible', timeout: 30_000 })
   const control = page.locator('.page-offline-control')
   await expect(control).toHaveCount(1)
   await expect(control).toBeVisible({ timeout: 30_000 })
@@ -271,7 +264,7 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
     const snapshot = (await response.json()) as OfflinePageSnapshotV1
     const withExpiry: OfflinePageSnapshotV1 = {
       ...snapshot,
-      expiresAt: options.expiresAt,
+      expiresAt: await options.expiresAt!(),
       integrity: ''
     }
     withExpiry.integrity = snapshotIntegrity(withExpiry)
@@ -557,19 +550,30 @@ test.describe('integrated offline access', () => {
   test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
     await warmFeatureWorker(page)
+    await page.locator('.policy-disclosure > summary').click()
     const automaticSaving = page.getByRole('checkbox', { name: /Save frequently visited and recently edited pages/ })
     await automaticSaving.uncheck()
+    await expect(automaticSaving).toBeEnabled()
     await expect(automaticSaving).not.toBeChecked()
     const target = (await guestReadablePublicPages(page, 1))[0]!
-    const expiresAt = new Date(Date.now() + 30_000).toISOString()
-    const saved = await savePageFromReader(page, target, { expiresAt })
+    let expiresAt = ''
+    const saved = await savePageFromReader(page, target, {
+      expiresAt: async () => {
+        // Start the expiry only after reader setup and the real snapshot response.
+        // Keep native timers running while Date stays before the expiry boundary.
+        const now = Date.now()
+        await page.clock.setFixedTime(now)
+        expiresAt = new Date(now + 30_000).toISOString()
+        return expiresAt
+      }
+    })
     expect(saved.snapshot.expiresAt).toBe(expiresAt)
     await page.context().setOffline(true)
 
     await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
     await waitForOfflineSettings(page)
     await expect(page.locator('.page-card')).toHaveCount(1)
-    await page.waitForTimeout(Math.max(0, Date.parse(expiresAt) - Date.now() + 250))
+    await page.clock.setFixedTime(Date.parse(expiresAt) + 250)
     await page.getByRole('button', { name: 'Refresh storage', exact: true }).click()
     await expect(page.locator('.page-card')).toHaveCount(0)
     const expiredDatabase = await inspectOfflineDatabase(page)
