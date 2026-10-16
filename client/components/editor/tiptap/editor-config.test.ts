@@ -2,9 +2,10 @@ import { Editor, type ChainedCommands } from '@tiptap/core'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import { createWikiMarkdownRenderer, sanitizeWikiMarkdownHtml } from '../markdown/preview.ts'
-import { createTiptapExtensions, getVisualEditorDefinition, serializeVisualEditorData, type VisualEditorFormat } from './editor-config.ts'
+import { createTiptapExtensions, getVisualEditorDefinition, serializeVisualEditorData, VisualEditorSource, type VisualEditorFormat } from './editor-config.ts'
 import { prepareTiptapHtml, prepareTiptapMarkdown } from './dialect.ts'
 import { installTiptapSlashMenu } from './slash-menu.ts'
+import { EditorAdapterController } from '../common/editor-adapter.ts'
 import {
   VISUAL_MARKDOWN_GLYPHS,
   insertVisualMarkdownAdmonition,
@@ -143,6 +144,83 @@ describe('Tiptap visual formats', () => {
   it('keeps persisted editor keys stable across the engine replacement', () => {
     expect(getVisualEditorDefinition('html').editorKey).toBe('ckeditor')
     expect(getVisualEditorDefinition('markdown').editorKey).toBe('visual-markdown')
+  })
+
+  it('captures exact HTML source through pristine startup, selection changes, and Undo', async () => {
+    const original = "<h2 id='saved-heading'> Saved heading</h2>\r\n<p>Original <a href='/home' class='saved-link'>link</a>.</p>\r\n<div class='table-container'><table><colgroup><col></col></colgroup><tbody><tr><td>Cell</td></tr></tbody></table></div><p>End</p>"
+    const editor = createEditor('html', original)
+    const created = new Promise<void>(resolve => editor.once('create', () => resolve()))
+    const source = new VisualEditorSource(editor, 'html', original)
+    const adapter = new EditorAdapterController({
+      readText: () => source.readText(),
+      writeText: text => source.replaceText(text),
+      clearText: () => source.replaceText('')
+    })
+    editor.on('update', () => adapter.noteTextChange())
+    adapter.initialize()
+
+    // This legacy input is intentionally not the serializer's canonical output.
+    expect(serializeVisualEditorData('html', editor)).not.toBe(original)
+    expect(adapter.capture()).toEqual({ text: original, editVersion: 0 })
+    editor.commands.setTextSelection({ from: 1, to: 6 })
+    await created
+    expect(adapter.capture()).toEqual({ text: original, editVersion: 0 })
+    expect(adapter.snapshot().nonPersisted).toBe(false)
+
+    editor.commands.setLink({ href: '/chosen-page' })
+    expect(adapter.capture().text).toContain('href="/chosen-page"')
+    expect(adapter.snapshot().nonPersisted).toBe(true)
+    expect(editor.commands.undo()).toBe(true)
+    expect(adapter.capture().text).toBe(original)
+    // Restoring equivalent content is not permission to acknowledge a version.
+    expect(adapter.capture().editVersion).toBeGreaterThan(0)
+    expect(adapter.snapshot().nonPersisted).toBe(true)
+    adapter.destroy()
+  })
+
+  it('pairs discarded or replaced HTML with its exact source without hiding later native edits', async () => {
+    const original = "<h2> Saved heading</h2>\r\n<p>Original draft baseline.</p>"
+    const replacement = "<p class='server-source'> Replacement bytes &amp; spacing.</p>\r\n"
+    const editor = createEditor('html', original)
+    const created = new Promise<void>(resolve => editor.once('create', () => resolve()))
+    const source = new VisualEditorSource(editor, 'html', original)
+    const adapter = new EditorAdapterController({
+      readText: () => source.readText(),
+      writeText: text => source.replaceText(text),
+      clearText: () => source.replaceText('')
+    })
+    editor.on('update', () => adapter.noteTextChange())
+    adapter.initialize()
+
+    editor.commands.insertContent('Unsaved link draft')
+    const editedVersion = adapter.capture().editVersion
+    adapter.replaceText(original, { detached: true })
+    const discarded = adapter.capture()
+    expect(discarded.text).toBe(original)
+    expect(discarded.editVersion).toBeGreaterThan(editedVersion)
+    expect(editor.getText()).not.toContain('Unsaved link draft')
+    adapter.markPersisted(discarded.editVersion)
+    expect(adapter.snapshot().nonPersisted).toBe(false)
+
+    adapter.replaceText(replacement, { detached: true })
+    const replaced = adapter.capture()
+    expect(replaced.text).toBe(replacement)
+    expect(editor.getText()).toContain('Replacement bytes & spacing.')
+    adapter.markPersisted(replaced.editVersion)
+    editor.commands.insertContent('Early native edit')
+    // A deferred create callback must never reset the new document's baseline.
+    await created
+    expect(adapter.capture().text).toContain('Early native edit')
+    expect(adapter.capture().text).not.toBe(replacement)
+    expect(adapter.capture().editVersion).toBeGreaterThan(replaced.editVersion)
+    adapter.markPersisted(replaced.editVersion)
+    expect(adapter.snapshot().nonPersisted).toBe(true)
+
+    adapter.clear()
+    expect(adapter.capture().text).toBe('')
+    expect(editor.getText()).toBe('')
+    expect(adapter.snapshot().nonPersisted).toBe(true)
+    adapter.destroy()
   })
 
   it('round-trips the Standard Markdown authoring surface', () => {

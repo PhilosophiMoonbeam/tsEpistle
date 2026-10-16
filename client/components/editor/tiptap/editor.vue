@@ -233,7 +233,7 @@ import {
   createTiptapExtensions,
   getVisualEditorDefinition,
   getVisualEditorStats,
-  serializeVisualEditorData,
+  VisualEditorSource,
   type VisualEditorFormat,
   type VisualEditorStats
 } from './editor-config.ts'
@@ -376,6 +376,7 @@ export default defineComponent({
     return {
       editorAdapter: null as EditorAdapterController | null,
       editor: null as Raw<Editor> | null,
+      editorSource: null as Raw<VisualEditorSource> | null,
       disposeSlashMenu: null as (() => void) | null,
       imageRequest: null as Raw<AbortController> | null,
       stats: { characters: 0, words: 0 } as VisualEditorStats,
@@ -726,15 +727,8 @@ export default defineComponent({
     handleEditorSaveConflict () {
       this.isConflict = true
     },
-    preparedContent (content: string): string {
-      return this.format === 'markdown' ? prepareTiptapMarkdown(content) : prepareTiptapHtml(content)
-    },
     handleEditorContentOverwrite () {
-      this.editor?.commands.setContent(this.preparedContent(wikiStore.editor.content), {
-        contentType: this.format,
-        emitUpdate: false
-      })
-      if (this.editor) this.syncFromEditor(this.editor)
+      this.replaceEditorText(wikiStore.editor.content)
     },
     insertCodeDocument (language: string, text: string) {
       const content: JSONContent = {
@@ -810,23 +804,24 @@ export default defineComponent({
       this.editorAdapter?.notifyState()
     },
     clearEditorText () {
-      const editor = this.editor
-      if (!editor) return
-      editor.commands.setContent(this.preparedContent(''), {
-        contentType: this.format,
-        emitUpdate: false
-      })
-      this.syncFromEditor(editor)
+      this.replaceEditorText('')
+    },
+    replaceEditorText (text: string) {
+      if (!this.editor || !this.editorSource) return
+      this.editorSource.replaceText(text)
+      this.syncFromEditor(this.editor)
     },
     syncFromEditor (editor: EditorEventInstance) {
-      wikiStore.editor.content = serializeVisualEditorData(this.format, editor)
+      if (!this.editorSource) return
+      wikiStore.editor.content = this.editorSource.readText()
       this.stats = getVisualEditorStats(editor)
       this.toolbarVersion += 1
     }
   },
   mounted () {
     wikiStore.editor.editorKey = this.definition.editorKey
-    const initialContent = this.preparedContent(wikiStore.editor.content)
+    const initialSource = wikiStore.editor.content
+    const initialContent = this.format === 'markdown' ? prepareTiptapMarkdown(initialSource) : prepareTiptapHtml(initialSource)
 
     const editor = new Editor({
       content: initialContent,
@@ -860,6 +855,8 @@ export default defineComponent({
       }
     })
     this.editor = markRaw(editor)
+    const source = new VisualEditorSource(editor, this.format, initialSource)
+    this.editorSource = markRaw(source)
     this.disposeSlashMenu = installTiptapSlashMenu(editor, [
       { id: 'paragraph', label: String(this.$t('editor:markup.paragraph')), keywords: 'text paragraph', run: chain => chain.setParagraph() },
       ...([1, 2, 3] as const).map(level => ({
@@ -877,14 +874,8 @@ export default defineComponent({
       { id: 'rule', label: this.toolLabel('horizontalBar'), keywords: 'horizontal rule divider', run: chain => chain.setHorizontalRule() }
     ], String(this.$t('editor:markup.insertTools')), String(this.$t('editor:markup.noMatchingCommands')))
     const adapter = new EditorAdapterController({
-      readText: () => serializeVisualEditorData(this.format, editor),
-      writeText: text => {
-        editor.commands.setContent(this.preparedContent(text), {
-          contentType: this.format,
-          emitUpdate: false
-        })
-        this.syncFromEditor(editor)
-      },
+      readText: () => source.readText(),
+      writeText: text => this.replaceEditorText(text),
       clearText: () => this.clearEditorText(),
       flushText: () => this.flushEligibleEditorText()
     })
@@ -921,6 +912,7 @@ export default defineComponent({
     if (root instanceof HTMLElement) delete (root as EditorHost).__wikiEditor
     this.editor?.destroy()
     this.editor = null
+    this.editorSource = null
   }
 })
 </script>

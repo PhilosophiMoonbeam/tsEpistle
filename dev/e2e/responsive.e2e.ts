@@ -120,7 +120,7 @@ async function openContinuityAgent(page: Page, path?: string): Promise<Locator> 
   }
   const search = await openSearch(page)
   await search.fill('context')
-  await page.getByRole('dialog', { name: 'Search the Wiki', exact: true }).getByRole('button', { name: 'Ask about this', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Search the Wiki', exact: true }).getByRole('button', { name: 'Ask Wiki about "context"', exact: true }).click()
   const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
   await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
   // The search hand-off prefills the composer with the search query asynchronously;
@@ -1802,6 +1802,7 @@ test.describe('responsive UI quality matrix', () => {
           expect(bounds.height, 'Phone action target height').toBeGreaterThanOrEqual(44)
         }
         await overflow.click()
+        await expect(page.locator('.v-menu.v-overlay--active').getByRole('button', { name: 'Glossary', exact: true })).toBeVisible()
         const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
         await expect(entrance).toBeVisible()
         await expect(page.getByRole('link', { name: 'Browse by Tags', exact: true })).toHaveAttribute('href', '/t')
@@ -2460,6 +2461,7 @@ test.describe('responsive UI quality matrix', () => {
       await page.mouse.wheel(0, 50000)
       const scrollTopAtBottom = await transcript.evaluate(element => element.scrollTop)
       expect(scrollTopAtBottom, 'Approval fixture scrolls to the bottom of its overflowing transcript').toBeGreaterThan(0)
+      await approvalCard.locator('.proposal-diff pre').hover()
       await page.mouse.wheel(0, -50000)
       await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBe(0)
       await expect
@@ -2951,14 +2953,7 @@ test.describe('responsive UI quality matrix', () => {
       const panel =
         expectedMode === 'modal' ? agent.getByRole('dialog', { name: 'Conversations' }) : agent.getByRole('complementary', { name: 'Conversations' })
       await expect(panel).toBeVisible()
-      const bounds = await panel.boundingBox()
-      expect(bounds).not.toBeNull()
-      if (bounds) {
-        expect(bounds.x).toBeGreaterThanOrEqual(-1)
-        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width + 1)
-        expect(bounds.y).toBeGreaterThanOrEqual(-1)
-        expect(bounds.y + bounds.height).toBeLessThanOrEqual(421)
-      }
+      await expectLocatorWithinViewport(panel, `Agent ${expectedMode} history at ${width}px`)
       if (expectedMode === 'modal') {
         await page.keyboard.press('Tab')
         await expect.poll(() => panel.evaluate(root => root.contains(document.activeElement))).toBe(true)

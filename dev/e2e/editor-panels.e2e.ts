@@ -1,8 +1,8 @@
 import { expect, type Page, type Request, type Response, type Route } from '@playwright/test'
-import { openAuthenticatedPage, responsiveTest as test } from './helpers'
+import { authenticateAsAdmin, openAuthenticatedPage, responsiveTest as test } from './helpers'
 import type { TextEditorHandle } from '../../client/components/editor/common/text-editor'
 
-// Mount the shipped editor with a new-page fixture: no account, saved page, or collaboration session.
+// Mount the shipped editor with a cookie-backed actor, but no saved page or collaboration session.
 const content = Array.from(
   { length: 45 },
   (_, index) => `## Section ${index + 1}\n\nA paragraph for checking cursor alignment and independent preview scrolling.\n\n`
@@ -14,10 +14,14 @@ type EditorFixtureOptions = {
 }
 
 async function openEditor(page: Page, options: EditorFixtureOptions = {}) {
+  await authenticateAsAdmin(page)
   let fixtureOrigin: string | undefined
   await page.route('**/_api/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    // This read-only credential handshake binds the real offline session; denying
+    // it locks the editor and clears its plaintext. All document writes stay denied.
+    if (request.method() === 'POST' && path === '/_api/offline/draft-key') return route.continue()
     if (request.method() !== 'GET') return route.fulfill({ status: 405 })
     if (path === '/_api/assets') {
       const assets = [
@@ -138,6 +142,11 @@ async function openEditor(page: Page, options: EditorFixtureOptions = {}) {
   const markdownSource = page.getByRole('textbox', { name: 'Markdown source', exact: true })
   await expect(markdownSource).toBeVisible()
   await expect(markdownSource).toBeEditable()
+  await expect
+    .poll(() => page.locator('.editor-markdown').evaluate(root =>
+      (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getValue()
+    ))
+    .toBe(content)
 }
 
 async function closeVisualEditor(page: Page, readerPath: string, expectUnsavedChanges = false) {
@@ -200,8 +209,11 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         await openAuthenticatedPage(page, `/e${readerPath}`, '.editor-tiptap .ProseMirror')
         await expect(editor).toBeVisible({ timeout: 15_000 })
         await expect.poll(() => editor.textContent()).toBe(originalText)
+        await expect(page.getByRole('button', { name: 'Saved', exact: true })).toBeVisible()
+        await expect(page.getByRole('status').filter({ hasText: /^Unsaved changes$/u })).toHaveCount(0)
+        await closeVisualEditor(page, readerPath)
       } finally {
-        if (await page.locator('.editor-tiptap').count()) await closeVisualEditor(page, readerPath)
+        if (!page.isClosed() && await page.locator('.editor-tiptap').count()) await closeVisualEditor(page, readerPath)
       }
     })
   }
