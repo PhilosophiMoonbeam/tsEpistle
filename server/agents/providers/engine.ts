@@ -10381,6 +10381,20 @@ export class AxAgentEngine implements AgentEngine {
       if ((request.purpose ?? 'root') === 'root') return await publishExecutionLimit('turns')
       throw new AgentRepositoryError('AGENT_TURN_LIMIT', 'Agent turn limit was exceeded', 409)
     } catch (error) {
+      if (request.run.ownerId === 33 && error instanceof Error) {
+        console.error(
+          JSON.stringify({
+            event: 'agent.qa.failure-boundary',
+            runId: request.run.id,
+            errorType: error.constructor.name,
+            errorName: /^(?:Error|TypeError|ReferenceError|RangeError|SyntaxError|ValidationError|AxAssertionError|AxGenerateError|ZodError|AgentRepositoryError|AgentExecutionFailure)$/u.test(error.name)
+              ? error.name
+              : 'other',
+            code: error instanceof AgentRepositoryError || error instanceof AgentExecutionFailure ? error.code : null,
+            frames: (error.stack?.match(/\/wiki\/(?:server|node_modules)\/[A-Za-z0-9_./@:-]+:\d+(?::\d+)?/gu) ?? []).slice(0, 8)
+          })
+        )
+      }
       finalizeActionSession()
       throw classifyAgentExecutionFailure(error, 'unknown')
     } finally {
