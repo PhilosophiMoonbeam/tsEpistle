@@ -192,7 +192,7 @@ prepare_fixture_asset() {
       WITH renamed AS (
         UPDATE assets
         SET filename = 'continuity.bin', ext = '.bin',
-          hash = encode(sha1(convert_to('continuity.bin', 'UTF8')), 'hex')
+          hash = '9519c3fab198c33c8e31a87f6452fe112e4fd6e5'
         WHERE filename = 'continuity.txt' AND \"folderId\" IS NULL
           AND hash = '7a98cdab7d7ca483ab801d78798f23180890f59c'
         RETURNING hash
