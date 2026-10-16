@@ -773,6 +773,56 @@ describe('durable agent repositories', () => {
     expect(projected.messages.map(message => message.content)).toEqual(['Question', ''])
   })
 
+  it('recovers only safe original user scope from queued context while keeping old corrupt history readable and owner fenced', async () => {
+    const eventId = '00000000-0000-4000-8000-000000000099'
+    const hint = { id: 42, locale: 'en', path: 'original/page', observedUpdatedAt: '2026-08-16T00:00:00.000Z' }
+    const knowledgeContext = {
+      scope: { kind: 'selected' },
+      sources: Array.from({ length: 8 }, (_, index) => ({
+        id: index + 1, locale: 'en', path: `original/source-${index}`, title: `Original ${index}`, visibility: 'private', sourceRevision: '7'
+      }))
+    }
+    await appendAgentEvent(knex, {
+      id: eventId,
+      runId,
+      ownerId: 7,
+      type: 'run.queued',
+      attempt: 0,
+      data: { runId, status: 'queued', knowledgeContext }
+    })
+    const cases: Array<{ data: string; expected: typeof hint | null | undefined; sources?: boolean }> = [
+      { data: JSON.stringify({ runId, status: 'queued', knowledgeContext }), expected: null, sources: true },
+      {
+        data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: { ...hint, authority: 'PRIVATE AUTHORITY', content: 'PRIVATE BODY' } }),
+        expected: hint,
+        sources: true
+      },
+      { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: { ...hint, id: 0 } }), expected: undefined, sources: true },
+      { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: { ...hint, observedUpdatedAt: 'not a date' } }), expected: undefined, sources: true },
+      { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: null }), expected: undefined, sources: true },
+      { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: hint, private: 'x'.repeat(32 * 1_024) }), expected: undefined, sources: true },
+      { data: JSON.stringify({ runId: 'foreign-run', status: 'queued', knowledgeContext, currentPage: hint }), expected: undefined },
+      { data: '[]', expected: undefined },
+      { data: '{broken old context', expected: undefined }
+    ]
+    for (const entry of cases) {
+      // Historical queued context is outside the current execution attempt.
+      await knex('agentEvents').where({ id: eventId }).update({ data: entry.data })
+      const thread = await projectAgentThread(knex, 7, sessionId, { profileResolutionToken: () => 'token' })
+      const user = thread.messages.find(message => message.id === userMessageId)!
+      expect(user.content).toBe('Question')
+      if (entry.expected === undefined) expect(user).not.toHaveProperty('currentPage')
+      else expect(user.currentPage).toEqual(entry.expected)
+      if (entry.sources) expect(user.knowledgeContext).toEqual(knowledgeContext)
+      expect(thread.messages.find(message => message.id === assistantMessageId)).not.toHaveProperty('currentPage')
+      expect(JSON.stringify(thread)).not.toContain('PRIVATE AUTHORITY')
+      expect(JSON.stringify(thread)).not.toContain('PRIVATE BODY')
+    }
+    await expect(projectAgentThread(knex, 8, sessionId, { profileResolutionToken: () => 'token' })).rejects.toMatchObject({
+      code: 'AGENT_RESOURCE_NOT_FOUND'
+    })
+  })
+
   it('projects only safe current-attempt correction phases and resets on accepted completion', async () => {
     const projectionOptions = {
       profileResolutionToken: (session: { readonly id: string; readonly version: number }) => `profile:${session.id}:${session.version}`,

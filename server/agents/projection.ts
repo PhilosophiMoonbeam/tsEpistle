@@ -50,6 +50,12 @@ const proposalStatusSchema = z.enum(AGENT_PROPOSAL_STATUSES)
 const approvalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled'])
 const riskSchema = z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write'])
 const toolRiskSchema = z.union([riskSchema, z.literal('external')])
+const currentPageSchema = z.object({
+  id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  locale: z.string().min(1).max(16),
+  path: z.string().min(1).max(1_024),
+  observedUpdatedAt: z.string().refine(value => Number.isFinite(Date.parse(value)))
+})
 
 const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
 const nullableIso = (value: Date | string | null): string | null => (value === null ? null : iso(value))
@@ -685,14 +691,23 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   const goal = latestGoal === null ? null : projectAgentGoal(latestGoal, latestGoalRun?.id ?? null)
   const reduced = reduceAgentEvents(events, runRows[0]?.id ?? null)
   const approvals = new Map(approvalRows.map(row => [row.proposalId, approvalView(row)]))
-  const sourceContexts = new Map<string, AgentKnowledgeContext>()
+  const sourceContexts = new Map<string, Pick<AgentMessageView, 'knowledgeContext' | 'currentPage'>>()
   for (const row of sourceContextRows) {
     try {
       const payload: unknown = JSON.parse(row.data)
-      const parsed = AgentKnowledgeContextSchema.safeParse(
-        typeof payload === 'object' && payload !== null ? Reflect.get(payload, 'knowledgeContext') : undefined
-      )
-      if (parsed.success) sourceContexts.set(row.runId, parsed.data)
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || Reflect.get(payload, 'runId') !== row.runId) continue
+      const parsed = AgentKnowledgeContextSchema.safeParse(Reflect.get(payload, 'knowledgeContext'))
+      const context: { knowledgeContext?: AgentKnowledgeContext; currentPage?: Exclude<AgentMessageView['currentPage'], undefined> } = {}
+      if (parsed.success) context.knowledgeContext = parsed.data
+      if (Reflect.get(payload, 'status') === 'queued' && Buffer.byteLength(row.data, 'utf8') <= 32 * 1_024) {
+        const hint = Reflect.get(payload, 'currentPage')
+        if (hint === undefined) context.currentPage = null
+        else {
+          const page = currentPageSchema.safeParse(hint)
+          if (page.success) context.currentPage = page.data
+        }
+      }
+      sourceContexts.set(row.runId, context)
     } catch {
       /* The run reader handles corrupt execution context; history remains readable. */
     }
@@ -722,7 +737,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       ...(mediaRows.some(media => media.messageId === message.id)
         ? { media: mediaRows.filter(media => media.messageId === message.id).map(projectAgentMedia) }
         : {}),
-      ...(message.role === 'user' && message.runId && sourceContexts.has(message.runId) ? { knowledgeContext: sourceContexts.get(message.runId)! } : {}),
+      ...(message.role === 'user' && message.runId ? sourceContexts.get(message.runId) : {}),
       createdAt: message.createdAt,
       updatedAt: message.updatedAt
     }

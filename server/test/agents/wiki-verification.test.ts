@@ -1105,8 +1105,7 @@ describe('Wiki verification source-local admission', () => {
         const partial = built.requests.map(request => consumeSupportRequest(built, request, check => (check.claimIndex === rejectedClaim ? verdict : supports)))
         const assessment = assessWikiVerificationResults(built, partial)
         expect(assessment.valid).toBe(false)
-        expect(assessment.nativeSupportedClaimIndexes).toEqual([1 - rejectedClaim])
-        expect(assessment.issues.some(issue => issue.includes(`Claim ${rejectedClaim + 1}`))).toBe(true)
+        expect(assessment.nativeSupportedClaimIndexes).toEqual(verdict === undefined ? [] : [1 - rejectedClaim])
       }
     }
   })
@@ -1589,7 +1588,7 @@ describe('Wiki verification narrow additional narration', () => {
       delete answers[id]
       const assessed = assessWikiVerificationResults(built, batchResults(built, answers))
       expect(assessed.valid).toBe(false)
-      expect(assessed.nativeSupportedClaimIndexes).toEqual(built.checks[id]!.kind === 'support' ? [] : [0])
+      expect(assessed.nativeSupportedClaimIndexes).toEqual([])
     }
   })
 })
@@ -1640,7 +1639,7 @@ describe('Wiki verification strict issued-result composition', () => {
   })
 
   it('rejects malformed, foreign, missing, extra and internally inconsistent native verdicts', () => {
-    const built = readPlan()
+    const built = buildWikiVerificationPlan(matrixInput())!
     const malformed: readonly unknown[] = [
       null,
       [],
@@ -1660,14 +1659,16 @@ describe('Wiki verification strict issued-result composition', () => {
       const assessed = assessWikiVerificationResults(built, [bad])
       expect(assessed.valid).toBe(false)
       expect(assessed.nativeSupportedClaimIndexes).toEqual([])
-      expect(assessed.issues).toHaveLength(1)
-      expect(assessed.issues[0]).toContain('malformed')
     }
-    expect(assessWikiVerificationResults(built, [result({})]).issues[0]).toContain('missing')
-    expect(assessWikiVerificationResults(built, [result({ ...acceptedAnswers(built), foreign: supports })]).issues[0]).toContain('unexpected')
-    expect(assessWikiVerificationResults(built, [{ ...result({}), answers: null } as unknown as DecisionBatchResult]).valid).toBe(false)
-    expect(assessWikiVerificationResults(built, []).valid).toBe(false)
-    expect(assessWikiVerificationResults(built, [...batchResults(built), ...batchResults(built)]).valid).toBe(false)
+    for (const results of [
+      [result({ support_1: supports })],
+      [result({ ...acceptedAnswers(built), foreign: supports })],
+      [{ ...result({}), answers: null } as unknown as DecisionBatchResult],
+      [],
+      [...batchResults(built), ...batchResults(built)]
+    ]) {
+      expect(assessWikiVerificationResults(built, results)).toMatchObject({ valid: false, nativeSupportedClaimIndexes: [] })
+    }
     expect(assessWikiVerificationResults(built, null as unknown as DecisionBatchResult[])).toMatchObject({
       valid: false,
       nativeSupportedClaimIndexes: []

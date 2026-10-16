@@ -272,6 +272,8 @@ export interface AgentMessageView {
   readonly media?: readonly AgentMediaView[]
   readonly googleSearchGrounding?: AgentGoogleSearchGrounding
   readonly knowledgeContext?: AgentKnowledgeContext
+  /** User messages only: original frozen hint, null for known exclusion, omitted when unrecoverable. */
+  readonly currentPage?: AgentCurrentPageHint | null
   readonly id: string
   readonly runId: string | null
   /** Present only when the matching assistant run is terminal and selected in the bounded thread window. */

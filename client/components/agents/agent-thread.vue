@@ -160,7 +160,7 @@
                 variant="text"
                 :disabled="canSubmit === false || networkBlocked"
                 prepend-icon="mdi-reload"
-                @click="emit('suggest', entry.retryPrompt)"
+                @click="emit('reviewRequest', entry.message.id)"
               >
                 {{ $t('common:agentThread.reviewRequest') }}
               </v-btn>
@@ -384,6 +384,7 @@ const emit = defineEmits<{
   reattach: [media: AgentMediaView]
   askSource: [source: WikiSource]
   suggest: [prompt: string]
+  reviewRequest: [messageId: string]
   decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string]
 }>()
 const forwardDecision = (

@@ -375,6 +375,7 @@
                 :can-submit="canSubmit"
                 :network-blocked="connectionBlocked"
                 @suggest="preparePrompt"
+                @review-request="reviewRequest"
                 @edit-image="composer?.editImage($event)"
                 @reattach="media => void composer?.reattachMedia(media)"
                 @ask-source="source => preparePrompt($t('common:inlineAgentChat.helpMeUnderstand', { title: source.title, interpolation: { escapeValue: false } }), source)"
@@ -500,8 +501,8 @@
                           v-if="thread"
                           :key="thread.session.id"
                           :draft="activeDraft"
-                          :current-page="currentPage"
-                          :current-page-title="pageTitle"
+                          :current-page="draftPage"
+                          :current-page-title="activeDraft.currentPageOverride === undefined ? pageTitle : undefined"
                           :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || !workspaceReady"
                           :connection-blocked="connectionBlocked"
                           :connection-retrying="connectionRetrying"
@@ -876,6 +877,7 @@ const canSubmit = computed(() =>
   !connectionBlocked.value &&
   !initializationError.value &&
   !loading.value &&
+  !agents.contextTransferController &&
   !sending.value &&
   !sessionMutationBusy.value &&
   Boolean(thread.value) &&
@@ -982,7 +984,8 @@ const connectionTone = computed<'ready' | 'error' | 'busy'>(() => connectionBloc
     ? 'busy'
     : 'ready')
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
-const contextualGlass = computed(() => Boolean(currentPage.value && activeDraft.value.includeCurrentPage))
+const draftPage = computed(() => activeDraft.value.currentPageOverride === undefined ? currentPage.value : activeDraft.value.currentPageOverride ?? currentPage.value)
+const contextualGlass = computed(() => Boolean(draftPage.value && activeDraft.value.includeCurrentPage))
 /* Labels and descriptions are locale keys; prompts are model input and stay as written. */
 const starters = computed(() => [
   ...(contextualGlass.value
@@ -1025,6 +1028,39 @@ const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentS
   if (!isComponentCurrent(generation, ownerId) || thread.value?.session.id !== sessionId) return
   const existing = agents.drafts[sessionId]?.text ?? ''
   await composer.value?.setDraft(existing.trim() && existing.trim() !== prompt.trim() ? source ? existing : `${existing}\n\n${prompt}` : prompt)
+}
+const reviewRequest = async (messageId: string): Promise<void> => {
+  const generation = componentGeneration
+  const ownerId = props.ownerId
+  const workspaceVersion = agents.workspaceVersion
+  const ownerGeneration = agents.ownerGeneration
+  const sessionId = thread.value?.session.id
+  if (!sessionId || !networkActionAllowed() || !mediaReplacementAllowed()) return
+  const selected = thread.value?.messages.find(message => message.id === messageId)
+  const original = selected?.role === 'user'
+    ? selected
+    : selected?.runId
+      ? thread.value?.messages.find(message => message.role === 'user' && message.runId === selected.runId)
+      : undefined
+  if (!original) {
+    agents.updateDraft(sessionId, { includeCurrentPage: false, currentPageOverride: null })
+    agents.contextTransferNotice = 'A previous source could not be restored. Check access and add it again if needed.'
+    return
+  }
+  const draft = agents.drafts[sessionId]
+  if (draft?.text.trim() && draft.text !== original.content && !await confirmDraftDiscard()) return
+  if (
+    !isComponentCurrent(generation, ownerId) || agents.workspaceVersion !== workspaceVersion ||
+    agents.ownerGeneration !== ownerGeneration || thread.value?.session.id !== sessionId ||
+    !networkActionAllowed() || !mediaReplacementAllowed()
+  ) return
+  const prompt = await agents.restoreRequest(original.id)
+  if (
+    prompt === null || !isComponentCurrent(generation, ownerId) ||
+    agents.workspaceVersion !== workspaceVersion || agents.ownerGeneration !== ownerGeneration ||
+    thread.value?.session.id !== sessionId
+  ) return
+  await composer.value?.setDraft(prompt)
 }
 const initializationFailureMessage = (value: unknown): string =>
   value instanceof Error && value.message

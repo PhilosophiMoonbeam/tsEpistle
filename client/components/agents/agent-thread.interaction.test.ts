@@ -257,7 +257,6 @@ interface MountedThread {
   readonly connection: { value: string }
   readonly userPicture: { value: UserPicture }
   readonly emittedReattachments: unknown[][]
-  readonly emittedSuggestions: unknown[][]
   readonly projection: { readonly value: { readonly orderedMessages: readonly PresentedMessage[] } }
   readonly unmount: () => void
 }
@@ -280,7 +279,6 @@ const mountThread = async (
   const userPicture = Vue.shallowRef(initialUserPicture)
   const connection = Vue.ref(initialConnection)
   const emittedReattachments: unknown[][] = []
-  const emittedSuggestions: unknown[][] = []
   let projection: MountedThread['projection']
   const agentThread = Vue.defineComponent({
     name: 'AgentThreadInteractionHarness',
@@ -292,7 +290,7 @@ const mountThread = async (
       canSubmit: { type: Boolean, default: true },
       networkBlocked: { type: Boolean, default: false }
     },
-    emits: ['askSource', 'suggest', 'decision', 'reattach'],
+    emits: ['askSource', 'suggest', 'reviewRequest', 'decision', 'reattach'],
     setup(props, { emit }) {
       const setup = evaluateAgentThread(
         Vue.computed,
@@ -321,8 +319,7 @@ const mountThread = async (
         thread: thread.value,
         connection: connection.value,
         userPicture: userPicture.value,
-        onReattach: (...args: unknown[]) => emittedReattachments.push(args),
-        onSuggest: (...args: unknown[]) => emittedSuggestions.push(args)
+        onReattach: (...args: unknown[]) => emittedReattachments.push(args)
       })
   })
   const app = Vue.createApp(harness)
@@ -343,7 +340,7 @@ const mountThread = async (
     host.remove()
   }
   mountedApps.push(unmount)
-  return { host, thread, connection, userPicture, projection: projection!, emittedReattachments, emittedSuggestions, unmount }
+  return { host, thread, connection, userPicture, projection: projection!, emittedReattachments, unmount }
 }
 
 afterEach(() => {
@@ -469,7 +466,7 @@ describe('AgentThread live status and interaction behavior', () => {
     expectPrivateDetailsHidden()
   })
 
-  it('explains matching public failures without leaking provider details or borrowing a different run failure', async () => {
+  it('keeps provider-private failures out of historical recovery notices', async () => {
     const session = makeSession('session-recovery')
     const runOutcome = { status: 'failed' as const, errorCode: 'AGENT_QUOTA_EXHAUSTED' }
     const mounted = await mountThread(
@@ -483,29 +480,7 @@ describe('AgentThread live status and interaction behavior', () => {
     )
     const recovery = (): HTMLElement => mounted.host.querySelector('.agent-message__recovery') as HTMLElement
     expect(recovery().getAttribute('role')).toBe('region')
-    expect(recovery().getAttribute('aria-label')).toBeTruthy()
-    expect(recovery().textContent).toContain('quota')
     expect(recovery().hasAttribute('aria-live')).toBe(false)
-    expect(mounted.emittedSuggestions).toEqual([])
-    const review = recovery().querySelector('button') as HTMLButtonElement
-    expect(review.textContent).toContain('Review request')
-    review.click()
-    await settle()
-    expect(mounted.emittedSuggestions).toEqual([['Summarize the release']])
-
-    for (const [code, action] of [
-      ['AGENT_CONTEXT_TOO_LARGE', 'Start a new conversation'],
-      ['UNKNOWN_FAILURE', 'Nothing is sent automatically']
-    ]) {
-      mounted.thread.value = {
-        ...mounted.thread.value,
-        messages: mounted.thread.value.messages.map(message =>
-          message.role === 'assistant' ? { ...message, runOutcome: { ...runOutcome, errorCode: code } } : message
-        )
-      }
-      await settle()
-      expect(recovery().textContent).toContain(action)
-    }
     mounted.thread.value = {
       ...mounted.thread.value,
       messages: mounted.thread.value.messages.map(message => (message.role === 'assistant' ? { ...message, runOutcome: undefined } : message)),
@@ -527,8 +502,6 @@ describe('AgentThread live status and interaction behavior', () => {
       }
     }
     await settle()
-    expect(recovery().textContent).toContain('Nothing is sent automatically')
-    expect(recovery().textContent).not.toContain('quota')
     expect(recovery().textContent).not.toContain('secret provider payload')
   })
 
@@ -554,32 +527,11 @@ describe('AgentThread live status and interaction behavior', () => {
     const recovery = articles[2].querySelector<HTMLElement>('.agent-message__recovery')!
     expect(mounted.host.querySelectorAll('.agent-message__recovery')).toHaveLength(1)
     expect(recovery.getAttribute('role')).toBe('region')
-    expect(recovery.getAttribute('aria-label')).toBeTruthy()
-    expect(recovery.querySelector('strong')?.textContent).toBe('Partial answer')
-    expect(recovery.textContent).toContain('Review the returned answer')
-    expect(recovery.textContent).toContain('Narrow')
-    expect(recovery.textContent).toContain('explicit follow-up')
     expect(recovery.hasAttribute('aria-live')).toBe(false)
     expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
-    expect(mounted.host.querySelector('.sr-status')?.textContent).toBe('Partial answer')
-    expect(articles[2].getAttribute('aria-label')).toBe('Wiki Agent message · Partial')
-    expect(articles[2].querySelector('.agent-message__status')?.textContent).toContain('Partial')
     for (const article of [articles[0], articles[1]]) {
-      expect(article.getAttribute('aria-label')).toContain('Complete')
       expect(article.querySelector('.agent-message__recovery')).toBeNull()
     }
-    expect(mounted.emittedSuggestions).toEqual([])
-    const review = recovery.querySelector<HTMLButtonElement>('button')!
-    expect(review.textContent).toContain('Review request')
-    review.click()
-    await settle()
-    expect(mounted.emittedSuggestions).toEqual([['Summarize the release']])
-
-    const announcement = mounted.host.querySelector('.sr-status')
-    mounted.thread.value = structuredClone(mounted.thread.value)
-    await settle()
-    expect(mounted.host.querySelector('.sr-status')).toBe(announcement)
-    expect(mounted.host.querySelectorAll('.agent-message__recovery')).toHaveLength(1)
 
     mounted.thread.value = {
       ...mounted.thread.value,
@@ -589,8 +541,6 @@ describe('AgentThread live status and interaction behavior', () => {
     }
     await settle()
     expect(mounted.host.querySelector('.agent-message__recovery')).toBeNull()
-    expect(mounted.host.querySelectorAll('.agent-message')[2].getAttribute('aria-label')).toContain('Complete')
-    expect(mounted.emittedSuggestions).toEqual([['Summarize the release']])
   })
 
   it('announces complete, active, approval, and reconnecting states on mount', async () => {

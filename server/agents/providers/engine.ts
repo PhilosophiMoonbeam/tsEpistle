@@ -125,7 +125,8 @@ import {
   type WikiSynthesisSource,
   type WikiSynthesisInputMedia,
   type WikiSynthesisRead,
-  wikiSynthesisSourceRef
+  wikiSynthesisSourceRef,
+  renderWikiSynthesisAnswer
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
@@ -3526,8 +3527,56 @@ interface NativeDraft {
   readonly content: string
   readonly contentByteLimit: number
   readonly trustedObservations: ReadonlySet<string>
-  /** Populated only after the original source-local Jev plan accepts every check. */
+  /** Canonical claims supported by globally well-formed source-local Jev results. */
   readonly semanticSupport?: ReadonlySet<string>
+}
+
+/**
+ * Same-read claims may qualify one another. Retain their original contribution
+ * atomically; a declined claim must never leave an unqualified sibling behind.
+ */
+const selectVerifiedRecentDraft = (
+  draft: NativeDraft,
+  plan: WikiVerificationPlan,
+  nativeSupportedClaimIndexes: readonly number[],
+  requestFacetCount: number
+): NativeDraft | undefined => {
+  const checks = Object.values(plan.checks)
+  if (
+    requestFacetCount === 0 ||
+    nativeSupportedClaimIndexes.length === 0 ||
+    checks.length !== draft.answer.claims.length ||
+    checks.some(check => check.kind !== 'support') ||
+    (draft.inputMediaSources?.length ?? 0) > 0 ||
+    (draft.answer.attachmentClaims?.length ?? 0) > 0 ||
+    (draft.answer.recommendations ?? '').trim().length > 0 ||
+    draft.answer.observations.some(line => !draft.trustedObservations.has(line))
+  )
+    return undefined
+  const supported = new Set(nativeSupportedClaimIndexes)
+  const readIds: string[] = []
+  const declinedReads = new Set<string>()
+  for (let index = 0; index < draft.answer.claims.length; index++) {
+    const claim = draft.answer.claims[index]!
+    const source = draft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
+    if (source?.kind !== 'source-read' || !source.complete) return undefined
+    readIds.push(source.readId)
+    if (!supported.has(index)) declinedReads.add(source.readId)
+  }
+  const claims = draft.answer.claims.filter((_claim, index) => !declinedReads.has(readIds[index]!))
+  if (claims.length === 0 || claims.length === draft.answer.claims.length) return undefined
+  const answer: WikiSynthesisAnswer = {
+    ...draft.answer,
+    claims,
+    unresolvedFacets: Array.from({ length: requestFacetCount }, (_value, index) => index)
+  }
+  return {
+    ...draft,
+    answer,
+    allRequestFacetsUnresolved: true,
+    content: renderWikiSynthesisAnswer(answer),
+    semanticSupport: new Set(claims.map(claim => canonicalJson(claim)))
+  }
 }
 
 interface WikiVerificationContext {
@@ -8859,8 +8908,8 @@ export class AxAgentEngine implements AgentEngine {
               contextPlan.requestFacets?.some(
                 (facet, index) => facet.coverage === 'recent-window' && contextPlan.recentWindows.get(index)?.windowComplete !== true
               ) === true)
-          const requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, result.rootUnresolvedFacets ?? [], unestablishedCoverage)
-          const assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
+          let requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, result.rootUnresolvedFacets ?? [], unestablishedCoverage)
+          let assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
           let assessmentEvidence: ReadonlyMap<string, CitationEvidence> = dispatchEvidence
           let assessment =
             request.purpose === 'planner'
@@ -8976,6 +9025,7 @@ export class AxAgentEngine implements AgentEngine {
           let publicationVerificationEvidence: ReadonlyMap<string, CitationEvidence> | undefined
           let coverageOutputLimited = false
           let coverageAuditFeedback: string | undefined
+          let selectedRecentPartial = false
           if (
             assessment.valid &&
             result.rootNativeDraft !== undefined &&
@@ -8985,18 +9035,47 @@ export class AxAgentEngine implements AgentEngine {
               (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0)
           ) {
             try {
-              const nativeDraft = result.rootNativeDraft
+              let nativeDraft = result.rootNativeDraft
               const { plan, evidence, decide } = await prepareWikiVerification(nativeDraft)
               const semanticResults: DecisionBatchResult[] = []
               for (const nativeRequest of plan?.requests ?? []) semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
               const semantic =
                 plan === null ? { valid: true, issues: [], nativeSupportedClaimIndexes: [] } : assessWikiVerificationResults(plan, semanticResults)
               if (plan !== null) publicationVerificationEvidence = evidence
-              const verifiedDraft: NativeDraft = {
+              const selectedDraft =
+                !semantic.valid &&
+                plan !== null &&
+                (request.purpose ?? 'root') === 'root' &&
+                coverage.recentGroups.length > 0 &&
+                result.finishReason !== 'length' &&
+                (rejectedDraftCount >= MAX_ANSWER_REPAIRS || turn + 1 >= maxTurns)
+                  ? selectVerifiedRecentDraft(nativeDraft, plan, semantic.nativeSupportedClaimIndexes, contextPlan.requestFacets?.length ?? 1)
+                  : undefined
+              const verifiedDraft: NativeDraft = selectedDraft ?? {
                 ...nativeDraft,
                 semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index => canonicalJson(nativeDraft.answer.claims[index]!)))
               }
-              result = { ...result, rootNativeDraft: verifiedDraft }
+              if (selectedDraft !== undefined) {
+                selectedRecentPartial = true
+                nativeDraft = verifiedDraft
+                const selectedResult = {
+                  ...result,
+                  content: verifiedDraft.content,
+                  thoughtBlocks: [],
+                  rootNativeDraft: verifiedDraft,
+                  rootUnresolvedFacets: verifiedDraft.answer.unresolvedFacets,
+                  rootHasVerifiedContent: true,
+                  rootMetadataPresent: true
+                } satisfies TurnResult
+                delete selectedResult.nativeContent
+                delete selectedResult.rootRejectedDraft
+                result = selectedResult
+                rootMetadataStripped = true
+                requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, verifiedDraft.answer.unresolvedFacets, unestablishedCoverage)
+                assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
+              } else {
+                result = { ...result, rootNativeDraft: verifiedDraft }
+              }
               // Every published claim still needs complete-source proof.
               // An explicitly unresolved request can retain verified partial findings.
               assessment = assessDraft(
@@ -9011,11 +9090,11 @@ export class AxAgentEngine implements AgentEngine {
                 },
                 verifiedDraft
               )
-              if (!semantic.valid) {
+              if (!semantic.valid && !selectedRecentPartial) {
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
               }
-              if (semantic.valid && (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0)) {
+              if ((semantic.valid || selectedRecentPartial) && (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0)) {
                 const conversationContext = wikiConversationContext(conversation)
                 const coverageInput = encodeWikiCoverageInput({
                   userRequest: userRequestWithRecentScope(assessmentEvidence),
@@ -9338,13 +9417,14 @@ export class AxAgentEngine implements AgentEngine {
             sink,
             assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined ? assertAssessmentPublicationFresh : undefined
           )
-          // The agent has finished responding and the user's turn is next: compact eagerly so the
-          // next dispatch starts lean. The answer is already delivered, so this pass is best-effort;
-          // failures keep the uncompacted history and never fail the completed response.
-          try {
-            await compactContext(turn + 2, null, requestedMaxOutputTokens, false, true, 'history')
-          } catch {
-            /* post-answer compaction is opportunistic; the completed answer stands on its own */
+          // Partial selection is final: spend only its reserved coverage audit.
+          // Other accepted answers may compact opportunistically for the next turn.
+          if (!selectedRecentPartial) {
+            try {
+              await compactContext(turn + 2, null, requestedMaxOutputTokens, false, true, 'history')
+            } catch {
+              /* post-answer compaction is opportunistic; the accepted answer stands on its own */
+            }
           }
           const citations = answerCitations(assessment.citationIds, assessmentEvidence)
           return {

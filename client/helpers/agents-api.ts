@@ -96,6 +96,12 @@ const Message = z.object({
   media: z.array(Media).optional(),
   googleSearchGrounding: GoogleSearchGrounding.optional(),
   knowledgeContext: AgentKnowledgeContextSchema.optional(),
+  currentPage: z.strictObject({
+    id: z.number().int().positive(),
+    locale: z.string().min(1).max(35),
+    path: z.string().min(1).max(1024),
+    observedUpdatedAt: z.string().refine(value => Number.isFinite(Date.parse(value)))
+  }).nullable().optional(),
   id: Uuid,
   runId: Uuid.nullable(),
   runOutcome: z.object({ status: z.enum(AGENT_TERMINAL_RUN_STATUSES), errorCode: z.string().nullable() }).optional(),

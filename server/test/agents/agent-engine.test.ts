@@ -11038,6 +11038,86 @@ describe('request-derived evidence coverage', () => {
     }
   )
 
+  it.each([
+    ['native', 'incomplete', 'stop'],
+    ['prompt', 'incomplete', 'stop'],
+    ['native', 'not_established', 'stop'],
+    ['native', 'incomplete', 'length']
+  ] as const)('final %s repair respects whole-read proof and %s/%s coverage', async (mode, auditVerdict, auditFinish) => {
+    const userRequest = 'Summarize the most recently updated Wiki pages.'
+    const qualified = recentRows[0]!.content
+    const unsupported = 'Release 94 does not require a separate review.'
+    const retained = recentRows[1]!
+    const synthesisCallCounts: number[] = []
+    const answer = (input: Readonly<AxChatRequest>) => {
+      synthesisCallCounts.push(fixture.providerCalls.length)
+      return synthesisFixtureAnswer(input, {
+        claims: [
+          { evidenceId: recentRows[0]!.citation.evidenceId, statement: qualified },
+          { evidenceId: recentRows[0]!.citation.evidenceId, statement: unsupported },
+          { evidenceId: retained.citation.evidenceId, statement: retained.content }
+        ],
+        unresolvedFacets: []
+      })
+    }
+    const coverage = vi.fn(async (_input: Readonly<AxChatRequest>) => ({
+      results: [
+        {
+          index: 0,
+          content:
+            mode === 'native'
+              ? JSON.stringify({ verdict: auditVerdict, feedback: 'One returned page has no admitted summary.' })
+              : `Verdict: ${auditVerdict}\nFeedback: One returned page has no admitted summary.`,
+          finishReason: auditFinish
+        }
+      ]
+    }))
+    const fixture = questionFixture(
+      mode,
+      [
+        {
+          metadata: `<wiki-request-plan>${JSON.stringify({
+            facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+          })}</wiki-request-plan>`,
+          calls: [{ id: 'partially-supported-recent', name: 'pages.listRecent', arguments: { limit: 10 } }]
+        },
+        { answer },
+        { answer }
+      ],
+      () => ({ kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: recentRows }),
+      [],
+      { coverage },
+      {},
+      rejectFixtureStatements([unsupported])
+    )
+    const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 2_048 })
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    const publishes = auditVerdict === 'incomplete' && auditFinish === 'stop'
+    if (publishes) {
+      expect(published).toContain(retained.content)
+      expect(published).toContain(userRequest.slice(0, -1))
+      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual([retained.citation.evidenceId])
+    } else {
+      expect(published).not.toContain(retained.content)
+      expect(result.citations).toBeUndefined()
+      if (auditFinish === 'length') expect(result.outputLimited).toBe(true)
+      else expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+    }
+    expect(published).not.toContain(qualified)
+    expect(published).not.toContain(unsupported)
+    expect(coverage).toHaveBeenCalledOnce()
+    const auditInput = JSON.stringify(coverage.mock.calls[0]![0]!.chatPrompt)
+    expect(auditInput).toContain(qualified)
+    expect(auditInput).toContain(retained.content)
+    expect(auditInput).not.toContain(unsupported)
+    expect(synthesisCallCounts).toHaveLength(2)
+    expect(fixture.providerCalls).toHaveLength(synthesisCallCounts[0]! + 1)
+    expect(fixture.event.mock.calls.filter(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toHaveLength(
+      publishes ? 1 : 0
+    )
+  })
+
   for (const mode of ['native', 'prompt'] as const) {
     for (const scenario of [
       {
