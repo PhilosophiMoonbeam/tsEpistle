@@ -2309,7 +2309,8 @@ export default defineComponent({
           )
         }
         if (saveMode === 'create' || closeAfterSave) {
-          const canNavigate = saveMode === 'create' ? canNavigateAfterSave() : !receiptPreparationWarning && !postWriteError && currentSnapshot
+          // Hydration can normalize saved metadata; navigation rechecks the saved baseline and captured editor version.
+          const canNavigate = saveMode === 'create' ? canNavigateAfterSave() : !receiptPreparationWarning && !postWriteError
           const navigated = canNavigate && await this.navigateToSavedPage(capture, saveMode === 'create')
           if (closeAfterSave) return navigated
         } else if (routeChanged && postWriteError === null) {
