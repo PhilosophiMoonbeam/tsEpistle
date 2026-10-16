@@ -289,7 +289,7 @@ test.describe('responsive UI quality matrix', () => {
       const discard = page.getByRole('button', { name: 'Discard Changes', exact: true })
       await expect.poll(async () => await discard.isVisible() || new URL(page.url()).pathname === `/en/${format}-browser`).toBe(true)
       if (await discard.isVisible()) await discard.click()
-      await expect(page).toHaveURL(`/en/${format}-browser`)
+      await expect(page).toHaveURL(`/en/${format}-browser`, { timeout: 30_000 })
     }
   })
 

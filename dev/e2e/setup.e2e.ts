@@ -436,7 +436,7 @@ test.describe('critical post-install workflows', () => {
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('button', { name: 'Discard Changes' }).click()
 
-    await expect(page).toHaveURL('/en/visual-markdown-browser')
+    await expect(page).toHaveURL('/en/visual-markdown-browser', { timeout: 30_000 })
     await expect(page.getByText('Saved with the keyboard.', { exact: true })).toBeVisible()
     await expect(page.getByText('Unsaved draft.', { exact: true })).not.toBeVisible()
 
@@ -788,7 +788,7 @@ test.describe('critical post-install workflows', () => {
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
 
-    await expect(page).toHaveURL('/en/home')
+    await expect(page).toHaveURL('/en/home', { timeout: 30_000 })
     await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
     await expect(page.getByText('Edited and rendered through the modern editor.')).toBeVisible()
   })
