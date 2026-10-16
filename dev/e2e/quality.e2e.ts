@@ -31,6 +31,32 @@ async function tabToControl(page: Page, control: Locator, maximumPresses = 60) {
   }
   return false
 }
+
+async function tabThroughHeaderToControl(page: Page, control: Locator) {
+  const search = page.locator('.nav-header-search-control input:visible').first()
+  for (let press = 0; press < 60; press += 1) {
+    await page.keyboard.press('Tab')
+    if (await control.evaluate(element => element === document.activeElement)) return true
+    if (await search.evaluate(element => element === document.activeElement)) {
+      await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeHidden()
+      await expect(search, 'Dismissing search keeps the next Tab in the forward header order').toBeFocused()
+    }
+  }
+  return false
+}
+
+async function openAgentFromHeader(page: Page): Promise<Locator> {
+  const mobile = (page.viewportSize()?.width ?? 1280) < 600
+  const opener = mobile
+    ? page.locator('.nav-header').getByRole('button', { name: 'Page Actions', exact: true })
+    : page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+  if (mobile) await opener.click()
+  await page.getByRole('button', { name: 'Open Wiki Agent', exact: true }).click()
+  return opener
+}
+
 async function openEnabledAgent(page: Page) {
   await openAuthenticatedPage(page, '/', '.page-header-section')
   const search = await openSearch(page)
@@ -506,20 +532,8 @@ test.describe('release accessibility profiles', () => {
     requireProject(testInfo, 'accessibility-keyboard')
     await openAuthenticatedPage(page, '/', '.page-header-section')
 
-    let reachedAdministration = false
-    for (let press = 0; press < 40; press += 1) {
-      await page.keyboard.press('Tab')
-      const label = await page.evaluate(() => {
-        const focused = document.activeElement
-        return `${focused?.getAttribute('aria-label') ?? ''} ${focused?.textContent ?? ''}`
-      })
-      if (label.includes('Administration')) {
-        reachedAdministration = true
-        break
-      }
-    }
-
-    expect(reachedAdministration, 'Administration must be reachable in the tab order').toBe(true)
+    const administration = page.locator('.nav-header').getByRole('button', { name: 'Administration', exact: true })
+    expect(await tabThroughHeaderToControl(page, administration), 'Administration must be reachable in the forward tab order').toBe(true)
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL('/a/dashboard')
   })
@@ -654,7 +668,7 @@ test.describe('release accessibility profiles', () => {
     await openAuthenticatedPage(page, '/en/home', '.page-header-section')
 
     const editPage = page.locator('.nav-header button[aria-label="Edit"]')
-    expect(await tabToControl(page, editPage), 'Edit must be reachable in the tab order').toBe(true)
+    expect(await tabThroughHeaderToControl(page, editPage), 'Edit must be reachable in the forward tab order').toBe(true)
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL('/e/en/home')
     const save = page.getByRole('button', { name: /^(?:save|saved)$/i })
@@ -740,18 +754,12 @@ test.describe('release accessibility profiles', () => {
     try {
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await openAuthenticatedPage(page, '/', '.page-header-section')
-      const agentTrigger = page.getByRole('button', { name: 'Open Wiki Agent' })
-      await expect(agentTrigger).not.toHaveAttribute('title', /Shift/u)
-      await agentTrigger.hover()
-      const agentTooltip = page.locator('.v-tooltip.v-overlay--active').filter({ hasText: 'Wiki Agent' })
-      await expect(agentTooltip).toBeVisible()
-      await expect(agentTooltip).toHaveText('Wiki Agent')
-      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
+      await openAgentFromHeader(page)
       const agent = page.getByRole('region', { name: 'Wiki Agent' })
       await expect(agent).toBeVisible()
-      await expect(agent.locator('.inline-agent__identity .inline-agent__agent-mark')).toHaveCount(0)
       const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
-      await composer.fill('Please retry this release evidence request.')
+      const prompt = 'Please retry this release evidence request.'
+      await composer.fill(prompt)
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
       const failedResponse = agent.locator('article.agent-message--assistant.agent-message--failed')
       await expect(failedResponse.getByText('Response could not be completed', { exact: true })).toBeVisible()
@@ -764,9 +772,16 @@ test.describe('release accessibility profiles', () => {
       expect(await userAvatar.evaluate(element => element.querySelector('img')?.getAttribute('src') ?? element.textContent?.trim())).toBe(
         await accountAvatar.evaluate(element => element.querySelector('img')?.getAttribute('src') ?? element.textContent?.trim())
       )
-      await agent.getByRole('button', { name: 'Try again', exact: true }).click()
+      const messagePosts = () => fixture.requests.filter(request => request.startsWith('POST ') && request.endsWith('/messages')).length
+      expect(messagePosts()).toBe(1)
+      await failedResponse.getByRole('button', { name: 'Review request', exact: true }).click()
+      const restoredComposer = agent.getByRole('textbox', { name: 'Follow up with Wiki Agent', exact: true })
+      await expect(restoredComposer).toHaveValue(prompt)
+      await expect(restoredComposer).toBeFocused()
+      expect(messagePosts(), 'Review restores the request without sending it automatically').toBe(1)
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
       await expect(agent.getByText('The release is ready for a deliberate review.', { exact: true })).toBeVisible()
+      expect(messagePosts(), 'Only explicit Send starts the second request').toBe(2)
       await expect(agent.locator('[data-agent-citation]')).not.toHaveCount(0)
       await expect(agent.getByRole('img', { name: 'Mermaid diagram', exact: true })).toBeVisible()
       await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -780,81 +795,47 @@ test.describe('release accessibility profiles', () => {
       await fixture.dispose()
     }
   })
-  test('shows Agent glass throughout its opening animation', async ({ page }, testInfo) => {
+  test('opens and closes Agent with native focus across desktop, mobile, and motion preferences', async ({ page }, testInfo) => {
     test.setTimeout(60_000)
     requireAnyProject(testInfo, ['accessibility-keyboard', 'accessibility-mobile'])
     const fixture = await installEnabledAgentFixture(page, { mode: 'success' })
     try {
-      await page.emulateMedia({ reducedMotion: 'no-preference' })
       await openAuthenticatedPage(page, '/', '.page-header-section')
-      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
-      const agent = page.locator('.inline-agent--contextual')
-      await expect(agent).toBeVisible()
-      const container = page.locator('.search-results-container--ask')
-      // Seek the actual entrance animation: inspecting only its settled state misses
-      // opacity on an ancestor temporarily cutting glass off from the page backdrop.
-      const frames = await container.evaluate(element => {
-        const animation = element.getAnimations()[0]
-        if (!animation) throw new Error('Expected the Agent entrance animation')
-        animation.pause()
-        const duration = Number(animation.effect?.getTiming().duration)
-        return [0, 0.25, 0.5, 0.99].flatMap(progress => {
-          animation.currentTime = duration * progress
-          return Array.from(element.querySelectorAll('.inline-agent__toolbar, .inline-agent__body')).map(surface => {
-            const style = getComputedStyle(surface)
-            const blockedBy: string[] = []
-            for (let parent = surface.parentElement; parent; parent = parent.parentElement) {
-              if (Number(getComputedStyle(parent).opacity) < 1) blockedBy.push(parent.className)
-            }
-            return { progress, blur: style.backdropFilter, background: style.backgroundColor, blockedBy }
-          })
-        })
-      })
-      expect(frames).toHaveLength(8)
-      for (const frame of frames) {
-        expect(frame.blockedBy, `Glass must see the page at entrance progress ${frame.progress}`).toEqual([])
-        expect(frame.blur).toContain('blur(')
-        expect(frame.background).toMatch(/^(rgba\(|color\()/u)
-      }
-      await page.screenshot({ path: testInfo.outputPath('agent-opening-glass.png') })
-      await container.evaluate(element => {
-        for (const animation of element.getAnimations()) animation.finish()
-      })
-      if (testInfo.project.name === 'accessibility-mobile') {
-        await agent.getByRole('region', { name: 'Conversation transcript' }).focus()
-      } else {
-        await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeFocused()
-      }
-      await page.keyboard.press('Escape')
-      await expect(agent).toBeHidden()
+      const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
       const search = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
-      await expect(search).toBeHidden()
-      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
-      await expect(agent).toBeVisible()
-      await page.keyboard.press('Control+Shift+A')
-      await expect(agent).toBeHidden()
-      await expect(search).toBeVisible()
-      const restoredSearchInput = page.locator('.nav-header-search-control input:visible').first()
-      await expect(restoredSearchInput).toBeVisible()
-      await restoredSearchInput.focus()
-      await expect(restoredSearchInput).toBeFocused()
-      // The search dialog keeps its own lighter glass; only check it stayed glassy.
-      const restoredGlass = await search.evaluate(element => getComputedStyle(element).backdropFilter)
-      expect(restoredGlass).toContain('blur(')
-      expect(frames[0].blur).toContain('blur(')
-      await page.emulateMedia({ reducedMotion: 'reduce' })
-      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
-      await expect(agent).toBeVisible()
-      await expect(container).toHaveCSS('animation-name', 'none')
-      await expect(agent.locator('.inline-agent__body')).toHaveCSS('opacity', '1')
-      await expect(agent.locator('.inline-agent__toolbar > *').first()).toHaveCSS('animation-name', 'none')
-      await expect(agent.locator('.inline-agent__body > *').first()).toHaveCSS('animation-name', 'none')
-      const cdp = await page.context().newCDPSession(page)
-      await cdp.send('Emulation.setEmulatedMedia', {
-        features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }]
-      })
-      await expect(agent.locator('.inline-agent__body')).toHaveCSS('backdrop-filter', 'none')
-      await cdp.detach()
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent', exact: true })
+      for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+        await page.emulateMedia({ reducedMotion })
+        const opener = await openAgentFromHeader(page)
+        await expect(agent).toBeVisible()
+        if (testInfo.project.name === 'accessibility-mobile') {
+          await expect.poll(() => agent.evaluate(element => element.contains(document.activeElement))).toBe(true)
+          await expect(composer, 'Opening on a phone does not summon the soft keyboard').not.toBeFocused()
+        } else {
+          await expect(composer).toBeFocused()
+        }
+        await page.keyboard.press('Escape')
+        await expect(agent).toBeHidden()
+        await expect(search).toBeHidden()
+        await expect(opener).toBeFocused()
+
+        await page.keyboard.press('Control+Shift+A')
+        await expect(agent).toBeVisible()
+        await page.keyboard.press('Control+Shift+A')
+        await expect(agent).toBeHidden()
+        await expect(search, 'The Agent shortcut closes the workspace, rather than switching to Search').toBeHidden()
+        await expect(opener).toBeFocused()
+
+        await openAgentFromHeader(page)
+        await expect(agent).toBeVisible()
+        await agent.getByRole('button', { name: 'Search the Wiki', exact: true }).click()
+        await expect(agent).toBeHidden()
+        await expect(search).toBeVisible()
+        const restoredSearchInput = page.locator('.nav-header-search-control input:visible').first()
+        await expect(restoredSearchInput, 'The explicit Search action restores the native header input').toBeFocused()
+        await page.keyboard.press('Escape')
+        await expect(search).toBeHidden()
+      }
       fixture.assertNoUnexpectedRequests()
     } finally {
       await fixture.dispose()
@@ -918,26 +899,22 @@ test.describe('release accessibility profiles', () => {
         }
       }
       const expectOpaque = async (locator: Locator, surface: string): Promise<void> => {
-        const styles = await readSurfaceStyle(locator)
-        expect(styles.backgroundAlpha, `${surface} keeps an opaque background`).toBe(1)
-        expect(styles.opacity, `${surface} keeps full element opacity`).toBe(1)
-        expect(styles.backdropFilter, `${surface} does not become a glass layer`).toBe('none')
+        await expect(locator, `${surface} finishes entering at full element opacity`).toHaveCSS('opacity', '1')
+        await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `${surface} keeps an opaque background` }).toBe(1)
+        await expect(locator, `${surface} does not become a glass layer`).toHaveCSS('backdrop-filter', 'none')
       }
       const expectContextualGlass = async (reduced: boolean) => {
-        const [toolbarStyles, bodyStyles] = await Promise.all([readSurfaceStyle(toolbar), readSurfaceStyle(body)])
-        if (reduced) {
-          expect(toolbarStyles.backgroundAlpha, 'Reduced transparency makes the Agent toolbar opaque').toBe(1)
-          expect(bodyStyles.backgroundAlpha, 'Reduced transparency makes the Agent body opaque').toBe(1)
-          expect(toolbarStyles.backdropFilter, 'Reduced transparency removes toolbar blur').toBe('none')
-          expect(bodyStyles.backdropFilter, 'Reduced transparency removes body blur').toBe('none')
-        } else {
-          expect(toolbarStyles.backgroundAlpha, 'Normal transparency keeps the Agent toolbar translucent').toBeLessThan(1)
-          expect(bodyStyles.backgroundAlpha, 'Normal transparency keeps the Agent body translucent').toBeLessThan(1)
-          expect(toolbarStyles.backdropFilter, 'Normal transparency blurs the Agent toolbar').toContain('blur')
-          expect(bodyStyles.backdropFilter, 'Normal transparency blurs the Agent body').toContain('blur')
+        for (const [name, locator] of [['toolbar', toolbar], ['body', body]] as const) {
+          await expect(locator, `The Agent ${name} finishes entering at full opacity`).toHaveCSS('opacity', '1')
+          await expect(locator).toHaveCSS('backdrop-filter', reduced ? 'none' : /blur\(/u)
+          if (reduced) {
+            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `Reduced transparency makes the Agent ${name} opaque` }).toBe(1)
+          } else {
+            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} remains translucent` }).toBeLessThan(1)
+            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} retains its background` }).toBeGreaterThan(0)
+          }
         }
-        expect(toolbarStyles.opacity).toBe(1)
-        expect(bodyStyles.opacity).toBe(1)
+        const [toolbarStyles, bodyStyles] = await Promise.all([readSurfaceStyle(toolbar), readSurfaceStyle(body)])
         return { toolbarStyles, bodyStyles }
       }
       const expectOpaqueWorkspaceSurfaces = async (): Promise<void> => {

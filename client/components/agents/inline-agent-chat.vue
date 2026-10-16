@@ -1039,8 +1039,9 @@ const reviewRequest = async (messageId: string): Promise<void> => {
   const selected = thread.value?.messages.find(message => message.id === messageId)
   const original = selected?.role === 'user'
     ? selected
-    : selected?.runId
-      ? thread.value?.messages.find(message => message.role === 'user' && message.runId === selected.runId)
+    : selected?.role === 'assistant' && selected.runId
+      // Admission reserves consecutive user/assistant ordinals; user.runId is null.
+      ? thread.value?.messages.find(message => message.role === 'user' && message.runId === null && message.ordinal === selected.ordinal - 1)
       : undefined
   if (!original) {
     agents.updateDraft(sessionId, { includeCurrentPage: false, currentPageOverride: null })

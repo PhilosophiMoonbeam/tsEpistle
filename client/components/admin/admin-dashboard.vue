@@ -20,8 +20,8 @@
           template(v-else-if='stat.key === "assetBytes"') {{ formatBytes(Number(stat.value)) }}
           animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='formatInteger')
         span.admin-stat__hint {{ stat.hint }}
-    p.mt-3(v-if='summaryLoading' role='status') {{ $t(`admin:dashboard.inventoryLoading`) }}
-    v-alert.mt-3(v-else-if='summaryError' type='warning' variant='tonal' density='compact' role='alert')
+    p.dashboard-summary-status.mt-3(role='status') {{ summaryLoading ? $t(`admin:dashboard.inventoryLoading`) : '' }}
+    v-alert.mt-3(v-if='summaryError' type='warning' variant='tonal' density='compact' role='alert')
       span {{ $t(`admin:dashboard.inventoryUnavailable`) }}
       v-btn.ms-2(variant='text' size='small' @click='refreshSummary') {{ $t(`admin:dashboard.retry`) }}
 
@@ -118,6 +118,7 @@
 import { markRaw, inject } from 'vue'
 import { adminSummaryKey } from '../../helpers/admin-summary'
 import AsyncState from '@/components/common/async-state.vue'
+import AdminHero from '@/components/common/admin-hero.vue'
 import AnimatedNumber from '@/components/common/animated-number.vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
@@ -130,7 +131,7 @@ const formatInteger = (value: number): string => integerFormatter.format(Math.ro
 
 
 export default {
-  components: { AsyncState, AnimatedNumber },
+  components: { AdminHero, AsyncState, AnimatedNumber },
   setup() {
     const summary = inject(adminSummaryKey)
     return {
@@ -235,7 +236,7 @@ export default {
           hint: 'Visible, nonempty discussion contributions', icon: 'mdi-comment-text-outline', to: '/comments', permission: 'manage:system'
         }
       ]
-        .filter((stat) => this.hasPermission(stat.permission) && (!['assets', 'assetBytes', 'comments'].includes(stat.key) || typeof stat.value === 'number'))
+        .filter((stat) => this.hasPermission(stat.permission) && (this.summaryLoading || this.summaryError || !['assets', 'assetBytes', 'comments'].includes(stat.key) || typeof stat.value === 'number'))
         .map((stat) => ({
           ...stat,
           ariaLabel: this.$t(this.summaryLoading ? 'admin:dashboard.statAriaLoading' : this.summaryError ? 'admin:dashboard.statAriaUnavailable' : 'admin:dashboard.statAriaValue', { label: stat.label, value: stat.value, hint: stat.hint, interpolation: { escapeValue: false } })
@@ -399,6 +400,9 @@ export default {
     margin-bottom: 0;
     border-bottom: 0;
   }
+}
+.dashboard-summary-status {
+  min-block-size: 1lh;
 }
 .dashboard-inventory {
   display: grid;

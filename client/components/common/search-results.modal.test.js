@@ -201,7 +201,7 @@ describe('Ask modal accessibility contract', () => {
       dom.window.close()
     }
   })
-  test('Escape from Agent dismisses both modal layers and restores the current page', async () => {
+  test('Escape closes Agent and restores openers without trapping desktop header traversal', async () => {
     const agentStore = {
       closeWorkspaceCalls: 0,
       closeWorkspace() {
@@ -210,7 +210,7 @@ describe('Ask modal accessibility contract', () => {
     }
     const methods = compileSearchMethods(
       search,
-      ['activateAgentModal', 'activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal'],
+      ['activateAgentModal', 'activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'handleSearchKeydown', 'captureSearchRestoreTarget'],
       {
         activeOwnedOverlayRoots,
         createModalFocusScope,
@@ -225,6 +225,8 @@ describe('Ask modal accessibility contract', () => {
     const fixtureDocument = fixtureWindow.document
     const originalGlobals = Object.fromEntries(['document', 'window', 'HTMLElement'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
     const pageOpener = fixtureDocument.createElement('button')
+    const headerSearch = fixtureDocument.createElement('input')
+    const nextHeaderAction = fixtureDocument.createElement('button')
     const root = fixtureDocument.createElement('section')
     const agentComposer = fixtureDocument.createElement('textarea')
     const nestedOverlay = fixtureDocument.createElement('div')
@@ -236,7 +238,7 @@ describe('Ask modal accessibility contract', () => {
     nestedOverlayControl.className = 'agent-owned-overlay'
     nestedOverlay.append(nestedOverlayControl)
     root.append(agentComposer, nestedOverlay)
-    fixtureDocument.body.append(pageOpener, root)
+    fixtureDocument.body.append(pageOpener, headerSearch, nextHeaderAction, root)
     Object.defineProperty(fixtureWindow, 'matchMedia', {
       configurable: true,
       value: () => ({ matches: true })
@@ -279,9 +281,9 @@ describe('Ask modal accessibility contract', () => {
           return this.canAsk && this.searchMode === 'ask'
         },
         activeModalOpener: () => agentComposer,
-        isSearchControl: () => false,
+        isSearchControl: target => target === headerSearch,
         restoreTargetFor: target => () => target,
-        searchModalAdditionalRoots: () => [],
+        searchModalAdditionalRoots: () => [headerSearch],
         syncSearchInputA11y: () => [],
         retireResumeAfterSelection: () => undefined,
         findSearchTrigger: () => pageOpener
@@ -289,6 +291,8 @@ describe('Ask modal accessibility contract', () => {
       for (const name of ['activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal']) {
         state[name] = (...args) => methods[name].call(state, ...args)
       }
+      fixtureDocument.addEventListener('keydown', methods.handleSearchKeydown.bind(state), true)
+      fixtureDocument.addEventListener('focusin', methods.captureSearchRestoreTarget.bind(state), true)
 
       pageOpener.focus()
       methods.activateSearchModal.call(state, pageOpener)
@@ -330,6 +334,39 @@ describe('Ask modal accessibility contract', () => {
       expect(fixtureDocument.activeElement).toBe(pageOpener)
       expect(agentStore.closeWorkspaceCalls).toBe(1)
       expect(fixtureWindow.location.hash).toBe('#section')
+
+      state.searchIsFocused = true
+      state.search = 'directly focused search'
+      pageOpener.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      headerSearch.focus()
+      methods.activateSearchModal.call(state, pageOpener)
+      headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(state.searchIsFocused).toBe(false)
+      expect(state.search).toBe('')
+      expect(state.searchModalFocusScope).toBeNull()
+      expect(fixtureDocument.activeElement).toBe(headerSearch)
+      expect(nextHeaderAction.hasAttribute('inert')).toBe(false)
+      // The reactive searchIsFocused watcher repeats this cleanup after close.
+      methods.finishSearchFocus.call(state, state.searchExitRestoreFocus)
+      expect(fixtureDocument.activeElement).toBe(headerSearch)
+
+      pageOpener.focus()
+      state.searchIsFocused = true
+      pageOpener.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+      headerSearch.focus()
+      methods.activateSearchModal.call(state, pageOpener)
+      headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(state.searchIsFocused).toBe(false)
+      expect(fixtureDocument.activeElement).toBe(pageOpener)
+
+      Object.defineProperty(fixtureWindow, 'matchMedia', { value: () => ({ matches: false }) })
+      state.searchIsFocused = true
+      pageOpener.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      headerSearch.focus()
+      methods.activateSearchModal.call(state, pageOpener)
+      headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(state.searchIsFocused).toBe(false)
+      expect(fixtureDocument.activeElement).toBe(pageOpener)
     } finally {
       state?.deactivateModalLayers(false)
       for (const [name, descriptor] of Object.entries(originalGlobals)) {

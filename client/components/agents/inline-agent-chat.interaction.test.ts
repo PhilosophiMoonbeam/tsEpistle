@@ -672,6 +672,7 @@ const reviewThread = (
     messages: [
       {
         ...common,
+        runId: null,
         id: '00000000-0000-4000-8000-000000000061', ordinal: 0, role: 'user', status: 'complete',
         content: 'What is the dominant color and geometric shape in this uploaded image? Use only the uploaded image, not Wiki pages.',
         ...(currentPage !== undefined ? { currentPage } : {}),
@@ -1123,10 +1124,15 @@ describe('Inline Agent historical Review scope', () => {
     expect(workspace.messageInputs[0]?.currentPage).toEqual(routePage)
   })
 
-  it('does not borrow another run request when the original is outside the historical window', async () => {
+  it.each(['missing ordinal pair', 'different run'] as const)('does not borrow a request with a %s', async mismatch => {
     const historical = reviewThread(originalPage)
-    const unrelated = { ...historical.messages[0], runId: '00000000-0000-4000-8000-000000000070', content: 'Unrelated retained request' }
-    const workspace = realWorkspace('saved', routePage, { ...historical, messages: [unrelated, historical.messages[1]] })
+    const unrelated = {
+      ...historical.messages[0],
+      ...(mismatch === 'different run' ? { runId: '00000000-0000-4000-8000-000000000070' } : {}),
+      content: 'Unrelated retained request'
+    }
+    const assistant = { ...historical.messages[1], ...(mismatch === 'missing ordinal pair' ? { ordinal: 3 } : {}) }
+    const workspace = realWorkspace('saved', routePage, { ...historical, messages: [unrelated, assistant] })
     const mounted = mountInlineAgent(workspace.state(), { realThread: true })
     await settle()
     review(mounted.root).click()
