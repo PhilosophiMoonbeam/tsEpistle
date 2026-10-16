@@ -23,7 +23,6 @@ if (!methodsNode) throw new Error('Header component methods were not found')
 const selected: Record<string, true> = {
   searchFocus: true,
   searchClose: true,
-  searchEscape: true,
   searchToggle: true,
   focusSearchField: true,
   handleSearchFocusCommand: true,
@@ -59,7 +58,6 @@ type HeaderState = {
   $nextTick: () => Promise<void>
   searchFocus: () => void
   searchClose: () => void
-  searchEscape: (event?: KeyboardEvent) => Promise<void>
   searchToggle: () => void
   focusSearchField: () => Promise<void>
   handleSearchFocusCommand: () => void
@@ -150,17 +148,13 @@ describe('header search keyboard entry', () => {
     }
   })
 
-  it('opens mobile search from its toggle and returns Escape focus to that stable toggle', async () => {
-    const { state, document, key } = fixture(true)
+  it('opens mobile search from its toggle', async () => {
+    const { state, document } = fixture(true)
     state.searchIsFocused = false
     state.searchToggle()
     await state.$nextTick()
     expect(document.activeElement?.id).toBe('mobile')
     expect(state.searchIsShown).toBe(true)
-    await state.searchEscape(key('Escape'))
-    expect(state.searchIsFocused).toBe(false)
-    expect(state.search).toBe('')
-    expect(document.activeElement?.id).toBe('toggle')
   })
 
   it('transfers focus to the replacement breakpoint input without losing the query', async () => {
@@ -208,14 +202,13 @@ describe('header search keyboard entry', () => {
 })
 
 describe('header search native keyboard protection', () => {
-  it('leaves composing arrows, Enter, Escape and shortcuts untouched, including legacy IME keyCode', async () => {
+  it('leaves composing arrows, Enter and shortcuts untouched, including legacy IME keyCode', () => {
     for (const options of [{ isComposing: true }, { keyCode: 229 }]) {
       const { state, entered, moved, key } = fixture()
-      for (const name of ['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'k']) {
+      for (const name of ['ArrowDown', 'ArrowUp', 'Enter', 'k']) {
         const event = key(name, { ...options, ...(name === 'k' ? { ctrlKey: true } : {}) })
         if (name.startsWith('Arrow')) state.searchMove(name === 'ArrowDown' ? 'down' : 'up', event)
         else if (name === 'Enter') state.searchEnter(event)
-        else if (name === 'Escape') await state.searchEscape(event)
         else state.handleSearchShortcut(event)
         expect(event.defaultPrevented).toBe(false)
       }
@@ -228,7 +221,6 @@ describe('header search native keyboard protection', () => {
     state.searchIsComposing = true
     state.searchEnter(key('Enter'))
     state.searchMove('down', key('ArrowDown'))
-    await state.searchEscape(key('Escape'))
     expect(entered).toEqual([])
     expect(moved).toEqual([])
     expect(state.searchIsFocused).toBe(true)

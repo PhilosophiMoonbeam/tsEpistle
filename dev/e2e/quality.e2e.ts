@@ -36,13 +36,13 @@ async function tabThroughHeaderToControl(page: Page, control: Locator) {
   const search = page.locator('.nav-header-search-control input:visible').first()
   for (let press = 0; press < 60; press += 1) {
     await page.keyboard.press('Tab')
-    if (await control.evaluate(element => element === document.activeElement)) return true
     if (await search.evaluate(element => element === document.activeElement)) {
       await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeHidden()
       await expect(search, 'Dismissing search keeps the next Tab in the forward header order').toBeFocused()
     }
+    if (await control.evaluate(element => element === document.activeElement)) return true
   }
   return false
 }

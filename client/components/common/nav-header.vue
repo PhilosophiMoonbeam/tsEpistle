@@ -16,7 +16,6 @@
           :prepend-inner-icon='searchInputIcon'
           :loading='searchIsLoading'
           @keydown.enter='searchEnter($event)'
-          @keydown.esc='searchEscape'
           @focus='searchFocus'
           @keydown.down='searchMove(`down`, $event)'
           @keydown.up='searchMove(`up`, $event)'
@@ -82,7 +81,6 @@
                 :prepend-inner-icon='searchInputIcon',
                 :loading='searchIsLoading',
                 @keydown.enter='searchEnter($event)'
-                @keydown.esc='searchEscape'
                 @focus='searchFocus'
                 @keydown.down='searchMove(`down`, $event)'
                 @keydown.up='searchMove(`up`, $event)'
@@ -1229,17 +1227,6 @@ export default defineComponent({
         root.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true })
       }
     },
-    async searchEscape(event?: KeyboardEvent): Promise<void> {
-      if (event && (event.defaultPrevented || event.isComposing || event.keyCode === 229 || this.searchIsComposing)) return
-      this.searchClose()
-      if (!this.$vuetify.display.smAndDown) return
-      await this.$nextTick()
-      const toggle = this.$refs.searchToggle
-      const element = toggle instanceof HTMLElement
-        ? toggle
-        : (toggle as { $el?: unknown } | undefined)?.$el
-      if (element instanceof HTMLElement) element.focus()
-    },
     searchToggle () {
       this.searchIsShown = !this.searchIsShown
       if (this.searchIsShown) void this.focusSearchField()
@@ -1273,7 +1260,7 @@ export default defineComponent({
       if (!this.canEnterAgent) return
       event.preventDefault()
       if (this.searchMode === 'ask' && this.searchIsFocused) {
-        void this.searchEscape()
+        this.searchClose()
         return
       }
       this.searchIsShown = true
