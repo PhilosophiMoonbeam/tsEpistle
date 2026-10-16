@@ -12,6 +12,9 @@ import { getAuthenticationAdministrationStore } from '../../operations/authentic
 import { systemRequester } from '../../helpers/system-authority.ts'
 import legacyErrors from '../../helpers/error.ts'
 import operationErrors from '../../operations/errors.ts'
+import { agentCsrfMatches } from '../../agents/csrf.ts'
+import { requestOriginMatches } from '../../agents/origins.ts'
+import { personalMcpRuntime } from '../../helpers/personal-mcp.ts'
 
 const { ApplicationError } = operationErrors
 
@@ -252,12 +255,13 @@ router.post('/api/state', async (req, res) => {
 router.post('/api/keys', async (req, res) => {
   if (!requireAdminApiAccess(req, res)) return
   try {
+    if (req.body && typeof req.body === 'object' && Object.hasOwn(req.body, 'mcpAccess'))
+      throw new ApplicationError('mcpAccess is no longer supported. Create personal MCP keys from your profile; service API keys support REST and GraphQL only.', { status: 400, code: 'OBSOLETE_API_KEY_MCP_ACCESS' })
     const key = await apiOperations.createKey(systemRequester(req), {
       name: objectValue(req.body, 'name'),
       expiration: objectValue(req.body, 'expiration'),
       fullAccess: objectValue(req.body, 'fullAccess'),
-      group: objectValue(req.body, 'group'),
-      ...(objectValue(req.body, 'mcpAccess') !== undefined ? { mcpAccess: objectValue(req.body, 'mcpAccess') } : {})
+      group: objectValue(req.body, 'group')
     })
     res.json({ key, message: 'API Key created successfully' })
   } catch (err) {
@@ -278,6 +282,18 @@ router.post('/api/keys/:id/revoke', async (req, res) => {
     const status = errorCode !== undefined && errorCode >= 400 && errorCode <= 599 ? errorCode : 500
     const publicMessage = err instanceof ApplicationError && status >= 400 && status <= 499 ? err.message : 'API key revoke failed'
     res.status(status).json({ error: publicMessage })
+  }
+})
+
+router.post('/api/personal-mcp-keys/:id/revoke', async (req, res) => {
+  if (!requireSystemAccess(req, res)) return
+  if (req.get('sec-fetch-site') !== 'same-origin' || !req.session || !agentCsrfMatches(req, req.get('x-wiki-csrf')) ||
+    !requestOriginMatches(req.get('origin'), personalMcpRuntime().config.host))
+    return res.status(403).json({ error: 'A same-origin request with a current CSRF token is required.' })
+  try {
+    return res.json(await apiOperations.revokeAdminPersonalMcpKey(systemRequester(req), req.get('X-TsEpistle-Profile-Account'), Number(req.params.id)))
+  } catch (error) {
+    return workspaceError(res, error)
   }
 })
 

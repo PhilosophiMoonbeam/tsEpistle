@@ -170,7 +170,7 @@ export const createGroupAdministrationStore = ({ db, onCommitted }: Dependencies
     return hash([row, members, groups.map(g => [g.id, g.adminRevision, g.permissions, g.isSystem])])
   }
   const keyCounts = async (tx: Database) => {
-    const rows = await tx('apiKeys').select('key', 'isRevoked', 'expiration'),
+    const rows = await tx('apiKeys').whereNull('personalAccess').whereNull('personalOwnerId').select('key', 'isRevoked', 'expiration'),
       counts = new Map<number, number>()
     for (const row of rows) {
       const id = describeApiKeyGrant(row.key).groupId

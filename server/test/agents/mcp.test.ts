@@ -291,7 +291,7 @@ describe('Wiki MCP transport', () => {
     createPage = vi.fn(async () => ({}))
     removePage = vi.fn(async () => ({}))
     activeApiKey = { apiKeyId: 9, groupId: 3, bearerToken: 'test-api-token' }
-    personalMcpAccess = undefined
+    personalMcpAccess = 'read-write'
     requesterPermissions = undefined
     skillsEnabled = true
     approver = humanPrincipal()
@@ -356,7 +356,7 @@ describe('Wiki MCP transport', () => {
       const principal = { ...apiPrincipal(apiKeyId, groupId), ...(requesterPermissions === undefined ? {} : { permissions: requesterPermissions }) }
       return personalMcpAccess === undefined
         ? principal
-        : { ...principal, personalMcpAccess, ownershipUserId: 7, permissions: [...principal.permissions!, 'manage:system'] }
+        : { ...principal, personalMcpAccess, ownershipUserId: 7 }
     }
     authenticate = vi.fn((req, _res, next) => {
       if (activeApiKey === null) {
@@ -451,6 +451,20 @@ describe('Wiki MCP transport', () => {
     await db.destroy()
   })
 
+  it.each([1, 3])('rejects service group %s credentials before initialization or discovery', async groupId => {
+    personalMcpAccess = undefined
+    activeApiKey = { apiKeyId: 9, groupId, bearerToken: 'test-api-token' }
+    requesterPermissions = ['manage:system', 'use:mcp']
+    const port = (server.address() as AddressInfo).port
+    const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-api-token', 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'service', version: '1' } } })
+    })
+    expect(response.status).toBe(403)
+    expect(getPage).not.toHaveBeenCalled()
+  })
+
   it.each(['explicit-form', 'implicit-form', 'both-modes', 'personal-read-write'] as const)('advertises all admitted writes for a modern %s continuation client', async mode => {
     if (mode === 'personal-read-write') personalMcpAccess = 'read-write'
     const port = (server.address() as AddressInfo).port
@@ -532,10 +546,10 @@ describe('Wiki MCP transport', () => {
     expect(movePage).not.toHaveBeenCalled()
   })
 
-  it.each(['modern-use-only', 'legacy-use-only', 'modern-service-admin', 'legacy-service-admin'] as const)(
-    'serves an empty readable MCP catalog without escalating %s credentials',
+  it.each(['modern-use-only', 'legacy-use-only'] as const)(
+    'serves an empty readable MCP catalog without escalating %s personal credentials',
     async mode => {
-      requesterPermissions = [mode.endsWith('service-admin') ? 'manage:system' : 'use:mcp']
+      requesterPermissions = ['use:agents', 'use:mcp']
       skillsEnabled = false
       const port = (server.address() as AddressInfo).port
       client = new Client(
@@ -1107,13 +1121,13 @@ describe('Wiki MCP transport', () => {
       getPageByPath.mockImplementation(async input => {
         if (!created || input.path !== createdPage.path || input.locale !== createdPage.locale || input.visibility !== createdPage.visibility)
           throw new errors.PageNotFound()
-        if (requesterReadRevoked && typeof input.requester === 'object' && input.requester !== null && Reflect.get(input.requester, 'ownershipUserId') === null)
+        if (requesterReadRevoked && typeof input.requester === 'object' && input.requester !== null && Reflect.get(input.requester, 'api') !== undefined)
           throw new errors.PageNotFound()
         return createdPage
       })
       getPage.mockImplementation(async input => {
         if (!created || input.id !== createdPage.id) throw new errors.PageNotFound()
-        if (requesterReadRevoked && typeof input.requester === 'object' && input.requester !== null && Reflect.get(input.requester, 'ownershipUserId') === null)
+        if (requesterReadRevoked && typeof input.requester === 'object' && input.requester !== null && Reflect.get(input.requester, 'api') !== undefined)
           throw new errors.PageNotFound()
         return createdPage
       })

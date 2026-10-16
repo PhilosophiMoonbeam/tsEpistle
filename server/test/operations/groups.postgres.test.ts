@@ -58,6 +58,8 @@ suite('PostgreSQL reviewed group administration', () => {
       t.text('key')
       t.boolean('isRevoked')
       t.string('expiration')
+      t.integer('personalOwnerId')
+      t.string('personalAccess')
     })
     await db.schema.createTable('authentication', t => {
       t.string('key').primary()

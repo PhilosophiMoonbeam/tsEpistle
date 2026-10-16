@@ -12,7 +12,7 @@ const originalWiki = Reflect.get(globalThis, 'WIKI')
 const administrator: SystemRequester = { user: { id: 1, authVersion: 0 } as never }
 
 type ApiOperations = {
-  createKey(requester: SystemRequester, input: { name: unknown; expiration: unknown; fullAccess: unknown; group: unknown; mcpAccess?: unknown }): Promise<unknown>
+  createKey(requester: SystemRequester, input: { name: unknown; expiration: unknown; fullAccess: unknown; group: unknown }): Promise<unknown>
   getConfig(requester: SystemRequester): Promise<{
     enabled: boolean
     createFullAccess: boolean
@@ -90,6 +90,8 @@ suite('API credential authority operations on PostgreSQL', () => {
       table.boolean('isRevoked').notNullable()
       table.string('createdAt').notNullable()
       table.string('updatedAt').notNullable()
+      table.integer('personalOwnerId').nullable()
+      table.string('personalAccess').nullable()
     })
     const modelModule = await vi.importFresh<{ default: typeof ApiKeyModel }>('../../models/apiKeys.ts', import.meta.url)
     ApiKey = modelModule.default

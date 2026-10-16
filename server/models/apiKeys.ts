@@ -4,14 +4,12 @@ import ms from 'ms'
 import { Model } from 'objection'
 import type { ModelOptions, QueryContext } from 'objection'
 import type { Knex } from 'knex'
-import { canonicalMcpResource } from '../agents/origins.ts'
 
 interface CreateKeyOptions {
   name: string
   expiration: string
   fullAccess: boolean
   group: number | null
-  mcpAccess?: boolean
 }
 type WikiRuntime = {
   config: {
@@ -67,7 +65,7 @@ export default class ApiKey extends Model {
   }
 
   static async createNewKey (
-    { name, expiration, fullAccess, group, mcpAccess }: CreateKeyOptions,
+    { name, expiration, fullAccess, group }: CreateKeyOptions,
     transaction?: Knex.Transaction
   ): Promise<string> {
     const wiki = getWiki()
@@ -78,13 +76,9 @@ export default class ApiKey extends Model {
       expiration: moment.utc().add(ms(expiration), 'ms').toISOString(),
       isRevoked: true
     })
-    const configuredMcpResource = wiki.config.agents?.mcp?.enabled && mcpAccess !== false ? canonicalMcpResource(wiki.config.host).href : undefined
     const key = jwt.sign({
       api: entry.id,
-      grp: fullAccess ? 1 : group,
-      ...(configuredMcpResource
-        ? { mcpResource: configuredMcpResource, mcpResourceVersion: 1 }
-        : {})
+      grp: fullAccess ? 1 : group
     }, {
       key: wiki.config.certs.private,
       passphrase: wiki.config.sessionSecret

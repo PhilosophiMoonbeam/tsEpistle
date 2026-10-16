@@ -118,19 +118,16 @@ describe('API-key authentication boundary', () => {
     })
   })
 
-  test('preserves API-key authentication on the exact separately mounted MCP route', async () => {
+  test('rejects a service API key on the exact separately mounted MCP route before assigning principal state', async () => {
     const req = createRequest('/', '/mcp', '/mcp')
     vi.mocked(req.get).mockReturnValue('bearer test-api-token')
 
     const next = await authenticate(req)
 
-    expect(next).toHaveBeenCalledWith()
-    expect(req.authContext).toMatchObject({
-      kind: 'apiKey',
-      apiKeyId: 7,
-      groupId: 3
-    })
-    expect(req.apiKeyAuth?.bearerToken).toBe('test-api-token')
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ code: 'API_KEY_TRANSPORT_FORBIDDEN', status: 403 }))
+    expect(req.user).toBeUndefined()
+    expect(req.authContext).toBeUndefined()
+    expect(req.apiKeyAuth).toBeUndefined()
   })
 
   test.each([

@@ -3,14 +3,14 @@ import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 const { sign } = vi.hoisted(() => ({ sign: vi.fn(() => 'signed-key') }))
 vi.mockModule('jsonwebtoken', import.meta.url, () => ({ default: { sign } }))
 
-describe('MCP API-key resource binding', () => {
+describe('service API-key issuance', () => {
   afterEach(() => {
     vi.resetModules()
     sign.mockClear()
     Reflect.deleteProperty(globalThis, 'WIKI')
   })
 
-  it.each([undefined, true, false])('derives resource binding from current configuration and explicit opt-out: %s', async mcpAccess => {
+  it('issues only REST and GraphQL grants even when MCP is enabled', async () => {
     const patch = vi.fn().mockResolvedValue(undefined)
     const insert = vi.fn().mockResolvedValue({ id: 17 })
     const query = vi.fn().mockReturnValue({ insert, findById: vi.fn(() => ({ patch })) })
@@ -35,13 +35,8 @@ describe('MCP API-key resource binding', () => {
       },
       models: { apiKeys: { query } }
     })
-    expect(await ApiKey.createNewKey({ name: 'MCP', expiration: '1h', fullAccess: false, group: 3, ...(mcpAccess === undefined ? {} : { mcpAccess }) })).toBe('signed-key')
-    expect(sign).toHaveBeenCalledWith(expect.objectContaining({
-      api: 17,
-      grp: 3,
-      ...(mcpAccess === false ? {} : { mcpResource: 'https://docs.example.co.uk/mcp', mcpResourceVersion: 1 })
-    }), expect.any(Object), expect.objectContaining({ audience: 'urn:wiki:test' }))
-    if (mcpAccess === false) expect(sign.mock.calls[0]?.[0]).not.toHaveProperty('mcpResource')
+    expect(await ApiKey.createNewKey({ name: 'Service', expiration: '1h', fullAccess: false, group: 3 })).toBe('signed-key')
+    expect(sign).toHaveBeenCalledWith({ api: 17, grp: 3 }, expect.any(Object), expect.objectContaining({ audience: 'urn:wiki:test' }))
     expect(patch).toHaveBeenCalledWith({ key: 'signed-key', isRevoked: false })
   })
 })

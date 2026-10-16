@@ -2,12 +2,14 @@
   <v-container fluid class="admin-api api-workspace">
     <admin-hero :title="$t('admin:api.apiAccess')" :description="$t('admin:api.giveEveryApplicationAgent')" :eyebrow="$t('admin:api.intelligenceConnections')" icon="mdi-api">
       <template #status><v-chip v-if="loadState === 'success'" size="small" :color="enabled ? 'success' : 'warning'">{{ enabled ? $t('admin:api.apiKeyAccessEnabled') : $t('admin:api.apiKeyAccessDisabled') }}</v-chip></template>
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loadState === 'loading'" :disabled="adminApiBusy" @click="refresh()">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:api.reloadApiKeysSettings') }}</v-tooltip></v-btn><v-btn color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success' || adminApiBusy || (!createFullAccess && !assignableGroups.length)" @click="newKey()">{{ $t('admin:api.createKey') }}</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loadState === 'loading'" :disabled="adminApiBusy" @click="refresh()">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:api.reloadApiKeysSettings') }}</v-tooltip></v-btn><v-btn v-if="section !== 'personal'" color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success' || adminApiBusy || (!createFullAccess && !assignableGroups.length)" @click="newKey()">{{ $t('admin:api.createKey') }}</v-btn></template>
     </admin-hero>
     <v-alert v-if="loadState === 'error'" type="error" variant="tonal" class="mb-4">{{ $t('admin:api.credentialInventoryCouldNot') }} <v-btn variant="text" @click="refresh(false)">{{ $t('admin:api.retry') }}</v-btn></v-alert>
     <v-alert v-if="loadState === 'success' && !enabled" type="warning" variant="tonal" class="mb-4">{{ $t('admin:api.apiKeyAuthenticationDisabled') }}</v-alert>
-    <v-tabs v-model="section" color="primary" class="api-tabs" show-arrows :aria-label="$t('admin:api.apiAdministrationSections')">
+    <!-- Keep the requested section while permission-gated tabs are still loading. -->
+    <v-tabs v-model="section" :mandatory="true" color="primary" class="api-tabs" show-arrows :aria-label="$t('admin:api.apiAdministrationSections')">
       <v-tab id="api-tab-credentials" value="credentials" aria-controls="api-panel-credentials">{{ $t('admin:api.credentials') }}</v-tab>
+      <v-tab v-if="canManagePersonalMcpKeys" id="api-tab-personal" value="personal" aria-controls="api-panel-personal">{{ $t('admin:api.personalMcpKeys') }}</v-tab>
       <v-tab id="api-tab-connect" value="connect" aria-controls="api-panel-connect">{{ $t('admin:api.connectClient') }}</v-tab>
       <v-tab id="api-tab-explore" value="explore" aria-controls="api-panel-explore">{{ $t('admin:api.graphqlExplorer') }}</v-tab>
     </v-tabs>
@@ -20,8 +22,7 @@
         <div v-if="filteredKeys.length" class="api-register">
           <details v-for="key in filteredKeys" :key="key.id" class="api-record">
             <summary><span class="api-key-identity"><strong>{{ key.name }}</strong><small>{{ groupName(key) }}</small></span><span class="api-key-expiry"><small>{{ keyState(key) === 'expired' ? $t('admin:api.expired2') : $t('admin:api.expires') }}</small>{{ formatDate(key.expiration) }}</span><v-chip size="small" :color="keyState(key) === 'active' ? 'success' : keyState(key) === 'expired' ? 'warning' : undefined">{{ keyStateLabel(key) }}</v-chip><v-icon size="18">mdi-chevron-down</v-icon></summary>
-            <div class="api-key-detail"><dl><div><dt>{{ $t('admin:api.keyEnding') }}</dt><dd><code>{{ key.keyShort }}</code></dd></div><div><dt>{{ $t('admin:api.headerCreated') }}</dt><dd>{{ formatDate(key.createdAt) }}</dd></div><div><dt>{{ $t('admin:api.issuedPermissionGroup') }}</dt><dd>{{ groupName(key) }}<span v-if="key.grant.groupId"> · #{{ key.grant.groupId }}</span></dd></div><div><dt>{{ $t('admin:api.mcpResourceBinding') }}</dt><dd>{{ key.grant.mcpResource || $t('admin:api.noMcpBindingWas') }}</dd></div></dl>
-              <v-alert v-if="key.grant.mcpResource && (key.grant.mcpResourceVersion !== 1 || (connections && key.grant.mcpResource !== connections.mcpResource))" type="warning" variant="tonal" class="mb-3">{{ $t('admin:api.bindingDoesNotMatch') }}</v-alert>
+            <div class="api-key-detail"><dl><div><dt>{{ $t('admin:api.keyEnding') }}</dt><dd><code>{{ key.keyShort }}</code></dd></div><div><dt>{{ $t('admin:api.headerCreated') }}</dt><dd>{{ formatDate(key.createdAt) }}</dd></div><div><dt>{{ $t('admin:api.issuedPermissionGroup') }}</dt><dd>{{ groupName(key) }}<span v-if="key.grant.groupId"> · #{{ key.grant.groupId }}</span></dd></div></dl>
               <p>{{ key.grant.groupId === 1 ? $t('admin:api.keyCarriesSystemAdministrator') : !key.grant.groupId ? $t('admin:api.issuedGrantCouldNot') : $t('admin:api.groupsCurrentPermissionsPage') }}</p>
               <p v-if="keyState(key) === 'active' && !enabled" class="api-note">{{ $t('admin:api.credentialHasNotExpired') }}</p>
               <p v-if="!canIssueKey" class="api-note">{{ $t('admin:apiCreate.noDelegableAuthority') }}</p>
@@ -32,15 +33,28 @@
         </div>
         <div v-else class="api-empty"><v-icon size="36" color="primary">mdi-key-outline</v-icon><h3>{{ keys.length ? $t('admin:api.noMatchingCredentials') : $t('admin:api.dedicatedIdentityEachConnection') }}</h3><p>{{ keys.length ? $t('admin:api.tryAnotherNameChoose') : $t('admin:api.createScopedKeyConfigure') }}</p><v-btn v-if="keys.length" variant="text" @click="keySearch = ''; keyFilter = 'all'">{{ $t('admin:api.showAllKeys') }}</v-btn><v-btn v-else color="primary" @click="newKey()">{{ $t('admin:api.createFirstKey') }}</v-btn></div>
         <p class="api-note mt-4">{{ $t('admin:api.statusBasedExpiryRevocation') }}</p>
-        <div class="api-access-control"><div><h3>{{ $t('admin:api.apiKeyAuthentication') }}</h3><p>{{ enabled ? $t('admin:api.disableApiKeyRequests') : $t('admin:api.enableApiKeyRequests') }}</p></div><v-btn :color="enabled ? 'error' : 'primary'" variant="outlined" :disabled="adminApiBusy" :loading="isToggleLoading" @click="enabled ? disableDialog = true : globalSwitch()">{{ enabled ? $t('admin:api.disableApiKeyAccess') : $t('admin:api.enableApiKeyAccess') }}</v-btn></div>
       </template>
     </section>
-    <section v-show="section === 'connect'" id="api-panel-connect" role="tabpanel" aria-labelledby="api-tab-connect"><admin-api-connect :connections="connections" :loading="connectionLoading" :error="connectionError" :enabled="enabled" @retry="loadConnections" @create="newKey()" /></section>
+    <section v-if="canManagePersonalMcpKeys && loadState === 'success'" v-show="section === 'personal'" id="api-panel-personal" role="tabpanel" aria-labelledby="api-tab-personal">
+      <div class="api-inventory-intro"><div><span class="api-kicker">{{ $t('admin:api.personalMcpKeys') }}</span><h2>{{ $t('admin:api.personalMcpOversight') }}</h2><p>{{ $t('admin:api.personalMcpDescription') }}</p><v-btn variant="outlined" href="/p/profile" prepend-icon="mdi-account-key">{{ $t('admin:api.openPersonalProfile') }}</v-btn></div></div>
+      <div class="api-filters"><v-text-field v-model="personalSearch" :label="$t('admin:api.findPersonalMcpKey')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" hide-details clearable /><v-select v-model="personalFilter" :label="$t('admin:api.keyStatus')" :items="personalFilterOptions" variant="outlined" density="compact" hide-details /><span role="status">{{ $t('admin:api.of', { filteredKeysCount: filteredPersonalKeys.length, keysCount: personalMcpKeys.length, interpolation: { escapeValue: false } }) }}</span></div>
+      <div v-if="filteredPersonalKeys.length" class="api-register">
+        <details v-for="key in filteredPersonalKeys" :key="key.id" class="api-record">
+          <summary><span class="api-key-identity"><strong>{{ key.name }}</strong><small>{{ personalOwnerName(key) }}</small></span><span class="api-key-expiry"><small>{{ $t('admin:api.expires') }}</small>{{ formatDate(key.expiresAt) }}</span><v-chip size="small" :color="keyState(key) === 'active' ? 'success' : keyState(key) === 'expired' ? 'warning' : undefined">{{ keyStateLabel(key) }}</v-chip><v-icon size="18">mdi-chevron-down</v-icon></summary>
+          <div class="api-key-detail"><dl><div><dt>{{ $t('admin:api.personalOwner') }}</dt><dd>{{ personalOwnerName(key) }}<template v-if="key.owner"><br>{{ key.owner.email }} · #{{ key.owner.id }}<br>{{ key.owner.isActive ? $t('admin:api.ownerActive') : $t('admin:api.ownerInactive') }}</template></dd></div><div><dt>{{ $t('admin:api.personalAccess') }}</dt><dd>{{ key.access === 'read-only' ? $t('admin:api.personalReadOnly') : $t('admin:api.personalReadWrite') }}</dd></div><div><dt>{{ $t('admin:api.headerCreated') }}</dt><dd>{{ formatDate(key.createdAt) }}</dd></div><div><dt>{{ $t('admin:api.expires') }}</dt><dd>{{ formatDate(key.expiresAt) }}</dd></div></dl>
+            <p>{{ $t('admin:api.personalLiveAuthority') }}</p><v-btn v-if="!key.isRevoked" variant="text" color="error" :disabled="adminApiBusy" :aria-label="$t('admin:api.revokePersonalNamed', { name: key.name, interpolation: { escapeValue: false } })" @click="revokePersonal(key)">{{ $t('admin:api.revokeKey') }}</v-btn>
+          </div>
+        </details>
+      </div>
+      <div v-else class="api-empty"><v-icon size="36" color="primary">mdi-account-key-outline</v-icon><h3>{{ personalMcpKeys.length ? $t('admin:api.noMatchingCredentials') : $t('admin:api.noPersonalMcpKeys') }}</h3><p>{{ personalMcpKeys.length ? $t('admin:api.tryAnotherPersonalSearch') : $t('admin:api.personalMcpDescription') }}</p><v-btn v-if="personalMcpKeys.length" variant="text" @click="personalSearch = ''; personalFilter = 'all'">{{ $t('admin:api.showAllKeys') }}</v-btn></div>
+    </section>
+    <section v-show="section === 'connect'" id="api-panel-connect" role="tabpanel" aria-labelledby="api-tab-connect"><admin-api-connect :loading="connectionLoading" :error="connectionError" :enabled="enabled" @retry="loadConnections" @create="newKey()" /></section>
     <section v-show="section === 'explore'" id="api-panel-explore" role="tabpanel" aria-labelledby="api-tab-explore">
       <div class="api-explorer-intro"><div><span class="api-kicker">{{ $t('admin:api.interactiveSchema') }}</span><h2>{{ $t('admin:api.exploreShapeWiki') }}</h2><p>{{ $t('admin:api.useGraphqlWorkspaceInspect') }}</p><v-btn color="primary" prepend-icon="mdi-code-braces" href="/graphql" target="_blank" rel="noopener">{{ $t('admin:api.openGraphqlWorkspace') }}<v-icon end size="16">mdi-open-in-new</v-icon></v-btn></div><aside><h3>{{ $t('admin:api.sessionStartingPoint') }}</h3><p>{{ $t('admin:api.explorerUsesSignedBrowser') }}</p><p>{{ $t('admin:api.evaluateKeyUseBearer') }}</p></aside></div>
       <div class="api-explorer-principles"><div><span>01</span><h3>{{ $t('admin:api.discover') }}</h3><p>{{ $t('admin:api.browseTypesFieldsArguments') }}</p></div><div><span>02</span><h3>{{ $t('admin:api.compose') }}</h3><p>{{ $t('admin:api.useVariablesAutocompleteBuild') }}</p></div><div><span>03</span><h3>{{ $t('admin:api.inspect') }}</h3><p>{{ $t('admin:api.reviewReturnedDataPermission') }}</p></div></div>
     </section>
-    <create-api-key v-model="isCreateDialogShown" :refresh-api-keys="refresh" :connections="connections" :assignable-groups="assignableGroups" :create-full-access="createFullAccess" :seed="replacementKey" @sensitive-state="credentialFlowProtected = $event" />
+    <div v-if="loadState === 'success'" class="api-access-control"><div><h3>{{ $t('admin:api.apiKeyAuthentication') }}</h3><p>{{ enabled ? $t('admin:api.disableApiKeyRequests') : $t('admin:api.enableApiKeyRequests') }}</p></div><v-btn :color="enabled ? 'error' : 'primary'" variant="outlined" :disabled="adminApiBusy" :loading="isToggleLoading" @click="enabled ? disableDialog = true : globalSwitch()">{{ enabled ? $t('admin:api.disableApiKeyAccess') : $t('admin:api.enableApiKeyAccess') }}</v-btn></div>
+    <create-api-key :key="accountId" v-model="isCreateDialogShown" :refresh-api-keys="refresh" :assignable-groups="assignableGroups" :create-full-access="createFullAccess" :seed="replacementKey" @sensitive-state="credentialFlowProtected = $event" />
     <v-dialog v-model="isRevokeConfirmDialogShown" max-width="520" persistent aria-labelledby="revoke-api-key-dialog-title"><v-card><v-card-title id="revoke-api-key-dialog-title">{{ $t('admin:api.revokeKey2') }}</v-card-title><v-card-text><strong>{{ current?.name }}</strong> {{ $t('admin:api.willStopAuthenticatingNew') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="revokeLoading" @click="isRevokeConfirmDialogShown = false">{{ $t('admin:api.keepKey') }}</v-btn><v-btn color="error" :loading="revokeLoading" @click="revokeConfirm">{{ $t('admin:api.revokeKey') }}</v-btn></v-card-actions></v-card></v-dialog>
     <v-dialog v-model="disableDialog" max-width="520" persistent aria-labelledby="disable-api-title"><v-card><v-card-title id="disable-api-title">{{ $t('admin:api.disableApiKeyAccess2') }}</v-card-title><v-card-text>{{ $t('admin:api.allApiKeyIntegrations') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="isToggleLoading" @click="disableDialog = false">{{ $t('admin:api.keepEnabled') }}</v-btn><v-btn color="error" :loading="isToggleLoading" @click="disableApi">{{ $t('admin:api.disableAccess') }}</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
@@ -52,9 +66,10 @@ import { wikiStore } from '@/store/index.ts'
 
 import CreateApiKey from './admin-api-create.vue'
 import AdminApiConnect from './admin-api-connect.vue'
-import { apiKeyState, type ApiAssignableGroup, type ApiConnectionInfo } from '../../../shared/api-admin.ts'
-import { fetchApiConnections, fetchAdminApiBootstrap, revokeAdminApiKey, setAdminApiState, type AdminApiKey } from '../../helpers/auth-api'
+import { apiKeyState, type ApiAssignableGroup, type ApiConnectionInfo, type AdminPersonalMcpKey } from '../../../shared/api-admin.ts'
+import { fetchApiConnections, fetchAdminApiBootstrap, revokeAdminApiKey, revokeAdminPersonalMcpKey, setAdminApiState, type AdminApiKey } from '../../helpers/auth-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
+import { requestConfirmation } from '../common/confirm-dialog.ts'
 
 export default {
   components: {
@@ -62,7 +77,7 @@ export default {
   },
   data() {
     return {
-      section: ['connect', 'explore'].includes(this.$route.hash.slice(1)) ? this.$route.hash.slice(1) : 'credentials',
+      section: ['personal', 'connect', 'explore'].includes(this.$route.hash.slice(1)) ? this.$route.hash.slice(1) : 'credentials',
       connections: null as ApiConnectionInfo | null,
       connectionLoading: false,
       connectionError: false,
@@ -75,6 +90,11 @@ export default {
       assignableGroups: [] as ApiAssignableGroup[],
       isToggleLoading: false,
       keys: [] as AdminApiKey[],
+      canManagePersonalMcpKeys: false,
+      personalMcpKeys: [] as AdminPersonalMcpKey[],
+      personalSearch: '',
+      personalFilter: 'all',
+      accountGeneration: 0,
       keySearch: '',
       keyFilter: 'all',
       loadState: 'loading' as 'loading' | 'success' | 'error',
@@ -87,6 +107,17 @@ export default {
     }
   },
   computed: {
+    accountId(): number { return wikiStore.user.id },
+    personalFilterOptions() {
+      return (['all', 'active', 'expired', 'revoked', 'unknown'] as const).map(value => ({
+        value,
+        title: value === 'all' ? this.$t('admin:api.allKeys', { keysCount: this.personalMcpKeys.length, interpolation: { escapeValue: false } }) : this.$t(`admin:api.${{ active: 'active2', expired: 'expired2', revoked: 'revoked2', unknown: 'unknownExpiry' }[value]}`)
+      }))
+    },
+    filteredPersonalKeys(): AdminPersonalMcpKey[] {
+      const query = (this.personalSearch || '').trim().toLocaleLowerCase()
+      return this.personalMcpKeys.filter(key => `${key.name} ${this.personalOwnerName(key)} ${key.owner?.email || ''} ${key.owner?.id || ''} ${key.access}`.toLocaleLowerCase().includes(query) && (this.personalFilter === 'all' || this.keyState(key) === this.personalFilter))
+    },
     keyFilterOptions() {
       return [{ title: this.$t('admin:api.allKeys', { keysCount: this.keys.length, interpolation: { escapeValue: false } }), value: 'all' }, { title: this.$t('admin:api.active', { activeKeyCount: this.activeKeyCount, interpolation: { escapeValue: false } }), value: 'active' }, { title: this.$t('admin:api.expired', { expiredKeyCount: this.expiredKeyCount, interpolation: { escapeValue: false } }), value: 'expired' }, { title: this.$t('admin:api.revoked', { revokedKeyCount: this.revokedKeyCount, interpolation: { escapeValue: false } }), value: 'revoked' }, { title: this.$t('admin:api.unknownExpiry'), value: 'unknown' }]
     },
@@ -101,18 +132,33 @@ export default {
     canIssueKey(): boolean { return this.createFullAccess || this.assignableGroups.length > 0 }
   },
   watch: {
+    accountId: {
+      flush: 'sync',
+      handler () {
+        this.accountGeneration++
+        this.keys = []; this.personalMcpKeys = []; this.assignableGroups = []; this.connections = null
+        this.canManagePersonalMcpKeys = false; this.createFullAccess = false; this.enabled = false
+        this.current = null; this.replacementKey = null; this.isCreateDialogShown = false; this.isRevokeConfirmDialogShown = false; this.disableDialog = false
+        this.credentialFlowProtected = false; this.revokeLoading = false; this.isToggleLoading = false; this.connectionLoading = false
+        this.keySearch = ''; this.personalSearch = ''; this.keyFilter = 'all'; this.personalFilter = 'all'
+        this.section = 'credentials'
+        void this.loadApiBootstrap(); void this.loadConnections()
+      }
+    },
     section (value: string) {
       const hash = `#${value}`
       if (this.$route.hash !== hash && !(value === 'credentials' && !this.$route.hash)) void this.$router.push({ hash, query: this.$route.query })
     },
     '$route.hash' (hash: string) {
-      this.section = ['connect', 'explore'].includes(hash.slice(1)) ? hash.slice(1) : 'credentials'
+      this.section = ['connect', 'explore', ...(this.canManagePersonalMcpKeys ? ['personal'] : [])].includes(hash.slice(1)) ? hash.slice(1) : 'credentials'
     }
   },
   beforeRouteLeave (): boolean { return !this.isCreateDialogShown && !this.credentialFlowProtected && !this.isToggleLoading && !this.revokeLoading },
   methods: {
-    keyState (key: AdminApiKey) { return apiKeyState(key, this.clock) },
-    keyStateLabel (key: AdminApiKey): string {
+    accountCurrent (accountId: number, generation: number): boolean { return !this.isDisposed && accountId > 0 && accountId === this.accountId && generation === this.accountGeneration },
+    personalOwnerName (key: AdminPersonalMcpKey): string { return key.owner ? key.owner.name || key.owner.email : this.$t('admin:api.deletedOwner') },
+    keyState (key: AdminApiKey | AdminPersonalMcpKey) { return apiKeyState('expiresAt' in key ? { isRevoked: key.isRevoked, expiration: key.expiresAt } : key, this.clock) },
+    keyStateLabel (key: AdminApiKey | AdminPersonalMcpKey): string {
       const labels = { active: 'active2', expired: 'expired2', revoked: 'revoked2', unknown: 'unknownExpiry' }
       return this.$t(`admin:api.${labels[this.keyState(key)]}`)
     },
@@ -127,27 +173,32 @@ export default {
     },
     async loadConnections () {
       if (this.connectionLoading || this.isDisposed) return
+      const accountId = this.accountId; const generation = this.accountGeneration
       this.connectionLoading = true; this.connectionError = false
-      try { const info = await fetchApiConnections(window.fetch.bind(window)); if (!this.isDisposed) this.connections = info }
-      catch { if (!this.isDisposed) this.connectionError = true }
-      finally { if (!this.isDisposed) this.connectionLoading = false }
+      try { const info = await fetchApiConnections(window.fetch.bind(window)); if (this.accountCurrent(accountId, generation)) this.connections = info }
+      catch { if (this.accountCurrent(accountId, generation)) this.connectionError = true }
+      finally { if (this.accountCurrent(accountId, generation)) this.connectionLoading = false }
     },
     async loadApiBootstrap () {
       if (this.isDisposed) return false
+      const accountId = this.accountId; const generation = this.accountGeneration
       this.loadState = 'loading'
       wikiStore.startLoading('admin-api-state-refresh')
       wikiStore.startLoading('admin-api-keys-refresh')
       try {
         const bootstrap = await fetchAdminApiBootstrap(window.fetch.bind(window), this.$t('admin:api.adminApiBootstrapResponse'))
-        if (this.isDisposed) return false
+        if (!this.accountCurrent(accountId, generation)) return false
         this.enabled = bootstrap.enabled
         this.createFullAccess = bootstrap.createFullAccess
         this.assignableGroups = markRaw(bootstrap.assignableGroups)
         this.keys = markRaw(bootstrap.keys)
+        this.canManagePersonalMcpKeys = bootstrap.canManagePersonalMcpKeys
+        this.personalMcpKeys = markRaw(bootstrap.personalMcpKeys)
+        if (!this.canManagePersonalMcpKeys && this.section === 'personal') this.section = 'credentials'
         this.loadState = 'success'
         return true
       } catch (err) {
-        if (this.isDisposed) return false
+        if (!this.accountCurrent(accountId, generation)) return false
         this.loadState = 'error'
         wikiStore.showNotification({
           style: 'red',
@@ -162,8 +213,9 @@ export default {
     },
     async refresh (notify = true) {
       if (this.isDisposed || this.loadState === 'loading') return false
+      const accountId = this.accountId; const generation = this.accountGeneration
       const loaded = await this.loadApiBootstrap()
-      if (notify && loaded) {
+      if (notify && loaded && this.accountCurrent(accountId, generation)) {
         wikiStore.showNotification({
           message: this.$t('admin:api.refreshSuccess'),
           style: 'success',
@@ -175,13 +227,14 @@ export default {
     async globalSwitch () {
       if (this.isDisposed || this.isToggleLoading || this.revokeLoading || this.loadState !== 'success') return
       const wasEnabled = this.enabled
+      const accountId = this.accountId; const generation = this.accountGeneration
       this.isToggleLoading = true
       wikiStore.startLoading('admin-api-toggle')
       try {
         await setAdminApiState(window.fetch.bind(window), !this.enabled)
-        if (this.isDisposed) return
+        if (!this.accountCurrent(accountId, generation)) return
         const loaded = await this.refresh(false)
-        if (loaded) {
+        if (loaded && this.accountCurrent(accountId, generation)) {
           wikiStore.showNotification({
             style: 'success',
             message: wasEnabled ? this.$t('admin:api.toggleStateDisabledSuccess') : this.$t('admin:api.toggleStateEnabledSuccess'),
@@ -189,10 +242,10 @@ export default {
           })
         }
       } catch (err) {
-        if (!this.isDisposed) wikiStore.showError(err)
+        if (this.accountCurrent(accountId, generation)) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-api-toggle')
-        if (!this.isDisposed) this.isToggleLoading = false
+        if (this.accountCurrent(accountId, generation)) this.isToggleLoading = false
       }
     },
     async disableApi () {
@@ -211,13 +264,14 @@ export default {
     },
     async revokeConfirm () {
       if (this.isDisposed || this.revokeLoading || !this.current) return
+      const accountId = this.accountId; const generation = this.accountGeneration
       this.revokeLoading = true
       wikiStore.startLoading('admin-api-revoke')
       try {
         await revokeAdminApiKey(window.fetch.bind(window), this.current.id)
-        if (this.isDisposed) return
+        if (!this.accountCurrent(accountId, generation)) return
         const loaded = await this.refresh(false)
-        if (loaded) {
+        if (loaded && this.accountCurrent(accountId, generation)) {
           wikiStore.showNotification({
             style: 'success',
             message: this.$t('admin:api.revokeSuccess'),
@@ -225,13 +279,35 @@ export default {
           })
         }
       } catch (err) {
-        if (!this.isDisposed) wikiStore.showError(err)
+        if (this.accountCurrent(accountId, generation)) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-api-revoke')
-        if (!this.isDisposed) {
+        if (this.accountCurrent(accountId, generation)) {
           this.isRevokeConfirmDialogShown = false
           this.revokeLoading = false
         }
+      }
+    },
+    async revokePersonal (key: AdminPersonalMcpKey) {
+      if (this.isDisposed || this.adminApiBusy || !this.canManagePersonalMcpKeys || key.isRevoked) return
+      const accountId = this.accountId; const generation = this.accountGeneration
+      const csrfToken = siteConfig.agentCsrfToken
+      const accepted = await requestConfirmation({
+        title: this.$t('admin:api.revokePersonalTitle'),
+        message: this.$t('admin:api.revokePersonalDescription', { name: key.name, owner: this.personalOwnerName(key), interpolation: { escapeValue: false } }),
+        confirmLabel: this.$t('admin:api.revokeKey'), cancelLabel: this.$t('admin:api.keepKey'), tone: 'destructive'
+      })
+      if (!accepted || !this.accountCurrent(accountId, generation) || this.adminApiBusy || !this.canManagePersonalMcpKeys) return
+      this.revokeLoading = true
+      try {
+        const result = await revokeAdminPersonalMcpKey(window.fetch.bind(window), accountId, csrfToken, key.id)
+        if (!this.accountCurrent(accountId, generation)) return
+        this.personalMcpKeys = this.personalMcpKeys.map(row => row.id === result.id ? { ...row, isRevoked: true } : row)
+        wikiStore.showNotification({ style: 'success', message: this.$t('admin:api.revokeSuccess'), icon: 'check' })
+      } catch (err) {
+        if (this.accountCurrent(accountId, generation)) wikiStore.showError(err)
+      } finally {
+        if (this.accountCurrent(accountId, generation)) this.revokeLoading = false
       }
     }
   },
@@ -242,6 +318,7 @@ export default {
   },
   beforeUnmount () {
     this.isDisposed = true
+    this.accountGeneration++
     if (this.clockTimer) clearInterval(this.clockTimer)
   }
 }

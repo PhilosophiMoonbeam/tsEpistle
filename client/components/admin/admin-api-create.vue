@@ -16,9 +16,8 @@
               <template v-if="scope === 'group'"><v-alert v-if="!selectableGroups.length" type="info" variant="tonal" class="mb-3">{{ $t('admin:apiCreate.noPermissionGroupsCurrently') }}</v-alert><v-select ref="groupInput" v-model="group" :items="selectableGroups" item-title="name" item-value="id" variant="outlined" color="primary" :label="$t('admin:apiCreate.permissionGroup')" :rules="groupRules" :disabled="loading || !selectableGroups.length" />
                 <div v-if="selectedGrant" class="grant-preview"><strong>{{ selectedGrant.name }}</strong><p>{{ $t('admin:apiCreate.currentPermissionsPageRules', { permissionsCount: selectedGrant.permissions.length, pageRuleCount: selectedGrant.pageRuleCount, interpolation: { escapeValue: false } }) }}</p><div class="grant-permissions"><code v-for="permission in selectedGrant.permissions" :key="permission">{{ permission }}</code></div><details v-if="selectedGrant.pageRules.length" class="grant-rules"><summary>{{ $t('admin:apiCreate.reviewPageAccessRules') }}</summary><ul><li v-for="(rule, index) in selectedGrant.pageRules" :key="index"><strong>{{ rule.deny ? $t('admin:apiCreate.deny') : $t('admin:apiCreate.allow') }} · {{ rule.match }}</strong><code>{{ rule.path || '/' }}</code><small>{{ rule.roles.join(', ') || $t('admin:apiCreate.noActions') }} · {{ rule.locales.join(', ') || $t('admin:apiCreate.allLanguages') }}</small></li></ul></details><p class="key-note">{{ $t('admin:apiCreate.groupsCurrentGrantFuture') }}</p></div><v-alert v-else-if="group" type="info" variant="tonal">{{ $t('admin:apiCreate.permissionDetailsUnavailableReload') }}</v-alert>
               </template>
-              <div class="mcp-key-choice"><v-checkbox v-model="mcpAccess" :label="$t('admin:apiCreate.allowKeyConnectThrough')" color="primary" hide-details :disabled="loading || (!mcpAccess && (!connections?.mcpEnabled || connections.mcpConfigurationError))" /><p class="key-note">{{ connections?.mcpEnabled ? $t('admin:apiCreate.keyWillBoundConfigured') : $t('admin:apiCreate.mcpMustEnabledDeployment') }}</p><p v-if="mcpAccess && scope === 'group' && selectedGrant && !selectedGrant.permissions.some(permission => ['use:mcp', 'manage:system'].includes(permission))" class="key-note">{{ $t('admin:apiCreate.groupDoesNotCurrently') }}</p><code v-if="mcpAccess">{{ connections?.mcpResource }}</code></div>
             </section>
-            <section v-if="step === 3" :aria-label="$t('admin:apiCreate.credentialReview')"><dl class="key-review"><div><dt>{{ $t('admin:apiCreate.integration') }}</dt><dd>{{ name.trim() }}</dd></div><div><dt>{{ $t('admin:apiCreate.lifetime') }}</dt><dd>{{ expirations.find(item => item.value === expiration)?.title }}</dd></div><div><dt>{{ $t('admin:apiCreate.authority') }}</dt><dd>{{ scope === 'full' ? $t('admin:apiCreate.systemAdministrator') : selectableGroups.find(item => item.id === group)?.name || $t('admin:apiCreate.group', { group, interpolation: { escapeValue: false } }) }}</dd></div><div><dt>{{ $t('admin:apiCreate.protocols') }}</dt><dd>{{ mcpAccess ? $t('admin:apiCreate.restV1GraphqlMcp') : $t('admin:apiCreate.restV1Graphql') }}</dd></div><div v-if="mcpAccess"><dt>{{ $t('admin:apiCreate.mcpResource') }}</dt><dd>{{ connections?.mcpResource }}</dd></div></dl><p>{{ $t('admin:apiCreate.afterIssuingSaveKey') }}</p></section>
+            <section v-if="step === 3" :aria-label="$t('admin:apiCreate.credentialReview')"><dl class="key-review"><div><dt>{{ $t('admin:apiCreate.integration') }}</dt><dd>{{ name.trim() }}</dd></div><div><dt>{{ $t('admin:apiCreate.lifetime') }}</dt><dd>{{ expirations.find(item => item.value === expiration)?.title }}</dd></div><div><dt>{{ $t('admin:apiCreate.authority') }}</dt><dd>{{ scope === 'full' ? $t('admin:apiCreate.systemAdministrator') : selectableGroups.find(item => item.id === group)?.name || $t('admin:apiCreate.group', { group, interpolation: { escapeValue: false } }) }}</dd></div><div><dt>{{ $t('admin:apiCreate.protocols') }}</dt><dd>{{ $t('admin:apiCreate.restV1Graphql') }}</dd></div></dl><p>{{ $t('admin:apiCreate.afterIssuingSaveKey') }}</p></section>
           </v-card-text>
           <v-card-actions class="key-dialog-actions"><v-btn variant="text" :disabled="loading" @click="isShown = false">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn v-if="step > 1" variant="text" :disabled="loading" @click="step--">{{ $t('admin:apiCreate.back') }}</v-btn><v-btn v-if="step < 3" color="primary" variant="flat" :disabled="loading || !hasDelegableAuthority" @click="nextStep">{{ $t('admin:apiCreate.continue') }}</v-btn><v-btn v-else type="submit" color="primary" variant="flat" :loading="loading" :disabled="loading || !hasDelegableAuthority">{{ $t('admin:apiCreate.issueKey') }}</v-btn></v-card-actions>
         </v-card>
@@ -30,7 +29,7 @@
 
 <script lang='ts'>
 import type { PropType } from 'vue'
-import type { ApiAssignableGroup, ApiConnectionInfo } from '../../../shared/api-admin.ts'
+import type { ApiAssignableGroup } from '../../../shared/api-admin.ts'
 import type { AdminApiKey } from '../../helpers/auth-api'
 import { wikiStore } from '@/store/index.ts'
 
@@ -41,7 +40,6 @@ export default {
   emits: ['update:modelValue', 'sensitive-state'],
   props: {
     assignableGroups: { type: Array as PropType<ApiAssignableGroup[]>, default: () => [] },
-    connections: { type: Object as PropType<ApiConnectionInfo | null>, default: null },
     createFullAccess: { type: Boolean, default: false },
     seed: { type: Object as PropType<AdminApiKey | null>, default: null },
     modelValue: {
@@ -57,8 +55,8 @@ export default {
     return {
       step: 1,
       formError: '',
-      mcpAccess: false,
       loading: false,
+      isDisposed: false,
       name: '',
       expiration: '90d',
       scope: 'group' as 'full' | 'group' | null,
@@ -69,6 +67,7 @@ export default {
     }
   },
   computed: {
+    accountId (): number { return wikiStore.user.id },
     selectableGroups (): ApiAssignableGroup[] { return this.assignableGroups },
     selectedGrant () { return this.assignableGroups.find(group => group.id === this.group) },
     hasDelegableAuthority (): boolean { return this.createFullAccess || this.selectableGroups.length > 0 },
@@ -124,7 +123,6 @@ export default {
           this.expiration = '90d'
           this.scope = this.seed ? (this.seedAuthorityAvailable ? (this.seed.grant.groupId === 1 ? 'full' : 'group') : null) : 'group'
           this.group = this.seedAuthorityAvailable && this.seed?.grant.groupId && this.seed.grant.groupId > 2 ? this.seed.grant.groupId : null
-          this.mcpAccess = Boolean(this.seed?.grant.mcpResource)
           this.$nextTick(() => {
             if (this.modelValue) this.focusFormControl('keyNameInput')
           })
@@ -139,20 +137,22 @@ export default {
     }
   },
   methods: {
+    accountCurrent (accountId: number): boolean { return !this.isDisposed && accountId > 0 && accountId === this.accountId },
     warnBeforeUnload (event: BeforeUnloadEvent) { if (this.modelValue || this.flowProtected) { event.preventDefault(); event.returnValue = '' } },
     nextStep () {
       this.formError = ''
       if (!this.hasDelegableAuthority) { this.formError = this.$t('admin:apiCreate.noDelegableAuthority'); return }
       if (this.step === 1 && (this.name.trim().length < 2 || this.name.trim().length > 255 || !this.expiration)) { this.formError = this.$t('admin:apiCreate.enterName2255'); this.focusFormControl('keyNameInput'); return }
       if (this.step === 2 && (!this.scope || (this.scope === 'full' && !this.createFullAccess) || (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)))) { this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
-      if (this.step === 2 && this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.formError = this.$t('admin:apiCreate.mcpConfigurationUnavailableReload'); return }
       this.step++
     },
     async copyKey () {
+      const accountId = this.accountId
       try {
         await navigator.clipboard.writeText(this.key)
-        this.copied = true
+        if (this.accountCurrent(accountId)) this.copied = true
       } catch {
+        if (!this.accountCurrent(accountId)) return
         const input = this.$refs.keyContentsIpt as { select?: () => void } | undefined
         input?.select?.()
         wikiStore.showNotification({ style: 'red', message: this.$t('admin:apiCreate.copyFailedSelectKey'), icon: 'alert' })
@@ -176,15 +176,16 @@ export default {
     },
     async generate () {
       if (this.loading) return
+      const accountId = this.accountId
       if (this.step < 3) { this.nextStep(); return }
       if (!this.hasDelegableAuthority || !this.scope) { this.step = 2; this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
       if (this.scope === 'full' && !this.createFullAccess) { this.step = 2; this.formError = this.$t('admin:apiCreate.systemAdministratorDelegationUnavailable'); return }
       if (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)) { this.step = 2; this.formError = this.$t('admin:apiCreate.chooseAvailablePermissionGroup'); return }
-      if (this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.step = 2; this.formError = this.$t('admin:apiCreate.mcpConfigurationUnavailableReload'); return }
       const form = this.$refs.createForm as {
         validate?: () => Promise<{ valid: boolean }>
       } | undefined
       const validation = await form?.validate?.()
+      if (!this.accountCurrent(accountId)) return
       if (!validation?.valid) {
         const normalizedName = this.name.trim()
         let firstInvalid = 'keyNameInput'
@@ -208,9 +209,9 @@ export default {
           name: this.name,
           expiration: this.expiration,
           fullAccess: this.scope === 'full',
-          group: this.scope === 'group' ? this.group : null,
-          mcpAccess: this.mcpAccess
+          group: this.scope === 'group' ? this.group : null
         })
+        if (!this.accountCurrent(accountId)) return
         this.key = resp.key
         this.isCopyKeyDialogShown = true
         this.isShown = false
@@ -220,7 +221,7 @@ export default {
         this.group = null
         const refreshed = this.refreshApiKeys ? await (this.refreshApiKeys as (notify: boolean) => Promise<boolean>)(false).catch(() => false) : true
 
-        if (refreshed) {
+        if (refreshed && this.accountCurrent(accountId)) {
           wikiStore.showNotification({
             style: 'success',
             message: this.$t('admin:api.newKeySuccess'),
@@ -229,16 +230,18 @@ export default {
         }
 
       } catch (err) {
-        this.formError = getErrorMessage(err)
-        wikiStore.showError(err)
+        if (this.accountCurrent(accountId)) {
+          this.formError = getErrorMessage(err)
+          wikiStore.showError(err)
+        }
       } finally {
         wikiStore.stopLoading('admin-api-create')
-        this.loading = false
+        if (this.accountCurrent(accountId)) this.loading = false
       }
     }
   },
   mounted () { window.addEventListener('beforeunload', this.warnBeforeUnload) },
-  beforeUnmount () { window.removeEventListener('beforeunload', this.warnBeforeUnload); this.key = '' }
+  beforeUnmount () { this.isDisposed = true; window.removeEventListener('beforeunload', this.warnBeforeUnload); this.key = '' }
 }
 </script>
 <style scoped>
@@ -246,7 +249,7 @@ export default {
 .key-dialog-heading { padding: 1.75rem 1.75rem .5rem; }.key-kicker { font-size: .7rem; letter-spacing: .09em; text-transform: uppercase; color: var(--wiki-accent-ink); }.key-dialog-heading h2 { font: 500 clamp(1.6rem, 4vw, 2rem) var(--wiki-font-display); margin-block: .6rem .75rem; }p { font-size: .85rem; line-height: 1.7; margin-bottom: 1rem; }
 .key-progress { display: flex; list-style: none; gap: 1.5rem; padding: .75rem 1.75rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); }.key-progress li { display: flex; align-items: center; gap: .5rem; font-size: .8rem; }.key-progress span { display: grid; place-items: center; width: 1.6rem; height: 1.6rem; border: 1px solid var(--wiki-surface-border); border-radius: 50%; font-size: .7rem; }.key-progress .current { color: var(--wiki-accent-ink); }.key-progress .current span { border-color: currentColor; }
 .key-dialog-body { overflow-y: auto; padding: 1.5rem 1.75rem; }.key-dialog-actions { flex-shrink: 0; padding: 1rem 1.25rem; border-top: 1px solid var(--wiki-surface-border); }.grant-preview { padding: 1rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); }.grant-preview strong { font-size: .9rem; }.grant-preview p { margin-block: .4rem; }.grant-permissions { display: flex; flex-wrap: wrap; gap: .4rem; }.grant-permissions code { border: 1px solid var(--wiki-surface-border); padding: .25rem .4rem; border-radius: .3rem; font-size: .72rem; overflow-wrap: anywhere; }.grant-rules { margin-top: 1rem; }.grant-rules summary { cursor: pointer; font-size: .8rem; }.grant-rules ul { list-style: none; padding: 0; }.grant-rules li { display: grid; gap: .3rem; padding-block: .75rem; border-bottom: 1px solid var(--wiki-surface-border); font-size: .75rem; }.grant-rules code { overflow-wrap: anywhere; }.grant-rules small { font-size: .7rem; }
-.key-note { font-size: .75rem; }.mcp-key-choice { margin-top: 1.5rem; padding-top: .5rem; border-top: 1px solid var(--wiki-surface-border); }.mcp-key-choice > code { display: block; font-size: .8rem; overflow-wrap: anywhere; }
+.key-note { font-size: .75rem; }
 .key-review { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }.key-review dt { font-size: .7rem; }.key-review dd { font-size: .9rem; margin: .5rem 0 0; overflow-wrap: anywhere; }.key-copy-actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; font-size: .8rem; }
 @media(max-width: 600px) { .key-dialog-heading { padding: 1.25rem 1rem .5rem; }.key-dialog-body { padding: 1rem; }.key-progress { padding-inline: 1rem; gap: 1rem; }.key-review { grid-template-columns: 1fr; } }
 </style>

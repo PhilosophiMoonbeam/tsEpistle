@@ -58,6 +58,7 @@ const apiTestDatabase = () => {
     const query = {
       select: vi.fn(() => query),
       orderBy: vi.fn(() => query),
+      whereNull: vi.fn(column => { rows = rows.filter(row => row[column] == null); return query }),
       where: vi.fn((column, value) => {
         rows = rows.filter(row => row[column] === value)
         return query
@@ -624,7 +625,7 @@ describe('controllers/api auth endpoints', () => {
 
   it('returns admin api bootstrap payload when authorized', async () => {
     const fullKey = '123456789012345678901234567890'
-    const orderBy = vi.fn().mockResolvedValueOnce([
+    global.WIKI.models.knex.tables.apiKeys.push(...[
       {
         id: 7,
         name: 'Deploy',
@@ -636,7 +637,6 @@ describe('controllers/api auth endpoints', () => {
         extraSecret: 'do-not-return'
       }
     ])
-    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
     const { api } = await loadHandlers()
     const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -644,18 +644,18 @@ describe('controllers/api auth endpoints', () => {
     await api(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system', 'manage:api'])
-    expect(global.WIKI.models.apiKeys.query).toHaveBeenCalledWith(expect.any(Function))
-    expect(orderBy).toHaveBeenCalledWith(['isRevoked', 'name'])
     expect(res.json).toHaveBeenCalledWith({
       enabled: true,
       createFullAccess: false,
       assignableGroups: [],
+      canManagePersonalMcpKeys: false,
+      personalMcpKeys: [],
       keys: [
         {
           id: 7,
           name: 'Deploy',
           keyShort: '...' + fullKey.substring(fullKey.length - 20),
-          grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+          grant: { groupId: null },
           canRevoke: false,
           isRevoked: false,
           expiration: '2026-01-01T00:00:00.000Z',
@@ -673,7 +673,7 @@ describe('controllers/api auth endpoints', () => {
   it('redacts malformed short admin api keys instead of exposing key material', async () => {
     const shortKey = 'abc'
     const boundaryKey = 'x'.repeat(20)
-    const orderBy = vi.fn().mockResolvedValueOnce([
+    global.WIKI.models.knex.tables.apiKeys.push(...[
       {
         id: 8,
         name: 'Legacy',
@@ -702,7 +702,6 @@ describe('controllers/api auth endpoints', () => {
         updatedAt: '2025-02-01T00:00:00.000Z'
       }
     ])
-    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
     const { api } = await loadHandlers()
     const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -729,6 +728,8 @@ describe('controllers/api auth endpoints', () => {
       enabled: false,
       createFullAccess: false,
       assignableGroups: [],
+      canManagePersonalMcpKeys: false,
+      personalMcpKeys: [],
       keys: []
     })
   })
@@ -759,13 +760,28 @@ describe('controllers/api auth endpoints', () => {
       enabled: true,
       createFullAccess: false,
       assignableGroups: [],
+      canManagePersonalMcpKeys: false,
+      personalMcpKeys: [],
       keys: []
     })
   })
+  it.each([
+    { 'sec-fetch-site': 'cross-site', origin: 'https://wiki.example.test', 'x-wiki-csrf': 'current' },
+    { 'sec-fetch-site': 'same-origin', origin: 'https://other.example.test', 'x-wiki-csrf': 'current' },
+    { 'sec-fetch-site': 'same-origin', origin: 'https://wiki.example.test', 'x-wiki-csrf': 'wrong' }
+  ])('rejects personal oversight revocation with invalid provenance or CSRF: %j', async headers => {
+    await loadHandlers()
+    const handler = express.__router.post.mock.calls.find(([path]) => path === '/api/personal-mcp-keys/:id/revoke')[1]
+    const req = { user: adminUser(['manage:system']), session: { agentCsrfToken: 'current' }, get: name => headers[name.toLowerCase()], params: { id: '1' } }
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    await handler(req, res)
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(global.WIKI.models.knex.transaction).not.toHaveBeenCalled()
+  })
+
 
   it('forwards admin api bootstrap query failures to next', async () => {
-    const orderBy = vi.fn().mockRejectedValueOnce(new Error('db failed'))
-    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
+    global.WIKI.models.knex.transaction.mockRejectedValueOnce(new Error('db failed'))
     const { api } = await loadHandlers()
     const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -947,12 +963,12 @@ describe('controllers/api auth endpoints', () => {
     expect(global.WIKI.models.apiKeys.createNewKey).not.toHaveBeenCalled()
   })
 
-  it('preserves explicit MCP opt-out and useful short lifetimes', async () => {
+  it('preserves useful short lifetimes for service-only keys', async () => {
     global.WIKI.models.knex.tables.groups.push({ ...apiScopedGroup })
     const { createApiKey } = await loadHandlers()
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-    await createApiKey({ user: adminUser(), body: { name: '  Indexer  ', expiration: '1h', fullAccess: false, group: 7, mcpAccess: false } }, res)
-    expect(global.WIKI.models.apiKeys.createNewKey).toHaveBeenCalledWith({ name: 'Indexer', expiration: '1h', fullAccess: false, group: 7, mcpAccess: false }, expect.any(Function))
+    await createApiKey({ user: adminUser(), body: { name: '  Indexer  ', expiration: '1h', fullAccess: false, group: 7 } }, res)
+    expect(global.WIKI.models.apiKeys.createNewKey).toHaveBeenCalledWith({ name: 'Indexer', expiration: '1h', fullAccess: false, group: 7 }, expect.any(Function))
   })
 
   it('requires API administration permissions before inspecting connections', async () => {
@@ -1006,7 +1022,6 @@ describe('controllers/api auth endpoints', () => {
     await revokeApiKey({ user: adminUser(), params: { id: '42' } }, res)
 
     expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.json).toHaveBeenCalledWith({ error: 'API key no longer exists' })
     expect(global.WIKI.auth.reloadApiKeys).not.toHaveBeenCalled()
   })
 

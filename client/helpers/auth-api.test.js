@@ -3,6 +3,7 @@ import {
   fetchAdminApiBootstrap,
   setAdminApiState,
   revokeAdminApiKey,
+  revokeAdminPersonalMcpKey,
   createAdminApiKey,
   submitAuthRequest,
   submitStatusRequest
@@ -115,13 +116,15 @@ describe('auth api helper', () => {
         enabled: true,
         createFullAccess: false,
         assignableGroups: [],
+        canManagePersonalMcpKeys: false,
+        personalMcpKeys: [],
         extraRoot: 'ignored',
         keys: [
           {
             id: 7,
             name: 'Deploy',
             keyShort: '...12345678901234567890',
-            grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+            grant: { groupId: null },
             canRevoke: false,
             key: '[REDACTED]',
             isRevoked: false,
@@ -138,13 +141,15 @@ describe('auth api helper', () => {
       enabled: true,
       createFullAccess: false,
       assignableGroups: [],
+      canManagePersonalMcpKeys: false,
+      personalMcpKeys: [],
       keys: [
         {
           id: 7,
           name: 'Deploy',
           keyShort: '...12345678901234567890',
           canRevoke: false,
-          grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+          grant: { groupId: null },
           isRevoked: false,
           expiration: '2026-01-01T00:00:00.000Z',
           createdAt: '2025-01-01T00:00:00.000Z',
@@ -162,7 +167,7 @@ describe('auth api helper', () => {
   })
 
   test('rejects malformed admin API bootstrap root payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ enabled: 'true', createFullAccess: false, assignableGroups: [], keys: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ enabled: 'true', createFullAccess: false, assignableGroups: [], keys: [], canManagePersonalMcpKeys: false, personalMcpKeys: [] }))
 
     await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Bad API bootstrap payload'))).rejects.toThrow('Bad API bootstrap payload')
   })
@@ -173,6 +178,8 @@ describe('auth api helper', () => {
         enabled: false,
         createFullAccess: false,
         assignableGroups: [],
+        canManagePersonalMcpKeys: false,
+        personalMcpKeys: [],
         keys: [
           {
             id: 7,
@@ -197,6 +204,8 @@ describe('auth api helper', () => {
         enabled: false,
         createFullAccess: false,
         assignableGroups: [],
+        canManagePersonalMcpKeys: false,
+        personalMcpKeys: [],
         keys: [
           {
             id: 7,
@@ -221,12 +230,14 @@ describe('auth api helper', () => {
         enabled: false,
         createFullAccess: false,
         assignableGroups: [],
+        canManagePersonalMcpKeys: false,
+        personalMcpKeys: [],
         keys: [
           {
             id: 7,
             name: 'Legacy',
             keyShort: '...[redacted]',
-            grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+            grant: { groupId: null },
             canRevoke: false,
             isRevoked: false,
             expiration: '2026-01-01T00:00:00.000Z',
@@ -241,13 +252,15 @@ describe('auth api helper', () => {
       enabled: false,
       createFullAccess: false,
       assignableGroups: [],
+      canManagePersonalMcpKeys: false,
+      personalMcpKeys: [],
       keys: [
         {
           id: 7,
           name: 'Legacy',
           keyShort: '...[redacted]',
           canRevoke: false,
-          grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+          grant: { groupId: null },
           isRevoked: false,
           expiration: '2026-01-01T00:00:00.000Z',
           createdAt: '2025-01-01T00:00:00.000Z',
@@ -315,6 +328,41 @@ describe('auth api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'missing key' }, false))
 
     await expect(Promise.resolve(revokeAdminApiKey(fetchImpl, 7, 'Bad revoke'))).rejects.toThrow('missing key')
+  })
+
+  test('requires explicit personal inventory authority and validates every personal row', async () => {
+    const row = { id: 8, name: 'Desktop', access: 'read-only', createdAt: '2026-01-01', expiresAt: '2027-01-01', isRevoked: false, owner: { id: 4, name: 'Reader', email: 'reader@example.invalid', isActive: true } }
+    const bootstrap = { enabled: true, createFullAccess: false, assignableGroups: [], keys: [], canManagePersonalMcpKeys: true, personalMcpKeys: [row, { ...row, id: 9, owner: null }] }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(bootstrap))
+    expect((await fetchAdminApiBootstrap(fetchImpl)).personalMcpKeys).toEqual(bootstrap.personalMcpKeys)
+    for (const value of [
+      { ...bootstrap, canManagePersonalMcpKeys: undefined },
+      { ...bootstrap, personalMcpKeys: undefined },
+      { ...bootstrap, canManagePersonalMcpKeys: false },
+      { ...bootstrap, personalMcpKeys: [{ ...row, access: 'full' }] },
+      { ...bootstrap, personalMcpKeys: [{ ...row, owner: { ...row.owner, isActive: 1 } }] },
+      { ...bootstrap, personalMcpKeys: [{ ...row, key: 'must-not-reach-inventory' }] }
+    ]) {
+      fetchImpl.mockResolvedValueOnce(createJsonResponse(value))
+      await expect(fetchAdminApiBootstrap(fetchImpl, 'Invalid inventory')).rejects.toThrow('Invalid inventory')
+    }
+  })
+
+  test('binds personal admin revocation to the captured account and CSRF token', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ id: 8, isRevoked: true }))
+    expect(await revokeAdminPersonalMcpKey(fetchImpl, 4, 'csrf-account-four', 8)).toEqual({ id: 8, isRevoked: true })
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/api/personal-mcp-keys/8/revoke', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Wiki-Csrf': 'csrf-account-four', 'X-TsEpistle-Profile-Account': '4' },
+      body: '{}'
+    })
+    for (const payload of [{ id: 9, isRevoked: true }, { id: 8, isRevoked: false }, { id: 8, isRevoked: true, key: 'unexpected' }]) {
+      fetchImpl.mockResolvedValueOnce(createJsonResponse(payload))
+      await expect(revokeAdminPersonalMcpKey(fetchImpl, 4, 'csrf-account-four', 8)).rejects.toThrow()
+    }
+    fetchImpl.mockResolvedValueOnce(createJsonResponse({ error: 'Current account required' }, false))
+    await expect(revokeAdminPersonalMcpKey(fetchImpl, 4, 'csrf-account-four', 8)).rejects.toThrow('Current account required')
   })
 
   test('creates admin API keys through REST and returns the generated key', async () => {
