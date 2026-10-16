@@ -882,6 +882,46 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
   }
 }
 
+const holdRecoveryCaptureAfterSubmission = (context: ShellContext) => {
+  const coordinator = context.offlineDraftCoordinator
+  if (!coordinator) throw new Error('The recovery coordinator is missing')
+  const completeSubmission = coordinator.completeSubmission
+  const captureNow = coordinator.captureNow
+  const inFlightWork = Object.getOwnPropertyDescriptor(coordinator, 'hasInFlightWork')?.get
+  if (!inFlightWork) throw new Error('The recovery work boundary is missing')
+  let pending = false
+  let release!: (captured: boolean) => void
+  let reject!: (error: Error) => void
+  const completion = new Promise<boolean>((resolve, rejectCapture) => {
+    release = resolve
+    reject = rejectCapture
+  })
+  Object.defineProperty(coordinator, 'hasInFlightWork', {
+    get: () => pending || inFlightWork.call(coordinator)
+  })
+  coordinator.completeSubmission = async (prepared, outcome) => {
+    const completed = await completeSubmission(prepared, outcome)
+    if (completed) pending = true
+    return completed
+  }
+  coordinator.captureNow = async options => {
+    if (pending) {
+      let captured: boolean
+      try {
+        captured = await completion
+      } finally {
+        pending = false
+      }
+      if (!captured) return false
+    }
+    return captureNow(options)
+  }
+  return {
+    release: (captured = true) => release(captured),
+    reject
+  }
+}
+
 const pendingRenderError = () => Object.assign(new Error('The current page render is pending.'), { status: 503, code: 'PAGE_RENDER_PENDING' })
 
 const createRenderPreview = (store: EditorStore, sourceRevision = '2') => ({
@@ -941,6 +981,215 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
+  test('mounted first Save and close settles pending recovery before requesting the authorized saved preview', async () => {
+    const store = Vue.reactive(createStore())
+    store.page.visibility = 'private'
+    const testWindow = createTestWindow()
+    let writes = 0
+    const previews: Array<{ url: string; credentials: RequestCredentials | undefined }> = []
+    mockRenderPreviews(testWindow, (async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input, testWindow.location.origin)
+      previews.push({ url: `${url.pathname}${url.search}`, credentials: init?.credentials })
+      return Response.json(createRenderPreview(store))
+    }) as typeof fetch)
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async () => {
+        writes++
+        return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      },
+      fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: '2', isSearchable: store.page.isSearchable }),
+      waitForPageRender
+    })
+    const recovery = holdRecoveryCaptureAfterSubmission(mounted.context)
+    mounted.context.editorAdapter.replaceText('first-close saved content')
+    const capturedVersion = mounted.context.editorAdapter.capture().editVersion
+    const saving = mounted.click()
+    await flushSaveUi()
+
+    expect(writes).toBe(1)
+    expect(previews).toEqual([])
+    expect(testWindow.location.assigned).toEqual([])
+    expect(mounted.context.isSaving).toBe(true)
+    expect(mounted.context.saveFeedback).toBe('saved')
+    expect(mounted.context.offlineDraftCoordinator?.hasUnresolvedSubmission).toBe(false)
+    expect(mounted.context.editorAdapter.snapshot()).toMatchObject({ editVersion: capturedVersion, nonPersisted: false })
+    expect(mounted.host.querySelector('[role="status"]')?.textContent).toContain('Saved. Preparing the page for viewing')
+    expect(await mounted.context.saveAndClose()).toBe(false)
+
+    recovery.release()
+    expect(await saving).toBe(true)
+    expect(writes).toBe(1)
+    expect(previews).toEqual([{ url: '/_api/pages/preview?id=12', credentials: 'same-origin' }])
+    expect(testWindow.location.assigned).toEqual(['/_private/en/persisted-path'])
+    expect(mounted.context.isSaving).toBe(false)
+    expect(mounted.context.renderWaitController).toBeNull()
+    expect(mounted.context.isDirty).toBe(false)
+    expect(store.notifications.at(-1)?.style).toBe('success')
+  })
+
+  for (const change of [
+    'typing',
+    'reverted typing',
+    'metadata',
+    'account',
+    'unmount',
+    'new collaboration work',
+    'unresolved submission',
+    'new local work'
+  ] as const) {
+    test(`mounted Save and close protects ${change} while its recovery capture is pending`, async () => {
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      let writes = 0
+      let previews = 0
+      mockRenderPreviews(testWindow, (async () => {
+        previews++
+        return Response.json(createRenderPreview(store))
+      }) as typeof fetch)
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async () => {
+          writes++
+          return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        },
+        fetchPage: async () => {
+          throw pendingRenderError()
+        },
+        waitForPageRender
+      })
+      const recovery = holdRecoveryCaptureAfterSubmission(mounted.context)
+      mounted.context.editorAdapter.replaceText('saved content')
+      let backlog = change === 'new collaboration work' ? 3 : 0
+      const snapshot = mounted.context.editorAdapter.snapshot
+      mounted.context.editorAdapter.snapshot = () => ({ ...snapshot(), collaborationBacklog: backlog })
+      mounted.context.editorAdapter.notifyState()
+      const saving = mounted.click()
+      await flushSaveUi()
+      expect(mounted.context.isSaving).toBe(true)
+      expect(previews).toBe(0)
+      const settlementSignal = mounted.context.renderWaitController?.signal
+      expect(settlementSignal).toBeDefined()
+
+      if (change === 'typing' || change === 'reverted typing') mounted.context.editorAdapter.replaceText('new unsaved content')
+      if (change === 'reverted typing') mounted.context.editorAdapter.replaceText('saved content')
+      if (change === 'metadata') store.page.title = 'New unsaved title'
+      if (change === 'account') {
+        mounted.context.accountId = 99
+        store.user.id = 99
+        store.offlineIdentityEpoch++
+      }
+      if (change === 'unmount') mounted.unmount()
+      if (change === 'new collaboration work') {
+        backlog = 2
+        mounted.context.editorAdapter.notifyState()
+        backlog = 3
+        mounted.context.editorAdapter.notifyState()
+      }
+      if (change === 'unresolved submission') {
+        Object.defineProperty(mounted.context.offlineDraftCoordinator, 'hasUnresolvedSubmission', { get: () => true })
+      }
+      if (change === 'new local work') {
+        Object.defineProperty(mounted.context.offlineDraftCoordinator, 'hasInFlightWork', { get: () => true })
+      }
+      recovery.release()
+      expect(await saving).toBe(false)
+
+      expect(writes).toBe(1)
+      expect(previews).toBe(0)
+      expect(testWindow.location.assigned).toEqual([])
+      expect(testWindow.location.replaced).toEqual([])
+      expect(mounted.context.savedState.content).toBe('saved content')
+      expect(mounted.context.saveFeedback).toBe('saved')
+      expect(mounted.context.renderWaitController).toBeNull()
+      if (change === 'typing') {
+        expect(store.editor.content).toBe('new unsaved content')
+        expect(mounted.context.isDirty).toBe(true)
+      }
+      if (change === 'typing' || change === 'reverted typing') expect(mounted.context.editorAdapter.snapshot().nonPersisted).toBe(true)
+      if (change === 'metadata') expect(store.page.title).toBe('New unsaved title')
+      if (change === 'account' || change === 'unmount') expect(settlementSignal?.aborted).toBe(true)
+      if (change === 'unresolved submission') expect(mounted.context.offlineDraftCoordinator?.hasUnresolvedSubmission).toBe(true)
+      if (change === 'new local work') expect(mounted.context.offlineDraftCoordinator?.hasInFlightWork).toBe(true)
+    })
+  }
+
+  test('mounted Save and close does not settle recovery through an already unresolved submission', async () => {
+    const store = Vue.reactive(createStore())
+    const testWindow = createTestWindow()
+    let writes = 0
+    let previews = 0
+    mockRenderPreviews(testWindow, (async () => {
+      previews++
+      return Response.json(createRenderPreview(store))
+    }) as typeof fetch)
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async () => {
+        writes++
+        return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      },
+      fetchPage: async () => {
+        throw pendingRenderError()
+      },
+      waitForPageRender
+    })
+    const recovery = holdRecoveryCaptureAfterSubmission(mounted.context)
+    Object.defineProperty(mounted.context.offlineDraftCoordinator, 'hasUnresolvedSubmission', { get: () => true })
+    mounted.context.editorAdapter.replaceText('saved content with a retained receipt')
+    const saving = mounted.click()
+    await flushSaveUi()
+    expect(mounted.context.isSaving).toBe(false)
+    expect(await saving).toBe(false)
+    recovery.release()
+    expect(writes).toBe(1)
+    expect(previews).toBe(0)
+    expect(testWindow.location.assigned).toEqual([])
+    expect(mounted.context.offlineDraftCoordinator?.hasUnresolvedSubmission).toBe(true)
+    expect(mounted.context.saveFeedback).toBe('saved')
+  })
+
+  for (const failure of ['unavailable', 'throws'] as const) {
+    test(`mounted ${failure} recovery bookkeeping preserves the successful save and retries close without rewriting`, async () => {
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      let writes = 0
+      let previews = 0
+      mockRenderPreviews(testWindow, (async () => {
+        previews++
+        return Response.json(createRenderPreview(store))
+      }) as typeof fetch)
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async () => {
+          writes++
+          return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        },
+        fetchPage: async () => {
+          throw pendingRenderError()
+        },
+        waitForPageRender
+      })
+      const recovery = holdRecoveryCaptureAfterSubmission(mounted.context)
+      mounted.context.editorAdapter.replaceText('source saved before recovery failure')
+      const saving = mounted.click()
+      await flushSaveUi()
+      expect(mounted.context.isSaving).toBe(true)
+      if (failure === 'throws') recovery.reject(new Error('Local recovery storage is unavailable.'))
+      else recovery.release(false)
+      expect(await saving).toBe(false)
+      expect(writes).toBe(1)
+      expect(previews).toBe(0)
+      expect(testWindow.location.assigned).toEqual([])
+      expect(mounted.context.saveFeedback).toBe('saved')
+      expect(mounted.context.isDirty).toBe(false)
+      expect(mounted.context.savedState.content).toBe('source saved before recovery failure')
+      expect(mounted.context.renderWaitController).toBeNull()
+      expect(store.notifications.at(-1)?.style).not.toBe('error')
+
+      expect(await mounted.click()).toBe(true)
+      expect(writes).toBe(1)
+      expect(previews).toBe(1)
+      expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+    })
+  }
+
   for (const { mode, backlog, remainingBacklog } of [
     { mode: 'update', backlog: 0, remainingBacklog: 0 },
     { mode: 'update', backlog: 3, remainingBacklog: 3 },
