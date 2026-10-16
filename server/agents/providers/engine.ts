@@ -3539,7 +3539,8 @@ const selectVerifiedRecentDraft = (
   draft: NativeDraft,
   plan: WikiVerificationPlan,
   nativeSupportedClaimIndexes: readonly number[],
-  requestFacetCount: number
+  requestFacetCount: number,
+  allowCompleteSelection = false
 ): NativeDraft | undefined => {
   const checks = Object.values(plan.checks)
   if (
@@ -3564,7 +3565,7 @@ const selectVerifiedRecentDraft = (
     if (!supported.has(index)) declinedReads.add(source.readId)
   }
   const claims = draft.answer.claims.filter((_claim, index) => !declinedReads.has(readIds[index]!))
-  if (claims.length === 0 || claims.length === draft.answer.claims.length) return undefined
+  if (claims.length === 0 || (!allowCompleteSelection && claims.length === draft.answer.claims.length)) return undefined
   const answer: WikiSynthesisAnswer = {
     ...draft.answer,
     claims,
@@ -9055,15 +9056,15 @@ export class AxAgentEngine implements AgentEngine {
                 ...nativeDraft,
                 semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index => canonicalJson(nativeDraft.answer.claims[index]!)))
               }
-              if (selectedDraft !== undefined) {
+              const adoptVerifiedRecentPartial = (partial: NativeDraft): void => {
                 selectedRecentPartial = true
-                nativeDraft = verifiedDraft
+                nativeDraft = partial
                 const selectedResult = {
                   ...result,
-                  content: verifiedDraft.content,
+                  content: partial.content,
                   thoughtBlocks: [],
-                  rootNativeDraft: verifiedDraft,
-                  rootUnresolvedFacets: verifiedDraft.answer.unresolvedFacets,
+                  rootNativeDraft: partial,
+                  rootUnresolvedFacets: partial.answer.unresolvedFacets,
                   rootHasVerifiedContent: true,
                   rootMetadataPresent: true
                 } satisfies TurnResult
@@ -9071,11 +9072,11 @@ export class AxAgentEngine implements AgentEngine {
                 delete selectedResult.rootRejectedDraft
                 result = selectedResult
                 rootMetadataStripped = true
-                requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, verifiedDraft.answer.unresolvedFacets, unestablishedCoverage)
+                requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, partial.answer.unresolvedFacets, unestablishedCoverage)
                 assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
-              } else {
-                result = { ...result, rootNativeDraft: verifiedDraft }
               }
+              if (selectedDraft !== undefined) adoptVerifiedRecentPartial(verifiedDraft)
+              else result = { ...result, rootNativeDraft: verifiedDraft }
               // Every published claim still needs complete-source proof.
               // An explicitly unresolved request can retain verified partial findings.
               assessment = assessDraft(
@@ -9140,6 +9141,29 @@ export class AxAgentEngine implements AgentEngine {
                 if (maxTokens !== undefined && totalTokens > maxTokens)
                   throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Coverage exceeded the admitted run token limit', 429)
                 coverageOutputLimited = audit.turn.finishReason === 'length'
+                // A valid incomplete audit can narrow completion, never source support.
+                // Preserve unchanged, wholly verified recent contributions on the final attempt.
+                if (
+                  !coverageOutputLimited &&
+                  audit.verdict === 'incomplete' &&
+                  semantic.valid &&
+                  assessment.valid &&
+                  plan !== null &&
+                  (request.purpose ?? 'root') === 'root' &&
+                  coverage.recentGroups.length > 0 &&
+                  result.finishReason !== 'length' &&
+                  !nativeDraft.allRequestFacetsUnresolved &&
+                  (rejectedDraftCount >= MAX_ANSWER_REPAIRS || turn + 1 >= maxTurns)
+                ) {
+                  const partial = selectVerifiedRecentDraft(
+                    nativeDraft,
+                    plan,
+                    semantic.nativeSupportedClaimIndexes,
+                    contextPlan.requestFacets?.length ?? 1,
+                    true
+                  )
+                  if (partial !== undefined) adoptVerifiedRecentPartial(partial)
+                }
                 if (
                   coverageOutputLimited ||
                   (audit.verdict !== 'complete' &&
