@@ -73,7 +73,7 @@ describe('Locale API boundaries', () => {
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } })
   const wiki = {
     SERVERPATH: fileURLToPath(new URL('../../', import.meta.url)),
-    config: { sessionSecret: 'controller-locale-review-key', host: 'https://wiki.example.test', lang: { code: 'en', autoUpdate: true, namespacing: false, namespaces: [] } },
+    config: { sessionSecret: 'controller-locale-review-key', offlineDraftSecret: 'controller-locale-offline-draft-key', host: 'https://wiki.example.test', lang: { code: 'en', autoUpdate: true, namespacing: false, namespaces: [] } },
     data: { localeNamespaces: ['common'] },
     product: { name: 'tsEpistle' },
     models: { knex: db },
@@ -101,7 +101,12 @@ describe('Locale API boundaries', () => {
       await db('users').insert([1, 3].map(id => ({ id, email: `admin-${id}@example.test`, name: `Administrator ${id}`, isActive: true, authVersion: 0, createdAt: now, updatedAt: now })))
       await db('groups').insert([1, 3].map(id => ({ id, name: `Group ${id}`, permissions: JSON.stringify(id === 1 ? ['manage:system'] : []), pageRules: '[]', createdAt: now, updatedAt: now })))
       await db('userGroups').insert([{ userId: 1, groupId: 1 }, { userId: 3, groupId: 3 }])
-      for (const [key, value] of Object.entries({ lang: wiki.config.lang, sessionSecret: wiki.config.sessionSecret, certs: { public: keys.publicKey, private: keys.privateKey } })) {
+      for (const [key, value] of Object.entries({
+        lang: wiki.config.lang,
+        sessionSecret: { v: wiki.config.sessionSecret },
+        offlineDraftSecret: { v: wiki.config.offlineDraftSecret },
+        certs: { public: keys.publicKey, private: keys.privateKey }
+      })) {
         await db('settings').insert({ key, value: JSON.stringify(value), updatedAt: now }).onConflict('key').merge()
       }
       const { default: settings } = await import('../../models/settings.ts')

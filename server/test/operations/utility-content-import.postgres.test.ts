@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { up as jobsMigration } from '../../db/migrations/2.5.130.ts'
+import { up as leaseMigration } from '../../db/migrations/2.5.158.ts'
 import { up as storageMigration } from '../../db/migrations/tsepistle-000023-storage-administration.ts'
 import { up as utilitiesMigration } from '../../db/migrations/tsepistle-000026-utilities-operations.ts'
+import { up as relocationMigration } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
 import { storageConfigurationKey } from '../../helpers/storage-configuration-key.ts'
 import { runUtilityContentImport } from '../../operations/utility-content-import.ts'
 import { createUtilitiesWorkspaceStore, type UtilitiesWorkspaceStore } from '../../operations/utilities-workspace.ts'
@@ -49,6 +52,22 @@ const rawDefinitions = [
 
 suite('legacy content import storage handoff on PostgreSQL', () => {
   let db: Knex, previousWiki: unknown, utilities: UtilitiesWorkspaceStore
+  const tables = [
+    'utilitiesOperations',
+    'assetRelocationEffects',
+    'assetRelocationOperations',
+    'storageOperations',
+    'durableJobs',
+    'assets',
+    'assetFolders',
+    'pages',
+    'storage',
+    'locales',
+    'userGroups',
+    'groups',
+    'users',
+    'settings'
+  ]
   const effects = { beforeActivation: async () => undefined }
   const completeImport = async () => ({
     targetKey: 'disk',
@@ -78,7 +97,11 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
         executeAction
       }
     },
-    config: { sessionSecret: 'utility-content-import-test-key', telemetry: { isEnabled: false, clientId: 'fixture-client' } },
+    config: {
+      sessionSecret: 'utility-content-import-test-key',
+      lang: { code: 'en', namespacing: false },
+      telemetry: { isEnabled: false, clientId: 'fixture-client' }
+    },
     telemetry: { enabled: false, generateClientId: () => undefined },
     configSvc: { saveToDb: async () => true },
     data: { storage: rawDefinitions }
@@ -119,6 +142,14 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
     })
     await storageMigration(db)
     await utilitiesMigration(db)
+    await jobsMigration(db)
+    await leaseMigration(db)
+    await db.raw(`
+      CREATE TABLE pages (id integer PRIMARY KEY, path text NOT NULL, "localeCode" text NOT NULL, "contentType" text NOT NULL, visibility text NOT NULL);
+      CREATE TABLE "assetFolders" (id integer PRIMARY KEY, slug text NOT NULL, "parentId" integer);
+      CREATE TABLE assets (id integer PRIMARY KEY, filename text NOT NULL, "folderId" integer, hash text NOT NULL);
+    `)
+    await relocationMigration(db)
     runtime.models.knex = db
     previousWiki = Reflect.get(globalThis, 'WIKI')
     Reflect.set(globalThis, 'WIKI', runtime)
@@ -127,16 +158,14 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
 
   afterAll(async () => {
     if (!db) return
-    for (const table of ['utilitiesOperations', 'storageOperations', 'storage', 'locales', 'userGroups', 'groups', 'users', 'settings'])
-      await db.schema.dropTableIfExists(table)
+    for (const table of tables) await db.schema.dropTableIfExists(table)
     await db.destroy()
     Reflect.set(globalThis, 'WIKI', previousWiki)
   })
 
   beforeEach(async () => {
     executeAction.mockClear()
-    for (const table of ['utilitiesOperations', 'storageOperations', 'storage', 'locales', 'userGroups', 'groups', 'users', 'settings'])
-      await db(table).delete()
+    for (const table of tables) await db(table).delete()
     await db('settings').insert({ key: 'storageAdministration', value: '{}', updatedAt: new Date().toISOString() })
     await db('users').insert({ id: 1, isActive: true, authVersion: 0 })
     effects.beforeActivation = async () => undefined
