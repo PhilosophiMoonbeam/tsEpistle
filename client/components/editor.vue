@@ -2420,6 +2420,7 @@ export default defineComponent({
       const expectedLifecycleGeneration = this.lifecycleGeneration
       const coordinator = this.offlineDraftCoordinator
       const savedState = this.savedState
+      const expectedAdapter = this.editorAdapter
       const expected = {
         id: this.savedRenderTarget?.id ?? capture.identity.pageId ?? wikiStore.page.id,
         sourceRevision: this.savedRenderTarget?.sourceRevision ?? wikiStore.page.sourceRevision,
@@ -2427,11 +2428,20 @@ export default defineComponent({
         path: savedState.path,
         visibility: savedState.visibility
       }
+      // A server save covers its exact persisted capture, not later collaboration work.
+      const coveredCollaborationBacklog = !requireReloadSafety &&
+        this.lastSavedAt !== null && this.lastSaveKind === 'server' &&
+        this.savedRenderTarget?.id === expected.id &&
+        this.savedRenderTarget.sourceRevision === expected.sourceRevision &&
+        this.editorAdapterSafety.nonPersisted === false
+        ? this.editorAdapterSafety.collaborationBacklog
+        : 0
+      let collaborationBacklogIncreased = false
       const currentActor = (): boolean =>
         this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, expectedLifecycleGeneration) &&
         this.offlineDraftCoordinator === coordinator && wikiStore.page.id === expected.id
       const canNavigate = (): boolean => {
-        if (!currentActor() || !this.editorAdapterSafety.ready) return false
+        if (!currentActor() || this.editorAdapter !== expectedAdapter || !this.editorAdapterSafety.ready) return false
         let adapter: EditorAdapterCapture | undefined
         try {
           adapter = this.editorAdapter?.capture()
@@ -2451,12 +2461,19 @@ export default defineComponent({
           !this.offlineDraftBusy && !this.offlineDraftMutationBlocked && !this.serverSaveDisabled &&
           this.offlineConnectionState === 'online' &&
           !this.editorAdapterSafety.mergeDirty &&
-          this.editorAdapterSafety.collaborationBacklog === 0 &&
+          !collaborationBacklogIncreased &&
+          (this.editorAdapterSafety.collaborationBacklog === 0 ||
+            (adapter !== undefined && this.editorAdapterSafety.collaborationBacklog <= coveredCollaborationBacklog)) &&
           this.editorAdapterSafety.nonPersisted === false &&
           coordinator?.hasInFlightWork !== true && coordinator?.hasUnresolvedSubmission !== true &&
           (!requireReloadSafety || coordinator?.reloadSafetySnapshot.safe !== false)
       }
       if (!canNavigate()) return false
+      let previousCollaborationBacklog = this.editorAdapterSafety.collaborationBacklog
+      const stopObservingBacklog = expectedAdapter?.onState(safety => {
+        if (safety.collaborationBacklog > previousCollaborationBacklog) collaborationBacklogIncreased = true
+        previousCollaborationBacklog = safety.collaborationBacklog
+      })
       if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
       this.navigationTimer = null
       const controller = markRaw(new AbortController())
@@ -2478,6 +2495,7 @@ export default defineComponent({
         }
         return false
       } finally {
+        stopObservingBacklog?.()
         if (this.renderWaitController === controller) this.renderWaitController = null
       }
     },

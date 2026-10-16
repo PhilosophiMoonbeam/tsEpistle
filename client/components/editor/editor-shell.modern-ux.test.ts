@@ -121,6 +121,8 @@ type EditorAdapterHarness = {
   destroy: () => void
   flushEligibleText: () => void
   markPersisted: (editVersion?: number) => void
+  onState: (listener: (safety: EditorAdapterSafety) => void) => () => void
+  notifyState: () => void
 }
 
 type OfflineCoordinatorHarness = {
@@ -670,8 +672,10 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     $t: translateEnglish
   }) as unknown as ShellContext
 
+  const adapterListeners = new Set<(safety: EditorAdapterSafety) => void>()
   const syncAdapterSafety = () => {
     context.editorAdapterSafety = adapter.snapshot()
+    for (const listener of adapterListeners) listener(context.editorAdapterSafety)
   }
   const adapter: EditorAdapterHarness = {
     capture: () => ({ text: store.editor.content, editVersion: adapterState.editVersion }),
@@ -695,8 +699,15 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
       adapterState.ready = false
       adapterState.revision = 'test-adapter:destroyed'
       syncAdapterSafety()
+      adapterListeners.clear()
     },
     flushEligibleText: () => undefined,
+    onState: listener => {
+      adapterListeners.add(listener)
+      listener(adapter.snapshot())
+      return () => adapterListeners.delete(listener)
+    },
+    notifyState: syncAdapterSafety,
     markPersisted: (editVersion = adapterState.editVersion) => {
       if (editVersion !== adapterState.editVersion) return
       adapterState.nonPersisted = false
@@ -930,8 +941,13 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
-  for (const mode of ['update', 'create'] as const) {
-    test(`mounted ${mode} waits for the saved render before reader navigation and rejects duplicate saves`, async () => {
+  for (const { mode, backlog, remainingBacklog } of [
+    { mode: 'update', backlog: 0, remainingBacklog: 0 },
+    { mode: 'update', backlog: 3, remainingBacklog: 3 },
+    { mode: 'update', backlog: 3, remainingBacklog: 2 },
+    { mode: 'create', backlog: 0, remainingBacklog: 0 }
+  ] as const) {
+    test(`mounted ${mode} waits for the saved render with collaboration backlog ${backlog} to ${remainingBacklog} and rejects duplicate saves`, async () => {
       vi.useFakeTimers()
       const store = Vue.reactive(createStore(mode))
       if (mode === 'update') store.page.visibility = 'private'
@@ -945,6 +961,8 @@ describe('modern editor shell interaction contract', () => {
       }) as typeof fetch)
       const written = async () => {
         writes++
+        expect(mounted.context.editorAdapter.snapshot().collaborationBacklog).toBe(backlog)
+        expect(mounted.context.editorAdapter.snapshot().nonPersisted).toBe(true)
         return { id: mode === 'create' ? 91 : 12, sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
       }
       const mounted = mountSaveActions(store, testWindow, {
@@ -968,11 +986,22 @@ describe('modern editor shell interaction contract', () => {
         waitForPageRender
       })
       mounted.context.editorAdapter.replaceText('saved content')
+      let pendingUpdates: number = backlog
+      const snapshot = mounted.context.editorAdapter.snapshot
+      mounted.context.editorAdapter.snapshot = () => ({ ...snapshot(), collaborationBacklog: pendingUpdates })
+      mounted.context.editorAdapter.notifyState()
+      const capturedVersion = mounted.context.editorAdapter.capture().editVersion
+      expect(mounted.context.editorAdapterSafety.nonPersisted).toBe(true)
       const saving = mounted.click(mode === 'create' ? 'save' : 'close')
       await flushSaveUi()
 
       expect(previews).toBe(1)
       expect(writes).toBe(1)
+      expect(mounted.context.editorAdapter.snapshot()).toMatchObject({
+        editVersion: capturedVersion,
+        nonPersisted: false,
+        collaborationBacklog: backlog
+      })
       expect(testWindow.location.assigned).toEqual([])
       expect(mounted.host.querySelector('[role="status"]')?.textContent).toContain('Saved. Preparing the page for viewing')
       expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-action')?.disabled).toBe(true)
@@ -981,12 +1010,19 @@ describe('modern editor shell interaction contract', () => {
       expect(await mounted.context.saveAndClose()).toBe(false)
       expect(mounted.context.isSaving).toBe(true)
 
+      pendingUpdates = remainingBacklog
+      mounted.context.editorAdapter.notifyState()
       ready = true
       await vi.advanceTimersByTimeAsync(100)
       expect(await saving).toBe(true)
       expect(previews).toBe(2)
       expect(writes).toBe(1)
       expect(mounted.context.isDirty).toBe(false)
+      expect(mounted.context.editorAdapter.snapshot()).toMatchObject({
+        editVersion: capturedVersion,
+        nonPersisted: false,
+        collaborationBacklog: remainingBacklog
+      })
       expect(mounted.context.isSaving).toBe(false)
       expect(testWindow.location.assigned).toEqual([mode === 'update' ? '/_private/en/persisted-path' : '/en/persisted-path'])
     })
@@ -1057,6 +1093,8 @@ describe('modern editor shell interaction contract', () => {
     'auth refresh',
     'merge',
     'collaboration backlog',
+    'covered collaboration backlog',
+    'new backlog after acknowledgement',
     'revision',
     'page',
     'account',
@@ -1081,9 +1119,14 @@ describe('modern editor shell interaction contract', () => {
         waitForPageRender
       })
       mounted.context.editorAdapter.replaceText('saved content')
+      let pendingUpdates = change === 'covered collaboration backlog' || change === 'new backlog after acknowledgement' ? 3 : 0
+      const snapshot = mounted.context.editorAdapter.snapshot
+      mounted.context.editorAdapter.snapshot = () => ({ ...snapshot(), collaborationBacklog: pendingUpdates })
+      mounted.context.editorAdapter.notifyState()
       const saving = mounted.click()
       await flushSaveUi()
       expect(previewSignal).toBeDefined()
+      expect(mounted.context.editorAdapterSafety.nonPersisted).toBe(false)
       const savedPreview = createRenderPreview(store)
       if (change === 'typing' || change === 'reverted typing') mounted.context.editorAdapter.replaceText('new unsaved content')
       if (change === 'reverted typing') mounted.context.editorAdapter.replaceText('saved content')
@@ -1092,7 +1135,16 @@ describe('modern editor shell interaction contract', () => {
       if (change === 'offline') mounted.context.offlineConnectionState = 'offline'
       if (change === 'auth refresh') store.authRefreshPending = true
       if (change === 'merge') mounted.context.editorAdapterSafety.mergeDirty = true
-      if (change === 'collaboration backlog') mounted.context.editorAdapterSafety.collaborationBacklog = 1
+      if (change === 'collaboration backlog' || change === 'covered collaboration backlog') {
+        pendingUpdates++
+        mounted.context.editorAdapter.notifyState()
+      }
+      if (change === 'new backlog after acknowledgement') {
+        pendingUpdates = 2
+        mounted.context.editorAdapter.notifyState()
+        pendingUpdates = 3
+        mounted.context.editorAdapter.notifyState()
+      }
       if (change === 'revision') store.page.sourceRevision = '3'
       if (change === 'page') store.page.id = 99
       if (change === 'account') {
