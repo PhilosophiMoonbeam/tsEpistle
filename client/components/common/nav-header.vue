@@ -446,17 +446,6 @@
                       appearance-selector
                     account-offline-summary(v-else-if='tab.id === `offline`')
                 v-divider
-                form.account-menu__session(action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
-                  v-list-item(
-                    tag='button'
-                    type='submit'
-                    link
-                    :aria-disabled='logoutPending || !onlineActionReady ? `true` : undefined'
-                    :class='{ "account-menu__session--blocked": logoutPending || !onlineActionReady }'
-                  )
-                    template(v-slot:append): v-icon(color='error') mdi-logout
-                    v-list-item-title.text-error {{ logoutPending ? $t('common:accountMenu.signingOut', { defaultValue: 'Signing out…' }) : $t('common:header.logout') }}
-                    v-list-item-subtitle(v-if='!onlineActionReady && !logoutPending') {{ $t('common:accountMenu.reconnectToSignOut', { defaultValue: 'Reconnect to sign out.' }) }}
               template(v-else)
                 .account-menu__offline
                   account-offline-summary
@@ -475,6 +464,19 @@
                   template(v-slot:prepend): v-icon mdi-account-clock-outline
                   v-list-item-title {{ accountVerificationTitle }}
                   v-list-item-subtitle {{ accountVerificationDetail }}
+              //- Auth verification can retire the user while local cleanup is
+              //- pending. Keep the native POST form connected until submission.
+              form.account-menu__session(v-if='isAuthenticated || logoutPending', action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
+                v-list-item(
+                  tag='button'
+                  type='submit'
+                  link
+                  :aria-disabled='logoutPending || !onlineActionReady ? `true` : undefined'
+                  :class='{ "account-menu__session--blocked": logoutPending || !onlineActionReady }'
+                )
+                  template(v-slot:append): v-icon(color='error') mdi-logout
+                  v-list-item-title.text-error {{ logoutPending ? $t('common:accountMenu.signingOut', { defaultValue: 'Signing out…' }) : $t('common:header.logout') }}
+                  v-list-item-subtitle(v-if='!onlineActionReady && !logoutPending') {{ $t('common:accountMenu.reconnectToSignOut', { defaultValue: 'Reconnect to sign out.' }) }}
     page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
     page-selector(
       mode='move'

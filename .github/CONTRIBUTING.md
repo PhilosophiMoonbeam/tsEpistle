@@ -60,6 +60,10 @@ Client Lodash consumers use static `lodash-es` imports so unused methods can be 
 
 `dev/e2e/ci-run.sh`, `dev/e2e/upgrade-smoke.sh`, and `dev/e2e/multi-instance-smoke.sh` require a fresh `WIKI_TEST_NAMESPACE` beginning with `tsepistle-ci-` (lowercase letters, digits, hyphens). CI assigns a distinct namespace per run attempt, job, and PostgreSQL version; local callers should choose a new one for each invocation. These scripts refuse to reuse existing Docker resources. The application binds a Docker-assigned loopback port, and `ci-run.sh` passes the discovered URL to Playwright. Do not assume port 3000 is free or delete another run's containers, networks, or volumes during local cleanup.
 
+The upgrade smoke restores the archived fixture unchanged, then normalizes its public continuity asset's filename and bound cache identity from `continuity.txt` to `continuity.bin`. Both the legacy and current routers reserve `.txt` for page aliases. This fixture-only normalization preserves asset bytes, source artifact hashes, default page-extension support, and public download verification before migration, after migration, and after backup restoration.
+
+Git synchronization may remove an empty child directory while a bounded filesystem observation is opening or enumerating it. Native regressions must cover deferred iterator `ENOENT`, not only `opendir` rejection; only a confirmed-absent child is tolerated. Root disappearance, replacement, symlinks, other errors, and resource limits remain fail-closed.
+
 ## Enterprise Release — security review and attestation workflow
 This workflow applies only when a maintainer explicitly activates **Enterprise Release** for a named official beta, production release, or compliance milestone as defined in `AGENTS.md`. Development Sprint is the default: routine development and maintained local-tailnet deployment do not require an immutable source/attestation pair, review record, evidence document, manifest update, release tag, provenance record, or certification artifact.
 

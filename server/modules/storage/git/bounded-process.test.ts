@@ -74,6 +74,27 @@ describe('bounded Git process execution', () => {
     })
   }
 
+  it('observes surviving bytes when a child disappears after opendir resolves but before iteration', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-read-removed-'))
+    const child = path.join(root, 'en')
+    await mkdir(child)
+    await writeFile(path.join(child, 'removed.md'), 'removed')
+    await writeFile(path.join(root, 'survivor.md'), 'wiki')
+    const realOpendir = fileSystem.opendir
+    const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
+      const directory = await realOpendir(...args)
+      if (args[0] === child) await rm(child, { recursive: true })
+      return directory
+    }) as typeof realOpendir)
+    try {
+      expect(await observeDirectoryTree(root, { maxEntries: 2, maxBytes: 4 })).toEqual({ entries: 2, bytes: 4 })
+      await expect(fileSystem.lstat(child)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      opendirSpy.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps encountered but removed names inside the entry bound', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-entry-bound-'))
     const transient = path.join(root, 'transient')
@@ -95,11 +116,12 @@ describe('bounded Git process execution', () => {
     }
   })
 
-  for (const stage of ['before traversal', 'after root lstat', 'during child traversal'] as const) {
+  for (const stage of ['before traversal', 'after root lstat', 'after root opendir', 'during child traversal'] as const) {
     it(`fails closed when the root disappears ${stage}`, async () => {
       const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-root-'))
       await writeFile(path.join(root, 'child.md'), 'wiki')
       const realLstat = fileSystem.lstat
+      const realOpendir = fileSystem.opendir
       let removed = false
       const lstatSpy = vi.spyOn(fileSystem, 'lstat').mockImplementation((async (...args: Parameters<typeof realLstat>) => {
         const result = await realLstat(...args)
@@ -109,6 +131,14 @@ describe('bounded Git process execution', () => {
         }
         return result
       }) as typeof realLstat)
+      const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
+        const directory = await realOpendir(...args)
+        if (args[0] === root && stage === 'after root opendir' && !removed) {
+          await rm(root, { recursive: true })
+          removed = true
+        }
+        return directory
+      }) as typeof realOpendir)
       try {
         if (stage === 'before traversal') await rm(root, { recursive: true })
         await expect(
@@ -126,6 +156,7 @@ describe('bounded Git process execution', () => {
         ).rejects.toMatchObject({ code: 'ENOENT' })
       } finally {
         lstatSpy.mockRestore()
+        opendirSpy.mockRestore()
         await rm(root, { recursive: true, force: true })
       }
     })
