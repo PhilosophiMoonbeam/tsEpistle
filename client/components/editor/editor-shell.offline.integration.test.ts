@@ -649,7 +649,6 @@ describe('composed editor offline submission boundary', () => {
       const coordinator = shell.offlineDraftCoordinator!
 
       expect(await coordinator.captureThrough(0)).toBe(true)
-      expect(shell.offlineDraftStatus).toBe('needs-review')
       expect(shell.editorAdapter.snapshot().nonPersisted).toBe(false)
       const save = shell.save()
       await Promise.race([networkStarted, save.then(() => { throw new Error('Save ended before dispatching the prepared receipt') })])

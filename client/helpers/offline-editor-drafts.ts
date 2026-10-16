@@ -748,7 +748,7 @@ export class OfflineEditorDraftCoordinator {
             envelope: cloneEnvelope(this.envelopes.get(newest.recordId)!)
           }
         : null
-    const onlineReview = this.options.isOnline?.() === true
+    const onlineReview = newest !== undefined && this.options.isOnline?.() === true
     this.reviewRequired = onlineReview || newest?.payload.state === 'needs-review'
     const candidateChoices = isNewer ? matches : []
     const candidate =

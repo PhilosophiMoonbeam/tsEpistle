@@ -31,6 +31,7 @@ type FetchImpl = (
       'Content-Type'?: 'application/json'
     }
     body?: string
+    signal?: AbortSignal
   }
 ) => Promise<JsonResponse>
 
@@ -496,6 +497,9 @@ async function parseJsonResponse(response: JsonResponse, fallbackMessage: string
     const failure = errorWithResponseStatus(new Error(message), response, fallbackMessage)
     // Offline snapshot refusals may name a known reason code; anything else is dropped.
     const reason = isRecord(payload) ? offlineIneligibleReason(payload.reason) : null
+    if (isRecord(payload) && payload.code === 'PAGE_RENDER_PENDING') {
+      Object.defineProperty(failure, 'code', { configurable: true, enumerable: true, value: payload.code, writable: false })
+    }
     if (reason) Object.defineProperty(failure, 'offlineReason', { configurable: true, enumerable: true, value: reason, writable: false })
     throw failure
   }
@@ -858,6 +862,88 @@ export async function fetchPage(fetchImpl: FetchImpl, id: number, fallbackMessag
   return normalizeResponse(response, fallbackMessage, payload => normalizePageDetails(payload, fallbackMessage))
 }
 
+export const isPageRenderPending = (error: unknown): boolean =>
+  error instanceof Error && Reflect.get(error, 'status') === 503 && Reflect.get(error, 'code') === 'PAGE_RENDER_PENDING'
+
+export type PageRenderTarget = {
+  id: number
+  sourceRevision: string
+  locale: string
+  path: string
+  visibility: 'public' | 'private'
+}
+
+export async function waitForPageRender(
+  fetchImpl: FetchImpl,
+  expected: PageRenderTarget,
+  signal: AbortSignal,
+  fallbackMessage = 'The saved page is not ready to view yet'
+): Promise<void> {
+  if (!isPositiveSafeInteger(expected.id) || !/^[1-9][0-9]*$/u.test(expected.sourceRevision)) throw new Error(fallbackMessage)
+  signal.throwIfAborted()
+  const controller = new AbortController()
+  const abort = (): void => controller.abort(signal.reason)
+  signal.addEventListener('abort', abort, { once: true })
+  if (signal.aborted) abort()
+  const timeout = setTimeout(() => controller.abort(new Error(fallbackMessage)), 15_000)
+  let rejectStopped: (reason: unknown) => void = () => undefined
+  const stopped = new Promise<never>((_resolve, reject) => {
+    rejectStopped = reject
+  })
+  const stop = (): void => rejectStopped(controller.signal.reason ?? new Error(fallbackMessage))
+  controller.signal.addEventListener('abort', stop, { once: true })
+  if (controller.signal.aborted) stop()
+  let retryTimer: typeof timeout | undefined
+  try {
+    let retryDelay = 100
+    while (true) {
+      controller.signal.throwIfAborted()
+      try {
+        await Promise.race([
+          (async () => {
+            const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/preview?id=${encodeURIComponent(expected.id)}`, {
+              credentials: 'same-origin',
+              headers: { Accept: 'application/json' },
+              signal: controller.signal
+            })
+            await normalizeResponse(response, fallbackMessage, payload => {
+              if (
+                !isRecord(payload) ||
+                payload.id !== expected.id ||
+                (typeof payload.sourceRevision !== 'string' && !isPositiveSafeInteger(payload.sourceRevision)) ||
+                String(payload.sourceRevision) !== expected.sourceRevision ||
+                payload.locale !== expected.locale ||
+                payload.path !== expected.path ||
+                payload.visibility !== expected.visibility
+              )
+                throw new Error(fallbackMessage)
+            })
+          })(),
+          stopped
+        ])
+        controller.signal.throwIfAborted()
+        return
+      } catch (error) {
+        controller.signal.throwIfAborted()
+        if (!isPageRenderPending(error)) throw error
+      }
+      // Back off only after the authorized reader explicitly reports a pending render.
+      await Promise.race([
+        new Promise<void>(resolve => {
+          retryTimer = setTimeout(resolve, retryDelay)
+        }),
+        stopped
+      ])
+      retryDelay = Math.min(retryDelay * 2, 1000)
+    }
+  } finally {
+    clearTimeout(timeout)
+    clearTimeout(retryTimer)
+    signal.removeEventListener('abort', abort)
+    controller.signal.removeEventListener('abort', stop)
+  }
+}
+
 export async function fetchOfflinePageSnapshot(
   fetchImpl: FetchImpl,
   id: number,
@@ -1197,7 +1283,7 @@ export async function convertPage(
   await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/convert`, 'POST', { editor, expectedSourceRevision }, fallbackMessage)
 }
 
-export type MoveLinkReviewChange = { before: string, after: string }
+export type MoveLinkReviewChange = { before: string; after: string }
 export type MoveLinkReviewItem = {
   id: number
   title: string
@@ -1226,7 +1312,7 @@ export type MovePageReceipt = {
   message: 'Page has been moved.'
   pageId: number
   sourceRevision: string
-  updated: Array<{ id: number, sourceRevision: string }>
+  updated: Array<{ id: number; sourceRevision: string }>
   projections: 'pending'
 }
 
@@ -1328,7 +1414,8 @@ export async function fetchMoveLinkReview(
   const selectedPageIds = input.selectedPageIds
   if (
     !isPositiveSafeInteger(id) ||
-    (typeof input.expectedSourceRevision !== 'string' || input.expectedSourceRevision.length < 1) ||
+    typeof input.expectedSourceRevision !== 'string' ||
+    input.expectedSourceRevision.length < 1 ||
     (selectedPageIds !== undefined &&
       (selectedPageIds.length > 20 ||
         new Set(selectedPageIds).size !== selectedPageIds.length ||
@@ -1342,13 +1429,8 @@ export async function fetchMoveLinkReview(
     ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
     ...(selectedPageIds === undefined ? {} : { selectedPageIds })
   }
-  return sendJson(
-    fetchImpl,
-    `/_api/pages/${encodeURIComponent(id)}/move/review`,
-    'POST',
-    body,
-    fallbackMessage,
-    payload => normalizeMoveLinkReview(payload, fallbackMessage, selectedPageIds !== undefined)
+  return sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move/review`, 'POST', body, fallbackMessage, payload =>
+    normalizeMoveLinkReview(payload, fallbackMessage, selectedPageIds !== undefined)
   )
 }
 
@@ -1369,13 +1451,8 @@ export async function movePage(
   }
   if (reviewToken !== undefined) {
     if (!reviewToken) throw new Error(fallbackMessage)
-    return sendJson(
-      fetchImpl,
-      `/_api/pages/${encodeURIComponent(id)}/move`,
-      'POST',
-      body,
-      fallbackMessage,
-      payload => normalizeMovePageReceipt(payload, id, fallbackMessage)
+    return sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move`, 'POST', body, fallbackMessage, payload =>
+      normalizeMovePageReceipt(payload, id, fallbackMessage)
     )
   }
   await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/move`, 'POST', body, fallbackMessage)
