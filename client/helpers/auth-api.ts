@@ -1,4 +1,6 @@
 import {
+  type AdminPersonalMcpKey,
+  AdminPersonalMcpKeySchema,
   type ApiAssignableGroup,
   ApiAssignableGroupSchema,
   type ApiConnectionInfo,
@@ -6,6 +8,7 @@ import {
   type ApiKeyGrant,
   ApiKeyGrantSchema
 } from '../../shared/api-admin.ts'
+import { RevokePersonalMcpKeyResponseSchema } from '../../shared/personal-mcp.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 
@@ -273,6 +276,8 @@ export type AdminApiBootstrap = {
   createFullAccess: boolean
   assignableGroups: ApiAssignableGroup[]
   keys: AdminApiKey[]
+  canManagePersonalMcpKeys: boolean
+  personalMcpKeys: AdminPersonalMcpKey[]
 }
 
 function isValidAdminApiKeyShort(keyShort: string): boolean {
@@ -304,7 +309,7 @@ function normalizeAdminApiKey(value: unknown, fallbackMessage: string): AdminApi
     name: value.name,
     keyShort: value.keyShort,
     canRevoke: value.canRevoke,
-    grant: ApiKeyGrantSchema.parse(value.grant ?? { groupId: null, mcpResource: null, mcpResourceVersion: null }),
+    grant: ApiKeyGrantSchema.parse(value.grant ?? { groupId: null }),
     isRevoked: value.isRevoked,
     expiration: value.expiration,
     createdAt: value.createdAt,
@@ -326,14 +331,19 @@ export async function fetchAdminApiBootstrap(fetchImpl: FetchImpl, fallbackMessa
     typeof payload.enabled !== 'boolean' ||
     typeof payload.createFullAccess !== 'boolean' ||
     !Array.isArray(payload.assignableGroups) ||
-    !Array.isArray(payload.keys)
+    !Array.isArray(payload.keys) ||
+    typeof payload.canManagePersonalMcpKeys !== 'boolean' ||
+    !Array.isArray(payload.personalMcpKeys) ||
+    (!payload.canManagePersonalMcpKeys && payload.personalMcpKeys.length > 0)
   ) {
     throw new Error(fallbackMessage)
   }
 
   let assignableGroups: ApiAssignableGroup[]
+  let personalMcpKeys: AdminPersonalMcpKey[]
   try {
     assignableGroups = payload.assignableGroups.map(group => ApiAssignableGroupSchema.parse(group))
+    personalMcpKeys = payload.personalMcpKeys.map(key => AdminPersonalMcpKeySchema.parse(key))
   } catch {
     throw new Error(fallbackMessage)
   }
@@ -342,6 +352,8 @@ export async function fetchAdminApiBootstrap(fetchImpl: FetchImpl, fallbackMessa
     enabled: payload.enabled,
     createFullAccess: payload.createFullAccess,
     assignableGroups,
+    canManagePersonalMcpKeys: payload.canManagePersonalMcpKeys,
+    personalMcpKeys,
     keys: payload.keys.map((key: unknown) => normalizeAdminApiKey(key, fallbackMessage))
   }
 }
@@ -351,7 +363,6 @@ export type StatusResponse = Record<string, unknown> & {
 }
 
 export type AdminApiKeyInput = {
-  mcpAccess?: boolean
   name: string
   expiration: string
   fullAccess: boolean
@@ -413,6 +424,23 @@ export async function revokeAdminApiKey(fetchImpl: FetchImpl, id: number | strin
   return submitStatusRequest(fetchImpl, `/_api/auth/api/keys/${encodeURIComponent(id)}/revoke`, {}, fallbackMessage)
 }
 
+export async function revokeAdminPersonalMcpKey(fetchImpl: FetchImpl, expectedAccountId: number, csrfToken: string, id: number) {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/auth/api/personal-mcp-keys/${encodeURIComponent(id)}/revoke`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Wiki-Csrf': csrfToken,
+      'X-TsEpistle-Profile-Account': String(expectedAccountId)
+    },
+    body: '{}'
+  })
+  const result = RevokePersonalMcpKeyResponseSchema.parse(await parseJsonResponse(response, 'The key could not be revoked. Reload its status before retrying.'))
+  if (result.id !== id) throw new Error('The key revocation response did not match the selected key.')
+  return result
+}
+
 export async function createAdminApiKey(
   fetchImpl: FetchImpl,
   payload: AdminApiKeyInput,
@@ -425,8 +453,7 @@ export async function createAdminApiKey(
       name: payload.name,
       expiration: payload.expiration,
       fullAccess: payload.fullAccess,
-      group: payload.group,
-      ...(payload.mcpAccess === undefined ? {} : { mcpAccess: payload.mcpAccess })
+      group: payload.group
     },
     fallbackMessage
   )

@@ -1,7 +1,7 @@
 import type { Knex } from 'knex'
 import _ from 'lodash'
 import ms from 'ms'
-import type { ApiAssignableGroup } from '../../shared/api-admin.ts'
+import type { AdminPersonalMcpKey, ApiAssignableGroup } from '../../shared/api-admin.ts'
 import { describeApiKeyGrant } from './api-connections.ts'
 import errors from './errors.ts'
 import { groupAuthorityAllows } from './group-administration.ts'
@@ -21,15 +21,10 @@ interface ApiKey {
   personalAccess?: string | null
 }
 
-interface ApiKeyQuery {
-  orderBy(columns: string[]): Promise<ApiKey[]>
-  findById(id: number): { patch(data: Record<string, unknown>): Promise<unknown> }
-}
 
 interface ApiKeyModel {
-  query(transaction?: Knex.Transaction): ApiKeyQuery
   createNewKey(
-    input: { name: string; expiration: string; fullAccess: boolean; group: number | null; mcpAccess?: boolean },
+    input: { name: string; expiration: string; fullAccess: boolean; group: number | null },
     transaction?: Knex.Transaction
   ): Promise<unknown>
 }
@@ -219,11 +214,15 @@ const getConfig = async (requester: SystemRequester) => getDatabase().transactio
     })
     .map(serializeGroup)
     .filter((group): group is ApiAssignableGroup => group !== null)
-  const keys = await getApiKeyModel().query(tx).orderBy(['isRevoked', 'name'])
+  const keys = await tx<ApiKey>('apiKeys').whereNull('personalAccess').whereNull('personalOwnerId').orderBy(['isRevoked', 'name'])
+  const canManagePersonalMcpKeys = authority.actorId !== null && authority.apiKeyId === null && permissions.includes('manage:system')
+  const personalMcpKeys: AdminPersonalMcpKey[] = canManagePersonalMcpKeys ? await personalInventory(tx) : []
   return {
     enabled: currentApiConfiguration().isEnabled === true,
     createFullAccess: permissions.includes('manage:system'),
     assignableGroups,
+    canManagePersonalMcpKeys,
+    personalMcpKeys,
     keys: keys.filter(key => key.personalAccess == null && key.personalOwnerId == null)
       .map(key => serializeKey(key, canRevokeGrant(authority, describeApiKeyGrant(key.key).groupId, groups)))
   }
@@ -258,7 +257,7 @@ const setState = async (requester: SystemRequester, enabled: unknown): Promise<v
 
 const createKey = async (
   requester: SystemRequester,
-  input: { name: unknown; expiration: unknown; fullAccess: unknown; group: unknown; mcpAccess?: unknown }
+  input: { name: unknown; expiration: unknown; fullAccess: unknown; group: unknown }
 ): Promise<unknown> => {
   const { name, expiration, fullAccess, group } = input
   if (!_.isString(name) || name.trim().length < 2 || name.trim().length > 255) throw new ApplicationError('name must contain 2 through 255 characters', { code: 'INVALID_API_KEY_NAME' })
@@ -269,8 +268,6 @@ const createKey = async (
   const lifetime = ms(expiration)
   if (!Number.isFinite(lifetime) || lifetime < 1000 || lifetime > ms('3y')) throw new ApplicationError('Expiration must be a duration from one second through three years', { code: 'INVALID_API_KEY_EXPIRATION' })
   if (!fullAccess && (typeof group !== 'number' || group <= 2)) throw new ApplicationError('Choose a non-system group for scoped access', { code: 'INVALID_API_KEY_GROUP' })
-  if (input.mcpAccess !== undefined && typeof input.mcpAccess !== 'boolean') throw new ApplicationError('mcpAccess must be a boolean', { code: 'INVALID_API_KEY_MCP' })
-  if (input.mcpAccess === true && !(WIKI.config as { agents?: { mcp?: { enabled?: boolean } } }).agents?.mcp?.enabled) throw new ApplicationError('MCP is not enabled in this deployment', { code: 'MCP_DISABLED' })
 
   const key = await getDatabase().transaction(async tx => {
     const authority = await requireSystemAuthority(tx, requester, true, new Date(), ['manage:system', 'manage:api'])
@@ -291,8 +288,7 @@ const createKey = async (
       name: name.trim(),
       expiration,
       fullAccess,
-      group: targetGroupId,
-      ...(typeof input.mcpAccess === 'boolean' ? { mcpAccess: input.mcpAccess } : {})
+      group: targetGroupId
     }, tx)
   })
   await getAuth().reloadApiKeys()
@@ -305,7 +301,7 @@ const revokeKey = async (requester: SystemRequester, id: unknown): Promise<void>
   await getDatabase().transaction(async tx => {
     const authority = await requireSystemAuthority(tx, requester, true, new Date(), ['manage:system', 'manage:api'])
     const row = await tx<ApiKey>('apiKeys').where('id', id).forUpdate().first()
-    if (!row) throw new ApplicationError('API key no longer exists', { status: 404, code: 'API_KEY_NOT_FOUND' })
+    if (!row || row.personalAccess != null || row.personalOwnerId != null) throw new ApplicationError('Service API key no longer exists', { status: 404, code: 'API_KEY_NOT_FOUND' })
     const groups = await tx<GroupRow>('groups').select('id', 'permissions', 'isSystem').orderBy('id')
     const grantGroupId = describeApiKeyGrant(row.key).groupId
     const target = targetGroupForGrant(grantGroupId, groups)
@@ -321,4 +317,36 @@ const revokeKey = async (requester: SystemRequester, id: unknown): Promise<void>
   getOutboundEvents().emit('reloadApiKeys')
 }
 
-export default { createKey, getConfig, revokeKey, setState }
+const personalInventory = async (tx: Knex.Transaction): Promise<AdminPersonalMcpKey[]> => {
+  const rows = await tx('apiKeys').leftJoin('users', 'apiKeys.personalOwnerId', 'users.id')
+    .whereNotNull('apiKeys.personalAccess')
+    .select('apiKeys.id', 'apiKeys.name', 'apiKeys.personalAccess', 'apiKeys.createdAt', 'apiKeys.expiration', 'apiKeys.isRevoked',
+      'users.id as ownerId', 'users.name as ownerName', 'users.email as ownerEmail', 'users.isActive as ownerIsActive')
+    .orderBy('apiKeys.createdAt', 'desc')
+  return rows.map(row => ({
+    id: row.id, name: row.name, access: row.personalAccess, createdAt: row.createdAt,
+    expiresAt: row.expiration, isRevoked: row.isRevoked === true || row.isRevoked === 1,
+    owner: row.ownerId == null ? null : { id: row.ownerId, name: row.ownerName, email: row.ownerEmail, isActive: row.ownerIsActive === true || row.ownerIsActive === 1 }
+  }))
+}
+
+const revokeAdminPersonalMcpKey = async (requester: SystemRequester, expectedAccountId: unknown, id: number) => {
+  if (!Number.isSafeInteger(id) || id < 1) throw new ApplicationError('Key id must be a positive integer.', { status: 400 })
+  await getDatabase().transaction(async tx => {
+    const authority = await requireSystemAuthority(tx, requester, true)
+    if (authority.actorId === null || authority.apiKeyId !== null || authority.actorId === 2)
+      throw new ApplicationError('A signed-in system administrator is required.', { status: 403 })
+    if (typeof expectedAccountId !== 'string' || !/^[1-9]\d*$/.test(expectedAccountId) || !Number.isSafeInteger(Number(expectedAccountId)))
+      throw new ApplicationError('The profile account identity is required.', { status: 400 })
+    if (Number(expectedAccountId) !== authority.actorId)
+      throw new ApplicationError('Your signed-in account changed. Reload this workspace.', { status: 409 })
+    const updated = await tx('apiKeys').where({ id }).whereNotNull('personalAccess')
+      .update({ isRevoked: true, updatedAt: new Date().toISOString() })
+    if (updated !== 1) throw new ApplicationError('Personal MCP key does not exist.', { status: 404, code: 'API_KEY_NOT_FOUND' })
+  })
+  await getAuth().reloadApiKeys()
+  getOutboundEvents().emit('reloadApiKeys')
+  return { id, isRevoked: true as const }
+}
+
+export default { createKey, getConfig, revokeKey, revokeAdminPersonalMcpKey, setState }

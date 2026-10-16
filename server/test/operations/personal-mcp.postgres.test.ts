@@ -10,6 +10,7 @@ import { loadMcpApiPrincipal } from '../../helpers/personal-mcp.ts'
 import { createApiPrincipal, isApiPrincipal, rejectApiPrincipalMutation } from '../../helpers/api-principal.ts'
 import auth, { loadPageRuleAuthority } from '../../core/auth.ts'
 import { requireSystemAuthority } from '../../helpers/system-authority.ts'
+import apiOperations from '../../operations/api.ts'
 
 const connection = getPostgresTestConnection('_personal_mcp_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -29,10 +30,12 @@ suite('personal MCP credential authority on PostgreSQL', () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 4 } })
     await db.schema.createTable('users', table => {
       table.integer('id').primary(); table.boolean('isActive').notNullable()
+      table.integer('authVersion').notNullable().defaultTo(0)
       table.string('name'); table.string('email'); table.string('pictureUrl'); table.string('timezone'); table.string('localeCode')
     })
     await db.schema.createTable('groups', table => {
       table.integer('id').primary(); table.string('name').notNullable().defaultTo('Group'); table.jsonb('permissions').notNullable(); table.jsonb('pageRules').notNullable()
+      table.boolean('isSystem').notNullable().defaultTo(false)
       table.string('adminRevision').notNullable().defaultTo('revision')
     })
     await db.schema.createTable('userGroups', table => { table.integer('userId'); table.integer('groupId') })
@@ -76,6 +79,48 @@ suite('personal MCP credential authority on PostgreSQL', () => {
   afterAll(async () => {
     if (db) { for (const table of ['apiKeys', 'userGroups', 'users', 'groups', 'tags']) await db.schema.dropTableIfExists(table); await db.destroy() }
     if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI'); else Reflect.set(globalThis, 'WIKI', originalWiki)
+  })
+
+  it('rejects every service grant for MCP while retaining live service administration authority', async () => {
+    for (const groupId of [1, 3]) {
+      for (const bound of [false, true]) {
+        const key = jwt.sign({ api: 901, grp: groupId, ...(bound ? { mcpResource: 'https://wiki.example.test/mcp', mcpResourceVersion: 1 } : {}) }, privateKey, { algorithm: 'RS256' })
+        await db('apiKeys').insert({ id: 901, name: 'Service', key, expiration: '2099-01-01T00:00:00Z', isRevoked: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+        await expect(loadMcpApiPrincipal(901, groupId)).rejects.toMatchObject({ status: 403 })
+        if (groupId === 1) {
+          const requester = { user: createApiPrincipal(901, 1, ['manage:system']), apiKey: { id: 901, groupId: 1, expiresAt: Math.floor(Date.now() / 1000) + 3600 } }
+          expect(await db.transaction(tx => requireSystemAuthority(tx, requester))).toMatchObject({ apiKeyId: 901 })
+          expect(await apiOperations.getConfig(requester)).toMatchObject({ canManagePersonalMcpKeys: false, personalMcpKeys: [] })
+        }
+        expect((await db('apiKeys').where({ id: 901 }).first()).key).toBe(key)
+        await db('apiKeys').where({ id: 901 }).delete()
+      }
+    }
+  })
+
+  it('restricts redacted oversight and kind-separated revocation to current human system administrators', async () => {
+    const issued = await issuePersonalMcpKey(owner, '42', input)
+    await db('userGroups').insert({ userId: 43, groupId: 1 })
+    const requester = { user: other }
+    const inventory = await apiOperations.getConfig(requester)
+    expect(inventory).toMatchObject({ canManagePersonalMcpKeys: true, personalMcpKeys: [{ id: issued.item.id, owner: { id: 42, name: 'Owner', email: 'owner@example.test', isActive: true } }] })
+    expect(JSON.stringify(inventory)).not.toContain(issued.key)
+    expect(inventory.keys).toEqual([])
+    await expect(apiOperations.revokeKey(requester, issued.item.id)).rejects.toMatchObject({ status: 404 })
+    await db('groups').insert({ id: 5, permissions: JSON.stringify(['manage:api']), pageRules: '[]' })
+    await db('userGroups').where({ userId: 43, groupId: 1 }).update({ groupId: 5 })
+    expect(await apiOperations.getConfig(requester)).toMatchObject({ canManagePersonalMcpKeys: false, personalMcpKeys: [] })
+    await expect(apiOperations.revokeAdminPersonalMcpKey(requester, '43', issued.item.id)).rejects.toMatchObject({ status: 403 })
+    await db('userGroups').where({ userId: 43, groupId: 5 }).update({ groupId: 1 })
+    await expect(apiOperations.revokeAdminPersonalMcpKey(requester, '42', issued.item.id)).rejects.toMatchObject({ status: 409 })
+    await db('apiKeys').insert({ id: 902, name: 'Service', key: 'preserved-service-bytes', expiration: '2099-01-01T00:00:00Z', isRevoked: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+    await expect(apiOperations.revokeAdminPersonalMcpKey(requester, '43', 902)).rejects.toMatchObject({ status: 404 })
+    expect(await db('apiKeys').where({ id: 902 }).first()).toMatchObject({ key: 'preserved-service-bytes', isRevoked: false })
+    await db('users').where({ id: 42 }).delete()
+    expect(await apiOperations.getConfig(requester)).toMatchObject({ personalMcpKeys: [{ id: issued.item.id, owner: null }] })
+    expect(await apiOperations.revokeAdminPersonalMcpKey(requester, '43', issued.item.id)).toEqual({ id: issued.item.id, isRevoked: true })
+    await db('users').where({ id: 43 }).update({ authVersion: 1 })
+    await expect(apiOperations.revokeAdminPersonalMcpKey(requester, '43', issued.item.id)).rejects.toMatchObject({ status: 403 })
   })
 
   it('issues a finite, resource-bound MCP credential and never lists its secret', async () => {

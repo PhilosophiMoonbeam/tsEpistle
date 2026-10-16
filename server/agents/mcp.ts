@@ -540,11 +540,13 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
   router.all('/mcp', async (req: Request, res: Response, next: NextFunction) => {
     if (!dependencies.config.enabled) return res.sendStatus(404)
     if (!req.authContext || req.authContext.kind !== 'apiKey' || !req.apiKeyAuth) return res.sendStatus(401)
+    if (req.user?.personalMcpAccess !== 'read-only' && req.user?.personalMcpAccess !== 'read-write')
+      return res.status(403).json({ error: 'A current personal MCP key is required. Create one from your profile.' })
     if (!req.user?.permissions?.some(permission => permission === 'use:mcp' || permission === 'manage:system')) return res.sendStatus(403)
     const token = req.apiKeyAuth.bearerToken
     if (!token) return res.sendStatus(401)
     if (req.apiKeyAuth.mcpResourceVersion !== 1 || req.apiKeyAuth.mcpResource === null)
-      return res.status(401).json({ error: 'API key must be regenerated with an MCP resource claim' })
+      return res.status(401).json({ error: 'A personal MCP key with a valid resource binding is required. Create one from your profile.' })
     let claimed: URL
     try {
       claimed = new URL(req.apiKeyAuth.mcpResource)

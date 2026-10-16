@@ -97,7 +97,7 @@ if (connection) describe('PostgreSQL reviewed group workspace transport outcomes
     })
     await db.schema.createTable('userGroups', table => { table.integer('userId').references('users.id'); table.integer('groupId').references('groups.id').onDelete('CASCADE'); table.primary(['userId', 'groupId']) })
     await db.schema.createTable('userAdministrationEvents', table => { table.increments('id'); table.integer('userId'); table.integer('actorId'); table.string('action'); table.string('reason'); table.jsonb('details'); table.timestamp('createdAt') })
-    await db.schema.createTable('apiKeys', table => { table.increments('id'); table.text('key'); table.boolean('isRevoked'); table.string('expiration') })
+    await db.schema.createTable('apiKeys', table => { table.increments('id'); table.text('key'); table.boolean('isRevoked'); table.string('expiration'); table.integer('personalOwnerId'); table.string('personalAccess') })
     await db.schema.createTable('authentication', table => { table.string('key').primary(); table.json('autoEnrollGroups') })
     await db.schema.createTable('navigation', table => { table.string('key').primary(); table.json('config') })
     for (const name of ['agentProviderGrants', 'agentSkillGrants']) await db.schema.createTable(name, table => { table.integer('groupId').references('groups.id').onDelete('CASCADE') })

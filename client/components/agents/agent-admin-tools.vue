@@ -15,7 +15,7 @@
         <span>{{ $t('admin:agentAdminTools.mcpResourceUrl') }}</span>
         <div class="mcp-connection__url"><code id="agent-mcp-endpoint">{{ endpoint }}</code><v-btn icon="mdi-content-copy" size="small" variant="text" :aria-label="$t('admin:agentAdminTools.copyMcpResourceUrl')" @click="copyEndpoint" /></div>
         <span v-if="copyMessage" role="status">{{ copyMessage }}</span>
-        <a href="/a/api">{{ $t('admin:agentAdminTools.manageApiKeysIntegration') }} <v-icon size="16">mdi-arrow-right</v-icon></a>
+        <a href="/p/profile">{{ $t('admin:agentAdminTools.openPersonalMcpKeys') }} <v-icon size="16">mdi-arrow-right</v-icon></a>
       </div>
     </div>
     <div class="tool-toolbar" role="search" :aria-label="$t('admin:agentAdminTools.findAgentTools')">

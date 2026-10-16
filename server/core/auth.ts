@@ -697,6 +697,8 @@ const auth: AuthService = {
         let principal
         try {
           const row = await loadActiveApiKey(user.api)
+          if (isDedicatedMcpRequest(req) && row.personalAccess == null)
+            return next(createAuthenticationError('Only personal MCP credentials are supported by the MCP transport.', 403, 'API_KEY_TRANSPORT_FORBIDDEN'))
           if (row.personalAccess != null || row.personalOwnerId != null || user.personalMcp !== undefined) {
             if (!isDedicatedMcpRequest(req))
               return next(createAuthenticationError('Personal keys are supported only by the dedicated MCP transport.', 403, 'API_KEY_TRANSPORT_FORBIDDEN'))

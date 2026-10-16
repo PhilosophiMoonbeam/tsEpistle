@@ -11,18 +11,14 @@ beforeEach(async () => {
 })
 afterEach(async () => { await knex.destroy(); Reflect.deleteProperty(globalThis, 'WIKI'); vi.resetModules() })
 describe('API connection inspection', () => {
-  it('projects configured MCP resource and usable group metadata without keys or members', async () => {
-    expect(await describeApiConnections()).toEqual({ mcpEnabled: true, mcpResource: 'https://wiki.example.test/mcp', mcpConfigurationError: false, groups: [{ id: 3, name: 'Integrations', permissions: ['read:pages', 'use:mcp'], pageRuleCount: 1, pageRules: [{ path: 'team', match: 'START', deny: false, roles: [], locales: [] }] }] })
-  })
-  it('marks an invalid canonical origin unavailable rather than inventing a resource', async () => {
-    Reflect.set(globalThis, 'WIKI', { config: { host: 'https://wiki.example.test/subpath' }, models: { knex } })
-    expect(await describeApiConnections()).toMatchObject({ mcpEnabled: false, mcpResource: null, mcpConfigurationError: true })
+  it('projects usable service group metadata without keys, members or MCP bindings', async () => {
+    expect(await describeApiConnections()).toEqual({ groups: [{ id: 3, name: 'Integrations', permissions: ['read:pages', 'use:mcp'], pageRuleCount: 1, pageRules: [{ path: 'team', match: 'START', deny: false, roles: [], locales: [] }] }] })
   })
   it('limits decoded token metadata to the issued grant and preserves unknown legacy data', () => {
     const claims = { grp: 3, mcpResource: 'https://wiki.example.test/mcp', mcpResourceVersion: 1, sensitive: 'not returned' }
     const token = `${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`
-    expect(describeApiKeyGrant(token)).toEqual({ groupId: 3, mcpResource: claims.mcpResource, mcpResourceVersion: 1 })
-    for (const invalid of ['malformed', null, '', 3]) expect(describeApiKeyGrant(invalid)).toEqual({ groupId: null, mcpResource: null, mcpResourceVersion: null })
+    expect(describeApiKeyGrant(token)).toEqual({ groupId: 3 })
+    for (const invalid of ['malformed', null, '', 3]) expect(describeApiKeyGrant(invalid)).toEqual({ groupId: null })
   })
   it('classifies expiry exactly at the boundary without treating invalid dates as active', () => {
     const now = Date.parse('2026-09-06T12:00:00Z')

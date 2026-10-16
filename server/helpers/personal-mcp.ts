@@ -89,7 +89,5 @@ export const loadMcpApiPrincipal = async (apiKeyId: number, groupId: number, dat
       groups, getGroups: () => groups
     }
   }
-  if (row.personalOwnerId != null || claims.personalMcp !== undefined) return denied('API key kind is invalid.')
-  const group = await database<GroupRecord>('groups').where({ id: groupId }).first('permissions')
-  return createApiPrincipal(apiKeyId, groupId, group ? stringArray(group.permissions) : [])
+  return denied('Only personal MCP credentials are supported by the MCP transport.', 'API_KEY_TRANSPORT_FORBIDDEN', 403)
 }

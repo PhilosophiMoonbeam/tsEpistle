@@ -1,9 +1,8 @@
 import { z } from 'zod'
+import { PersonalMcpKeySchema } from './personal-mcp.ts'
 
 export const ApiKeyGrantSchema = z.object({
-  groupId: z.number().int().positive().nullable(),
-  mcpResource: z.string().nullable(),
-  mcpResourceVersion: z.number().int().nullable()
+  groupId: z.number().int().positive().nullable()
 })
 export type ApiKeyGrant = z.infer<typeof ApiKeyGrantSchema>
 export const ApiGroupPageRuleSchema = z.object({
@@ -23,12 +22,18 @@ export const ApiAssignableGroupSchema = z.object({
 })
 export type ApiAssignableGroup = z.infer<typeof ApiAssignableGroupSchema>
 export const ApiConnectionInfoSchema = z.object({
-  mcpEnabled: z.boolean(),
-  mcpResource: z.string().nullable(),
-  mcpConfigurationError: z.boolean(),
   groups: z.array(ApiAssignableGroupSchema)
 })
 export type ApiConnectionInfo = z.infer<typeof ApiConnectionInfoSchema>
+export const AdminPersonalMcpKeySchema = PersonalMcpKeySchema.extend({
+  owner: z.strictObject({
+    id: z.number().int().positive(),
+    name: z.string(),
+    email: z.string(),
+    isActive: z.boolean()
+  }).nullable()
+})
+export type AdminPersonalMcpKey = z.infer<typeof AdminPersonalMcpKeySchema>
 export const API_KEY_EXPIRATIONS = ['30d', '90d', '180d', '1y', '3y'] as const
 export const apiKeyState = (key: { isRevoked: boolean; expiration: string }, now = Date.now()): 'active' | 'expired' | 'revoked' | 'unknown' => {
   if (key.isRevoked) return 'revoked'
