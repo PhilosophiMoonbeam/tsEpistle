@@ -761,7 +761,7 @@ interface WikiPageOperations {
       getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageSourceRecord | undefined>
       deletePage(input: { id: number; expectedSourceRevision?: string; user?: Express.User }): unknown
       createPage(input: Record<string, unknown> & { user?: Express.User }): unknown
-      updatePage(input: Record<string, unknown> & { user?: Express.User }): unknown
+      updatePage(input: Record<string, unknown> & { user?: Express.User }): Promise<PageRecord>
       convertPage(input: Record<string, unknown> & { user?: Express.User }): unknown
       movePage(input: Record<string, unknown> & { user?: Express.User }): unknown
       changeVisibility(input: {
