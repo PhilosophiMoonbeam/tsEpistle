@@ -18,6 +18,7 @@ import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer } from './synthesis-fixture.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
+import { createApiPrincipal } from '../../helpers/api-principal.ts'
 
 const flags = Object.fromEntries(AGENT_FEATURE_FLAG_KEYS.map(flag => [flag, true])) as AgentFeatureFlags
 
@@ -448,6 +449,62 @@ describe('agent proposal repository', () => {
     ).rejects.toMatchObject({ code: 'PROPOSAL_EXPIRED', status: 409 })
     expect(await knex('agentProposals').select('status')).toEqual([{ status: 'expired' }])
     expect(await knex('agentApprovals').select('status')).toEqual([{ status: 'expired' }])
+  })
+
+  it('bounds a personal admin key by read-only scope and attributes approved writes to its owner, not its approver', async () => {
+    const admission = {
+      transport: 'mcp' as const, executionMode: 'agent' as const, supportsTools: true,
+      permissions: ['manage:system', 'use:mcp', 'write:pages'], groupIds: [3], featureFlags: flags
+    }
+    const auth = { kind: 'apiKey' as const, apiKeyId: 9, groupId: 1 }
+    const requestId = '00000000-0000-4000-8000-000000000701'
+    const owner = { id: 42, name: 'Key owner' } as Express.User
+    const approver = { id: 8, name: 'Independent approver' } as Express.User
+    let access: 'read-only' | 'read-write' = 'read-only'
+    let currentPage: Record<string, unknown> | null = null
+    const operations = {
+      get: vi.fn(async () => currentPage),
+      getByPath: vi.fn(async () => {
+        if (!currentPage) throw Object.assign(new Error('missing'), { name: 'PageNotFoundError' })
+        return currentPage
+      }),
+      getVersion: vi.fn(),
+      create: vi.fn(async (value: { input: Record<string, unknown>; requester: Express.User }) => {
+        currentPage = { ...value.input, id: 43, authorId: value.requester.id, sourceRevision: '1', editor: 'markdown' }
+        return currentPage
+      }),
+      update: vi.fn(), move: vi.fn(), restore: vi.fn(), remove: vi.fn(),
+      authorizeMutation: vi.fn(async () => {})
+    }
+    const kernel = new ActionKernel()
+    registerPageProposalActions(kernel, {
+      knex, operations,
+      resolveRequester: async () => ({
+        ...createApiPrincipal(9, 1, ['manage:system']), ownershipUserId: 42, personalMcpAccess: access, groups: [3]
+      }),
+      resolveApprover: async id => id === 42 ? owner : approver,
+      snapshotSigningSecret: Buffer.alloc(32, 7)
+    })
+    const input = { path: 'docs/personal', locale: 'en', title: 'Personal edit', description: '', content: '# Personal edit\n', contentType: 'markdown', isPublished: true, tags: [] }
+    const execute = (actionName: 'pages.prepareCreate' | 'pages.applyProposal', value: unknown) => kernel.execute({
+      authority: createActionAuthority(actionName, requestId, auth, admission),
+      actionCallId: actionName, input: value, signal: new AbortController().signal, refreshAdmission: async () => admission
+    })
+    await expect(execute('pages.prepareCreate', input)).rejects.toMatchObject({ code: 'MCP_READ_ONLY', status: 403 })
+    expect(await knex('agentProposals')).toHaveLength(0)
+    access = 'read-write'
+    const prepared = ACTION_CATALOG['pages.prepareCreate'].output.parse(await execute('pages.prepareCreate', input))
+    await decideProposal(knex, { proposalId: prepared.proposalId, approvalId: prepared.approvalId, userId: 8, decision: 'approved', authorize: async () => {} })
+    access = 'read-only'
+    await expect(execute('pages.applyProposal', { proposalId: prepared.proposalId, approvalId: prepared.approvalId })).rejects.toMatchObject({ code: 'MCP_READ_ONLY' })
+    expect(operations.create).not.toHaveBeenCalled()
+    access = 'read-write'
+    await execute('pages.applyProposal', { proposalId: prepared.proposalId, approvalId: prepared.approvalId })
+    expect(operations.create).toHaveBeenCalledWith(expect.objectContaining({ requester: owner }))
+    expect(currentPage).toMatchObject({ authorId: 42 })
+    expect(operations.authorizeMutation).toHaveBeenCalledWith(expect.objectContaining({ requester: expect.objectContaining({ api: 9, ownershipUserId: 42 }) }))
+    expect(operations.authorizeMutation).toHaveBeenCalledWith(expect.objectContaining({ requester: approver }))
+    expect(await knex('agentProposals').where({ id: prepared.proposalId }).first('requesterApiKeyId', 'requesterUserId')).toEqual({ requesterApiKeyId: 9, requesterUserId: null })
   })
 
   it('replays a pre-ID pending create through the real action kernel without changing its immutable envelope', async () => {

@@ -4,13 +4,15 @@ import { toNodeHandler } from '@modelcontextprotocol/node'
 import {
   type AuthInfo,
   acceptedContent,
+  CLIENT_CAPABILITIES_META_KEY,
   createMcpHandler,
   createRequestStateCodec,
   inputRequired,
   McpServer,
   PROTOCOL_VERSION_META_KEY,
   ResourceTemplate,
-  type ServerContext
+  type ServerContext,
+  type Tool
 } from '@modelcontextprotocol/server'
 import express, { type NextFunction, type Request, type RequestHandler, type Response } from 'express'
 import type { Knex } from 'knex'
@@ -19,7 +21,7 @@ import { z } from 'zod'
 import { AGENT_TOOL_NAMES, type AgentActionName, type AgentFeatureFlags } from '../../shared/agents/contracts.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import { ACTION_CATALOG, actionDefinition } from './actions/catalog.ts'
-import { type ActionAdmissionSnapshot, type ActionAuthority, ActionKernel, ActionKernelError, toMcpAction } from './actions/kernel.ts'
+import { type ActionAdmissionSnapshot, type ActionAuthority, ActionKernel, ActionKernelError, type McpActionDescriptor, toMcpAction } from './actions/kernel.ts'
 import { type PageProposalActionDependencies, registerPageProposalActions } from './actions/page-proposals.ts'
 import { type PageReadActionDependencies, registerPageReadActions } from './actions/page-reads.ts'
 import { registerSkillReadActions } from './actions/skill-reads.ts'
@@ -144,6 +146,21 @@ const toolInputSchema = (name: AgentActionName): z.ZodType => {
   return (definition.input as z.ZodObject<z.ZodRawShape>).extend({ requestId: z.uuid() })
 }
 
+// SDK 2.1 form input-required legs use the validated per-request capability envelope.
+// A bare elicitation declaration retains form support; URL-only elicitation does not.
+const supportsApprovalContinuation = (context: ServerContext): boolean => {
+  const capabilities: unknown = Reflect.get(context.mcpReq.envelope ?? {}, CLIENT_CAPABILITIES_META_KEY)
+  if (capabilities === null || typeof capabilities !== 'object' || Array.isArray(capabilities)) return false
+  const elicitation: unknown = Reflect.get(capabilities, 'elicitation')
+  return elicitation !== null && typeof elicitation === 'object' && !Array.isArray(elicitation) &&
+    (Reflect.get(elicitation, 'form') !== undefined || Reflect.get(elicitation, 'url') === undefined)
+}
+
+const requiresApprovalContinuation = (name: AgentActionName): boolean => {
+  const risk = actionDefinition(name).descriptor.risk
+  return name === 'pages.applyProposal' || risk === 'proposal' || risk === 'destructive-write'
+}
+
 const decodeTemplateValue = (value: unknown): string => {
   if (typeof value !== 'string') throw new ActionKernelError('INVALID_SKILL_PATH', 'Skill resource URI is invalid', 400)
   try {
@@ -252,7 +269,16 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
         supportsTools: true,
         permissions,
         groupIds: groupIdsFor(principal, identity.groupId),
-        featureFlags: featureFlags(dependencies.config)
+        ...(principal.personalMcpAccess !== undefined &&
+        typeof principal.ownershipUserId === 'number' &&
+        Number.isSafeInteger(principal.ownershipUserId) &&
+        principal.ownershipUserId > 0
+          ? { personalMcpOwnerUserId: principal.ownershipUserId }
+          : {}),
+        featureFlags: {
+          ...featureFlags(dependencies.config),
+          ...(principal.personalMcpAccess === 'read-only' ? { 'agents.proposals.enabled': false, 'agents.writes.enabled': false } : {})
+        }
       }
     }
   }
@@ -265,6 +291,7 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
       const server = new McpServer(
         { name: 'tsEpistle', version: '1.0.0' },
         {
+          capabilities: { tools: {}, resources: {} },
           requestState: { verify: verifyState },
           cacheHints: {
             'tools/list': { ttlMs: 0, cacheScope: 'private' },
@@ -274,23 +301,36 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
           }
         }
       )
+      const listedTools: { actionName: AgentActionName; descriptor: McpActionDescriptor; inputSchema: z.ZodType }[] = []
+      const canContinueApproval = (context: ServerContext): boolean => requestContext.era === 'modern' && supportsApprovalContinuation(context)
 
       for (const [actionNameValue] of Object.entries(AGENT_TOOL_NAMES)) {
         const actionName = actionNameValue as AgentActionName
         if (!offeredNames.has(actionName)) continue
-        if (requestContext.era === 'legacy' && actionName === 'pages.applyProposal') continue
+        if (requestContext.era !== 'modern' && requiresApprovalContinuation(actionName)) continue
         const descriptor = toMcpAction(ACTION_CATALOG[actionName])
+        const inputSchema = toolInputSchema(actionName)
+        listedTools.push({ actionName, descriptor, inputSchema })
         server.registerTool(
           descriptor.name,
           {
             title: descriptor.title,
             description: descriptor.description,
-            inputSchema: toolInputSchema(actionName),
+            inputSchema,
             annotations: descriptor.annotations
           },
           async (input: unknown, context: ServerContext) => {
             try {
+              if (requiresApprovalContinuation(actionName) && !canContinueApproval(context)) {
+                throw new ActionKernelError('APPROVAL_CONTINUATION_REQUIRED', 'This action requires modern MCP form-elicitation continuation support', 403)
+              }
               const identity = identityFrom(context.http?.authInfo)
+              const { requestId, actionInput } = requestIdInput(actionName, input)
+              const current = await admissionFor(context.http?.authInfo)
+              const authority = kernel
+                .offer(current.auth, current.snapshot, requestId)
+                .find(action => action.definition.descriptor.name === actionName)?.authority
+              if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'Action is not currently permitted', 403)
               if (actionName === 'pages.applyProposal') {
                 const applyInput = ACTION_CATALOG['pages.applyProposal'].input.parse(input)
                 const persisted = await getMcpProposal(dependencies.knex, identity.apiKeyId, applyInput.proposalId)
@@ -339,12 +379,6 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
                 }
               }
 
-              const { requestId, actionInput } = requestIdInput(actionName, input)
-              const current = await admissionFor(context.http?.authInfo)
-              const authority = kernel
-                .offer(current.auth, current.snapshot, requestId)
-                .find(action => action.definition.descriptor.name === actionName)?.authority
-              if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'Action is not currently permitted', 403)
               const output = await kernel.execute({
                 authority,
                 actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
@@ -359,6 +393,16 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
           }
         )
       }
+      // The SDK's default list does not filter by client capabilities. Listing is a
+      // discoverability boundary only: each write handler independently checks again.
+      server.server.setRequestHandler('tools/list', (_request, context) => ({
+        tools: listedTools
+          .filter(tool => !requiresApprovalContinuation(tool.actionName) || canContinueApproval(context))
+          .map(({ descriptor, inputSchema }) => ({
+            ...descriptor,
+            inputSchema: { ...z.toJSONSchema(inputSchema, { io: 'input' }), type: 'object' } as Tool['inputSchema']
+          }))
+      }))
       if (offeredNames.has('pages.getOkf')) {
         server.registerResource(
           'okf-pages',

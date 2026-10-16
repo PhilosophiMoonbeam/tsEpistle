@@ -40,6 +40,7 @@ const evaluate = new Function(
   'newPasswordIssue',
   'AsyncState',
   'PasswordStrength',
+  'ProfileMcpKeys',
   'wikiStore',
   'changeProfilePassword',
   'fetchProfile',
@@ -281,6 +282,7 @@ const mount = async (initialProfile = profile()) => {
   const options = evaluate(
     passwordPolicyMixin,
     newPasswordIssue,
+    placeholder,
     placeholder,
     placeholder,
     store,

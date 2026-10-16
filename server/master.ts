@@ -55,7 +55,7 @@ import mail from './core/mail.ts'
 import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
 import type { PageRenderPublicationFence } from './core/page-mutation-outbox.ts'
 import system from './core/system.ts'
-import { createApiPrincipal } from './helpers/api-principal.ts'
+import { loadMcpApiPrincipal } from './helpers/personal-mcp.ts'
 import pageHelper from './helpers/page.ts'
 import { sessionCookieOptions } from './helpers/session-cookie.ts'
 import { resolveActiveBranding } from './helpers/site-logo-branding.ts'
@@ -316,10 +316,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         knex: wiki.models.knex,
         operations: pageOperations,
         authenticate: wiki.auth.authenticate.bind(wiki.auth),
-        resolvePrincipal: async (apiKeyId, groupId) => {
-          const permissions = wiki.auth.groups[String(groupId)]?.permissions ?? []
-          return createApiPrincipal(apiKeyId, groupId, permissions)
-        },
+        resolvePrincipal: loadMcpApiPrincipal,
         resolveUser: loadWikiAgentUser,
         config: {
           enabled: true,
@@ -647,7 +644,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       agentProviderEnabled: wiki.config.agents.provider.enabled,
       agentSkillsEnabled: wiki.config.agents.skills.enabled,
       agentGoalsEnabled: wiki.config.agents.goals.enabled,
-      agentCsrfToken: wiki.config.agents.enabled ? agentCsrfToken(_req) : ''
+      agentCsrfToken: wiki.config.agents.enabled || _req.authContext?.kind === 'user' ? agentCsrfToken(_req) : ''
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })
     res.locals.analyticsCode = { head: '', bodyStart: '', bodyEnd: '' }

@@ -2,6 +2,7 @@ import { isUserContentTextSize, isUserTimeFormat, UserCommunicationLocaleSchema 
 import type { ProfilePreferencesInput, UserCommunicationLocale, UserContentTextSize, UserTimeFormat } from '../../shared/user-presentation.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards.ts'
+import { PersonalMcpKeysResponseSchema, IssuePersonalMcpKeyResponseSchema, RevokePersonalMcpKeyResponseSchema, type IssuePersonalMcpKeyInput } from '../../shared/personal-mcp.ts'
 
 type JsonResponse = { ok: boolean; headers?: { get: (name: string) => string | null }; json: () => Promise<unknown> }
 type FetchImpl = (url: string, init: RequestInit) => Promise<JsonResponse>
@@ -341,4 +342,32 @@ export function changeProfilePassword(
   fallbackMessage = 'Password change failed'
 ): Promise<string> {
   return sendProfileRequest(fetchImpl, expectedAccountId, '/password', 'POST', { current, newPassword }, fallbackMessage)
+}
+
+export async function fetchProfileMcpKeys(fetchImpl: FetchImpl, expectedAccountId: number, csrfToken: string) {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/users/profile/mcp-keys', {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', 'X-TsEpistle-Profile-Account': String(expectedAccountId), 'X-Wiki-Csrf': csrfToken }
+  })
+  return PersonalMcpKeysResponseSchema.parse(await parseJsonResponse(response, 'MCP access keys could not be loaded.'))
+}
+
+export async function issueProfileMcpKey(fetchImpl: FetchImpl, expectedAccountId: number, csrfToken: string, input: IssuePersonalMcpKeyInput) {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/users/profile/mcp-keys', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-TsEpistle-Profile-Account': String(expectedAccountId), 'X-Wiki-Csrf': csrfToken },
+    body: JSON.stringify(input)
+  })
+  return IssuePersonalMcpKeyResponseSchema.parse(await parseJsonResponse(response, 'The key creation result is uncertain. Reload your keys before trying again.'))
+}
+
+export async function revokeProfileMcpKey(fetchImpl: FetchImpl, expectedAccountId: number, csrfToken: string, id: number) {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/users/profile/mcp-keys/${encodeURIComponent(id)}/revoke`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-TsEpistle-Profile-Account': String(expectedAccountId), 'X-Wiki-Csrf': csrfToken },
+    body: '{}'
+  })
+  return RevokePersonalMcpKeyResponseSchema.parse(await parseJsonResponse(response, 'The key could not be revoked. Reload its status before retrying.'))
 }

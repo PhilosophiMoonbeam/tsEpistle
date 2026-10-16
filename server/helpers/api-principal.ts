@@ -1,3 +1,5 @@
+import type { PersonalMcpAccess } from '../../shared/personal-mcp.ts'
+
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const positiveInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
@@ -5,7 +7,8 @@ const positiveInteger = (value: unknown): value is number => typeof value === 'n
 export interface ApiPrincipal extends Express.User {
   readonly api: number
   readonly grp: number
-  readonly ownershipUserId: null
+  readonly ownershipUserId: number | null
+  readonly personalMcpAccess?: PersonalMcpAccess
   readonly groups: number[]
   readonly permissions: string[]
   readonly getGlobalPermissions: () => string[]
@@ -49,8 +52,10 @@ export const createApiPrincipal = (apiKeyId: number, groupId: number, permission
  */
 export const isApiPrincipal = (value: unknown): value is ApiPrincipal => {
   if (!isRecord(value) || 'id' in value || !Object.hasOwn(value, 'api') || !Object.hasOwn(value, 'grp') || !positiveInteger(value.api) || !positiveInteger(value.grp)) return false
-  if (Object.hasOwn(value, 'ownershipUserId') && value.ownershipUserId !== null) return false
-  if (value.groups !== undefined && (!Array.isArray(value.groups) || value.groups.length !== 1 || value.groups[0] !== value.grp)) return false
+  const personal = value.personalMcpAccess === 'read-only' || value.personalMcpAccess === 'read-write'
+  if (Object.hasOwn(value, 'ownershipUserId') && value.ownershipUserId !== null && (!personal || !positiveInteger(value.ownershipUserId))) return false
+  if (personal && !positiveInteger(value.ownershipUserId)) return false
+  if (value.groups !== undefined && (!Array.isArray(value.groups) || !value.groups.every(positiveInteger) || (!personal && (value.groups.length !== 1 || value.groups[0] !== value.grp)))) return false
   if (value.permissions !== undefined && (!Array.isArray(value.permissions) || !value.permissions.every(permission => typeof permission === 'string'))) return false
   const expiresAt = value.exp
   if (expiresAt !== undefined && (typeof expiresAt !== 'number' || !Number.isSafeInteger(expiresAt) || expiresAt < 0)) return false

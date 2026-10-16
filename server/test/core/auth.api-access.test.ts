@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import { DateTime } from 'luxon'
 
 let authenticatedPrincipal: Express.User | false | null = null
+let storedKey = { id: 7, expiration: '2099-01-01T00:00:00.000Z', isRevoked: false, personalOwnerId: null as number | null, personalAccess: null as string | null }
 type PassportCallback = (error: unknown, user: Express.User | false | null | undefined, info: unknown) => unknown
 
 const passportAuthenticate = vi.fn((_strategy: string, _options: unknown, callback: PassportCallback) => () => callback(null, authenticatedPrincipal, null))
@@ -43,6 +44,7 @@ describe('API-key authentication boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     authenticatedPrincipal = { api: 7, grp: 3 } as Express.User
+    storedKey = { id: 7, expiration: '2099-01-01T00:00:00.000Z', isRevoked: false, personalOwnerId: null, personalAccess: null }
     auth.validApiKeys = [7]
     auth.groups = {
       '3': {
@@ -76,6 +78,7 @@ describe('API-key authentication boundary', () => {
         warn: vi.fn()
       },
       models: {
+        knex: vi.fn(() => ({ where: vi.fn().mockReturnValue({ first: vi.fn(async () => storedKey) }) })),
         apiKeys: { query: vi.fn() },
         authentication: { getStrategies: vi.fn() },
         groups: { query: vi.fn() },
@@ -174,6 +177,20 @@ describe('API-key authentication boundary', () => {
     expect(req.user).toBeUndefined()
     expect(req.authContext).toBeUndefined()
     expect(req.apiKeyAuth).toBeUndefined()
+  })
+
+  test.each(['/graphql', '/api/v1', '/api/v1/pages'])('rejects a stored personal key on %s even when its signed claims omit the personal marker', async path => {
+    storedKey.personalOwnerId = 42
+    storedKey.personalAccess = 'read-write'
+    const request = createRequest(path)
+    expect(await authenticate(request)).toHaveBeenCalledWith(expect.objectContaining({ code: 'API_KEY_TRANSPORT_FORBIDDEN', status: 403 }))
+    expect(request.user).toBeUndefined()
+    expect(request.authContext).toBeUndefined()
+  })
+
+  test('consults fresh persistence even while a revoked key remains in the service cache', async () => {
+    storedKey.isRevoked = true
+    expect(await authenticate(createRequest('/graphql'))).toHaveBeenCalledWith(expect.objectContaining({ name: 'API_KEY_INVALID', status: 401 }))
   })
 
   test('preserves internal REST access for signed-in user sessions', async () => {

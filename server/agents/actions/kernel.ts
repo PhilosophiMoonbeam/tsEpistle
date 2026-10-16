@@ -18,6 +18,8 @@ export interface ActionAdmissionSnapshot {
   readonly supportsTools: boolean
   readonly permissions: readonly string[]
   readonly groupIds: readonly number[]
+  /** Set only from a freshly resolved, user-owned personal MCP principal. */
+  readonly personalMcpOwnerUserId?: number
   readonly featureFlags: AgentFeatureFlags
   readonly allowedActions?: readonly AgentActionName[]
 }
@@ -141,7 +143,10 @@ const authFromAuthority = (authority: ActionAuthority): RequestAuthContext =>
 
 const hasAdmissionPermission = (snapshot: ActionAdmissionSnapshot, permission: string): boolean =>
   snapshot.permissions.includes(permission) ||
-  (snapshot.transport === 'agent' && permission !== 'use:agent-browser' && snapshot.permissions.includes('manage:system'))
+  ((snapshot.transport === 'agent' ||
+    (snapshot.transport === 'mcp' && Number.isSafeInteger(snapshot.personalMcpOwnerUserId) && (snapshot.personalMcpOwnerUserId ?? 0) > 0)) &&
+    permission !== 'use:agent-browser' &&
+    snapshot.permissions.includes('manage:system'))
 
 const assertAdmission = (definition: ActionDefinition, snapshot: ActionAdmissionSnapshot): void => {
   const descriptor = definition.descriptor
