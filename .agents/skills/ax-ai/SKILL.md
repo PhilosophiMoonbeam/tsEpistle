@@ -1,7 +1,7 @@
 ---
 name: ax-ai
 description: This skill helps an LLM generate correct AI provider setup and configuration code using @ax-llm/ax. Use when the user asks about ai(), providers, models, routing, adaptive balancing, presets, embeddings, batch audio with ai.transcribe() or ai.speak(), extended thinking, context caching, or mentions OpenAI/Anthropic/Google/Azure/DeepSeek/Meta/Mistral/Cohere/Reka/Grok/Typesafe/Jev with @ax-llm/ax.
-version: "25.3.0"
+version: "25.4.1"
 ---
 
 # AI Provider Codegen Rules (@ax-llm/ax)
@@ -657,11 +657,12 @@ rules, including when configured for Vertex with `projectId` and `region`. The
 separate OpenAI-compatible `vertex-ai` profile keeps its own request rules and
 does not inherit native Gemini fields from a Gemini-looking model ID.
 
-For GPT-5.6 and GPT-6 (Astra, Sol, Luna), these map to `none`, `low`, `low`,
-`medium`, `high`, and a top rung that depends on the API surface: `xhigh` on
+For GPT-5.6 and GPT-6 (Astra, Sol, Luna, GPT-6.1 Sol), these map to `none`,
+`low`, `low`, `medium`, `high`, and a top rung that depends on the API surface: `xhigh` on
 Chat Completions, which rejects `max`, and `max` on the Responses API, which is
 the only place it is served. These models default an omitted effort to
-`medium`, so `none` is sent explicitly; GPT-6 Astra refuses `none` and Ax throws.
+`medium`, so `none` is sent explicitly; GPT-6 Astra and GPT-6.1 Sol refuse
+`none` and Ax throws.
 Earlier OpenAI models retain their existing mapping.
 
 ### Anthropic Model-Specific Behavior
@@ -890,8 +891,9 @@ To reach OpenAI's GPT models on those endpoints through the `openai` or
 on bedrock-mantle, or a cross-Region inference profile such as
 `us.openai.gpt-6-sol` or `global.openai.gpt-6-astra` on bedrock-runtime. Ax
 applies the named model's contracts: its built-in model info (so `temperature`
-and `top_p` are not sent), the GPT-5.6 and GPT-6 effort ladders, Astra's rules,
-and, on `openai`, routing the GPT-6 family to `<apiURL>/responses`. It leaves
+and `top_p` are not sent), the GPT-5.6 and GPT-6 effort ladders, the reasoning
+rules of Astra and GPT-6.1 Sol, and, on `openai`, routing the GPT-6 family to
+`<apiURL>/responses`. It leaves
 off what Bedrock does not serve: prompt-cache breakpoints on Chat Completions
 (Bedrock caches these models on the Responses API only) and Astra chat
 sessions, since async tools, steering, and reasoning updates are not available
@@ -921,8 +923,9 @@ const bedrock = new AxAIBedrock({
 
 The native client uses Bedrock `Converse` and `ConverseStream`. Claude models
 advertise native functions, streaming, image/document input, prompt-cache
-breakpoints, and their verified thinking modes. GPT-6 Sol, Luna, and Astra
-(`AxAIBedrockModel.Gpt6Sol`, `Gpt6Luna`, `Gpt6Astra`) advertise native
+breakpoints, and their verified thinking modes. GPT-6 Sol, Luna, Astra, and
+GPT-6.1 Sol (`AxAIBedrockModel.Gpt6Sol`, `Gpt6Luna`, `Gpt6Astra`, `Gpt61Sol`)
+advertise native
 functions, streaming, image input, and reasoning effort. Structured-output and
 service-tier support remain model-specific; query `bedrock.getFeatures(model)`
 instead of assuming every Bedrock model has the same capabilities. The AWS SDK
@@ -953,7 +956,7 @@ On the native Bedrock client, Claude Sonnet 5 and Opus 5.5 always use adaptive
 thinking and reject `thinkingTokenBudget: 'none'`; Claude Opus 5 permits
 disabling it. On GPT-6, `thinkingTokenBudget` sets the reasoning effort
 (`minimal` → `low`, `highest` → `max`, `none` turns reasoning off), except
-that Astra rejects `'none'` before sending. GPT-6 requests omit `temperature`
+that Astra and GPT-6.1 Sol reject `'none'` before sending. GPT-6 requests omit `temperature`
 and `topP`, which these models do not accept.
 
 ## Vercel AI SDK Integration
@@ -1054,6 +1057,20 @@ route through Responses, since Chat Completions refuses their function tools
 while they reason. Unlike Astra they accept `thinkingTokenBudget: 'none'`, and
 chat sessions and `configuration_update` remain Astra-only. OpenAI reports a
 GPT-6 priority request's served tier as `fast`; Ax records it as `priority`.
+
+GPT-6.1 Sol (`AxAIOpenAIModel.GPT61Sol`) is a GPT-6 family member: it routes
+through Responses, caches at breakpoints with `ttl: '30m'`, and drops sampling
+and log-probability options while reasoning. Like Astra it cannot disable
+reasoning, so `thinkingTokenBudget: 'none'` throws and Chat Completions refuses
+its function tools at every effort. Ax does not yet expose chat sessions or
+`configuration_update` for this model.
+
+Its Standard input/cache-read/cache-write/output rates per million tokens are
+$2/$0.10/$2.50/$10, rising to $4/$0.20/$5/$15 above 272K total input tokens.
+Priority costs 2x Standard and Flex costs 0.5x, including cache tokens and the
+long-context rates. A served `fast` tier is recorded as `priority` for cost
+accounting. On profiles without model metadata, fixed Bedrock OpenAI IDs use
+the corresponding OpenAI sampling restrictions; unknown IDs remain unchanged.
 
 Keep calling `forward()` and `streamingForward()`. Declare independent tools with
 `fn('lookup').description('...').execution('background').handler(...).build()`.
@@ -1213,3 +1230,16 @@ and all usage fields. Runnable examples are under each language generation
 directory as `openai-decisions` and `openai-decisions-native` (Java uses
 `OpenAIDecisionsExample` and `OpenAIDecisionsNativeExample`). See the [Decisions guide](https://developers.openai.com/api/docs/guides/decisions)
 for the current provider contract and availability.
+
+## Streaming Usage And Incomplete Responses
+
+OpenAI Responses reports a token-limit stop as `length` and a content-filter
+stop as `content_filter`. The terminal response status takes precedence even
+when no message was produced or an earlier message completed. Incomplete
+streams retain their token usage and the served service tier. Reusing a client
+keeps each stream's usage separate; consume the terminal event for final totals.
+
+Anthropic `message_delta` counts are cumulative. Present input and cache counts
+replace earlier counts, including explicit zero; omitted or null fields retain
+previous values. Successive deltas retain the latest input, cache, and speed
+metadata while updating output tokens.
