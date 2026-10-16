@@ -11065,11 +11065,13 @@ describe('request-derived evidence coverage', () => {
   )
 
   it.each([
-    ['native', 'incomplete', 'stop'],
-    ['prompt', 'incomplete', 'stop'],
-    ['native', 'not_established', 'stop'],
-    ['native', 'incomplete', 'length']
-  ] as const)('final %s repair respects whole-read proof and %s/%s coverage', async (mode, auditVerdict, auditFinish) => {
+    ['native', 'incomplete', 'stop', 'split-read'],
+    ['prompt', 'incomplete', 'stop', 'split-read'],
+    ['native', 'not_established', 'stop', 'split-read'],
+    ['native', 'incomplete', 'length', 'split-read'],
+    ['native', 'incomplete', 'stop', 'all-supported'],
+    ['prompt', 'incomplete', 'stop', 'all-supported']
+  ] as const)('final %s repair respects whole-read proof and %s/%s coverage with %s claims', async (mode, auditVerdict, auditFinish, selection) => {
     const userRequest = 'Summarize the most recently updated Wiki pages.'
     const qualified = recentRows[0]!.content
     const unsupported = 'Release 94 does not require a separate review.'
@@ -11079,21 +11081,26 @@ describe('request-derived evidence coverage', () => {
       synthesisCallCounts.push(fixture.providerCalls.length)
       return synthesisFixtureAnswer(input, {
         claims: [
-          { evidenceId: recentRows[0]!.citation.evidenceId, statement: qualified },
-          { evidenceId: recentRows[0]!.citation.evidenceId, statement: unsupported },
+          ...(selection === 'split-read'
+            ? [
+                { evidenceId: recentRows[0]!.citation.evidenceId, statement: qualified },
+                { evidenceId: recentRows[0]!.citation.evidenceId, statement: unsupported }
+              ]
+            : [{ evidenceId: recentRows[0]!.citation.evidenceId, statement: qualified }]),
           { evidenceId: retained.citation.evidenceId, statement: retained.content }
         ],
         unresolvedFacets: []
       })
     }
+    const feedback = selection === 'all-supported' ? 'Requested recap coverage remains incomplete.' : 'One returned page has no admitted summary.'
     const coverage = vi.fn(async (_input: Readonly<AxChatRequest>) => ({
       results: [
         {
           index: 0,
           content:
             mode === 'native'
-              ? JSON.stringify({ verdict: auditVerdict, feedback: 'One returned page has no admitted summary.' })
-              : `Verdict: ${auditVerdict}\nFeedback: One returned page has no admitted summary.`,
+              ? JSON.stringify({ verdict: auditVerdict, feedback })
+              : `Verdict: ${auditVerdict}\nFeedback: ${feedback}`,
           finishReason: auditFinish
         }
       ]
@@ -11123,17 +11130,20 @@ describe('request-derived evidence coverage', () => {
       expect(published).toContain(retained.content)
       expect(published).toContain(userRequest.slice(0, -1))
       expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
-      expect(result.citations?.map(citation => citation.evidenceId)).toEqual([retained.citation.evidenceId])
+      expect(result.citations?.map(citation => citation.evidenceId)).toEqual(
+        selection === 'all-supported' ? recentRows.map(row => row.citation.evidenceId) : [retained.citation.evidenceId]
+      )
     } else {
       expect(published).not.toContain(retained.content)
       expect(result.citations).toBeUndefined()
       if (auditFinish === 'length') expect(result.outputLimited).toBe(true)
       else expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
     }
-    expect(published).not.toContain(qualified)
+    if (selection === 'split-read' || !publishes) expect(published).not.toContain(qualified)
+    else expect(published).toContain(qualified)
     expect(published).not.toContain(unsupported)
-    expect(coverage).toHaveBeenCalledOnce()
-    const auditInput = JSON.stringify(coverage.mock.calls[0]![0]!.chatPrompt)
+    expect(coverage).toHaveBeenCalledTimes(selection === 'all-supported' ? 2 : 1)
+    const auditInput = JSON.stringify(coverage.mock.calls.at(-1)![0]!.chatPrompt)
     expect(auditInput).toContain(qualified)
     expect(auditInput).toContain(retained.content)
     expect(auditInput).not.toContain(unsupported)
