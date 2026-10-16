@@ -142,11 +142,13 @@ import { useTranslate } from '../helpers/use-translate'
 
 import { buildAdminNavigation, filterAdminNavigation, type AdminNavGroup, type AdminNavItem } from '../helpers/admin-navigation'
 import ConfirmDialogHost from './common/confirm-dialog-host.vue'
+import NavHeader from './common/nav-header.vue'
+import VueScroll from './common/vue-scroll.vue'
 import { focusRouteHeading } from './common/route-heading-focus.ts'
 
 export default defineComponent({
   i18nOptions: { namespaces: 'admin' },
-  components: { ConfirmDialogHost },
+  components: { ConfirmDialogHost, NavHeader, VueScroll },
   setup() {
     const t = useTranslate()
     const summaryLoading = ref(false)

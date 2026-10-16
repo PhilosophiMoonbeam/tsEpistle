@@ -2310,7 +2310,9 @@ export default defineComponent({
   .nav-header {
     .nav-header-layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr);
+      // Reserve the actions' intrinsic width before sharing the remaining
+      // space; otherwise their max-content row can push Account offscreen.
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(max-content, 1fr);
     }
 
     &.nav-header--dense.nav-header--reserved-actions {

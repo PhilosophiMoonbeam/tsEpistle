@@ -451,6 +451,8 @@ export default defineComponent({
       searchModalFocusScope: null as ModalFocusScope | null,
       pendingAskRestoreTarget: null as HTMLElement | null,
       searchRestoreTarget: null as HTMLElement | null,
+      searchTabEntryPending: false,
+      searchInputOpenedByTab: false,
       searchExitRestoreFocus: true,
       directPromptHandoffId: 0,
       directPromptHandoffPending: false,
@@ -773,7 +775,7 @@ export default defineComponent({
     onSearchExit(this.handleSearchExit)
     void this.$nextTick(this.syncSearchInputA11y)
     document.addEventListener('focusin', this.captureSearchRestoreTarget, true)
-    document.addEventListener('keydown', this.handleSearchPreviewShortcut, true)
+    document.addEventListener('keydown', this.handleSearchKeydown, true)
     if (this.searchIsFocused) void this.activateAgentModal()
     window.addEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
     this.offlineStorageChangesUnsubscribe = subscribeOfflineStorageChanges(this.handleOfflineStorageChange)
@@ -802,7 +804,7 @@ export default defineComponent({
     offSearchExit(this.handleSearchExit)
     window.removeEventListener(OFFLINE_READING_STATE_EVENT, this.handleOfflineReadingStateChange)
     document.removeEventListener('focusin', this.captureSearchRestoreTarget, true)
-    document.removeEventListener('keydown', this.handleSearchPreviewShortcut, true)
+    document.removeEventListener('keydown', this.handleSearchKeydown, true)
     this.deactivateModalLayers(false)
     this.agentResumeSessionId = null
   },
@@ -888,8 +890,9 @@ export default defineComponent({
     finishSearchFocus(restoreFocus = true): void {
       this.deactivateModalLayers(restoreFocus)
       const active = document.activeElement
-      if (this.isSearchControl(active)) active.blur()
+      if (restoreFocus && this.isSearchControl(active)) active.blur()
       this.searchRestoreTarget = null
+      this.searchInputOpenedByTab = false
     },
     handleSearchExit(restoreFocus: boolean): void {
       this.searchExitRestoreFocus = restoreFocus
@@ -902,7 +905,10 @@ export default defineComponent({
       this.closeSearch()
     },
     captureSearchRestoreTarget(event: FocusEvent): void {
+      const enteredByTab = this.searchTabEntryPending
+      this.searchTabEntryPending = false
       if (this.searchModalFocusScope || !this.isSearchControl(event.target)) return
+      this.searchInputOpenedByTab = enteredByTab
       const previous = event.relatedTarget
       this.searchRestoreTarget = previous instanceof HTMLElement &&
         previous !== document.body &&
@@ -1121,7 +1127,10 @@ export default defineComponent({
         root?.querySelector<HTMLElement>('.highlighted')?.scrollIntoView({ block: 'nearest' })
       })
     },
-    handleSearchPreviewShortcut(event: KeyboardEvent): void {
+    handleSearchKeydown(event: KeyboardEvent): void {
+      if (!this.searchModalFocusScope) {
+        this.searchTabEntryPending = event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
+      }
       if (
         event.defaultPrevented || event.isComposing || event.key !== 'Enter' ||
         !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
@@ -1194,6 +1203,11 @@ export default defineComponent({
     },
     closeSearch(): void {
       const shouldCloseAgentWorkspace = this.isAgentOpen || Boolean(this.agentResumeSessionId)
+      // Dismissing a directly focused desktop field must allow the next Tab to
+      // continue along the header, not restore its previous sibling and reopen.
+      const keepSearchControlFocus = !this.isAgentOpen && this.searchInputOpenedByTab &&
+        this.isSearchControl(document.activeElement) &&
+        window.matchMedia('(min-width: 960px)').matches
       this.searchRequestId += 1
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
@@ -1206,7 +1220,8 @@ export default defineComponent({
       this.previewSelector = null
       this.directPromptHandoffId += 1
       this.pendingAskRestoreTarget = null
-      this.finishSearchFocus()
+      this.searchExitRestoreFocus = !keepSearchControlFocus
+      this.finishSearchFocus(!keepSearchControlFocus)
       this.searchIsFocused = false
       this.searchMode = 'search'
       this.search = ''

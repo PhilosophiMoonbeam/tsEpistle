@@ -35,7 +35,7 @@ const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(
 const evaluate = new Function(
   'defineComponent', 'provide', 'ref', 'watch', 'useDisplay', 'wikiStore', 'adminSummaryKey', 'fetchSystemSummary',
   'getErrorMessage', 'loadingStart', 'loadingStop', 'showNotification', 'buildAdminNavigation', 'filterAdminNavigation',
-  'ConfirmDialogHost', 'focusRouteHeading',
+  'ConfirmDialogHost', 'NavHeader', 'VueScroll', 'focusRouteHeading',
   script
 )
 
@@ -86,7 +86,7 @@ const mountAdmin = async () => {
     async () => ({}), String, () => {}, () => {}, () => {},
     () => [{ key: 'people', label: 'People', icon: 'mdi-account', items: [{ to: '/users', label: 'Members', icon: 'mdi-account' }] }],
     groups => groups,
-    passthrough(), focusRouteHeading
+    passthrough(), passthrough(), passthrough(), focusRouteHeading
   )
   const router = createRouter({
     history: createMemoryHistory(),
