@@ -1687,6 +1687,61 @@ describe('modern editor shell interaction contract', () => {
     expect(markdownStyle).toMatch(/&-sidebar\s*\{[\s\S]*background:\s*var\(--wiki-surface-sunken\);/)
   })
 
+  for (const outcome of ['ready', 'cancelled', 'account changed', 'forbidden'] as const) {
+    test(`discard restores the private persisted baseline before waiting for a real render receipt: ${outcome}`, async () => {
+      const store = createStore()
+      store.editor.editorKey = 'visual-markdown'
+      store.page.visibility = 'private'
+      const testWindow = createTestWindow()
+      let release!: (response: Response) => void
+      let previewCalls = 0
+      let writes = 0
+      mockRenderPreviews(testWindow, (async () => {
+        previewCalls++
+        return await new Promise<Response>(resolve => { release = resolve })
+      }) as typeof fetch)
+      const context = createShellHarness(store, testWindow, {
+        waitForPageRender,
+        updatePage: async () => {
+          writes++
+          return { sourceRevision: 'unexpected', updatedAt: '' }
+        }
+      })
+      const baseline = _.cloneDeep(context.savedState)
+      context.editorAdapter.replaceText('new unsaved Visual Markdown')
+      store.page.path = 'discarded-path'
+      store.page.visibility = 'public'
+      context.dialogUnsaved = true
+
+      const discarding = context.discardAndExit()
+      await flushSaveUi()
+
+      expect(previewCalls).toBe(1)
+      expect(testWindow.location.assigned).toEqual([])
+      expect(mutableSnapshot(store)).toEqual(baseline)
+      expect(context.editorAdapter.capture().text).toBe(baseline.content)
+      expect(context.localDiscardCalls).toBe(1)
+      expect(context.dialogUnsaved).toBe(false)
+      if (outcome === 'cancelled') context.cancelRenderWait()
+      if (outcome === 'account changed') context.accountId += 1
+      release(outcome === 'forbidden'
+        ? Response.json({ error: 'Page access was revoked.' }, { status: 403 })
+        : Response.json(createRenderPreview(store, store.page.sourceRevision)))
+      await discarding
+
+      expect(testWindow.location.assigned).toEqual(outcome === 'ready' ? ['/_private/en/persisted-path'] : [])
+      expect(mutableSnapshot(store)).toEqual(baseline)
+      expect(context.editorAdapter.capture().text).toBe(baseline.content)
+      expect(context.isDirty).toBe(false)
+      expect(context.dialogUnsaved).toBe(false)
+      expect(context.discardPending).toBe(false)
+      expect(context.renderWaitController).toBeNull()
+      expect(context.localDiscardCalls).toBe(1)
+      expect(writes).toBe(0)
+      if (outcome === 'forbidden') expect(String(store.notifications.at(-1)?.message)).toContain('Page access was revoked.')
+    })
+  }
+
   test('resets the durable Markdown draft before restoring a public page and exiting', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
