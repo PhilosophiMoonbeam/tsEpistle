@@ -4,6 +4,8 @@ Search locates knowledge; Wiki Agent works with it. Desktop and tablet headers k
 
 On desktop, **Browse by Tags** sits immediately before Search with the same 8px gap as the other grouped header buttons. The command group is bounded to Search's maximum width so wider headers do not separate the two controls; Search remains centered.
 
+Glossary remains available in **Page actions** on phones and in compact desktop reader headers that already have that menu. This leaves room for the full workspace title and centered Search without clipping Account or reducing touch targets below 44px.
+
 Opening Agent from an already-open Search dialog retires the previous Search focus scope before capturing the rendered menu activator. Vuetify's activator slot retains its own ref; restoration targets the actual overflow button.
 
 ## Sources in place
@@ -100,6 +102,8 @@ Completed answers offer Copy answer with source links and Save as Wiki draft. Sa
 Terminal assistant messages carry a bounded, owner-scoped `runOutcome` with terminal status and an optional error code; it does not keep a finished run in `currentRun` or expose provider error messages. Partial, failed, and cancelled answers retain truthful recovery states after reload. Review request restores an editable draft and never resubmits it automatically.
 
 Governed changes report their recorded outcome rather than treating a mutation as an unanswered source question. Applied receipts identify the exact proposal and committed result; denied decisions identify the proposal that was not applied. These receipts establish operation status, not page-content facts. An unrelated missing fact can still make the answer partial without concealing a completed change. Missing or no-longer-readable page metadata is not proof that the page was deleted.
+
+Transcript proposal diffs keep horizontal code scrolling local, but vertical wheel input can continue into the transcript at the diff's edge. Reading earlier messages must not trap the pointer inside a short diff or make the approval-navigation control unreachable.
 
 Activity labels name the action and its status. Running or exceptional activity opens by default, while a user's native disclosure choice survives transcript updates. Completed message entrances are static; animation and decorative live indicators are confined to live work. Presentation caches retain unchanged entry identities and invalidate when content, locale, time, or origin changes.
 

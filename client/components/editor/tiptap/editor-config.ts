@@ -24,6 +24,8 @@ import {
   DefinitionListKeyboard,
   DefinitionTerm,
   Keyboard,
+  prepareTiptapHtml,
+  prepareTiptapMarkdown,
   parseSupportedWikiImageSource,
   restoreTiptapHtmlSources,
   WikiSourceBlock,
@@ -425,4 +427,38 @@ export function serializeVisualEditorData(format: VisualEditorFormat, editor: Ed
   if (format === 'markdown') return editor.getMarkdown()
   const html = restoreTiptapHtmlSources(editor.getHTML())
   return beautify(html, { indent_size: 2, end_with_newline: true })
+}
+
+/**
+ * Keep the source bytes paired with the native document they produced. Parsing
+ * and HTML serialization are not inverses (whitespace, attributes, legacy HTML),
+ * so a capture of an unchanged document must not manufacture an unsaved edit.
+ */
+export class VisualEditorSource {
+  private sourceDocument: Editor['state']['doc']
+
+  constructor(
+    private readonly editor: Editor,
+    private readonly format: VisualEditorFormat,
+    private source: string
+  ) {
+    this.sourceDocument = editor.state.doc
+  }
+
+  readText(): string {
+    // Persistent-node equality also recognizes Undo back to the original source.
+    if (this.format === 'html' && this.sourceDocument.eq(this.editor.state.doc)) return this.source
+    return serializeVisualEditorData(this.format, this.editor)
+  }
+
+  replaceText(source: string): void {
+    this.editor.commands.setContent(
+      this.format === 'markdown' ? prepareTiptapMarkdown(source) : prepareTiptapHtml(source),
+      { contentType: this.format, emitUpdate: false }
+    )
+    // Reset only after the synchronous replacement, never in deferred onCreate:
+    // a later native transaction must remain a real edit, even during startup.
+    this.source = source
+    this.sourceDocument = this.editor.state.doc
+  }
 }

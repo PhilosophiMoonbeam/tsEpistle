@@ -739,7 +739,8 @@ const decide = (decision: 'approved' | 'denied'): void => {
   overflow: auto;
   font-size: .78rem;
   line-height: 1.55;
-  overscroll-behavior: contain;
+  /* Keep horizontal code scrolling local; vertical input can reach the transcript. */
+  overscroll-behavior: contain auto;
   white-space: pre;
 }
 

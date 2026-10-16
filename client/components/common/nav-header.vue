@@ -100,7 +100,7 @@
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
           v-btn(
-            v-if='glossaryAvailable && transportVerified'
+            v-if='glossaryAvailable && transportVerified && !glossaryInPageMenu'
             icon
             rounded='lg'
             :aria-label='$t(`common:glossary.title`, { defaultValue: `Glossary` })'
@@ -208,6 +208,14 @@
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4 {{$t('common:header.currentPage')}}
                 p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
+                v-list-item(
+                  v-if='glossaryInPageMenu && glossaryAvailable && transportVerified'
+                  role='button'
+                  link
+                  prepend-icon='mdi-book-alphabet'
+                  @click='openGlossaryDirectory'
+                )
+                  v-list-item-title {{ $t('common:glossary.title', { defaultValue: 'Glossary' }) }}
                 v-list-item.pl-4(
                   v-for='action of desktopPageMenuActions'
                   :key='action.handler'
@@ -248,7 +256,7 @@
             v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)', :aria-disabled='!onlineActionReady ? `true` : undefined')
               v-icon(start) mdi-exit-to-app
               v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:actions.exit`) : onlineActionUnavailableReason')
-          v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
+          v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && (!hideSearch || (glossaryAvailable && transportVerified)))) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(
                 icon
@@ -269,6 +277,14 @@
                 @click='openAgent'
               )
                 v-list-item-title {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
+              v-list-item(
+                v-if='glossaryInPageMenu && glossaryAvailable && transportVerified'
+                role='button'
+                link
+                prepend-icon='mdi-book-alphabet'
+                @click='openGlossaryDirectory'
+              )
+                v-list-item-title {{ $t('common:glossary.title', { defaultValue: 'Glossary' }) }}
               p.nav-header-menu__note(v-if='$vuetify.display.xs && !hideSearch && !transportVerified') {{ navigationUnavailableReason }}
               v-list-item(
                 v-if='$vuetify.display.xs && !hideSearch'
@@ -648,6 +664,12 @@ export default defineComponent({
     },
     mobilePageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
       return this.path ? this.pageMenuActions : []
+    },
+    glossaryInPageMenu(): boolean {
+      return this.$vuetify.display.xs || (
+        this.$vuetify.display.mdAndUp && !this.$vuetify.display.lgAndUp &&
+        this.hasAnyPagePermissions && Boolean(this.path) && this.mode !== 'edit'
+      )
     },
     search: {
       get(): string { return wikiStore.site.search ?? '' },
@@ -2297,9 +2319,9 @@ export default defineComponent({
   .nav-header {
     .nav-header-layout {
       display: grid;
-      // Reserve the actions' intrinsic width before sharing the remaining
-      // space; otherwise their max-content row can push Account offscreen.
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(max-content, 1fr);
+      // Equal side tracks keep Search centered; the action track still owns
+      // its intrinsic minimum so Account cannot be pushed offscreen.
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(max-content, 1fr);
     }
 
     &.nav-header--dense.nav-header--reserved-actions {
@@ -2345,6 +2367,22 @@ export default defineComponent({
 
     .nav-header-slot-actions {
       flex: 0 0 auto;
+    }
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1279px) {
+  .nav-header:not(.nav-header--dense) .nav-header-actions {
+    gap: 2px;
+
+    .v-btn--icon {
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+    }
+
+    .v-divider {
+      margin-inline: 4px !important;
     }
   }
 }
