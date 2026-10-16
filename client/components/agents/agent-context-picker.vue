@@ -34,7 +34,7 @@
         ? $t('common:agentContext.pageNeedsConnection')
         : disabled
           ? $t('common:agentContext.pageBusy')
-          : $t(draft.includeCurrentPage ? 'common:agentContext.pageIncluded' : 'common:agentContext.pageExcluded', { path: `${currentPage.locale}/${currentPage.path}` })">
+          : $t(draft.includeCurrentPage ? 'common:agentContext.pageIncluded' : 'common:agentContext.pageExcluded', { path: `${currentPage.locale}/${currentPage.path}`, interpolation: { escapeValue: false } })">
       <template #activator="{ props: tooltipProps }">
         <button
           v-bind="tooltipProps"
@@ -43,7 +43,7 @@
           :class="{ 'agent-context__page-chip--excluded': !draft.includeCurrentPage }"
           :aria-disabled="disabled || connectionBlocked ? 'true' : undefined"
           :aria-pressed="draft.includeCurrentPage"
-          :aria-label="$t('common:agentContext.includePage', { title: currentPageLabel })"
+          :aria-label="$t('common:agentContext.includePage', { title: currentPageLabel, interpolation: { escapeValue: false } })"
           @click="toggleCurrentPage"
         >
           <v-icon :icon="draft.includeCurrentPage ? 'mdi-file-check-outline' : 'mdi-file-hidden'" size="15" aria-hidden="true" />

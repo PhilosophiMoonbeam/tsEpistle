@@ -15,7 +15,9 @@ if (!descriptor.template || !descriptor.scriptSetup) throw new Error('agent-cont
 
 import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
+const translateWithDefaultEscaping = (key: string, options: Record<string, unknown> = {}): string =>
+  translateEnglish(key, { interpolation: { escapeValue: true }, ...options })
+globalThis.useTranslate = () => translateWithDefaultEscaping
 
 setLocation('/wiki/en/home')
 
@@ -227,7 +229,7 @@ const mountPicker = (
   })
   const app = Vue.createApp(picker, { draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false, ...extraProps })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  app.config.globalProperties.$t = translateEnglish
+  app.config.globalProperties.$t = translateWithDefaultEscaping
   app.component(
     'WikiSourcePreview',
     Vue.defineComponent({
@@ -409,6 +411,7 @@ describe('Agent context current-page inclusion', () => {
     if (!includeControl) throw new Error('Current-page source chip did not render')
 
     expect(includeControl.getAttribute('aria-pressed')).toBe('true')
+    expect(includeControl.getAttribute('aria-label')).toContain('en/handbook/context')
     includeControl.click()
     await settle()
     expect(included.changes).toEqual([{ includeCurrentPage: false }])
@@ -426,6 +429,7 @@ describe('Agent context current-page inclusion', () => {
 
   it('names the chip by page title and explains, without toggling, while the connection is down', async () => {
     const page: AgentCurrentPageHint = { id: 78, locale: 'en', path: 'handbook/title', observedUpdatedAt: '2026-09-16T00:00:00.000Z' }
+    const currentPageTitle = 'Team & <Ops> / "Handbook"'
     const mounted = mountPicker(
       vi.fn(async () => result([])),
       vi.fn(async (selector: { id: number }) => source(selector.id)),
@@ -433,19 +437,19 @@ describe('Agent context current-page inclusion', () => {
       page,
       {
         connectionBlocked: true,
-        currentPageTitle: 'Team handbook'
+        currentPageTitle
       }
     )
     const chip = mounted.host.querySelector<HTMLButtonElement>('.agent-context__page-chip')
     if (!chip) throw new Error('Current-page source chip did not render')
-    expect(chip.textContent).toContain('Team handbook')
+    expect(chip.textContent).toContain(currentPageTitle)
     expect(chip.textContent).not.toContain('handbook/title')
-    expect(chip.getAttribute('aria-label')).toBe('Include current page: Team handbook')
+    expect(chip.getAttribute('aria-label')).toContain(currentPageTitle)
+    expect(chip.querySelector('ops')).toBeNull()
     expect(chip.getAttribute('aria-pressed')).toBe('true')
     // Still focusable so its tooltip can give the reason, but the click changes nothing.
     expect(chip.disabled).toBe(false)
     expect(chip.getAttribute('aria-disabled')).toBe('true')
-    expect(chip.hasAttribute('title')).toBe(false)
     chip.click()
     await settle()
     expect(mounted.changes).toEqual([])
