@@ -2,7 +2,7 @@
 
 ## Assessment and the original defects
 
-The maintained integration uses `@ax-llm/ax` **25.0.0** for generative inference, image chat and transcription. The application owns authorization, run leases, tool execution, accounting, context compaction and continuation integrity. Request-scoped Ax services sit behind the existing DNS-pinned, bounded provider fetch. Keeping that host loop is intentional: replacing it with an independent AxAgent/AxBalancer loop would not automatically preserve these application contracts.
+The maintained integration uses `@ax-llm/ax` **25.4.1** for generative inference, image chat and transcription. The application owns authorization, run leases, tool execution, accounting, context compaction and continuation integrity. Request-scoped Ax services sit behind the existing DNS-pinned, bounded provider fetch. Keeping that host loop is intentional: replacing it with an independent AxAgent/AxBalancer loop would not automatically preserve these application contracts.
 
 The original image-model lock had four independent causes: a readonly administration field, a client save payload containing a fixed model, a server `z.literal` model schema, and a transport dispatching a module constant instead of the configured model. Changing only the field would not fix the API request. The separate media configuration now binds the editable model to the actual guarded endpoint and request.
 

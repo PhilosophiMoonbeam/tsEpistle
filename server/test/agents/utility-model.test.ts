@@ -228,38 +228,41 @@ describe('agent utility model', () => {
     }
   })
 
-  it('charges a valid receipt while falling back extended for invalid classification text', async () => {
-    const reconcile = vi.fn(async () => {})
-    const chat = vi.fn(async () => ({
-      results: [{ index: 0, content: 'not-a-tier' }],
-      modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
-    }))
-    const utility = new AgentUtilityModel({
-      create: vi.fn(async () => ({
-        service: { chat },
-        model: 'model-mini',
-        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
-        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 },
-        transportKind: 'openai-responses'
+  it.each(['invalid text', 'length', 'content_filter', 'error'] as const)(
+    'charges a valid receipt while falling back extended for unusable classification (%s)',
+    async failure => {
+      const reconcile = vi.fn(async () => {})
+      const chat = vi.fn(async () => ({
+        results: [{ index: 0, content: failure === 'invalid text' ? 'not-a-tier' : 'small', ...(failure === 'invalid text' ? {} : { finishReason: failure }) }],
+        modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
       }))
-    } as unknown as AgentProviderFactory)
-    const reservation = { id: 1, tokens: 100, costMicros: 100 }
-    await expect(
-      utility.classifyGoalBudget({
-        profileVersionId: request.profileVersionId,
-        objective: 'Investigate the deployment rollover',
-        signal: new AbortController().signal,
-        dispatchBudget: {
-          reserve: vi.fn(async () => reservation),
-          reconcile,
-          release: vi.fn(async () => {}),
-          consumeTool: vi.fn(async () => {}),
-          unsettledExposure: { tokens: 0, costMicros: 0 }
-        }
-      })
-    ).resolves.toEqual({ tier: 'extended', selection: 'fallback', inputTokens: 3, outputTokens: 4, totalTokens: 7, costMicros: 11 })
-    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 3, outputTokens: 4, totalTokens: 7, costMicros: 11 })
-  })
+      const utility = new AgentUtilityModel({
+        create: vi.fn(async () => ({
+          service: { chat },
+          model: 'model-mini',
+          capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+          pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 },
+          transportKind: 'openai-responses'
+        }))
+      } as unknown as AgentProviderFactory)
+      const reservation = { id: 1, tokens: 100, costMicros: 100 }
+      await expect(
+        utility.classifyGoalBudget({
+          profileVersionId: request.profileVersionId,
+          objective: 'Investigate the deployment rollover',
+          signal: new AbortController().signal,
+          dispatchBudget: {
+            reserve: vi.fn(async () => reservation),
+            reconcile,
+            release: vi.fn(async () => {}),
+            consumeTool: vi.fn(async () => {}),
+            unsettledExposure: { tokens: 0, costMicros: 0 }
+          }
+        })
+      ).resolves.toEqual({ tier: 'extended', selection: 'fallback', inputTokens: 3, outputTokens: 4, totalTokens: 7, costMicros: 11 })
+      expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 3, outputTokens: 4, totalTokens: 7, costMicros: 11 })
+    }
+  )
   it('keeps post-dispatch goal classification reconciliation failures fatal', async () => {
     const chat = vi.fn(async () => ({
       results: [{ index: 0, content: 'standard' }],
@@ -332,6 +335,72 @@ describe('agent utility model', () => {
       costMicros: 9157
     })
   })
+
+  it.each(['length', 'content_filter', 'error'] as const)(
+    'discards terminally failed title output after EOF while settling its final receipt (%s)',
+    async finishReason => {
+      for (const streaming of [false, true]) {
+        let reachedEof = !streaming
+        const receipt = {
+          results: [{ index: 0, content: 'Deployment Pipeline Failures', finishReason }],
+          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
+        }
+        const chat = vi.fn(async () =>
+          streaming
+            ? new ReadableStream({
+                start(controller) {
+                  controller.enqueue({
+                    results: [{ index: 0, content: 'Deployment Pipeline Failures', finishReason: 'stop' as const }],
+                    modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+                  })
+                  controller.enqueue({ ...receipt, results: [{ index: 0, finishReason }] })
+                },
+                pull(controller) {
+                  reachedEof = true
+                  controller.close()
+                }
+              })
+            : receipt
+        )
+        const utility = new AgentUtilityModel({
+          create: vi.fn(async () => ({
+            service: { chat },
+            model: 'model-mini',
+            transportKind: 'openai-responses',
+            capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+            pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+          }))
+        } as unknown as AgentProviderFactory)
+        const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+        const reconcile = vi.fn(async () => {
+          expect(reachedEof).toBe(true)
+        })
+        const release = vi.fn(async () => {})
+        await expect(
+          utility.generateConversationTitle({
+            ...request,
+            dispatchBudget: {
+              reserve: vi.fn(async () => reservation),
+              reconcile,
+              release,
+              consumeTool: vi.fn(async () => {}),
+              unsettledExposure: { tokens: 0, costMicros: 0 }
+            }
+          })
+        ).resolves.toEqual({
+          title: 'Investigate intermittent failures in the deployment pipeline',
+          source: 'fallback',
+          inputTokens: 3,
+          outputTokens: 4,
+          totalTokens: 7,
+          costMicros: 11
+        })
+        expect(chat).toHaveBeenCalledTimes(1)
+        expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 3, outputTokens: 4, totalTokens: 7, costMicros: 11 })
+        expect(release).not.toHaveBeenCalled()
+      }
+    }
+  )
 
   it('rejects missing provider usage instead of settling a dispatched title at zero', async () => {
     const chat = vi.fn(async () => ({ results: [{ index: 0, content: 'A title' }] }))
@@ -642,6 +711,47 @@ describe('agent utility model', () => {
     expect(create).toHaveBeenCalledWith(request.profileVersionId, { purpose: 'utility' })
     expect(chat.mock.calls[0]?.[0]).not.toHaveProperty('functions')
   })
+
+  it.each(['length', 'content_filter', 'error'] as const)(
+    'rejects otherwise valid knowledge JSON from a terminally failed inference (%s)',
+    async finishReason => {
+      const chat = vi.fn(async () => ({
+        results: [
+          {
+            index: 0,
+            finishReason,
+            content: JSON.stringify({
+              type: 'Procedure',
+              summary: null,
+              tags: [],
+              entities: [],
+              relationships: [],
+              openQuestions: [],
+              searchTerms: []
+            })
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
+      }))
+      const utility = new AgentUtilityModel({
+        create: vi.fn(async () => ({
+          service: { chat },
+          model: 'model-mini',
+          transportKind: 'openai-responses',
+          capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 }
+        }))
+      } as unknown as AgentProviderFactory)
+      await expect(
+        utility.enrichKnowledge({
+          profileVersionId: request.profileVersionId,
+          page: { title: 'Deploy', description: '', locale: 'en', path: 'ops/deploy', contentType: 'markdown', content: '# Deploy\n' },
+          missingFields: ['concept.type'],
+          signal: request.signal
+        })
+      ).rejects.toThrow('Utility model knowledge output did not complete')
+      expect(chat).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('rejects unknown provider JSON fields in utility knowledge output', async () => {
     const chat = vi.fn(async () => ({

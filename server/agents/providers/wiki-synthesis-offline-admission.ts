@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { fetch as undiciFetch } from 'undici/index.js'
 import type { AxAIService, AxChatResponse } from '@ax-llm/ax'
+import { ProxyTracerProvider } from '@opentelemetry/api'
 import { acquireAgentCoordinatorAdvisoryLocks, admitAgentRunInTransaction, heartbeatAgentRun, terminalizeAgentRunInTransaction, type AgentRunClaim } from '../coordinator.ts'
 import { AgentRepositoryError, appendAgentEvent, createAgentSession, getOwnedAgentSession } from '../repository.ts'
 import { AgentProviderFactory, agentProviderCostMicros, agentProviderMeasuredCostMicros, type AgentProviderFetch } from './factory.ts'
@@ -76,6 +77,8 @@ interface OfflineSharedAllowanceState {
 }
 const allowanceStates = new WeakMap<WikiOfflineAllowance, OfflineSharedAllowanceState>()
 const offlineFailure = (): Error => new Error('Offline inference failed; only numeric accounting is retained')
+// Native provider spans record raw exceptions even when trace content is excluded.
+const privateTracer = new ProxyTracerProvider().getTracer('wiki-synthesis-offline-admission-private')
 
 /** Every inference owns a real, fenced run. No production tools or queued tool replay. */
 export const createWikiOfflineDispatchAdmission = async (
@@ -270,13 +273,24 @@ export const createWikiOfflineDispatchAdmission = async (
       signal.throwIfAborted()
       const modelConfig = { ...request.modelConfig, maxTokens: outputTokens, n: 1, stream: false }
       delete modelConfig.effort
-      response = await provider.service.chat({ ...request, model: provider.model,
-        modelConfig }, {
-        ...(options?.functionCallMode === undefined ? {} : { functionCallMode: options.functionCallMode }),
-        ...(options?.functionCallSource === undefined ? {} : { functionCallSource: options.functionCallSource }),
-        stream: false, asyncMode: 'off', abortSignal: signal, timeout: 120_000, debug: false, verbose: false,
-        logger: () => {}, excludeContentFromTrace: true, includeRequestBodyInErrors: false, retry: { maxRetries: 0 }
-      }) as AxChatResponse
+      response = (await provider.service.chat(
+        { ...request, model: provider.model, modelConfig },
+        {
+          ...(options?.functionCallMode === undefined ? {} : { functionCallMode: options.functionCallMode }),
+          ...(options?.functionCallSource === undefined ? {} : { functionCallSource: options.functionCallSource }),
+          stream: false,
+          asyncMode: 'off',
+          abortSignal: signal,
+          timeout: 120_000,
+          debug: false,
+          verbose: false,
+          logger: () => {},
+          tracer: privateTracer,
+          excludeContentFromTrace: true,
+          includeRequestBodyInErrors: false,
+          retry: { maxRetries: 0 }
+        }
+      )) as AxChatResponse
       if (dispatch.providerStartedAt !== undefined) usage.providerMilliseconds += performance.now() - dispatch.providerStartedAt
       delete dispatch.providerStartedAt
       if (response instanceof ReadableStream || !dispatch.dispatched || !dispatch.exposure) throw offlineFailure()
@@ -347,17 +361,39 @@ export const createWikiOfflineDispatchAdmission = async (
     if (failed || !response) throw offlineFailure()
     return response
   }
-  const service: AxAIService = { ...provider.service, getLogger: () => () => {},
-    getOptions: () => ({ stream: false, debug: false, verbose: false, asyncMode: 'off', timeout: 120_000,
-      retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }),
-    setOptions: () => { throw new Error('Offline provider options are locked') },
+  const service: AxAIService = {
+    ...provider.service,
+    getLogger: () => () => {},
+    getOptions: () => ({
+      stream: false,
+      debug: false,
+      verbose: false,
+      asyncMode: 'off',
+      timeout: 120_000,
+      retry: { maxRetries: 0 },
+      tracer: privateTracer,
+      includeRequestBodyInErrors: false,
+      excludeContentFromTrace: true
+    }),
+    setOptions: () => {
+      throw new Error('Offline provider options are locked')
+    },
     validateChatRequest: (request, options) => {
       try {
-        provider.service.validateChatRequest?.({ ...request, model: provider.model }, {
-          ...(options?.functionCallMode === undefined ? {} : { functionCallMode: options.functionCallMode }),
-          ...(options?.functionCallSource === undefined ? {} : { functionCallSource: options.functionCallSource }),
-          stream: false, asyncMode: 'off', debug: false, verbose: false, includeRequestBodyInErrors: false, excludeContentFromTrace: true
-        })
+        provider.service.validateChatRequest?.(
+          { ...request, model: provider.model },
+          {
+            ...(options?.functionCallMode === undefined ? {} : { functionCallMode: options.functionCallMode }),
+            ...(options?.functionCallSource === undefined ? {} : { functionCallSource: options.functionCallSource }),
+            stream: false,
+            asyncMode: 'off',
+            debug: false,
+            verbose: false,
+            tracer: privateTracer,
+            includeRequestBodyInErrors: false,
+            excludeContentFromTrace: true
+          }
+        )
       } catch {
         throw offlineFailure()
       }

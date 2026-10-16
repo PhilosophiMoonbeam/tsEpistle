@@ -413,7 +413,7 @@ describe('decision provider protocols', () => {
     await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({ usage: null, estimatedCost: null })
   })
 
-  for (const failure of ['invalid-decision', 'ax-refusal'] as const) {
+  for (const failure of ['invalid-decision', 'nonmaximal-generated-choice', 'ax-refusal'] as const) {
     it(`retains billed compatible usage and redacts provider content after ${failure}`, async () => {
       const client = new DecisionProviderClient({
         resolve: publicDns,
@@ -429,7 +429,11 @@ describe('decision provider protocols', () => {
                 finish_reason: 'stop',
                 message: {
                   role: 'assistant',
-                  content: JSON.stringify({ ...answer, probabilities: { simple: 0.8, complex: 0.2, unauthorized: 0 } }),
+                  content: JSON.stringify(
+                    failure === 'nonmaximal-generated-choice'
+                      ? { ...answer, choice: 'complex' }
+                      : { ...answer, probabilities: { simple: 0.8, complex: 0.2, unauthorized: 0 } }
+                  ),
                   ...(failure === 'ax-refusal' ? { refusal: 'sensitive-provider-refusal' } : {})
                 }
               }
@@ -579,10 +583,11 @@ describe('decision provider protocols', () => {
 })
 
 describe('native decision batches', () => {
-  it('preserves each question distribution at inclusive rounding boundaries without conflating confidence or duplicating request usage', async () => {
+  it('preserves native nonargmax choices and inclusive rounding boundaries without conflating confidence or duplicating paid usage', async () => {
     for (const probabilities of [
-      { simple: 0.79, complex: 0.2 },
-      { simple: 0.81, complex: 0.2 }
+      { simple: 0.4, complex: 0.6 },
+      { simple: 0.39, complex: 0.6 },
+      { simple: 0.41, complex: 0.6 }
     ]) {
       let calls = 0
       const client = new DecisionProviderClient({
@@ -591,7 +596,7 @@ describe('native decision batches', () => {
           calls++
           return Response.json({
             model: 'jev-1.13.0',
-            answers: { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities } },
+            answers: { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities, confidence: 0.9 } },
             usage: { input_tokens: 100, output_tokens: 5, total_tokens: 120 }
           })
         })
@@ -602,12 +607,13 @@ describe('native decision batches', () => {
         providerRevision: native.revision,
         model: 'jev-1.13.0',
         answers: {
-          effort: { choice: 'simple', probabilities, confidence: 0.6 },
+          effort: { choice: 'simple', probabilities, confidence: 0.9 },
           evidence: { choice: 'unsupported', probabilities: { supported: 0, unsupported: 1 }, confidence: 0.1 }
         },
         usage: { inputTokens: 100, outputTokens: 5, totalTokens: 120, totalTokensSource: 'reported' },
         estimatedCostMicros: 5
       })
+      expect(result.estimatedCost?.amount).toBeCloseTo(0.00000483, 12)
       expect(calls).toBe(1)
     }
   })
@@ -625,7 +631,6 @@ describe('native decision batches', () => {
     ['out of range probability', { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities: { simple: 1.1, complex: -0.1 } } }],
     ['nonfinite probability', { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities: { simple: Infinity, complex: 0 } } }],
     ['probabilities outside rounding tolerance', { ...batchAnswers, effort: { ...batchAnswers.effort, probabilities: { simple: 0.789, complex: 0.2 } } }],
-    ['nonmaximal choice', { ...batchAnswers, effort: { ...batchAnswers.effort, choice: 'complex' } }],
     ['missing confidence', { ...batchAnswers, evidence: { type: 'choice', choice: 'unsupported', probabilities: { supported: 0, unsupported: 1 } } }],
     ['out of range confidence', { ...batchAnswers, evidence: { ...batchAnswers.evidence, confidence: 1.1 } }],
     ['unexpected answer field', { ...batchAnswers, evidence: { ...batchAnswers.evidence, explanation: 'fixture-secret-reflected' } }]
@@ -798,7 +803,7 @@ describe('decision validation and cost semantics', () => {
       expect(result.confidence).toBe(0.6)
     }
   })
-  it('rejects unknown, missing, negative, nonfinite and nonsumming probabilities and a nonmaximal choice', () => {
+  it('rejects unknown choices, missing, extra, negative, nonfinite and nonsumming probabilities, and nonfinite confidence', () => {
     for (const value of [
       { ...answer, choice: 'unknown' },
       { ...answer, probabilities: { simple: 1 } },
@@ -807,7 +812,6 @@ describe('decision validation and cost semantics', () => {
       { ...answer, probabilities: { simple: NaN, complex: 0 } },
       { ...answer, probabilities: { simple: 1.1, complex: -0.1 } },
       { ...answer, probabilities: { simple: 0.7, complex: 0.2 } },
-      { ...answer, choice: 'complex' },
       { ...answer, confidence: Infinity }
     ])
       expect(() => normalizeDecisionAnswer(value, request.criteria)).toThrow()

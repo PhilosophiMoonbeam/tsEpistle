@@ -57,7 +57,7 @@ const MAX_STRUCTURED_DEPTH = 64
 const MAX_STRUCTURED_VALUES = 16_384
 const MAX_STRUCTURED_BYTES = 65_536
 
-// Exact native chat capabilities in Ax 25.2.1 and Google's thinking-level table:
+// Exact native chat capabilities in Ax 25.4.1 and Google's thinking-level table:
 // https://ai.google.dev/gemini-api/docs/thinking
 // Portable catalog levels may collapse to a different native level. Unknown
 // models (including Gemini 2.x) keep provider defaults instead of guessing.

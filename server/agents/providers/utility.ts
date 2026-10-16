@@ -155,11 +155,14 @@ const consumeUtilityResponse = async (
   maximumBytes: number,
   outputLimitMessage: string,
   transportKind: AgentProviderTransportKind
-): Promise<{ content: string; usage: AgentProviderUsage }> => {
+): Promise<{ content: string; usage: AgentProviderUsage; terminalFailure: boolean }> => {
   let content = ''
   let usage: AgentProviderUsage | null = null
+  // Reject publication only after consuming EOF and retaining the final paid receipt.
+  let terminalFailure = false
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
+      if (result.finishReason === 'error' || result.finishReason === 'length' || result.finishReason === 'content_filter') terminalFailure = true
       if (result.content) content += result.content
       if (Buffer.byteLength(content, 'utf8') > maximumBytes) throw new Error(outputLimitMessage)
     }
@@ -199,19 +202,19 @@ const consumeUtilityResponse = async (
     accept(response)
   }
   if (usage === null) throw invalidProviderUsage()
-  return { content, usage }
+  return { content, usage, terminalFailure }
 }
 
 const consumeTitleResponse = async (
   response: AxChatResponse | ReadableStream<AxChatResponse>,
   transportKind: AgentProviderTransportKind
-): Promise<{ content: string; usage: AgentProviderUsage }> =>
+): Promise<{ content: string; usage: AgentProviderUsage; terminalFailure: boolean }> =>
   consumeUtilityResponse(response, TITLE_MAXIMUM_PROVIDER_BYTES, 'Utility model title exceeded its output limit', transportKind)
 
 const consumeKnowledgeResponse = async (
   response: AxChatResponse | ReadableStream<AxChatResponse>,
   transportKind: AgentProviderTransportKind
-): Promise<{ content: string; usage: AgentProviderUsage }> =>
+): Promise<{ content: string; usage: AgentProviderUsage; terminalFailure: boolean }> =>
   consumeUtilityResponse(response, KNOWLEDGE_MAXIMUM_PROVIDER_BYTES, 'Utility model knowledge output exceeded its limit', transportKind)
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -352,7 +355,7 @@ Use small only for narrow, self-contained work with few steps, little context an
         })
         dispatchReservation = undefined
       }
-      const value = consumed.content.trim()
+      const value = consumed.terminalFailure ? '' : consumed.content.trim()
       const tier = value === 'small' || value === 'standard' || value === 'extended' ? value : 'extended'
       return {
         tier,
@@ -443,7 +446,7 @@ Use small only for narrow, self-contained work with few steps, little context an
         })
         dispatchReservation = undefined
       }
-      const title = normalizeConversationTitle(consumed.content, '')
+      const title = consumed.terminalFailure ? '' : normalizeConversationTitle(consumed.content, '')
       return {
         title: title || fallback,
         source: title ? 'utility' : 'fallback',
@@ -520,6 +523,7 @@ Use small only for narrow, self-contained work with few steps, little context an
     const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
     const consumed = await consumeKnowledgeResponse(response, provider.transportKind)
     if (consumed.usage.outputTokens > maximumOutputTokens) throw new Error('Utility model knowledge output exceeded its configured token limit')
+    if (consumed.terminalFailure) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Utility model knowledge output did not complete', 502)
     const decoded: unknown = JSON.parse(consumed.content.trim())
     const value = KnowledgeUtilityResultSchema.parse(decoded)
     const encodedOutput = canonicalJson(value)

@@ -605,13 +605,12 @@ describe('eligible, confidence-gated per-turn routing', () => {
     expect(f.checkpoints).toHaveLength(0)
   })
 
-  it('rejects wrong choices, nonmaximal choices and malformed probability distributions after accounting billed usage', async () => {
+  it('rejects wrong choices and malformed probability distributions after accounting billed usage', async () => {
     const malformed: Partial<DecisionResult>[] = [
       { choice: 'unknown:simple' },
       { probabilities: { 'writing:simple': 1 } },
       { probabilities: { ...fixture().answer.probabilities, 'writing:simple': Number.NaN } },
       { probabilities: { ...fixture().answer.probabilities, 'writing:simple': 0.2 } },
-      { probabilities: { ...fixture().answer.probabilities, 'writing:simple': 0.1, 'analysis:complex': 0.9 } },
       { confidence: Number.POSITIVE_INFINITY }
     ]
     for (const change of malformed) {
@@ -624,14 +623,19 @@ describe('eligible, confidence-gated per-turn routing', () => {
     }
   })
 
-  it('requires BOTH confidence and chosen-label probability to reach the configured threshold', async () => {
-    for (const probabilities of [false, true]) {
+  it('retains valid native classification and billed usage but requires BOTH confidence and chosen-label probability to reach the configured threshold', async () => {
+    for (const belowThreshold of ['confidence', 'chosen-probability', 'nonargmax-choice'] as const) {
       const f = fixture()
-      if (probabilities) Object.assign(f.answer, { probabilities: { ...f.answer.probabilities, 'writing:simple': 0.94, 'writing:moderate': 0.06 } })
+      if (belowThreshold === 'chosen-probability')
+        Object.assign(f.answer, { probabilities: { ...f.answer.probabilities, 'writing:simple': 0.94, 'writing:moderate': 0.06 } })
+      else if (belowThreshold === 'nonargmax-choice')
+        Object.assign(f.answer, { probabilities: { ...f.answer.probabilities, 'writing:simple': 0.4, 'analysis:complex': 0.6 } })
       else Object.assign(f.answer, { confidence: 0.94 })
       const result = await f.router.routeTurn(f.input, f.hooks)
-      expect(result.reason).toBe('classifier-low-confidence')
-      expect(f.reconciliations).toHaveLength(1)
+      expect(result).toMatchObject({ switched: false, reason: 'classifier-low-confidence' })
+      expect(result.classification).toEqual(f.answer)
+      expect(f.reconciliations).toEqual([{ inputTokens: 300, outputTokens: 20, totalTokens: 320, costMicros: 13 }])
+      expect(f.getReleased()).toBe(0)
     }
   })
 

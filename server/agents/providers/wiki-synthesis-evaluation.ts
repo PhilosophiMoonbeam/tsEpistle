@@ -370,7 +370,9 @@ export const evaluateWikiSynthesisFixtures = async (
         const response = await service.chat(request, options)
         if (!(response instanceof ReadableStream)) {
           completedInference = true
-          terminalFailure = response.results.some(result => result.finishReason === 'error' || result.finishReason === 'length')
+          terminalFailure = response.results.some(
+            result => result.finishReason === 'error' || result.finishReason === 'length' || result.finishReason === 'content_filter'
+          )
         }
         return response
       }
