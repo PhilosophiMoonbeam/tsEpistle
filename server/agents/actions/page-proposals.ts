@@ -14,6 +14,7 @@ import { applyWikiLinePatch, inspectWikiLineSnapshotToken } from '../patch/wiki-
 import { getMcpProposal, getOwnedProposal, persistProposal, type PersistedProposal, type ProposalStatus } from '../proposals/repository.ts'
 import { applyApprovedProposal } from '../proposals/execution.ts'
 import { withOkfProducer } from '../../okf/mutation-context.ts'
+import { isApiPrincipal } from '../../helpers/api-principal.ts'
 
 const PageSchema = z.looseObject({
   id: z.coerce.number().int().positive(),
@@ -128,6 +129,8 @@ const pageDiff = (path: string, before: string, after: string): string | null =>
 const requester = async (dependencies: PageProposalActionDependencies, authority: ActionAuthority): Promise<Express.User> => {
   const value = await dependencies.resolveRequester(authority)
   if (!value) throw new ActionKernelError('AUTHENTICATION_REQUIRED', 'The action principal no longer exists', 401)
+  if (isApiPrincipal(value) && value.personalMcpAccess === 'read-only')
+    throw new ActionKernelError('MCP_READ_ONLY', 'This personal MCP key cannot prepare or apply proposals.', 403)
   return value
 }
 
@@ -723,8 +726,14 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
         await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: approverUser })
       }
       const producer = context.authority.transport === 'mcp' ? `mcp:${context.authority.requestId}` : `agent:${context.authority.requestId}`
-      const operationInput = withOkfProducer({ ...metadata.operationInput, requester: approverUser }, producer)
-      const nestedOperationInput = withOkfProducer({ input: metadata.operationInput, requester: approverUser }, producer)
+      // Personal credentials retain exact key-bound proposal authority while
+      // their actual page mutation is attributed to the current human owner.
+      const mutationRequester = isApiPrincipal(requestingUser) && requestingUser.personalMcpAccess !== undefined
+        ? await dependencies.resolveApprover?.(requestingUser.ownershipUserId!)
+        : approverUser
+      if (!mutationRequester) throw new ActionKernelError('REQUESTER_UNAVAILABLE', 'Proposal owner is no longer available', 403)
+      const operationInput = withOkfProducer({ ...metadata.operationInput, requester: mutationRequester }, producer)
+      const nestedOperationInput = withOkfProducer({ input: metadata.operationInput, requester: mutationRequester }, producer)
       if (metadata.kind === 'create') {
         const created = z.object({ id: z.number().int().positive() }).parse(await dependencies.operations.create(nestedOperationInput))
         // Older approved proposals retain their exact expected result/hash.

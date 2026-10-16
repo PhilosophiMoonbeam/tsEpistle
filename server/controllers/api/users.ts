@@ -4,6 +4,10 @@ import _ from 'lodash'
 import userOperations, { type ListUser } from '../../operations/users.ts'
 import { ProfilePreferencesInputSchema } from '../../../shared/user-presentation.ts'
 import { accountAdministration } from '../../operations/account-administration.ts'
+import { listPersonalMcpKeys, issuePersonalMcpKey, revokePersonalMcpKey } from '../../operations/personal-mcp.ts'
+import { agentCsrfMatches } from '../../agents/csrf.ts'
+import { requestOriginMatches } from '../../agents/origins.ts'
+import { personalMcpRuntime } from '../../helpers/personal-mcp.ts'
 
 const router = express.Router()
 
@@ -353,6 +357,34 @@ router.get('/whoami', async (req, res, next) => {
   } catch (err) {
     next(err)
   }
+})
+
+router.use('/profile/mcp-keys', (req, res, next) => {
+  res.set('Cache-Control', 'no-store')
+  if (req.authContext?.kind !== 'user' || req.user?.id !== req.authContext.userId)
+    return res.status(401).json({ error: 'A signed-in user session is required.' })
+  const origin = req.get('origin')
+  if (req.get('sec-fetch-site') !== 'same-origin' || !req.session || !agentCsrfMatches(req, req.get('x-wiki-csrf')) ||
+    ((req.method !== 'GET' || origin !== undefined) && !requestOriginMatches(origin, personalMcpRuntime().config.host)))
+    return res.status(403).json({ error: 'A same-origin request with a current CSRF token is required.' })
+  return next()
+})
+router.get('/profile/mcp-keys', async (req, res, next) => {
+  try {
+    return res.json(await listPersonalMcpKeys(req.user, req.get('X-TsEpistle-Profile-Account')))
+  } catch (error) { return next(error) }
+})
+router.post('/profile/mcp-keys', async (req, res, next) => {
+  try {
+    return res.status(201).json(await issuePersonalMcpKey(req.user, req.get('X-TsEpistle-Profile-Account'), req.body))
+  } catch (error) { return next(error) }
+})
+router.post('/profile/mcp-keys/:id/revoke', async (req, res, next) => {
+  const id = normalizeUserIdParam(String(req.params.id), res)
+  if (id === null) return
+  try {
+    return res.json(await revokePersonalMcpKey(req.user, req.get('X-TsEpistle-Profile-Account'), id))
+  } catch (error) { return next(error) }
 })
 
 router.get('/profile', async (req, res, next) => {

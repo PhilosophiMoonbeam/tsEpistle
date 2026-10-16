@@ -19,6 +19,7 @@ import commonHelper from '../helpers/common.ts'
 import securityHelper from '../helpers/security.ts'
 import cache from './cache.ts'
 import { createApiPrincipal, isApiPrincipal } from '../helpers/api-principal.ts'
+import { loadActiveApiKey, loadMcpApiPrincipal } from '../helpers/personal-mcp.ts'
 import { apiAccessContract, isApiKeyTransportPath } from '../../shared/api-access.ts'
 import {
   evaluateGroupAccess,
@@ -412,7 +413,13 @@ const authoritySnapshot = (requester: AccessUser | undefined, rows: AuthorityGro
 const selectedGroupIds = async (requester: AccessUser | undefined, transaction: Knex.Transaction): Promise<number[]> => {
   const binding = pageRuleRequesterBinding(requester)
   if (binding.kind === 'anonymous') return []
-  if (binding.kind === 'apiKey') return [binding.groupId]
+  if (binding.kind === 'apiKey') {
+    if (isApiPrincipal(requester) && requester.personalMcpAccess !== undefined) {
+      const current = await loadMcpApiPrincipal(binding.apiKeyId, binding.groupId, transaction)
+      return current.groups
+    }
+    return [binding.groupId]
+  }
   const rows = await transaction<{ groupId: unknown }>('userGroups').select('groupId').where('userId', binding.userId).orderBy('groupId')
   const ids = rows.map(row => row.groupId)
   if (!ids.every((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0))
@@ -687,8 +694,20 @@ const auth: AuthService = {
         if (!this.validApiKeys.includes(user.api)) {
           return next(createAuthenticationError('API key is invalid or was revoked.', 401, 'API_KEY_INVALID'))
         }
-        const permissions = this.groups[String(user.grp)]?.permissions ?? []
-        const principal = createApiPrincipal(user.api, user.grp, permissions)
+        let principal
+        try {
+          const row = await loadActiveApiKey(user.api)
+          if (row.personalAccess != null || row.personalOwnerId != null || user.personalMcp !== undefined) {
+            if (!isDedicatedMcpRequest(req))
+              return next(createAuthenticationError('Personal keys are supported only by the dedicated MCP transport.', 403, 'API_KEY_TRANSPORT_FORBIDDEN'))
+            principal = await loadMcpApiPrincipal(user.api, user.grp)
+          } else {
+            const permissions = this.groups[String(user.grp)]?.permissions ?? []
+            principal = createApiPrincipal(user.api, user.grp, permissions)
+          }
+        } catch (keyError) {
+          return next(asError(keyError))
+        }
         req.user = principal
         req.authContext = {
           kind: 'apiKey',

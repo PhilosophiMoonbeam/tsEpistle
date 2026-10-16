@@ -33,6 +33,8 @@ export const requireSystemAuthority = async (
   const gq = tx<Group>('groups').select('id', 'permissions', 'adminRevision').orderBy('id'),
     groups = await (lock ? gq.forUpdate() : gq)
   if (!requester.user) return denied('An administrator sign-in is required.')
+  if (isApiPrincipal(requester.user) && requester.user.personalMcpAccess !== undefined)
+    return denied('Personal MCP credentials cannot authorize system administration.')
   const actorId = principalId(requester.user)
   let ids: number[],
     apiKeyId: number | null = null
@@ -60,11 +62,13 @@ export const requireSystemAuthority = async (
       requester.user.groups[0] !== key.groupId
     )
       return denied('A current administrator API credential is required.')
-    const kq = tx<{ id: number; isRevoked: boolean; expiration: string }>('apiKeys').where('id', key.id).select('id', 'isRevoked', 'expiration').first()
+    const kq = tx<{ id: number; isRevoked: boolean; expiration: string; personalOwnerId?: number | null; personalAccess?: string | null }>('apiKeys').where('id', key.id).select('*').first()
     const account = await (lock ? kq.forUpdate() : kq),
       until = account ? new Date(account.expiration).getTime() : NaN
     if (
       !account ||
+      account.personalAccess != null ||
+      account.personalOwnerId != null ||
       account.isRevoked !== false ||
       !Number.isFinite(until) ||
       until <= now.getTime() ||

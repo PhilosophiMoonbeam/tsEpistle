@@ -17,6 +17,8 @@ interface ApiKey {
   expiration: string
   createdAt: unknown
   updatedAt: unknown
+  personalOwnerId?: number | null
+  personalAccess?: string | null
 }
 
 interface ApiKeyQuery {
@@ -222,7 +224,8 @@ const getConfig = async (requester: SystemRequester) => getDatabase().transactio
     enabled: currentApiConfiguration().isEnabled === true,
     createFullAccess: permissions.includes('manage:system'),
     assignableGroups,
-    keys: keys.map(key => serializeKey(key, canRevokeGrant(authority, describeApiKeyGrant(key.key).groupId, groups)))
+    keys: keys.filter(key => key.personalAccess == null && key.personalOwnerId == null)
+      .map(key => serializeKey(key, canRevokeGrant(authority, describeApiKeyGrant(key.key).groupId, groups)))
   }
 })
 

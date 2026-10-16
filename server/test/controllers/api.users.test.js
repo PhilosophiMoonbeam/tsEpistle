@@ -37,6 +37,7 @@ describe('controllers/api users endpoints', () => {
     express.__router.put.mockClear()
     express.__router.delete.mockClear()
     express.__router.patch.mockClear()
+    express.__router.use.mockClear()
 
     global.WIKI = {
       Error: {},
@@ -156,6 +157,36 @@ describe('controllers/api users endpoints', () => {
         }
       }
     }
+  })
+
+  it('fences personal MCP profile endpoints with user session, CSRF and same-origin metadata', async () => {
+    await vi.importFresh('../../controllers/api/users.ts', import.meta.url)
+    const gate = express.__router.use.mock.calls.find(([path]) => path === '/profile/mcp-keys')[1]
+    const makeRequest = (headers = {}, values = {}) => ({
+      user: { id: 42 }, authContext: { kind: 'user', userId: 42 },
+      method: 'GET', session: { agentCsrfToken: 'current-csrf' },
+      get: name => ({ 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': 'current-csrf', ...headers })[name],
+      ...values
+    })
+    const response = () => ({ set: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn() })
+    for (const req of [
+      makeRequest({}, { authContext: { kind: 'apiKey', apiKeyId: 7, groupId: 1 }, user: { api: 7, grp: 1 } }),
+      makeRequest({}, { authContext: { kind: 'guest' }, user: { id: 2 } }),
+      makeRequest({ 'x-wiki-csrf': 'foreign-csrf' }),
+      makeRequest({ 'sec-fetch-site': 'cross-site' }),
+      makeRequest({}, { method: 'POST' }),
+      makeRequest({ origin: 'https://foreign.example.test' }, { method: 'POST' })
+    ]) {
+      const next = vi.fn()
+      gate(req, response(), next)
+      expect(next).not.toHaveBeenCalled()
+    }
+    const next = vi.fn()
+    gate(makeRequest(), response(), next)
+    expect(next).toHaveBeenCalledOnce()
+    const postNext = vi.fn()
+    gate(makeRequest({ origin: 'https://wiki.example.test' }, { method: 'POST' }), response(), postNext)
+    expect(postNext).toHaveBeenCalledOnce()
   })
 
   const loadHandler = async () => {

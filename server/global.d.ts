@@ -1,4 +1,5 @@
 import type { RequestAuthContext } from '../shared/agents/contracts.ts'
+import type { PersonalMcpAccess } from '../shared/personal-mcp.ts'
 
 
 type WikiRecord = Record<string, unknown>
@@ -14,6 +15,7 @@ declare global {
       id?: number
       permissions?: string[]
       ownershipUserId?: number | null
+      personalMcpAccess?: PersonalMcpAccess
     }
 
     interface Request {
