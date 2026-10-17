@@ -4,6 +4,7 @@ import { wikiStore } from './store/index.ts'
 import { loadingStart, loadingStop } from './helpers/root-ui-store'
 import { requestConfirmation } from './components/common/confirm-dialog.ts'
 import { translate } from './modules/localization.ts'
+import { OFFLINE_PRIVATE_HISTORY_EVENT } from './helpers/offline-routes.ts'
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
 const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
@@ -67,6 +68,17 @@ function startProfileRouteLoading(to: RouteLocationNormalized): void {
 function stopProfileRouteLoading(to: RouteLocationNormalized): void {
   if (!profileLoadingOwners.delete(to)) return
   loadingStop(wikiStore, profileLoadingKey)
+}
+
+if (isProfile) {
+  // Window-targeted listeners can run in registration order, even with capture.
+  // Claim private reader history before the profile router sees its canonical URL.
+  window.addEventListener('popstate', event => {
+    if (typeof window.history.state?.offlineSelection !== 'string') return
+    const ownership = new window.Event(OFFLINE_PRIVATE_HISTORY_EVENT, { cancelable: true })
+    window.dispatchEvent(ownership)
+    if (ownership.defaultPrevented) event.stopImmediatePropagation()
+  }, true)
 }
 
 export const router = createRouter({

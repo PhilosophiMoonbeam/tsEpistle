@@ -20,6 +20,7 @@ import {
   type OfflineStorage
 } from '../../helpers/offline-storage.ts'
 import {
+  OFFLINE_PRIVATE_HISTORY_EVENT,
   OFFLINE_SAVED_PAGE_OPEN_EVENT,
   offlinePageHref,
   offlineRecordAtUrl,
@@ -1531,16 +1532,19 @@ const expiryLabel = (record: OfflineSnapshotRecord): string => {
   return t('common:offlineLibrary.expires', { expiresAt: formatDate(record.snapshot.expiresAt), interpolation: { escapeValue: false } })
 }
 
-const handlePopState = (event: PopStateEvent): void => {
+const handlePopState = (event: Event): void => {
+  const ownershipRequest = event.type === OFFLINE_PRIVATE_HISTORY_EVENT
+  if (ownershipRequest && !props.showSettings) return
   const selector = selectorFromUrl()
   if (!selector) {
-    if (selectedKey.value) closeRecord({ fromHistory: true })
+    if (!ownershipRequest && selectedKey.value) closeRecord({ fromHistory: true })
     return
   }
   const key = recordKey(selector)
   const selected = activeRecordForKey(key)
-  // A private reader owns its canonical history entry, not the profile router.
-  if (props.showSettings && selected?.audience === 'private' && window.history.state?.offlineSelection === key) {
+  if (ownershipRequest) {
+    if (selected?.audience !== 'private' || window.history.state?.offlineSelection !== key) return
+    event.preventDefault()
     event.stopImmediatePropagation()
   }
   historyMode.value = 'history'
@@ -1637,6 +1641,7 @@ onMounted(() => {
   void refreshReadingVault()
   clockTimer = window.setInterval(() => { clock.value = Date.now() }, 60_000)
   window.addEventListener('popstate', handlePopState, true)
+  window.addEventListener(OFFLINE_PRIVATE_HISTORY_EVENT, handlePopState)
   window.addEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
   window.addEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)
   unsubscribeStorageChanges = subscribeOfflineStorageChanges(notice => {
@@ -1664,6 +1669,7 @@ onBeforeUnmount(() => {
   searchController?.abort()
   searchController = null
   window.removeEventListener('popstate', handlePopState, true)
+  window.removeEventListener(OFFLINE_PRIVATE_HISTORY_EVENT, handlePopState)
   window.removeEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
   unsubscribeStorageChanges?.()
   window.removeEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)
