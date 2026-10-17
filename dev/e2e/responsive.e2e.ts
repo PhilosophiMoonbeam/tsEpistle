@@ -1309,7 +1309,7 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
-  test('mirrors native LTR/RTL reader and sidebar geometry while keeping branding physically right', async ({ page }, testInfo) => {
+  routedReaderTest('mirrors native LTR/RTL reader and sidebar geometry while keeping branding physically right', async ({ page }, testInfo) => {
     const viewport = page.viewportSize()
     if (!viewport) throw new Error('Reader geometry requires a configured viewport')
     let direction: 'ltr' | 'rtl' = 'ltr'
@@ -2120,7 +2120,15 @@ test.describe('responsive UI quality matrix', () => {
     await expectLocatorWithinViewport(agent, 'Wiki Agent panel')
     await expectResponsiveLayout(page, 'Wiki Agent panel')
     await page.context().clearCookies()
-    await page.goto('/en/home', { waitUntil: 'networkidle' })
+    const anonymousIdentityResponse = page.waitForResponse(response => {
+      const request = response.request()
+      return request.method() === 'GET' && new URL(response.url()).pathname === '/_api/users/whoami'
+    })
+    // Background channels are not reader readiness; wait for the native identity transition instead.
+    await page.goto('/en/home', { waitUntil: 'domcontentloaded' })
+    const anonymousIdentity = await anonymousIdentityResponse
+    expect(anonymousIdentity.status(), 'The reader rechecks native identity after cookies are cleared').toBe(200)
+    expect(await anonymousIdentity.json()).toEqual({ authenticated: false, user: null })
     await expect(page.locator('.page-header-section')).toBeVisible()
     await expect(page.locator('.nav-header-agent:visible')).toHaveCount(0)
     if (viewport.width < 600) await page.locator('.nav-header-mobile-actions').click()

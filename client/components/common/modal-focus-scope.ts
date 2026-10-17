@@ -217,9 +217,13 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
       return
     }
     // Gecko can ignore iframe focus until native cancelled-Tab processing ends.
-    // Enter on the next frame, without choosing focus in a cross-origin document.
+    // Focus the browsing context as well as its host; Window.focus is cross-origin safe.
     document.defaultView!.requestAnimationFrame(() => {
-      if (isTopScope() && target.isConnected && document.activeElement === previous) target.focus()
+      if (!isTopScope() || !target.isConnected || document.activeElement !== previous) return
+      target.focus()
+      if (isTopScope() && target.isConnected && document.activeElement === target) {
+        ;(target as HTMLIFrameElement).contentWindow?.focus()
+      }
     })
   }
 
