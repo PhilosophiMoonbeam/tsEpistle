@@ -3,6 +3,9 @@ import { expect, type Page } from '@playwright/test'
 import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { expectResponsiveLayout, responsiveTest as test } from './helpers'
 
+// The controlled tag API must own this story's responses; real offline stories keep workers enabled.
+const routedTagTest = test.extend({ serviceWorkers: 'block' })
+
 type PageApiRow = {
   id: number
   locale: string
@@ -200,11 +203,11 @@ async function openTags(page: Page, path = '/t', options: TagApiOptions = {}) {
   await page.goto(path, { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: /tags/i }).first()).toBeVisible()
 }
-async function expectTagFooterReachability(page: Page, resultName: RegExp, surface: string, expectInitiallyVisible: boolean) {
+async function expectTagFooterReachability(page: Page, resultName: RegExp, surface: string, shortResult: boolean, isMobile: boolean) {
   const resultLink = page.getByRole('link', { name: resultName }).last()
   await expect(resultLink).toBeVisible()
 
-  if (expectInitiallyVisible) {
+  if (shortResult) {
     const shortTagSearch = page.getByRole('textbox', { name: /search tags/i }).first()
     await shortTagSearch.fill('Alpha')
     await expect(page.locator('.tags-index-item'), `${surface} short fixture must narrow the tag index`).toHaveCount(1)
@@ -238,16 +241,16 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
   if (!initialGeometry) throw new Error(`${surface} did not expose footer and bottom content geometry.`)
 
   const footerDocumentTopBeforeScroll = initialGeometry.footer.documentTop
-  // One card is short on desktop, but the mobile vocabulary, selection, filters,
-  // and result stack are taller than the viewport even after the index is narrowed.
-  const contentFits = expectInitiallyVisible && (page.viewportSize()?.width ?? 0) >= 960
-  if (contentFits) {
+  // Desktop release profiles fit this narrowed result. The mobile/tablet device
+  // profiles can need document scroll even when they use the desktop-width layout.
+  const expectNoScroll = shortResult && !isMobile && (page.viewportSize()?.width ?? 0) >= 960
+  if (expectNoScroll) {
     expect(initialGeometry.scrollHeight - initialGeometry.viewportHeight, `${surface} short desktop content needs no document scroll`).toBeLessThanOrEqual(1)
     expect(initialGeometry.footer.top, `${surface} footer must be visible without scrolling`).toBeGreaterThanOrEqual(-1)
     expect(initialGeometry.footer.bottom, `${surface} footer must fit without scrolling`).toBeLessThanOrEqual(initialGeometry.viewportHeight + 1)
   } else {
-    if (expectInitiallyVisible) {
-      expect(initialGeometry.bottomContent.documentBottom, `${surface} mobile content itself extends beyond the viewport`).toBeGreaterThan(initialGeometry.viewportHeight)
+    if (shortResult) {
+      expect(initialGeometry.bottomContent.documentBottom, `${surface} mobile or tablet content itself extends beyond the viewport`).toBeGreaterThan(initialGeometry.viewportHeight)
     }
     expect(initialGeometry.footer.top, `${surface} footer must stay below the viewport before the document end`).toBeGreaterThan(initialGeometry.viewportHeight)
     const middleScroll = Math.max(0, Math.floor((initialGeometry.scrollHeight - initialGeometry.viewportHeight) / 2))
@@ -256,11 +259,12 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
     expect(middleFooterTop, `${surface} footer must stay below the viewport away from the document end`).toBeGreaterThan(initialGeometry.viewportHeight)
   }
 
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
   await resultLink.evaluate(element => {
     if (element instanceof HTMLElement) element.focus({ preventScroll: true })
   })
   await expect(resultLink).toBeFocused()
+  // Complete native focus scrolling before placing the document at its end.
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
 
   const geometry = await page.evaluate(() => {
     const footer = document.querySelector('footer')
@@ -271,6 +275,8 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
     const bounds = (element: HTMLElement) => {
       const rect = element.getBoundingClientRect()
       return {
+        left: rect.left,
+        right: rect.right,
         top: rect.top,
         bottom: rect.bottom,
         documentTop: rect.top + window.scrollY,
@@ -284,6 +290,7 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
       focused: bounds(focused),
       scrollY: window.scrollY,
       scrollHeight: document.documentElement.scrollHeight,
+      viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight
     }
   })
@@ -294,8 +301,12 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
   expect(Math.abs(geometry.scrollY + geometry.viewportHeight - geometry.scrollHeight), `${surface} must reach the document end`).toBeLessThanOrEqual(1)
   expect(geometry.footer.top, `${surface} footer must be visible at the document end`).toBeGreaterThanOrEqual(0)
   expect(geometry.footer.bottom, `${surface} footer must fit in the viewport`).toBeLessThanOrEqual(geometry.viewportHeight + 1)
+  expect(geometry.footer.left, `${surface} footer must stay inside the viewport`).toBeGreaterThanOrEqual(-1)
+  expect(geometry.footer.right, `${surface} footer must stay inside the viewport`).toBeLessThanOrEqual(geometry.viewportWidth + 1)
   expect(geometry.focused.top, `${surface} focused final control must be fully visible`).toBeGreaterThanOrEqual(-1)
   expect(geometry.focused.bottom, `${surface} focused final control must be fully visible`).toBeLessThanOrEqual(geometry.viewportHeight + 1)
+  expect(geometry.focused.left, `${surface} focused final control must be fully visible`).toBeGreaterThanOrEqual(-1)
+  expect(geometry.focused.right, `${surface} focused final control must be fully visible`).toBeLessThanOrEqual(geometry.viewportWidth + 1)
   expect(geometry.focused.bottom, `${surface} footer must not occlude the focused final control`).toBeLessThanOrEqual(geometry.footer.top + 1)
   expect(
     Math.abs(geometry.footer.documentTop - footerDocumentTopBeforeScroll),
@@ -304,7 +315,7 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
   expect(geometry.footer.documentTop, `${surface} footer must follow bottom content in document flow`).toBeGreaterThanOrEqual(
     geometry.bottomContent.documentBottom - 1
   )
-  if (expectInitiallyVisible) {
+  if (shortResult) {
     await page
       .getByRole('textbox', { name: /search tags/i })
       .first()
@@ -312,7 +323,7 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
   }
 }
 
-test('public tag library supports local filtering, AND selection, and mobile result focus', async ({ page }) => {
+routedTagTest('public tag library supports local filtering, AND selection, and mobile result focus', async ({ page, isMobile }) => {
   const longResultDescription = Array.from(
     { length: 80 },
     (_, index) => `Long result detail ${index + 1} keeps the public tag result content meaningfully tall for end-of-document checks.`
@@ -351,11 +362,19 @@ test('public tag library supports local filtering, AND selection, and mobile res
     }
   })
 
-  const browseLink = page.getByRole('banner').getByRole('link', { name: /^browse(?: by)? tags$/i })
+  const compactHeader = (page.viewportSize()?.width ?? 0) < 600
+  const headerActions = page.getByRole('banner').getByRole('button', { name: 'Page Actions', exact: true })
+  if (compactHeader) await headerActions.click()
+  const browseLink = page.getByRole('link', { name: /^browse(?: by)? tags$/i })
   await expect(browseLink).toHaveAttribute('href', '/t')
   await expect(browseLink).toHaveAttribute('aria-current', 'page')
   await browseLink.focus()
   await expect(browseLink).toBeFocused()
+  if (compactHeader) {
+    await browseLink.press('Escape')
+    await expect(browseLink).toBeHidden()
+    await expect(headerActions).toBeFocused()
+  }
 
   const indexSearch = page.getByRole('textbox', { name: /search tags/i }).first()
   await expect(indexSearch).toBeVisible()
@@ -444,18 +463,19 @@ test('public tag library supports local filtering, AND selection, and mobile res
   await expect(locale).toBeFocused()
   await locale.press('Enter')
   await page.getByRole('option', { name: 'French', exact: true }).click()
+  await expect(page.getByRole('listbox')).toBeHidden()
   await expect(page).toHaveURL(/\/t\/alpha\?lang=fr(?:$|#)/)
   const frenchResult = page.getByRole('link', { name: /french guide result/i })
   await expect(frenchResult).toBeVisible()
   await expect(frenchResult).toHaveAttribute('href', '/fr/guide/french-start')
-  await expectTagFooterReachability(page, /french guide result/i, 'short tag result', true)
+  await expectTagFooterReachability(page, /french guide result/i, 'short tag result', true, isMobile)
 
   const beta = await revealTagButton(page, 'Beta')
   await beta.click()
   await expect(beta).toHaveAttribute('aria-pressed', 'true')
   await expect(page).toHaveURL(/\/t\/alpha\/beta\?lang=fr(?:$|#)/)
   await expect(page.getByRole('link', { name: /latest result/i })).toBeVisible()
-  await expectTagFooterReachability(page, /trailing result/i, 'long tag result', false)
+  await expectTagFooterReachability(page, /trailing result/i, 'long tag result', false, isMobile)
 
   const viewportWidth = page.viewportSize()?.width
   if (viewportWidth === undefined) throw new Error('Responsive tag coverage requires a configured viewport width.')

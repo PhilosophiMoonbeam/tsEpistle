@@ -3515,6 +3515,8 @@ test.describe('reader metadata rendering', () => {
     await expect(historyLink).toHaveAccessibleName('View history')
     const assertHistoryLayout = async (width: number): Promise<void> => {
       await page.setViewportSize({ width, height: initialViewport.height })
+      // Native viewport resize can hide the old host before Vue moves the tools card.
+      await expect(page.locator('.page-tools-card'), `Reader tools finish moving after resizing to ${width}px`).toBeVisible()
       const geometry = await page.evaluate(() => {
         const card = document.querySelector<HTMLElement>('.page-tools-card')
         const date = card?.querySelector<HTMLElement>('.page-document-row--date')
