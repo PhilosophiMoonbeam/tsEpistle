@@ -31,6 +31,7 @@
 <script lang='ts'>
 import { requestConfirmation } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
+import AdminHero from '@/components/common/admin-hero.vue'
 import AdminPagesPublication from './admin-pages-publication.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
@@ -39,7 +40,7 @@ import { publicationState, PUBLICATION_STATE_KEYS, type PublicationState } from 
 import { wikiStore } from '@/store/index.ts'
 
 export default {
-  components: { AsyncState, AdminPagesPublication, StatusIndicator },
+  components: { AdminHero, AsyncState, AdminPagesPublication, StatusIndicator },
   data() { return { pages: [] as PageListRow[], loading: false, errorMessage: '', loadRequestId: 0, search: '', selectedLang: null as string | null, visibility: 'all', publication: 'all', tag: null as string | null, untagged: false, sort: 'updated', pagination: 1, selectedIds: [] as number[], bulkOpen: false, bulkBusy: false, now: Date.now(), clock: null as ReturnType<typeof setInterval> | null,
     views: [{ title: this.$t('admin:pages.allPages'), value: 'all' }, { title: this.$t('admin:pages.drafts'), value: 'draft' }, { title: this.$t('admin:pages.privatePages'), value: 'private' }, { title: this.$t('admin:pages.withoutTags'), value: 'untagged' }],
     sortOptions: [{ title: this.$t('admin:pages.recentlyUpdated'), value: 'updated' }, { title: this.$t('admin:pages.oldestUpdateFirst'), value: 'oldest' }, { title: this.$t('admin:pages.titleZ'), value: 'title' }, { title: this.$t('admin:pages.pathZ'), value: 'path' }],
