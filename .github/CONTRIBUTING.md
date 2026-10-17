@@ -88,6 +88,8 @@ Backend-specific `logo-particle-performance*.json` files are generated check art
 
 First-run setup autofocus must not override a field the user has already focused or redirect subsequent password typing. Preserve the native regression that drains startup timers after choosing the password field.
 
+Confirmation sessions mount `VDialog` with its active model. Reusing an inactive overlay defers Vuetify's `globalTop` ownership and can drop an immediate Escape after reopening. Keep queued requests in the same overlay, retain leave-transition opener restoration, and preserve native keyboard qualification without added delays.
+
 Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
 
 Draw.io keyboard qualification covers a full forward focus loop, reverse traversal, Escape restoration, and pointer close/reopen. Do not repeat an identical forward loop: it adds native protocol time without another boundary or transition, while the reverse and reopen paths already exercise re-entry.
