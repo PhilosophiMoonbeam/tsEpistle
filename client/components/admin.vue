@@ -201,6 +201,7 @@ export default defineComponent({
     return {
       // Set by in-app navigation only; the first route never moves focus.
       focusAfterEnter: false,
+      focusAtNavigation: null as Element | null,
       removeAfterEach: null as (() => void) | null
     }
   },
@@ -250,6 +251,7 @@ export default defineComponent({
     this.removeAfterEach = this.$router.afterEach((to, from, failure) => {
       // The initial navigation starts from a route with no matched records.
       if (failure || from.matched.length === 0 || to.path === from.path) return
+      this.focusAtNavigation = document.activeElement
       const incoming = to.matched[to.matched.length - 1]?.components?.default
       const outgoing = from.matched[from.matched.length - 1]?.components?.default
       if (incoming && incoming === outgoing) {
@@ -282,7 +284,7 @@ export default defineComponent({
     },
     focusHeading() {
       const main = ((this.$refs.adminMain as { $el?: HTMLElement })?.$el || this.$refs.adminMain) as HTMLElement | undefined
-      focusRouteHeading(main)
+      focusRouteHeading(main, this.focusAtNavigation)
     },
     isSectionOpen(key: string) {
       return this.openedSections.includes(key)

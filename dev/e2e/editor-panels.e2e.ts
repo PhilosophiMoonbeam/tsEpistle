@@ -2,7 +2,8 @@ import { expect, type Page, type Request, type Response, type Route } from '@pla
 import { authenticateAsAdmin, openAuthenticatedPage, responsiveTest as test } from './helpers'
 import type { TextEditorHandle } from '../../client/components/editor/common/text-editor'
 
-const routedTagTest = test.extend({ serviceWorkers: 'block' })
+// These editor fixtures route API reads; a controlling worker can bypass page.route.
+const routedEditorTest = test.extend({ serviceWorkers: 'block' })
 
 // Mount the shipped editor with a cookie-backed actor, but no saved page or collaboration session.
 const content = Array.from(
@@ -289,7 +290,7 @@ async function assertControlsContained(page: Page) {
     .toEqual([])
 }
 
-test('asset browser keeps folder, upload, and insertion actions contained', async ({ page }) => {
+routedEditorTest('asset browser keeps folder, upload, and insertion actions contained', async ({ page }) => {
   await openEditor(page)
   const assetButton = page.getByRole('button', { name: 'Insert Assets', exact: true })
   if (!(await assetButton.isVisible())) {
@@ -326,7 +327,7 @@ test('asset browser keeps folder, upload, and insertion actions contained', asyn
   const image = preview.getByRole('img', { name: 'brand-mark.png', exact: true })
   await expect(image).toHaveJSProperty('src', new URL('/brand-mark.png', page.url()).href)
 })
-test('page identity asset results stay within the viewport and scroll internally', async ({ page }) => {
+routedEditorTest('page identity asset results stay within the viewport and scroll internally', async ({ page }) => {
   await openEditor(page, { largeAssetFixture: true })
   await page.getByRole('button', { name: 'Page', exact: true }).click()
   const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
@@ -381,7 +382,7 @@ test('page identity asset results stay within the viewport and scroll internally
   }
 })
 
-test('preview follows the cursor by default and stops when toggled off', async ({ page }) => {
+routedEditorTest('preview follows the cursor by default and stops when toggled off', async ({ page }) => {
   await openEditor(page)
   const preview = page.locator('.editor-markdown-preview-content')
   if (!(await preview.isVisible())) await page.getByRole('button', { name: 'Show preview', exact: true }).click()
@@ -430,7 +431,7 @@ test('preview follows the cursor by default and stops when toggled off', async (
   }
 })
 
-test('applies formatting from the toolbar or its mobile overflow', async ({ page }) => {
+routedEditorTest('applies formatting from the toolbar or its mobile overflow', async ({ page }) => {
   await openEditor(page)
   const editorRoot = page.locator('.editor-markdown')
   await selectText(page, 2, 0, 11)
@@ -481,7 +482,7 @@ test('applies formatting from the toolbar or its mobile overflow', async ({ page
     .poll(() => editorRoot.evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getLine(2)))
     .toMatch(/^~~A paragraph~~/)
 })
-routedTagTest('page properties keeps tag drafts honest across suggestion, failure, removal, and cancel', async ({ page }) => {
+routedEditorTest('page properties keeps tag drafts honest across suggestion, failure, removal, and cancel', async ({ page }) => {
   const searchRequests: string[] = []
   const failedQueries: Record<string, true> = {}
   const taxonomyRequests: string[] = []
@@ -600,7 +601,7 @@ routedTagTest('page properties keeps tag drafts honest across suggestion, failur
   expect(taxonomyRequests).toEqual([])
 })
 
-routedTagTest('page properties applies a new tag without reviving a canceled draft', async ({ page }) => {
+routedEditorTest('page properties applies a new tag without reviving a canceled draft', async ({ page }) => {
   const taxonomyRequests: string[] = []
   page.on('request', request => {
     if (new URL(request.url()).pathname.includes('/taxonomy')) taxonomyRequests.push(request.url())
@@ -641,7 +642,7 @@ routedTagTest('page properties applies a new tag without reviving a canceled dra
   expect(taxonomyRequests).toEqual([])
 })
 
-routedTagTest('page properties ignores a late suggestion response for an older query', async ({ page }) => {
+routedEditorTest('page properties ignores a late suggestion response for an older query', async ({ page }) => {
   let releaseSlow: (() => void) | undefined
   let slowStarted: (() => void) | undefined
   const slowResponse = new Promise<void>(resolve => {
@@ -680,7 +681,7 @@ routedTagTest('page properties ignores a late suggestion response for an older q
   await expect(page.getByRole('option', { name: 'slow-tag', exact: true })).toHaveCount(0)
 })
 
-test('Draw.io parent modal isolates the editor and restores its native toolbar opener across iframe focus', async ({ page }) => {
+routedEditorTest('Draw.io parent modal isolates the editor and restores its native toolbar opener across iframe focus', async ({ page }) => {
   // Use the persistent desktop toolbar opener, not a transient mobile overflow item.
   await page.setViewportSize({ width: 1440, height: 900 })
   await openEditor(page)
