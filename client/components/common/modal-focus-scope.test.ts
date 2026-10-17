@@ -119,6 +119,8 @@ describe('modal focus scope', () => {
     const back = document.querySelector<HTMLElement>('#back')!
     const other = document.querySelector<HTMLElement>('#other')!
     const iframe = document.querySelector<HTMLIFrameElement>('iframe')!
+    // JSDOM has no native child-window focus; browser coverage exercises that handoff.
+    iframe.contentWindow!.focus = () => {}
     for (const element of [root, back, other, iframe]) {
       element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList
     }

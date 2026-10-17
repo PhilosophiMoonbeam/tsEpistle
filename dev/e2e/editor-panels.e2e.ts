@@ -366,6 +366,12 @@ test('page identity asset results stay within the viewport and scroll internally
       })
     )
     .toBe(true)
+
+  for (const name of ['Browse files', 'Upload']) {
+    const action = picker.getByRole('button', { name, exact: true })
+    await action.scrollIntoViewIfNeeded()
+    await expect(action).toBeInViewport({ ratio: 1 })
+  }
 })
 
 test('preview follows the cursor by default and stops when toggled off', async ({ page }) => {
