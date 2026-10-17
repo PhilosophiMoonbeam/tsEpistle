@@ -2186,6 +2186,27 @@ describe('Inline Agent workspace actions', () => {
     approval.getBoundingClientRect = approvalRead
     await frames.flush()
     expect(container.scrollTop).toBe(1400)
+
+    // Short transcripts can expose earlier media actions while still within
+    // the near-bottom threshold. A ripple/layout frame must not move the
+    // action between pointerdown and pointerup.
+    container.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    container.scrollTop = 1332
+    container.dispatchEvent(new browserWindow.Event('scroll'))
+    await frames.flush()
+    expect(state.transcriptFollowing.value).toBe(false)
+    expect(state.transcriptBottomDistance.value).toBe(68)
+    state.scheduleTranscriptReconcile()
+    await frames.flush()
+    expect(container.scrollTop).toBe(1332)
+    expect(state.transcriptFollowing.value).toBe(false)
+    state.handleTranscriptScroll()
+    await frames.flush()
+    expect(state.transcriptFollowing.value).toBe(false)
+    container.scrollTop = 1400
+    container.dispatchEvent(new browserWindow.Event('scroll'))
+    await frames.flush()
+    expect(state.transcriptFollowing.value).toBe(true)
     heightRead.mockClear()
     viewportRead.mockClear()
     dockRead.mockClear()

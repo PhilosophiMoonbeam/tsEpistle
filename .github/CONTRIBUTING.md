@@ -68,11 +68,19 @@ Linux WebKit qualification uses the pinned engine's GTK runtime, not its headles
 
 Install Xvfb alongside Playwright's supported native dependencies, following its [Linux headed execution guidance](https://playwright.dev/docs/ci#running-headed). Use `bun run e2e [Playwright arguments]` or `bun run e2e:responsive [Playwright arguments]`: the shared launcher resolves the repository's pinned CLI and starts `xvfb-run --auto-servernum` when Linux has no `DISPLAY`. With an existing display it uses that display. The three Linux WebKit projects select GTK/headed mode; Chromium, Firefox, their headless settings, and performance capability flags remain unchanged. Do not replace this runtime with compositor-disabling flags, engine skips, or retries. For a direct native WebKit diagnostic on a displayless Linux host, use `xvfb-run -a` and `webkit.launch({ headless: false })`.
 
+Run the pinned Playwright CLI with Node.js, as its shebang declares; Bun only orchestrates the launcher. `bunx` also [honors that Node shebang](https://bun.com/docs/pm/bunx#shebangs). Using Bun's `process.execPath` here silently changes Playwright's worker, timeout and teardown runtime.
+
+The multi-turn creation-tools story uses a 60-second whole-story orchestration budget for tool selection, two native media decodes/playback checks, and the next text-only turn. Its individual assertions and application performance/runtime budgets remain unchanged; retain the full independent-selection, playback, persistence and empty-whitelist checks.
+
 First-run setup autofocus must not override a field the user has already focused or redirect subsequent password typing. Preserve the native regression that drains startup timers after choosing the password field.
 
 Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
 
 Route-backed Agent browser fixtures authenticate a genuine cookie actor and leave native identity and offline-key handshakes intact. A mocked authenticated `whoami` does not authorize native page/watch/key requests. Use the existing service-worker blocking pattern only for controlled route-backed fixtures; keep real worker and offline coverage in `offline.e2e.ts`.
+
+Controlled page-property tag stories use their own worker-blocked test fixture so declared suggestion failures and late responses retain request ownership; [Playwright routing does not intercept service-worker requests](https://playwright.dev/docs/api/class-page#page-route). Leave other editor and offline contexts unchanged. Commit a tag and leave its combobox with native Tab before applying the dialog.
+
+Media qualification enters Wiki Agent through its documented native shortcut; Search-to-Agent admission has separate coverage. Keep all media operations in the same conversation, including independent creation-tool deselection and the next turn's explicit empty whitelist, rather than repeating unrelated entry or pre-generation selection rehearsals.
 
 Keep emulated user agents consistent with their browser engine. Chromium tablet profiles retain their viewport, touch, mobile and device-scale settings but use a Chromium tablet user agent, not Safari's; otherwise Monaco selects a WebKit-only clipboard workaround in Chromium.
 

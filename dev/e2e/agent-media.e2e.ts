@@ -4,7 +4,7 @@ import multer from 'multer'
 import { expect, type Locator, type Page, type Request } from '@playwright/test'
 import type { AgentMediaView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { installEnabledAgentFixture, renewFixtureThreadResolution } from './agent-fixture.ts'
-import { authenticateAsAdmin, expectLocatorWithinViewport, openSearch, responsiveTest as test } from './helpers.ts'
+import { authenticateAsAdmin, expectLocatorWithinViewport, responsiveTest as test } from './helpers.ts'
 
 // Route-backed Agent fixtures own these responses; real service-worker coverage lives in offline.e2e.ts.
 test.use({ serviceWorkers: 'block' })
@@ -21,14 +21,9 @@ const generated: AgentMediaView = {
 }
 
 async function openAgent(page: Page, waitForComposer = true): Promise<Locator> {
-  await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: [], suggestions: [], totalHits: 0, nextCursor: null } }))
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
-  const search = await openSearch(page)
-  await search.fill('home')
-  const dialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
-  await expect(dialog).toBeVisible()
-  await dialog.getByRole('button', { name: 'Ask Wiki about "home"', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+Shift+A')
   const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
   await expect(agent).toBeVisible()
   if (waitForComposer) await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
@@ -311,7 +306,18 @@ mediaTest('Agent media uploads, generates, edits, and transcribes within the exi
   expect(sent[0]?.generationTools).toEqual(['image'])
   expect(sent[0]?.responseMode).toBeUndefined()
   expect(sent[0]?.attachmentIds).toEqual([uploaded[1]?.id])
-  await agent.getByRole('button', { name: 'Edit image', exact: true }).click()
+  const editImage = agent.getByRole('button', { name: 'Edit image', exact: true })
+  await editImage.scrollIntoViewIfNeeded()
+  if (!await editImage.evaluate(button => {
+    const bounds = button.getBoundingClientRect()
+    const target = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+    return target !== null && button.contains(target)
+  })) {
+    // Read older output through the transcript instead of clicking through fixed chrome.
+    await agent.getByRole('region', { name: 'Conversation transcript', exact: true }).focus()
+    for (let step = 0; step < 4; step += 1) await page.keyboard.press('ArrowUp')
+  }
+  await editImage.click()
   await expect(agent.getByRole('button', { name: 'Remove generated-image.png', exact: true })).toBeVisible()
   await expect(input).toHaveValue('Edit this image: ')
   expect(uploaded).toHaveLength(3)
@@ -407,6 +413,7 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
 })
 
 test('Agent combines selected creation tools in a normal conversation', async ({ page }) => {
+  test.setTimeout(60_000)
   await authenticateAsAdmin(page)
   const fixture = await installEnabledAgentFixture(page, {
     media: { attachments: false, imageGeneration: false, videoGeneration: true, musicGeneration: true, transcription: false }
@@ -528,11 +535,7 @@ test('Agent combines selected creation tools in a normal conversation', async ({
   const menuScreenshot = test.info().outputPath('agent-creation-tools-menu.png')
   await page.screenshot({ path: menuScreenshot })
   await test.info().attach('agent-creation-tools-menu', { path: menuScreenshot, contentType: 'image/png' })
-  await musicTool.click()
-  await trigger.click()
-  await expect(musicTool).toHaveAttribute('aria-checked', 'false')
-  await expect(videoTool).toHaveAttribute('aria-checked', 'true')
-  await musicTool.click()
+  await page.keyboard.press('Escape')
   await input.fill('Compose ambient piano music and create an accompanying sunrise video. Explain your choices.')
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   for (const kind of ['video', 'audio']) {
@@ -553,9 +556,11 @@ test('Agent combines selected creation tools in a normal conversation', async ({
   await trigger.click()
   await expect(videoTool).toHaveAttribute('aria-checked', 'true')
   await expect(musicTool).toHaveAttribute('aria-checked', 'true')
-  await videoTool.click()
-  await trigger.click()
   await musicTool.click()
+  await trigger.click()
+  await expect(musicTool).toHaveAttribute('aria-checked', 'false')
+  await expect(videoTool).toHaveAttribute('aria-checked', 'true')
+  await videoTool.click()
   await input.fill('Now explain the scene without creating any more media.')
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   await expect.poll(() => sent.length).toBe(2)

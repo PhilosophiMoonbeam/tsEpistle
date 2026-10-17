@@ -2,6 +2,8 @@ import { expect, type Page, type Request, type Response, type Route } from '@pla
 import { authenticateAsAdmin, openAuthenticatedPage, responsiveTest as test } from './helpers'
 import type { TextEditorHandle } from '../../client/components/editor/common/text-editor'
 
+const routedTagTest = test.extend({ serviceWorkers: 'block' })
+
 // Mount the shipped editor with a cookie-backed actor, but no saved page or collaboration session.
 const content = Array.from(
   { length: 45 },
@@ -440,7 +442,7 @@ test('applies formatting from the toolbar or its mobile overflow', async ({ page
     .poll(() => editorRoot.evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getLine(2)))
     .toMatch(/^~~A paragraph~~/)
 })
-test('page properties keeps tag drafts honest across suggestion, failure, removal, and cancel', async ({ page }) => {
+routedTagTest('page properties keeps tag drafts honest across suggestion, failure, removal, and cancel', async ({ page }) => {
   const searchRequests: string[] = []
   const failedQueries: Record<string, true> = {}
   const taxonomyRequests: string[] = []
@@ -557,6 +559,7 @@ test('page properties keeps tag drafts honest across suggestion, failure, remova
   await reopened.getByRole('combobox', { name: /tags/i }).fill('  Draft-Tag  ')
   await reopened.getByRole('combobox', { name: /tags/i }).press('Enter')
   await expect(reopened.getByRole('button', { name: /remove.*draft-tag/i })).toBeVisible()
+  await reopened.getByRole('combobox', { name: /tags/i }).press('Tab')
   await reopened.getByRole('button', { name: 'Apply', exact: true }).click()
   await expect(reopened).not.toBeVisible()
   await page.getByRole('button', { name: 'Page', exact: true }).click()
@@ -565,7 +568,7 @@ test('page properties keeps tag drafts honest across suggestion, failure, remova
   expect(taxonomyRequests).toEqual([])
 })
 
-test('page properties ignores a late suggestion response for an older query', async ({ page }) => {
+routedTagTest('page properties ignores a late suggestion response for an older query', async ({ page }) => {
   let releaseSlow: (() => void) | undefined
   let slowStarted: (() => void) | undefined
   const slowResponse = new Promise<void>(resolve => {

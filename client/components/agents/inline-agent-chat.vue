@@ -1597,8 +1597,10 @@ const scheduleTranscriptFrame = (): void => {
     // Keyboard resizing can change the distance without moving the viewport.
     if (scrollTop > transcriptScrollTopMemory + 1 && distance > transcriptBottomDistance.value + 1) composerFocused.value = false
     transcriptBottomDistance.value = distance
-    if (distance < 160) transcriptFollowing.value = true
-    else if (scrollTop < transcriptScrollTopMemory - 1 && transcriptReadingIntent) transcriptFollowing.value = false
+    // Reading upwards also disengages follow inside the near-bottom threshold.
+    // No-motion frames (including button ripples) must not re-arm it mid-click.
+    if (transcriptReadingIntent && scrollTop < transcriptScrollTopMemory - 1) transcriptFollowing.value = false
+    else if (distance < 160 && (!transcriptReadingIntent || scrollTop > transcriptScrollTopMemory + 1)) transcriptFollowing.value = true
     const restoreFollowing = transcriptFollowing.value && !transcriptReadingIntent && scrollTop < transcriptScrollTopMemory - 1
     transcriptScrollTopMemory = scrollTop
 
@@ -2390,6 +2392,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   width: 100%;
   max-width: var(--agent-conversation-width);
   margin-inline: auto;
+}
+.inline-agent__transcript :deep(.agent-message__media video) {
+  /* Intrinsic video dimensions can exceed a short scrollport. Keep the
+     player inside the reading space above the sticky dock, including the
+     transcript's scroll padding, without removing its native controls. */
+  max-height: min(480px, max(var(--wiki-control-height), calc(100cqh - var(--agent-dock-height, 0px) - var(--wiki-space-4) * 2)));
+  object-fit: contain;
 }
 
 
