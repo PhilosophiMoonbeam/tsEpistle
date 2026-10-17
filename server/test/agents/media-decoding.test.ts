@@ -3,9 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { afterEach, describe, expect, it } from '../bun-test.mts'
-import { decodeAgentAudioVideo } from '../../agents/media-decoding.ts'
 import { validateAgentMedia } from '../../agents/media.ts'
+import { decodeAgentAudioVideo } from '../../agents/media-decoding.ts'
+import { afterEach, describe, expect, it } from '../bun-test.mts'
 
 const directories: string[] = []
 const newDirectory = async (): Promise<string> => {
@@ -402,7 +402,13 @@ try {
   })
 
   it.each([
-    { name: 'audio sample duration', input: audioInput(1801, 8000), options: ['-c:a', 'libopus', '-b:a', '8k'], mimeType: 'audio/webm' },
+    // Keep fixture encoding cheap so the deadline measures bounded decoding.
+    {
+      name: 'audio sample duration',
+      input: audioInput(1801, 8000),
+      options: ['-c:a', 'libopus', '-compression_level', '0', '-b:a', '8k'],
+      mimeType: 'audio/webm'
+    },
     { name: 'video duration', input: videoInput(301, '16x16', 1), options: ['-c:v', 'libvpx'], mimeType: 'video/webm' },
     { name: 'video frame work', input: videoInput(151, '16x16', 120), options: ['-c:v', 'libvpx'], mimeType: 'video/webm' }
   ])(
