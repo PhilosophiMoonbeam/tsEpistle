@@ -796,8 +796,8 @@ jobs:
         [[ "$expected_amd64_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
         test "$(docker image inspect --format '{{.Id}}' "$candidate")" = "$expected_image_id"
         test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$candidate")" = 'linux/amd64'
-        docker buildx imagetools inspect "$IMAGE_REPOSITORY@$expected_amd64_digest" --raw > tested-amd64-manifest.json
-        test "$(jq --exit-status --raw-output '.config.digest' tested-amd64-manifest.json)" = "$expected_image_id"
+        docker buildx imagetools inspect "$IMAGE_REPOSITORY@$expected_amd64_digest"
+        test "$(docker image inspect --format '{{.Descriptor.digest}}' "$candidate")" = "$expected_amd64_digest"
         printf '%s@%s\n' "$IMAGE_REPOSITORY" "$expected_amd64_digest" > image-amd64-descriptor.txt
 
     - name: Build and Push AMD64 Agent Browser Candidate
