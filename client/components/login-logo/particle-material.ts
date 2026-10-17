@@ -138,7 +138,7 @@ const createVertexState = (uniforms: ParticleNodeUniforms, motionTexture: DataTe
   const motionIndex = vertexIndex.shiftRight(2)
   const cloudMotion = textureLoad(
     motionTexture,
-    ivec2(motionIndex.bitAnd(MOTION_TEXTURE_WIDTH - 1), motionIndex.shiftRight(Math.log2(MOTION_TEXTURE_WIDTH)))
+    ivec2(motionIndex.bitAnd(MOTION_TEXTURE_WIDTH - 1).toInt(), motionIndex.shiftRight(Math.log2(MOTION_TEXTURE_WIDTH)).toInt())
   ).xy
   const safeViewport = uniforms.viewportSize.max(vec2(1)).toVar('safeViewport')
   const baseCss = vec2(
