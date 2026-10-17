@@ -450,11 +450,24 @@ jobs:
         sha256sum tsepistle-linux.tar.gz
 
   e2e:
-    name: Playwright (PostgreSQL 18)
-    runs-on: [self-hosted, linux, x64, tsepistle-ci]
+    name: Playwright (${{ matrix.suite }}, PostgreSQL 18)
+    runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: core
+            browser: chromium
+          - suite: chromium
+            browser: chromium
+          - suite: firefox
+            browser: chromium firefox
+          - suite: webkit
+            browser: chromium webkit
     env:
-      WIKI_TEST_NAMESPACE: tsepistle-ci-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}-e2e-pg18
+      WIKI_TEST_NAMESPACE: tsepistle-ci-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}-e2e-${{ matrix.suite }}-pg18
+      WIKI_E2E_SUITE: ${{ matrix.suite }}
     needs: [build]
     permissions:
       contents: read
@@ -462,6 +475,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+      with:
+        bun-version: ${{ env.BUN_VERSION }}
     - name: Verify Local Toolchain
       shell: bash
       run: |
@@ -471,7 +487,7 @@ jobs:
     - name: Install Test Dependencies
       run: |
         bun install --frozen-lockfile
-        bun --bun playwright install chromium firefox webkit
+        bunx playwright install --with-deps ${{ matrix.browser }}
 
     - name: Download Test Image
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -509,13 +525,13 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
-        name: playwright-failures-postgres-18
+        name: playwright-failures-${{ matrix.suite }}-postgres-18
         path: test-results
         if-no-files-found: ignore
         retention-days: 14
 
     - name: Upload Runtime Performance Metrics
-      if: always()
+      if: always() && matrix.suite == 'core'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: runtime-performance-postgres-18
