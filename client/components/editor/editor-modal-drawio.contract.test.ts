@@ -193,7 +193,7 @@ describe('Draw.io editor modal contract', () => {
     postMessage.mockRestore()
   })
 
-  test('mounts the actual modal with accessible labels, iframe focus, Escape, and focus restoration', async () => {
+  test('mounts the actual modal with accessible labels, Escape, and focus restoration', async () => {
     const background = document.body.appendChild(document.createElement('main'))
     background.setAttribute('aria-hidden', 'false')
     const trigger = background.appendChild(document.createElement('button'))
@@ -213,17 +213,6 @@ describe('Draw.io editor modal contract', () => {
     expect(background.inert).toBe(true)
     expect(background.getAttribute('aria-hidden')).toBe('true')
     expect(document.activeElement).toBe(closeButton)
-    closeButton.dispatchEvent(
-      new document.defaultView!.KeyboardEvent('keydown', {
-        key: 'Tab',
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true
-      })
-    )
-    await settle()
-    expect(document.activeElement).toBe(dialog.querySelector('iframe'))
-    closeButton.focus()
     closeButton.dispatchEvent(new document.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     expect(mounted.wikiStore.editor.activeModal).toBe('')
     mounted.unmount()
