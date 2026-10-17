@@ -598,21 +598,46 @@ async function installControlledWebGpuLoss(page: Page): Promise<void> {
   })
 }
 
-async function waitForBackendOutcome(page: Page): Promise<LogoPerformanceHook> {
-  await page.waitForFunction(
+type LogoBackendOutcome =
+  | { readonly state: 'animated'; readonly backend: ParticleBackendKind }
+  | { readonly state: 'static'; readonly diagnostic: LogoBackendDiagnostic }
+
+async function waitForBackendOutcome(page: Page): Promise<LogoBackendOutcome> {
+  const result = await page.waitForFunction(
     () => {
       const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
       const benchmark = logoPerformanceWindow().__logoParticlePerformance
-      return (
-        benchmark !== undefined &&
-        (benchmark.effectiveBackend !== null ||
-          benchmark.backendDiagnostics?.some(diagnostic => diagnostic.phase === 'failed' || diagnostic.phase === 'lost') === true)
-      )
+      const diagnostic = benchmark?.backendDiagnostics?.at(-1)
+      if (!benchmark || !diagnostic) return false
+      if (diagnostic.phase === 'failed' || diagnostic.phase === 'lost' || diagnostic.phase === 'retired') {
+        // Backend selection survives retirement and can precede the first visible frame.
+        // Only an uncommitted terminal outcome is a startup capability fallback.
+        if (benchmark.startup?.visibleCommitAt !== undefined) {
+          throw new Error(`The visibly committed particle field unexpectedly became ${diagnostic.phase}.`)
+        }
+        return { state: 'static' as const, diagnostic: { ...diagnostic } }
+      }
+      if (
+        diagnostic.phase !== 'ready' ||
+        diagnostic.effectiveBackend === null ||
+        benchmark.startup?.firstSubmissionAt === undefined ||
+        benchmark.startup.visibleCommitAt === undefined
+      ) return false
+      const field = document.querySelector('.login-particle-logo')
+      const image = field?.querySelector<HTMLElement>('.login-particle-logo__image')
+      if (field?.querySelectorAll('canvas').length !== 1 || !image || getComputedStyle(image).opacity !== '0') return false
+      return { state: 'animated' as const, backend: diagnostic.effectiveBackend }
     },
     undefined,
     { timeout: 15_000 }
   )
-  return readLogoPerformance(page)
+  try {
+    const outcome = await result.jsonValue()
+    if (!outcome) throw new Error('The particle backend did not produce a current outcome.')
+    return outcome
+  } finally {
+    await result.dispose()
+  }
 }
 
 async function expectBackendReady(
@@ -2625,8 +2650,8 @@ test.describe('managed login logo auth independence', () => {
     const field = page.locator('.login-particle-logo')
     const staticImage = field.locator('.login-particle-logo__image')
     const outcome = await waitForBackendOutcome(page)
-    if (outcome.effectiveBackend === null) {
-      const diagnostic = 'No usable particle backend committed; static fallback is the explicit capability outcome.'
+    if (outcome.state === 'static') {
+      const diagnostic = `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; static fallback is the explicit capability outcome.`
       testInfo.annotations.push({ type: 'capability-fallback', description: diagnostic })
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
       await expectLoginValidation(page)
@@ -2700,8 +2725,8 @@ test.describe('managed login logo auth independence', () => {
     const field = page.locator('.login-particle-logo')
     const canvas = field.locator('canvas')
     const outcome = await waitForBackendOutcome(page)
-    if (outcome.effectiveBackend === null) {
-      const diagnostic = 'No usable particle backend committed; motion coverage records the explicit static capability outcome.'
+    if (outcome.state === 'static') {
+      const diagnostic = `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; motion coverage records the explicit static capability outcome.`
       testInfo.annotations.push({ type: 'capability-fallback', description: diagnostic })
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
       return
@@ -2806,17 +2831,17 @@ test.describe('managed login logo auth independence', () => {
     const canvas = field.locator('canvas')
     const staticImage = field.locator('.login-particle-logo__image')
     const outcome = await waitForBackendOutcome(page)
-    if (outcome.effectiveBackend == null) {
+    if (outcome.state === 'static') {
       testInfo.annotations.push({
         type: 'capability-fallback',
-        description: 'No particle backend committed; static fallback is the explicit capability outcome.'
+        description: `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; static fallback is the explicit capability outcome.`
       })
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
       await expectLoginValidation(page)
       return
     }
 
-    await expectBackendReady(page, outcome.effectiveBackend, squareEffect, 'auto')
+    await expectBackendReady(page, outcome.backend, squareEffect, 'auto')
     const email = page.getByLabel('Email Address', { exact: true })
     await email.focus()
     await expect(email).toBeFocused()
@@ -2874,10 +2899,10 @@ test.describe('managed login logo auth independence', () => {
     const field = page.locator('.login-particle-logo')
     const canvas = field.locator('canvas')
     const outcome = await waitForBackendOutcome(page)
-    if (outcome.effectiveBackend === null) {
+    if (outcome.state === 'static') {
       testInfo.annotations.push({
         type: 'capability-fallback',
-        description: 'No particle backend committed; request privacy is checked against the explicit static fallback.'
+        description: `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; request privacy is checked against the explicit static fallback.`
       })
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
     } else {
@@ -2902,7 +2927,7 @@ test.describe('managed login logo auth independence', () => {
 
     await page.waitForLoadState('networkidle')
     const requestCountBeforePointer = allRequests.length
-    const pointerTarget = outcome.effectiveBackend === null ? field : canvas
+    const pointerTarget = outcome.state === 'static' ? field : canvas
     const bounds = await pointerTarget.boundingBox()
     expect(bounds).not.toBeNull()
     if (!bounds) throw new Error('The visible logo surface has no pointer-test bounds.')
@@ -3037,11 +3062,15 @@ test.describe('particle compositor without service workers', () => {
   test('keeps rendered particle colors intrinsic across theme changes and composites straight-alpha samples', async ({ context, page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
 
-    const prepare = async (target: Page, colorScheme: 'light' | 'dark', query: string): Promise<void> => {
+    const prepare = async (target: Page, colorScheme: 'light' | 'dark', query: string): Promise<LogoBackendOutcome> => {
       await target.emulateMedia({ colorScheme, reducedMotion: 'no-preference' })
-      await installLogoPerformanceProbe(target)
+      await installLogoResourceTrace(target)
       await installLogoFrameCapture(target)
-      await installManagedLogo(target, colorProbeEffect, { particleBody: colorProbeParticleFixture })
+      const sceneRequests: string[] = []
+      target.on('request', request => {
+        if (SCENE_REQUEST_PATTERN.test(request.url())) sceneRequests.push(request.url())
+      })
+      const artifacts = await installManagedLogo(target, colorProbeEffect, { particleBody: colorProbeParticleFixture })
       await target.goto(`/login?${query}`, { waitUntil: 'domcontentloaded' })
       const card = target.locator('main.auth-shell__card')
       const title = card.locator('#login-site-title')
@@ -3055,17 +3084,19 @@ test.describe('particle compositor without service workers', () => {
       await expect(target.getByLabel('Password', { exact: true })).toBeVisible()
       await expect(target.getByRole('button', { name: 'Log In', exact: true })).toBeEnabled()
       const outcome = await waitForBackendOutcome(target)
-      if (outcome.effectiveBackend == null) {
-        const description = 'Color/compositor coverage skipped: no backend committed, with static fallback recorded as capability evidence.'
-        testInfo.annotations.push({ type: 'capability-skip', description })
-        test.skip(true, description)
-        return
+      if (outcome.state === 'static') {
+        const description = `Color/compositor startup ended in ${outcome.diagnostic.phase} before any visible commit; the explicit static capability outcome remains usable.`
+        testInfo.annotations.push({ type: 'capability-fallback', description })
+        await expectSettledLoadingFailure(target, colorProbeEffect, sceneRequests, artifacts.particle)
+        await expectLoginValidation(target)
+        return outcome
       }
-      await expectBackendReady(target, outcome.effectiveBackend, colorProbeEffect, 'auto')
+      await expectBackendReady(target, outcome.backend, colorProbeEffect, 'auto')
       const field = target.locator('.login-particle-logo')
       await expect(field.locator('canvas')).toHaveCount(1)
       await expect(field.locator('.login-particle-logo__image')).toHaveCSS('opacity', '0')
       await expect(target.locator('.v-application')).toHaveClass(colorScheme === 'light' ? /v-theme--light/ : /v-theme--dark/)
+      return outcome
     }
 
     const captureIntrinsic = async (target: Page): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry }> =>
@@ -3077,10 +3108,10 @@ test.describe('particle compositor without service workers', () => {
 
     const cold = async (
       colorScheme: 'light' | 'dark'
-    ): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry; readonly theme: ApplicationThemeObservation }> => {
+    ): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry; readonly theme: ApplicationThemeObservation } | null> => {
       const target = await context.newPage()
       try {
-        await prepare(target, colorScheme, `logo-color-probe-cold-${colorScheme}`)
+        if ((await prepare(target, colorScheme, `logo-color-probe-cold-${colorScheme}`)).state === 'static') return null
         const capture = await captureIntrinsic(target)
         return { ...capture, theme: await readApplicationTheme(target) }
       } finally {
@@ -3090,14 +3121,20 @@ test.describe('particle compositor without service workers', () => {
 
     const coldLight = await cold('light')
     const coldDark = await cold('dark')
-    expect(coldLight.theme.className).toMatch(/v-theme--light/)
-    expect(coldDark.theme.className).toMatch(/v-theme--dark/)
-    expect(coldLight.theme.background).not.toBe(coldDark.theme.background)
-    expectColorProbePixels(coldLight.frame, coldLight.geometry)
-    expectColorProbePixels(coldDark.frame, coldDark.geometry)
-    expectIntrinsicProbeSamplesEquivalent('cold light/dark', coldLight.frame, coldLight.geometry, coldDark.frame, coldDark.geometry)
+    if (coldLight) {
+      expect(coldLight.theme.className).toMatch(/v-theme--light/)
+      expectColorProbePixels(coldLight.frame, coldLight.geometry)
+    }
+    if (coldDark) {
+      expect(coldDark.theme.className).toMatch(/v-theme--dark/)
+      expectColorProbePixels(coldDark.frame, coldDark.geometry)
+    }
+    if (coldLight && coldDark) {
+      expect(coldLight.theme.background).not.toBe(coldDark.theme.background)
+      expectIntrinsicProbeSamplesEquivalent('cold light/dark', coldLight.frame, coldLight.geometry, coldDark.frame, coldDark.geometry)
+    }
 
-    await prepare(page, 'light', 'logo-color-probe-live')
+    if ((await prepare(page, 'light', 'logo-color-probe-live')).state === 'static') return
     const liveLightComposition = await capturePageComposition(page)
     const liveLight = {
       frame: liveLightComposition.frame,
@@ -3130,8 +3167,8 @@ test.describe('particle compositor without service workers', () => {
     expectColorProbePixels(liveLight.frame, liveLightComposition.geometry)
     expectColorProbePixels(liveDark.frame, liveDarkComposition.geometry)
     expectColorProbePixels(liveLightAgain.frame, liveLightAgainComposition.geometry)
-    expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
-    expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
+    if (coldLight) expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
+    if (coldDark) expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
     expectIntrinsicProbeSamplesEquivalent('live light/dark', liveLight.frame, liveLightComposition.geometry, liveDark.frame, liveDarkComposition.geometry)
     expectIntrinsicProbeSamplesEquivalent(
       'live light/light again',

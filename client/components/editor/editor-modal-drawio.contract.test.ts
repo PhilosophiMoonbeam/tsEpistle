@@ -221,6 +221,7 @@ describe('Draw.io editor modal contract', () => {
         cancelable: true
       })
     )
+    await settle()
     expect(document.activeElement).toBe(dialog.querySelector('iframe'))
     closeButton.focus()
     closeButton.dispatchEvent(new document.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))

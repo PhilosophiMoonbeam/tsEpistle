@@ -40,6 +40,8 @@ Generation and model input are separate authorities:
 
 In the chat composer, **Images** is selected by default only when image generation is supported for the current conversation; users can deselect it. Other generation choices remain explicit. Redundant image-reference and media-readiness helper notices are omitted; capability controls and actionable errors still describe unavailable operations.
 
+Dictation's review action inserts the transcript at the textarea's live caret captured when recording starts, including an end-of-draft caret after typing or keyboard navigation. Text before and after that position is preserved; moving to the start or middle deliberately still inserts there. If the saved position no longer fits the current draft, the transcript appends instead of replacing typed text.
+
 Wiki Agent citation-number badges share a deterministic five-color pastel cycle in answers and Sources: **1 rose, 2 peach, 3 mint, 4 sky, 5 lavender**, repeating every five numbers (so 6 matches 1, including large numbers). CSS uses the existing displayed citation number, blending each tint with the current light/dark surface and retaining the theme's readable foreground. Numbers, keyboard focus, source previews, link targets and sanitized hrefs remain unchanged; color is supplemental, not the citation identifier.
 
 ### Implemented generation APIs

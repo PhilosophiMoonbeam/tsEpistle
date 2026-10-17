@@ -662,7 +662,7 @@ afterEach(() => {
 describe('composed editor offline submission boundary', () => {
   for (const outcome of ['success', 'unknown'] as const) {
     test(outcome === 'success'
-      ? 'Vue-reactive Save and Close drains pending local recovery before previewing the saved source revision'
+      ? 'Vue-reactive Save and Close retires covered recovery so reopening permits new saves but still blocks unresolved drafts'
       : 'Vue-reactive editor exposes durable receipt transitions for an unknown save outcome', async () => {
       const storage = new ComposedDraftStorage()
       let updateCalls = 0
@@ -682,7 +682,11 @@ describe('composed editor offline submission boundary', () => {
       }
       const store = reactive(createStore())
       store.page.pageFeatures = capturedPageFeatures
-      if (outcome === 'success') store.page.path = 'docs/example'
+      if (outcome === 'success') {
+        store.page.path = 'docs/example'
+        store.editor.editor = 'editorVisualMarkdown'
+        store.editor.editorKey = 'visual-markdown'
+      }
       const events: string[] = []
       const previewRequests: Array<{ url: string; method: string; credentials: RequestCredentials | undefined }> = []
       let releasePreview!: () => void
@@ -790,6 +794,11 @@ describe('composed editor offline submission boundary', () => {
         expectedSessionGeneration: SESSION_GENERATION
       })
       expect((await decryptOfflineDraft(handle, receipt)).content).toBe('A')
+      // An autosave may fire while this same snapshot is in flight; it must not
+      // manufacture a newer recovery fork for text the receipt already covers.
+      expect(await coordinator.captureThrough(0)).toBe(true)
+      expect(storage.records.size).toBe(2)
+      expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
       releaseNetwork()
       if (outcome === 'success') {
         try {
@@ -840,13 +849,7 @@ describe('composed editor offline submission boundary', () => {
         expect(coordinator.hasUnresolvedSubmission).toBe(false)
         expect(coordinator.hasInFlightWork).toBe(false)
         expect(storage.records.has(receipt.recordId)).toBe(false)
-        expect([...storage.records.values()].every(record => record.submissionId === null)).toBe(true)
-        const recovery = await Promise.all([...storage.records.values()].map(record => decryptOfflineDraft(handle, record)))
-        expect(recovery).toMatchObject([{
-          content: 'A',
-          baseSourceRevision: '2',
-          baseUpdatedAt: '2026-09-03T12:00:00.000Z'
-        }])
+        expect(storage.records.size).toBe(0)
         expect(previewRequests).toEqual([{
           url: `${ORIGIN}/_api/pages/preview?id=12`,
           method: 'GET',
@@ -854,6 +857,65 @@ describe('composed editor offline submission boundary', () => {
         }])
         expect(events).toEqual(['source-write', 'preview-request', 'preview-ready:2', 'reader-navigation'])
         expect(testWindow.location.assigned).toEqual(['/en/docs/example'])
+
+        coordinator.destroy()
+        invalidateOfflineSession()
+        const reopenedStore = reactive(createStore())
+        reopenedStore.editor.editor = 'editorVisualMarkdown'
+        reopenedStore.editor.editorKey = 'visual-markdown'
+        reopenedStore.editor.content = 'A'
+        reopenedStore.editor.checkoutDateActive = '2026-09-03T12:00:00.000Z'
+        reopenedStore.page.path = 'docs/example'
+        reopenedStore.page.sourceRevision = '2'
+        reopenedStore.page.pageFeatures = hydratedPageFeatures
+        const reopened = createReactiveShellContext(reopenedStore, testWindow, storage)
+        reopened.savedState.content = 'A'
+        reopened.setupOfflineDraftCoordinator()
+        await reopened.initializeOfflineDrafts()
+        expect(reopened.offlineDraftStatus).toBeNull()
+        expect(reopened.offlineDraftCandidate).toBeNull()
+        expect(reopened.offlineDraftCandidates).toHaveLength(0)
+        expect(reopened.isDirty).toBe(false)
+
+        reopenedStore.editor.content = 'A\n\nSaved with the keyboard.'
+        reopened.editorAdapter.noteTextChange()
+        expect(await reopened.save()).toBe(true)
+        expect(updateCalls).toBe(2)
+        expect(submittedContent).toBe('A\n\nSaved with the keyboard.')
+        expect(reopened.saveFeedback).toBe('saved')
+        expect(reopened.isDirty).toBe(false)
+        // Drain any already-scheduled callback after the successful save too.
+        expect(await reopened.offlineDraftCoordinator!.captureNow({ editVersion: 1 })).toBe(true)
+        expect(storage.records.size).toBe(0)
+
+        reopenedStore.editor.content = 'A genuine unsaved recovery draft'
+        reopened.editorAdapter.noteTextChange()
+        expect(await reopened.offlineDraftCoordinator!.captureThrough(2)).toBe(true)
+        const unresolved = cloneEnvelope([...storage.records.values()][0]!)
+        reopened.offlineDraftCoordinator!.destroy()
+        invalidateOfflineSession()
+        const recoveringStore = reactive(createStore())
+        recoveringStore.editor.editor = 'editorVisualMarkdown'
+        recoveringStore.editor.editorKey = 'visual-markdown'
+        recoveringStore.editor.content = 'A\n\nSaved with the keyboard.'
+        recoveringStore.editor.checkoutDateActive = '2026-09-03T12:00:00.000Z'
+        recoveringStore.page.path = 'docs/example'
+        recoveringStore.page.sourceRevision = '2'
+        recoveringStore.page.pageFeatures = hydratedPageFeatures
+        const recovering = createReactiveShellContext(recoveringStore, testWindow, storage)
+        recovering.savedState.content = recoveringStore.editor.content
+        recovering.setupOfflineDraftCoordinator()
+        await recovering.initializeOfflineDrafts()
+        expect(recovering.offlineDraftStatus).toBe('needs-review')
+        expect(toRaw(recovering.offlineDraftCandidates)).toMatchObject([{
+          recordId: unresolved.recordId,
+          payload: { content: 'A genuine unsaved recovery draft' }
+        }])
+        recoveringStore.editor.content += '\nNot a recovery decision.'
+        recovering.editorAdapter.noteTextChange()
+        expect(await recovering.save()).toBe(false)
+        expect(updateCalls).toBe(2)
+        expect(sameEnvelope(storage.records.get(unresolved.recordId)!, unresolved)).toBe(true)
       } else {
         expect(previewRequests).toHaveLength(0)
         expect(testWindow.location.assigned).toHaveLength(0)

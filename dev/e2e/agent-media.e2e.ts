@@ -1,3 +1,6 @@
+import { createServer } from 'node:http'
+import express from 'express'
+import multer from 'multer'
 import { expect, type Locator, type Page, type Request } from '@playwright/test'
 import type { AgentMediaView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { installEnabledAgentFixture, renewFixtureThreadResolution } from './agent-fixture.ts'
@@ -76,6 +79,65 @@ async function installRecorder(page: Page) {
   })
 }
 
+// Read the browser's upload at the HTTP boundary: Firefox can omit file-backed
+// multipart bodies from Playwright's intercepted Request.postDataBuffer().
+const mediaTest = test.extend<{ mediaUploads: { url: string; media: AgentMediaView[] } }>({
+  mediaUploads: async ({ baseURL }, use) => {
+    const media: AgentMediaView[] = []
+    const errors: unknown[] = []
+    if (!baseURL) throw new Error('The media upload fixture requires the configured application origin.')
+    const origin = new URL(baseURL).origin
+    // Bun 1.4.2's formData() retypes audio/webm parts as video/webm.
+    const parse = multer({ storage: multer.memoryStorage(), limits: { files: 1, fields: 0, fileSize: 250_000_000 } }).single('file')
+    const app = express()
+    app.use((request, response, next) => {
+      response.setHeader('access-control-allow-origin', origin)
+      response.setHeader('access-control-allow-credentials', 'true')
+      if (request.method === 'OPTIONS') {
+        response.setHeader('access-control-allow-methods', 'POST')
+        response.setHeader('access-control-allow-headers', 'content-type, x-wiki-csrf')
+        response.status(204).end()
+        return
+      }
+      next()
+    })
+    app.post('/media', async (request, response) => {
+      try {
+        expect(request.headers['x-wiki-csrf']).toBeTruthy()
+        expect(request.headers['content-type']).toContain('multipart/form-data; boundary=')
+        await new Promise<void>((resolve, reject) => {
+          parse(request, response, error => error ? reject(error) : resolve())
+        })
+        const file = request.file
+        if (!file) throw new Error('The media upload must contain a file.')
+        const uploaded: AgentMediaView = {
+          id: `00000000-0000-4000-8000-${String(801 + media.length).padStart(12, '0')}`,
+          kind: 'attachment',
+          filename: file.originalname,
+          mimeType: file.mimetype,
+          byteLength: file.size,
+          available: true
+        }
+        media.push(uploaded)
+        response.writeHead(201, { 'content-type': 'application/json' }).end(JSON.stringify({ media: uploaded }))
+      } catch (error) {
+        errors.push(error)
+        response.writeHead(500).end()
+      }
+    })
+    const server = createServer(app)
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('The media upload fixture must listen on a TCP port.')
+    try {
+      await use({ url: `http://127.0.0.1:${address.port}/media`, media })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      if (errors.length) throw errors[0]
+    }
+  }
+})
+
 test('Agent media stays hidden without administrator configuration', async ({ page }) => {
   await installBrowserIdentity(page)
   const fixture = await installEnabledAgentFixture(page)
@@ -126,15 +188,14 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
   fixture.assertNoUnexpectedRequests()
 })
 
-test('Agent media uploads, generates, edits, and transcribes within the existing composer', async ({ page }) => {
+mediaTest('Agent media uploads, generates, edits, and transcribes within the existing composer', async ({ page, mediaUploads }) => {
   await installBrowserIdentity(page)
   await installRecorder(page)
   const fixture = await installEnabledAgentFixture(page, { media: { attachments: true, imageGeneration: true, transcription: true } })
-  const uploaded: AgentMediaView[] = []
+  const uploaded = mediaUploads.media
   const removed: string[] = []
   const sent: Array<{ content: string; attachmentIds: string[]; generationTools: string[]; responseMode?: string }> = []
   let thread: AgentThreadState | null = null
-  let uploadIndex = 0
   let speechRunId = ''
   await page.route(/\/_api\/agents(?:\/|$)/, async route => {
     const request = route.request()
@@ -142,18 +203,9 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
     if (path.endsWith(`/sessions/${fixture.sessionId}/media`) && request.method() === 'POST') {
       expect(request.headers()['x-wiki-csrf']).toBeTruthy()
       expect(request.headers()['content-type']).toContain('multipart/form-data; boundary=')
-      const body = request.postDataBuffer()?.toString() ?? ''
-      const mimeType = body.includes('application/pdf') ? 'application/pdf' : body.includes('audio/webm') ? 'audio/webm' : 'image/png'
-      const media: AgentMediaView = {
-        id: `00000000-0000-4000-8000-${String(800 + ++uploadIndex).padStart(12, '0')}`,
-        kind: 'attachment',
-        filename: mimeType === 'application/pdf' ? 'reference.pdf' : mimeType === 'audio/webm' ? 'dictation.webm' : 'reference.png',
-        mimeType,
-        byteLength: png.length,
-        available: true
-      }
-      uploaded.push(media)
-      return route.fulfill({ status: 201, json: { media } })
+      // Continue without overriding postData so the native file stream reaches
+      // the fixture server even when interception exposes no multipart bytes.
+      return route.continue({ url: mediaUploads.url })
     }
     if (/\/media\/[^/]+\/content$/.test(path)) return route.fulfill({ contentType: 'image/png', body: png })
     if (/\/media\/[^/]+$/.test(path) && request.method() === 'DELETE') {
@@ -244,12 +296,14 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
     buffer: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(11 * 1024 * 1024)])
   })
   await expect(agent.getByRole('button', { name: 'Remove reference.pdf', exact: true })).toBeVisible()
+  expect(uploaded[0]).toMatchObject({ filename: 'reference.pdf', mimeType: 'application/pdf', byteLength: 11 * 1024 * 1024 + 9 })
   await agent.getByRole('button', { name: 'Remove reference.pdf', exact: true }).click()
   await expect.poll(() => removed.length).toBe(1)
   await expect(agent.getByRole('button', { name: 'Remove reference.pdf', exact: true })).toHaveCount(0)
   await expect(attach).toBeEnabled()
   await fileInput.setInputFiles({ name: 'reference.png', mimeType: 'image/png', buffer: png })
   await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
+  expect(uploaded[1]).toMatchObject({ filename: 'reference.png', mimeType: 'image/png', byteLength: png.length })
   await input.fill('Turn this into a watercolor illustration.')
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   const generatedImage = agent.locator('.agent-message__media img[alt="Image created by Wiki Agent"]')
@@ -264,12 +318,13 @@ test('Agent media uploads, generates, edits, and transcribes within the existing
   expect(sent[0]?.responseMode).toBeUndefined()
   expect(sent[0]?.attachmentIds).toEqual([uploaded[1]?.id])
   await agent.getByRole('button', { name: 'Edit image', exact: true }).click()
-  await expect(agent.getByRole('button', { name: 'Remove reference.png', exact: true })).toBeVisible()
+  await expect(agent.getByRole('button', { name: 'Remove generated-image.png', exact: true })).toBeVisible()
   await expect(input).toHaveValue('Edit this image: ')
   expect(uploaded).toHaveLength(3)
   expect(uploaded[2]?.id).not.toBe(generatedId)
   expect(sent).toHaveLength(1)
   await input.fill('Keep my draft.')
+  await input.press('End')
   await agent.getByRole('button', { name: 'Start dictation', exact: true }).click()
   await expect(agent.getByRole('status').filter({ hasText: 'Recording. Listening for speech.' })).toBeVisible()
   await agent.getByRole('button', { name: 'Stop dictation and review the transcript', exact: true }).click()

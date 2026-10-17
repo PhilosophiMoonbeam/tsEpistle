@@ -239,7 +239,7 @@ const sameFullIdentity = (left: OfflineEditorDraftIdentity, right: OfflineEditor
   left.baseSourceRevision === right.baseSourceRevision &&
   left.baseUpdatedAt === right.baseUpdatedAt
 
-const sameText = (payload: OfflineDraftPayloadV1, values: OfflineEditorDraftValues): boolean =>
+const sameText = (payload: OfflineEditorDraftValues, values: OfflineEditorDraftValues): boolean =>
   payload.title === values.title && payload.description === values.description && payload.content === values.content
 
 const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => left.byteLength === right.byteLength && left.every((value, index) => value === right[index])
@@ -357,6 +357,7 @@ export class OfflineEditorDraftCoordinator {
   private latestEditVersion = 0
   private committedEditVersion = 0
   private currentDraft: CurrentDraft | null = null
+  private persistedCapture: CaptureSnapshot | null = null
   private activePrepared: InternalPrepared | null = null
   private draftState: DraftState = {
     state: null,
@@ -553,6 +554,7 @@ export class OfflineEditorDraftCoordinator {
     this.keyGeneration = null
     this.keyActorEpoch = null
     this.currentDraft = null
+    this.persistedCapture = null
     this.activePrepared = null
     this.reviewRequired = false
     this.envelopes.clear()
@@ -889,6 +891,29 @@ export class OfflineEditorDraftCoordinator {
     if (!force && this.options.isDirty?.() === false) return false
     const session = await this.ensureSession()
     if (!session || !this.fenceCurrent(session.actorEpoch, session.handle)) return false
+    if (snapshot.stateOverride === undefined) {
+      const persisted = this.persistedCapture
+      if (
+        persisted &&
+        snapshot.editVersion <= persisted.editVersion &&
+        sameFullIdentity(snapshot.identity, persisted.identity) &&
+        sameText(persisted.values, snapshot.values)
+      )
+        return true
+      // The receipt already retains this version, including a create-to-page
+      // identity transition. Only actual newer edits need a mutable fork.
+      const submitted = this.activePrepared?.publicValue
+      if (
+        submitted &&
+        snapshot.editVersion <= submitted.editVersion &&
+        sameText(submitted.payload, snapshot.values) &&
+        snapshot.identity.editorKey === submitted.identity.editorKey &&
+        snapshot.identity.locale === submitted.identity.locale &&
+        snapshot.identity.path === submitted.identity.path &&
+        (sameEditorIdentity(submitted.payload, snapshot.identity) || submitted.identity.pageId === null)
+      )
+        return true
+    }
     const previous = this.currentDraft
     const frozenSource = this.activePrepared?.sourceEnvelope ?? null
     const previousIsFrozenSource =
@@ -1396,6 +1421,20 @@ export class OfflineEditorDraftCoordinator {
       this.currentDraft = { recordId: fork.recordId, draftRevision: fork.draftRevision, payload: clonePayload(forkPayload), envelope: fork }
     } else {
       this.currentDraft = null
+    }
+    if (outcome.kind === 'success' && this.fenceCurrent(prepared.actorEpoch, session.handle)) {
+      // A delayed autosave of this exact server-saved version is already durable.
+      // Keep the acknowledgement instance-local: recovered and other-tab drafts
+      // must still pass the normal review and compare-and-swap boundaries.
+      this.persistedCapture = {
+        values: safeValues(prepared.payload),
+        identity: cloneIdentity({
+          ...(outcome.identity ?? prepared.publicValue.identity),
+          baseSourceRevision: outcome.baseSourceRevision ?? outcome.identity?.baseSourceRevision ?? prepared.publicValue.identity.baseSourceRevision,
+          baseUpdatedAt: outcome.baseUpdatedAt ?? outcome.identity?.baseUpdatedAt ?? prepared.publicValue.identity.baseUpdatedAt
+        }),
+        editVersion: prepared.publicValue.editVersion
+      }
     }
     this.activePrepared = null
     this.outcomeKind = outcome.kind
