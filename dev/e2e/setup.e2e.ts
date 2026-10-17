@@ -196,6 +196,22 @@ test.describe('critical post-install workflows', () => {
     expect(browserErrors).toEqual([])
   })
 
+  test('preserves the chosen setup field while initial autofocus settles', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') })
+    await page.clock.pauseAt(new Date('2026-01-01T00:01:00Z'))
+    await openClientPage(page, '/', '.setup .auth-shell__card')
+    const email = page.getByLabel('Administrator Email')
+    const password = page.getByLabel('Password', { exact: true })
+    await email.fill(adminEmail)
+    await password.fill(adminPassword)
+
+    await page.clock.runFor(1000)
+    await expect(password).toBeFocused()
+    await page.keyboard.type('x')
+    await expect(email).toHaveValue(adminEmail)
+    await expect(password).toHaveValue(`${adminPassword}x`)
+  })
+
   test('installs tsEpistle with telemetry disabled and opens the login screen', async ({ page }) => {
     test.setTimeout(120_000)
 

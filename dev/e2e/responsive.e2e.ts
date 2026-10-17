@@ -540,10 +540,13 @@ test.describe('responsive UI quality matrix', () => {
         const bounds = await shortcutButton.boundingBox()
         expect(bounds).not.toBeNull()
         if (bounds) {
-          expect(bounds.width, 'Reader utility targets remain compact and usable').toBeGreaterThanOrEqual(36)
-          expect(bounds.width, 'Reader utility targets remain compact and usable').toBeLessThanOrEqual(44)
-          expect(bounds.height, 'Reader utility targets remain compact and usable').toBeGreaterThanOrEqual(36)
-          expect(bounds.height, 'Reader utility targets remain compact and usable').toBeLessThanOrEqual(44)
+          // Normalize sub-millipixel DOMRect representation error, not the 36–44 CSS-pixel limits.
+          const width = Math.round(bounds.width * 1000) / 1000
+          const height = Math.round(bounds.height * 1000) / 1000
+          expect(width, 'Reader utility targets remain compact and usable').toBeGreaterThanOrEqual(36)
+          expect(width, 'Reader utility targets remain compact and usable').toBeLessThanOrEqual(44)
+          expect(height, 'Reader utility targets remain compact and usable').toBeGreaterThanOrEqual(36)
+          expect(height, 'Reader utility targets remain compact and usable').toBeLessThanOrEqual(44)
         }
       }
 
