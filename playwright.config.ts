@@ -8,6 +8,9 @@ const performanceExecution = {
 const linuxWebGpuCapabilityFlags = process.platform === 'linux' ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan'] : []
 const hardwareWebGlLaunchFlags = ['--use-gl=angle', '--use-angle=gl']
 const swiftShaderLaunchFlags = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+// Headless Linux selects WPE, whose compositor crashes on authenticated pages.
+// Keep the same WebKit engine through GTK, with Xvfb supplied by the E2E launcher.
+const webkitRuntime = process.platform === 'linux' ? { headless: false } : {}
 
 export default defineConfig({
   testDir: './dev/e2e',
@@ -88,6 +91,7 @@ export default defineConfig({
       testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
       use: {
         ...devices['Desktop Safari'],
+        ...webkitRuntime,
         viewport: { width: 1440, height: 900 }
       }
     },
@@ -116,13 +120,13 @@ export default defineConfig({
       name: 'responsive-webkit-mobile',
       dependencies: ['chromium'],
       testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
-      use: { ...devices['iPhone 13'] }
+      use: { ...devices['iPhone 13'], ...webkitRuntime }
     },
     {
       name: 'responsive-webkit-mobile-landscape',
       dependencies: ['chromium'],
       testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
-      use: { ...devices['iPhone 13 landscape'] }
+      use: { ...devices['iPhone 13 landscape'], ...webkitRuntime }
     },
     {
       name: 'performance-desktop',

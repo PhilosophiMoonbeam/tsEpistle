@@ -8,7 +8,7 @@ dev/e2e/ci-setup.sh
 wiki_port=$(docker port "${WIKI_TEST_NAMESPACE}-wiki" 3000/tcp)
 wiki_port=${wiki_port##*:}
 export PLAYWRIGHT_BASE_URL="http://127.0.0.1:$wiki_port"
-bun --bun playwright test \
+bun run e2e \
   --project=chromium \
   --project=accessibility-keyboard \
   --project=accessibility-dark \

@@ -658,6 +658,23 @@ test('Draw.io parent modal isolates the editor and restores its native toolbar o
   const frame = page.frameLocator('.editor-modal-drawio iframe[title="Diagram editor"]')
   const frameStart = frame.getByRole('button', { name: 'Frame start', exact: true })
   const frameEnd = frame.getByRole('textbox', { name: 'Diagram label', exact: true })
+  const frameBody = frame.locator('body')
+  const enterFrameForward = async () => {
+    await page.keyboard.press('Tab')
+    await expect(iframe).toBeFocused()
+    await expect.poll(() => frameStart.evaluate(element => ({
+      hasFocus: document.hasFocus(),
+      target: document.activeElement === element ? 'start' : document.activeElement === document.body ? 'body' : 'other'
+    }))).toEqual({ hasFocus: true, target: expect.stringMatching(/^(body|start)$/) })
+    // Some native browsers enter the frame document before its first control.
+    // Accept only that real focused-body stop, then require one Tab to the button.
+    if (await frameBody.evaluate(element => document.activeElement === element)) {
+      await expect(frameBody).toBeFocused()
+      await page.keyboard.press('Tab')
+    }
+    await expect(frameStart).toBeFocused()
+    expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+  }
   await expect(frameStart).toBeVisible()
   await expect(dialog.getByText('Loading diagram editor', { exact: true })).not.toBeVisible()
   const frameOrigin = await frameStart.evaluate(() => location.origin)
@@ -665,23 +682,19 @@ test('Draw.io parent modal isolates the editor and restores its native toolbar o
   expect(frameOrigin).not.toBe(parentOrigin)
 
   // Browser keyboard events, not DOM-dispatched events or scripted focus in the frame.
-  await page.keyboard.press('Tab')
-  await expect(iframe).toBeFocused()
-  await expect(frameStart).toBeFocused()
+  await enterFrameForward()
   await page.keyboard.press('Tab')
   await expect(frameEnd).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(back).toBeFocused()
   expect(await page.evaluate(() => document.hasFocus())).toBe(true)
-  await page.keyboard.press('Tab')
-  await expect(frameStart).toBeFocused()
+  await enterFrameForward()
   await page.keyboard.press('Tab')
   await expect(frameEnd).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(back).toBeFocused()
   expect(await page.evaluate(() => document.hasFocus())).toBe(true)
-  await page.keyboard.press('Tab')
-  await expect(frameStart).toBeFocused()
+  await enterFrameForward()
   await page.keyboard.press('Tab')
   await expect(frameEnd).toBeFocused()
   await page.keyboard.press('Shift+Tab')
@@ -692,11 +705,28 @@ test('Draw.io parent modal isolates the editor and restores its native toolbar o
   await expect(iframe).toBeFocused()
   await expect(back).not.toBeFocused()
   expect(await page.evaluate(() => document.hasFocus())).toBe(true)
-  // The parent can enter a foreign frame, but cannot choose its internal reverse-entry target.
-  for (let step = 0; step < 3 && !(await back.evaluate(element => element === document.activeElement)); step++) {
+  // Reverse entry can land on the frame document or one of its native controls.
+  // Each accepted state has a specific remaining sequence; never retry Tab
+  // until focus happens to escape an opaque frame.
+  await expect.poll(() => frameStart.evaluate(element => ({
+    hasFocus: document.hasFocus(),
+    target: document.activeElement === document.body ? 'body'
+      : document.activeElement === element ? 'start'
+        : document.activeElement?.matches('input') ? 'end' : 'other'
+  }))).toEqual({ hasFocus: true, target: expect.stringMatching(/^(body|start|end)$/) })
+  if (await frameBody.evaluate(element => document.activeElement === element)) {
+    await expect(frameBody).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(frameEnd).toBeFocused()
+  }
+  if (await frameEnd.evaluate(element => document.activeElement === element)) {
+    await expect(frameEnd).toBeFocused()
     await page.keyboard.press('Shift+Tab')
   }
+  await expect(frameStart).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
   await expect(back).toBeFocused()
+  expect(await page.evaluate(() => document.hasFocus())).toBe(true)
 
   // Escape originates at the genuine parent modal control after leaving the iframe.
   await page.keyboard.press('Escape')

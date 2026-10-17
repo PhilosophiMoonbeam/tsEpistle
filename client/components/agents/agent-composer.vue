@@ -615,10 +615,10 @@ const toggleGenerationTool = (tool: 'image' | 'video' | 'music'): void => {
   mediaComposer.value?.toggleGenerationTool(tool)
 }
 /**
- * Saved caret anchor for dictated text. Tracked from the textarea's own
- * selection while the user types or moves the caret; insertion restores the
- * anchor when it is still valid and otherwise appends, so typing is never
- * overwritten.
+ * Saved caret anchor for dictated text. Refreshed from the textarea's live
+ * selection when recording starts, including collapsed caret moves that do
+ * not emit a select event. Insertion keeps typed text on both sides and
+ * otherwise appends when the anchor is no longer valid.
  */
 const savedCaret = ref<number | null>(null)
 const rememberCaret = (): void => {
@@ -627,9 +627,8 @@ const rememberCaret = (): void => {
   savedCaret.value = textarea.selectionStart ?? textarea.value.length
 }
 const insertionAnchor = (): number => {
-  // The anchor is saved from the textarea's selection while the user types or
-  // moves the caret; when it is no longer valid for the current draft the
-  // dictated text appends instead, so typed text is never overwritten.
+  // Recording starts with the textarea's live selection. If later draft
+  // changes invalidate that anchor, append without overwriting typed text.
   const anchor = savedCaret.value
   const length = draft.value.length
   if (anchor === null || !Number.isInteger(anchor) || anchor < 0 || anchor > length) return length
@@ -1329,6 +1328,9 @@ const submitDuringRecording = async (): Promise<void> => {
 }
 const startDictation = (): void => {
   if (props.disabled || sendInProgress.value || mediaBusy.value) return
+  // A collapsed typing/navigation caret need not emit `select` in every
+  // browser. Capture it before requesting capture can change the input state.
+  rememberCaret()
   void mediaComposer.value?.startRecording()
 }
 const stopDictation = (): void => {

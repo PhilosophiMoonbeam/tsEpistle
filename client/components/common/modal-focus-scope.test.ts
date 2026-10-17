@@ -107,4 +107,36 @@ describe('modal focus scope', () => {
     expect(overlay.getAttribute('aria-hidden')).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })
+
+  test('does not let a deferred iframe handoff override newer focus or a closed scope', async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><section role="dialog" tabindex="-1"><button id="back">Back</button><button id="other">Other</button><iframe title="Editor"></iframe></section></body></html>',
+      { pretendToBeVisual: true }
+    )
+    doms.push(dom)
+    const document = dom.window.document
+    const root = document.querySelector<HTMLElement>('section')!
+    const back = document.querySelector<HTMLElement>('#back')!
+    const other = document.querySelector<HTMLElement>('#other')!
+    const iframe = document.querySelector<HTMLIFrameElement>('iframe')!
+    for (const element of [root, back, other, iframe]) {
+      element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList
+    }
+    const scope = createModalFocusScope({ root, onEscape: () => {} })
+    const reverseTab = () => back.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+    )
+
+    back.focus()
+    reverseTab()
+    other.focus()
+    await new Promise<void>(resolve => dom.window.queueMicrotask(resolve))
+    expect(document.activeElement).toBe(other)
+
+    back.focus()
+    reverseTab()
+    scope.deactivate({ restoreFocus: false })
+    await new Promise<void>(resolve => dom.window.queueMicrotask(resolve))
+    expect(document.activeElement).toBe(back)
+  })
 })

@@ -1535,6 +1535,39 @@ describe('Agent composer dictation controls', () => {
     expect(mounted.root.querySelector('.agent-composer__notice')?.textContent).toContain('No speech was found')
   })
 
+  for (const [position, anchor, expected] of [
+    ['end', 9, 'head tail spoken'],
+    ['middle', 4, 'head spoken tail'],
+    ['start', 0, 'spoken head tail']
+  ] as const) {
+    it(`captures the live ${position} caret when recording starts without a select event`, async () => {
+      const mounted = mountComposer({ initialDraft: 'Replace this draft', mediaCapabilities: { transcription: true } })
+      const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+      const start = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')
+      if (!textarea || !start) throw new Error('Dictation input and trigger did not render')
+      textarea.focus()
+      textarea.setSelectionRange(0, textarea.value.length)
+      textarea.dispatchEvent(new browserWindow.Event('select', { bubbles: true }))
+      // Native replacement typing and collapsed caret moves need not emit
+      // select after the old value's select-all event (Firefox/WebKit).
+      textarea.value = 'head tail'
+      textarea.setSelectionRange(anchor, anchor)
+      textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await Vue.nextTick()
+      textarea.blur()
+      start.click()
+      await Vue.nextTick()
+      expect(recording.value).toBe(true)
+      expect(textarea.value).toBe('head tail')
+      recording.value = false
+      const bindings = lastBindings as unknown as { appendDictation: (text: string) => void }
+      bindings.appendDictation('spoken')
+      await Vue.nextTick()
+      expect(textarea.value).toBe(expected)
+      expect(mounted.sent).toHaveLength(0)
+    })
+  }
+
   it('inserts dictated text at the saved caret instead of overwriting typed text', async () => {
     const mounted = mountComposer({ initialDraft: 'head tail', mediaCapabilities: { transcription: true } })
     const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')

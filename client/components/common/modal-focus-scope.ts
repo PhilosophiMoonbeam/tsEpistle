@@ -211,6 +211,19 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
     focusFirst()
   }
 
+  const focusKeyboardTarget = (target: HTMLElement, previous: Element | null): void => {
+    if (target.tagName !== 'IFRAME') {
+      target.focus()
+      return
+    }
+    // Gecko ignores iframe focus while processing a cancelled Tab keydown.
+    // Enter the native browsing context after that dispatch, without inspecting
+    // or choosing focus inside a potentially cross-origin document.
+    queueMicrotask(() => {
+      if (isTopScope() && target.isConnected && document.activeElement === previous) target.focus()
+    })
+  }
+
   const handleKeydown = (event: KeyboardEvent): void => {
     if (!isTopScope() || event.defaultPrevented || event.isComposing || event.keyCode === 229) return
     // An owned Vuetify menu/dialog manages its own Tab and Escape handling.
@@ -239,13 +252,13 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
     const focused = document.activeElement
     if (!isWithinModal(root, modalAdditionalRoots(), focused)) {
       event.preventDefault()
-      ;(event.shiftKey ? last : first).focus()
+      focusKeyboardTarget(event.shiftKey ? last : first, focused)
     } else if (event.shiftKey && focused === first) {
       event.preventDefault()
-      last.focus()
+      focusKeyboardTarget(last, focused)
     } else if (!event.shiftKey && focused === last) {
       event.preventDefault()
-      first.focus()
+      focusKeyboardTarget(first, focused)
     }
   }
 
