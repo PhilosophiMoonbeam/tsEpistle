@@ -184,9 +184,34 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         // Replace only the unsaved draft through the real contenteditable.
         // Selection and page-link insertion below remain native UI interactions.
         await editor.click()
-        await editor.selectText()
-        await page.keyboard.press('Backspace')
-        await expect(editor).toHaveText('')
+        // ProseMirror must consume the native selectionchange before Backspace.
+        const selectionReady = await editor.evaluateHandle(root => {
+          const doc = root.ownerDocument
+          const controller = new AbortController()
+          const ready = new Promise<void>(resolve => {
+            doc.addEventListener('selectionchange', () => {
+              const selection = doc.getSelection()
+              if (!selection?.rangeCount) return
+              const range = selection.getRangeAt(0)
+              if (
+                !root.contains(range.commonAncestorContainer) ||
+                range.toString() !== root.textContent
+              ) return
+              controller.abort()
+              resolve()
+            }, { signal: controller.signal })
+          })
+          return { ready, dispose() { controller.abort() } }
+        })
+        try {
+          await editor.selectText()
+          await selectionReady.evaluate(state => state.ready)
+          await page.keyboard.press('Backspace')
+          await expect(editor).toHaveText('')
+        } finally {
+          await selectionReady.evaluate(state => state.dispose())
+          await selectionReady.dispose()
+        }
         const label = selection === 'selected text' ? 'Chosen page' : 'Link: '
         await page.keyboard.insertText(label)
         await expect(editor).toHaveText(label)
