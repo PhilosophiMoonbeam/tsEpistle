@@ -10,7 +10,7 @@ import {
   responsiveTest as test
 } from './helpers.ts'
 import { waitForPageRender } from '../../client/helpers/pages-api.ts'
-import { OFFLINE_DB_NAME, type OfflinePageSnapshotV1 } from '../../shared/offline.ts'
+import { OFFLINE_DB_NAME, OfflinePrivateSnapshotResponseV1Schema, type OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 
 type PageRow = {
   id?: unknown
@@ -411,6 +411,8 @@ test.describe('integrated offline access', () => {
     const saved = savedPages.find(row => row.snapshot.title === title)!
     await firstCard.getByRole('button', { name: /^Open saved page / }).click()
     await expect(page.locator('.nav-header')).toBeVisible()
+    await expect(page.locator('.offline-application')).toBeVisible()
+    await expect(page.locator('.offline-settings')).toHaveCount(0)
     await expect(page.locator('#offline-reader-title')).toHaveText(title)
     await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeFocused()
     expect(new URL(page.url()).pathname).toBe(saved.snapshot.canonicalPath)
@@ -422,11 +424,128 @@ test.describe('integrated offline access', () => {
     expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
     await page.goForward({ waitUntil: 'domcontentloaded' })
     await expect(page.locator('#offline-reader-title')).toHaveText(title)
+    await expect(page.locator('.offline-application')).toBeVisible()
+    await expect(page.locator('.offline-settings')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: title, level: 1, exact: true })).toBeFocused()
     await page.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
     await waitForOfflineSettings(page)
     expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
     expect(new URL(page.url()).hash).toBe('#downloaded-pages-title')
     await page.context().setOffline(false)
+
+    // Private readers cannot leave this document: their unlock handle is volatile.
+    await authenticateAsAdmin(page)
+    let fixturePage: { id: number; sourceRevision: string } | undefined
+    let unlockSecret = ''
+    try {
+      const path = `offline-private-history-${randomUUID()}`
+      const created = await page.request.post('/_api/pages', {
+        headers: sameOriginHeaders(),
+        data: {
+          content: '# Private offline history\n\nThis encrypted saved page retains its unlock through browser history.',
+          description: 'Private offline browser history fixture',
+          editor: 'markdown',
+          visibility: 'private',
+          isPublished: true,
+          locale: 'en',
+          path,
+          publishStartDate: '',
+          publishEndDate: '',
+          scriptCss: '',
+          scriptJs: '',
+          tags: [],
+          title: 'Private offline history'
+        }
+      })
+      expect(created.ok(), `Private offline history fixture creation failed: HTTP ${created.status()}`).toBe(true)
+      const payload = (await created.json()) as { page?: { id?: unknown; sourceRevision?: unknown } }
+      const id = payload.page?.id
+      const sourceRevision = payload.page?.sourceRevision
+      if (typeof id !== 'number' || typeof sourceRevision !== 'string') throw new Error('Private offline history fixture response omitted page identity.')
+      fixturePage = { id, sourceRevision }
+      await waitForPageRender(async url => {
+        const response = await page.request.get(url)
+        return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+      }, { id, sourceRevision, locale: 'en', path, visibility: 'private' }, AbortSignal.timeout(15_000))
+      const snapshotResponse = await page.request.get(`/_api/pages/${id}/offline-private-snapshot`)
+      expect(snapshotResponse.ok(), `Private offline history snapshot failed: HTTP ${snapshotResponse.status()}`).toBe(true)
+      const privateSnapshot = OfflinePrivateSnapshotResponseV1Schema.parse(await snapshotResponse.json()).snapshot
+
+      // Reload the reconnected settings URL into the real online profile router.
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await waitForOfflineSettings(page)
+      await expect(page.locator('.offline-application')).toHaveCount(0)
+      const reading = page.locator('.offline-settings__reading')
+      await reading.getByRole('button', { name: 'Set up private reading', exact: true }).click()
+      const displayedSecret = reading.locator('.offline-settings__secret')
+      await expect(displayedSecret).toBeVisible()
+      unlockSecret = (await displayedSecret.textContent())!.trim()
+      await reading.getByRole('textbox', { name: 'Re-enter secret exactly', exact: true }).fill(unlockSecret)
+      await reading.getByRole('button', { name: 'Confirm and save', exact: true }).click()
+      await expect(reading.getByRole('button', { name: 'Lock private pages', exact: true })).toBeVisible({ timeout: 30_000 })
+
+      await page.goto(privateSnapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 30_000 })
+      const privateControl = page.locator('.page-offline-control')
+      await expect(privateControl).toHaveAttribute('aria-label', /Unlock/iu, { timeout: 30_000 })
+      await privateControl.click()
+      const unlockDialog = page.getByRole('dialog')
+      await expect(unlockDialog).toBeVisible()
+      await unlockDialog.getByLabel('Unlock secret', { exact: true }).fill(unlockSecret)
+      await unlockDialog.getByRole('button', { name: 'Unlock', exact: true }).click()
+      await expect(unlockDialog).toHaveCount(0)
+      await expect(privateControl).toHaveAttribute('aria-label', 'Save offline', { timeout: 30_000 })
+      if (await privateControl.getAttribute('aria-pressed') !== 'true') await privateControl.click()
+      await expect(privateControl).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
+      await expect(page.locator('.page-offline-status')).toContainText('Saved offline', { timeout: 30_000 })
+
+      await page.goto(`${OFFLINE_SETTINGS_PATH}#downloaded-pages-title`, { waitUntil: 'domcontentloaded' })
+      await waitForOfflineSettings(page)
+      await reading.getByLabel('Unlock secret', { exact: true }).fill(unlockSecret)
+      await reading.getByRole('button', { name: 'Unlock private pages', exact: true }).click()
+      await expect(reading.getByRole('button', { name: 'Lock private pages', exact: true })).toBeVisible({ timeout: 30_000 })
+      await page.context().setOffline(true)
+      await search.fill(privateSnapshot.title)
+      const privateCard = page.locator('.page-card').filter({ has: page.locator('.page-card-title', { hasText: privateSnapshot.title }) })
+      await expect(privateCard).toHaveCount(1, { timeout: 30_000 })
+      const privateDocument = await page.evaluate(() => performance.timeOrigin)
+      await privateCard.getByRole('button', { name: /^Open saved page /u }).click()
+      await expect(page.locator('#offline-reader-title')).toHaveText(privateSnapshot.title)
+      await expect(page.getByRole('heading', { name: privateSnapshot.title, level: 1, exact: true })).toBeFocused()
+      expect(new URL(page.url()).pathname).toBe(privateSnapshot.canonicalPath)
+      expect(new URL(page.url()).search).toBe('')
+
+      await page.goBack({ waitUntil: 'domcontentloaded' })
+      await waitForOfflineSettings(page)
+      expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
+      await page.goForward({ waitUntil: 'domcontentloaded' })
+      await expect(page.locator('#offline-reader-title')).toHaveText(privateSnapshot.title)
+      // Let any native route transition settle; a disappearing profile route is not a reader.
+      await expect.poll(() => page.locator('.offline-settings').evaluate(root =>
+        root.getAnimations().every(animation => animation.playState !== 'running')
+      )).toBe(true)
+      await expect(page.locator('#offline-reader-title')).toHaveText(privateSnapshot.title)
+      await expect(page.getByRole('heading', { name: privateSnapshot.title, level: 1, exact: true })).toBeFocused()
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(privateDocument)
+      await expect(reading.getByRole('button', { name: 'Lock private pages', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
+      await waitForOfflineSettings(page)
+      expect(new URL(page.url()).pathname).toBe(OFFLINE_SETTINGS_PATH)
+      expect(new URL(page.url()).hash).toBe('#downloaded-pages-title')
+      await reading.getByRole('button', { name: 'Lock private pages', exact: true }).click()
+      await expect(reading.getByRole('button', { name: 'Unlock private pages', exact: true })).toBeVisible()
+      await expect(privateCard).toHaveCount(0)
+    } finally {
+      unlockSecret = ''
+      await page.context().setOffline(false)
+      if (fixturePage) {
+        const removal = await page.request.delete(`/_api/pages/${fixturePage.id}`, {
+          headers: sameOriginHeaders(),
+          data: { expectedSourceRevision: fixturePage.sourceRevision }
+        })
+        expect(removal.ok(), `Private offline history fixture removal failed: HTTP ${removal.status()}`).toBe(true)
+      }
+    }
   })
 
   test('offers current saved page text after clipboard denial without leaking the fallback between readers', async ({ page, browserName }) => {

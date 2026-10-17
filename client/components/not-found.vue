@@ -89,3 +89,34 @@ const searchWiki = async (): Promise<void> => {
 
 const goBack = (): void => goBackOrHome('/')
 </script>
+
+<style scoped lang='scss'>
+@media (max-height: 500px) and (min-width: 600px) {
+  .notfound {
+    .notfound-content {
+      display: grid;
+      height: auto;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: var(--wiki-space-3) var(--wiki-space-6);
+    }
+
+    .newpage-mark {
+      grid-row: 1 / 3;
+      margin: 0;
+    }
+
+    .newpage-copy,
+    .newpage-path {
+      grid-column: 2;
+      justify-self: start;
+      margin: 0;
+      text-align: start;
+    }
+
+    .newpage-actions {
+      grid-column: 1 / -1;
+      margin-top: 0;
+    }
+  }
+}
+</style>
