@@ -4,7 +4,10 @@ import multer from 'multer'
 import { expect, type Locator, type Page, type Request } from '@playwright/test'
 import type { AgentMediaView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { installEnabledAgentFixture, renewFixtureThreadResolution } from './agent-fixture.ts'
-import { expectLocatorWithinViewport, openSearch, responsiveTest as test } from './helpers.ts'
+import { authenticateAsAdmin, expectLocatorWithinViewport, openSearch, responsiveTest as test } from './helpers.ts'
+
+// Route-backed Agent fixtures own these responses; real service-worker coverage lives in offline.e2e.ts.
+test.use({ serviceWorkers: 'block' })
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==', 'base64')
 const generatedId = '00000000-0000-4000-8000-000000000701'
@@ -17,16 +20,6 @@ const generated: AgentMediaView = {
   available: true
 }
 
-async function installBrowserIdentity(page: Page) {
-  await page.route('**/_api/users/whoami', route =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user: { id: 900001, authVersion: 1, name: 'Media fixture', email: 'media-fixture@example.invalid', permissions: ['use:agents'], localeCode: 'en' }
-      }
-    })
-  )
-}
 async function openAgent(page: Page, waitForComposer = true): Promise<Locator> {
   await page.route('**/_api/pages/search?**', route => route.fulfill({ json: { results: [], suggestions: [], totalHits: 0, nextCursor: null } }))
   await page.goto('/', { waitUntil: 'domcontentloaded' })
@@ -139,7 +132,7 @@ const mediaTest = test.extend<{ mediaUploads: { url: string; media: AgentMediaVi
 })
 
 test('Agent media stays hidden without administrator configuration', async ({ page }) => {
-  await installBrowserIdentity(page)
+  await authenticateAsAdmin(page)
   const fixture = await installEnabledAgentFixture(page)
   let releaseThread!: () => void
   const threadResponse = new Promise<void>(resolve => { releaseThread = resolve })
@@ -189,7 +182,8 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
 })
 
 mediaTest('Agent media uploads, generates, edits, and transcribes within the existing composer', async ({ page, mediaUploads }) => {
-  await installBrowserIdentity(page)
+  // Keep the browser actor and native auth/key handshakes consistent with the server.
+  await authenticateAsAdmin(page)
   await installRecorder(page)
   const fixture = await installEnabledAgentFixture(page, { media: { attachments: true, imageGeneration: true, transcription: true } })
   const uploaded = mediaUploads.media
@@ -324,11 +318,11 @@ mediaTest('Agent media uploads, generates, edits, and transcribes within the exi
   expect(uploaded[2]?.id).not.toBe(generatedId)
   expect(sent).toHaveLength(1)
   await input.fill('Keep my draft.')
-  await input.press('End')
   await agent.getByRole('button', { name: 'Start dictation', exact: true }).click()
   await expect(agent.getByRole('status').filter({ hasText: 'Recording. Listening for speech.' })).toBeVisible()
   await agent.getByRole('button', { name: 'Stop dictation and review the transcript', exact: true }).click()
   await expect(input).toHaveValue('Keep my draft. Make the background green.')
+  await expect(input).toBeEnabled()
   await expect.poll(() => page.evaluate(() => Reflect.get(window, '__agentMediaStopped'))).toBe(1)
   expect(sent).toHaveLength(1)
   const screenshot = test.info().outputPath('agent-media-final-layout.png')
@@ -338,7 +332,7 @@ mediaTest('Agent media uploads, generates, edits, and transcribes within the exi
 })
 
 test('Agent attaches a Wiki asset through a keyboard-accessible private-copy picker', async ({ page }) => {
-  await installBrowserIdentity(page)
+  await authenticateAsAdmin(page)
   const fixture = await installEnabledAgentFixture(page, { media: { attachments: true, imageGeneration: true, transcription: false } })
   let assetCopies = 0
   let denyAssets = false
@@ -413,7 +407,7 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
 })
 
 test('Agent combines selected creation tools in a normal conversation', async ({ page }) => {
-  await installBrowserIdentity(page)
+  await authenticateAsAdmin(page)
   const fixture = await installEnabledAgentFixture(page, {
     media: { attachments: false, imageGeneration: false, videoGeneration: true, musicGeneration: true, transcription: false }
   })

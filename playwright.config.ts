@@ -56,7 +56,11 @@ export default defineConfig({
       name: 'accessibility-tablet',
       dependencies: ['chromium'],
       testMatch: '**/quality.e2e.ts',
-      use: { ...devices['iPad Mini'], browserName: 'chromium' }
+      use: {
+        ...devices['iPad Mini'],
+        browserName: 'chromium',
+        userAgent: devices['Galaxy Tab S9'].userAgent
+      }
     },
     {
       name: 'accessibility-wide',
@@ -108,7 +112,11 @@ export default defineConfig({
       name: 'responsive-chromium-tablet',
       dependencies: ['chromium'],
       testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
-      use: { ...devices['iPad Mini landscape'], browserName: 'chromium' }
+      use: {
+        ...devices['iPad Mini landscape'],
+        browserName: 'chromium',
+        userAgent: devices['Galaxy Tab S9'].userAgent
+      }
     },
     {
       name: 'responsive-chromium-mobile',

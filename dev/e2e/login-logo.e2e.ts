@@ -273,9 +273,6 @@ type StrictParticleBackend = Exclude<ParticleBackendRequest, 'auto'>
 interface LogoFramePointerSample {
   readonly clientX: number
   readonly clientY: number
-  readonly pointerId?: number
-  readonly pointerType?: 'mouse' | 'pen' | 'touch'
-  readonly type?: 'pointercancel' | 'pointerdown' | 'pointermove' | 'pointerup'
 }
 
 interface LogoResourceTrace {
@@ -338,7 +335,7 @@ declare global {
     __loginLogoReducedMotionReport?: ReducedMotionChangeReport | null
     __setLogoParticleVisibility?: (visibility: DocumentVisibilityState) => void
     __readLoginLogoOpacityTrace?: () => LogoOpacityTrace
-    __loginLogoFrameFreeze?: { restore: () => void }
+    __loginLogoFrameFreeze?: { advance: () => void; restore: () => void }
     __loginLogoControlledDeviceLoss?: BackendCapability & { trigger?: () => void }
   }
 }
@@ -1268,6 +1265,7 @@ function readColorProbeAlpha(sample: ColorProbeParticle): number {
 }
 
 async function withFrozenLogoFrame<T>(page: Page, capture: () => Promise<T>): Promise<T> {
+  if (await page.evaluate(() => window.__loginLogoFrameFreeze !== undefined)) return capture()
   await page.evaluate(() => {
     if (window.__loginLogoFrameFreeze) throw new Error('A logo frame freeze is already active.')
     const originalRequestAnimationFrame = window.requestAnimationFrame
@@ -1297,6 +1295,13 @@ async function withFrozenLogoFrame<T>(page: Page, capture: () => Promise<T>): Pr
       return originalToDataURL.apply(this, args)
     }
     window.__loginLogoFrameFreeze = {
+      advance: () => {
+        if (restored) throw new Error('The logo frame freeze has already been restored.')
+        frozen = false
+        const pending = [...queuedFrames.values()]
+        queuedFrames.clear()
+        for (const callback of pending) nativeRequestAnimationFrame(callback)
+      },
       restore: () => {
         if (restored) return
         restored = true
@@ -1570,15 +1575,16 @@ async function captureLogoRenderedFrame(
         ...(pointerTimeMilliseconds === undefined ? {} : { pointerTimeMilliseconds })
       }
       const capturePromise = request(Object.keys(options).length === 0 ? undefined : options)
+      window.__loginLogoFrameFreeze?.advance()
       if (pointerSample) {
         field.dispatchEvent(
-          new PointerEvent(pointerSample.type ?? 'pointermove', {
+          new PointerEvent('pointermove', {
             bubbles: true,
             clientX: pointerSample.clientX,
             clientY: pointerSample.clientY,
             isPrimary: true,
-            pointerId: pointerSample.pointerId ?? 1,
-            pointerType: pointerSample.pointerType ?? 'mouse'
+            pointerId: 1,
+            pointerType: 'mouse'
           })
         )
       }
@@ -1593,21 +1599,22 @@ async function captureLogoRenderedFrame(
     png: Buffer.from(capture.dataUrl.slice(CANVAS_PNG_DATA_URL_PREFIX.length), 'base64')
   }
 }
-async function dispatchLogoPointerEvent(page: Page, sample: LogoFramePointerSample): Promise<void> {
-  await page.evaluate(({ clientX, clientY, pointerId, pointerType, type }) => {
-    const field = document.querySelector('.login-particle-logo')
-    if (!(field instanceof HTMLElement)) throw new Error('The animated logo field is unavailable.')
-    field.dispatchEvent(
-      new PointerEvent(type ?? 'pointermove', {
-        bubbles: true,
-        clientX,
-        clientY,
-        isPrimary: true,
-        pointerId: pointerId ?? 1,
-        pointerType: pointerType ?? 'mouse'
-      })
-    )
-  }, sample)
+async function captureLogoPointerClickFrame(
+  page: Page,
+  sample: LogoFramePointerSample,
+  elapsedSeconds: number,
+  pointerTimeMilliseconds: number
+): Promise<CapturedCanvasPng> {
+  await page.mouse.move(sample.clientX, sample.clientY)
+  // Prime the monotonic pointer clock before native input; synthetic downs do
+  // not register a browser-owned pointer that setPointerCapture can capture.
+  await captureLogoRenderedFrame(page, undefined, elapsedSeconds, pointerTimeMilliseconds)
+  await page.mouse.down()
+  try {
+    return await captureLogoRenderedFrame(page, undefined, elapsedSeconds, pointerTimeMilliseconds)
+  } finally {
+    await page.mouse.up()
+  }
 }
 function expectInactivePerformance(benchmark: LogoPerformanceHook): void {
   expect(benchmark.callbackCount).toBe(0)
@@ -2188,8 +2195,7 @@ test.describe('strict particle backend consumer coverage', () => {
     const baselineTime = 5.25
     const clock = 1_000_000_000
     const before = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, clock - 1)).png)
-    await captureLogoRenderedFrame(page, { clientX: x, clientY: y, type: 'pointerdown' }, baselineTime, clock)
-    await dispatchLogoPointerEvent(page, { clientX: x, clientY: y, type: 'pointerup' })
+    await captureLogoPointerClickFrame(page, { clientX: x, clientY: y }, baselineTime, clock)
 
     const at = async (milliseconds: number): Promise<RgbaFrame> =>
       decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, clock + milliseconds)).png)
@@ -2762,8 +2768,7 @@ test.describe('managed login logo auth independence', () => {
 
     const blastTime = clock + 5000
     const before = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime - 1)).png)
-    await captureLogoRenderedFrame(page, { clientX: x, clientY: y, type: 'pointerdown' }, baselineTime, blastTime)
-    await dispatchLogoPointerEvent(page, { clientX: x, clientY: y, type: 'pointerup' })
+    await captureLogoPointerClickFrame(page, { clientX: x, clientY: y }, baselineTime, blastTime)
     const scattered = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime + 350)).png)
     expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(1)
     const scatteredDifference = compareFrames(before, scattered).mean
@@ -2774,8 +2779,7 @@ test.describe('managed login logo auth independence', () => {
     expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(0)
 
     for (let i = 0; i < 8; i++) {
-      await captureLogoRenderedFrame(page, { clientX: x + i, clientY: y, type: 'pointerdown' }, baselineTime, blastTime + 4000 + i)
-      await dispatchLogoPointerEvent(page, { clientX: x + i, clientY: y, type: 'pointerup' })
+      await captureLogoPointerClickFrame(page, { clientX: x + i, clientY: y }, baselineTime, blastTime + 4000 + i)
     }
     expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(6)
     await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime + 7000)
@@ -3135,50 +3139,54 @@ test.describe('particle compositor without service workers', () => {
     }
 
     if ((await prepare(page, 'light', 'logo-color-probe-live')).state === 'static') return
-    const liveLightComposition = await capturePageComposition(page)
-    const liveLight = {
-      frame: liveLightComposition.frame,
-      theme: await readApplicationTheme(page)
-    }
+    // A forced shader time does not rewind the CPU bead springs. Keep their
+    // state fixed between themes, while still submitting a fresh draw for each.
+    await withFrozenLogoFrame(page, async () => {
+      const liveLightComposition = await capturePageComposition(page)
+      const liveLight = {
+        frame: liveLightComposition.frame,
+        theme: await readApplicationTheme(page)
+      }
 
-    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
-    await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
-    await expect.poll(async () => (await readApplicationTheme(page)).background).not.toBe(liveLight.theme.background)
-    const liveDarkComposition = await capturePageComposition(page)
-    const liveDark = {
-      frame: liveDarkComposition.frame,
-      theme: await readApplicationTheme(page)
-    }
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
+      await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
+      await expect.poll(async () => (await readApplicationTheme(page)).background).not.toBe(liveLight.theme.background)
+      const liveDarkComposition = await capturePageComposition(page)
+      const liveDark = {
+        frame: liveDarkComposition.frame,
+        theme: await readApplicationTheme(page)
+      }
 
-    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
-    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
-    await expect.poll(async () => (await readApplicationTheme(page)).background).toBe(liveLight.theme.background)
-    const liveLightAgainComposition = await capturePageComposition(page)
-    const liveLightAgain = {
-      frame: liveLightAgainComposition.frame,
-      theme: await readApplicationTheme(page)
-    }
+      await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
+      await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+      await expect.poll(async () => (await readApplicationTheme(page)).background).toBe(liveLight.theme.background)
+      const liveLightAgainComposition = await capturePageComposition(page)
+      const liveLightAgain = {
+        frame: liveLightAgainComposition.frame,
+        theme: await readApplicationTheme(page)
+      }
 
-    expect(liveLight.theme.className).toMatch(/v-theme--light/)
-    expect(liveDark.theme.className).toMatch(/v-theme--dark/)
-    expect(liveLightAgain.theme.className).toMatch(/v-theme--light/)
-    expect(liveLight.theme.background).not.toBe(liveDark.theme.background)
-    expect(liveDark.theme.background).not.toBe(liveLightAgain.theme.background)
-    expectColorProbePixels(liveLight.frame, liveLightComposition.geometry)
-    expectColorProbePixels(liveDark.frame, liveDarkComposition.geometry)
-    expectColorProbePixels(liveLightAgain.frame, liveLightAgainComposition.geometry)
-    if (coldLight) expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
-    if (coldDark) expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
-    expectIntrinsicProbeSamplesEquivalent('live light/dark', liveLight.frame, liveLightComposition.geometry, liveDark.frame, liveDarkComposition.geometry)
-    expectIntrinsicProbeSamplesEquivalent(
-      'live light/light again',
-      liveLight.frame,
-      liveLightComposition.geometry,
-      liveLightAgain.frame,
-      liveLightAgainComposition.geometry
-    )
-    expectStraightSourceOver(liveLightComposition)
-    expectStraightSourceOver(liveDarkComposition)
-    expectStraightSourceOver(liveLightAgainComposition)
+      expect(liveLight.theme.className).toMatch(/v-theme--light/)
+      expect(liveDark.theme.className).toMatch(/v-theme--dark/)
+      expect(liveLightAgain.theme.className).toMatch(/v-theme--light/)
+      expect(liveLight.theme.background).not.toBe(liveDark.theme.background)
+      expect(liveDark.theme.background).not.toBe(liveLightAgain.theme.background)
+      expectColorProbePixels(liveLight.frame, liveLightComposition.geometry)
+      expectColorProbePixels(liveDark.frame, liveDarkComposition.geometry)
+      expectColorProbePixels(liveLightAgain.frame, liveLightAgainComposition.geometry)
+      if (coldLight) expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
+      if (coldDark) expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
+      expectIntrinsicProbeSamplesEquivalent('live light/dark', liveLight.frame, liveLightComposition.geometry, liveDark.frame, liveDarkComposition.geometry)
+      expectIntrinsicProbeSamplesEquivalent(
+        'live light/light again',
+        liveLight.frame,
+        liveLightComposition.geometry,
+        liveLightAgain.frame,
+        liveLightAgainComposition.geometry
+      )
+      expectStraightSourceOver(liveLightComposition)
+      expectStraightSourceOver(liveDarkComposition)
+      expectStraightSourceOver(liveLightAgainComposition)
+    })
   })
 })
