@@ -32,7 +32,7 @@ describe('profile route loading ownership', () => {
   })
 
   it('retains loading while an overlapping profile navigation still owns the key', async () => {
-    vi.stubGlobal('window', {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
       location: { pathname: '/p', reload: vi.fn() },
       confirm: vi.fn(() => false),
       siteConfig: {
@@ -46,7 +46,7 @@ describe('profile route loading ownership', () => {
         logoUrl: '',
         product: { name: 'Test', version: '1.0.0' }
       }
-    })
+    }))
     vi.mockModule('vue-router', import.meta.url, () => ({
       createWebHistory: vi.fn(() => ({})),
       createRouter: vi.fn(() => router)
@@ -79,7 +79,7 @@ describe('profile route loading ownership', () => {
   })
 
   it('asks the reload question in the reader language', async () => {
-    vi.stubGlobal('window', {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
       location: { pathname: '/a', reload: vi.fn() },
       confirm: vi.fn(() => true),
       siteConfig: {
@@ -93,7 +93,7 @@ describe('profile route loading ownership', () => {
         logoUrl: '',
         product: { name: 'Test', version: '1.0.0' }
       }
-    })
+    }))
     vi.mockModule('vue-router', import.meta.url, () => ({
       createWebHistory: vi.fn(() => ({})),
       createRouter: vi.fn(() => router)
