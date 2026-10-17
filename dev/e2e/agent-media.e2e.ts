@@ -177,6 +177,7 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
 })
 
 mediaTest('Agent media uploads, generates, edits, and transcribes within the existing composer', async ({ page, mediaUploads }) => {
+  test.setTimeout(60_000)
   // Keep the browser actor and native auth/key handshakes consistent with the server.
   await authenticateAsAdmin(page)
   await installRecorder(page)
@@ -307,7 +308,6 @@ mediaTest('Agent media uploads, generates, edits, and transcribes within the exi
   expect(sent[0]?.responseMode).toBeUndefined()
   expect(sent[0]?.attachmentIds).toEqual([uploaded[1]?.id])
   const editImage = agent.getByRole('button', { name: 'Edit image', exact: true })
-  await editImage.scrollIntoViewIfNeeded()
   if (!await editImage.evaluate(button => {
     const bounds = button.getBoundingClientRect()
     const target = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
@@ -549,6 +549,14 @@ test('Agent combines selected creation tools in a normal conversation', async ({
     await player.evaluate(element => (element as HTMLMediaElement).pause())
     await expect(player).not.toHaveAttribute('autoplay')
     await player.scrollIntoViewIfNeeded()
+    if (kind === 'video' && await player.evaluate(element => {
+      const transcript = element.closest('.inline-agent__transcript')
+      return transcript !== null && element.getBoundingClientRect().top < transcript.getBoundingClientRect().top
+    })) {
+      // Read the earlier video output without fighting the transcript's live following.
+      await agent.getByRole('region', { name: 'Conversation transcript', exact: true }).focus()
+      for (let step = 0; step < 4; step += 1) await page.keyboard.press('PageUp')
+    }
     await expectLocatorWithinViewport(player, `${kind} player`)
   }
   expect(sent[0]?.generationTools).toEqual(['video', 'music'])

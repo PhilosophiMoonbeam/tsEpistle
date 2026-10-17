@@ -149,14 +149,40 @@ type ResponsiveFixtures = {
 
 export const responsiveTest = base.extend<ResponsiveFixtures>({
   pageErrors: [
-    async ({ page }, use) => {
+    async ({ page, browserName }, use, testInfo) => {
       const errors: string[] = []
-      page.on('pageerror', error => {
-        if (error.message !== 'ResizeObserver loop completed with undelivered notifications.') {
-          errors.push(error.message)
-        }
-      })
+      const protocolErrors: string[] | undefined = browserName === 'webkit' ? [] : undefined
+      const recordError = (message: string) => {
+        if (message !== 'ResizeObserver loop completed with undelivered notifications.') errors.push(message)
+      }
+      if (protocolErrors) {
+        // WebKit also reports handled fetch diagnostics as protocol pageerrors.
+        // Observe genuine uncaught events before application scripts in every frame.
+        page.on('pageerror', error => protocolErrors.push(error.stack ?? error.message))
+        await page.exposeBinding('__wikiReportUncaughtError', (_, message: string) => recordError(message))
+        await page.addInitScript(() => {
+          const report = Reflect.get(window, '__wikiReportUncaughtError') as (message: string) => Promise<void>
+          const record = (message: string) => {
+            // A disappearing document must not create a bridge-rejection feedback loop.
+            void report(message).catch(() => {})
+          }
+          window.addEventListener('error', event => {
+            if (event instanceof ErrorEvent) record(event.message)
+          }, true)
+          window.addEventListener('unhandledrejection', event => {
+            record(event.reason instanceof Error ? event.reason.message : String(event.reason))
+          })
+        })
+      } else {
+        page.on('pageerror', error => recordError(error.message))
+      }
       await use(errors)
+      if (protocolErrors?.length) {
+        await testInfo.attach('webkit-protocol-pageerrors', {
+          body: protocolErrors.join('\n\n'),
+          contentType: 'text/plain'
+        })
+      }
       expect(errors, 'The responsive surface raised uncaught browser errors').toEqual([])
     },
     { auto: true }
