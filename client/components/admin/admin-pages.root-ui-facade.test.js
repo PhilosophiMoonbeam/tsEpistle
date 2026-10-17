@@ -91,6 +91,7 @@ describe('admin-pages root UI facade migration guard', () => {
     const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
 
     return new Function(
+      'AdminHero',
       'AsyncState',
       'AdminPagesPublication',
       'StatusIndicator',
@@ -102,6 +103,7 @@ describe('admin-pages root UI facade migration guard', () => {
       'window',
       executableScript
     )(
+      { render: () => null },
       {},
       {},
       {},
@@ -163,7 +165,6 @@ describe('admin-pages root UI facade migration guard', () => {
     app.config.globalProperties.$t = translateEnglish
     app.use(router)
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives, defaults: { VDialog: { transition: false } } }))
-    app.component('admin-hero', { render: () => null })
     const vm = app.mount(host)
     mounted.push({ app, host })
     await settle()
