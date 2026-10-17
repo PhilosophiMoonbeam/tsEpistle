@@ -18,6 +18,7 @@ export type OfflineRouteRecord = {
 }
 
 export const OFFLINE_SAVED_PAGE_OPEN_EVENT = 'tsepistle:offline-saved-page-open'
+export const OFFLINE_PRIVATE_HISTORY_EVENT = 'tsepistle:offline-private-history'
 
 export type OfflineSavedPageOpenRequest = {
   readonly siteId: string
