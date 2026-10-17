@@ -375,7 +375,6 @@ test('Agent attaches a Wiki asset through a keyboard-accessible private-copy pic
   const browse = page.getByText('Browse Wiki assets', { exact: true })
   await browse.click()
   let picker = page.getByRole('dialog', { name: 'Browse Wiki assets', exact: true })
-  await expect(picker).toBeVisible()
   await expectLocatorWithinViewport(picker.locator('.agent-asset-picker'), 'Wiki asset picker')
   await expect(picker.getByText('A private copy stays with this conversation.', { exact: true })).toBeVisible()
   await picker.getByRole('button', { name: 'Team', exact: true }).click()

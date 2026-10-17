@@ -352,7 +352,7 @@ test.describe('integrated offline access', () => {
   })
 
   test('downloads through the product control, warms the feature worker, and falls back to local search and reading offline', async ({ page, browserName }) => {
-    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
     const savedPages = await saveOfflinePages(page)
     const origin = new URL(page.url()).origin
     const database = await inspectOfflineDatabase(page)
@@ -443,7 +443,7 @@ test.describe('integrated offline access', () => {
   })
 
   test('opens saved pages at their normal URLs and returns to offline settings', async ({ page, browserName }) => {
-    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
     const savedPages = await saveOfflinePages(page)
     await page.context().setOffline(true)
     await page.goto(`${OFFLINE_SETTINGS_PATH}#downloaded-pages-title`, { waitUntil: 'domcontentloaded' })
@@ -518,7 +518,7 @@ test.describe('integrated offline access', () => {
   })
 
   test('keeps the canonical page on reconnect and offers offline access in the account menu', async ({ page, browserName }) => {
-    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
     const saved = (await saveOfflinePages(page, 1))[0]!
     await page.context().setOffline(true)
     await page.goto(saved.snapshot.canonicalPath, { waitUntil: 'domcontentloaded' })
@@ -548,7 +548,7 @@ test.describe('integrated offline access', () => {
   })
 
   test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName }) => {
-    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+    test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
     await warmFeatureWorker(page)
     await page.locator('.policy-disclosure > summary').click()
     const automaticSaving = page.getByRole('checkbox', { name: /Save frequently visited and recently edited pages/ })
@@ -675,7 +675,7 @@ test.describe('integrated offline access', () => {
 })
 
 test('account and navigation remain useful through offline startup and reconnect', async ({ page, browserName }) => {
-  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
   test.setTimeout(90_000)
   await warmFeatureWorker(page)
   await page.goto('/', { waitUntil: 'networkidle' })
@@ -718,7 +718,7 @@ test('account and navigation remain useful through offline startup and reconnect
 })
 
 test('offline Browse immediately lists saved copies and recovers without an online event', async ({ page, browserName }) => {
-  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
   test.setTimeout(120_000)
   await warmFeatureWorker(page)
   const publicPages = await guestReadablePublicPages(page, 2)
@@ -777,7 +777,7 @@ test('offline Browse immediately lists saved copies and recovers without an onli
 })
 
 for (const cachedBrowse of [false, true]) test(`missed disconnect switches ${cachedBrowse ? 'cached' : 'fresh'} Browse to saved pages and preserves the logo on first offline navigation`, async ({ page, browserName }) => {
-  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
   test.setTimeout(90_000)
   await warmFeatureWorker(page)
   const target = (await guestReadablePublicPages(page, 1))[0]!
