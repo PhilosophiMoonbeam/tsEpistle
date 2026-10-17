@@ -2273,7 +2273,8 @@ export default defineComponent({
           return
         }
         this.offlinePassiveRefreshPending = false
-        void this.refreshOfflinePageState()
+        // Same-generation policy/corpus updates do not revoke a locked reading vault.
+        void this.refreshOfflinePageState(notice.kind !== 'generation' && notice.sessionGeneration === this.offlineGeneration)
       }
     })
 
@@ -2584,30 +2585,38 @@ export default defineComponent({
       if (code === 'locked' || /unlock|reading.*(?:key|handle)|private.*locked/u.test(detail)) return 'locked'
       return null
     },
-    async refreshOfflinePageState (): Promise<void> {
+    async refreshOfflinePageState (preserveLockedAccess = false): Promise<void> {
       if (this.offlineDisposed) return
       const pageId = this.pageId
       const locale = this.locale
       const operationId = ++this.offlineOperationId
-      this.offlineState = 'checking'
-      this.offlineAccessState = null
+      const privateHandle = this.offlinePrivatePath ? this.offlinePrivateHandle() : null
+      const retainLocked = preserveLockedAccess && this.offlinePrivatePath && !privateHandle &&
+        this.offlineState === 'locked' && this.offlineAccessState === 'locked'
+      if (!retainLocked) {
+        this.offlineState = 'checking'
+        this.offlineAccessState = null
+      }
       this.offlineAvailabilityError = ''
       this.offlinePolicy = null
       this.offlineHasSnapshot = false
       this.offlineSnapshotRevision = ''
       this.offlineExpiresAt = null
-      this.offlineGeneration = null
+      if (!retainLocked) this.offlineGeneration = null
       this.offlinePolicyRevision = null
-      if (this.offlinePrivatePath && !this.offlinePrivateHandle()) {
+      if (this.offlinePrivatePath && !privateHandle) {
         try {
           const storage = await this.offlineStorageForOperation(operationId)
           if (!storage || !this.isCurrentOfflineOperation(operationId, pageId)) return
           const vault = await storage.getReadingVault()
           if (!this.isCurrentOfflineOperation(operationId, pageId)) return
           this.offlineAccessState = vault ? 'locked' : 'setup-required'
+          this.offlineGeneration = vault?.sessionGeneration ?? null
           this.offlineState = this.offlineAccessState
         } catch {
           if (!this.isCurrentOfflineOperation(operationId, pageId)) return
+          this.offlineAccessState = null
+          this.offlineGeneration = null
           this.offlineState = 'unavailable'
           this.offlineAvailabilityError = this.$t('common:page.privateOfflineReadingUnavailable')
         }

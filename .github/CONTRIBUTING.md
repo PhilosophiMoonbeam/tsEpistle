@@ -98,6 +98,8 @@ First-run setup autofocus must not override a field the user has already focused
 
 Confirmation sessions mount `VDialog` with its active model. Reusing an inactive overlay defers Vuetify's `globalTop` ownership and can drop an immediate Escape after reopening. Keep queued requests in the same overlay, retain leave-transition opener restoration, and preserve native keyboard qualification without added delays.
 
+Creation-tool browser stories await the selected menu's actual dismissal before reopening through the composer's owned native ArrowDown handling. Vuetify deliberately guards immediate post-selection activator clicks. Preserve both selected-tool checks, viewport geometry, the submitted tool set, and native video/audio playback; do not replace the dismissal signal with a sleep.
+
 Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
 
 Draw.io keyboard qualification covers a full forward focus loop, reverse traversal, Escape restoration, and pointer close/reopen. Do not repeat an identical forward loop: it adds native protocol time without another boundary or transition, while the reverse and reopen paths already exercise re-entry.
@@ -113,6 +115,8 @@ Short-landscape not-found layouts place the icon beside the copy/path and keep a
 Route-backed Agent browser fixtures authenticate a genuine cookie actor and leave native identity and offline-key handshakes intact. A mocked authenticated `whoami` does not authorize native page/watch/key requests. Use the existing service-worker blocking pattern only for controlled route-backed fixtures; keep real worker and offline coverage in `offline.e2e.ts`.
 
 Controlled editor-panel fixtures that mock API reads use the shared worker-blocked `routedEditorTest`, so asset rows, declared suggestion failures, and late responses retain request ownership; [Playwright routing does not intercept service-worker requests](https://playwright.dev/docs/api/class-page#page-route). A controlling worker can otherwise return real empty asset results instead of the fixture's scrollable corpus. Real-server editor and offline contexts retain their workers. Keep the full tag suggestion/failure/removal/Cancel story separate from the short Cancel-to-Apply consumer boundary, preserving both 30-second budgets. The latter must cancel a transient tag, reopen, apply a different tag, and verify the actual Create payload excludes the canceled value. Leave the combobox with native Tab before applying.
+
+The stale-tag story native-clicks its below-fold combobox before text entry, bounds the first routed-query acknowledgment with the normal expectation budget, and releases the held response in `finally`. Retain the actual late-response boundary and both current/stale option assertions. Online private-history settings entry awaits its documented fragment focus, then native-clicks the secret field before typing; do not race initial route focus or substitute a model write.
 
 Tag-follow feedback retires its animation state on the icon's genuine `animationend`, not a wall timer started before rendering. A delayed first frame must not cancel unfinished feedback. Preserve native completion, settled identity transform/no active animation, saved-follow persistence, and reduced-motion checks.
 

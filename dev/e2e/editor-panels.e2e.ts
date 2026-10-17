@@ -3,7 +3,7 @@ import { authenticateAsAdmin, openAuthenticatedPage, responsiveTest as test } fr
 import type { TextEditorHandle } from '../../client/components/editor/common/text-editor'
 
 // These editor fixtures route API reads; a controlling worker can bypass page.route.
-const routedEditorTest = test.extend({ serviceWorkers: 'block' })
+const routedEditorTest = test.extend({ serviceWorkers: 'block', trace: 'retain-on-failure' })
 
 // Mount the shipped editor with a cookie-backed actor, but no saved page or collaboration session.
 const content = Array.from(
@@ -644,18 +644,15 @@ routedEditorTest('page properties applies a new tag without reviving a canceled 
 
 routedEditorTest('page properties ignores a late suggestion response for an older query', async ({ page }) => {
   let releaseSlow: (() => void) | undefined
-  let slowStarted: (() => void) | undefined
+  let slowStarted = false
   const slowResponse = new Promise<void>(resolve => {
     releaseSlow = resolve
-  })
-  const slowRequest = new Promise<void>(resolve => {
-    slowStarted = resolve
   })
   await openEditor(page, {
     onTagSearch: async route => {
       const query = new URL(route.request().url()).searchParams.get('query') ?? ''
       if (query === 'slow') {
-        slowStarted?.()
+        slowStarted = true
         await slowResponse
         await route.fulfill({ json: ['slow-tag'] })
         return
@@ -664,21 +661,26 @@ routedEditorTest('page properties ignores a late suggestion response for an olde
     }
   })
 
-  await page.getByRole('button', { name: 'Page', exact: true }).click()
-  const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
-  const tags = properties.getByRole('combobox', { name: /tags/i }).first()
-  await tags.fill('slow')
-  await slowRequest
-  await tags.fill('fast')
-  await expect(page.getByRole('option', { name: 'fast-tag', exact: true })).toBeVisible()
-  const slowNetworkResponse = page.waitForResponse(response => {
-    const url = new URL(response.url())
-    return url.pathname === '/_api/pages/tags/search' && url.searchParams.get('query') === 'slow' && response.ok()
-  })
-  releaseSlow?.()
-  await slowNetworkResponse
-  await expect(page.getByRole('option', { name: 'fast-tag', exact: true })).toBeVisible()
-  await expect(page.getByRole('option', { name: 'slow-tag', exact: true })).toHaveCount(0)
+  try {
+    await page.getByRole('button', { name: 'Page', exact: true }).click()
+    const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+    const tags = properties.getByRole('combobox', { name: /tags/i }).first()
+    await tags.click()
+    await tags.fill('slow')
+    await expect.poll(() => slowStarted).toBe(true)
+    await tags.fill('fast')
+    await expect(page.getByRole('option', { name: 'fast-tag', exact: true })).toBeVisible()
+    const slowNetworkResponse = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname === '/_api/pages/tags/search' && url.searchParams.get('query') === 'slow' && response.ok()
+    })
+    releaseSlow?.()
+    await slowNetworkResponse
+    await expect(page.getByRole('option', { name: 'fast-tag', exact: true })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'slow-tag', exact: true })).toHaveCount(0)
+  } finally {
+    releaseSlow?.()
+  }
 })
 
 routedEditorTest('Draw.io parent modal isolates the editor and restores its native toolbar opener across iframe focus', async ({ page }) => {

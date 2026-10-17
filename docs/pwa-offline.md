@@ -62,6 +62,8 @@ Installability and offline operation are separate: browser install UI is an enha
 
 `/_offline` is a server route available before authentication and personalization. It serves a fixed, non-user-specific document with no page body, account data, permissions, CSRF token, Agent state, analytics payload, or custom site scripts. It boots a separate `client/index-offline.ts` entry and `client/offline-app.vue` surface.
 
+When the worker supplies that cached document for another navigation, it streams a fresh response with the cached status and headers but no originating response URL. The requested canonical page or settings URL owns the document location; the cached `/_offline` bootstrap URL must not replace it before application startup.
+
 The server serves `/sw.js`, `/_offline`, and the manifest with correct MIME types, explicit revalidation headers, and stable URLs. The offline document may use safe site-neutral product branding only. `/_offline` MUST send a strict generated CSP whose `default-src` is `'none'`, whose `script-src` and `style-src` list only the exact hashed offline application script/style URLs for that build (no wildcard, `unsafe-inline`, or generic same-origin source), whose `connect-src` is only `'self'`, and whose `img-src`, `font-src`, `media-src`, `object-src`, `base-uri`, `frame-src`, `form-action`, and `child-src` are respectively `'none'`, `'none'`, `'none'`, `'none'`, `'none'`, `'none'`, `'none'`, and `'none'`; `worker-src` and `manifest-src` are only `'self'`. The generated header is also applied to the cached offline document. Ordinary reader, editor, `/a`, `/p`, setup, login, and private routes remain unchanged and server-owned.
 
 ## 4. Capability model
@@ -268,6 +270,8 @@ The visual direction is a **resilient field notebook**: a quiet, editorial exten
 The page tools surface shows **Save offline copy** with a disabled or explanatory state until page admission and any required private key permit the action. States include checking, updating, saved, locked, expiring, stale/error, unavailable, remove, and explicit exclusion. The reader status is source-aware: it reports whether the page is selected or excluded and names every active source—**Manual**, **Automatic**, and each followed tag—alongside whether a readable offline copy is present, pending, stale, locked, or unavailable.
 
 In the reader, the icon-only offline action sits with the other page utilities above Page Contents on desktop and mobile rather than in the page title/description header. The nearby Focus reader icon has a tooltip. The offline retry action remains conditional, and the live status continues to describe the current saved-copy state without relying on the button icon alone.
+
+On an already-locked private page, same-generation policy/corpus notifications recheck vault metadata without temporarily withdrawing the Unlock action. Generation or authoritative identity refreshes still withdraw old admission immediately; failed vault inspection becomes unavailable. Opening the prompt grants no reading authority: actual unlock retains the current origin, account, authentication-version, vault, and session-generation checks.
 
 Cached reader date presentation survives an unavailable identity check. A newly authenticated identity refreshes it from that reader's verified preferences; confirmed anonymous identity clears the cached presentation. Connectivity hints alone do not establish identity or erase readable cached dates.
 

@@ -504,7 +504,10 @@ test.describe('integrated offline access', () => {
 
       await page.goto(`${OFFLINE_SETTINGS_PATH}#downloaded-pages-title`, { waitUntil: 'domcontentloaded' })
       await waitForOfflineSettings(page)
-      await reading.getByLabel('Unlock secret', { exact: true }).fill(unlockSecret)
+      await expect(page.locator('#downloaded-pages-title')).toBeFocused()
+      const privateUnlockInput = reading.getByLabel('Unlock secret', { exact: true })
+      await privateUnlockInput.click()
+      await privateUnlockInput.fill(unlockSecret)
       await reading.getByRole('button', { name: 'Unlock private pages', exact: true }).click()
       await expect(reading.getByRole('button', { name: 'Lock private pages', exact: true })).toBeVisible({ timeout: 30_000 })
       await page.context().setOffline(true)

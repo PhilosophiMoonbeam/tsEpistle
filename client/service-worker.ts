@@ -385,7 +385,11 @@ async function cachedShell(): Promise<Response | undefined> {
   try {
     const cache = await caches.open(PRECACHE_CACHE_NAME)
     if (!(await completeCache(cache))) return undefined
-    return (await cache.match(new URL(OFFLINE_DOCUMENT_PATH, worker.location.origin).href)) ?? undefined
+    const cached = await cache.match(new URL(OFFLINE_DOCUMENT_PATH, worker.location.origin).href)
+    if (!cached) return undefined
+    // The navigation owns its URL; the cached bootstrap's /_offline response
+    // URL must not become the document location before the reader mounts.
+    return new Response(cached.body, { status: cached.status, statusText: cached.statusText, headers: cached.headers })
   } catch {
     return undefined
   }
