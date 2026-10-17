@@ -400,9 +400,21 @@ test.describe('responsive UI quality matrix', () => {
     for (const path of ['/en/home', '/en/visual-markdown-browser']) {
       await openAuthenticatedPage(page, path, '.page-header-section')
       await expectResponsiveLayout(page, path)
-      const browseTags = page.locator('.nav-header .nav-header-browse:visible').first()
-      await expect(browseTags, 'Public headers keep Browse by Tags available').toBeVisible()
-      await expect(browseTags).toHaveAccessibleName('Browse by Tags')
+      if (viewport.width < 600) {
+        const overflow = page.locator('.nav-header-mobile-actions')
+        await expectLocatorWithinViewport(overflow, 'Compact header actions')
+        await overflow.click()
+        const browseTags = page.getByRole('link', { name: 'Browse by Tags', exact: true })
+        await expect(browseTags, 'Compact headers keep Browse by Tags available through Glo').toBeVisible()
+        await expect(browseTags).toHaveAttribute('href', '/t')
+        await page.keyboard.press('Escape')
+        await expect(browseTags).toBeHidden()
+        await expect(overflow).toBeFocused()
+      } else {
+        const browseTags = page.locator('.nav-header .nav-header-browse:visible').first()
+        await expect(browseTags, 'Public headers keep Browse by Tags available').toBeVisible()
+        await expect(browseTags).toHaveAccessibleName('Browse by Tags')
+      }
       if (viewport.width >= 960) {
         const command = page.locator('.nav-header-command:visible').first()
         await expect(command, 'Desktop headers keep the search command group visible').toBeVisible()
@@ -450,25 +462,7 @@ test.describe('responsive UI quality matrix', () => {
           expect(primaryWeight, 'Top-level contents headings remain more prominent than nested entries').toBeGreaterThan(secondaryWeight)
         }
 
-        if (await headingLinks.count()) {
-          const firstLink = headingLinks.first()
-          const targetHref = await firstLink.getAttribute('href')
-          if (targetHref && targetHref.startsWith('#')) {
-            const targetId = targetHref.slice(1)
-            const targetHeading = page.locator(`id=${targetId}`).first()
-            if (await targetHeading.count()) {
-              await firstLink.click()
-              await expect(targetHeading).toBeVisible()
-              const headingBox = await targetHeading.boundingBox()
-              expect(headingBox).not.toBeNull()
-              if (headingBox) {
-                expect(headingBox.y, 'TOC destination heading is visible below fixed chrome').toBeGreaterThanOrEqual(0)
-                expect(headingBox.y, 'TOC destination heading is within viewport').toBeLessThan(viewport.height)
-              }
-            }
-          }
-        }
-
+        // Check initial rail geometry before TOC navigation intentionally scrolls the hero away.
         if (viewport.width >= 1280) {
           const hero = page.locator('.page-hero').first()
           const rail = page.locator('.page-col-sd:visible').first()
@@ -531,6 +525,24 @@ test.describe('responsive UI quality matrix', () => {
             await sidebar.evaluate(element => {
               element.scrollTop = 0
             })
+          }
+        }
+        if (await headingLinks.count()) {
+          const firstLink = headingLinks.first()
+          const targetHref = await firstLink.getAttribute('href')
+          if (targetHref && targetHref.startsWith('#')) {
+            const targetId = targetHref.slice(1)
+            const targetHeading = page.locator(`id=${targetId}`).first()
+            if (await targetHeading.count()) {
+              await firstLink.click()
+              await expect(targetHeading).toBeVisible()
+              const headingBox = await targetHeading.boundingBox()
+              expect(headingBox).not.toBeNull()
+              if (headingBox) {
+                expect(headingBox.y, 'TOC destination heading is visible below fixed chrome').toBeGreaterThanOrEqual(0)
+                expect(headingBox.y, 'TOC destination heading is within viewport').toBeLessThan(viewport.height)
+              }
+            }
           }
         }
       }
@@ -620,8 +632,19 @@ test.describe('responsive UI quality matrix', () => {
     if (await pageEditFab.count()) {
       await expectLocatorWithinViewport(pageEditFab, 'Page actions')
     }
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    const scrollExtent = await page.evaluate(async () => {
+      const maximum = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+      window.scrollTo(0, maximum)
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      return { maximum, actual: window.scrollY, activation: window.innerHeight * 0.33 }
+    })
+    expect(Math.abs(scrollExtent.actual - scrollExtent.maximum), 'Reader reaches its actual document bottom').toBeLessThanOrEqual(1)
     const returnToTop = page.getByRole('button', { name: /return to top/i })
+    if (scrollExtent.maximum <= scrollExtent.activation) {
+      // Wide layouts can exhaust the page before the viewport-relative action activates.
+      await expect(returnToTop).toHaveCount(0)
+      return
+    }
     await expectLocatorWithinViewport(returnToTop, 'Return to top action')
     const returnToTopBounds = await returnToTop.boundingBox()
     expect(returnToTopBounds).not.toBeNull()
@@ -1744,13 +1767,24 @@ test.describe('responsive UI quality matrix', () => {
     await page.keyboard.insertText('query PaneRetention { __typename }')
     const queryEditor = page.locator('.graphiql-query-editor')
     await expect(queryEditor).toContainText('PaneRetention')
+    const expectEditorRelayout = async () => {
+      await expect.poll(
+        () => page.getByRole('textbox', { name: 'Editor content', exact: true }).evaluateAll(inputs => inputs.every(input => {
+          const bounds = input.getBoundingClientRect()
+          return bounds.left >= -1 && bounds.right <= window.innerWidth + 1
+        })),
+        'Monaco inputs finish native relayout after the documentation pane changes'
+      ).toBe(true)
+    }
     await page.getByRole('button', { name: 'Show Documentation Explorer', exact: true }).click()
     await expect(page.locator('.graphiql-doc-explorer')).toBeVisible()
+    await expectEditorRelayout()
     await expectResponsiveLayout(page, 'GraphQL schema documentation')
     if (viewport.width <= 700) await expect(queryEditor).toBeHidden()
     await page.getByRole('button', { name: 'Hide Documentation Explorer', exact: true }).click()
     await expect(queryEditor).toBeVisible()
     await expect(queryEditor).toContainText('PaneRetention')
+    await expectEditorRelayout()
     await expectResponsiveLayout(page, 'Restored GraphQL query')
   })
 
@@ -2014,50 +2048,7 @@ test.describe('responsive UI quality matrix', () => {
     const memoryPanel = agent.getByRole('complementary', { name: 'Agent memory' })
     const historyDialog = agent.getByRole('dialog', { name: 'Conversations' })
 
-    if (viewport.width >= 1760) {
-      await page.locator('.search-results--ask').evaluate(async element => {
-        await Promise.all(element.getAnimations().map(animation => animation.finished))
-      })
-      const initialCard = await card.boundingBox()
-      expect(initialCard).not.toBeNull()
-
-      await panelFocusTarget.click()
-      await expect(historyPanel).toBeVisible()
-      await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
-      await expect(historyPanel).not.toHaveAttribute('role', 'dialog')
-      await expect(scrim).toHaveCount(0)
-      await expect(visibleSidePanels).toHaveCount(1)
-      await expect.poll(() => historyPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
-      const historyCard = await card.boundingBox()
-      const historyBounds = await historyPanel.boundingBox()
-      expect(historyCard).not.toBeNull()
-      expect(historyBounds).not.toBeNull()
-      if (initialCard && historyCard && historyBounds) {
-        expect(historyCard.width).toBeGreaterThanOrEqual(initialCard.width * 0.75)
-        expect(historyCard.x + historyCard.width).toBeLessThanOrEqual(viewport.width + 1)
-        expect(historyBounds.x + historyBounds.width).toBeLessThanOrEqual(historyCard.x)
-      }
-
-      await agent.getByRole('button', { name: 'Memory', exact: true }).click()
-      await expect(memoryPanel).toBeVisible()
-      await expect(scrim).toHaveCount(0)
-      await expect(memoryPanel).not.toHaveAttribute('aria-modal', 'true')
-      await expect(memoryPanel).not.toHaveAttribute('role', 'dialog')
-      await expect.poll(() => memoryPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
-      const memoryCard = await card.boundingBox()
-      const memoryBounds = await memoryPanel.boundingBox()
-      expect(memoryCard).not.toBeNull()
-      expect(memoryBounds).not.toBeNull()
-      if (initialCard && memoryCard && memoryBounds) {
-        expect(memoryCard.width).toBeGreaterThanOrEqual(initialCard.width * 0.6)
-        expect(memoryCard.x + memoryCard.width).toBeLessThanOrEqual(viewport.width + 1)
-        expect(memoryBounds.x).toBeGreaterThanOrEqual(memoryCard.x + memoryCard.width)
-      }
-      await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
-      await expect(memoryPanel).toBeHidden()
-      await historyPanel.getByRole('button', { name: 'Close chat history' }).click()
-      await expect(historyPanel).toBeHidden()
-    } else if (viewport.width >= 1024) {
+    if (viewport.width >= 1024) {
       await panelFocusTarget.click()
       await expect(historyPanel).toBeVisible()
       await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
@@ -2071,8 +2062,21 @@ test.describe('responsive UI quality matrix', () => {
       if (cardBounds && historyBounds) {
         expect(historyBounds.x + historyBounds.width).toBeLessThanOrEqual(cardBounds.x)
       }
-      await historyPanel.getByRole('button', { name: 'Close chat history' }).click()
+      await agent.locator('.inline-agent__memory-toggle').click()
+      await expect(memoryPanel).toBeVisible()
       await expect(historyPanel).toBeHidden()
+      await expect(visibleSidePanels).toHaveCount(1)
+      await expect(scrim).toHaveCount(0)
+      await expect(memoryPanel).not.toHaveAttribute('aria-modal', 'true')
+      await expect.poll(() => memoryPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
+      await expectLocatorWithinViewport(memoryPanel, 'Exclusive left Memory panel')
+      await expect.poll(async () => {
+        const [memoryBounds, memoryCard] = await Promise.all([memoryPanel.boundingBox(), card.boundingBox()])
+        return Boolean(memoryBounds && memoryCard && memoryBounds.x + memoryBounds.width <= memoryCard.x)
+      }).toBe(true)
+      await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
+      await expect(memoryPanel).toBeHidden()
+      await expect(visibleSidePanels).toHaveCount(0)
     } else {
       await panelFocusTarget.click()
       await expect(historyDialog).toBeVisible()

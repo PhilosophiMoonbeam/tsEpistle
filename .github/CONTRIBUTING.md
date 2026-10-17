@@ -72,6 +72,12 @@ First-run setup autofocus must not override a field the user has already focused
 
 Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
 
+Route-backed Agent browser fixtures authenticate a genuine cookie actor and leave native identity and offline-key handshakes intact. A mocked authenticated `whoami` does not authorize native page/watch/key requests. Use the existing service-worker blocking pattern only for controlled route-backed fixtures; keep real worker and offline coverage in `offline.e2e.ts`.
+
+Keep emulated user agents consistent with their browser engine. Chromium tablet profiles retain their viewport, touch, mobile and device-scale settings but use a Chromium tablet user agent, not Safari's; otherwise Monaco selects a WebKit-only clipboard workaround in Chromium.
+
+Measure initial reader rail geometry before following TOC links. A page whose entire scroll extent stays below the viewport-relative Return-to-top activation gate correctly has no such action. After opening or closing GraphQL documentation, await native Monaco relayout before applying the unchanged viewport and query-retention checks.
+
 **Saved** confirms the source commit, not reader readiness. Save/discard/restore navigation can wait for the existing 15-second certified-render check; use the established 30-second reader-navigation assertion and still verify the committed content. Do not replay saves or bypass readiness to satisfy a five-second default assertion.
 
 The upgrade smoke restores the archived fixture unchanged, then normalizes its public continuity asset's filename and bound cache identity from `continuity.txt` to `continuity.bin`. Both the legacy and current routers reserve `.txt` for page aliases. This fixture-only normalization preserves asset bytes, source artifact hashes, default page-extension support, and public download verification before migration, after migration, and after backup restoration.
