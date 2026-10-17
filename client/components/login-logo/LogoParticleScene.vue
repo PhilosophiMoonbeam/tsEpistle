@@ -961,7 +961,7 @@ const ParticleSceneContents = defineComponent({
                 particleCount: props.resources.particles.count,
                 triangles,
                 computeDispatches: 0,
-                motionScheduledBytes: props.resources.cloud.count > 0 ? props.resources.cloudMotionTexture.image.data.byteLength : 0,
+                motionScheduledBytes: props.resources.cloud.count > 0 ? props.resources.cloudMotionTexture.image.data!.byteLength : 0,
                 actualUploadBytes: null,
                 uploadCalls: null,
                 colorUploadBytes: 0

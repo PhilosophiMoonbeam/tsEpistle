@@ -45,7 +45,7 @@ export class ParticleCloud {
 
   constructor(
     private readonly particles: ParsedLogoParticles,
-    motion = new Float32Array(particles.count * 2)
+    motion: Float32Array = new Float32Array(particles.count * 2)
   ) {
     this.motion = motion
     const indices: number[] = []
