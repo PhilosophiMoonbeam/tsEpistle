@@ -143,6 +143,28 @@ describe('confirm dialog host', () => {
     await expect(second).resolves.toBe(false)
   })
 
+  test('Escape cancels a reopened confirmation before deferred stack ownership is published', async () => {
+    const host = await mount()
+    const opener = trigger()
+    const first = confirmDialog.confirmDiscard('Discard the first draft?')
+    await settle()
+    buttons(host)[0].click()
+    await expect(first).resolves.toBe(false)
+    await settle()
+    expect(document.activeElement).toBe(opener)
+
+    const second = confirmDialog.confirmDiscard('Discard the next draft?')
+    // The card and native Escape listener are ready after the render flush;
+    // do not advance Vuetify's deferred globalTop publication first.
+    await Vue.nextTick()
+    buttons(host)[0].focus()
+    pressEscape(buttons(host)[0])
+    expect(confirmDialog.currentConfirmation() === null).toBe(true)
+    await expect(second).resolves.toBe(false)
+    await settle()
+    expect(document.activeElement).toBe(opener)
+  })
+
   test('restores the captured invoking control only after the real overlay finishes leaving', async () => {
     let finishLeave: (() => void) | undefined
     const host = await mount({}, { onLeave: (_element, done) => { finishLeave = done } })

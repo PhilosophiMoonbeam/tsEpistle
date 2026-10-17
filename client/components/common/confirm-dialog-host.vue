@@ -1,6 +1,7 @@
 <template lang="pug">
   v-dialog(
     ref='dialog'
+    :key='dialogKey'
     :model-value='request !== null'
     max-width='460'
     :aria-labelledby='request ? `confirm-dialog-title-${request.id}` : undefined'
@@ -38,6 +39,7 @@ type Translate = (key: string, options?: Record<string, unknown>) => string
 export default defineComponent({
   data () {
     return {
+      dialogKey: 0,
       unregister: null as (() => void) | null,
       returnFocusTo: null as HTMLElement | null
     }
@@ -57,9 +59,14 @@ export default defineComponent({
     async request (request: PendingConfirmation | null, previous: PendingConfirmation | null) {
       if (!request) return
       this.returnFocusTo = null
+      if (!previous) {
+        // Start active: a reused inactive VDialog defers globalTop and drops
+        // an immediate Escape. Queued cards must keep their current overlay.
+        this.dialogKey = request.id
+        return
+      }
       // Queued cards replace one another without re-entering VDialog. Keep
       // focus in the next card rather than on the removed action button.
-      if (!previous) return
       await this.$nextTick()
       const dialog = this.$refs.dialog as { contentEl?: HTMLElement; globalTop?: boolean } | undefined
       if (this.request?.id === request.id && dialog?.globalTop && !dialog.contentEl?.contains(dialog.contentEl.ownerDocument.activeElement)) {
