@@ -183,29 +183,27 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
       try {
         // Replace only the unsaved draft through the real contenteditable.
         // Selection and page-link insertion below remain native UI interactions.
-        await editor.click()
-        // ProseMirror must consume the native selectionchange before Backspace.
+        await editor.getByRole('heading').first().click()
+        // A real draft edit retires the editor's first-focus reconciliation.
+        await page.keyboard.insertText('x')
+        await expect(page.getByRole('button', { name: /^Save \(/ }).first()).toBeVisible()
         const selectionReady = await editor.evaluateHandle(root => {
           const doc = root.ownerDocument
           const controller = new AbortController()
-          const ready = new Promise<void>(resolve => {
-            doc.addEventListener('selectionchange', () => {
-              const selection = doc.getSelection()
-              if (!selection?.rangeCount) return
-              const range = selection.getRangeAt(0)
-              if (
-                !root.contains(range.commonAncestorContainer) ||
-                range.toString() !== root.textContent
-              ) return
-              controller.abort()
-              resolve()
-            }, { signal: controller.signal })
-          })
-          return { ready, dispose() { controller.abort() } }
+          const state = { ready: false, dispose() { controller.abort() } }
+          doc.addEventListener('selectionchange', () => {
+            const selection = doc.getSelection()
+            if (!selection?.rangeCount) return
+            const range = selection.getRangeAt(0)
+            if (!root.contains(range.commonAncestorContainer) || range.toString() !== root.textContent) return
+            state.ready = true
+            controller.abort()
+          }, { signal: controller.signal })
+          return state
         })
         try {
           await editor.selectText()
-          await selectionReady.evaluate(state => state.ready)
+          await expect.poll(() => selectionReady.evaluate(state => state.ready)).toBe(true)
           await page.keyboard.press('Backspace')
           await expect(editor).toHaveText('')
         } finally {
