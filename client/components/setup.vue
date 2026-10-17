@@ -290,7 +290,7 @@ export default {
   mounted() {
     this.focusTimer = window.setTimeout(() => {
       this.focusTimer = null
-      if (!this.isDisposed) focusComponent(this.$refs.adminEmailInput)
+      if (!this.isDisposed && document.activeElement === document.body) focusComponent(this.$refs.adminEmailInput)
     }, 500)
   },
   beforeUnmount() {

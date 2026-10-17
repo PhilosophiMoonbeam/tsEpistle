@@ -68,6 +68,10 @@ Linux WebKit qualification uses the pinned engine's GTK runtime, not its headles
 
 Install Xvfb alongside Playwright's supported native dependencies, following its [Linux headed execution guidance](https://playwright.dev/docs/ci#running-headed). Use `bun run e2e [Playwright arguments]` or `bun run e2e:responsive [Playwright arguments]`: the shared launcher resolves the repository's pinned CLI and starts `xvfb-run --auto-servernum` when Linux has no `DISPLAY`. With an existing display it uses that display. The three Linux WebKit projects select GTK/headed mode; Chromium, Firefox, their headless settings, and performance capability flags remain unchanged. Do not replace this runtime with compositor-disabling flags, engine skips, or retries. For a direct native WebKit diagnostic on a displayless Linux host, use `xvfb-run -a` and `webkit.launch({ headless: false })`.
 
+First-run setup autofocus must not override a field the user has already focused or redirect subsequent password typing. Preserve the native regression that drains startup timers after choosing the password field.
+
+Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
+
 **Saved** confirms the source commit, not reader readiness. Save/discard/restore navigation can wait for the existing 15-second certified-render check; use the established 30-second reader-navigation assertion and still verify the committed content. Do not replay saves or bypass readiness to satisfy a five-second default assertion.
 
 The upgrade smoke restores the archived fixture unchanged, then normalizes its public continuity asset's filename and bound cache identity from `continuity.txt` to `continuity.bin`. Both the legacy and current routers reserve `.txt` for page aliases. This fixture-only normalization preserves asset bytes, source artifact hashes, default page-extension support, and public download verification before migration, after migration, and after backup restoration.
