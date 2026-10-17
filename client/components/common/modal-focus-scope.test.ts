@@ -129,14 +129,21 @@ describe('modal focus scope', () => {
 
     back.focus()
     reverseTab()
-    other.focus()
     await new Promise<void>(resolve => dom.window.queueMicrotask(resolve))
+    expect(document.activeElement).toBe(back)
+    await new Promise<void>(resolve => dom.window.requestAnimationFrame(() => resolve()))
+    expect(document.activeElement).toBe(iframe)
+
+    back.focus()
+    reverseTab()
+    other.focus()
+    await new Promise<void>(resolve => dom.window.requestAnimationFrame(() => resolve()))
     expect(document.activeElement).toBe(other)
 
     back.focus()
     reverseTab()
     scope.deactivate({ restoreFocus: false })
-    await new Promise<void>(resolve => dom.window.queueMicrotask(resolve))
+    await new Promise<void>(resolve => dom.window.requestAnimationFrame(() => resolve()))
     expect(document.activeElement).toBe(back)
   })
 })

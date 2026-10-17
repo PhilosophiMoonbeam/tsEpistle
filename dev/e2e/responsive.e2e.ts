@@ -12,6 +12,9 @@ import {
   responsiveTest as test
 } from './helpers.ts'
 
+// This HTML fixture must own reader navigations; real service-worker coverage stays in offline.e2e.ts.
+const routedReaderTest = test.extend({ serviceWorkers: 'block' })
+
 async function openFixtureAgentFromSearch(page: Page): Promise<Locator> {
   await openAuthenticatedPage(page, '/', '.page-header-section')
   const viewport = page.viewportSize()
@@ -678,7 +681,7 @@ test.describe('responsive UI quality matrix', () => {
     await returnToTop.click()
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(2)
   })
-  test('keeps the reader Edit action reachable by pointer and keyboard', async ({ page }) => {
+  routedReaderTest('keeps the reader Edit action reachable by pointer and keyboard', async ({ page }) => {
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     if (!viewport || viewport.width < 600) return
@@ -686,6 +689,7 @@ test.describe('responsive UI quality matrix', () => {
 
     await authenticateAsAdmin(page)
     const readerUrl = new URL('/en/visual-markdown-browser', sameOriginHeaders().Origin)
+    let patchedReaderNavigations = 0
     await page.route(`${readerUrl.origin}${readerUrl.pathname}**`, async route => {
       const request = route.request()
       const requestUrl = new URL(request.url())
@@ -808,10 +812,13 @@ test.describe('responsive UI quality matrix', () => {
       const patchedDocument =
         document.slice(0, match.index) + `${match[1]}${match[2]}${encodedPatchedPayload}${match[2]}` + document.slice(match.index + match[0].length)
       await route.fulfill({ response, body: patchedDocument })
+      patchedReaderNavigations += 1
     })
 
     for (const position of ['top', 'center', 'bottom'] as const) {
+      const previousPatchedNavigations = patchedReaderNavigations
       await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+      expect(patchedReaderNavigations, 'Each reader navigation passes through the validated HTML fixture').toBeGreaterThan(previousPatchedNavigations)
       const edit = page.locator(editSelector).first()
       await expect(edit, 'Reader Edit action is present').toBeVisible()
       const bounds = await edit.boundingBox()

@@ -722,21 +722,40 @@ test('Draw.io parent modal isolates the editor and restores its native toolbar o
   const frameStart = frame.getByRole('button', { name: 'Frame start', exact: true })
   const frameEnd = frame.getByRole('textbox', { name: 'Diagram label', exact: true })
   const frameBody = frame.locator('body')
-  const enterFrameForward = async () => {
+  const leaveFrame = async (key: 'Tab' | 'Shift+Tab') => {
+    await page.keyboard.press(key)
+    const frameElementStop = await iframe.evaluate(element => document.hasFocus() && document.activeElement === element)
+    if (frameElementStop && !await frameStart.evaluate(() => document.hasFocus())) {
+      // Gecko can stop on the parent iframe element after leaving its document.
+      // One further native key must reach the modal, never an arbitrary Tab loop.
+      await expect(iframe).toBeFocused()
+      await page.keyboard.press(key)
+    }
+    await expect(back).toBeFocused()
+    expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+  }
+  const enterFrameForward = async (allowRetainedEnd = false) => {
     await page.keyboard.press('Tab')
     await expect(iframe).toBeFocused()
     await expect.poll(() => frameStart.evaluate(element => ({
       hasFocus: document.hasFocus(),
-      target: document.activeElement === element ? 'start' : document.activeElement === document.body ? 'body' : 'other'
-    }))).toEqual({ hasFocus: true, target: expect.stringMatching(/^(body|start)$/) })
+      target: document.activeElement === element ? 'start' : document.activeElement === document.body ? 'body'
+        : document.activeElement?.matches('input') ? 'end' : 'other'
+    }))).toEqual({ hasFocus: true, target: expect.stringMatching(allowRetainedEnd ? /^(body|start|end)$/ : /^(body|start)$/) })
     // Some native browsers enter the frame document before its first control.
     // Accept only that real focused-body stop, then require one Tab to the button.
     if (await frameBody.evaluate(element => document.activeElement === element)) {
       await expect(frameBody).toBeFocused()
       await page.keyboard.press('Tab')
     }
+    if (allowRetainedEnd && await frameEnd.evaluate(element => document.activeElement === element)) {
+      await expect(frameEnd).toBeFocused()
+      expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+      return 'end'
+    }
     await expect(frameStart).toBeFocused()
     expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+    return 'start'
   }
   await expect(frameStart).toBeVisible()
   await expect(dialog.getByText('Loading diagram editor', { exact: true })).not.toBeVisible()
@@ -748,16 +767,14 @@ test('Draw.io parent modal isolates the editor and restores its native toolbar o
   await enterFrameForward()
   await page.keyboard.press('Tab')
   await expect(frameEnd).toBeFocused()
-  await page.keyboard.press('Tab')
-  await expect(back).toBeFocused()
-  expect(await page.evaluate(() => document.hasFocus())).toBe(true)
-  await enterFrameForward()
-  await page.keyboard.press('Tab')
+  await leaveFrame('Tab')
+  // Native iframe re-entry may retain the last focused control.
+  const retainedEntry = await enterFrameForward(true)
+  if (retainedEntry === 'start') await page.keyboard.press('Tab')
   await expect(frameEnd).toBeFocused()
   await page.keyboard.press('Shift+Tab')
   await expect(frameStart).toBeFocused()
-  await page.keyboard.press('Shift+Tab')
-  await expect(back).toBeFocused()
+  await leaveFrame('Shift+Tab')
   await page.keyboard.press('Shift+Tab')
   await expect(iframe).toBeFocused()
   await expect(back).not.toBeFocused()
@@ -781,9 +798,7 @@ test('Draw.io parent modal isolates the editor and restores its native toolbar o
     await page.keyboard.press('Shift+Tab')
   }
   await expect(frameStart).toBeFocused()
-  await page.keyboard.press('Shift+Tab')
-  await expect(back).toBeFocused()
-  expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+  await leaveFrame('Shift+Tab')
 
   // Escape originates at the genuine parent modal control after leaving the iframe.
   await page.keyboard.press('Escape')

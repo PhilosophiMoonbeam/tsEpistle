@@ -216,10 +216,9 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
       target.focus()
       return
     }
-    // Gecko ignores iframe focus while processing a cancelled Tab keydown.
-    // Enter the native browsing context after that dispatch, without inspecting
-    // or choosing focus inside a potentially cross-origin document.
-    queueMicrotask(() => {
+    // Gecko can ignore iframe focus until native cancelled-Tab processing ends.
+    // Enter on the next frame, without choosing focus in a cross-origin document.
+    document.defaultView!.requestAnimationFrame(() => {
       if (isTopScope() && target.isConnected && document.activeElement === previous) target.focus()
     })
   }
