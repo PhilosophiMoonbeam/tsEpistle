@@ -158,6 +158,7 @@
                           size='17'
                           aria-hidden='true'
                           :data-tag-color='tagColor(tag.tag)'
+                          @animationend.self='finishFollowedTagAnimation(tag.tag, $event)'
                         ) {{isFollowed(tag.tag) ? 'mdi-cloud-check' : 'mdi-cloud-download-outline'}}
                         span {{ followTagVisibleLabel(tag.tag) }}
 
@@ -394,7 +395,6 @@ export default {
       offlinePolicyError: '',
       offlineActionLoading: false,
       offlineFollowAnimationTag: '',
-      offlineFollowAnimationTimer: null as number | null,
       offlineTags: [] as string[],
       offlinePolicySequence: 0,
       offlineStorageChangesUnsubscribe: null as (() => void) | null,
@@ -566,8 +566,6 @@ export default {
   },
   beforeUnmount () {
     this.disposed = true
-    if (this.offlineFollowAnimationTimer !== null) window.clearTimeout(this.offlineFollowAnimationTimer)
-    this.offlineFollowAnimationTimer = null
     this.offlineFollowAnimationTag = ''
     this.tagsLoadSequence += 1
     this.pagesLoadSequence += 1
@@ -646,18 +644,17 @@ export default {
       })
     },
     animateFollowedTag (canonical: string): void {
-      if (this.offlineFollowAnimationTimer !== null) window.clearTimeout(this.offlineFollowAnimationTimer)
-      this.offlineFollowAnimationTimer = null
       this.offlineFollowAnimationTag = ''
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
       this.$nextTick(() => {
         if (this.disposed) return
         this.offlineFollowAnimationTag = canonical
-        this.offlineFollowAnimationTimer = window.setTimeout(() => {
-          this.offlineFollowAnimationTag = ''
-          this.offlineFollowAnimationTimer = null
-        }, 420)
       })
+    },
+    finishFollowedTagAnimation (tag: string, event: AnimationEvent): void {
+      if (event.animationName === 'tags-follow-toggle' && this.offlineFollowAnimationTag === this.offlineTagCanonical(tag)) {
+        this.offlineFollowAnimationTag = ''
+      }
     },
     async toggleFollowedTag (tag: string): Promise<void> {
       const storage = this.offlineStorage

@@ -748,7 +748,7 @@ test('tag follow feedback finishes cleanly and respects reduced motion', async (
 })
 
 test('tag browsing offers saved pages when a live page query loses its connection', async ({ page, browserName }) => {
-  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves network requests online.')
+  test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
   await openTags(page)
   const alpha = await revealTagButton(page, 'Alpha')
   await page.unrouteAll({ behavior: 'wait' })

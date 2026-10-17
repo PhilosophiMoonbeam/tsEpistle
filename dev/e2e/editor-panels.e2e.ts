@@ -557,6 +557,31 @@ routedTagTest('page properties keeps tag drafts honest across suggestion, failur
   await expect(reopened.getByRole('button', { name: 'Remove tag keyboard', exact: true })).toHaveCount(0)
   await expect(reopened.getByRole('button', { name: 'Remove tag blurred', exact: true })).toHaveCount(0)
 
+  await reopened.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(reopened).not.toBeVisible()
+  expect(taxonomyRequests).toEqual([])
+})
+
+routedTagTest('page properties applies a new tag without reviving a canceled draft', async ({ page }) => {
+  const taxonomyRequests: string[] = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.includes('/taxonomy')) taxonomyRequests.push(request.url())
+  })
+  await openEditor(page, { onTagSearch: route => route.fulfill({ json: [] }) })
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  await expect(properties).toBeVisible()
+  const tags = properties.getByRole('combobox', { name: /tags/i }).first()
+  await tags.fill('  Cancelled-Transient  ')
+  await tags.press('Enter')
+  await expect(properties.getByRole('button', { name: 'Remove tag cancelled-transient', exact: true })).toBeVisible()
+  await tags.press('Tab')
+  await properties.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(properties).not.toBeVisible()
+
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const reopened = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  await expect(reopened.getByRole('button', { name: 'Remove tag cancelled-transient', exact: true })).toHaveCount(0)
   await reopened.getByRole('combobox', { name: /tags/i }).fill('  Draft-Tag  ')
   await reopened.getByRole('combobox', { name: /tags/i }).press('Enter')
   await expect(reopened.getByRole('button', { name: /remove.*draft-tag/i })).toBeVisible()
@@ -566,6 +591,15 @@ routedTagTest('page properties keeps tag drafts honest across suggestion, failur
   await page.getByRole('button', { name: 'Page', exact: true }).click()
   const committed = page.getByRole('dialog', { name: 'Page Properties', exact: true })
   await expect(committed.getByRole('button', { name: /remove.*draft-tag/i })).toBeVisible()
+  await expect(committed.getByRole('button', { name: 'Remove tag cancelled-transient', exact: true })).toHaveCount(0)
+  await committed.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(committed).not.toBeVisible()
+
+  const createRequest = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/_api/pages')
+  const createResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/_api/pages')
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  expect((await createRequest).postDataJSON().tags).toEqual(['draft-tag'])
+  await createResponse
   expect(taxonomyRequests).toEqual([])
 })
 
