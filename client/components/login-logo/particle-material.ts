@@ -1,15 +1,14 @@
 import {
   BufferAttribute,
-  DynamicDrawUsage,
-  Float32BufferAttribute,
-  InstancedBufferAttribute,
-  InstancedBufferGeometry,
+  BufferGeometry,
+  DataTexture,
+  FloatType,
   NormalBlending,
+  RGFormat,
   SpriteNodeMaterial,
-  SRGBColorSpace,
-  StaticDrawUsage
+  SRGBColorSpace
 } from 'three/webgpu'
-import { If, Fn, attribute, float, length, mix, positionGeometry, smoothstep, vec2, vec3, vec4, workingToColorSpace } from 'three/tsl'
+import { If, Fn, attribute, float, ivec2, length, mix, positionGeometry, smoothstep, textureLoad, vec2, vec3, vec4, vertexIndex, workingToColorSpace } from 'three/tsl'
 import type { Node, Vector2, Vector4 } from 'three/webgpu'
 
 import {
@@ -38,50 +37,68 @@ export interface ParticleNodeUniforms {
   readonly viewportSize: ParticleUniform<'vec2', Vector2>
 }
 
-type ParticleColorInput = BufferAttribute | Float32Array
+const MOTION_TEXTURE_WIDTH = 128
 
-/** Build the single indexed quad and its source-order per-particle attributes. */
+/** The cloud writes directly into the texture's logical prefix; row padding stays zero. */
+export const createParticleMotionTexture = (
+  particleCount: number
+): { cloudMotionTexture: DataTexture; motion: Float32Array } => {
+  const height = Math.max(1, Math.ceil(particleCount / MOTION_TEXTURE_WIDTH))
+  const data = new Float32Array(MOTION_TEXTURE_WIDTH * height * 2)
+  const cloudMotionTexture = new DataTexture(data, MOTION_TEXTURE_WIDTH, height, RGFormat, FloatType)
+  cloudMotionTexture.needsUpdate = true
+  return {
+    cloudMotionTexture,
+    motion: new Float32Array(data.buffer, 0, particleCount * 2)
+  }
+}
+
+/** Keep source order in one indexed batch, without per-sprite instance scheduling. */
 export const createParticleSpriteGeometry = (
   particles: ParsedLogoParticles,
   cloud: ParticleCloud,
-  particleColor: ParticleColorInput
-): { geometry: InstancedBufferGeometry; cloudMotion: InstancedBufferAttribute } => {
-  const geometry = new InstancedBufferGeometry()
-  geometry.setAttribute('position', new Float32BufferAttribute(new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]), 3))
-  geometry.setIndex(new BufferAttribute(new Uint16Array([0, 1, 2, 0, 2, 3]), 1))
-
+  particleColor: Float32Array
+): BufferGeometry => {
+  const geometry = new BufferGeometry()
+  const positions = new Float32Array(particles.count * 12)
+  const xy = new Int16Array(particles.count * 8)
+  const parameters = new Float32Array(particles.count * 16)
+  const colors = new Float32Array(particles.count * 16)
+  const indices = new Uint16Array(particles.count * 6)
+  const quad = [-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]
   const physical = new Uint8Array(particles.count)
   for (const index of cloud.indices) physical[index] = 1
 
-  const logoParameters = new Float32Array(particles.count * 4)
   for (let index = 0; index < particles.count; index += 1) {
-    const offset = index * 4
-    logoParameters[offset] = particles.depth[index]! / 127
-    logoParameters[offset + 1] = particles.size[index]! / 255
-    logoParameters[offset + 2] = particles.seed[index]! / 65535
-    logoParameters[offset + 3] = physical[index]!
+    positions.set(quad, index * 12)
+    for (let corner = 0; corner < 4; corner += 1) {
+      const vertex = index * 4 + corner
+      xy[vertex * 2] = particles.xy[index * 2]!
+      xy[vertex * 2 + 1] = particles.xy[index * 2 + 1]!
+      parameters[vertex * 4] = particles.depth[index]! / 127
+      parameters[vertex * 4 + 1] = particles.size[index]! / 255
+      parameters[vertex * 4 + 2] = particles.seed[index]! / 65535
+      parameters[vertex * 4 + 3] = physical[index]!
+      for (let channel = 0; channel < 4; channel += 1) {
+        colors[vertex * 4 + channel] = particleColor[index * 4 + channel]!
+      }
+    }
+    const vertex = index * 4
+    const offset = index * 6
+    indices[offset] = vertex
+    indices[offset + 1] = vertex + 1
+    indices[offset + 2] = vertex + 2
+    indices[offset + 3] = vertex
+    indices[offset + 4] = vertex + 2
+    indices[offset + 5] = vertex + 3
   }
 
-  geometry.setAttribute('logoXY', new InstancedBufferAttribute(particles.xy, 2, true))
-  geometry.setAttribute('logoParameters', new InstancedBufferAttribute(logoParameters, 4, false))
-
-  const colors = particleColor instanceof Float32Array ? particleColor : particleColor.array
-  if (!(colors instanceof Float32Array)) throw new Error('Particle colors must use Float32Array storage')
-  const colorAttribute =
-    particleColor instanceof InstancedBufferAttribute &&
-    particleColor.itemSize === 4 &&
-    particleColor.normalized === false &&
-    particleColor.array instanceof Float32Array
-      ? particleColor
-      : new InstancedBufferAttribute(colors, 4, false)
-  geometry.setAttribute('particleColor', colorAttribute)
-
-  const cloudMotion = new InstancedBufferAttribute(cloud.motion, 2, false)
-  cloudMotion.setUsage(cloud.count > 0 ? DynamicDrawUsage : StaticDrawUsage)
-  geometry.setAttribute('cloudMotion', cloudMotion)
-  geometry.instanceCount = particles.count
-
-  return { geometry, cloudMotion }
+  geometry.setAttribute('position', new BufferAttribute(positions, 3))
+  geometry.setAttribute('logoXY', new BufferAttribute(xy, 2, true))
+  geometry.setAttribute('logoParameters', new BufferAttribute(parameters, 4))
+  geometry.setAttribute('particleColor', new BufferAttribute(colors, 4))
+  geometry.setIndex(new BufferAttribute(indices, 1))
+  return geometry
 }
 
 const createExplosionDisplacement = (
@@ -115,10 +132,14 @@ const createExplosionDisplacement = (
     }
     return displacement
   })()
-const createVertexState = (uniforms: ParticleNodeUniforms) => {
+const createVertexState = (uniforms: ParticleNodeUniforms, motionTexture: DataTexture) => {
   const logoXY = attribute<'vec2'>('logoXY', 'vec2')
   const logoParameters = attribute<'vec4'>('logoParameters', 'vec4')
-  const cloudMotion = attribute<'vec2'>('cloudMotion', 'vec2')
+  const motionIndex = vertexIndex.shiftRight(2)
+  const cloudMotion = textureLoad(
+    motionTexture,
+    ivec2(motionIndex.bitAnd(MOTION_TEXTURE_WIDTH - 1), motionIndex.shiftRight(Math.log2(MOTION_TEXTURE_WIDTH)))
+  ).xy
   const safeViewport = uniforms.viewportSize.max(vec2(1)).toVar('safeViewport')
   const baseCss = vec2(
     uniforms.contentRect.x.add(uniforms.contentRect.z.mul(0.5)).sub(safeViewport.x.mul(0.5)).add(logoXY.x.mul(uniforms.contentRect.z).mul(0.5)),
@@ -211,8 +232,8 @@ const createVertexState = (uniforms: ParticleNodeUniforms) => {
 }
 
 /** Build the one-draw sprite material and its immutable TSL graph. */
-export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms): SpriteNodeMaterial => {
-  const state = createVertexState(uniforms)
+export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, motionTexture: DataTexture): SpriteNodeMaterial => {
+  const state = createVertexState(uniforms, motionTexture)
   const lifecycle = state.lifecycle.toVarying('particleLifecycle')
   const halfPixel = state.halfPixel.toVarying('particleHalfPixel')
   const coreRatio = state.coreRatio.toVarying('particleCoreRatio')

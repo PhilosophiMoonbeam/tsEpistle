@@ -55,9 +55,11 @@ export interface LogoPerformanceFrame {
   readonly renderInvocationCpuMs?: number
   readonly afterRenderCpuMs?: number
   readonly totalDrawCalls?: number
-  readonly particleInstances?: number
+  /** Logical sprite population; primitive work is independently observed through triangles/draw calls. */
+  readonly particleCount?: number
   readonly triangles?: number
   readonly computeDispatches?: number
+  /** Scheduled motion texture backing bytes, including row padding; not an API-observed transfer count. */
   readonly motionScheduledBytes?: number
   readonly actualUploadBytes?: number | null
   readonly uploadCalls?: number | null

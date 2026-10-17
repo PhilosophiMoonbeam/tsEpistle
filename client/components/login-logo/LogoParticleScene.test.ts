@@ -466,21 +466,13 @@ beforeEach(() => {
 })
 
 describe('LogoParticleScene resource path', () => {
-  it('builds one indexed instanced sprite draw with source-order packed attributes', () => {
+  it('builds one indexed particle mesh with shared motion storage', () => {
     const particles = makeParticles()
     const resources = createParticleSceneResources(particles, effect)
     try {
-      expect(resources.geometry.instanceCount).toBe(particles.count)
-      expect(resources.geometry.index?.count).toBe(6)
-      expect(resources.geometry.getAttribute('logoXY').array).toBe(particles.xy)
-      expect(resources.geometry.getAttribute('logoXY').normalized).toBe(true)
-      expect(resources.geometry.getAttribute('particleColor').array).toBe(resources.particleColor.array)
-      expect(resources.geometry.getAttribute('cloudMotion').itemSize).toBe(2)
-      expect(resources.cloudMotion.array).toBe(resources.cloud.motion)
-      expect(resources.cloudMotion.array.byteLength).toBe(particles.count * 2 * Float32Array.BYTES_PER_ELEMENT)
-      expect(Array.from(resources.geometry.getAttribute('logoParameters').array as Float32Array)).toEqual(
-        Array.from(new Float32Array([-1, 1 / 255, 1 / 65535, 0, 0, 128 / 255, 32768 / 65535, 0, 1, 1, 1, 1]))
-      )
+      expect(resources.geometry.index?.count).toBe(particles.count * 6)
+      expect(resources.cloud.motion.buffer).toBe(resources.cloudMotionTexture.image.data.buffer)
+      expect(resources.cloud.motion.byteOffset).toBe(resources.cloudMotionTexture.image.data.byteOffset)
       expect(resources.mesh.geometry).toBe(resources.geometry)
       expect(resources.mesh.material).toBe(resources.material)
       expect(resources.mesh.frustumCulled).toBe(false)
@@ -512,7 +504,7 @@ describe('LogoParticleScene resource path', () => {
     }
     const sourceAttributes = ['logoXY', 'logoParameters', 'particleColor'].map(name => resources.geometry.getAttribute(name))
     const sourceVersions = sourceAttributes.map(attribute => attribute.version)
-    const motionVersion = resources.cloudMotion.version
+    const motionVersion = resources.cloudMotionTexture.version
 
     try {
       updateParticleSceneFrame(resources, pointerController, {
@@ -531,7 +523,7 @@ describe('LogoParticleScene resource path', () => {
       expect(resources.uniforms.elapsedSeconds.value).toBe(2.5)
       expect(resources.uniforms.viewportSize.value.toArray()).toEqual([640, 320])
       expect(resources.uniforms.pixelRatio.value).toBe(1.5)
-      expect(resources.cloudMotion.version).toBeGreaterThan(motionVersion)
+      expect(resources.cloudMotionTexture.version).toBeGreaterThan(motionVersion)
       expect(sourceAttributes.map(attribute => attribute.version)).toEqual(sourceVersions)
       expect(new Uint8Array(resources.particles.buffer)).toEqual(before)
     } finally {
@@ -558,6 +550,10 @@ describe('LogoParticleScene resource path', () => {
     })
     let geometryDisposals = 0
     let materialDisposals = 0
+    let textureDisposals = 0
+    resources.cloudMotionTexture.addEventListener('dispose', () => {
+      textureDisposals += 1
+    })
     const disposeGeometry = resources.geometry.dispose.bind(resources.geometry)
     const disposeMaterial = resources.material.dispose.bind(resources.material)
     resources.geometry.dispose = () => {
@@ -575,6 +571,7 @@ describe('LogoParticleScene resource path', () => {
     disposeParticleSceneResources(resources)
     expect(geometryDisposals).toBe(1)
     expect(materialDisposals).toBe(1)
+    expect(textureDisposals).toBe(1)
     expect(retiredObjects).toEqual(['mesh', 'camera'])
     expect(resources.mesh.parent).toBeNull()
     expect(new Uint8Array(particles.buffer)).toEqual(before)
@@ -840,9 +837,8 @@ describe('LogoParticleScene frame fence and loop', () => {
       expect(benchmark.frames).toHaveLength(1)
       const frame = benchmark.frames[0] as Record<string, unknown>
       expect(frame.totalDrawCalls).toBe(1)
-      expect(frame.particleInstances).toBe(effect.count)
+      expect(frame.particleCount).toBe(effect.count)
       expect(frame.triangles).toBe(effect.count * 2)
-      expect(frame.motionScheduledBytes).toBe(resources.cloud.motion.byteLength)
       expect(frame.computeDispatches).toBe(0)
       expect(frame.colorUploadBytes).toBe(0)
       expect(frame.renderCallbackGapMs).toBeGreaterThanOrEqual(0)
@@ -854,8 +850,8 @@ describe('LogoParticleScene frame fence and loop', () => {
       const renderInvocations = benchmark.counters.renderInvocations
       const afterRenderCallbacks = benchmark.counters.afterRenderCallbacks
       const invalidations = loopHarness.invalidations
-      const motionVersion = resources.cloudMotion.version
-      const motionStorage = resources.cloudMotion.array
+      const motionVersion = resources.cloudMotionTexture.version
+      const motionStorage = resources.cloudMotionTexture.image.data
       const pausedElapsed = resources.uniforms.elapsedSeconds.value
       active.value = false
       await Vue.nextTick()
@@ -867,7 +863,7 @@ describe('LogoParticleScene frame fence and loop', () => {
       expect(benchmark.counters.renderInvocations).toBe(renderInvocations)
       expect(benchmark.counters.afterRenderCallbacks).toBe(afterRenderCallbacks)
       expect(loopHarness.invalidations).toBe(invalidations)
-      expect(resources.cloudMotion.version).toBe(motionVersion)
+      expect(resources.cloudMotionTexture.version).toBe(motionVersion)
       expect(loopHarness.stops).toBeGreaterThan(0)
       expect(resources.uniforms.elapsedSeconds.value).toBe(pausedElapsed)
 
@@ -886,7 +882,7 @@ describe('LogoParticleScene frame fence and loop', () => {
       expect(pointerUpdates).toHaveLength(2)
       expect(benchmark.frames).toHaveLength(2)
       expect(resources.uniforms.elapsedSeconds.value).toBe(2)
-      expect(resources.cloudMotion.array).toBe(motionStorage)
+      expect(resources.cloudMotionTexture.image.data).toBe(motionStorage)
     } finally {
       app.unmount()
       host.remove()
@@ -922,7 +918,7 @@ describe('LogoParticleScene shader prewarm readiness', () => {
     const benchmark = makeBenchmark()
     const backend = makePrewarmingBackend()
     const scene = mountPrewarmingScene()
-    const motionVersion = scene.resources.cloudMotion.version
+    const motionVersion = scene.resources.cloudMotionTexture.version
     const readiness = scene.ready(backend)
 
     try {
@@ -932,7 +928,7 @@ describe('LogoParticleScene shader prewarm readiness', () => {
       scene.draw(backend)
       scene.callbacks(backend)
       expect(backend.draws).toBe(0)
-      expect(scene.resources.cloudMotion.version).toBe(motionVersion)
+      expect(scene.resources.cloudMotionTexture.version).toBe(motionVersion)
       expect(benchmark.counters.updateCallbacks).toBe(0)
       expect(benchmark.counters.renderInvocations).toBe(0)
       expect(scene.events).toEqual([])
@@ -947,7 +943,7 @@ describe('LogoParticleScene shader prewarm readiness', () => {
       expect(loopHarness.starts).toBe(0)
       expect(loopHarness.invalidations).toBe(0)
       expect(backend.draws).toBe(0)
-      expect(scene.resources.cloudMotion.version).toBe(motionVersion)
+      expect(scene.resources.cloudMotionTexture.version).toBe(motionVersion)
       expect(benchmark.counters.updateCallbacks).toBe(0)
       expect(benchmark.counters.renderInvocations).toBe(0)
 
@@ -960,7 +956,7 @@ describe('LogoParticleScene shader prewarm readiness', () => {
       expect(backend.compileLoopStates).toEqual([false])
       scene.draw(backend, 2)
       expect(backend.draws).toBe(1)
-      expect(scene.resources.cloudMotion.version).toBeGreaterThan(motionVersion)
+      expect(scene.resources.cloudMotionTexture.version).toBeGreaterThan(motionVersion)
       expect(benchmark.counters.updateCallbacks).toBe(1)
       expect(benchmark.counters.renderInvocations).toBe(1)
       expect(scene.events).toEqual(['first-frame'])

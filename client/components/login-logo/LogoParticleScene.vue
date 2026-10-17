@@ -37,8 +37,8 @@
 import { TresCanvas, useLoop, useTres } from '@tresjs/core'
 import type { TresContext, TresRenderer, TresRendererSetupContext } from '@tresjs/core'
 import {
-  InstancedBufferAttribute,
-  InstancedBufferGeometry,
+  BufferGeometry,
+  DataTexture,
   LinearSRGBColorSpace,
   Mesh,
   NoToneMapping,
@@ -64,6 +64,7 @@ import type { LogoEffectDescriptor, ParsedLogoParticles, ParticleContentRect } f
 import { ParticleCloud } from './particle-cloud'
 import { updateParticleColors } from './particle-colors'
 import {
+  createParticleMotionTexture,
   createParticleSpriteGeometry,
   createParticleSpriteMaterial,
   type ParticleNodeUniforms
@@ -124,14 +125,13 @@ export interface ParticleMotionDiagnostics {
 export interface ParticleSceneResources {
   readonly camera: OrthographicCamera
   readonly cloud: ParticleCloud
-  readonly cloudMotion: InstancedBufferAttribute
-  readonly particleColor: InstancedBufferAttribute
+  readonly cloudMotionTexture: DataTexture
   readonly particles: ParsedLogoParticles
-  readonly geometry: InstancedBufferGeometry
+  readonly geometry: BufferGeometry
   readonly material: ReturnType<typeof createParticleSpriteMaterial>
   readonly motionDiagnostics: ParticleMotionDiagnostics | null
   readonly motionDiagnosticsBenchmark: ParticlePerformanceBenchmark | null
-  readonly mesh: Mesh<InstancedBufferGeometry, ReturnType<typeof createParticleSpriteMaterial>>
+  readonly mesh: Mesh<BufferGeometry, ReturnType<typeof createParticleSpriteMaterial>>
   readonly uniforms: ParticleUniforms
   disposed: boolean
 }
@@ -229,7 +229,7 @@ interface ParticlePerformanceFrame {
   readonly renderInvocationCpuMs: number | null
   readonly afterRenderCpuMs: number
   readonly totalDrawCalls: number
-  readonly particleInstances: number
+  readonly particleCount: number
   readonly triangles: number
   readonly computeDispatches: number
   readonly motionScheduledBytes: number
@@ -531,14 +531,13 @@ export const createParticleSceneResources = (
 ): ParticleSceneResources => {
   assertParticleViews(particles, effect)
 
-  const cloud = new ParticleCloud(particles)
+  const { cloudMotionTexture, motion } = createParticleMotionTexture(particles.count)
+  const cloud = new ParticleCloud(particles, motion)
   const colors = new Float32Array(particles.count * 4)
   updateParticleColors(particles, colors)
-  const particleColor = new InstancedBufferAttribute(colors, 4, false)
-  const { cloudMotion, geometry } = createParticleSpriteGeometry(particles, cloud, particleColor)
-  geometry.instanceCount = particles.count
+  const geometry = createParticleSpriteGeometry(particles, cloud, colors)
   const uniforms = createParticleUniforms(effect)
-  const material = createParticleSpriteMaterial(uniforms)
+  const material = createParticleSpriteMaterial(uniforms, cloudMotionTexture)
   const mesh = new Mesh(geometry, material)
   mesh.frustumCulled = false
   mesh.matrixAutoUpdate = false
@@ -557,8 +556,7 @@ export const createParticleSceneResources = (
   return {
     camera,
     cloud,
-    cloudMotion,
-    particleColor,
+    cloudMotionTexture,
     particles,
     disposed: false,
     geometry,
@@ -582,6 +580,7 @@ export const disposeParticleSceneResources = (resources: ParticleSceneResources)
   resources.camera.dispose()
   resources.geometry.dispose()
   resources.material.dispose()
+  resources.cloudMotionTexture.dispose()
 }
 
 type ParticleRenderMetric = 'drawCalls' | 'triangles'
@@ -833,7 +832,7 @@ export const updateParticleSceneFrame = (
   const brush = resources.cloud.brush
   resources.uniforms.brushPositionRadius.value.set(brush.x, brush.y, brush.radius, brush.travel)
   resources.uniforms.brushDirection.value.set(brush.directionX, brush.directionY)
-  if (resources.cloud.count > 0) resources.cloudMotion.needsUpdate = true
+  if (resources.cloud.count > 0) resources.cloudMotionTexture.needsUpdate = true
 
   const diagnostics = resources.motionDiagnostics
   if (diagnostics) {
@@ -959,10 +958,10 @@ const ParticleSceneContents = defineComponent({
                 renderInvocationCpuMs,
                 afterRenderCpuMs: Math.max(0, performance.now() - callbackStartedAt),
                 totalDrawCalls,
-                particleInstances: props.resources.geometry.instanceCount,
+                particleCount: props.resources.particles.count,
                 triangles,
                 computeDispatches: 0,
-                motionScheduledBytes: props.resources.cloud.motion.byteLength,
+                motionScheduledBytes: props.resources.cloud.count > 0 ? props.resources.cloudMotionTexture.image.data.byteLength : 0,
                 actualUploadBytes: null,
                 uploadCalls: null,
                 colorUploadBytes: 0
