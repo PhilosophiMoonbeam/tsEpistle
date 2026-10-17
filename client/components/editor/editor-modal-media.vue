@@ -1961,6 +1961,12 @@ export default defineComponent({
       flex: 1 1 auto;
       align-items: stretch;
       overflow-y: auto;
+      // Stacked uploads belong below the browser, not at the expense of its results scrollport.
+      grid-template-rows: 100% max-content;
+
+      @media (min-width: 1100px) {
+        grid-template-rows: none;
+      }
     }
 
     .editor-media-browser {

@@ -1497,7 +1497,7 @@ function expectIntrinsicProbeSamplesEquivalent(
 async function capturePageComposition(page: Page): Promise<PageCompositionCapture> {
   return withFrozenLogoFrame(page, async () => {
     const geometry = await readCanvasSurfaceGeometry(page)
-    const frame = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png)
+    await captureLogoRenderedFrame(page, undefined, 0, 0)
     const canvas = page.locator('.login-particle-logo canvas')
     const previousVisibility = await canvas.evaluate(element => (element instanceof HTMLCanvasElement ? element.style.visibility : ''))
     let backdrop: RgbaFrame
@@ -1512,6 +1512,9 @@ async function capturePageComposition(page: Page): Promise<PageCompositionCaptur
         if (element instanceof HTMLCanvasElement) element.style.visibility = visibility
       }, previousVisibility)
     }
+    // WPE can retain the preceding compositor surface while the scene is frozen.
+    // Submit the same frozen state after restoring visibility before sampling it.
+    const frame = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png)
     const visible = await decodeScreenshot(await page.screenshot({ animations: 'disabled', fullPage: false }))
     return { backdrop, frame, geometry, visible }
   })

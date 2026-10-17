@@ -1,6 +1,15 @@
-import { createHash } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { expect, type Page } from '@playwright/test'
-import { authenticateAsAdmin, expectLocatorWithinViewport, expectResponsiveLayout, responsiveTest as test } from './helpers.ts'
+import {
+  adminEmail,
+  adminPassword,
+  authenticateAsAdmin,
+  expectLocatorWithinViewport,
+  expectResponsiveLayout,
+  sameOriginHeaders,
+  responsiveTest as test
+} from './helpers.ts'
+import { waitForPageRender } from '../../client/helpers/pages-api.ts'
 import { OFFLINE_DB_NAME, type OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 
 type PageRow = {
@@ -51,10 +60,6 @@ type OwnedCacheInspection = {
   names: string[]
   ownedNames: string[]
   entries: Record<string, string[]>
-}
-
-type SavePageOptions = {
-  expiresAt?: () => Promise<string>
 }
 
 const OFFLINE_PATH = '/_offline' // Immutable cached bootstrap, not an application destination.
@@ -172,29 +177,6 @@ async function warmFeatureWorker(page: Page): Promise<void> {
   await waitForFeatureWorker(page)
 }
 
-function snapshotIntegrity(snapshot: OfflinePageSnapshotV1): string {
-  const payload = JSON.stringify({
-    schemaVersion: snapshot.schemaVersion,
-    pageId: snapshot.pageId,
-    locale: snapshot.locale,
-    path: snapshot.path,
-    canonicalPath: snapshot.canonicalPath,
-    title: snapshot.title,
-    description: snapshot.description,
-    sourceRevision: snapshot.sourceRevision,
-    capturedAt: snapshot.capturedAt,
-    expiresAt: snapshot.expiresAt,
-    content: {
-      representation: snapshot.content.representation,
-      sanitizerVersion: snapshot.content.sanitizerVersion,
-      html: snapshot.content.html
-    },
-    searchText: snapshot.searchText,
-    contentType: snapshot.contentType
-  })
-  return createHash('sha256').update(`tsepistle/offline-snapshot-v1\u0000${payload}`).digest('hex')
-}
-
 async function pageIdForPath(page: Page, path: string, locale: string): Promise<number> {
   const pagesResponse = await page.request.get('/_api/pages')
   expect(pagesResponse.ok(), `Page index request failed: HTTP ${pagesResponse.status()}`).toBe(true)
@@ -232,7 +214,7 @@ async function guestReadablePublicPages(page: Page, count: number): Promise<Read
   return result.slice(0, count)
 }
 
-async function savePageFromReader(page: Page, target: ReaderPageTarget, options: SavePageOptions = {}): Promise<OfflineSnapshotRow> {
+async function savePageFromReader(page: Page, target: ReaderPageTarget): Promise<OfflineSnapshotRow> {
   const pageId = await pageIdForPath(page, target.path, target.locale)
   const header = page.locator('.page-header-section')
   await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
@@ -246,43 +228,15 @@ async function savePageFromReader(page: Page, target: ReaderPageTarget, options:
   await expect(control).toHaveAttribute('aria-describedby', /offline-status$/u)
 
   const controlPressed = async (): Promise<boolean> => (await control.getAttribute('aria-pressed')) === 'true'
-  if (await controlPressed() && !options.expiresAt) {
+  if (await controlPressed()) {
     const current = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
     if (!current) throw new Error(`The saved snapshot for ${target.path} was not found.`)
     return current
   }
 
-  if (await controlPressed() && options.expiresAt) {
-    await control.click()
-    await expect(control).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 })
-  }
-
-  const snapshotRoute = options.expiresAt ? `**/_api/pages/${pageId}/offline-snapshot` : null
-  if (snapshotRoute) {
-    const response = await page.request.get(`/_api/pages/${pageId}/offline-snapshot`)
-    expect(response.ok(), `Offline snapshot fixture request failed: HTTP ${response.status()}`).toBe(true)
-    const snapshot = (await response.json()) as OfflinePageSnapshotV1
-    const withExpiry: OfflinePageSnapshotV1 = {
-      ...snapshot,
-      expiresAt: await options.expiresAt!(),
-      integrity: ''
-    }
-    withExpiry.integrity = snapshotIntegrity(withExpiry)
-    await page.route(snapshotRoute, route => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      headers: { 'cache-control': 'private, no-store', vary: 'Cookie' },
-      body: JSON.stringify(withExpiry)
-    }))
-  }
-
-  try {
-    await control.click()
-    await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
-    await expect(page.locator('.page-offline-status')).toContainText('Saved offline', { timeout: 30_000 })
-  } finally {
-    if (snapshotRoute) await page.unroute(snapshotRoute)
-  }
+  await control.click()
+  await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
+  await expect(page.locator('.page-offline-status')).toContainText('Saved offline', { timeout: 30_000 })
 
   const saved = (await inspectOfflineDatabase(page)).snapshots.find(record => record.pageId === pageId)
   if (!saved) throw new Error(`The saved snapshot for ${target.path} was not found after the product save action.`)
@@ -547,7 +501,7 @@ test.describe('integrated offline access', () => {
     await expect(settingsLink).toHaveAttribute('href', OFFLINE_SETTINGS_PATH)
   })
 
-  test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName }) => {
+  test('treats an expired offline selection as removable rather than a refresh action', async ({ page, browserName, request }) => {
     test.skip(browserName === 'firefox', 'Playwright Firefox setOffline leaves service-worker network requests online.')
     await warmFeatureWorker(page)
     await page.locator('.policy-disclosure > summary').click()
@@ -555,41 +509,91 @@ test.describe('integrated offline access', () => {
     await automaticSaving.uncheck()
     await expect(automaticSaving).toBeEnabled()
     await expect(automaticSaving).not.toBeChecked()
-    const target = (await guestReadablePublicPages(page, 1))[0]!
-    let expiresAt = ''
-    const saved = await savePageFromReader(page, target, {
-      expiresAt: async () => {
-        // Start the expiry only after reader setup and the real snapshot response.
-        // Keep native timers running while Date stays before the expiry boundary.
-        const now = Date.now()
-        await page.clock.setFixedTime(now)
-        expiresAt = new Date(now + 30_000).toISOString()
-        return expiresAt
-      }
+
+    // Keep fixture administration outside the guest browser's cookie jar and offline emulation.
+    const login = await request.post('/_api/auth/login', {
+      headers: sameOriginHeaders(),
+      data: { strategy: 'local', username: adminEmail, password: adminPassword }
     })
-    expect(saved.snapshot.expiresAt).toBe(expiresAt)
-    await page.context().setOffline(true)
+    expect(login.ok(), `Offline expiry fixture login failed: HTTP ${login.status()}`).toBe(true)
+    expect((await login.json()) as { authenticated?: unknown }).toMatchObject({ authenticated: true })
+    const path = `offline-expiry-${randomUUID()}`
+    const publicationEnd = new Date(Date.now() + 60 * 60_000).toISOString()
+    let fixturePage: { id: number; sourceRevision: string } | undefined
+    try {
+      const created = await request.post('/_api/pages', {
+        headers: sameOriginHeaders(),
+        data: {
+          content: '# Expiring offline page\n\nThis published page can be removed after its saved copy expires.',
+          description: 'Offline expiry browser fixture',
+          editor: 'markdown',
+          visibility: 'public',
+          isPublished: true,
+          locale: 'en',
+          path,
+          publishEndDate: publicationEnd,
+          publishStartDate: '',
+          scriptCss: '',
+          scriptJs: '',
+          tags: [],
+          title: 'Expiring offline page'
+        }
+      })
+      expect(created.ok(), `Offline expiry fixture creation failed: HTTP ${created.status()}`).toBe(true)
+      const payload = (await created.json()) as { page?: { id?: number; sourceRevision?: string } }
+      const id = payload.page?.id
+      const sourceRevision = payload.page?.sourceRevision
+      expect(id).toEqual(expect.any(Number))
+      expect(sourceRevision).toEqual(expect.any(String))
+      if (id === undefined || sourceRevision === undefined) throw new Error('Offline expiry fixture response omitted page identity.')
+      fixturePage = { id, sourceRevision }
+      await waitForPageRender(async url => {
+        const response = await request.get(url)
+        return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+      }, { id, sourceRevision, locale: 'en', path, visibility: 'public' }, AbortSignal.timeout(15_000))
 
-    await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
-    await waitForOfflineSettings(page)
-    await expect(page.locator('.page-card')).toHaveCount(1)
-    await page.clock.setFixedTime(Date.parse(expiresAt) + 250)
-    await page.getByRole('button', { name: 'Refresh storage', exact: true }).click()
-    await expect(page.locator('.page-card')).toHaveCount(0)
-    const expiredDatabase = await inspectOfflineDatabase(page)
-    expect(expiredDatabase.snapshots).toHaveLength(1)
-    expect(expiredDatabase.snapshots[0]?.snapshot.expiresAt).toBe(expiresAt)
+      // Obtain the genuine public snapshot, not an admin projection or a route that a worker can bypass.
+      const response = await page.request.get(`/_api/pages/${id}/offline-snapshot`)
+      expect(response.ok(), `Public offline expiry snapshot failed: HTTP ${response.status()}`).toBe(true)
+      const snapshot = (await response.json()) as OfflinePageSnapshotV1
+      expect(snapshot.expiresAt).toBe(publicationEnd)
+      const expiresAt = snapshot.expiresAt!
+      // Only the browser Date crosses expiry; native timers and the live server remain before it.
+      await page.clock.setFixedTime(Date.parse(snapshot.capturedAt))
+      const target = { path, locale: 'en', canonicalPath: snapshot.canonicalPath }
+      const saved = await savePageFromReader(page, target)
+      expect(saved.snapshot.expiresAt).toBe(expiresAt)
+      await page.context().setOffline(true)
 
-    await page.context().setOffline(false)
-    await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
-    const control = page.locator('.page-offline-control')
-    await expect(control).toBeVisible()
-    await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
-    await control.click()
-    await expect(control).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 })
-    const removedDatabase = await inspectOfflineDatabase(page)
-    expect(removedDatabase.snapshots).toHaveLength(0)
-    expect(removedDatabase.searchDocuments).toHaveLength(0)
+      await page.goto(OFFLINE_SETTINGS_PATH, { waitUntil: 'networkidle' })
+      await waitForOfflineSettings(page)
+      await expect(page.locator('.page-card')).toHaveCount(1)
+      await page.clock.setFixedTime(Date.parse(expiresAt) + 250)
+      await page.getByRole('button', { name: 'Refresh storage', exact: true }).click()
+      await expect(page.locator('.page-card')).toHaveCount(0)
+      const expiredDatabase = await inspectOfflineDatabase(page)
+      expect(expiredDatabase.snapshots).toHaveLength(1)
+      expect(expiredDatabase.snapshots[0]?.snapshot.expiresAt).toBe(expiresAt)
+
+      await page.context().setOffline(false)
+      await page.goto(target.canonicalPath, { waitUntil: 'domcontentloaded' })
+      const control = page.locator('.page-offline-control')
+      await expect(control).toBeVisible()
+      await expect(control).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
+      await control.click()
+      await expect(control).toHaveAttribute('aria-pressed', 'false', { timeout: 30_000 })
+      const removedDatabase = await inspectOfflineDatabase(page)
+      expect(removedDatabase.snapshots).toHaveLength(0)
+      expect(removedDatabase.searchDocuments).toHaveLength(0)
+    } finally {
+      if (fixturePage) {
+        const removal = await request.delete(`/_api/pages/${fixturePage.id}`, {
+          headers: sameOriginHeaders(),
+          data: { expectedSourceRevision: fixturePage.sourceRevision }
+        })
+        expect(removal.ok(), `Offline expiry fixture removal failed: HTTP ${removal.status()}`).toBe(true)
+      }
+    }
   })
 
   test('invalidates a second offline tab after a committed product removal', async ({ page, context }) => {
