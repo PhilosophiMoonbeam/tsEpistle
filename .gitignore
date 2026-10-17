@@ -59,6 +59,7 @@ test-results/
 /migration-metrics-*.json
 /page-index-benchmark*.json
 /runtime-performance*.json
+/logo-particle-performance*.json
 .agent-ready_login
 
 # Localization Resources

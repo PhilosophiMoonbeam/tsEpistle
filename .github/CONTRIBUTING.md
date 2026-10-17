@@ -84,6 +84,8 @@ Runtime layout-shift budgets include initial paint and permission hydration. Kee
 
 Particle performance qualification uses the indexed-batch/shared-motion-texture contract in [`Particle-Logo_Login.md`](../docs/.research/Particle-Logo_Login.md). Schema 4 distinguishes logical `particleCount`, declared padded `scheduledBytes`, and actual API-observed buffer/texture transfers. Preserve visual, population, frame, CPU, sample and lifecycle budgets; remove obsolete layout-pinning assertions rather than treating an old attribute byte count as a physical upload limit. Injected batching/shader diagnostics are causal evidence, not built-source qualification.
 
+Backend-specific `logo-particle-performance*.json` files are generated check artifacts, like `runtime-performance*.json`, and are ignored rather than committed as build inputs. Preserve failure reports outside the working tree when carrying evidence across revisions; do not bypass the build metadata generator's dirty-tree guard.
+
 First-run setup autofocus must not override a field the user has already focused or redirect subsequent password typing. Preserve the native regression that drains startup timers after choosing the password field.
 
 Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
