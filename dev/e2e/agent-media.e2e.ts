@@ -133,8 +133,8 @@ const mediaTest = test.extend<{ mediaUploads: { url: string; media: AgentMediaVi
       await use({ url: `http://127.0.0.1:${address.port}/media`, media })
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-      if (errors.length) throw errors[0]
     }
+    if (errors.length) throw errors[0]
   }
 })
 
