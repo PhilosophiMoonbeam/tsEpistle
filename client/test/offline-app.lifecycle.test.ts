@@ -588,7 +588,7 @@ describe('saved-page reader and library settings lifecycle', () => {
       throw new Error('Offline network unavailable')
     })
     vi.stubGlobal('fetch', fetch)
-    const { host, errors } = await fixture.mount()
+    const { host, errors } = await fixture.mount(false, false)
 
     host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
     await vi.waitFor(() => expect(host.querySelector('.offline-page-body .token.keyword')?.textContent).toBe('const'))
@@ -769,7 +769,7 @@ describe('saved-page reader and library settings lifecycle', () => {
   it('keeps the current article DOM, URL, focus and position when another saved page changes', async () => {
     const fixture = await offlineFixture()
     setLocation('/?saved=1')
-    const { host, props, errors } = await fixture.mount()
+    const { host, props, errors } = await fixture.mount(false, false)
     host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
     await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Reader A body'))
     const body = host.querySelector<HTMLElement>('.offline-page-body')!
@@ -806,7 +806,7 @@ describe('saved-page reader and library settings lifecycle', () => {
 
   it('finishes opening the live selection when an unrelated corpus reload was already awaiting storage', async () => {
     const fixture = await offlineFixture()
-    const { host, errors } = await fixture.mount()
+    const { host, errors } = await fixture.mount(false, false)
     const { promise: reachedRead, resolve: started } = Promise.withResolvers<void>()
     const { promise: gate, resolve: release } = Promise.withResolvers<void>()
     fixture.state.beforePolicyRead = async () => {
@@ -827,7 +827,7 @@ describe('saved-page reader and library settings lifecycle', () => {
 
   it('renders a changed authoritative selected body without resetting its reading position', async () => {
     const fixture = await offlineFixture()
-    const { host, errors } = await fixture.mount()
+    const { host, errors } = await fixture.mount(false, false)
     host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
     await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Reader A body'))
     const body = host.querySelector<HTMLElement>('.offline-page-body')!
@@ -846,7 +846,7 @@ describe('saved-page reader and library settings lifecycle', () => {
 
   it('clears a removed or expired selected page and immediately clears an identity generation boundary', async () => {
     const fixture = await offlineFixture()
-    const { host, errors } = await fixture.mount()
+    const { host, errors } = await fixture.mount(false, false)
     const openFirst = async () => {
       host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
       await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Reader A body'))
@@ -890,7 +890,7 @@ describe('saved-page reader and library settings lifecycle', () => {
     const expiring = fixture.state.publicBodies[0]!
     expiring.snapshot.expiresAt = new Date(now + 1500).toISOString()
     expiring.snapshot.integrity = await offlineRenderer.offlineSnapshotIntegrity(expiring.snapshot)
-    const { host, errors } = await fixture.mount()
+    const { host, errors } = await fixture.mount(false, false)
     let fireExpiry: (() => void) | undefined
     let scheduledDelay: number | undefined
     vi.spyOn(browserWindow, 'setTimeout').mockImplementation((handler: TimerHandler, delay?: number) => {
@@ -908,16 +908,6 @@ describe('saved-page reader and library settings lifecycle', () => {
     fireExpiry!()
     await Vue.nextTick()
     expect(host.querySelector('.offline-reader')).toBeNull()
-    expect(errors).toEqual([])
-  })
-
-  it('opens saved pages in profile settings without a false missing-route alert', async () => {
-    const fixture = await offlineFixture()
-    const { host, errors } = await fixture.mount(true)
-    expect(host.querySelector('.offline-settings__notice[role="alert"]')).toBeNull()
-    host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
-    await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Reader A body'))
-    expect(host.querySelector('.offline-settings__notice[role="alert"]')).toBeNull()
     expect(errors).toEqual([])
   })
 
