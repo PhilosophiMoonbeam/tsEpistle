@@ -51,7 +51,10 @@ const routePage = () =>
   Vue.defineComponent({
     props: ['heading'],
     setup(props) {
-      return () => Vue.h('section', Vue.h('h1', { key: props.heading }, props.heading))
+      return () => Vue.h('section', [
+        Vue.h('h1', { key: props.heading }, props.heading),
+        Vue.h('input', { 'aria-label': `${props.heading} control` })
+      ])
     }
   })
 const DashboardPage = routePage()
@@ -161,18 +164,55 @@ describe('admin shell route focus', () => {
     expect(focus).toHaveBeenCalledTimes(1)
     expect(focus).toHaveBeenCalledWith({ preventScroll: true })
   })
+  it('preserves a control focused in the incoming view before its transition finishes', async () => {
+    const { host, router } = await mountAdmin()
+    const focusedControl = new Promise(resolve => {
+      const observer = new browserWindow.MutationObserver(() => {
+        const control = host.querySelector('input[aria-label="Members control"]')
+        if (!control) return
+        observer.disconnect()
+        control.focus()
+        resolve(control)
+      })
+      observer.observe(host, { childList: true, subtree: true })
+    })
+
+    await router.push('/users')
+    const control = await focusedControl
+    await settle()
+
+    expect(document.activeElement).toBe(control)
+    expect(host.querySelector('main h1')?.textContent).toBe('Members')
+  })
+
+  it('does not move focus behind an active modal boundary', async () => {
+    const { host } = await mountAdmin()
+    const main = host.querySelector('main')
+    main.setAttribute('inert', '')
+    const modal = document.createElement('section')
+    modal.setAttribute('role', 'dialog')
+    modal.setAttribute('aria-modal', 'true')
+    const control = document.createElement('input')
+    modal.append(control)
+    document.body.append(modal)
+    control.focus()
+
+    expect(focusRouteHeading(main)).toBe(false)
+    expect(document.activeElement).toBe(control)
+  })
+
   it('also focuses the heading when a reused view changes its record', async () => {
     const { host, router } = await mountAdmin()
     await router.push('/users/1')
     await settle()
-    const other = document.createElement('button')
-    document.body.append(other)
-    other.focus()
+    const retainedControl = host.querySelector('main input')
+    retainedControl.focus()
 
     await router.push('/users/2')
     await settle()
 
     const heading = host.querySelector('main h1')
+    expect(host.querySelector('main input')).toBe(retainedControl)
     expect(heading?.textContent).toBe('Member 2')
     expect(document.activeElement).toBe(heading)
   })

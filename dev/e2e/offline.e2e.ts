@@ -286,6 +286,9 @@ async function rejectClipboard(page: Page): Promise<void> {
   await page.evaluate(() => (window as OfflineWindow).__rejectOfflineClipboard?.())
 }
 
+// Preserve the first failing native worker/document lifecycle, not only a retry.
+test.use({ trace: 'retain-on-failure' })
+
 test.describe('integrated offline access', () => {
   test.describe.configure({ timeout: 90_000 })
   test('keeps search in the first narrow viewport and reports empty actions truthfully', async ({ page }) => {
