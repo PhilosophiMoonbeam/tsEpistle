@@ -700,12 +700,6 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
   const origin = currentOrigin()
   const openHandle = readingHandle.value
   const openEpoch = readingEpoch.value
-  if (props.navigateOnOpen && !options.inDocument && origin) {
-    if (record.audience === 'private' && !isReadingCurrent(openHandle, openEpoch)) return
-    const href = offlinePageHref(record, origin)
-    if (href) window.location.assign(href)
-    return
-  }
   const storage = props.storage
   const view = corpus.value
   const currentPolicy = record.audience === 'private' ? privatePolicy.value : publicPolicy.value
@@ -734,6 +728,13 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     currentPolicy.sessionGeneration !== view.sessionGeneration
   ) {
     emit('error', t('common:offlineLibrary.savedPagesChangedBefore'))
+    return
+  }
+  // Public pages leave the settings router through a real document navigation.
+  // Private pages keep their in-memory reading handle in this document.
+  if ((props.navigateOnOpen || (props.showSettings && record.audience === 'public')) && !options.inDocument) {
+    const href = offlinePageHref(record, origin)
+    if (href) window.location.assign(href)
     return
   }
   if (!options.preservePosition) setSelectionUrl(record, mode)
@@ -1530,7 +1531,7 @@ const expiryLabel = (record: OfflineSnapshotRecord): string => {
   return t('common:offlineLibrary.expires', { expiresAt: formatDate(record.snapshot.expiresAt), interpolation: { escapeValue: false } })
 }
 
-const handlePopState = (): void => {
+const handlePopState = (event: PopStateEvent): void => {
   const selector = selectorFromUrl()
   if (!selector) {
     if (selectedKey.value) closeRecord({ fromHistory: true })
@@ -1538,6 +1539,10 @@ const handlePopState = (): void => {
   }
   const key = recordKey(selector)
   const selected = activeRecordForKey(key)
+  // A private reader owns its canonical history entry, not the profile router.
+  if (props.showSettings && selected?.audience === 'private' && window.history.state?.offlineSelection === key) {
+    event.stopImmediatePropagation()
+  }
   historyMode.value = 'history'
   if (!selected) {
     if (selectedKey.value) closeRecord({ fromHistory: true })
@@ -1631,7 +1636,7 @@ watch(clock, () => {
 onMounted(() => {
   void refreshReadingVault()
   clockTimer = window.setInterval(() => { clock.value = Date.now() }, 60_000)
-  window.addEventListener('popstate', handlePopState)
+  window.addEventListener('popstate', handlePopState, true)
   window.addEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
   window.addEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)
   unsubscribeStorageChanges = subscribeOfflineStorageChanges(notice => {
@@ -1658,7 +1663,7 @@ onBeforeUnmount(() => {
   preparationController = null
   searchController?.abort()
   searchController = null
-  window.removeEventListener('popstate', handlePopState)
+  window.removeEventListener('popstate', handlePopState, true)
   window.removeEventListener(OFFLINE_READING_STATE_EVENT, handleReadingStateChange)
   unsubscribeStorageChanges?.()
   window.removeEventListener(OFFLINE_SAVED_PAGE_OPEN_EVENT, handleSavedPageOpen)

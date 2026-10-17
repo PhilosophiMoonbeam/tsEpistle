@@ -539,6 +539,8 @@ test.describe('responsive UI quality matrix', () => {
             if (await targetHeading.count()) {
               await firstLink.click()
               await expect(targetHeading).toBeVisible()
+              // Anchor navigation focuses the heading only after its scroll animation finishes.
+              await expect(targetHeading).toBeFocused()
               const headingBox = await targetHeading.boundingBox()
               expect(headingBox).not.toBeNull()
               if (headingBox) {

@@ -364,6 +364,15 @@ test('page identity asset results stay within the viewport and scroll internally
       })
     )
     .toBe(true)
+  await lastAsset.scrollIntoViewIfNeeded()
+  await expect
+    .poll(() =>
+      lastAsset.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        return bounds.top >= 0 && bounds.bottom <= innerHeight
+      })
+    )
+    .toBe(true)
 
   for (const name of ['Browse files', 'Upload']) {
     const action = picker.getByRole('button', { name, exact: true })

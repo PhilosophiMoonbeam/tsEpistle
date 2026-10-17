@@ -1961,12 +1961,6 @@ export default defineComponent({
       flex: 1 1 auto;
       align-items: stretch;
       overflow-y: auto;
-      // Stacked uploads belong below the browser, not at the expense of its results scrollport.
-      grid-template-rows: 100% max-content;
-
-      @media (min-width: 1100px) {
-        grid-template-rows: none;
-      }
     }
 
     .editor-media-browser {
@@ -2016,6 +2010,36 @@ export default defineComponent({
     .editor-media-sidebar {
       min-height: 0;
       overflow-y: auto;
+    }
+
+    @media (max-width: 1099px) {
+      .editor-media-layout {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .editor-media-browser {
+        height: auto;
+        min-height: 100%;
+        max-height: none;
+        flex: 0 0 auto;
+      }
+
+      .editor-media-browser > .editor-media-panel,
+      .editor-media-browser > .editor-media-panel > .editor-media-panel-content {
+        // Wrapped controls contribute their real height instead of squeezing the results away.
+        min-height: min-content;
+      }
+
+      .editor-media-browser .editor-media-table {
+        // Bound the intrinsic table size, while retaining space for its header and a full row.
+        height: 8rem;
+        min-height: 8rem;
+      }
+
+      .editor-media-sidebar {
+        flex: 0 0 auto;
+      }
     }
   }
 

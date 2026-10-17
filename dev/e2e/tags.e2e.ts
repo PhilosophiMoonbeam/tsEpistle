@@ -527,6 +527,7 @@ test('public tag index keeps selected desktop labels readable and contained', as
 })
 test('public tag colors follow canonical identity across browse states', async ({ page }) => {
   await openTags(page, '/t', { tagRows: identityTagRows })
+  await expect(page.locator('.tags-index-item')).toHaveCount(identityTagRows.length)
 
   const initialColors = await page.locator('.tags-index-item').evaluateAll(items => {
     return items.map(item => {
@@ -549,7 +550,6 @@ test('public tag colors follow canonical identity across browse states', async (
       }
     })
   })
-  expect(initialColors).toHaveLength(identityTagRows.length)
   const bucketByTag = new Map<string, string | null>()
   for (const row of initialColors) {
     const fixture = identityTagRows.find(candidate => candidate.tag === row.canonical)
