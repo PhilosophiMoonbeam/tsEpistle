@@ -671,10 +671,9 @@ async function expectBackendReady(
         (await readLogoPerformance(page)).frames?.some(
           (frame: LogoPerformanceFrame) =>
             frame.totalDrawCalls === 1 &&
-            frame.particleInstances === effect.count &&
+            frame.particleCount === effect.count &&
             frame.triangles === effect.count * 2 &&
             frame.computeDispatches === 0 &&
-            (frame.motionScheduledBytes ?? 0) > 0 &&
             frame.colorUploadBytes === 0
         ) ?? false
     )

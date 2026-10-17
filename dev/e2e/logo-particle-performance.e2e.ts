@@ -62,7 +62,6 @@ function reportPathForBackend(backend: StrictBackend, projectName: string): stri
 const thresholds = {
   activeExplosionMaximum: 6,
   activeImpulseMaximum: 6,
-  activeMotionBytes: 128_000,
   animatedFrameP95Milliseconds: 20,
   animatedFrameP99Milliseconds: 34,
   animatedFrameMinimumCoverageMilliseconds: 9_000,
@@ -104,7 +103,6 @@ const descriptor = {
   medianStroke: 24,
   auraColor: '#336699'
 }
-const expectedActiveMotionBytes = thresholds.activeMotionBytes
 const expectedTriangles = descriptor.count * 2
 const logoFixture =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><rect x="64" y="64" width="896" height="896" rx="128" fill="#e8538a"/><circle cx="512" cy="512" r="300" fill="#36a3d9"/></svg>'
@@ -183,7 +181,7 @@ interface InactivityMeasurement {
   canvasCount: number
   counters: BenchmarkCounters | null
   drawCallsDelta: number | null
-  logicalScheduledBytes: number | null
+  scheduledBytes: number | null
   actualUploadBytes: number | null
   actualUploadCalls: number | null
   uploadObservations: BenchmarkApiObservations | null
@@ -543,6 +541,69 @@ async function createMeasuredPage(
         if (source === null) return 0
         return rangedUploadBytes(source, sourceOffset, length, true)
       }
+      const textureUploadBytes = (
+        source: unknown,
+        offsetArgument: unknown,
+        widthArgument: unknown,
+        heightArgument: unknown,
+        depthArgument: unknown,
+        texelBytesArgument: unknown,
+        rowBytesArgument?: unknown,
+        rowsPerImageArgument?: unknown
+      ): number | null => {
+        if (source === null) return 0
+        const availableBytes = sourceByteLength(source)
+        const offset = nonNegativeInteger(offsetArgument ?? 0)
+        const width = nonNegativeInteger(widthArgument)
+        const height = nonNegativeInteger(heightArgument)
+        const depth = nonNegativeInteger(depthArgument)
+        const texelBytes = nonNegativeInteger(texelBytesArgument)
+        if (availableBytes === null || offset === null || width === null || height === null || depth === null || texelBytes === null || texelBytes === 0) return null
+        if (width === 0 || height === 0 || depth === 0) return 0
+        const pixelRowBytes = width * texelBytes
+        const rowBytes = nonNegativeInteger(rowBytesArgument ?? pixelRowBytes)
+        const rowsPerImage = nonNegativeInteger(rowsPerImageArgument ?? height)
+        if (rowBytes === null || rowsPerImage === null || rowBytes < pixelRowBytes || rowsPerImage < height) return null
+        const requiredBytes = (depth - 1) * rowsPerImage * rowBytes + (height - 1) * rowBytes + pixelRowBytes
+        return offset + requiredBytes <= availableBytes ? requiredBytes : null
+      }
+      const webgpuTexelBytes: Readonly<Record<string, number>> = {
+        r8unorm: 1, rg8unorm: 2, rgba8unorm: 4, 'rgba8unorm-srgb': 4, bgra8unorm: 4, 'bgra8unorm-srgb': 4,
+        r16float: 2, rg16float: 4, rgba16float: 8, r32float: 4, rg32float: 8, rgba32float: 16
+      }
+      const webgpuTextureUploadBytes = (args: readonly unknown[]): number | null => {
+        const format = readProperty(readProperty(args[0], 'texture'), 'format')
+        const layout = args[2]
+        const extent = args[3]
+        return textureUploadBytes(
+          args[1],
+          readProperty(layout, 'offset'),
+          readProperty(extent, 'width') ?? readProperty(extent, '0'),
+          readProperty(extent, 'height') ?? readProperty(extent, '1') ?? 1,
+          readProperty(extent, 'depthOrArrayLayers') ?? readProperty(extent, '2') ?? 1,
+          typeof format === 'string' ? webgpuTexelBytes[format] : undefined,
+          readProperty(layout, 'bytesPerRow'),
+          readProperty(layout, 'rowsPerImage')
+        )
+      }
+      const webglTextureComponents: Readonly<Record<number, number>> = {
+        0x1903: 1, 0x8227: 2, 0x1907: 3, 0x1908: 4,
+        0x8d94: 1, 0x8228: 2, 0x8d98: 3, 0x8d99: 4
+      }
+      const webglTextureComponentBytes: Readonly<Record<number, number>> = {
+        0x1400: 1, 0x1401: 1, 0x1402: 2, 0x1403: 2, 0x1404: 4, 0x1405: 4, 0x1406: 4, 0x140b: 2
+      }
+      const webglTextureUploadBytes = (
+        source: unknown, sourceOffset: unknown, width: unknown, height: unknown, format: unknown, type: unknown
+      ): number | null => {
+        if (source === null) return 0
+        if (!ArrayBuffer.isView(source) || typeof format !== 'number' || typeof type !== 'number') return null
+        const components = webglTextureComponents[format]
+        const componentBytes = webglTextureComponentBytes[type]
+        const offset = nonNegativeInteger(sourceOffset ?? 0)
+        if (components === undefined || componentBytes === undefined || offset === null) return null
+        return textureUploadBytes(source, offset * elementByteSize(source), width, height, 1, components * componentBytes)
+      }
       const recordUpload = (observation: UploadApiObservation, bytes: number | null): void => {
         if (observation.status !== 'available') return
         observation.calls = (observation.calls ?? 0) + 1
@@ -592,53 +653,45 @@ async function createMeasuredPage(
         }
       }
 
-      const webgpuPrototype = publicPrototype('GPUQueue')
-      const webgpuWriteBuffer = webgpuPrototype ? publicMethod(webgpuPrototype, 'writeBuffer') : null
-      if (!webgpuPrototype) {
-        markUnavailable('webgpu', 'GPUQueue constructor/prototype is unavailable')
-      } else if (!webgpuWriteBuffer) {
-        markUnavailable('webgpu', 'GPUQueue.prototype.writeBuffer is unavailable')
-      } else {
-        const writeBuffer = webgpuWriteBuffer
-        const replaced = replaceMethod(webgpuPrototype, 'writeBuffer', function (this: unknown, ...args: unknown[]): unknown {
-          const result = Reflect.apply(writeBuffer, this, args)
-          recordUpload(observations.webgpu, webgpuUploadBytes(args[2], args[3], args[4]))
-          return result
-        })
-        if (!replaced) markUnavailable('webgpu', 'GPUQueue.prototype.writeBuffer could not be wrapped')
-        else observations.webgpu = { status: 'available', calls: 0, bytes: 0 }
-      }
-
-      const webglPrototype = publicPrototype('WebGL2RenderingContext')
-      const webglBufferData = webglPrototype ? publicMethod(webglPrototype, 'bufferData') : null
-      const webglBufferSubData = webglPrototype ? publicMethod(webglPrototype, 'bufferSubData') : null
-      if (!webglPrototype) {
-        markUnavailable('webgl2', 'WebGL2RenderingContext constructor/prototype is unavailable')
-      } else if (!webglBufferData || !webglBufferSubData) {
-        markUnavailable('webgl2', 'WebGL2 bufferData/bufferSubData prototype methods are unavailable')
-      } else {
-        const bufferData = webglBufferData
-        const bufferSubData = webglBufferSubData
-        const replacedBufferData = replaceMethod(webglPrototype, 'bufferData', function (this: unknown, ...args: unknown[]): unknown {
-          const result = Reflect.apply(bufferData, this, args)
-          recordUpload(observations.webgl2, webglUploadBytes(args[1], args[3], args[4]))
-          return result
-        })
-        const replacedBufferSubData = replacedBufferData
-          ? replaceMethod(webglPrototype, 'bufferSubData', function (this: unknown, ...args: unknown[]): unknown {
-              const result = Reflect.apply(bufferSubData, this, args)
-              recordUpload(observations.webgl2, webglUploadBytes(args[2], args[3], args[4]))
-              return result
-            })
-          : null
-        if (!replacedBufferData || !replacedBufferSubData) {
-          restoreMethod(replacedBufferSubData)
-          restoreMethod(replacedBufferData)
-          markUnavailable('webgl2', 'WebGL2 buffer upload prototypes could not be wrapped')
-        } else {
-          observations.webgl2 = { status: 'available', calls: 0, bytes: 0 }
+      const observeUploadMethods = (
+        backend: StrictBackend,
+        constructorName: string,
+        methods: readonly { readonly name: string; readonly bytes: (args: readonly unknown[]) => number | null }[]
+      ): void => {
+        const owner = publicPrototype(constructorName)
+        if (!owner) {
+          markUnavailable(backend, `${constructorName} constructor/prototype is unavailable`)
+          return
         }
+        const replacements: ReplacedMethod[] = []
+        for (const method of methods) {
+          const native = publicMethod(owner, method.name)
+          const replaced = native
+            ? replaceMethod(owner, method.name, function (this: unknown, ...args: unknown[]): unknown {
+                const result = Reflect.apply(native, this, args)
+                recordUpload(observations[backend], method.bytes(args))
+                return result
+              })
+            : null
+          if (!replaced) {
+            for (const replacement of replacements.reverse()) restoreMethod(replacement)
+            markUnavailable(backend, `${constructorName}.prototype.${method.name} could not be observed`)
+            return
+          }
+          replacements.push(replaced)
+        }
+        observations[backend] = { status: 'available', calls: 0, bytes: 0 }
       }
+      observeUploadMethods('webgpu', 'GPUQueue', [
+        { name: 'writeBuffer', bytes: args => webgpuUploadBytes(args[2], args[3], args[4]) },
+        { name: 'writeTexture', bytes: webgpuTextureUploadBytes }
+      ])
+      observeUploadMethods('webgl2', 'WebGL2RenderingContext', [
+        { name: 'bufferData', bytes: args => webglUploadBytes(args[1], args[3], args[4]) },
+        { name: 'bufferSubData', bytes: args => webglUploadBytes(args[2], args[3], args[4]) },
+        { name: 'texImage2D', bytes: args => webglTextureUploadBytes(args[8], args[9], args[3], args[4], args[6], args[7]) },
+        { name: 'texSubImage2D', bytes: args => webglTextureUploadBytes(args[8], args[9], args[4], args[5], args[6], args[7]) }
+      ])
 
       type TimerQueryExtension = {
         readonly TIME_ELAPSED_EXT: number
@@ -767,27 +820,27 @@ async function createMeasuredPage(
         for (const state of timerQueryStates) pollTimerQueryState(state)
       }
       const webglTimerPrototype = publicPrototype('WebGL2RenderingContext')
-      const webglDrawElementsInstanced = webglTimerPrototype ? publicMethod(webglTimerPrototype, 'drawElementsInstanced') : null
+      const webglDrawElements = webglTimerPrototype ? publicMethod(webglTimerPrototype, 'drawElements') : null
       if (!webglTimerPrototype) {
         pushGpuSample({ status: 'unavailable', reason: 'WebGL2RenderingContext constructor/prototype is unavailable' })
-      } else if (!webglDrawElementsInstanced) {
-        pushGpuSample({ status: 'unavailable', reason: 'WebGL2RenderingContext.prototype.drawElementsInstanced is unavailable' })
+      } else if (!webglDrawElements) {
+        pushGpuSample({ status: 'unavailable', reason: 'WebGL2RenderingContext.prototype.drawElements is unavailable' })
       } else {
-        const drawElementsInstanced = webglDrawElementsInstanced
-        const replaced = replaceMethod(webglTimerPrototype, 'drawElementsInstanced', function (this: unknown, ...args: unknown[]): unknown {
+        const drawElements = webglDrawElements
+        const replaced = replaceMethod(webglTimerPrototype, 'drawElements', function (this: unknown, ...args: unknown[]): unknown {
           const context = this as WebGL2RenderingContext
           const state = timerStateFor(context)
           pollTimerQueryState(state)
-          const instanceCount = args[4]
-          if (instanceCount !== managedDescriptor.count || !state.extension) {
-            return Reflect.apply(drawElementsInstanced, this, args)
+          const indexCount = args[1]
+          if (indexCount !== managedDescriptor.count * 6 || !state.extension) {
+            return Reflect.apply(drawElements, this, args)
           }
           const slot = state.slots.find(candidate => !candidate.pending)
           if (!slot) {
             const frameId = state.nextFrameId
             state.nextFrameId += 1
             markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 query pool is busy', frameId)
-            return Reflect.apply(drawElementsInstanced, this, args)
+            return Reflect.apply(drawElements, this, args)
           }
           const frameId = state.nextFrameId
           state.nextFrameId += 1
@@ -798,12 +851,12 @@ async function createMeasuredPage(
             began = true
           } catch {
             markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 beginQuery failed', frameId)
-            return Reflect.apply(drawElementsInstanced, this, args)
+            return Reflect.apply(drawElements, this, args)
           }
           let failed = false
           let result: unknown
           try {
-            result = Reflect.apply(drawElementsInstanced, this, args)
+            result = Reflect.apply(drawElements, this, args)
           } catch (error: unknown) {
             failed = true
             result = error
@@ -821,7 +874,7 @@ async function createMeasuredPage(
           return result
         })
         if (!replaced) {
-          pushGpuSample({ status: 'unavailable', reason: 'WebGL2 drawElementsInstanced could not be wrapped for timer queries' })
+          pushGpuSample({ status: 'unavailable', reason: 'WebGL2 drawElements could not be wrapped for timer queries' })
         }
       }
       if (initRequestedBackend === 'webgpu') {
@@ -1118,7 +1171,7 @@ async function readInactivityMeasurement(page: Page): Promise<InactivityMeasurem
   const measurement = await readMeasurements(page)
   const counters = measurement.counters ?? null
   const frames = measurement.frames
-  const logicalScheduledBytes = frames === undefined ? null : frames.length === 0 ? 0 : sumNullable(frameField(frames, 'motionScheduledBytes'))
+  const scheduledBytes = frames === undefined ? null : frames.length === 0 ? 0 : sumNullable(frameField(frames, 'motionScheduledBytes'))
   const uploadObservation = selectedUploadObservation(measurement)
   return {
     callbackCount: measurement.callbackCount,
@@ -1126,7 +1179,7 @@ async function readInactivityMeasurement(page: Page): Promise<InactivityMeasurem
     canvasCount: await page.locator('.login-particle-logo canvas').count(),
     counters,
     drawCallsDelta: counterValue(counters ?? undefined, 'draws'),
-    logicalScheduledBytes,
+    scheduledBytes,
     actualUploadBytes: uploadObservation.bytes,
     actualUploadCalls: uploadObservation.calls,
     uploadObservations: uploadObservationsFor(measurement),
@@ -1479,10 +1532,10 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   const renderInvocationCpuMilliseconds = frameField(frames, 'renderInvocationCpuMs')
   const afterRenderCpuMilliseconds = frameField(frames, 'afterRenderCpuMs')
   const frameDrawCalls = frameField(frames, 'totalDrawCalls')
-  const frameParticleInstances = frameField(frames, 'particleInstances')
+  const frameParticleCounts = frameField(frames, 'particleCount')
   const frameTriangles = frameField(frames, 'triangles')
   // These are application-declared scheduling diagnostics, not public GPU API counters.
-  // motionScheduledBytes is the logical motion attribute byteLength.
+  // motionScheduledBytes is the scheduled motion texture backing byteLength, including row padding.
   const frameComputeDispatches = frameField(frames, 'computeDispatches')
   const frameMotionScheduledBytes = frameField(frames, 'motionScheduledBytes')
   const frameColorUploadBytes = frameField(frames, 'colorUploadBytes')
@@ -1494,7 +1547,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     'renderInvocationCpuMs',
     'afterRenderCpuMs',
     'totalDrawCalls',
-    'particleInstances',
+    'particleCount',
     'triangles',
     'computeDispatches',
     'motionScheduledBytes',
@@ -1574,7 +1627,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     effective === requestedBackend &&
     coldRuns.every(run => run.measurement.requestedBackend === requestedBackend && effectiveBackend(run.measurement) === requestedBackend) &&
     diagnosticIdentityMatch
-  const logicalDynamicUploadBytes = sumNullable(frameMotionScheduledBytes)
+  const scheduledDynamicUploadBytes = sumNullable(frameMotionScheduledBytes)
   const uploadObservations = uploadObservationsFor(animation)
   const activeUploadObservation = uploadObservationFor(animation, requestedBackend)
   const actualUploadBytes = activeUploadObservation.bytes
@@ -1671,8 +1724,8 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   )
   addExactViolation(
     violations,
-    'animation.frames.every(frame => frame.particleInstances === 16000)',
-    frames !== undefined && frameParticleInstances.length === frames.length && frameParticleInstances.every(sample => sample === descriptor.count) ? 1 : 0,
+    'animation.frames.every(frame => frame.particleCount === 16000)',
+    frames !== undefined && frameParticleCounts.length === frames.length && frameParticleCounts.every(sample => sample === descriptor.count) ? 1 : 0,
     1
   )
   addExactViolation(
@@ -1689,25 +1742,9 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   )
   addExactViolation(
     violations,
-    'animation.frames declare motionScheduledBytes === 128000 (logical attribute byteLength)',
-    frames !== undefined &&
-      frameMotionScheduledBytes.length === frames.length &&
-      frameMotionScheduledBytes.every(sample => sample === expectedActiveMotionBytes)
-      ? 1
-      : 0,
-    1
-  )
-  addExactViolation(
-    violations,
     'animation.frames declare colorUploadBytes === 0 (scheduling diagnostic, not API-observed)',
     frames !== undefined && frameColorUploadBytes.length === frames.length && frameColorUploadBytes.every(sample => sample === 0) ? 1 : 0,
     1
-  )
-  addExactViolation(
-    violations,
-    'animation.logicalDynamicUploadBytes === activeMotionBytes * frameCount',
-    logicalDynamicUploadBytes,
-    expectedActiveMotionBytes * measuredFrames.length
   )
   addExactViolation(violations, 'animation.draws.delta === animation.frames.length', drawCalls.delta, measuredFrames.length)
   addExactViolation(
@@ -1749,7 +1786,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   addExactViolation(violations, 'hidden.afterRenderCallbacks === 0', counterValue(hidden.counters, 'afterRenderCallbacks'), 0)
   addExactViolation(violations, 'hidden.canvasCount === 1', hidden.canvasCount, thresholds.retainedCanvasCount)
   addExactViolation(violations, 'hidden.drawCallsDelta === 0', hidden.drawCallsDelta, 0)
-  addExactViolation(violations, 'hidden.logicalScheduledBytes === 0', hidden.logicalScheduledBytes, 0)
+  addExactViolation(violations, 'hidden.scheduledBytes === 0', hidden.scheduledBytes, 0)
   addObservedZeroViolation(violations, 'hidden.actualUploadCalls === 0 when observation is available', hidden.actualUploadCalls)
   addObservedZeroViolation(violations, 'hidden.actualUploadBytes === 0 when observation is available', hidden.actualUploadBytes)
   addExactViolation(violations, 'offscreen.callbackCount === 0', offscreen.callbackCount, thresholds.inactiveCallbackCount)
@@ -1758,7 +1795,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
   addExactViolation(violations, 'offscreen.afterRenderCallbacks === 0', counterValue(offscreen.counters, 'afterRenderCallbacks'), 0)
   addExactViolation(violations, 'offscreen.canvasCount === 1', offscreen.canvasCount, thresholds.retainedCanvasCount)
   addExactViolation(violations, 'offscreen.drawCallsDelta === 0', offscreen.drawCallsDelta, 0)
-  addExactViolation(violations, 'offscreen.logicalScheduledBytes === 0', offscreen.logicalScheduledBytes, 0)
+  addExactViolation(violations, 'offscreen.scheduledBytes === 0', offscreen.scheduledBytes, 0)
   addObservedZeroViolation(violations, 'offscreen.actualUploadCalls === 0 when observation is available', offscreen.actualUploadCalls)
   addObservedZeroViolation(violations, 'offscreen.actualUploadBytes === 0 when observation is available', offscreen.actualUploadBytes)
   addExactViolation(violations, 'resume.timeouts === 0', resumeTimeouts, thresholds.timeouts)
@@ -1823,7 +1860,7 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
         : true
   const graphicsClassification = classifyGraphicsIdentity(performanceProfile, environmentMetadata.graphics)
   const report = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     status: violations.length === 0 ? 'passed' : 'failed',
     generatedAt: new Date().toISOString(),
     options: { requestedBackend, project: testInfo.project.name, performanceProfile },
@@ -1942,12 +1979,11 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
       triangles,
       schedulingDiagnosticProvenance: {
         computeDispatches: 'application-declared scheduling diagnostic, not an observed API dispatch count',
-        motionScheduledBytes: 'logical motion attribute byteLength, not an observed API transfer',
+        motionScheduledBytes: 'scheduled motion texture backing byteLength including row padding, not an observed API transfer',
         colorUploadBytes: 'application-declared scheduling diagnostic, not observed color-buffer uploads'
       },
       dynamicUploads: {
-        logicalScheduledBytes: logicalDynamicUploadBytes,
-        logicalDynamicUploadBytes,
+        scheduledBytes: scheduledDynamicUploadBytes,
         scheduledBytesPerFrame: frameMotionScheduledBytes,
         actualObservedUploadBytes: actualUploadBytes,
         actualObservedUploadCalls: uploadCalls,

@@ -43,8 +43,11 @@ export class ParticleCloud {
   private logicalHeight = Number.NaN
   private accumulator = 0
 
-  constructor(private readonly particles: ParsedLogoParticles) {
-    this.motion = new Float32Array(particles.count * 2)
+  constructor(
+    private readonly particles: ParsedLogoParticles,
+    motion = new Float32Array(particles.count * 2)
+  ) {
+    this.motion = motion
     const indices: number[] = []
     let candidates = 0
     for (const seed of particles.seed) if (seed / 65535 > 1 - CLOUD_BEAD_FRACTION) candidates++
