@@ -181,11 +181,12 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
       const editor = page.locator('.editor-tiptap .ProseMirror')
       const originalText = await editor.textContent()
       try {
-        // Replace only the unsaved draft, using native keyboard input. No editor commands
-        // or window hooks select text or perform the insertion being exercised.
+        // Replace only the unsaved draft through the real contenteditable.
+        // Selection and page-link insertion below remain native UI interactions.
         await editor.click()
-        await page.keyboard.press('ControlOrMeta+A')
+        await editor.selectText()
         await page.keyboard.press('Backspace')
+        await expect(editor).toHaveText('')
         const label = selection === 'selected text' ? 'Chosen page' : 'Link: '
         await page.keyboard.insertText(label)
         await expect(editor).toHaveText(label)
@@ -685,12 +686,6 @@ test('Draw.io parent modal isolates the editor and restores its native toolbar o
   expect(frameOrigin).not.toBe(parentOrigin)
 
   // Browser keyboard events, not DOM-dispatched events or scripted focus in the frame.
-  await enterFrameForward()
-  await page.keyboard.press('Tab')
-  await expect(frameEnd).toBeFocused()
-  await page.keyboard.press('Tab')
-  await expect(back).toBeFocused()
-  expect(await page.evaluate(() => document.hasFocus())).toBe(true)
   await enterFrameForward()
   await page.keyboard.press('Tab')
   await expect(frameEnd).toBeFocused()

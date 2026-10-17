@@ -70,15 +70,21 @@ Install Xvfb alongside Playwright's supported native dependencies, following its
 
 Run the pinned Playwright CLI with Node.js, as its shebang declares; Bun only orchestrates the launcher. `bunx` also [honors that Node shebang](https://bun.com/docs/pm/bunx#shebangs). Using Bun's `process.execPath` here silently changes Playwright's worker, timeout and teardown runtime.
 
-The multi-turn creation-tools story uses a 60-second whole-story orchestration budget for tool selection, two native media decodes/playback checks, and the next text-only turn. Its individual assertions and application performance/runtime budgets remain unchanged; retain the full independent-selection, playback, persistence and empty-whitelist checks.
+Playwright 1.62.1's GTK WebKit protocol also turns handled, navigation-canceled fetch diagnostics into `pageerror` reports. The shared responsive fixture therefore observes genuine Window `error` and `unhandledrejection` events through an [early all-frame init script](https://playwright.dev/docs/api/class-page#page-add-init-script) for WebKit, retaining raw protocol reports as diagnostic attachments rather than filtering URLs or messages. Chromium and Firefox retain their protocol handling, including existing worker coverage. The WebKit guard preserves observed dedicated-worker throws but does not claim dedicated-worker rejection, shared-worker, or service-worker exception coverage.
+
+The upload/edit/dictation and multi-turn creation-tools stories each use a 60-second whole-story orchestration budget. They retain native multipart upload/removal, image generation/private-copy editing and recording/transcription, or tool selection, two media decodes/playback checks and the next text-only turn, respectively. Individual five-second assertions and application performance/runtime budgets remain unchanged; retain the full payload, cleanup, independent-selection, playback, persistence and empty-whitelist checks.
 
 First-run setup autofocus must not override a field the user has already focused or redirect subsequent password typing. Preserve the native regression that drains startup timers after choosing the password field.
 
 Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
 
+Draw.io keyboard qualification covers a full forward focus loop, reverse traversal, Escape restoration, and pointer close/reopen. Do not repeat an identical forward loop: it adds native protocol time without another boundary or transition, while the reverse and reopen paths already exercise re-entry.
+
 Route-backed Agent browser fixtures authenticate a genuine cookie actor and leave native identity and offline-key handshakes intact. A mocked authenticated `whoami` does not authorize native page/watch/key requests. Use the existing service-worker blocking pattern only for controlled route-backed fixtures; keep real worker and offline coverage in `offline.e2e.ts`.
 
 Controlled page-property tag stories use their own worker-blocked test fixture so declared suggestion failures and late responses retain request ownership; [Playwright routing does not intercept service-worker requests](https://playwright.dev/docs/api/class-page#page-route). Leave other editor and offline contexts unchanged. Commit a tag and leave its combobox with native Tab before applying the dialog.
+
+Visual-link stories first click the real contenteditable, then replace only the unsaved draft with [`locator.selectText()`](https://playwright.dev/docs/api/class-locator#locator-select-text), native Backspace, and native text insertion. This separates initial editor focus from DOM-only selection. Host `ControlOrMeta+A` is not portable to emulated iOS; nonempty `fill()` also does not establish equivalent editor-model selection here. Retain native Shift+Home for the selected-link case and every toolbar, exact-link, discard, and saved-source reopening assertion.
 
 Media qualification enters Wiki Agent through its documented native shortcut; Search-to-Agent admission has separate coverage. Keep all media operations in the same conversation, including independent creation-tool deselection and the next turn's explicit empty whitelist, rather than repeating unrelated entry or pre-generation selection rehearsals.
 
