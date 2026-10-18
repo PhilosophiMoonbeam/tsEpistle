@@ -232,8 +232,8 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         await testInfo.attach(`${format}-${selection}-page-link`, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
         await closeVisualEditor(page, readerPath, true)
 
-        // Reopening proves the draft was discarded rather than written to the fixture.
-        await openAuthenticatedPage(page, `/e${readerPath}`, '.editor-tiptap .ProseMirror')
+        // Reopen in the same authenticated session to prove the draft was discarded.
+        await page.goto(`/e${readerPath}`, { waitUntil: 'networkidle' })
         await expect(editor).toBeVisible({ timeout: 15_000 })
         await expect.poll(() => editor.textContent()).toBe(originalText)
         await expect(page.getByRole('button', { name: 'Saved', exact: true })).toBeVisible()

@@ -12,7 +12,7 @@ import {
   responsiveTest as test
 } from './helpers.ts'
 
-// This HTML fixture must own reader navigations; real service-worker coverage stays in offline.e2e.ts.
+// Mocked reader HTML and API responses must own their requests; real worker coverage stays in offline.e2e.ts.
 const routedReaderTest = test.extend({ serviceWorkers: 'block' })
 
 async function openFixtureAgentFromSearch(page: Page): Promise<Locator> {
@@ -1478,7 +1478,7 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
-  test('keeps search interaction and results inside every viewport', async ({ page }) => {
+  routedReaderTest('keeps search interaction and results inside every viewport', async ({ page }) => {
     await page.route('**/_api/pages/search?**', async route => {
       await route.fulfill({
         status: 200,
