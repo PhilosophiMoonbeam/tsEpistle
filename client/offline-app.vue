@@ -33,7 +33,7 @@ if (window.location.pathname === '/_offline') {
     headers: new Headers({ accept: 'text/html' })
   }, window.location.origin)) {
     const url = new URL(requestedUrl, window.location.origin)
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${window.location.hash}`)
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash || window.location.hash}`)
   }
 }
 

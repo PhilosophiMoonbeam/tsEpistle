@@ -101,11 +101,11 @@ afterEach(() => {
 
 describe('offline bootstrap navigation recovery', () => {
   it.each([
-    { requested: '/en/saved/1', pathname: '/en/saved/1', hash: '#section' },
-    { requested: '/p/offline', pathname: '/p/offline', hash: '#downloaded-pages-title' },
-    { requested: 'https://foreign.example/en/saved/1', pathname: '/', hash: '' }
-  ])('restores only an owned navigation from the cached bootstrap: $requested', async ({ requested, pathname, hash }) => {
-    setLocation(`/_offline${hash}`)
+    { requested: '/en/saved/1#section', pathname: '/en/saved/1', hash: '#section', bootstrapHash: '#old-bootstrap' },
+    { requested: '/p/offline', pathname: '/p/offline', hash: '#downloaded-pages-title', bootstrapHash: '#downloaded-pages-title' },
+    { requested: 'https://foreign.example/en/saved/1', pathname: '/', hash: '', bootstrapHash: '' }
+  ])('restores only an owned navigation from the cached bootstrap: $requested', async ({ requested, pathname, hash, bootstrapHash }) => {
+    setLocation(`/_offline${bootstrapHash}`)
     browserWindow.history.replaceState({ readerPosition: 7 }, '', browserWindow.location.href)
     const navigation = document.createElement('meta')
     navigation.name = 'tsepistle-requested-url'
