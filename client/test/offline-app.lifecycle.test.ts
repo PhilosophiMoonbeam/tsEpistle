@@ -17,6 +17,7 @@ import * as offlineRoutes from '../helpers/offline-routes.ts'
 import * as offlineRenderer from '../helpers/offline-renderer.ts'
 import { offlineServerReasonDetail } from '../helpers/offline-page-status.ts'
 import { createOfflineSyncUnavailableResult, OFFLINE_SYNC_COORDINATOR_KEY, type OfflineSyncService } from '../helpers/offline-sync.ts'
+import * as pwaRoutePolicy from '../helpers/pwa-route-policy.ts'
 
 function compileComponent(relativePath: string, id: string): (modules: Record<string, Record<string, unknown>>) => Vue.Component {
   const filename = fileURLToPath(new URL(relativePath, import.meta.url))
@@ -98,6 +99,63 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('offline bootstrap navigation recovery', () => {
+  it.each([
+    { requested: '/en/saved/1', pathname: '/en/saved/1', hash: '#section' },
+    { requested: '/p/offline', pathname: '/p/offline', hash: '#downloaded-pages-title' },
+    { requested: 'https://foreign.example/en/saved/1', pathname: '/', hash: '' }
+  ])('restores only an owned navigation from the cached bootstrap: $requested', async ({ requested, pathname, hash }) => {
+    setLocation(`/_offline${hash}`)
+    browserWindow.history.replaceState({ readerPosition: 7 }, '', browserWindow.location.href)
+    const navigation = document.createElement('meta')
+    navigation.name = 'tsepistle-requested-url'
+    navigation.content = new URL(requested, browserWindow.location.origin).href
+    document.head.append(navigation)
+    vi.stubGlobal('siteConfig', { title: 'Offline test', lang: 'en' })
+    const store = Vue.reactive({
+      page: { title: '', mode: 'view' },
+      user: { authenticated: false, ...defaults },
+      authRefreshOutcome: 'anonymous',
+      refreshAuth: async () => 'anonymous'
+    })
+    const component = shellComponent({
+      './components/pwa/offline-library.vue': { default: empty },
+      './components/pwa/offline-navigation.vue': { default: empty },
+      './components/pwa/offline-settings.vue': { default: empty },
+      './helpers/offline-storage.ts': { openOfflineStorage: async () => { throw new Error('IndexedDB unavailable') } },
+      './helpers/offline-session.ts': { currentOfflineReadingHandle: () => null, OFFLINE_READING_STATE_EVENT: 'test-reading-state' },
+      './helpers/offline-sync.ts': {
+        OFFLINE_SYNC_COORDINATOR_KEY: 'offline-sync-coordinator',
+        createOfflineSyncUnavailableResult,
+        createOfflineSyncCoordinator: () => { throw new Error('No storage') }
+      },
+      './helpers/pwa.ts': { pwaState: Vue.reactive({ connectionState: 'offline' }), retryServerConnection: async () => true },
+      './store/index.ts': { wikiStore: store },
+      './helpers/use-translate.ts': { useTranslate: () => (key: string) => key },
+      './helpers/index.ts': presentation,
+      './helpers/offline-presentation.ts': offlinePresentation,
+      './helpers/pwa-route-policy.ts': pwaRoutePolicy
+    })
+    try {
+      app = Vue.createApp(component)
+      for (const name of ['v-app', 'v-navigation-drawer', 'v-main', 'v-icon', 'v-btn', 'v-alert', 'nav-header', 'search-results', 'notify'])
+        app.component(name, passthrough)
+      app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
+      app.config.globalProperties.$t = (key: string) => key
+      const host = document.createElement('div')
+      document.body.append(host)
+      app.mount(host)
+      await settle()
+      expect(browserWindow.location.pathname).toBe(pathname)
+      expect(browserWindow.location.hash).toBe(hash)
+      expect(browserWindow.location.origin).toBe(new URL(originalLocation).origin)
+      expect(browserWindow.history.state).toEqual({ readerPosition: 7 })
+    } finally {
+      navigation.remove()
+    }
+  })
+})
+
 describe('offline shell reader-date authentication lifecycle', () => {
   it('preserves cached dates through unavailable startup and updates reactive settings after reconnect and confirmed logout without navigation', async () => {
     setLocation('/p/offline')
@@ -146,7 +204,8 @@ describe('offline shell reader-date authentication lifecycle', () => {
       './store/index.ts': { wikiStore: store },
       './helpers/use-translate.ts': { useTranslate: () => (key: string) => key },
       './helpers/index.ts': presentation,
-      './helpers/offline-presentation.ts': offlinePresentation
+      './helpers/offline-presentation.ts': offlinePresentation,
+      './helpers/pwa-route-policy.ts': pwaRoutePolicy
     })
     app = Vue.createApp(component)
     for (const name of ['v-app', 'v-navigation-drawer', 'v-main', 'v-icon', 'v-btn', 'v-alert', 'nav-header', 'search-results', 'notify'])

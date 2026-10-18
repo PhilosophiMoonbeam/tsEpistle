@@ -18,8 +18,24 @@ import type { OfflineSnapshotRecord } from '../shared/offline.ts'
 import { useTranslate } from './helpers/use-translate.ts'
 import { applyUserPresentation } from './helpers/index.ts'
 import { forgetReaderDates, rememberReaderDates } from './helpers/offline-presentation.ts'
+import { isAllowlistedNavigation } from './helpers/pwa-route-policy.ts'
 
 const t = useTranslate()
+
+// The worker owns the requested route even when a restored document exposes
+// the cached bootstrap URL. Do this before choosing settings or reader mode.
+if (window.location.pathname === '/_offline') {
+  const requestedUrl = document.querySelector<HTMLMetaElement>('meta[name="tsepistle-requested-url"]')?.content
+  if (requestedUrl && isAllowlistedNavigation({
+    method: 'GET',
+    mode: 'navigate',
+    url: requestedUrl,
+    headers: new Headers({ accept: 'text/html' })
+  }, window.location.origin)) {
+    const url = new URL(requestedUrl, window.location.origin)
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${window.location.hash}`)
+  }
+}
 
 const settings = window.location.pathname === '/p/offline'
 const siteTitle = siteConfig.title

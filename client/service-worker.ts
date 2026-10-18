@@ -381,14 +381,23 @@ async function retireOldPrecacheCaches(): Promise<void> {
   )
 }
 
-async function cachedShell(): Promise<Response | undefined> {
+async function cachedShell(requestedUrl?: string): Promise<Response | undefined> {
   try {
     const cache = await caches.open(PRECACHE_CACHE_NAME)
     if (!(await completeCache(cache))) return undefined
     const cached = await cache.match(new URL(OFFLINE_DOCUMENT_PATH, worker.location.origin).href)
     if (!cached) return undefined
-    // The navigation owns its URL; the cached bootstrap's /_offline response
-    // URL must not become the document location before the reader mounts.
+    // Strip the cache entry's response URL. Also carry the validated navigation
+    // in the document: restored WebKit loads can still expose /_offline at boot.
+    if (requestedUrl) {
+      const escapedUrl = requestedUrl.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      const body = (await cached.text()).replace('</head>', `<meta name="tsepistle-requested-url" content="${escapedUrl}"></head>`)
+      const headers = new Headers(cached.headers)
+      headers.delete('content-length')
+      headers.delete('content-encoding')
+      headers.delete('etag')
+      return new Response(body, { status: cached.status, statusText: cached.statusText, headers })
+    }
     return new Response(cached.body, { status: cached.status, statusText: cached.statusText, headers: cached.headers })
   } catch {
     return undefined
@@ -403,7 +412,7 @@ async function handleNavigation(request: Request): Promise<Response> {
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]) })
   } catch (error) {
     if (request.signal.aborted) throw error
-    const fallback = await cachedShell()
+    const fallback = await cachedShell(request.url)
     if (fallback) return fallback
     throw error
   }
