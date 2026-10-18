@@ -101,11 +101,12 @@ afterEach(() => {
 
 describe('offline bootstrap navigation recovery', () => {
   it.each([
-    { requested: '/en/saved/1#section', pathname: '/en/saved/1', hash: '#section', bootstrapHash: '#old-bootstrap' },
-    { requested: '/p/offline', pathname: '/p/offline', hash: '#downloaded-pages-title', bootstrapHash: '#downloaded-pages-title' },
-    { requested: 'https://foreign.example/en/saved/1', pathname: '/', hash: '', bootstrapHash: '' }
-  ])('restores only an owned navigation from the cached bootstrap: $requested', async ({ requested, pathname, hash, bootstrapHash }) => {
-    setLocation(`/_offline${bootstrapHash}`)
+    { requested: '/en/saved/1#section', pathname: '/en/saved/1', hash: '#section', bootstrapHash: '#old-bootstrap', bootstrapPath: '/_offline' },
+    { requested: '/p/offline', pathname: '/p/offline', hash: '#downloaded-pages-title', bootstrapHash: '#downloaded-pages-title', bootstrapPath: '/_offline' },
+    { requested: 'https://foreign.example/en/saved/1', pathname: '/', hash: '', bootstrapHash: '', bootstrapPath: '/_offline' },
+    { requested: '/en/saved/2', pathname: '/en/saved/2', hash: '', bootstrapHash: '', bootstrapPath: '/?saved=1' }
+  ])('restores only an owned navigation from $bootstrapPath: $requested', async ({ requested, pathname, hash, bootstrapHash, bootstrapPath }) => {
+    setLocation(`${bootstrapPath}${bootstrapHash}`)
     browserWindow.history.replaceState({ readerPosition: 7 }, '', browserWindow.location.href)
     const navigation = document.createElement('meta')
     navigation.name = 'tsepistle-requested-url'

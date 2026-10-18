@@ -22,22 +22,22 @@ import { isAllowlistedNavigation } from './helpers/pwa-route-policy.ts'
 
 const t = useTranslate()
 
-// The worker owns the requested route even when a restored document exposes
-// the cached bootstrap URL. Do this before choosing settings or reader mode.
-if (window.location.pathname === '/_offline') {
-  const requestedUrl = document.querySelector<HTMLMetaElement>('meta[name="tsepistle-requested-url"]')?.content
-  if (requestedUrl && isAllowlistedNavigation({
-    method: 'GET',
-    mode: 'navigate',
-    url: requestedUrl,
-    headers: new Headers({ accept: 'text/html' })
-  }, window.location.origin)) {
-    const url = new URL(requestedUrl, window.location.origin)
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash || window.location.hash}`)
-  }
+// Use the worker-owned route as startup state. A restored cached document's
+// address is not necessarily the requested navigation or still /_offline.
+let navigationUrl = new URL(window.location.href)
+const requestedUrl = document.querySelector<HTMLMetaElement>('meta[name="tsepistle-requested-url"]')?.content
+if (requestedUrl && isAllowlistedNavigation({
+  method: 'GET',
+  mode: 'navigate',
+  url: requestedUrl,
+  headers: new Headers({ accept: 'text/html' })
+}, navigationUrl.origin)) {
+  const url = new URL(requestedUrl, navigationUrl.origin)
+  url.hash ||= navigationUrl.hash
+  navigationUrl = url
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
 }
 
-const settings = window.location.pathname === '/p/offline'
 const siteTitle = siteConfig.title
 const storage = shallowRef<OfflineStorage | null>(null)
 const storageState = ref('checking')
@@ -51,10 +51,11 @@ let stopIdentityWatch: (() => void) | null = null
 let disposed = false
 let restored = false
 const requestedSelector = (() => {
-  if (window.location.pathname !== '/_offline') return null
-  const url = new URL(window.location.href)
+  if (navigationUrl.pathname !== '/_offline') return null
+  const url = navigationUrl
   if (!url.search) {
-    window.history.replaceState(window.history.state, '', url.hash === '#offline-policy-title' ? '/p/offline' : '/?saved=1')
+    navigationUrl = new URL(url.hash === '#offline-policy-title' ? '/p/offline' : '/?saved=1', url.origin)
+    window.history.replaceState(window.history.state, '', `${navigationUrl.pathname}${navigationUrl.search}`)
     return null
   }
   const pageId = Number(url.searchParams.get('pageId'))
@@ -65,7 +66,7 @@ const requestedSelector = (() => {
   }
   return { siteId: window.location.origin, pageId, locale }
 })()
-const settingsView = settings || window.location.pathname === '/p/offline'
+const settingsView = navigationUrl.pathname === '/p/offline'
 const requireOfflineSyncCoordinator = (): OfflineSyncCoordinator => {
   if (coordinator) return coordinator
   throw new Error(t('common:offlineApp.offlineSynchronizationNotReady'))
