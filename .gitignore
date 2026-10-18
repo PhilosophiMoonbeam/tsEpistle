@@ -67,3 +67,10 @@ test-results/
 
 # Trail-Code's graft map cache — regenerable, not committed (run `trail build`).
 /graft/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
