@@ -120,6 +120,12 @@
       "computedHash": "dedf8bb4b25f9ff8a68e46042a67861154644d79fbe56d90c9f0ad9ca2036c13",
       "wellKnownDigest": "sha256:ce91dd7dd1a5f803f2de60ffe936066cc2c71a778eaf9632add36a645276b2db"
     },
+    "ax-skills": {
+      "source": "PhilosophiMoonbeam/ax-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ax-skills/SKILL.md",
+      "computedHash": "0ec8349a7eb244165aabd051e1924ecd6bc1088f7d39a9930cd2581d51b5edb5"
+    },
     "ax-typesafe": {
       "source": "ax-llm.github.io",
       "sourceUrl": "https://ax-llm.github.io/ax/typescript/",

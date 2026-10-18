@@ -1,0 +1,189 @@
+{
+  "schema_version": 2,
+  "source_root": ".agents/skills/ax-llm",
+  "upstream": {
+    "package": "@ax-llm/ax",
+    "version": "25.4.3",
+    "git_commit": "818d15b02d57de8f215f6d2cb23bd3d3921a6e5e",
+    "index_url": "https://ax-llm.github.io/ax/typescript/.well-known/agent-skills/index.json",
+    "archive_url": "https://ax-llm.github.io/ax/typescript/.well-known/agent-skills/ax-llm/skill.tar.gz",
+    "archive_sha256": "cf85a81e8b7a73fe6b9b52a6b743f1b6188565779a2cab788bb544277f5aec67"
+  },
+  "sources": [
+    {
+      "source": ".agents/skills/ax-llm/SKILL.md",
+      "destinations": [
+        "SKILL.md",
+        "references/llm.md"
+      ],
+      "sha256": "2a0da2c248ce22a020c59e332da6b5e6dfd596330d3fcf9739104156fa14c57d",
+      "original_bytes": 3359,
+      "original_lines": 54
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-agent-context.md",
+      "destinations": [
+        "references/agent-context.md"
+      ],
+      "sha256": "51b8e8450da05589657f12f7aa85a9821b2ee6aa4694d9f18bf134a89cd80ff3",
+      "original_bytes": 2864,
+      "original_lines": 37
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-agent-memory-skills.md",
+      "destinations": [
+        "references/agent-memory-skills.md"
+      ],
+      "sha256": "f990f08511c6108cf2ab6b5cb0183f83a6802cd4cd2c12470d26e1edccc558f6",
+      "original_bytes": 21093,
+      "original_lines": 437
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-agent-observability.md",
+      "destinations": [
+        "references/agent-observability.md"
+      ],
+      "sha256": "16c56f782363a8d182aba184680d1021d106ccbfff509f62814820c6b0bd1d62",
+      "original_bytes": 17021,
+      "original_lines": 402
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-agent-optimize.md",
+      "destinations": [
+        "references/agent-optimize.md"
+      ],
+      "sha256": "440033c106101840eed7d2265babe0bf29f761861e4bc52e6c34746521e7a44d",
+      "original_bytes": 19574,
+      "original_lines": 363
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-agent-rlm.md",
+      "destinations": [
+        "references/agent-rlm.md"
+      ],
+      "sha256": "fcd74eb9e1b826e251faf219661f2ba4c3d1646745e9312c6b290ef9e9ea0499",
+      "original_bytes": 32899,
+      "original_lines": 498
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-agent.md",
+      "destinations": [
+        "references/agent.md"
+      ],
+      "sha256": "c63f73adb7ee5ea60121b7ef712df2caeb9156fc2ac331e311a2887077df59c9",
+      "original_bytes": 36548,
+      "original_lines": 704
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-ai.md",
+      "destinations": [
+        "references/ai.md"
+      ],
+      "sha256": "0a25ba3961d59affbaeec0c275da0db30a42252c377747d57f9229ced6d7dc91",
+      "original_bytes": 64115,
+      "original_lines": 1245
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-audio.md",
+      "destinations": [
+        "references/audio.md"
+      ],
+      "sha256": "bd491eb5e2b85473c43f5c36799a7e4866b1d293d31d7111222d91cb507c1773",
+      "original_bytes": 14083,
+      "original_lines": 460
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-event-runtime.md",
+      "destinations": [
+        "references/event-runtime.md"
+      ],
+      "sha256": "c8d0d19cd11653f3b41f7b02ab34975baf0b9123ad1806d0b937f13c23c76711",
+      "original_bytes": 6671,
+      "original_lines": 146
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-flow.md",
+      "destinations": [
+        "references/flow.md"
+      ],
+      "sha256": "906d468410fa4c64b702e78aa399aca80c38d4960fe02032bd807173c26ae585",
+      "original_bytes": 30289,
+      "original_lines": 742
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-gen.md",
+      "destinations": [
+        "references/gen.md"
+      ],
+      "sha256": "930d93fbb88f87e21dc8b550321aa9e779bd368c96dfba399fba13ab07db3e4e",
+      "original_bytes": 29284,
+      "original_lines": 626
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-gepa.md",
+      "destinations": [
+        "references/gepa.md"
+      ],
+      "sha256": "b1cc9064607aa63c113a0a6dd698f31f57701b7082ea1709f0466a9d65ad4f9c",
+      "original_bytes": 10693,
+      "original_lines": 260
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-mcp.md",
+      "destinations": [
+        "references/mcp.md"
+      ],
+      "sha256": "71a06154624d788318cfe0654a8d1a0148fc24803ac3738bd933c0868dd168a6",
+      "original_bytes": 18546,
+      "original_lines": 443
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-playbook.md",
+      "destinations": [
+        "references/playbook.md"
+      ],
+      "sha256": "cdbd63b49b46ea1459c6362ae5609d1ac9172fe11211d177964e9171986f73a6",
+      "original_bytes": 8399,
+      "original_lines": 127
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-refine.md",
+      "destinations": [
+        "references/refine.md"
+      ],
+      "sha256": "b3a58c5bc53d4475b3d430aad7e751ed8b28d324536c50111c307108b0cb0740",
+      "original_bytes": 3235,
+      "original_lines": 75
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-signature.md",
+      "destinations": [
+        "references/signature.md"
+      ],
+      "sha256": "c72f770b785d604e35a6a69b66313861c646689514f1cc721e303620d0fb2954",
+      "original_bytes": 23621,
+      "original_lines": 501
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/ax-typesafe.md",
+      "destinations": [
+        "references/typesafe.md"
+      ],
+      "sha256": "c704f420cf6faa8e413a925766746d508feb339a2a987349bcc1ce63240aedb9",
+      "original_bytes": 17666,
+      "original_lines": 343
+    },
+    {
+      "source": ".agents/skills/ax-llm/references/quickstart.md",
+      "destinations": [
+        "references/llm.md"
+      ],
+      "sha256": "fde55ffee392f32a139403015f9235be6d392dde81b06d4375332a6d15e25522",
+      "original_bytes": 13028,
+      "original_lines": 354
+    }
+  ],
+  "authored_references": [
+    "references/architecture.md"
+  ]
+}
