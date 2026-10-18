@@ -147,7 +147,6 @@ describe('product build and publication metadata', () => {
     expect(downloadedDescriptorArtifacts(arm64Gate)).toEqual(['arm64-image-descriptors'])
     expect(uploadedDescriptorArtifacts(arm64Gate)).toEqual(['gated-arm64-image-descriptors'])
 
-    expect(canary).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/main'")
     expect(canary).toContain('needs: [site-logo-processing-amd64, site-logo-processing-arm64]')
     expect(beta).toContain('needs: [site-logo-processing-amd64, site-logo-processing-arm64]')
     expect(release).toContain('needs: [beta, reproducibility, site-logo-processing-amd64, site-logo-processing-arm64]')

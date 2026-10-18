@@ -1,17 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image=${1:?Usage: run-site-logo-processing-gate.sh IMAGE@DIGEST PLATFORM REPORT BUN_VERSION}
-platform=${2:?Usage: run-site-logo-processing-gate.sh IMAGE@DIGEST PLATFORM REPORT BUN_VERSION}
-report=${3:?Usage: run-site-logo-processing-gate.sh IMAGE@DIGEST PLATFORM REPORT BUN_VERSION}
-expected_bun_version=${4:?Usage: run-site-logo-processing-gate.sh IMAGE@DIGEST PLATFORM REPORT BUN_VERSION}
+local_image=false
+if [ "${1:-}" = --local-image-id ]; then
+  local_image=true
+  shift
+fi
+image=${1:?Usage: run-site-logo-processing-gate.sh [--local-image-id] IMAGE PLATFORM REPORT BUN_VERSION}
+platform=${2:?Usage: run-site-logo-processing-gate.sh [--local-image-id] IMAGE PLATFORM REPORT BUN_VERSION}
+report=${3:?Usage: run-site-logo-processing-gate.sh [--local-image-id] IMAGE PLATFORM REPORT BUN_VERSION}
+expected_bun_version=${4:?Usage: run-site-logo-processing-gate.sh [--local-image-id] IMAGE PLATFORM REPORT BUN_VERSION}
+[ "$#" -eq 4 ]
+source "$(dirname "${BASH_SOURCE[0]}")/../ci/docker-resources.sh"
 expected_sharp_version=$(jq --exit-status --raw-output '.dependencies.sharp | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' package.json)
 
-if [[ ! "$image" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
+if [ "$local_image" = true ]; then
+  if [[ ! "$image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "Local candidate must be an existing immutable sha256 image ID: $image" >&2
+    exit 1
+  fi
+  : "${WIKI_BUILD_REVISION:?WIKI_BUILD_REVISION is required for a local candidate}"
+  [[ "$WIKI_BUILD_REVISION" =~ ^[0-9a-f]{40}$ ]]
+  test "$(docker image inspect --format '{{.Id}}' "$image")" = "$image"
+  test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$WIKI_BUILD_REVISION"
+elif [[ ! "$image" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
   echo "Candidate image must be an exact digest descriptor: $image" >&2
   exit 1
 fi
-
 case "$platform" in
   linux/amd64)
     expected_bun_arch=x64
@@ -35,7 +50,9 @@ rm -f \
   "$report_directory/candidate-image-descriptor.txt" \
   "$report_directory/site-logo-processing-benchmark.log"
 
-docker pull --platform "$platform" "$image"
+if [ "$local_image" = false ]; then
+  docker pull --platform "$platform" "$image"
+fi
 test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = "$platform"
 configured_user=$(docker image inspect --format '{{.Config.User}}' "$image")
 case "${configured_user%%:*}" in
@@ -45,8 +62,17 @@ case "${configured_user%%:*}" in
     ;;
 esac
 printf '%s\n' "$image" > "$report_directory/candidate-image-descriptor.txt"
+cidfile=$(mktemp "$report_directory/container-id.XXXXXX")
+rm "$cidfile"
+cleanup() {
+  if [ -s "$cidfile" ]; then docker rm -f -v "$(cat "$cidfile")" >/dev/null 2>&1 || true; fi
+  rm -f "$cidfile"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-if docker run --rm \
+if docker run --rm "${ci_app_docker_args[@]}" --cidfile "$cidfile" \
   --platform "$platform" \
   --pull never \
   --mount "type=bind,src=$report_directory,dst=/benchmark" \

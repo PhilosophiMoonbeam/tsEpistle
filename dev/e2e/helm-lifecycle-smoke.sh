@@ -83,6 +83,8 @@ cleanup() {
   rm -rf "$RECOVERY_DIR"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 app_request() {
   kubectl --namespace "$NAMESPACE" exec deployment/"$APP" -- curl \

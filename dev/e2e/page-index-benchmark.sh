@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../ci/docker-resources.sh"
 
 : "${WIKI_TEST_NAMESPACE:?WIKI_TEST_NAMESPACE is required}"
 if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
@@ -18,13 +19,13 @@ fi
 container_id=
 
 cleanup() {
-  if [ -n "$container_id" ]; then docker rm -f "$container_id" >/dev/null 2>&1 || true; fi
+  if [ -n "$container_id" ]; then docker rm -f -v "$container_id" >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if ! container_id=$(docker run -d --name "$container" -p "127.0.0.1:${requested_port}:5432" \
+if ! container_id=$(docker run -d "${ci_postgres_docker_args[@]}" --name "$container" -p "127.0.0.1:${requested_port}:5432" \
   -e POSTGRES_PASSWORD='Password123!' \
   -e POSTGRES_USER=wiki \
   -e POSTGRES_DB=wiki_page_index_benchmark \

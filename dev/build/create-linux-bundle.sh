@@ -9,15 +9,17 @@ work_dir=$(mktemp -d)
 container_id=
 cleanup() {
   if [ -n "$container_id" ]; then
-    docker rm "$container_id" >/dev/null 2>&1 || true
+    docker rm -v "$container_id" >/dev/null 2>&1 || true
   fi
   rm -rf "$work_dir"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 container_id=$(docker create "$image")
 docker cp "$container_id:/wiki" "$work_dir"
-docker rm "$container_id" >/dev/null
+docker rm -v "$container_id" >/dev/null
 container_id=
 rm -f "$work_dir/wiki/config.yml"
 cp config.sample.yml "$work_dir/wiki/config.sample.yml"

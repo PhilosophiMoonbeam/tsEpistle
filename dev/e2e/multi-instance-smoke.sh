@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../ci/docker-resources.sh"
 
 : "${WIKI_TEST_IMAGE:?WIKI_TEST_IMAGE is required}"
 : "${WIKI_TEST_NAMESPACE:?WIKI_TEST_NAMESPACE is required}"
@@ -45,10 +46,10 @@ cleanup() {
     if [ -n "$WIKI_B_CONTAINER_ID" ]; then docker logs "$WIKI_B_CONTAINER_ID" 2>/dev/null || true; fi
     if [ -n "$DB_CONTAINER_ID" ]; then docker logs "$DB_CONTAINER_ID" 2>/dev/null || true; fi
   fi
-  if [ -n "$WIKI_A_CONTAINER_ID" ]; then docker rm -f "$WIKI_A_CONTAINER_ID" >/dev/null 2>&1 || true; fi
-  if [ -n "$WIKI_B_CONTAINER_ID" ]; then docker rm -f "$WIKI_B_CONTAINER_ID" >/dev/null 2>&1 || true; fi
-  if [ -n "$LOCK_HOLDER_CONTAINER_ID" ]; then docker rm -f "$LOCK_HOLDER_CONTAINER_ID" >/dev/null 2>&1 || true; fi
-  if [ -n "$DB_CONTAINER_ID" ]; then docker rm -f "$DB_CONTAINER_ID" >/dev/null 2>&1 || true; fi
+  if [ -n "$WIKI_A_CONTAINER_ID" ]; then docker rm -f -v "$WIKI_A_CONTAINER_ID" >/dev/null 2>&1 || true; fi
+  if [ -n "$WIKI_B_CONTAINER_ID" ]; then docker rm -f -v "$WIKI_B_CONTAINER_ID" >/dev/null 2>&1 || true; fi
+  if [ -n "$LOCK_HOLDER_CONTAINER_ID" ]; then docker rm -f -v "$LOCK_HOLDER_CONTAINER_ID" >/dev/null 2>&1 || true; fi
+  if [ -n "$DB_CONTAINER_ID" ]; then docker rm -f -v "$DB_CONTAINER_ID" >/dev/null 2>&1 || true; fi
   if [ -n "$NETWORK_ID" ]; then docker network rm "$NETWORK_ID" >/dev/null 2>&1 || true; fi
   rm -rf "$COOKIE_DIR"
 }
@@ -92,7 +93,7 @@ start_wiki() {
       return 1
       ;;
   esac
-  if ! container_id=$(docker run -d --name "$name" --network="$NETWORK_NAME" \
+  if ! container_id=$(docker run -d "${ci_app_docker_args[@]}" --name "$name" --network="$NETWORK_NAME" \
     -p 127.0.0.1:0:3000 \
     -e HA_ACTIVE=true \
     -e "INSTANCE_ID=$instance_id" \
@@ -149,7 +150,7 @@ if ! NETWORK_ID=$(docker network create "$NETWORK_NAME"); then
   echo "Could not create Docker network $NETWORK_NAME (name collision or Docker error)." >&2
   exit 1
 fi
-if ! DB_CONTAINER_ID=$(docker run -d --name "$DB_CONTAINER_NAME" --network="$NETWORK_NAME" \
+if ! DB_CONTAINER_ID=$(docker run -d "${ci_postgres_docker_args[@]}" --name "$DB_CONTAINER_NAME" --network="$NETWORK_NAME" \
   --network-alias db \
   -e "POSTGRES_PASSWORD=$DB_PASSWORD" -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
   "$POSTGRES_TEST_IMAGE"); then
@@ -191,7 +192,7 @@ create_response=$(curl --fail --silent --show-error \
   "$SITE_ORIGIN/_api/pages")
 page_id=$(printf '%s' "$create_response" | jq --exit-status --raw-output '.page.id')
 
-if ! LOCK_HOLDER_CONTAINER_ID=$(docker run -d --name "$LOCK_HOLDER_NAME" --network="$NETWORK_NAME" \
+if ! LOCK_HOLDER_CONTAINER_ID=$(docker run -d "${ci_postgres_docker_args[@]}" --name "$LOCK_HOLDER_NAME" --network="$NETWORK_NAME" \
   -e "PGPASSWORD=$DB_PASSWORD" \
   "$POSTGRES_TEST_IMAGE" \
   psql --host=db --username=wiki --dbname=wiki --set ON_ERROR_STOP=1 \

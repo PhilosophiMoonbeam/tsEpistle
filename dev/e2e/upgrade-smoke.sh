@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../ci/docker-resources.sh"
 
 : "${WIKI_TEST_NAMESPACE:?WIKI_TEST_NAMESPACE is required}"
 if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
@@ -63,10 +64,10 @@ cleanup() {
     fi
   fi
   if [ "$wiki_container_owned" = true ]; then
-    docker rm -f "$WIKI_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -f -v "$WIKI_CONTAINER" >/dev/null 2>&1 || true
   fi
   if [ "$db_container_owned" = true ]; then
-    docker rm -f "$DB_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -f -v "$DB_CONTAINER" >/dev/null 2>&1 || true
   fi
   if [ "$data_volume_owned" = true ]; then
     volume_owner=$(docker volume inspect --format '{{ index .Labels "tsepistle-ci.owner" }}' "$DATA_VOLUME" 2>/dev/null || true)
@@ -141,7 +142,7 @@ start_wiki() {
   local image=$1
   local port_mapping
   WIKI_HOST_PORT=
-  docker run -d -p 127.0.0.1:0:3000 --name "$WIKI_CONTAINER" --network "$TEST_NETWORK" -v "$DATA_VOLUME":/wiki/data \
+  docker run -d "${ci_app_docker_args[@]}" -p 127.0.0.1:0:3000 --name "$WIKI_CONTAINER" --network "$TEST_NETWORK" -v "$DATA_VOLUME":/wiki/data \
     -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_NAME=wiki \
     -e DB_USER=wiki -e 'DB_PASS=Password123!' "$image" >/dev/null
   wiki_container_owned=true
@@ -157,7 +158,7 @@ start_wiki() {
   fi
 }
 remove_wiki() {
-  docker rm -f "$WIKI_CONTAINER" >/dev/null
+  docker rm -f -v "$WIKI_CONTAINER" >/dev/null
   wiki_container_owned=false
   WIKI_HOST_PORT=
 }
@@ -199,7 +200,7 @@ prepare_fixture_asset() {
       )
       SELECT hash FROM renamed")
   [ "$asset_hash" = '9519c3fab198c33c8e31a87f6452fe112e4fd6e5' ]
-  docker run --rm --user 0 --entrypoint mv -v "$DATA_VOLUME":/data "$WIKI_TEST_IMAGE" \
+  docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint mv -v "$DATA_VOLUME":/data "$WIKI_TEST_IMAGE" \
     /data/cache/7a98cdab7d7ca483ab801d78798f23180890f59c.dat \
     "/data/cache/$asset_hash.dat"
 }
@@ -279,7 +280,7 @@ database_size_bytes() {
 }
 
 data_volume_size_bytes() {
-  docker run --rm --user 0 --entrypoint sh -v "$DATA_VOLUME":/data:ro "$WIKI_TEST_IMAGE" \
+  docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint sh -v "$DATA_VOLUME":/data:ro "$WIKI_TEST_IMAGE" \
     -c 'set -- $(du -sk /data); echo $(( $1 * 1024 ))'
 }
 monitor_migration_resources() {
@@ -299,7 +300,7 @@ monitor_migration_resources() {
 
 
 snapshot_data_volume() {
-  docker run --rm --user 0 --entrypoint tar \
+  docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint tar \
     -v "$DATA_VOLUME":/source:ro -v "$RECOVERY_DIR":/backup "$WIKI_TEST_IMAGE" \
     -C /source -czf /backup/wiki-data.tar.gz .
 }
@@ -314,7 +315,7 @@ restore_data_volume() {
   docker volume rm "$DATA_VOLUME" >/dev/null
   data_volume_owned=false
   create_data_volume
-  docker run --rm --user 0 --entrypoint tar \
+  docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint tar \
     -v "$DATA_VOLUME":/target -v "$RECOVERY_DIR":/backup:ro "$WIKI_TEST_IMAGE" \
     -C /target -xzf /backup/wiki-data.tar.gz
 }
@@ -327,7 +328,7 @@ printf '%s  %s\n' "$expected_data_sha" "$DATA_FIXTURE" | sha256sum --check --sta
 assert_resources_available
 create_data_volume
 test_network_id=$(docker network create --label "tsepistle-ci.owner=$VOLUME_OWNER" "$TEST_NETWORK")
-docker run -d --name "$DB_CONTAINER" --network "$TEST_NETWORK" --network-alias db \
+docker run -d "${ci_postgres_docker_args[@]}" --name "$DB_CONTAINER" --network "$TEST_NETWORK" --network-alias db \
   -e POSTGRES_PASSWORD='Password123!' -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
   "$POSTGRES_TEST_IMAGE" >/dev/null
 db_container_owned=true
@@ -337,7 +338,7 @@ postgres_version_num=$(docker exec "$DB_CONTAINER" psql --username=wiki --dbname
 
 docker cp "$DATABASE_FIXTURE" "$DB_CONTAINER":/tmp/source.dump >/dev/null
 docker exec "$DB_CONTAINER" pg_restore --username=wiki --dbname=wiki /tmp/source.dump
-docker run --rm --user 0 --entrypoint tar \
+docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint tar \
   -v "$DATA_VOLUME":/target -v "$FIXTURE_DIR":/fixtures:ro "$WIKI_TEST_IMAGE" \
   -C /target -xzf "/fixtures/$(basename "$DATA_FIXTURE")"
 prepare_fixture_asset
@@ -355,7 +356,7 @@ docker exec "$DB_CONTAINER" pg_dump --username=wiki --format=custom --compress=9
 backup_sha=$(docker exec "$DB_CONTAINER" sha256sum /tmp/pre-upgrade.dump | cut -d ' ' -f 1)
 # The owned root sentinel is outside cache, which application startup may clear.
 printf 'pre-upgrade data\000sentinel\n' > "$RECOVERY_DIR/data-sentinel.expected"
-docker run --rm --user 0 --entrypoint sh \
+docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint sh \
   -v "$DATA_VOLUME":/data -v "$RECOVERY_DIR":/backup:ro "$WIKI_TEST_IMAGE" \
   -c 'set -eu; mkdir /data/.upgrade-smoke; cp /backup/data-sentinel.expected /data/.upgrade-smoke/original'
 snapshot_data_volume
@@ -433,14 +434,14 @@ database_peak_amplification_percent=$(((database_bytes_peak * 100 + database_byt
 [ "$peak_memory_bytes" -le "$MIGRATION_MAX_PEAK_MEMORY_BYTES" ]
 
 remove_wiki
-docker run --rm --user 0 --entrypoint sh -v "$DATA_VOLUME":/data "$WIKI_TEST_IMAGE" \
+docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint sh -v "$DATA_VOLUME":/data "$WIKI_TEST_IMAGE" \
   -c 'set -eu; printf "candidate changed data\n" > /data/.upgrade-smoke/original; printf "candidate-only data\n" > /data/.upgrade-smoke/candidate-only'
 docker exec "$DB_CONTAINER" dropdb --username=wiki --force wiki
 docker exec "$DB_CONTAINER" createdb --username=wiki --owner=wiki wiki
 docker exec "$DB_CONTAINER" pg_restore --username=wiki --dbname=wiki /tmp/pre-upgrade.dump
 restore_data_volume
 # Check restored bytes before the old image can recreate or clear any files.
-docker run --rm --user 0 --entrypoint sh \
+docker run --rm "${ci_app_docker_args[@]}" --user 0 --entrypoint sh \
   -v "$DATA_VOLUME":/data:ro -v "$RECOVERY_DIR":/backup:ro "$WIKI_TEST_IMAGE" \
   -c 'set -eu; cmp /backup/data-sentinel.expected /data/.upgrade-smoke/original; test ! -e /data/.upgrade-smoke/candidate-only'
 assert_fixture_asset_bytes

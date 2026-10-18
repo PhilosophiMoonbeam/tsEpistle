@@ -7,6 +7,11 @@ if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
   echo 'WIKI_TEST_NAMESPACE must be a Docker-safe tsepistle-ci- namespace.' >&2
   exit 1
 fi
+source dev/ci/docker-resources.sh
+ownership_args=()
+if [[ -n "${WIKI_CI_RESOURCE_OWNER:-}" ]]; then
+  ownership_args+=(--label "org.tsepistle.ci.owner=$WIKI_CI_RESOURCE_OWNER")
+fi
 POSTGRES_TEST_IMAGE=${POSTGRES_TEST_IMAGE:-postgres:15-alpine@sha256:4006528dcbdd9be8c1aaa50389caea4e93c46d6f54c3533bcd3253725e526e23}
 wiki_container="${WIKI_TEST_NAMESPACE}-wiki"
 db_container="${WIKI_TEST_NAMESPACE}-db"
@@ -21,9 +26,10 @@ if docker container inspect "$wiki_container" >/dev/null 2>&1 ||
   exit 1
 fi
 
-docker volume create "$data_volume" >/dev/null
-docker network create "$network" >/dev/null
-docker run -d --name "$db_container" --network="$network" --network-alias db \
+docker volume create "${ownership_args[@]}" "$data_volume" >/dev/null
+docker network create "${ownership_args[@]}" "$network" >/dev/null
+docker run -d "${ci_postgres_docker_args[@]}" "${ownership_args[@]}" \
+  --name "$db_container" --network="$network" --network-alias db \
   -e POSTGRES_PASSWORD='Password123!' -e POSTGRES_USER=wiki -e POSTGRES_DB=wiki \
   "$POSTGRES_TEST_IMAGE"
 for attempt in {1..90}; do
@@ -37,7 +43,8 @@ for attempt in {1..90}; do
   sleep 1
 done
 docker exec "$db_container" psql --tuples-only --no-align --username=wiki --dbname=wiki --command='SHOW server_version'
-docker run -d -p 127.0.0.1:0:3000 --name "$wiki_container" --network="$network" -v "$data_volume":/wiki/data \
+docker run -d "${ci_app_docker_args[@]}" "${ownership_args[@]}" \
+  -p 127.0.0.1:0:3000 --name "$wiki_container" --network="$network" -v "$data_volume":/wiki/data \
   --mount "type=bind,source=$PWD/dev/e2e/config.yml,target=/wiki/config.yml,readonly" \
   -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_NAME=wiki \
   -e DB_USER=wiki -e 'DB_PASS=Password123!' "$WIKI_TEST_IMAGE"
