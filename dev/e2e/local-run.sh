@@ -16,7 +16,7 @@ if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ||
   echo 'Expected a Docker-safe tsepistle-ci- namespace, immutable image ID, and committed revision.' >&2
   exit 1
 fi
-browser_jobs=${WIKI_LOCAL_CI_BROWSER_JOBS:-2}
+browser_jobs=${WIKI_LOCAL_CI_BROWSER_JOBS:-1}
 if [[ "$browser_jobs" != 1 && "$browser_jobs" != 2 ]]; then
   echo 'WIKI_LOCAL_CI_BROWSER_JOBS must be 1 or 2.' >&2
   exit 1
@@ -48,7 +48,7 @@ for suite in "${suites[@]}"; do
     exit 1
   fi
 done
-export WIKI_CI_APP_MEMORY=${WIKI_CI_APP_MEMORY:-4g}
+export WIKI_CI_APP_MEMORY=${WIKI_CI_APP_MEMORY:-2g}
 export WIKI_CI_APP_CPUS=${WIKI_CI_APP_CPUS:-2}
 export WIKI_CI_POSTGRES_MEMORY=${WIKI_CI_POSTGRES_MEMORY:-1g}
 export WIKI_CI_POSTGRES_CPUS=${WIKI_CI_POSTGRES_CPUS:-1}
@@ -85,9 +85,15 @@ owns_container() {
 }
 
 cleanup_lane() {
-  local suite=$1 namespace="$WIKI_TEST_NAMESPACE-e2e-$1" name
+  local suite=$1 namespace="$WIKI_TEST_NAMESPACE-e2e-$1" name container_id
   for name in "$namespace-wiki" "$namespace-db"; do
     if owns_container "$name"; then
+      if [[ -n "${WIKI_LOCAL_CI_PHASE_RUNNER:-}" ]]; then
+        container_id=$(docker container inspect --format '{{.Id}}' "$name")
+        if ! bun "$WIKI_LOCAL_CI_PHASE_RUNNER" snapshot --container "$container_id" >> "$artifact_root/cleanup.log" 2>&1; then
+          cleanup_failed=1
+        fi
+      fi
       docker logs "$name" > "$artifact_root/$suite/${name##"$namespace-"}.log" 2>&1 || true
       if ! docker container rm --force --volumes "$name" >> "$artifact_root/cleanup.log" 2>&1; then
         cleanup_failed=1

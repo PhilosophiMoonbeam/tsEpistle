@@ -2,31 +2,75 @@
 # Routine nonbrowser gates. Run from the frozen repository root, after ci and the AMD64 build.
 # Required: WIKI_TEST_IMAGE (sha256 ID), WIKI_BUILD_REVISION (40 hex),
 # WIKI_TEST_NAMESPACE (unique tsepistle-ci- prefix, <=44 characters),
-# WIKI_LOCAL_CI_ARTIFACTS (absolute private directory). Optional: WIKI_LOCAL_CI_TOOLS,
-# BUILDX_BUILDER, WIKI_CI_{APP,POSTGRES}_{MEMORY,CPUS}, WIKI_LOCAL_CI_KIND_{MEMORY,CPUS}.
+# WIKI_LOCAL_CI_ARTIFACTS (absolute private directory), WIKI_LOCAL_CI_PHASE_RUNNER
+# (absolute frozen-worktree helper). Optional: WIKI_LOCAL_CI_TOOLS, BUILDX_BUILDER,
+# WIKI_CI_{APP,POSTGRES}_{MEMORY,CPUS}, WIKI_LOCAL_CI_KIND_{MEMORY,CPUS}.
 # ARM64 binfmt/QEMU must already be configured by the host administrator.
 set -euo pipefail
 umask 077
+phase=
+if [ "$#" -ne 0 ]; then
+  if [ "$#" -ne 2 ] || [ "$1" != --phase ]; then
+    echo 'Usage: local-contracts.sh [--phase NAME]' >&2
+    exit 2
+  fi
+  phase=$2
+  case "$phase" in
+    ledger-pg16|ledger-pg17|private-pages-pg18|page-index-pg15|page-index-pg16|page-index-pg17|page-index-pg18|\
+    upgrade-pg15|upgrade-pg16|upgrade-pg17|upgrade-pg18|recovery-pg15|recovery-pg18|kubernetes-tools|\
+    helm-lifecycle|agent-browser-multiarch|linux-bundle|arm64-application|site-logo-amd64|site-logo-arm64) ;;
+    *) printf 'Unknown local contract phase: %s\n' "$phase" >&2; exit 2 ;;
+  esac
+fi
+export WIKI_CI_APP_MEMORY=${WIKI_CI_APP_MEMORY:-2g}
+export WIKI_CI_POSTGRES_MEMORY=${WIKI_CI_POSTGRES_MEMORY:-1g}
+export WIKI_LOCAL_CI_KIND_MEMORY=${WIKI_LOCAL_CI_KIND_MEMORY:-6g}
 source "$(dirname "${BASH_SOURCE[0]}")/docker-resources.sh"
 : "${WIKI_TEST_IMAGE:?WIKI_TEST_IMAGE is required}"
 : "${WIKI_TEST_NAMESPACE:?WIKI_TEST_NAMESPACE is required}"
 : "${WIKI_LOCAL_CI_ARTIFACTS:?WIKI_LOCAL_CI_ARTIFACTS is required}"
 : "${WIKI_BUILD_REVISION:?WIKI_BUILD_REVISION is required}"
+: "${WIKI_LOCAL_CI_PHASE_RUNNER:?WIKI_LOCAL_CI_PHASE_RUNNER is required}"
 [[ "$WIKI_TEST_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]]
 [[ "$WIKI_BUILD_REVISION" =~ ^[0-9a-f]{40}$ ]]
 [[ "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ && ${#WIKI_TEST_NAMESPACE} -le 44 ]]
 [[ "$WIKI_LOCAL_CI_ARTIFACTS" = /* ]]
-for tool in bun docker jq curl tar gzip sha256sum flock install; do command -v "$tool" >/dev/null; done
+for tool in bun docker jq curl tar gzip sha256sum flock install realpath stat; do command -v "$tool" >/dev/null; done
 [ "$(uname -m)" = x86_64 ]
 [ "$(docker image inspect --format '{{.Id}}' "$WIKI_TEST_IMAGE")" = "$WIKI_TEST_IMAGE" ]
 [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$WIKI_TEST_IMAGE")" = linux/amd64 ]
 [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$WIKI_TEST_IMAGE")" = "$WIKI_BUILD_REVISION" ]
 [ "$(git rev-parse HEAD)" = "$WIKI_BUILD_REVISION" ]
+workspace=$(pwd -P)
+script=$(realpath "${BASH_SOURCE[0]}")
+[ "$script" = "$workspace/dev/ci/local-contracts.sh" ]
+[[ "$WIKI_LOCAL_CI_PHASE_RUNNER" = /* ]]
+[ "$WIKI_LOCAL_CI_PHASE_RUNNER" = "$workspace/server/scripts/local-ci-resources.ts" ]
+[ -f "$WIKI_LOCAL_CI_PHASE_RUNNER" ]
 base_namespace=$WIKI_TEST_NAMESPACE
 artifacts="$WIKI_LOCAL_CI_ARTIFACTS/contracts"
-# Refuse to mix results from different runs or adopt existing artifacts.
-mkdir "$artifacts"
-mkdir "$artifacts/logs" "$artifacts/reports" "$artifacts/images" "$artifacts/helm"
+# Child scopes may only reuse the parent's private, source-bound artifact tree.
+if [ -n "$phase" ]; then
+  [ "${WIKI_LOCAL_CI_ACTIVE_PHASE:-}" = "$phase" ]
+  for directory in "$artifacts" "$artifacts/logs" "$artifacts/reports" "$artifacts/images" "$artifacts/helm" "$artifacts/phases"; do
+    [ -d "$directory" ] && [ ! -L "$directory" ] && [ -O "$directory" ]
+    [ "$(stat -c '%a' "$directory")" = 700 ]
+  done
+  [ -f "$artifacts/context.json" ] && [ ! -L "$artifacts/context.json" ] && [ -O "$artifacts/context.json" ]
+  [ "$(stat -c '%a' "$artifacts/context.json")" = 600 ]
+  jq --exit-status --arg revision "$WIKI_BUILD_REVISION" --arg image "$WIKI_TEST_IMAGE" \
+    --arg namespace "$base_namespace" --arg workspace "$workspace" \
+    '.revision == $revision and .amd64ImageId == $image and .namespace == $namespace and .workspace == $workspace' \
+    "$artifacts/context.json" >/dev/null
+  [ ! -e "$artifacts/phases/$phase.success" ] && [ ! -L "$artifacts/phases/$phase.success" ]
+else
+  # Refuse to mix results from different runs or adopt existing artifacts.
+  mkdir "$artifacts"
+  mkdir "$artifacts/logs" "$artifacts/reports" "$artifacts/images" "$artifacts/helm" "$artifacts/phases"
+  jq --null-input --arg revision "$WIKI_BUILD_REVISION" --arg image "$WIKI_TEST_IMAGE" \
+    --arg namespace "$base_namespace" --arg workspace "$workspace" \
+    '{revision:$revision, amd64ImageId:$image, namespace:$namespace, workspace:$workspace}' > "$artifacts/context.json"
+fi
 export WIKI_LOCAL_CI_TOOLS=${WIKI_LOCAL_CI_TOOLS:-${XDG_STATE_HOME:-$HOME/.local/state}/tsepistle/ci/tools}
 [[ "$WIKI_LOCAL_CI_TOOLS" = /* ]]
 mkdir -p "$WIKI_LOCAL_CI_TOOLS"
@@ -35,7 +79,11 @@ metadata=$(GITHUB_SHA="$WIKI_BUILD_REVISION" bun server/scripts/export-build-env
 while IFS='=' read -r key value; do export "$key=$value"; done <<< "$metadata"
 bun_version=$(bun --version)
 [ "$bun_version" = "$(jq -r '.packageManager | sub("^bun@"; "")' package.json)" ]
-printf '%s\n' "$WIKI_TEST_IMAGE" > "$artifacts/images/amd64-image-id.txt"
+if [ -n "$phase" ]; then
+  [ "$(cat "$artifacts/images/amd64-image-id.txt")" = "$WIKI_TEST_IMAGE" ]
+else
+  printf '%s\n' "$WIKI_TEST_IMAGE" > "$artifacts/images/amd64-image-id.txt"
+fi
 phase_pid=
 completed=()
 cleanup() {
@@ -51,19 +99,52 @@ cleanup() {
     "${completed[@]}" > "$artifacts/result.json"
   exit "$status"
 }
-trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-# Each phase owns a process group; cancellation reaches wrappers and their Docker clients.
-set -m
+if [ -z "$phase" ]; then
+  trap cleanup EXIT
+  # The helper owns the scoped workload; this group owns the cancellable helper.
+  set -m
+fi
+memory_gib() {
+  local value=$1 amount unit divisor
+  if [[ ! "$value" =~ ^([1-9][0-9]{0,15})([bBkKmMgG]?)$ ]]; then
+    printf 'Cannot budget CI Docker memory quantity: %s\n' "$value" >&2
+    return 1
+  fi
+  amount=${BASH_REMATCH[1]}
+  unit=${BASH_REMATCH[2]}
+  case "$unit" in
+    ''|b|B) divisor=1073741824 ;;
+    k|K) divisor=1048576 ;;
+    m|M) divisor=1024 ;;
+    g|G) divisor=1 ;;
+  esac
+  printf '%s\n' "$(((amount + divisor - 1) / divisor))"
+}
+app_gib=$(memory_gib "$WIKI_CI_APP_MEMORY")
+postgres_gib=$(memory_gib "$WIKI_CI_POSTGRES_MEMORY")
+kind_gib=$(memory_gib "$WIKI_LOCAL_CI_KIND_MEMORY")
 run_phase() {
-  local name=$1 status
-  shift
+  local name=$1 host_gib=$2 docker_gib=$3 status receipt
+  shift 3
+  receipt="$artifacts/phases/$name.success"
+  [ ! -e "$receipt" ] && [ ! -L "$receipt" ]
   printf 'Local contracts: %s (log: %s/logs/%s.log)\n' "$name" "$artifacts" "$name"
-  (trap - EXIT INT TERM; set +m; "$@") > "$artifacts/logs/$name.log" 2>&1 &
+  (trap - EXIT INT TERM; set +m
+    exec bun "$WIKI_LOCAL_CI_PHASE_RUNNER" run --name "$name" --host-gib "$host_gib" --docker-gib "$docker_gib" \
+      "$@" -- bash "$script" --phase "$name"
+  ) > "$artifacts/logs/$name.log" 2>&1 &
   phase_pid=$!
   if wait "$phase_pid"; then status=0; else status=$?; fi
   phase_pid=
+  if [ "$status" -eq 0 ]; then
+    if [ ! -f "$receipt" ] || [ -L "$receipt" ] || [ ! -O "$receipt" ] ||
+      [ "$(stat -c '%a' "$receipt")" != 600 ] || [ "$(cat "$receipt")" != "$name" ]; then
+      echo "Local contracts phase $name exited without its child success receipt." >&2
+      status=1
+    fi
+  fi
   if [ "$status" -ne 0 ]; then
     printf 'Local contracts phase %s failed (%s); see %s/logs/%s.log\n' "$name" "$status" "$artifacts" "$name" >&2
     return "$status"
@@ -85,10 +166,14 @@ postgres_contract() (
   namespace="$base_namespace-$suite-pg$version"
   container_id=
   cleanup_database() {
+    local status=$?
+    trap - EXIT INT TERM
     if [ -n "$container_id" ]; then
+      if ! bun "$WIKI_LOCAL_CI_PHASE_RUNNER" snapshot --container "$container_id"; then status=1; fi
       docker logs "$container_id" > "$artifacts/logs/$suite-pg$version-postgres.log" 2>&1 || true
       docker rm -f -v "$container_id" >/dev/null 2>&1 || true
     fi
+    exit "$status"
   }
   trap cleanup_database EXIT
   trap 'exit 130' INT
@@ -164,6 +249,8 @@ helm_lifecycle() (
   tagged_candidate=false
   tagged_postgres=false
   cleanup_helm() {
+    local status=$?
+    trap - EXIT INT TERM
     if [ -n "$create_pid" ]; then kill "$create_pid" 2>/dev/null || true; wait "$create_pid" 2>/dev/null || true; fi
     # Cancellation can arrive after Docker created the node but before its ID was recorded.
     if [ -n "$network_id" ] && [ -z "$node_id" ]; then
@@ -175,12 +262,14 @@ helm_lifecycle() (
       fi
     fi
     if [ -n "$node_id" ]; then
+      if ! bun "$WIKI_LOCAL_CI_PHASE_RUNNER" snapshot --container "$node_id"; then status=1; fi
       kind export logs --name "$KIND_CLUSTER_NAME" "$artifacts/helm/cluster-logs" >/dev/null 2>&1 || true
       docker rm -f -v "$node_id" >/dev/null 2>&1 || true
     fi
     if [ -n "$network_id" ]; then docker network rm "$network_id" >/dev/null 2>&1 || true; fi
     if [ "$tagged_candidate" = true ]; then docker image rm "$candidate" >/dev/null 2>&1 || true; fi
     if [ "$tagged_postgres" = true ]; then docker image rm "$postgres" >/dev/null 2>&1 || true; fi
+    exit "$status"
   }
   trap cleanup_helm EXIT
   trap 'exit 130' INT
@@ -251,28 +340,71 @@ worker_image() {
   tar -xOf "$artifacts/images/wiki-agent-browser.oci.tar" index.json > "$artifacts/images/agent-browser-oci-index.json"
   sha256sum "$artifacts/images/wiki-agent-browser.oci.tar" > "$artifacts/images/agent-browser-oci.sha256"
 }
-for version in 16 17; do run_phase "ledger-pg$version" postgres_contract "$version" ledger; done
-run_phase private-pages-pg18 postgres_contract 18 private-pages
-for version in 15 16 17 18; do
-  run_phase "page-index-pg$version" env WIKI_TEST_NAMESPACE="$base_namespace-page-index-pg$version" \
-    POSTGRES_TEST_IMAGE="$(postgres_image "$version")" PAGE_INDEX_BENCHMARK_FILE="$artifacts/reports/page-index-pg$version.json" \
-    bun run benchmark:page-index
-done
-for version in 15 16 17 18; do
-  run_phase "upgrade-pg$version" env WIKI_TEST_NAMESPACE="$base_namespace-upgrade-pg$version" \
-    POSTGRES_TEST_IMAGE="$(postgres_image "$version")" MIGRATION_METRICS_FILE="$artifacts/reports/migration-pg$version.json" \
-    dev/e2e/upgrade-smoke.sh
-done
-for version in 15 18; do
-  run_phase "recovery-pg$version" env WIKI_TEST_NAMESPACE="$base_namespace-recovery-pg$version" \
-    POSTGRES_TEST_IMAGE="$(postgres_image "$version")" dev/e2e/multi-instance-smoke.sh
-done
-run_phase kubernetes-tools provision_tools
-run_phase helm-lifecycle helm_lifecycle
-run_phase agent-browser-multiarch worker_image
-run_phase linux-bundle linux_bundle
-run_phase arm64-application arm_application
-run_phase site-logo-amd64 dev/build/run-site-logo-processing-gate.sh --local-image-id "$WIKI_TEST_IMAGE" \
-  linux/amd64 "$artifacts/reports/site-logo-amd64/site-logo-processing-benchmark-amd64.json" "$bun_version"
-run_phase site-logo-arm64 dev/build/run-site-logo-processing-gate.sh --local-image-id "$(cat "$artifacts/images/arm64-image-id.txt")" \
-  linux/arm64 "$artifacts/reports/site-logo-arm64/site-logo-processing-benchmark-arm64.json" "$bun_version"
+execute_phase() {
+  local name=$1 version
+  case "$name" in
+    ledger-pg16|ledger-pg17)
+      postgres_contract "${name#ledger-pg}" ledger
+      ;;
+    private-pages-pg18)
+      postgres_contract 18 private-pages
+      ;;
+    page-index-pg15|page-index-pg16|page-index-pg17|page-index-pg18)
+      version=${name#page-index-pg}
+      env WIKI_TEST_NAMESPACE="$base_namespace-page-index-pg$version" \
+        POSTGRES_TEST_IMAGE="$(postgres_image "$version")" PAGE_INDEX_BENCHMARK_FILE="$artifacts/reports/page-index-pg$version.json" \
+        bun run benchmark:page-index
+      ;;
+    upgrade-pg15|upgrade-pg16|upgrade-pg17|upgrade-pg18)
+      version=${name#upgrade-pg}
+      env WIKI_TEST_NAMESPACE="$base_namespace-upgrade-pg$version" \
+        POSTGRES_TEST_IMAGE="$(postgres_image "$version")" MIGRATION_METRICS_FILE="$artifacts/reports/migration-pg$version.json" \
+        dev/e2e/upgrade-smoke.sh
+      ;;
+    recovery-pg15|recovery-pg18)
+      version=${name#recovery-pg}
+      env WIKI_TEST_NAMESPACE="$base_namespace-recovery-pg$version" \
+        POSTGRES_TEST_IMAGE="$(postgres_image "$version")" dev/e2e/multi-instance-smoke.sh
+      ;;
+    kubernetes-tools) provision_tools ;;
+    helm-lifecycle) helm_lifecycle ;;
+    agent-browser-multiarch) worker_image ;;
+    linux-bundle) linux_bundle ;;
+    arm64-application) arm_application ;;
+    site-logo-amd64)
+      dev/build/run-site-logo-processing-gate.sh --local-image-id "$WIKI_TEST_IMAGE" \
+        linux/amd64 "$artifacts/reports/site-logo-amd64/site-logo-processing-benchmark-amd64.json" "$bun_version"
+      ;;
+    site-logo-arm64)
+      dev/build/run-site-logo-processing-gate.sh --local-image-id "$(cat "$artifacts/images/arm64-image-id.txt")" \
+        linux/arm64 "$artifacts/reports/site-logo-arm64/site-logo-processing-benchmark-arm64.json" "$bun_version"
+      ;;
+    *) printf 'Unknown local contract phase: %s\n' "$name" >&2; return 2 ;;
+  esac
+}
+if [ -n "$phase" ]; then
+  execute_phase "$phase"
+  # Only a successful child may publish a receipt; it never writes result.json.
+  (set -C; printf '%s\n' "$phase" > "$artifacts/phases/$phase.success")
+  exit 0
+fi
+
+# Budgets cover maximum simultaneous allocations, not just application services.
+for version in 16 17; do run_phase "ledger-pg$version" 4 "$postgres_gib"; done
+run_phase private-pages-pg18 4 "$postgres_gib"
+for version in 15 16 17 18; do run_phase "page-index-pg$version" 4 "$postgres_gib"; done
+# Migration monitoring runs a second app-capped volume helper alongside Wiki/PG.
+for version in 15 16 17 18; do run_phase "upgrade-pg$version" 2 "$((2 * app_gib + postgres_gib))"; done
+# Recovery retains both Wiki instances on rejoin, or Wiki/PG plus a PG-capped lock holder.
+recovery_gib=$((2 * app_gib + postgres_gib))
+recovery_lock_gib=$((app_gib + 2 * postgres_gib))
+if [ "$recovery_lock_gib" -gt "$recovery_gib" ]; then recovery_gib=$recovery_lock_gib; fi
+for version in 15 18; do run_phase "recovery-pg$version" 2 "$recovery_gib"; done
+run_phase kubernetes-tools 2 0
+run_phase helm-lifecycle 2 "$kind_gib"
+run_phase agent-browser-multiarch 1 8 --builder
+# Bundle extraction creates a stopped container, not another running Wiki.
+run_phase linux-bundle 2 0
+run_phase arm64-application 1 8 --builder
+run_phase site-logo-amd64 2 "$app_gib"
+run_phase site-logo-arm64 2 "$app_gib"
