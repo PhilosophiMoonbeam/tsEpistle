@@ -210,10 +210,9 @@ function base64(bytes: Uint8Array): string {
   return btoa(value)
 }
 
-async function integrityMatches(response: Response, integrity: string | undefined): Promise<boolean> {
+async function integrityMatches(bytes: ArrayBuffer, integrity: string | undefined): Promise<boolean> {
   if (!integrity) return true
-  if (typeof response.clone !== 'function' || !globalThis.crypto?.subtle) return false
-  const bytes = new Uint8Array(await response.clone().arrayBuffer())
+  if (!globalThis.crypto?.subtle) return false
   for (const token of integrity.split(/\s+/u)) {
     const separator = token.indexOf('-')
     if (separator <= 0) continue
@@ -287,7 +286,7 @@ async function cleanupIncompleteCaches(): Promise<void> {
   }
 }
 
-async function fetchPrecacheAsset(url: string): Promise<Response> {
+async function fetchPrecacheAsset(url: string): Promise<{ response: Response; body: ArrayBuffer | null }> {
   const signal = AbortSignal.timeout(10_000)
   for (let attempt = 0; ; attempt += 1) {
     signal.throwIfAborted()
@@ -295,11 +294,11 @@ async function fetchPrecacheAsset(url: string): Promise<Response> {
     try {
       response = await fetch(new Request(url, { cache: 'reload', credentials: 'same-origin', signal }))
       // HTTP and policy/integrity validation failures must remain authoritative.
-      if (response.status !== 200 || response.redirected || !responseTypeIsUsable(response)) return response
-      // A transient transport failure can happen after headers were received.
-      // Keep the original metadata while verifying that its body arrived fully.
-      await response.clone().arrayBuffer()
-      return response
+      if (response.status !== 200 || response.redirected || !responseTypeIsUsable(response)) return { response, body: null }
+      // Read the complete transport body inside the existing bounded retry.
+      // Reuse these verified bytes to publish independent cache responses.
+      const body = await response.arrayBuffer()
+      return { response, body }
     } catch (error) {
       void response?.body?.cancel().catch(() => undefined)
       if (!(error instanceof TypeError) || signal.aborted || attempt >= 2) throw error
@@ -337,19 +336,23 @@ async function installPrecache(): Promise<void> {
   try {
     for (const request of await cache.keys()) await cache.delete(request)
     for (const { entry, url } of entries) {
-      const response = await fetchPrecacheAsset(url)
-      if (response.status !== 200 || response.redirected || !responseTypeIsUsable(response) || !(await integrityMatches(response, entry.integrity))) {
+      const { response, body } = await fetchPrecacheAsset(url)
+      if (body === null) throw new Error(`The offline shell dependency could not be precached: ${url}`)
+      if (!(await integrityMatches(body, entry.integrity))) {
         throw new Error(`The offline shell dependency could not be precached: ${url}`)
       }
+      // Preserve content and headers, not the original network response:
+      // WebKit can otherwise fail to replay HTTPS modules while disconnected.
+      const cachedResponse = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
       if (url === offlineURL) {
-        const shell = await response.clone().text()
+        const shell = new TextDecoder().decode(body)
         if (metaContent(shell, 'tsepistle-pwa-mode') !== 'feature') throw new Error('The neutral offline shell is not in feature mode.')
         if (metaContent(shell, 'tsepistle-pwa-release') !== PWA_RELEASE_ID) {
           throw new Error('The neutral offline shell belongs to a different release.')
         }
         shellDependencies(shell, url, closure)
       }
-      await cache.put(url, response)
+      await cache.put(url, cachedResponse)
     }
     for (const url of closure) {
       if (!(await cache.match(url))) throw new Error(`The offline shell closure is incomplete: ${url}`)
