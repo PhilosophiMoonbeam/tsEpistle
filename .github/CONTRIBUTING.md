@@ -100,6 +100,8 @@ Confirmation sessions mount `VDialog` with its active model. Reusing an inactive
 
 Creation-tool browser stories await the selected menu's actual dismissal before reopening through the composer's owned native ArrowDown handling. Vuetify deliberately guards immediate post-selection activator clicks. Preserve both selected-tool checks, viewport geometry, the submitted tool set, and native video/audio playback; do not replace the dismissal signal with a sleep.
 
+Inline-Agent accessibility stories assert the Suggested prompts group's owned status, not a page-wide wording match: the same unavailable reason can also appear in the panel alert. Retain responsive geometry, accessibility scans, and native History traversal; do not resolve duplicate text by picking an arbitrary match.
+
 Native target-size checks normalize sub-millipixel DOMRect representation error before enforcing their unchanged CSS-pixel bounds. Do not widen actual hit-target limits to accommodate floating-point coordinate noise.
 
 Draw.io keyboard qualification covers a full forward focus loop, reverse traversal, Escape restoration, and pointer close/reopen. Do not repeat an identical forward loop: it adds native protocol time without another boundary or transition, while the reverse and reopen paths already exercise re-entry.

@@ -715,12 +715,14 @@ test.describe('release accessibility profiles', () => {
     const askAgent = searchDialog.getByRole('button', { name: 'Ask about this', exact: true })
     await expect(askAgent).toBeVisible()
     await askAgent.click()
-    await expect(page.getByRole('region', { name: 'Wiki Agent' })).toBeVisible()
-    await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
+    const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
+    await expect(agent).toBeVisible()
+    const starters = agent.getByRole('group', { name: 'Suggested prompts', exact: true })
+    await expect(starters.getByRole('status')).toBeVisible()
     await expectResponsiveLayout(page, `inline agent (${testInfo.project.name})`)
     await expectNoBlockingAccessibilityViolations(page, `inline agent (${testInfo.project.name})`)
     if (testInfo.project.name === 'accessibility-keyboard') {
-      const history = page.getByRole('region', { name: 'Wiki Agent' }).getByRole('button', { name: 'History', exact: true })
+      const history = agent.getByRole('button', { name: 'History', exact: true })
       expect(await tabToControl(page, history), 'Agent history must be reachable in the tab order').toBe(true)
     }
   })
