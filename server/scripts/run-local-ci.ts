@@ -142,7 +142,7 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
     imageId = image.Id
     env.WIKI_TEST_IMAGE = imageId
     await gate('contracts', ['bash', 'dev/ci/local-contracts.sh'])
-    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], 6, owner.options.browserJobs * 3)
+    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], owner.options.browserJobs === 1 ? 6 : 8, owner.options.browserJobs * 3)
     for (const file of (await fs.readdir(path.join(runDir, 'resources'))).filter(file => file.endsWith('.json'))) {
       const phase = JSON.parse(await fs.readFile(path.join(runDir, 'resources', file), 'utf8'))
       if (phase.status !== 'passed' || phase.namespace !== namespace || phase.revision !== revision) throw new Error('Resource qualification is incomplete.')
@@ -248,7 +248,6 @@ async function outside(options: Options): Promise<void> {
         '--quiet',
         '--unit',
         namespace,
-        '--property=MemoryHigh=384M',
         '--property=MemoryMax=512M',
         '--property=MemorySwapMax=0',
         '--property=CPUQuota=800%',

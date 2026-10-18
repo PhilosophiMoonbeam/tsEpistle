@@ -545,7 +545,6 @@ export async function runPhase(
       '--unit',
       unit.slice(0, -6),
       '--property=MemoryAccounting=yes',
-      `--property=MemoryHigh=${Math.floor(hostGiB * 768)}M`,
       `--property=MemoryMax=${hostGiB}G`,
       '--property=MemorySwapMax=0',
       '--property=TimeoutStopSec=10s',
