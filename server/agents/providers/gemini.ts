@@ -151,7 +151,9 @@ const acceptPayload = (value: unknown, state: GeminiWireState, buffered: boolean
     const receipt = [input, output, total, cached, thoughts]
     if (state.usageReceipt?.some((prior, index) => receipt[index]! < prior)) throw invalidUsage()
     state.usageReceipt = receipt
-    state.usage = true
+    // Interim receipts cannot settle a turn whose output is still growing.
+    // Require a complete receipt on or after the terminal candidate.
+    state.usage = state.terminal
     state.frames.push({ cached, reported: Object.hasOwn(usage, 'cachedContentTokenCount'), complete: state.terminal })
   } else {
     state.frames.push({ reported: false, complete: state.terminal && state.usage })

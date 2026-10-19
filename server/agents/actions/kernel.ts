@@ -275,6 +275,7 @@ export class ActionKernel {
     if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before execution', 409)
 
     const liveAdmission = await request.refreshAdmission(authority, input)
+    if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before handler dispatch', 409)
     if (liveAdmission.transport !== authority.transport) throw new ActionKernelError('INVALID_AUTHORITY', 'Action transport changed after admission', 400)
     assertAdmission(definition, liveAdmission)
     const handler = this.handlers.get(authority.actionName)

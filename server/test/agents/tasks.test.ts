@@ -144,6 +144,22 @@ describe('durable agent task ledger', () => {
     ])
   })
 
+  it.each([
+    ['a cancelled root', { cancelRequestedAt: '2026-10-19T00:00:00.000Z' }],
+    ['a terminal root', { status: 'succeeded' }],
+    ['a superseded worker', { leaseOwner: 'replacement-worker' }]
+  ] as const)('does not admit a child for %s or alter its durable plan', async (_name, rootPatch) => {
+    await createAgentRunTasks(knex, claim, tasks, plannerUsage)
+    const before = await listAgentRunTasks(knex, runId)
+    const events = await knex('agentEvents').orderBy('sequence')
+    await knex('agentRuns').where({ id: runId }).update(rootPatch)
+
+    await expect(startAgentRunTask(knex, claim, firstTaskId, firstSubagentId)).rejects.toMatchObject({ code: 'RUN_LEASE_LOST', status: 409 })
+
+    expect(await listAgentRunTasks(knex, runId)).toEqual(before)
+    expect(await knex('agentEvents').orderBy('sequence')).toEqual(events)
+  })
+
   it('projects only authorized selected-run tasks in deterministic order and rejects overflow', async () => {
     const earlierRunId = '00000000-0000-4000-8000-000000000010'
     const omittedRunId = '00000000-0000-4000-8000-000000000011'

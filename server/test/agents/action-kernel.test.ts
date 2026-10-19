@@ -179,6 +179,37 @@ describe('action authority and execution', () => {
     expect(handler).not.toHaveBeenCalled()
   })
 
+  it('does not dispatch a handler when cancellation arrives during live admission refresh', async () => {
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const kernel = new ActionKernel()
+    const handler = vi.fn(async () => page)
+    kernel.register('pages.get', handler)
+    const authority = createActionAuthority('pages.get', requestId, auth, admission())
+    const controller = new AbortController()
+    const invocation = kernel.execute({
+      authority,
+      actionCallId: 'cancelled-admission',
+      input: { id: 42 },
+      signal: controller.signal,
+      refreshAdmission: async () => {
+        entered.resolve()
+        await release.promise
+        return admission()
+      }
+    })
+    try {
+      await entered.promise
+      controller.abort(new Error('Request cancelled while authorizing'))
+      release.resolve()
+      await expect(invocation).rejects.toMatchObject({ code: 'ACTION_CANCELLED', status: 409 })
+      expect(handler).not.toHaveBeenCalled()
+    } finally {
+      release.resolve()
+      await invocation.catch(() => {})
+    }
+  })
+
   it('fails closed for cancellation, duplicate handlers, and invalid handler output', async () => {
     const kernel = new ActionKernel()
     kernel.register('pages.get', async () => ({ content: 'missing fields' }))

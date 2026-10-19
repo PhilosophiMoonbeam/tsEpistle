@@ -150,8 +150,25 @@ const main = async (): Promise<void> => {
     process.stdout.write(`${JSON.stringify({ mode, status: 'failed', failure: 'OFFLINE_EVALUATION_FAILED', accounting: admissions.map(({ label, admitted }) => ({ label, ...admitted.summary() })) })}\n`)
     process.exitCode = 1
   } finally {
-    await Promise.all(admissions.map(({ admitted }) => admitted.close()))
-    await knex.destroy()
+    let cleanupFailed = false
+    try {
+      const closed = await Promise.allSettled(admissions.map(({ admitted }) => admitted.close()))
+      cleanupFailed = closed.some(result => result.status === 'rejected')
+    } catch {
+      cleanupFailed = true
+    } finally {
+      try {
+        await knex.destroy()
+      } catch {
+        cleanupFailed = true
+      }
+    }
+    if (cleanupFailed) {
+      process.stdout.write(
+        `${JSON.stringify({ mode, status: 'failed', failure: 'OFFLINE_EVALUATION_CLEANUP_FAILED', accounting: admissions.map(({ label, admitted }) => ({ label, ...admitted.summary() })) })}\n`
+      )
+      process.exitCode = 1
+    }
   }
 }
 

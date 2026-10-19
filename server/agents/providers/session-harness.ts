@@ -48,6 +48,7 @@ const boundedJson = (value: unknown, maxBytes: number, code: string): string => 
   let encoded: string
   try {
     encoded = JSON.stringify(value)
+    if (typeof encoded !== 'string') throw new Error('Missing JSON representation')
   } catch {
     throw new AgentRepositoryError(code, 'Runtime value is not JSON serializable', 500)
   }
@@ -91,14 +92,14 @@ export class AxSessionHarness {
     const callbacks = Object.fromEntries(
       actions.map(action => [
         action.definition.descriptor.name,
-        async (input: unknown) => {
+        async (inputJson: string) => {
           const active = invocation
           if (!active) throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback was invoked outside an active request', 500)
           assertOpen()
           active.signal.throwIfAborted()
           let result: unknown
           try {
-            result = await this.#execute(action, input, active.signal, active.actionCallId)
+            result = await this.#execute(action, JSON.parse(inputJson) as unknown, active.signal, active.actionCallId)
             boundedJson(result, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
           } catch (error: unknown) {
             const rawCode = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined
@@ -155,12 +156,15 @@ export class AxSessionHarness {
         if (!offered.has(name as AgentActionName)) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider requested an unavailable action', 403)
         if (!actionCallId || actionCallId.length > 128) throw new AgentRepositoryError('INVALID_ACTION_CALL_ID', 'Action call identity is invalid', 400)
         const inputJson = boundedJson(input, 64 * 1_024, 'INVALID_ACTION_INPUT')
+        // Transport JSON text, not a JavaScript object literal: own __proto__
+        // keys must remain data, and Ax scans source for quoted directives.
+        const inputLiteral = JSON.stringify(inputJson).replaceAll("'", '\\u0027')
         signal.throwIfAborted()
         const active = { signal, actionCallId, hostResult: NO_HOST_RESULT as unknown }
         invocation = active
         try {
           try {
-            await session.execute(`await __wikiActions[${JSON.stringify(name)}](${inputJson})`, { signal, reservedNames: RESERVED_NAMES })
+            await session.execute(`await __wikiActions[${JSON.stringify(name)}](${inputLiteral})`, { signal, reservedNames: RESERVED_NAMES })
           } catch (error) {
             // A timed-out worker may restart, and an aborted worker is already
             // closed. Neither can safely retain this host invocation's ownership.

@@ -130,13 +130,13 @@ describe('decision provider protocols', () => {
   for (const check of [false, true]) {
     it(`rejects an undiscovered Jev pin when inference reports a different version (check=${check})`, async () => {
       const client = new DecisionProviderClient({
-        resolve: publicDns,
-        fetch: fakeFetch(url =>
-          Response.json(
-            url.pathname.endsWith('/models') ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] } : nativePayload()
-          )
+      resolve: publicDns,
+      fetch: fakeFetch(url =>
+        Response.json(
+          url.pathname.endsWith('/models') ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] } : nativePayload()
         )
-      })
+      )
+    })
       const error = await client
         .execute({ ...native, config: { ...native.config, model: 'jev-9.99.0' } }, 'fixture-secret', request, { check })
         .catch(value => value)
@@ -683,9 +683,9 @@ describe('decision provider protocols', () => {
     const client = new DecisionProviderClient({
       resolve,
       fetch: fakeFetch(() => {
-        calls++
-        return Response.json(nativePayload())
-      })
+          calls++
+          return Response.json(nativePayload())
+        })
     })
     await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({ code: 'DECISION_EGRESS_DENIED' })
     await expect(client.executeBatch(native, 'fixture', batchRequest)).rejects.toMatchObject({ code: 'DECISION_EGRESS_DENIED' })
@@ -772,6 +772,181 @@ describe('decision provider protocols', () => {
     await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({ code: 'INVALID_DECISION_RESPONSE' })
     await expect(client.executeBatch(native, 'fixture', batchRequest)).rejects.toMatchObject({ code: 'INVALID_DECISION_RESPONSE' })
   })
+
+  it.each(['DNS', 'source authorization', 'transport', 'response body'] as const)(
+    'honors Ax cancellation during compatible %s without publishing an incomplete receipt or dispatching queued work',
+    async boundary => {
+      const previous = axGlobals.abortSignal
+      const sdkAbort = new AbortController()
+      const hostAbort = new AbortController()
+      axGlobals.abortSignal = sdkAbort.signal
+      const entered = Promise.withResolvers<void>()
+      const dnsReady = Promise.withResolvers<{ address: string; family: number }[]>()
+      const sourceReady = Promise.withResolvers<void>()
+      const transportReady = Promise.withResolvers<Response>()
+      const lateBodyCancelled = Promise.withResolvers<void>()
+      const onRequestDispatched = vi.fn()
+      let transportSignal: AbortSignal | null | undefined
+      let body: ReadableStreamDefaultController<Uint8Array> | undefined
+      let calls = 0
+      const payload = {
+        model: 'decision-model',
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(answer) } }],
+        usage: { prompt_tokens: 100, completion_tokens: 5 }
+      }
+      const client = new DecisionProviderClient({
+        resolve: (async () => {
+          if (boundary === 'DNS') {
+            entered.resolve()
+            return dnsReady.promise
+          }
+          return [{ address: '93.184.216.34', family: 4 }]
+        }) as unknown as typeof lookup,
+        fetch: fakeFetch((_url, init) => {
+          calls++
+          transportSignal = init.signal
+          if (boundary === 'transport') {
+            entered.resolve()
+            return transportReady.promise
+          }
+          if (boundary === 'response body')
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  body = controller
+                  controller.enqueue(new TextEncoder().encode(JSON.stringify(payload)))
+                },
+                pull() {
+                  // Complete JSON is not a receipt until the next read proves EOF.
+                  entered.resolve()
+                }
+              })
+            )
+          return Response.json(payload)
+        })
+      })
+      const completed = withAgentSourceAuthorization(
+        async () => {
+          if (boundary === 'source authorization') {
+            entered.resolve()
+            await sourceReady.promise
+          }
+        },
+        () =>
+          client.execute(custom('chat-completions'), 'fixture', request, {
+            signal: hostAbort.signal,
+            onRequestDispatched
+          })
+      ).catch((error: unknown) => error)
+      try {
+        await entered.promise
+        sdkAbort.abort('private-sdk-cancellation-reason')
+        dnsReady.resolve([{ address: '93.184.216.34', family: 4 }])
+        sourceReady.resolve()
+        const checkpoint = new Promise<'stalled'>(resolve => {
+          // The completed cancellation must beat the next event-loop turn,
+          // not an elapsed wall-clock delay or the host's later deadline.
+          setImmediate(() => resolve('stalled'))
+        })
+        const failure = await Promise.race([completed, checkpoint])
+        expect(failure).not.toBe('stalled')
+        expect(failure).toMatchObject({ code: 'DECISION_ABORTED', status: 499 })
+        expect(Reflect.get(failure as object, 'usage') ?? null).toBeNull()
+        expect(hostAbort.signal.aborted).toBe(false)
+        expect(JSON.stringify(failure)).not.toContain('private-sdk-cancellation-reason')
+        const dispatched = boundary === 'transport' || boundary === 'response body'
+        expect(calls).toBe(dispatched ? 1 : 0)
+        expect(onRequestDispatched).toHaveBeenCalledTimes(dispatched ? 1 : 0)
+        if (dispatched) expect(transportSignal?.aborted).toBe(true)
+        if (boundary === 'transport') {
+          transportReady.resolve(
+            new Response(
+              new ReadableStream({
+                cancel() {
+                  lateBodyCancelled.resolve()
+                }
+              })
+            )
+          )
+          expect(
+            await Promise.race([lateBodyCancelled.promise.then(() => 'cancelled'), new Promise<'stalled'>(resolve => setImmediate(() => resolve('stalled')))])
+          ).toBe('cancelled')
+        }
+      } finally {
+        axGlobals.abortSignal = previous
+        dnsReady.resolve([{ address: '93.184.216.34', family: 4 }])
+        sourceReady.resolve()
+        transportReady.resolve(Response.json(payload))
+        try {
+          body?.close()
+        } catch {
+          // Cancellation may already have closed the fixture stream.
+        }
+        await completed
+      }
+    }
+  )
+
+  it.each(['cancelled body', 'oversized declared body', 'HTTP rejection'] as const)(
+    'settles a %s without awaiting stalled transport cleanup or inventing usage',
+    async mode => {
+      const reading = Promise.withResolvers<void>()
+      const cancelling = Promise.withResolvers<void>()
+      const cleanupReady = Promise.withResolvers<void>()
+      const controller = new AbortController()
+      const onRequestDispatched = vi.fn()
+      let calls = 0
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => {
+          calls++
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.enqueue(new TextEncoder().encode(JSON.stringify(nativePayload())))
+              },
+              pull() {
+                reading.resolve()
+              },
+              cancel() {
+                cancelling.resolve()
+                return cleanupReady.promise
+              }
+            }),
+            mode === 'HTTP rejection' ? { status: 429 } : mode === 'oversized declared body' ? { headers: { 'content-length': String(256 * 1_024 + 1) } } : {}
+          )
+        })
+      })
+      const completed = client
+        .execute(native, 'fixture', request, {
+          signal: controller.signal,
+          onRequestDispatched
+        })
+        .catch((error: unknown) => error)
+      try {
+        if (mode === 'cancelled body') {
+          await reading.promise
+          controller.abort()
+        }
+        await cancelling.promise
+        // Cleanup stays unresolved across the next event-loop turn.
+        const failure = await Promise.race([completed, new Promise<'stalled'>(resolve => setImmediate(() => resolve('stalled')))])
+        expect(failure).not.toBe('stalled')
+        expect(failure).toBeInstanceOf(DecisionProviderFailure)
+        expect(failure).toMatchObject({
+          code: mode === 'cancelled body' ? 'DECISION_ABORTED' : mode === 'HTTP rejection' ? 'DECISION_PROVIDER_UNAVAILABLE' : 'INVALID_DECISION_RESPONSE',
+          usage: null,
+          estimatedCost: null,
+          estimatedCostMicros: null
+        })
+        expect(calls).toBe(1)
+        expect(onRequestDispatched).toHaveBeenCalledTimes(1)
+      } finally {
+        cleanupReady.resolve()
+        await completed
+      }
+    }
+  )
 
   it('propagates abort and bounds stalled DNS resolution by the configured timeout', async () => {
     const unresolved = (async () => Promise.withResolvers<never>().promise) as unknown as typeof lookup
@@ -1059,9 +1234,9 @@ describe('native decision batches', () => {
         return [{ address: '93.184.216.34', family: 4 }]
       }) as unknown as typeof lookup,
       fetch: fakeFetch((_url, init) => {
-        outgoing.push(init)
-        return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
-      })
+          outgoing.push(init)
+          return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+        })
     })
     const failure = await client
       .executeBatch({ ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest, {
@@ -1084,9 +1259,9 @@ describe('native decision batches', () => {
     const client = new DecisionProviderClient({
       resolve: publicDns,
       fetch: fakeFetch((_url, init) => {
-        outgoing.push(init)
-        return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
-      })
+          outgoing.push(init)
+          return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+        })
     })
     const controller = new AbortController()
     const pending = client.executeBatch({ ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest, {
@@ -1103,6 +1278,45 @@ describe('native decision batches', () => {
     expect(failure).not.toBeInstanceOf(DecisionProviderFailure)
     expect(String(failure)).not.toContain('private-cancellation-detail')
     expect(outgoing).toEqual([])
+  })
+
+  it('reports a final source guard deadline as an unbilled timeout rather than caller cancellation', async () => {
+    const entered = Promise.withResolvers<void>()
+    const ready = Promise.withResolvers<void>()
+    const timeout = new AbortController()
+    const nativeTimeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    const outgoing: RequestInit[] = []
+    const onRequestDispatched = vi.fn()
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch((_url, init) => {
+          outgoing.push(init)
+          return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+        })
+    })
+    const completed = client
+      .executeBatch({ ...native, config: { ...native.config, timeoutMs: 100 } }, 'fixture', batchRequest, {
+        onPreDispatch: async () => {
+          entered.resolve()
+          await ready.promise
+        },
+        onRequestDispatched
+      })
+      .catch((error: unknown) => error)
+    try {
+      await entered.promise
+      timeout.abort(new DOMException('Fixture deadline', 'TimeoutError'))
+      const failure = await completed
+      expect(failure).toMatchObject({ code: 'DECISION_TIMEOUT', status: 502 })
+      expect(failure).not.toBeInstanceOf(DecisionProviderFailure)
+      expect(failure).not.toHaveProperty('usage')
+      expect(outgoing).toEqual([])
+      expect(onRequestDispatched).not.toHaveBeenCalled()
+    } finally {
+      ready.resolve()
+      nativeTimeout.mockRestore()
+      await completed
+    }
   })
 
   it('cancels an in-flight batch without retrying or fabricating usage when its transport stalls', async () => {

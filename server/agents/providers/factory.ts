@@ -2,6 +2,7 @@ import { lookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
 import {
   ai,
+  axGetRuntimeHookFrame,
   type AxAIAnthropicModel,
   type AxAIFeatures,
   AxAIGoogleGeminiModel,
@@ -13,6 +14,7 @@ import {
   type AxChatResponse,
   type AxChatResponseResult
 } from '@ax-llm/ax'
+import { createNoopMeter, ProxyTracerProvider } from '@opentelemetry/api'
 import type { Knex } from 'knex'
 // The explicit entry point avoids Bun's built-in shim, which ignores dispatchers.
 import { Agent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from 'undici/index.js'
@@ -57,6 +59,12 @@ const MAX_PROVIDER_RESULT_RECORDS = 65_536
 const MAX_STRUCTURED_DEPTH = 64
 const MAX_STRUCTURED_VALUES = 16_384
 const MAX_STRUCTURED_BYTES = 65_536
+
+// Ax 25.4.3 chat() drops symbol frames and undefined hooks in its options merge.
+// Defined neutral hooks preserve resolved absence without changing ambient state.
+const absentRuntimeTracer = new ProxyTracerProvider().getTracer('agent-provider-resolved-absence')
+const absentRuntimeMeter = createNoopMeter()
+const absentRuntimeLimiter: NonNullable<AxAIServiceOptions['rateLimiter']> = next => next()
 
 // Exact native chat capabilities and Google's thinking-level table:
 // https://ai.google.dev/gemini-api/docs/thinking
@@ -366,8 +374,8 @@ export const decodeAgentProviderContinuation = (
   if (!Array.isArray(thoughtBlocks)) return undefined
   if (expectedDialect !== 'openai-responses-reasoning-v1' && expectedDialect !== 'openresponses-reasoning-v1') return undefined
   return {
-    thoughtBlocks: validateContinuationBlocks(expectedDialect, thoughtBlocks, 'stored')
-  }
+      thoughtBlocks: validateContinuationBlocks(expectedDialect, thoughtBlocks, 'stored')
+    }
 }
 
 export class AgentProviderAttemptError extends Error {
@@ -1330,8 +1338,8 @@ const createRequestScopedService = (
       const attached = readAgentProviderResourceLimits(request)
       const outputTokens = requestOutputTokens(request, ceiling)
       const limits = attached
-        ? { ...attached, maxOutputTokens: Math.min(attached.maxOutputTokens, outputTokens) }
-        : deriveAgentProviderResourceLimits(outputTokens)
+          ? { ...attached, maxOutputTokens: Math.min(attached.maxOutputTokens, outputTokens) }
+          : deriveAgentProviderResourceLimits(outputTokens)
       const onLimit = (error: AgentRepositoryError): void => {
         if (!controller.signal.aborted) controller.abort(error)
       }
@@ -1354,7 +1362,20 @@ const createRequestScopedService = (
           promptCacheKey: options?.promptCacheKey ?? defaultsSnapshot.promptCacheKey,
           cachePrompt: boundedRequest.chatPrompt
         })
-        const nativeOptions = { ...defaultsSnapshot, ...options, abortSignal: signal }
+        const nativeOptions = {
+          ...defaultsSnapshot,
+          ...options,
+          // The native merge drops the frame symbol and undefined values, so
+          // clearing hooks alone would still revive service/ambient defaults.
+          ...(axGetRuntimeHookFrame(options)?.resolved
+            ? {
+                rateLimiter: options?.rateLimiter ?? absentRuntimeLimiter,
+                tracer: options?.tracer ?? absentRuntimeTracer,
+                meter: options?.meter ?? absentRuntimeMeter
+              }
+            : {}),
+          abortSignal: signal
+        }
         delete nativeOptions.onRequestDispatched
         const scopedOptions = safeOptions(nativeOptions, service.getOptions().fetch)
         // Host-owned native cache controls cover official models newer than this SDK's catalog.

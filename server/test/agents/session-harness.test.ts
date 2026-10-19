@@ -4,7 +4,7 @@ import { actionDefinition } from '../../agents/actions/catalog.ts'
 import type { OfferedAction } from '../../agents/actions/kernel.ts'
 import { AxSessionHarness } from '../../agents/providers/session-harness.ts'
 
-const offered = (name: 'pages.get'): OfferedAction => ({
+const offered = (name: 'pages.get' | 'pages.search'): OfferedAction => ({
   definition: actionDefinition(name),
   authority: {
     version: 1,
@@ -82,6 +82,81 @@ describe('Ax session harness', () => {
     await expect(Promise.resolve(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-3'))).rejects.toMatchObject({
       code: 'ACTION_SESSION_CLOSED'
     })
+  })
+
+  it.each([
+    "'use strict'",
+    '"use strict"',
+    "await import('node:fs'); __wikiActions = {}; // ordinary source example",
+    'const __wikiActions = undefined; /* reserved binding example */',
+    `\`template \${__wikiActions}\`; \\ escaped "quotes"\nreturn (value)`
+  ])('preserves ordinary JSON strings containing %s through the actual runtime', async text => {
+    const input = { query: `A document says ${text} in an example.` }
+    const execute = vi.fn(async (_action: OfferedAction, _input: unknown) => ({ read: true }))
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
+    const session = await harness.open([offered('pages.search')])
+    try {
+      expect(await session.invoke('pages.search', input, new AbortController().signal, 'directive-data')).toEqual({ read: true })
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute.mock.calls[0]?.[1]).toEqual(input)
+    } finally {
+      session.close()
+    }
+  })
+
+  it('preserves own __proto__ JSON keys at every input depth through the actual runtime', async () => {
+    const input = JSON.parse('{"id":42,"__proto__":{"root":"data"},"nested":{"__proto__":{"child":"data"}}}') as Record<string, unknown>
+    const execute = vi.fn(async (_action: OfferedAction, _input: unknown) => ({ read: true }))
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
+    const session = await harness.open([offered('pages.get')])
+    try {
+      expect(await session.invoke('pages.get', input, new AbortController().signal, 'prototype-data')).toEqual({ read: true })
+      const received = execute.mock.calls[0]?.[1] as Record<string, unknown>
+      expect(received).toEqual(input)
+      expect(Object.hasOwn(received, '__proto__')).toBe(true)
+      expect(Object.hasOwn(received.nested as object, '__proto__')).toBe(true)
+    } finally {
+      session.close()
+    }
+  })
+
+  it('rejects unencodable or oversized JSON input before host dispatch', async () => {
+    const execute = vi.fn(async () => ({ read: true }))
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
+    const session = await harness.open([offered('pages.get')])
+    try {
+      for (const input of [undefined, Symbol('not-json'), () => null, { text: 'é'.repeat(32 * 1_024) }]) {
+        await expect(session.invoke('pages.get', input, new AbortController().signal, 'invalid-input')).rejects.toMatchObject({
+          code: 'INVALID_ACTION_INPUT'
+        })
+      }
+      expect(execute).not.toHaveBeenCalled()
+      expect(await session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'valid-input')).toEqual({ read: true })
+      expect(execute).toHaveBeenCalledTimes(1)
+    } finally {
+      session.close()
+    }
+  })
+
+  it('rejects unencodable and oversized host results without losing subsequent action calls', async () => {
+    let output: unknown
+    const execute = vi.fn(async () => output)
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
+    const session = await harness.open([offered('pages.get')])
+    try {
+      await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'unencodable-result')).rejects.toMatchObject({
+        code: 'ACTION_RESULT_TOO_LARGE'
+      })
+      output = { text: 'é'.repeat(64 * 1_024) }
+      await expect(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'oversized-result')).rejects.toMatchObject({
+        code: 'ACTION_RESULT_TOO_LARGE'
+      })
+      output = { recovered: true }
+      expect(await session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'valid-result')).toEqual({ recovered: true })
+      expect(execute).toHaveBeenCalledTimes(3)
+    } finally {
+      session.close()
+    }
   })
 
   it('returns the authoritative host result after an approval-length pause', async () => {
@@ -265,11 +340,12 @@ describe('Ax session harness', () => {
     const snapshot = await first.snapshot(new AbortController().signal)
     first.close()
     expect(snapshot).not.toHaveProperty('__wikiActions')
-    const restored = await harness.open([], { ...snapshot, safeValue: { count: 2 } })
+    const restored = await harness.open([offered('pages.get')], { ...snapshot, safeValue: { count: 2 }, __wikiActions: { 'pages.get': 'untrusted' } })
     try {
       const restoredSnapshot = await restored.snapshot(new AbortController().signal)
       expect(restoredSnapshot).toMatchObject({ safeValue: { count: 2 } })
       expect(restoredSnapshot).not.toHaveProperty('__wikiActions')
+      expect(await restored.invoke('pages.get', { id: 42 }, new AbortController().signal, 'restored-authority')).toEqual({})
     } finally {
       restored.close()
     }

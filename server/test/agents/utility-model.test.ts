@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from '../bun-test.mts'
-import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import type { AgentProviderChatOptions, AgentProviderFactory } from '../../agents/providers/factory.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import { AgentUtilityModel, conversationTitleFallback, normalizeConversationTitle } from '../../agents/providers/utility.ts'
 
@@ -133,12 +133,12 @@ describe('agent utility model', () => {
         transportKind: 'openai-responses',
         capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
         pricing: {
-          revision: 'cache-v2',
-          inputMicrosPerMillionTokens: 2_000_000,
-          outputMicrosPerMillionTokens: 5_000_000,
-          cacheReadMicrosPerMillionTokens: 100_000,
-          cacheWriteMicrosPerMillionTokens: 3_000_000
-        }
+        revision: 'cache-v2',
+        inputMicrosPerMillionTokens: 2_000_000,
+        outputMicrosPerMillionTokens: 5_000_000,
+        cacheReadMicrosPerMillionTokens: 100_000,
+        cacheWriteMicrosPerMillionTokens: 3_000_000
+      }
       }))
     } as unknown as AgentProviderFactory)
     expect(await utility.generateConversationTitle(request)).toMatchObject({ inputTokens: 10, outputTokens: 0, totalTokens: 10, costMicros: 13 })
@@ -440,14 +440,14 @@ describe('agent utility model', () => {
             : receipt
         )
         const utility = new AgentUtilityModel({
-          create: vi.fn(async () => ({
-            service: { chat },
-            model: 'model-mini',
-            transportKind: 'openai-responses',
-            capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
-            pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
-          }))
-        } as unknown as AgentProviderFactory)
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
         const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
         const reconcile = vi.fn(async () => {
           expect(reachedEof).toBe(true)
@@ -498,7 +498,8 @@ describe('agent utility model', () => {
     const reserve = vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 }))
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
-    const chat = vi.fn(async () => {
+    const chat = vi.fn(async (_request: unknown, options?: AgentProviderChatOptions) => {
+      options?.onRequestDispatched?.()
       throw new Error('provider request failed')
     })
     const utility = new AgentUtilityModel({
@@ -567,7 +568,8 @@ describe('agent utility model', () => {
   it('reserves unknown attempted title exposure at the configured maximum rate', async () => {
     const reserve = vi.fn(async () => ({ id: 1, tokens: 100_000, costMicros: 100_000 }))
     const release = vi.fn(async () => {})
-    const chat = vi.fn(async (_providerRequest: unknown) => {
+    const chat = vi.fn(async (_providerRequest: unknown, options?: AgentProviderChatOptions) => {
+      options?.onRequestDispatched?.()
       throw new Error('provider request failed')
     })
     const utility = new AgentUtilityModel({
@@ -658,7 +660,7 @@ describe('agent utility model', () => {
         })
         controller.enqueue({
           results: [{ index: 0, content: 'Pipeline Failures' }],
-          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4_580 } }
+          modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 309, totalTokens: 4580 } }
         })
         controller.close()
       }
@@ -677,7 +679,7 @@ describe('agent utility model', () => {
       title: 'Deployment Pipeline Failures',
       inputTokens: 3,
       outputTokens: 309,
-      totalTokens: 4_580
+      totalTokens: 4580
     })
   })
 
@@ -739,6 +741,316 @@ describe('agent utility model', () => {
         }
       })
     ).rejects.toThrow('accounting unavailable')
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it.each(['title', 'classification'] as const)('releases %s admission after a provider guard rejects without dispatch', async purpose => {
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const release = vi.fn(async () => {})
+    const reconcile = vi.fn(async () => {})
+    const chat = vi.fn(async () => {
+      throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Request rejected before HTTP handoff', 400)
+    })
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+    const dispatchBudget = {
+      reserve: vi.fn(async () => reservation),
+      reconcile,
+      release,
+      consumeTool: vi.fn(async () => {}),
+      unsettledExposure: { tokens: 0, costMicros: 0 }
+    }
+    const result =
+      purpose === 'title'
+        ? await utility.generateConversationTitle({ ...request, dispatchBudget })
+        : await utility.classifyGoalBudget({
+            profileVersionId: request.profileVersionId,
+            objective: 'Investigate deployment rollover',
+            signal: request.signal,
+            dispatchBudget
+          })
+    expect(result).toMatchObject(
+      purpose === 'title'
+        ? { source: 'fallback', title: 'Investigate intermittent failures in the deployment pipeline', totalTokens: 0 }
+        : { selection: 'fallback', tier: 'extended', totalTokens: 0 }
+    )
+    expect(chat).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledWith(reservation)
+    expect(reconcile).not.toHaveBeenCalled()
+  })
+
+  it('retains unknown goal classification exposure after an actual provider handoff fails', async () => {
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const release = vi.fn(async () => {})
+    const reconcile = vi.fn(async () => {})
+    const chat = vi.fn(async (_request: unknown, options?: AgentProviderChatOptions) => {
+      options?.onRequestDispatched?.()
+      throw new Error('network outcome unknown')
+    })
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+    await expect(
+      utility.classifyGoalBudget({
+        profileVersionId: request.profileVersionId,
+        objective: 'Investigate deployment rollover',
+        signal: request.signal,
+        dispatchBudget: {
+              reserve: vi.fn(async () => reservation),
+              reconcile,
+              release,
+              consumeTool: vi.fn(async () => {}),
+              unsettledExposure: { tokens: 0, costMicros: 0 }
+            }
+      })
+    ).rejects.toMatchObject({ code: 'AGENT_QUOTA_CORRUPT' })
+    expect(chat).toHaveBeenCalledOnce()
+    expect(release).not.toHaveBeenCalled()
+    expect(reconcile).not.toHaveBeenCalled()
+  })
+
+  it('settles the final EOF receipt before falling back from an over-limit goal classification', async () => {
+    let reachedEof = false
+    const chat = vi.fn(
+      async () =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue({ results: [{ index: 0, content: 'small' }] })
+            controller.enqueue({
+              results: [],
+              modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 33, totalTokens: 36 } }
+            })
+          },
+          pull(controller) {
+                  reachedEof = true
+                  controller.close()
+                }
+        })
+    )
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const reconcile = vi.fn(async () => {
+          expect(reachedEof).toBe(true)
+        })
+    const release = vi.fn(async () => {})
+    await expect(
+      utility.classifyGoalBudget({
+        profileVersionId: request.profileVersionId,
+        objective: 'Investigate deployment rollover',
+        signal: request.signal,
+        dispatchBudget: {
+              reserve: vi.fn(async () => reservation),
+              reconcile,
+              release,
+              consumeTool: vi.fn(async () => {}),
+              unsettledExposure: { tokens: 0, costMicros: 0 }
+            }
+      })
+    ).resolves.toEqual({ tier: 'extended', selection: 'fallback', inputTokens: 3, outputTokens: 33, totalTokens: 36, costMicros: 69 })
+    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 3, outputTokens: 33, totalTokens: 36, costMicros: 69 })
+    expect(chat).toHaveBeenCalledOnce()
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it.each(['title', 'knowledge'] as const)('does not start %s setup or admission for an already cancelled request', async purpose => {
+    const controller = new AbortController()
+    const reason = new Error('utility request cancelled')
+    controller.abort(reason)
+    const create = vi.fn(async () => {
+      throw new Error('setup must not start')
+    })
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 100, costMicros: 100 }))
+    const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
+    const result =
+      purpose === 'title'
+        ? utility.generateConversationTitle({
+            ...request,
+            signal: controller.signal,
+            dispatchBudget: {
+            reserve,
+            reconcile: vi.fn(async () => {}),
+            release: vi.fn(async () => {}),
+            consumeTool: vi.fn(async () => {}),
+            unsettledExposure: { tokens: 0, costMicros: 0 }
+          }
+          })
+        : utility.enrichKnowledge({
+            profileVersionId: request.profileVersionId,
+            page: { title: 'Deploy', description: '', locale: 'en', path: 'ops/deploy', contentType: 'markdown', content: '# Deploy\n' },
+            missingFields: ['concept.type'],
+            signal: controller.signal
+          })
+    await expect(result).rejects.toBe(reason)
+    expect(create).not.toHaveBeenCalled()
+    expect(reserve).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['title', false],
+    ['title', true],
+    ['knowledge', false],
+    ['knowledge', true]
+  ] as const)('does not dispatch %s or admit quota when cancellation wins during provider setup (failed=%s)', async (purpose, failed) => {
+    const controller = new AbortController()
+    const reason = new Error('utility request cancelled during setup')
+    const chat = vi.fn(async () => ({ results: [] }))
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 100, costMicros: 100 }))
+    const create = vi.fn(async () => {
+      controller.abort(reason)
+      if (failed) throw new Error('provider setup failed')
+      return {
+        service: { chat },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }
+    })
+    const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
+    const result =
+      purpose === 'title'
+        ? utility.generateConversationTitle({
+            ...request,
+            signal: controller.signal,
+            dispatchBudget: {
+            reserve,
+            reconcile: vi.fn(async () => {}),
+            release: vi.fn(async () => {}),
+            consumeTool: vi.fn(async () => {}),
+            unsettledExposure: { tokens: 0, costMicros: 0 }
+          }
+          })
+        : utility.enrichKnowledge({
+            profileVersionId: request.profileVersionId,
+            page: { title: 'Deploy', description: '', locale: 'en', path: 'ops/deploy', contentType: 'markdown', content: '# Deploy\n' },
+            missingFields: ['concept.type'],
+            signal: controller.signal
+          })
+    await expect(result).rejects.toBe(reason)
+    expect(create).toHaveBeenCalledOnce()
+    expect(reserve).not.toHaveBeenCalled()
+    expect(chat).not.toHaveBeenCalled()
+  })
+
+  it.each(['AGENT_TOKEN_BUDGET_LIMITED', 'AGENT_QUOTA_EXHAUSTED', 'AGENT_QUOTA_CORRUPT', 'RUN_LEASE_LOST', 'DISPATCH_RESERVATION_INVALID'] as const)(
+    'keeps title no-send fallback separate from admission failure (%s)',
+    async code => {
+      const denied = code === 'AGENT_TOKEN_BUDGET_LIMITED' || code === 'AGENT_QUOTA_EXHAUSTED'
+      const failure = new AgentRepositoryError(code, 'admission failed', code === 'AGENT_QUOTA_EXHAUSTED' ? 429 : denied ? 409 : 500)
+      const chat = vi.fn(async () => ({ results: [] }))
+      const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+      const release = vi.fn(async () => {})
+      const result = utility.generateConversationTitle({
+        ...request,
+        dispatchBudget: {
+          reserve: vi.fn(async () => {
+            if (code === 'DISPATCH_RESERVATION_INVALID') return { id: -1, tokens: 100, costMicros: 100 }
+            throw failure
+          }),
+          reconcile: vi.fn(async () => {}),
+          release,
+          consumeTool: vi.fn(async () => {}),
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      })
+      if (denied) {
+        await expect(result).resolves.toMatchObject({ source: 'fallback', totalTokens: 0, costMicros: 0 })
+      } else {
+        await expect(result).rejects.toMatchObject({ code })
+      }
+      expect(chat).not.toHaveBeenCalled()
+      expect(release).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['title', 'classification', 'knowledge'] as const)('rejects cancelled %s output even when a completed receipt is returned', async purpose => {
+    const controller = new AbortController()
+    const reason = new Error('utility request cancelled during inference')
+    const chat = vi.fn(async (_request: unknown, options?: AgentProviderChatOptions) => {
+      options?.onRequestDispatched?.()
+      controller.abort(reason)
+      return {
+        results: [
+          {
+            index: 0,
+            content:
+              purpose === 'classification'
+                ? 'small'
+                : purpose === 'title'
+                  ? 'Deployment rollover investigation'
+                  : JSON.stringify({ type: 'Procedure', summary: null, tags: [], entities: [], relationships: [], openQuestions: [], searchTerms: [] })
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
+      }
+    })
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({
+        service: { chat },
+        model: 'model-mini',
+        transportKind: 'openai-responses',
+        capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      }))
+    } as unknown as AgentProviderFactory)
+    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const dispatchBudget = {
+      reserve: vi.fn(async () => reservation),
+      reconcile,
+      release,
+      consumeTool: vi.fn(async () => {}),
+      unsettledExposure: { tokens: 0, costMicros: 0 }
+    }
+    const result =
+      purpose === 'title'
+        ? utility.generateConversationTitle({ ...request, signal: controller.signal, dispatchBudget })
+        : purpose === 'classification'
+          ? utility.classifyGoalBudget({
+              profileVersionId: request.profileVersionId,
+              objective: 'Investigate deployment rollover',
+              signal: controller.signal,
+              dispatchBudget
+            })
+          : utility.enrichKnowledge({
+              profileVersionId: request.profileVersionId,
+              page: { title: 'Deploy', description: '', locale: 'en', path: 'ops/deploy', contentType: 'markdown', content: '# Deploy\n' },
+              missingFields: ['concept.type'],
+              signal: controller.signal
+            })
+    await expect(result).rejects.toBe(reason)
+    expect(chat).toHaveBeenCalledOnce()
+    if (purpose !== 'knowledge') expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 3, outputTokens: 4, totalTokens: 7, costMicros: 11 })
     expect(release).not.toHaveBeenCalled()
   })
 

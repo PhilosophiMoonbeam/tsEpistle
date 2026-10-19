@@ -310,6 +310,12 @@ export const recoverAgentRunTasks = async (knex: Knex, claim: AgentRunClaim): Pr
 
 export const startAgentRunTask = async (knex: Knex, claim: AgentRunClaim, taskId: string, subagentRunId: string): Promise<AgentTaskRecord> =>
   knex.transaction(async transaction => {
+    const run = await transaction('agentRuns')
+      .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken, status: 'running' })
+      .whereNull('cancelRequestedAt')
+      .forUpdate()
+      .first('id')
+    if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before starting its task', 409)
     const row = await transaction<AgentTaskRow>('agentRunTasks').where({ id: taskId, runId: claim.id }).forUpdate().first()
     if (!row || row.status !== 'pending' || row.depth !== 1)
       throw new AgentRepositoryError('AGENT_TASK_STATE_CHANGED', 'Agent task cannot be started from its current state', 409)

@@ -1,5 +1,5 @@
 import type { LookupAddress } from 'node:dns'
-import { ax, axGlobals, f, type AxRateLimiterFunction } from '@ax-llm/ax'
+import { ax, axGlobals, axRuntimeHookFrame, f, type AxRateLimiterFunction } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
 import { z } from 'zod'
 import { AgentProviderConformanceRunner } from '../../agents/providers/conformance.ts'
@@ -91,14 +91,16 @@ describe('additional provider transports', () => {
       if (!readable) throw denial
     })
     await authorize()
+    const onRequestDispatched = vi.fn()
     const generation = withAgentSourceAuthorization(authorize, async () =>
-      provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Copied private Wiki source text' }] }, { stream: false })
+      provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Copied private Wiki source text' }] }, { stream: false, onRequestDispatched })
     ).catch((error: unknown) => error)
     await resolving.promise
     readable = false
     resolved.resolve(await publicResolver())
     expect(await generation).toBe(denial)
     expect(sent).toEqual([])
+    expect(onRequestDispatched).not.toHaveBeenCalled()
     expect(authorize).toHaveBeenCalledTimes(2)
     expect(await db('agentProviderProfileVersions').where({ id }).first('conformed')).toMatchObject({ conformed: 1 })
   })
@@ -175,6 +177,169 @@ describe('additional provider transports', () => {
     expect(authorizeFirst).toHaveBeenCalledTimes(1)
     expect(authorizeSecond).toHaveBeenCalledTimes(1)
     expect(schedulerAuthorization).not.toHaveBeenCalled()
+  })
+
+  it('notifies cancellation accounting only after the guarded HTTP handoff and never clears an actual send', async () => {
+    const id = '00000000-0000-4000-8000-000000000049'
+    await insert({ id, transportKind: 'openai-chat', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer' })
+    const resolving = Promise.withResolvers<void>()
+    const resolved = Promise.withResolvers<LookupAddress[]>()
+    let dnsCalls = 0
+    const resolver = async (): Promise<LookupAddress[]> => {
+      if (++dnsCalls !== 1) return publicResolver()
+      resolving.resolve()
+      return resolved.promise
+    }
+    const entered = Promise.withResolvers<void>()
+    let sends = 0
+    const provider = await new AgentProviderFactory(
+      db,
+      { get: () => 'private-cancellation-key' },
+      (async (_input, init) => {
+        sends++
+        entered.resolve()
+        const signal = init!.signal!
+        signal.throwIfAborted()
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      }) as typeof fetch,
+      resolver as never
+    ).create(id)
+    const request = { chatPrompt: [{ role: 'user' as const, content: 'Private cancellable Wiki request' }] }
+    const onRequestDispatched = vi.fn()
+    const beforeSend = new AbortController()
+    const beforeFailure = provider.service
+      .chat(request, {
+        stream: false,
+        abortSignal: beforeSend.signal,
+        onRequestDispatched
+      })
+      .catch((error: unknown) => error)
+    await resolving.promise
+    beforeSend.abort()
+    resolved.resolve(await publicResolver())
+    expect(await beforeFailure).toBeInstanceOf(Error)
+    expect(sends).toBe(0)
+    expect(onRequestDispatched).not.toHaveBeenCalled()
+
+    const afterSend = new AbortController()
+    const afterFailure = provider.service
+      .chat(request, {
+        stream: false,
+        abortSignal: afterSend.signal,
+        onRequestDispatched
+      })
+      .catch((error: unknown) => error)
+    await entered.promise
+    afterSend.abort()
+    expect(await afterFailure).toBeInstanceOf(Error)
+    expect(sends).toBe(1)
+    expect(onRequestDispatched).toHaveBeenCalledTimes(1)
+  })
+
+  it('honors empty resolved native Ax runtime frames without reviving inherited hooks', async () => {
+    const id = '00000000-0000-4000-8000-000000000047'
+    await insert({ id, transportKind: 'openai-chat', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer' })
+    const inheritedMetadata: unknown[] = []
+    const inheritedLimiter: AxRateLimiterFunction = async (next, info) => {
+      inheritedMetadata.push(info)
+      return next()
+    }
+    const inheritedTrace = vi.fn(() => {
+      throw new Error('Unrelated inherited trace hook')
+    })
+    const inheritedMetric = vi.fn(() => {
+      throw new Error('Unrelated inherited metric hook')
+    })
+    const previous = { rateLimiter: axGlobals.rateLimiter, tracer: axGlobals.tracer, meter: axGlobals.meter }
+    axGlobals.rateLimiter = inheritedLimiter
+    axGlobals.tracer = { startActiveSpan: inheritedTrace } as unknown as NonNullable<typeof axGlobals.tracer>
+    axGlobals.meter = { createHistogram: inheritedMetric, createCounter: inheritedMetric } as unknown as NonNullable<typeof axGlobals.meter>
+    try {
+      const requests: string[] = []
+      const provider = await new AgentProviderFactory(
+        db,
+        { get: () => 'private-runtime-key' },
+        (async (_input, init) => {
+          requests.push(String(init?.body))
+          return Response.json({
+            id: 'chat_runtime',
+            object: 'chat.completion',
+            created: 1,
+            model: 'model-test',
+            choices: [{ index: 0, message: { role: 'assistant', content: 'Private answer' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 }
+          })
+        }) as typeof fetch,
+        publicResolver as never
+      ).create(id)
+      const request = { chatPrompt: [{ role: 'user' as const, content: 'Private request-scoped Wiki text' }] }
+      // The SDK contract makes absent hooks authoritative in a resolved frame,
+      // even when getOptions() exposes ambient or service-level defaults.
+      const resolvedOptions = { stream: false, [axRuntimeHookFrame]: { globals: {}, resolved: true } }
+      expect(await provider.service.chat(request, resolvedOptions)).toMatchObject({ results: [{ content: 'Private answer' }] })
+      const requestMetadata: unknown[] = []
+      const requestLimiter: AxRateLimiterFunction = async (next, info) => {
+        requestMetadata.push(info)
+        return next()
+      }
+      expect(await provider.service.chat(request, { ...resolvedOptions, rateLimiter: requestLimiter })).toMatchObject({
+        results: [{ content: 'Private answer' }]
+      })
+      expect(requests).toHaveLength(2)
+      expect(inheritedMetadata).toEqual([])
+      expect(inheritedTrace).not.toHaveBeenCalled()
+      expect(inheritedMetric).not.toHaveBeenCalled()
+      expect(requestMetadata).toHaveLength(1)
+      expect(requestMetadata[0]).toMatchObject({ operation: 'chat', model: 'model-test' })
+      expect(JSON.stringify(requestMetadata)).not.toContain('Private request-scoped Wiki text')
+      expect(JSON.stringify(requestMetadata)).not.toContain('private-runtime-key')
+    } finally {
+      axGlobals.rateLimiter = previous.rateLimiter
+      axGlobals.tracer = previous.tracer
+      axGlobals.meter = previous.meter
+    }
+  })
+
+  it.each([
+    ['openai-responses', 'https://responses.example.test/v1', 'model-test'],
+    ['openresponses', 'https://openresponses.example.test/v1', 'model-test'],
+    ['openai-chat', 'https://chat.example.test/v1', 'model-test'],
+    ['anthropic-messages', 'https://anthropic.example.test/v1', 'claude-sonnet-4-6'],
+    ['gemini-api', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-3.7-flash'],
+    ['legacy-completions', 'https://legacy.example.test/v1', 'model-test']
+  ] as const)('retains %s actual-send accounting after an uncertain HTTP failure without retrying', async (transportKind, baseUrl, model) => {
+    const id = '00000000-0000-4000-8000-000000000048'
+    await insert({
+      id, transportKind, baseUrl, model,
+      authMode: transportKind === 'gemini-api' ? 'google-api-key' : transportKind === 'anthropic-messages' ? 'anthropic-api-key' : 'bearer'
+    })
+    const handoff: string[] = []
+    const provider = await new AgentProviderFactory(
+      db,
+      { get: () => 'private-dispatch-key' },
+      (async () => {
+        handoff.push('HTTP')
+        throw new TypeError('Connection failed after handoff')
+      }) as typeof fetch,
+      publicResolver as never
+    ).create(id)
+    let dispatched = false
+    await expect(
+      provider.service.chat(
+        { chatPrompt: [{ role: 'user', content: 'Private Wiki request' }] },
+        {
+          stream: false,
+          onRequestDispatched: () => {
+            dispatched = true
+            handoff.push('dispatched')
+          }
+        }
+      )
+    ).rejects.toThrow()
+    expect(dispatched).toBe(true)
+    expect(handoff).toEqual(['dispatched', 'HTTP'])
   })
 
   it.each([
@@ -1145,8 +1310,8 @@ describe('OpenResponses protocol validation', () => {
         await expect(Promise.resolve(response.text())).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
       } else {
         await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request()))).rejects.toMatchObject({
-          code: 'INVALID_OPENRESPONSES_PROTOCOL'
-        })
+      code: 'INVALID_OPENRESPONSES_PROTOCOL'
+    })
       }
       expect(limitCalls).toBe(1)
       expect(cancelCalls).toBe(1)
@@ -1386,8 +1551,8 @@ describe('explicitly bound Google media egress', () => {
           new Response(
             new ReadableStream<Uint8Array>({
               start(controller) {
-                controller.enqueue(new Uint8Array(9))
-              },
+            controller.enqueue(new Uint8Array(9))
+          },
               cancel() {
                 cancelled++
               }

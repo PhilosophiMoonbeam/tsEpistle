@@ -253,6 +253,8 @@ const validDispatchReservation = (value: AgentDispatchBudgetReservation | undefi
   Number.isSafeInteger(value.costMicros) &&
   value.costMicros >= 0
 
+// One no-tool Ax chat keeps admission tied to this bounded prompt and preserves
+// EOF receipts independently of output validation or presentation fallback.
 export class AgentUtilityModel implements AgentConversationTitleGenerator, AgentKnowledgeEnricher, AgentGoalBudgetClassifier {
   readonly #factory: AgentProviderFactory
 
@@ -323,28 +325,23 @@ Use small only for narrow, self-contained work with few steps, little context an
           if (isGoalBudgetAdmissionDenial(error)) return fallback
           throw error
         }
+        dispatchAdmissionAttempted = false
       }
-      if (request.signal.aborted) {
-        const unusedReservation = dispatchReservation
-        dispatchReservation = undefined
-        if (unusedReservation && request.dispatchBudget) {
-          try {
-            await request.dispatchBudget.release(unusedReservation)
-          } catch {
-            /* Preserve cancellation. */
-          }
+      signal.throwIfAborted()
+      const response = await provider.service.chat(providerRequest, {
+        stream: false,
+        abortSignal: signal,
+        onRequestDispatched: () => {
+          providerCallStarted = true
         }
-        throw request.signal.reason
-      }
+      })
       providerCallStarted = true
-      const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
       const consumed = await consumeUtilityResponse(
         response,
         GOAL_BUDGET_MAXIMUM_PROVIDER_BYTES,
         'Utility model goal classification exceeded its output limit',
         provider.transportKind
       )
-      if (consumed.usage.outputTokens > maximumOutputTokens) throw new Error('Utility model goal classification exceeded its token limit')
       accountingAttempted = true
       const costMicros = agentProviderMeasuredCostMicros(provider.pricing, consumed.usage)
       if (dispatchReservation && request.dispatchBudget) {
@@ -356,7 +353,8 @@ Use small only for narrow, self-contained work with few steps, little context an
         })
         dispatchReservation = undefined
       }
-      const value = consumed.terminalFailure ? '' : consumed.content.trim()
+      request.signal.throwIfAborted()
+      const value = consumed.terminalFailure || consumed.usage.outputTokens > maximumOutputTokens ? '' : consumed.content.trim()
       const tier = value === 'small' || value === 'standard' || value === 'extended' ? value : 'extended'
       return {
         tier,
@@ -367,32 +365,37 @@ Use small only for narrow, self-contained work with few steps, little context an
         costMicros
       }
     } catch (error) {
+      if (!providerCallStarted && dispatchReservation && request.dispatchBudget) {
+        const unusedReservation = dispatchReservation
+        dispatchReservation = undefined
+        try {
+          await request.dispatchBudget.release(unusedReservation)
+        } catch (releaseError) {
+          if (!request.signal.aborted) throw releaseError
+        }
+      }
       if (request.signal.aborted) throw request.signal.reason
       if (accountingAttempted || providerCallStarted || dispatchAdmissionAttempted) {
         if (error instanceof AgentRepositoryError) throw error
         throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Goal budget classification usage could not be reconciled', 500)
-      }
-      if (dispatchReservation && request.dispatchBudget) {
-        try {
-          await request.dispatchBudget.release(dispatchReservation)
-        } catch {
-          /* Pre-dispatch fallback is best effort. */
-        }
       }
       return fallback
     }
   }
 
   async generateConversationTitle(request: AgentConversationTitleRequest): Promise<AgentConversationTitleResult> {
+    request.signal.throwIfAborted()
     const transcript = boundedTranscript(request.messages)
     const firstUserMessage = transcript.find(message => message.role === 'user')?.content ?? ''
     const fallback = conversationTitleFallback(firstUserMessage)
     let attempted = false
+    let dispatchAdmissionAttempted = false
     let usageValidationAttempted = false
     let accountingAttempted = false
     let dispatchReservation: AgentDispatchBudgetReservation | undefined
     try {
       const provider = await this.#factory.create(request.profileVersionId, { purpose: 'utility' })
+      request.signal.throwIfAborted()
       const maximumOutputTokens = providerOutputTokens(provider.capabilities.maxOutputTokens, 128)
       const signal = AbortSignal.any([request.signal, AbortSignal.timeout(TITLE_TIMEOUT_MILLISECONDS)])
       const providerRequest = {
@@ -416,24 +419,26 @@ Use small only for narrow, self-contained work with few steps, little context an
         throw new Error('Utility model title prompt exceeds its context limit')
       const maximumTotalTokens = safeTokenSum(maximumInputTokens, maximumOutputTokens)
       const dispatchBudget = request.dispatchBudget
-      dispatchReservation = await dispatchBudget?.reserve({
-        tokens: maximumTotalTokens,
-        costMicros: agentProviderCostMicros(provider.pricing, 0, 0, maximumTotalTokens)
-      })
-      if (request.signal.aborted) {
-        const unusedReservation = dispatchReservation
-        dispatchReservation = undefined
-        if (unusedReservation && dispatchBudget) {
-          try {
-            await dispatchBudget.release(unusedReservation)
-          } catch {
-            // Preserve the user cancellation.
-          }
-        }
-        throw request.signal.reason
+      if (dispatchBudget) {
+        dispatchAdmissionAttempted = true
+        const reservation = await dispatchBudget.reserve({
+          tokens: maximumTotalTokens,
+          costMicros: agentProviderCostMicros(provider.pricing, 0, 0, maximumTotalTokens)
+        })
+        if (!validDispatchReservation(reservation))
+          throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Conversation title reservation is invalid', 500)
+        dispatchReservation = reservation
+        dispatchAdmissionAttempted = false
       }
+      signal.throwIfAborted()
+      const response = await provider.service.chat(providerRequest, {
+        stream: false,
+        abortSignal: signal,
+        onRequestDispatched: () => {
+          attempted = true
+        }
+      })
       attempted = true
-      const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
       usageValidationAttempted = true
       const consumed = await consumeTitleResponse(response, provider.transportKind)
       accountingAttempted = true
@@ -447,6 +452,7 @@ Use small only for narrow, self-contained work with few steps, little context an
         })
         dispatchReservation = undefined
       }
+      request.signal.throwIfAborted()
       const title = consumed.terminalFailure ? '' : normalizeConversationTitle(consumed.content, '')
       return {
         title: title || fallback,
@@ -457,23 +463,30 @@ Use small only for narrow, self-contained work with few steps, little context an
         costMicros
       }
     } catch (error) {
-      if (request.signal.aborted) throw request.signal.reason
-      if (accountingAttempted || (usageValidationAttempted && error instanceof AgentRepositoryError && error.code === 'PROVIDER_USAGE_INVALID')) throw error
-      if (attempted) return { title: fallback, source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
-      if (dispatchReservation && request.dispatchBudget) {
+      if (!attempted && dispatchReservation && request.dispatchBudget) {
+        const unusedReservation = dispatchReservation
+        dispatchReservation = undefined
         try {
-          await request.dispatchBudget.release(dispatchReservation)
-        } catch {
-          // Pre-dispatch fallback is best effort.
+          await request.dispatchBudget.release(unusedReservation)
+        } catch (releaseError) {
+          if (!request.signal.aborted) throw releaseError
         }
       }
+      if (request.signal.aborted) throw request.signal.reason
+      if (dispatchAdmissionAttempted && !isGoalBudgetAdmissionDenial(error)) throw error
+      if (accountingAttempted || (usageValidationAttempted && error instanceof AgentRepositoryError && error.code === 'PROVIDER_USAGE_INVALID')) throw error
       return { title: fallback, source: 'fallback', inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
     }
   }
 
   async enrichKnowledge(request: AgentKnowledgeEnrichmentRequest): Promise<AgentKnowledgeEnrichmentResult> {
+    request.signal.throwIfAborted()
     if (request.missingFields.length === 0) throw new Error('Knowledge enrichment requires declared gaps')
-    const provider = await this.#factory.create(request.profileVersionId, { purpose: 'utility' })
+    const provider = await this.#factory.create(request.profileVersionId, { purpose: 'utility' }).catch((error: unknown) => {
+      request.signal.throwIfAborted()
+      throw error
+    })
+    request.signal.throwIfAborted()
     const maximumOutputTokens = providerOutputTokens(provider.capabilities.maxOutputTokens, KNOWLEDGE_MAXIMUM_OUTPUT_TOKENS)
     const maximumInputBytes = provider.capabilities.maxContextTokens - maximumOutputTokens
     if (maximumInputBytes < 1) throw new Error('Utility model cannot fit a knowledge request')
@@ -521,8 +534,10 @@ Use small only for narrow, self-contained work with few steps, little context an
     if (Buffer.byteLength(JSON.stringify(providerRequest), 'utf8') > maximumInputBytes)
       throw new Error('Utility model knowledge prompt exceeds its context limit')
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(KNOWLEDGE_TIMEOUT_MILLISECONDS)])
+    signal.throwIfAborted()
     const response = await provider.service.chat(providerRequest, { stream: false, abortSignal: signal })
     const consumed = await consumeKnowledgeResponse(response, provider.transportKind)
+    request.signal.throwIfAborted()
     if (consumed.usage.outputTokens > maximumOutputTokens) throw new Error('Utility model knowledge output exceeded its configured token limit')
     if (consumed.terminalFailure) throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Utility model knowledge output did not complete', 502)
     const decoded: unknown = JSON.parse(consumed.content.trim())

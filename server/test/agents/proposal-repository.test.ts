@@ -274,7 +274,7 @@ describe('agent proposal repository', () => {
       )
     ).rejects.toMatchObject({ code: 'INVALID_PROPOSAL_SCOPE', status: 400 })
   })
-  it('persists an execution claim before mutation and applies once', async () => {
+  it('persists one execution claim and replays only its owned, approval-bound durable outcome', async () => {
     const draft = {
       authority: authority(),
       runId: '00000000-0000-4000-8000-000000000010',
@@ -325,6 +325,38 @@ describe('agent proposal repository', () => {
     expect(await knex('appliedPages')).toEqual([{ id: 42, path: 'docs/next' }])
     expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'committed' }])
     expect(await knex('agentProposals').select('status')).toEqual([{ status: 'applied' }])
+
+    await expect(applyApprovedProposal(knex, { ...request, authority: authority() })).rejects.toMatchObject({
+      code: 'INVALID_APPLY_AUTHORITY',
+      status: 400
+    })
+    await expect(
+      applyApprovedProposal(knex, {
+        ...request,
+        authority: {
+          ...request.authority,
+          requester: { kind: 'user', userId: 8 }
+        }
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_APPLY_AUTHORITY', status: 403 })
+    await expect(applyApprovedProposal(knex, { ...request, approvalId: '00000000-0000-4000-8000-000000000099' })).rejects.toMatchObject({
+      code: 'PROPOSAL_NOT_FOUND',
+      status: 404
+    })
+
+    // A receipt does not dispatch again or require retained mutation content.
+    await knex('agentProposals').where({ id: persisted.proposal.id }).update({
+      input: null,
+      contentPurgedAt: new Date().toISOString(),
+      expiresAt: '2020-01-01T00:00:00.000Z'
+    })
+    expect(await applyApprovedProposal(knex, request)).toEqual(first)
+    expect(request.reauthorize).toHaveBeenCalledOnce()
+    expect(mutate).toHaveBeenCalledOnce()
+
+    await knex('agentActionExecutions').where({ proposalId: persisted.proposal.id }).update({ result: '{"page":{"id":99,"path":"docs/foreign"}}' })
+    await expect(applyApprovedProposal(knex, request)).rejects.toMatchObject({ code: 'PROPOSAL_LEDGER_CORRUPT', status: 500 })
+    expect(await knex('appliedPages')).toEqual([{ id: 42, path: 'docs/next' }])
   })
 
   it('reconciles a committed domain mutation when execution loses its response', async () => {

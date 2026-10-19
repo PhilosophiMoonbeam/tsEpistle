@@ -487,9 +487,7 @@ describe('Ax native Gemini application transport', () => {
     })
     await db('agentProviderProfileVersions')
       .where({ id })
-      .update({
-        adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} })
-      })
+      .update({ adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} }) })
     const defaultMinimal = await factory.create(id, { reasoningEffort: 'minimal' })
     const defaultHigh = await factory.create(id, { reasoningEffort: 'high' })
     await buffered(defaultMinimal.service.chat({ chatPrompt: [{ role: 'user', content: 'minimal' }] }, { stream: false }))
@@ -588,10 +586,13 @@ describe('Ax native Gemini application transport', () => {
     expect(calls).toBe(0)
   })
 
-  it('streams native content through a genuine EOF with full cached input counted once', async () => {
+  it('streams native content through a genuine EOF with final usage replacing an interim receipt and cached input counted once', async () => {
     let url = ''
     const frames = [
-      { candidates: [{ index: 0, content: { role: 'model', parts: [{ text: 'Hello ' }] } }] },
+      {
+        candidates: [{ index: 0, content: { role: 'model', parts: [{ text: 'Hello ' }] } }],
+        usageMetadata: { ...usageMetadata, candidatesTokenCount: 0, thoughtsTokenCount: 0, totalTokenCount: 10 }
+      },
       { candidates: [{ index: 0, content: { role: 'model', parts: [{ text: 'world.' }] }, finishReason: 'STOP' }], usageMetadata }
     ]
     const service = await provider((async input => {
@@ -687,7 +688,7 @@ describe('Ax native Gemini application transport', () => {
     await expect(consume(service.service.chat({ chatPrompt: [{ role: 'user', content: 'Hello.' }] }, { stream }))).rejects.toThrow()
   })
 
-  it.each(['missing_finish', 'missing_usage', 'partial_json', 'malformed_json', 'invalid_usage', 'trailing_content'] as const)(
+  it.each(['missing_finish', 'missing_usage', 'preterminal_usage', 'partial_json', 'malformed_json', 'invalid_usage', 'trailing_content'] as const)(
     'fails closed on %s instead of accepting an incomplete stream',
     async scenario => {
       const terminal = reply() as Record<string, unknown>
@@ -695,6 +696,11 @@ describe('Ax native Gemini application transport', () => {
       if (scenario === 'missing_usage') delete terminal.usageMetadata
       if (scenario === 'invalid_usage') terminal.usageMetadata = { ...usageMetadata, cachedContentTokenCount: 11 }
       let body = `data: ${JSON.stringify(terminal)}\n\n`
+      if (scenario === 'preterminal_usage') {
+        delete terminal.usageMetadata
+        const interim = { candidates: [{ index: 0, content: { role: 'model', parts: [{ text: 'partial' }] } }], usageMetadata }
+        body = `data: ${JSON.stringify(interim)}\n\ndata: ${JSON.stringify(terminal)}\n\n`
+      }
       if (scenario === 'partial_json') body += 'data: {"candidates":'
       if (scenario === 'malformed_json') body = 'data: {bad json}\n\n'
       if (scenario === 'trailing_content') body += `data: ${JSON.stringify(reply([{ text: 'extra' }]))}\n\n`

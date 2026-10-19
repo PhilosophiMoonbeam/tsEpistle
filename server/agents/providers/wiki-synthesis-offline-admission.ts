@@ -802,6 +802,7 @@ export const createWikiOfflineDispatchAdmission = async (
       timeout: 120_000,
       retry: { maxRetries: 0 },
       tracer: privateTracer,
+      meter: privateMeter,
       includeRequestBodyInErrors: false,
       excludeContentFromTrace: true
     }),

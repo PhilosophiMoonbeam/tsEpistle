@@ -75,7 +75,7 @@ const parseInput = (proposal: ProposalRecord): unknown => {
   }
 }
 
-const lockProposal = async (transaction: Knex.Transaction, proposalId: string, approvalId: string): Promise<LockedProposalContext> => {
+const lockProposalLedger = async (transaction: Knex.Transaction, proposalId: string, approvalId: string): Promise<Omit<LockedProposalContext, 'input'>> => {
   const proposal = await transaction<ProposalRecord>('agentProposals').where({ id: proposalId }).forUpdate().first()
   const approval = await transaction<ApprovalRecord>('agentApprovals').where({ id: approvalId, proposalId }).forUpdate().first()
   if (!proposal || !approval) throw new AgentProposalError('PROPOSAL_NOT_FOUND', 'Proposal does not exist', 404)
@@ -90,7 +90,12 @@ const lockProposal = async (transaction: Knex.Transaction, proposalId: string, a
     approval.diffSha256 !== (proposal.diffSha256 ?? null)
   )
     throw new AgentProposalError('PROPOSAL_LEDGER_TAMPERED', 'Proposal approval does not match its immutable payload', 409)
-  return { transaction, proposal, approval, input: parseInput(proposal) }
+  return { transaction, proposal, approval }
+}
+
+const lockProposal = async (transaction: Knex.Transaction, proposalId: string, approvalId: string): Promise<LockedProposalContext> => {
+  const context = await lockProposalLedger(transaction, proposalId, approvalId)
+  return { ...context, input: parseInput(context.proposal) }
 }
 
 const updateStatuses = async (
@@ -165,8 +170,8 @@ const assertApplyingAuthority = (proposal: ProposalRecord, authority: ActionAuth
       throw new AgentProposalError('INVALID_APPLY_AUTHORITY', 'Proposal requester does not match apply authority', 403)
     }
   } else if (proposal.requesterApiKeyId !== authority.requester.apiKeyId || proposal.requesterUserId !== null) {
-    throw new AgentProposalError('INVALID_APPLY_AUTHORITY', 'Proposal requester does not match apply authority', 403)
-  }
+      throw new AgentProposalError('INVALID_APPLY_AUTHORITY', 'Proposal requester does not match apply authority', 403)
+    }
 }
 
 const completedResult = (execution: ExecutionRow): AppliedProposalResult | null => {
@@ -178,6 +183,38 @@ const completedResult = (execution: ExecutionRow): AppliedProposalResult | null 
     throw new AgentProposalError('PROPOSAL_LEDGER_CORRUPT', 'Committed execution result is invalid', 500)
   }
   return { proposalId: execution.proposalId, status: 'applied', result, resultHash: sha256(execution.result) }
+}
+
+const committedProposalResult = (proposal: ProposalRecord, approval: ApprovalRecord, execution: ExecutionRow | undefined): AppliedProposalResult => {
+  const expectedKey = sha256(
+    canonicalJson({
+      version: 1,
+      proposalId: proposal.id,
+      authoritySha256: proposal.authoritySha256,
+      inputHash: proposal.inputHash
+    })
+  )
+  if (
+    !execution ||
+    proposal.status !== 'applied' ||
+    execution.status !== 'committed' ||
+    execution.result === null ||
+    execution.inputHash !== proposal.inputHash ||
+    execution.runId !== proposal.runId ||
+    execution.actionName !== proposal.actionName ||
+    execution.requesterUserId !== proposal.requesterUserId ||
+    execution.requesterApiKeyId !== proposal.requesterApiKeyId ||
+    execution.idempotencyKey !== expectedKey ||
+    approval.status !== 'approved' ||
+    approval.approvedByUserId === null ||
+    execution.approvedByUserId !== approval.approvedByUserId ||
+    proposal.applyResult !== execution.result ||
+    execution.completedAt === null ||
+    (proposal.resultCanonicalSha256 !== null && sha256(execution.result) !== proposal.resultCanonicalSha256)
+  ) {
+      throw new AgentProposalError('PROPOSAL_LEDGER_CORRUPT', 'Committed proposal result does not match its approved execution', 500)
+    }
+  return completedResult(execution)!
 }
 
 export const readCommittedProposalResult = async (knex: Knex, proposal: ProposalRecord): Promise<{ readonly pageId: number | null } | null> =>
@@ -203,36 +240,9 @@ export const readCommittedProposalResult = async (knex: Knex, proposal: Proposal
     }
     if (stored.status !== 'applied') return null
     const execution = await transaction<ExecutionRow>('agentActionExecutions').where({ proposalId: stored.id }).first()
-    const expectedKey = sha256(
-      canonicalJson({
-        version: 1,
-        proposalId: stored.id,
-        authoritySha256: stored.authoritySha256,
-        inputHash: stored.inputHash
-      })
-    )
+    const completed = committedProposalResult(stored, approval, execution)
     if (
-      !execution ||
-      execution.status !== 'committed' ||
-      execution.result === null ||
-      execution.inputHash !== stored.inputHash ||
-      execution.runId !== stored.runId ||
-      execution.actionName !== stored.actionName ||
-      execution.requesterUserId !== stored.requesterUserId ||
-      execution.requesterApiKeyId !== stored.requesterApiKeyId ||
-      execution.idempotencyKey !== expectedKey ||
-      approval.status !== 'approved' ||
-      approval.approvedByUserId === null ||
-      execution.approvedByUserId !== approval.approvedByUserId ||
-      stored.applyResult !== execution.result ||
-      execution.completedAt === null ||
-      (stored.resultCanonicalSha256 !== null && sha256(execution.result) !== stored.resultCanonicalSha256)
-    ) {
-      throw new AgentProposalError('PROPOSAL_LEDGER_CORRUPT', 'Committed proposal result does not match its approved execution', 500)
-    }
-    const completed = completedResult(execution)!
-    if (
-      canonicalJson(completed.result) !== execution.result ||
+      canonicalJson(completed.result) !== execution!.result ||
       typeof completed.result !== 'object' ||
       completed.result === null ||
       Array.isArray(completed.result)
@@ -321,8 +331,14 @@ export const applyApprovedProposal = async (knex: Knex, input: ApplyProposalInpu
 
   const prior = await knex<ExecutionRow>('agentActionExecutions').where({ proposalId: input.proposalId }).first()
   if (prior) {
-    const completed = completedResult(prior)
-    if (completed) return completed
+    if (prior.status === 'committed') {
+      return knex.transaction(async transaction => {
+        const context = await lockProposalLedger(transaction, input.proposalId, input.approvalId)
+        assertApplyingAuthority(context.proposal, input.authority)
+        const execution = await transaction<ExecutionRow>('agentActionExecutions').where({ id: prior.id, proposalId: context.proposal.id }).first()
+        return committedProposalResult(context.proposal, context.approval, execution)
+      })
+    }
     const recoveryContext = await loadRecoveryContext(prior)
     const recovered = await input.reconcile(recoveryContext)
     if (recovered !== null) return commitResult(prior.id, recovered)
@@ -346,8 +362,8 @@ export const applyApprovedProposal = async (knex: Knex, input: ApplyProposalInpu
     const context = await lockProposal(transaction, input.proposalId, input.approvalId)
     assertApplyingAuthority(context.proposal, input.authority)
     if (context.proposal.status !== 'approved' || context.approval.status !== 'approved' || context.approval.approvedByUserId === null) {
-      throw new AgentProposalError('PROPOSAL_NOT_APPROVED', 'Proposal is not approved', 409)
-    }
+        throw new AgentProposalError('PROPOSAL_NOT_APPROVED', 'Proposal is not approved', 409)
+      }
     if (dateValue(context.proposal.expiresAt) <= Date.now()) throw new AgentProposalError('PROPOSAL_EXPIRED', 'Proposal has expired', 409)
     if (input.signal.aborted) throw new AgentProposalError('ACTION_CANCELLED', 'Proposal apply was cancelled', 409)
     await input.reauthorize({ ...context, approverUserId: context.approval.approvedByUserId, authority: input.authority })

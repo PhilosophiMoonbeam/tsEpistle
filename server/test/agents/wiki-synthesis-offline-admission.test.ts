@@ -1,7 +1,7 @@
 import { setImmediate } from 'node:timers/promises'
 import createKnex, { type Knex } from 'knex'
 import { Agent, MockAgent, type Dispatcher } from 'undici/index.js'
-import { axGlobals, type AxAIServiceOptions } from '@ax-llm/ax'
+import { ax, axGlobals, type AxAIServiceOptions } from '@ax-llm/ax'
 import { createNoopMeter, ProxyTracerProvider, type Meter, type Span } from '@opentelemetry/api'
 import { AgentProviderRegistry, type AgentProviderTransportKind } from '../../agents/providers/registry.ts'
 import { AgentProviderFactory } from '../../agents/providers/factory.ts'
@@ -263,6 +263,61 @@ describe('offline synthesis measured pricing admission', () => {
       }
     }
   )
+
+  it('keeps native generator metrics private while returning and settling its measured answer', async () => {
+    const metrics: unknown[] = []
+    const meter = Object.create(createNoopMeter()) as Meter
+    meter.createCounter = name => ({ add: (value, attributes) => { metrics.push({ name, value, attributes }) } })
+    meter.createHistogram = name => ({ record: (value, attributes) => { metrics.push({ name, value, attributes }) } })
+    meter.createUpDownCounter = name => ({ add: (value, attributes) => { metrics.push({ name, value, attributes }) } })
+    meter.createGauge = name => ({ record: (value, attributes) => { metrics.push({ name, value, attributes }) } })
+    const priorMeter = axGlobals.meter
+    axGlobals.meter = meter
+    mock
+      .get(origin)
+      .intercept({ path: '/v1/messages', method: 'POST' })
+      .reply(
+        200,
+        {
+          ...measuredResponse,
+          content: [{ type: 'text', text: 'Answer: Synthetic fixture sentence.' }]
+        },
+        { headers: { 'content-type': 'application/json' } }
+      )
+    try {
+      const admission = await admit()
+      const program = ax('"PRIVATE_OFFLINE_GENERATOR_DESCRIPTION_DO_NOT_EXPORT" query:string -> answer:string')
+      const answer = await program.forward(
+        admission.service,
+        { query: 'Return one synthetic fixture sentence.' },
+        {
+          stream: false,
+          maxRetries: 0,
+          maxSteps: 1,
+          functionCallMode: 'prompt',
+          modelConfig: { maxTokens: 8 }
+        }
+      )
+      expect(answer.answer).toBe('Synthetic fixture sentence.')
+      expect(metrics).toEqual([])
+      expect(axGlobals.meter).toBe(meter)
+      expect(admission.summary()).toMatchObject({
+        calls: 1,
+        dispatchedCalls: 1,
+        failedCalls: 0,
+        totalTokens: 12,
+        costMicros: 21,
+        unknownExposureTokens: 0,
+        unknownExposureCostMicros: 0
+      })
+      expect(await db('agentQuotaReservations').select('status', 'consumedTokens', 'consumedCostMicros')).toEqual([
+          { status: 'consumed', consumedTokens: 12, consumedCostMicros: 21 }
+        ])
+      mock.assertNoPendingInterceptors()
+    } finally {
+      axGlobals.meter = priorMeter
+    }
+  })
 
   it.each(dialects.flatMap(fixture => [false, true].map(rejectHook => ({ ...fixture, rejectHook }))))(
     'settles complete $kind usage exactly once before refusal/answer decoding fails with hook rejection $rejectHook and permits measured shared spending',
@@ -820,9 +875,9 @@ describe('offline synthesis measured pricing admission', () => {
     })
     const http = vi.spyOn(mock, 'dispatch')
     mock
-      .get(origin)
-      .intercept({ path: '/v1/messages', method: 'POST' })
-      .reply(200, measuredResponse, { headers: { 'content-type': 'application/json' } })
+        .get(origin)
+        .intercept({ path: '/v1/messages', method: 'POST' })
+        .reply(200, measuredResponse, { headers: { 'content-type': 'application/json' } })
     const firstLimiter: NonNullable<AxAIServiceOptions['rateLimiter']> = async next => {
       void next().catch(() => {})
       return {} as never
@@ -913,8 +968,8 @@ describe('offline synthesis measured pricing admission', () => {
         calls: 1, dispatchedCalls: 1, totalTokens: 12, costMicros: 21, unknownExposureTokens: 0, unknownExposureCostMicros: 0
       })
       expect(await db('agentQuotaReservations').select('status', 'consumedTokens', 'consumedCostMicros')).toEqual([
-        { status: 'consumed', consumedTokens: 12, consumedCostMicros: 21 }
-      ])
+          { status: 'consumed', consumedTokens: 12, consumedCostMicros: 21 }
+        ])
       expect(await db('agentEvents').where({ type: 'usage.updated' }).select('id')).toHaveLength(2)
       mock.assertNoPendingInterceptors()
     } finally {
@@ -978,10 +1033,10 @@ describe('offline synthesis measured pricing admission', () => {
       expect(summary).toMatchObject({ calls: 1, dispatchedCalls: 1, failedCalls: 1, totalTokens: 0, costMicros: 0 })
       expect(summary.unknownExposureTokens).toBeGreaterThan(8)
       expect(await db('agentQuotaReservations').first()).toMatchObject({
-        status: 'consumed',
-        consumedTokens: summary.unknownExposureTokens,
-        consumedCostMicros: summary.unknownExposureCostMicros
-      })
+      status: 'consumed',
+      consumedTokens: summary.unknownExposureTokens,
+      consumedCostMicros: summary.unknownExposureCostMicros
+    })
       expect(await db('agentRuns').first()).toMatchObject({ status: 'failed', errorCode: 'OFFLINE_INFERENCE_FAILED' })
       mock.assertNoPendingInterceptors()
     } finally {

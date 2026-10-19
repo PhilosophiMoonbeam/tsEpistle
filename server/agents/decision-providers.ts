@@ -352,7 +352,12 @@ const pinnedDispatcher = (resolve: typeof lookup): Agent => {
   return dispatcher
 }
 const abortable = async <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> => {
-  signal.throwIfAborted()
+  if (signal.aborted) {
+    // The caller may already have started work before passing its promise.
+    // Observe a late rejection even when cancellation wins before the race.
+    void promise.catch(() => {})
+    signal.throwIfAborted()
+  }
   const { promise: cancellation, reject } = Promise.withResolvers<never>()
   const listener = (): void => reject(new AgentRepositoryError('DECISION_ABORTED', 'Decision provider request was cancelled', 499))
   signal.addEventListener('abort', listener, { once: true })
@@ -364,7 +369,7 @@ const abortable = async <T>(promise: Promise<T>, signal: AbortSignal): Promise<T
 }
 const boundedJson = async (response: Response, signal: AbortSignal): Promise<unknown> => {
   if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES || !response.body) {
-    await response.body?.cancel().catch(() => {})
+    void response.body?.cancel().catch(() => {})
     throw invalid()
   }
   const reader = response.body.getReader()
@@ -380,7 +385,8 @@ const boundedJson = async (response: Response, signal: AbortSignal): Promise<unk
     }
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes))) as unknown
   } finally {
-    await reader.cancel().catch(() => {})
+    // A transport's cancellation promise must not extend the request deadline.
+    void reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 }
@@ -447,6 +453,7 @@ export class DecisionProviderClient {
     let answers: DecisionBatchResult['answers'] | undefined
     let payloadDispatched = false
     let providerStatus: number | undefined
+    let transportSignal = signal
     let preDispatchRejected = false
     let preDispatchFailure: unknown
     // These identifiers cross the server boundary in checks/results. A custom
@@ -457,7 +464,11 @@ export class DecisionProviderClient {
     const resolve = this.#options.resolve ?? lookup
     const implementation = this.#options.fetch ?? (undiciFetch as unknown as typeof fetch)
     const fetchJson = async (url: URL, init: RequestInit): Promise<unknown> => {
-      signal.throwIfAborted()
+      // Ax adds its own per-attempt cancellation (including inherited signals).
+      // Preserve that boundary through host DNS, authorization and body reads.
+      const requestSignal = init.signal ? AbortSignal.any([signal, init.signal]) : signal
+      transportSignal = requestSignal
+      requestSignal.throwIfAborted()
       const allowed =
         config.kind === 'typesafe'
           ? ['/v1/models', '/v1/systemone']
@@ -478,13 +489,13 @@ export class DecisionProviderClient {
         throw new AgentRepositoryError('DECISION_EGRESS_DENIED', 'Decision provider destination is prohibited', 502)
       if (typeof init.body !== 'string' && init.body !== undefined && init.body !== null) throw invalid('INVALID_DECISION_REQUEST', 400)
       if (typeof init.body === 'string' && Buffer.byteLength(init.body) > MAX_REQUEST_BYTES) throw invalid('INVALID_DECISION_REQUEST', 400)
-      assertPublic(await abortable(resolve(url.hostname, { all: true, verbatim: true }), signal))
+      assertPublic(await abortable(resolve(url.hostname, { all: true, verbatim: true }), requestSignal))
       if (!isModels) {
         try {
-          if (options.onPreDispatch !== undefined) await abortable(options.onPreDispatch(), signal)
+          if (options.onPreDispatch !== undefined) await abortable(options.onPreDispatch(), requestSignal)
           const sourceAuthorization = currentAgentSourceAuthorization()
-          if (sourceAuthorization !== undefined) await abortable(sourceAuthorization(), signal)
-          signal.throwIfAborted()
+          if (sourceAuthorization !== undefined) await abortable(sourceAuthorization(), requestSignal)
+          requestSignal.throwIfAborted()
         } catch (error) {
           preDispatchRejected = true
           preDispatchFailure = error
@@ -498,24 +509,33 @@ export class DecisionProviderClient {
         options.onRequestDispatched?.()
       }
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${key}` }
+      const pendingResponse = (implementation as unknown as typeof undiciFetch)(url, {
+        method: isModels ? 'GET' : 'POST',
+        ...(typeof init.body === 'string' ? { body: init.body } : {}),
+        headers,
+        signal: requestSignal,
+        redirect: 'manual',
+        credentials: 'omit',
+        dispatcher: pinnedDispatcher(resolve)
+      } satisfies UndiciRequestInit) as unknown as Promise<Response>
       const response = await abortable(
-        (implementation as unknown as typeof undiciFetch)(url, {
-          method: isModels ? 'GET' : 'POST',
-          ...(typeof init.body === 'string' ? { body: init.body } : {}),
-          headers,
-          signal,
-          redirect: 'manual',
-          credentials: 'omit',
-          dispatcher: pinnedDispatcher(resolve)
-        } satisfies UndiciRequestInit) as unknown as Promise<Response>,
-        signal
+        pendingResponse.then(response => {
+          // An injected transport may finish after cancellation won the race.
+          // Its body still belongs to this invocation, but cannot prove usage.
+          if (requestSignal.aborted) {
+            void response.body?.cancel().catch(() => {})
+            requestSignal.throwIfAborted()
+          }
+          return response
+        }),
+        requestSignal
       )
       providerStatus = response.status
       if (!response.ok || response.status >= 300) {
-        await response.body?.cancel().catch(() => {})
+        void response.body?.cancel().catch(() => {})
         throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider request failed', 502)
       }
-      const payload = await boundedJson(response, signal)
+      const payload = await boundedJson(response, requestSignal)
       if (!isModels && plain(payload)) {
         const measured = config.kind === 'typesafe' ? NativeUsage.safeParse(payload.usage) : CompatibleUsage.safeParse(payload.usage)
         if (measured.success) {
@@ -732,8 +752,13 @@ export class DecisionProviderClient {
       if (preDispatchRejected && !payloadDispatched) {
         // No source POST left the server. Keep typed host failure codes without
         // manufacturing a provider usage/cost receipt; redact unknown failures.
-        if (preDispatchFailure instanceof AgentRepositoryError) throw preDispatchFailure
-        const code = options.signal?.aborted ? 'DECISION_ABORTED' : timeout.aborted ? 'DECISION_TIMEOUT' : 'DECISION_PRE_DISPATCH_REJECTED'
+        if (preDispatchFailure instanceof AgentRepositoryError && !transportSignal.aborted) throw preDispatchFailure
+        const code =
+          options.signal?.aborted || (transportSignal.aborted && !timeout.aborted)
+            ? 'DECISION_ABORTED'
+            : timeout.aborted
+              ? 'DECISION_TIMEOUT'
+              : 'DECISION_PRE_DISPATCH_REJECTED'
         throw new AgentRepositoryError(code, 'Decision provider dispatch was not authorized', code === 'DECISION_ABORTED' ? 499 : 502)
       }
       // Ax wraps fetch rejections, including our own egress/body guards.
@@ -743,9 +768,11 @@ export class DecisionProviderClient {
         ? 'DECISION_ABORTED'
         : timeout.aborted
           ? 'DECISION_TIMEOUT'
-          : failure instanceof AgentRepositoryError
-            ? failure.code
-            : 'DECISION_PROVIDER_FAILED'
+          : transportSignal.aborted
+            ? 'DECISION_ABORTED'
+            : failure instanceof AgentRepositoryError
+              ? failure.code
+              : 'DECISION_PROVIDER_FAILED'
       throw new DecisionProviderFailure(
         code,
         snapshot,
