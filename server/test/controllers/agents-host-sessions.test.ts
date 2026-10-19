@@ -963,35 +963,35 @@ describe('ordinary-origin agent session API', () => {
   })
 
   afterEach(async () => {
-    restoreProposalOperations?.()
+    const httpServer = server
+    const destroy = destroyDatabase
+    const runtimes = [runtime, ...auxiliaryRuntimes]
+    const coordinators = [...auxiliaryCoordinators]
+    const restoreOperations = restoreProposalOperations
+    auxiliaryRuntimes.clear()
+    auxiliaryCoordinators.clear()
     restoreProposalOperations = undefined
-    vi.unstubAllGlobals()
+    let shutdownFailure: PromiseRejectedResult | undefined
     try {
       const closed = Promise.withResolvers<void>()
-      server.close(error => (error ? closed.reject(error) : closed.resolve()))
+      httpServer.close(error => (error ? closed.reject(error) : closed.resolve()))
+      // Bun can retain a keep-alive socket after a status-only fetch; the fixture owns it.
+      httpServer.closeAllConnections()
       await closed.promise
     } finally {
-      const runtimes = [runtime, ...auxiliaryRuntimes]
-      const coordinators = [...auxiliaryCoordinators]
-      await Promise.allSettled([...runtimes, ...coordinators].map(candidate => candidate.shutdown()))
-      auxiliaryRuntimes.clear()
-      auxiliaryCoordinators.clear()
       try {
-        await destroyDatabase()
+        const shutdowns = await Promise.allSettled([...runtimes, ...coordinators].map(candidate => candidate.shutdown()))
+        shutdownFailure = shutdowns.find((result): result is PromiseRejectedResult => result.status === 'rejected')
       } finally {
-        ownerId = 7
-        authContextOwnerId = null
-        administrator = false
-        engineCurrentPage = undefined
-        engineMessages = []
-        engineSkills = []
-        engineMemory = undefined
-        engineRunId = undefined
-        engineFailure = null
-        engineContextLimit = undefined
-        runtimeLogs.length = 0
+        try {
+          await destroy()
+        } finally {
+          restoreOperations?.()
+          vi.unstubAllGlobals()
+        }
       }
     }
+    if (shutdownFailure) throw shutdownFailure.reason
   })
 
   const mcpProposalAuthority = (actionName: AgentActionName) =>
@@ -5709,10 +5709,14 @@ describe('ordinary-origin agent API routing', () => {
   })
 
   afterAll(async () => {
-    const closed = Promise.withResolvers<void>()
-    server.close(error => (error ? closed.reject(error) : closed.resolve()))
-    await closed.promise
-    await db.destroy()
+    try {
+      const closed = Promise.withResolvers<void>()
+      server.close(error => (error ? closed.reject(error) : closed.resolve()))
+      server.closeAllConnections()
+      await closed.promise
+    } finally {
+      await db.destroy()
+    }
   })
 
   it('falls through ordinary routes without applying isolated host behavior', async () => {

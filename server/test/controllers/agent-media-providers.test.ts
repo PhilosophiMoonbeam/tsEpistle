@@ -141,13 +141,23 @@ describe('independent media provider administration over HTTP', () => {
   })
 
   afterEach(async () => {
-    vi.restoreAllMocks()
-    if (previousEnvironment === undefined) delete process.env[environmentName]
-    else process.env[environmentName] = previousEnvironment
+    const httpServer = server
+    const destroy = destroyDatabase
+    const environment = previousEnvironment
     try {
-      await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())))
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close(error => (error ? reject(error) : resolve()))
+        // Bun can retain a keep-alive socket after a status-only fetch; the fixture owns it.
+        httpServer.closeAllConnections()
+      })
     } finally {
-      await destroyDatabase()
+      try {
+        await destroy()
+      } finally {
+        vi.restoreAllMocks()
+        if (environment === undefined) delete process.env[environmentName]
+        else process.env[environmentName] = environment
+      }
     }
   })
 

@@ -6,18 +6,18 @@ import { isDeepStrictEqual } from 'node:util'
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/
+const THREAT_MODEL_AUDIT_COMMAND = 'bun --no-env-file server/scripts/audit-dependencies.ts'
 
 const REQUIRED_COMMANDS = [
   'bun run dependencies:check',
   'bun run licenses:check',
   'bun run test:security',
-  'bun audit --production',
+  THREAT_MODEL_AUDIT_COMMAND,
   'bun run typecheck:server'
 ] as const
 
 const THREAT_MODEL_SCRIPT = 'bun server/scripts/check-threat-model.ts'
 const THREAT_MODEL_CI_COMMAND = 'bun run threat-model:check'
-const THREAT_MODEL_AUDIT_COMMAND = 'bun audit --production'
 
 export const CANONICAL_REPOSITORY = 'PhilosophiMoonbeam/tsEpistle'
 export const CANONICAL_FINGERPRINT_ALGORITHM = 'tsepistle-isolated-preview-v1'
@@ -1081,7 +1081,7 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
           (threatModelIndex !== -1 && auditIndex >= threatModelIndex)
         ) {
           failures.push(
-            'ci:static must execute exact unconditional bun audit --production after dependencies:check and licenses:check and before threat-model:check'
+            `ci:static must execute exact unconditional ${THREAT_MODEL_AUDIT_COMMAND} after dependencies:check and licenses:check and before threat-model:check`
           )
         }
       }

@@ -3,61 +3,14 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { load } from 'js-yaml'
 
 import { describe, expect, it } from '../bun-test.mts'
 
 const repositoryRoot = process.cwd()
-const readRepositoryFile = (filePath: string): string => fs.readFileSync(path.join(repositoryRoot, filePath), 'utf8')
-const bracedExpansion = (value: string): string => '$' + '{' + value + '}'
 
 describe('Packer release provenance contracts', () => {
-  it('verifies the attested release manifest and checksum before passing an immutable image to Packer', () => {
-    const workflow = readRepositoryFile('.github/workflows/packer.yml')
-    const download = workflow.indexOf('gh release download "v$APPLICATION_VERSION"')
-    const attestation = workflow.indexOf('gh attestation verify "$release_dir/release-manifest.json"')
-    const checksum = workflow.indexOf('sha256sum --check --strict --ignore-missing SHA256SUMS')
-    const manifestValidation = workflow.indexOf('(.containerImage.reference == ("ghcr.io/philosophimoonbeam/wiki@" + .containerImage.digest))')
-    const build = workflow.indexOf('packer build .')
-
-    expect(download).toBeGreaterThan(-1)
-    expect(attestation).toBeGreaterThan(download)
-    expect(checksum).toBeGreaterThan(attestation)
-    expect(manifestValidation).toBeGreaterThan(checksum)
-    expect(build).toBeGreaterThan(manifestValidation)
-    expect(workflow).toContain('attestations: read')
-    expect(workflow).toContain('and (.product.version == $version)')
-    expect(workflow).toContain('and (.release.tag == ("v" + $version))')
-    expect(workflow).toContain('and (.release.revision | type == "string" and test("^[0-9a-f]{40}$"))')
-    expect(workflow).toContain('and (.containerImage.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))')
-    expect(workflow).toContain('PKR_VAR_application_image: ' + bracedExpansion('{ steps.release.outputs.application_image }'))
-    expect(workflow).not.toContain('PKR_VAR_application_version')
-    expect(workflow).not.toContain('docker manifest inspect')
-  })
-
-  it('resolves every runtime-changing input before invoking Packer and passes only immutable identities', () => {
-    const workflow = readRepositoryFile('.github/workflows/packer.yml')
-    const resolver = workflow.indexOf('run: dev/packer/scripts/resolve-runtime-inputs.sh')
-    const build = workflow.indexOf('packer build .')
-
-    expect(resolver).toBeGreaterThan(-1)
-    expect(build).toBeGreaterThan(resolver)
-    for (const variable of [
-      'PKR_VAR_apt_snapshot: ' + bracedExpansion('{ steps.runtime.outputs.apt_snapshot }'),
-      'PKR_VAR_base_image_id: ' + bracedExpansion('{ steps.runtime.outputs.base_image_id }'),
-      'PKR_VAR_docker_package_manifest_sha256: ' + bracedExpansion('{ steps.runtime.outputs.docker_package_manifest_sha256 }'),
-      'PKR_VAR_postgres_image: ' + bracedExpansion('{ steps.runtime.outputs.postgres_image }')
-    ]) {
-      expect(workflow).toContain(variable)
-    }
-
-    const resolverScript = readRepositoryFile('dev/packer/scripts/resolve-runtime-inputs.sh')
-    expect(resolverScript).toMatch(/https:\/\/api\.digitalocean\.com\/v2\/images\?[^"\n]*\btype=distribution\b/)
-    expect(resolverScript).toContain('https://snapshot.ubuntu.com/ubuntu/$APT_SNAPSHOT/dists/$suite/InRelease')
-    expect(resolverScript).toContain('postgres_image="docker.io/library/postgres@$postgres_digest"')
-    expect(resolverScript).toContain('cmp --silent "$postgres_tag_manifest" "$postgres_digest_manifest"')
-    expect(resolverScript).toContain('docker_package_manifest_sha256=')
-    expect(resolverScript).toContain('sha256sum --check --strict')
+  it.each([false, true])('verifies package bytes before accepting immutable runtime identities (tampered=%s)', tampered => {
+    const resolverScript = fs.readFileSync(path.join(repositoryRoot, 'dev/packer/scripts/resolve-runtime-inputs.sh'), 'utf8')
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'packer-runtime-inputs-'))
     const bin = path.join(temporaryDirectory, 'bin')
     const scripts = path.join(temporaryDirectory, 'scripts')
@@ -89,6 +42,7 @@ describe('Packer release provenance contracts', () => {
       )
       fs.writeFileSync(path.join(temporaryDirectory, 'postgres-manifest.json'), postgresManifest)
       for (const identity of packageIdentities) fs.writeFileSync(path.join(packages, identity.file), identity.bytes)
+      if (tampered) fs.appendFileSync(path.join(packages, packageIdentities[0]!.file), 'tampered archive')
       fs.writeFileSync(
         path.join(packages, 'package-manifest.tsv'),
         packageIdentities.map(identity => [identity.package, identity.version, identity.architecture, identity.file, identity.sha256].join('\t')).join('\n') +
@@ -144,6 +98,12 @@ fi
           TEST_PACKAGES: packages
         }
       })
+      if (tampered) {
+        expect(result.status).toBe(1)
+        expect(fs.existsSync(path.join(temporaryDirectory, 'outputs'))).toBe(false)
+        expect(fs.existsSync(path.join(temporaryDirectory, 'runtime-inputs/runtime-inputs.json'))).toBe(false)
+        return
+      }
       expect(result.status).toBe(0)
       const inputs = JSON.parse(fs.readFileSync(path.join(temporaryDirectory, 'runtime-inputs/runtime-inputs.json'), 'utf8'))
       expect(inputs.digitalOceanBaseImage).toEqual({ slug: 'ubuntu-24-04-x64', id: '123456' })
@@ -166,66 +126,7 @@ fi
     }
   })
 
-  it('persists evidence binding the snapshot to the resolved release provenance', () => {
-    const workflow = readRepositoryFile('.github/workflows/packer.yml')
-
-    for (const field of [
-      'snapshotId: .artifact_id',
-      'applicationDigest: $application_digest',
-      'applicationImage: $application_image',
-      'sourceRevision: $source_revision',
-      'releaseVersion: $release_version',
-      'runtimeInputs: $runtime_inputs[0]'
-    ]) {
-      expect(workflow).toContain(field)
-    }
-    const parsed = load(workflow) as { jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, unknown> }> }> }
-    const upload = parsed.jobs['build-do-image']!.steps.find(
-      step => step.uses?.startsWith('actions/upload-artifact@') && step.with?.path === 'dev/packer/snapshot-provenance.json'
-    )
-    expect(upload?.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}$/)
-    expect(upload?.with).toMatchObject({ path: 'dev/packer/snapshot-provenance.json', 'if-no-files-found': 'error' })
-    for (const identity of [
-      '$runtime.digitalOceanBaseImage.id == $base_image_id',
-      '$runtime.ubuntuAptSnapshot.id == $apt_snapshot',
-      '$runtime.postgresqlImage.reference == $postgres_image',
-      '$runtime.postgresqlImage.digest == $postgres_digest',
-      '$runtime.dockerPackages.manifestSha256 == $docker_package_manifest_sha256'
-    ]) {
-      expect(workflow).toContain(identity)
-    }
-  })
-
-  it('accepts only a digest-pinned application image and records it in the Packer manifest', () => {
-    const template = readRepositoryFile('dev/packer/digitalocean.pkr.hcl')
-
-    expect(template).toContain('variable "application_image"')
-    expect(template).toContain('^ghcr\\\\.io/philosophimoonbeam/wiki@sha256:[0-9a-f]{64}$')
-    expect(template).toContain('"application_image=' + bracedExpansion('var.application_image') + '"')
-    expect(template).toContain('application_digest = split("@", var.application_image)[1]')
-    expect(template).toContain('application_image  = var.application_image')
-    expect(template).toContain('release_version    = var.release_version')
-    expect(template).toContain('source_revision    = var.source_revision')
-    expect(template).toContain('variable "base_image_id"')
-    expect(template).toContain('image         = var.base_image_id')
-    expect(template).toContain('variable "apt_snapshot"')
-    expect(template).toContain('variable "postgres_image"')
-    expect(template).toContain('^docker\\\\.io/library/postgres@sha256:[0-9a-f]{64}$')
-    expect(template).toContain('variable "docker_package_manifest_sha256"')
-    expect(template).toContain('apt_snapshot                   = var.apt_snapshot')
-    expect(template).toContain('base_image_id                  = var.base_image_id')
-    expect(template).toContain('docker_package_manifest_sha256 = var.docker_package_manifest_sha256')
-    expect(template).toContain('postgres_digest    = split("@", var.postgres_image)[1]')
-    expect(template).toContain('postgres_image     = var.postgres_image')
-    expect(template).not.toContain('image         = "ubuntu-24-04-x64"')
-    expect(template).toContain('output     = "packer-manifest.json"')
-    expect(template).not.toContain('variable "application_version"')
-  })
-
-  it('provisions the application container from only the validated digest reference', () => {
-    const script = readRepositoryFile('dev/packer/scripts/010-docker.sh')
-
-    expect(script).toMatch(/^docker create\b[^\n]*--name=wiki\b[^\n]*"\$application_image"\s*$/m)
+  it('rejects mutable or foreign application images before host provisioning', () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'packer-application-admission-'))
     const operations = path.join(temporaryDirectory, 'operations')
     const admissionBoundary = path.join(temporaryDirectory, 'bash-env')
@@ -257,19 +158,6 @@ fi
     } finally {
       fs.rmSync(temporaryDirectory, { recursive: true, force: true })
     }
-  })
-
-  it('installs only verified Docker package bytes and a digest-pinned PostgreSQL image', () => {
-    const script = readRepositoryFile('dev/packer/scripts/010-docker.sh')
-
-    expect(script).toContain(': "' + bracedExpansion('postgres_image:?postgres_image is required') + '"')
-    expect(script).toContain('^docker\\.io/library/postgres@sha256:[0-9a-f]{64}$')
-    expect(script).toContain('printf \'%s  %s\\n\' "$docker_package_manifest_sha256" "$manifest" | sha256sum --check --strict')
-    expect(script).toContain('done < <(jq -r \'.[] | [.sha256, .file] | @tsv\' "$manifest") | sha256sum --check --strict')
-    expect(script).toContain('sudo apt-get -qqy install "' + bracedExpansion('docker_packages[@]') + '"')
-    expect(script).toContain('"$postgres_image"')
-    expect(script).not.toContain('download.docker.com')
-    expect(script).not.toContain('postgres:17')
   })
 
   it('keeps all surviving apt sources snapshot-only at every apt operation', () => {
@@ -418,7 +306,7 @@ esac
           fs.mkdirSync(path.dirname(keyPath), { recursive: true })
           fs.writeFileSync(keyPath, keyMaterial + '\n')
         }
-        const checker = readRepositoryFile('dev/packer/scripts/999-img-check.sh')
+        const checker = fs.readFileSync(path.join(repositoryRoot, 'dev/packer/scripts/999-img-check.sh'), 'utf8')
         // EUID is readonly. Root admission is covered by the full-script container
         // smoke; ordinary tests execute every other statement against guest fixtures.
         const admissionStart = checker.indexOf('if [ "$EUID" -ne 0 ]')

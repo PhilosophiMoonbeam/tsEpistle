@@ -20,7 +20,7 @@ import {
 } from '../../scripts/check-threat-model.ts'
 
 const temporaryDirectories: string[] = []
-const requiredCommands = ['bun run dependencies:check', 'bun run licenses:check', 'bun run test:security', 'bun audit --production', 'bun run typecheck:server']
+const requiredCommands = ['bun run dependencies:check', 'bun run licenses:check', 'bun run test:security', 'bun --no-env-file server/scripts/audit-dependencies.ts', 'bun run typecheck:server']
 
 type FixtureManifest = {
   packageManager: string
@@ -93,7 +93,7 @@ function createRepository(options: RepositoryFixtureOptions = {}): {
       'test:security': 'bun security-tests.ts',
       'typecheck:server': 'bun --bun tsc --noEmit',
       'threat-model:check': 'bun server/scripts/check-threat-model.ts',
-      'ci:static': 'bun run dependencies:check && bun run licenses:check && bun audit --production && bun run threat-model:check'
+      'ci:static': 'bun run dependencies:check && bun run licenses:check && bun --no-env-file server/scripts/audit-dependencies.ts && bun run threat-model:check'
     }
   }
   write(rootPath, 'package.json', `${JSON.stringify(baseManifest, null, 2)}\n`)
@@ -371,27 +371,31 @@ describe('release gate wiring', () => {
     )
   })
 
-  it('requires an exact unsuppressed audit segment in the canonical ci:static chain', async () => {
-    const invalidChains = [
-      'bun run dependencies:check && bun run licenses:check && bun run threat-model:check',
-      'bun run dependencies:check && bun run licenses:check && echo "bun audit --production" && bun run threat-model:check',
-      'bun run dependencies:check && bun run licenses:check && bun audit --production && bun run threat-model:check || true',
-      'bun run dependencies:check && bun run licenses:check && bun audit --production --audit-level=high && bun run threat-model:check',
-      'bun run dependencies:check && bun run licenses:check && bun audit --production & bun run threat-model:check'
-    ]
+  const audit = 'bun --no-env-file server/scripts/audit-dependencies.ts'
+  const prerequisites = 'bun run dependencies:check && bun run licenses:check'
+  const gate = 'bun run threat-model:check'
+  it.each([
+    [0, `${prerequisites} && ${audit} && ${gate}`],
+    [1, `${prerequisites} && ${gate}`],
+    [1, `${prerequisites} && echo "${audit}" && ${gate}`],
+    [1, `${prerequisites} && ${audit} && ${gate} || true`],
+    [1, `${prerequisites} && ${audit} --audit-level=high && ${gate}`],
+    [1, `${prerequisites} && ${audit} & ${gate}`],
+    [1, `${prerequisites} && bun audit --production && ${gate}`],
+    [1, `${audit} && ${prerequisites} && ${gate}`],
+    [1, `${prerequisites} && ${gate} && ${audit}`]
+  ] as const)('returns CLI exit %s for audit chain %s', (status, ciStatic) => {
+    const { rootPath } = createRepository()
+    const packagePath = path.join(rootPath, 'package.json')
+    const manifest = JSON.parse(readFileSync(packagePath, 'utf8'))
+    manifest.scripts['ci:static'] = ciStatic
+    write(rootPath, 'package.json', `${JSON.stringify(manifest, null, 2)}\n`)
 
-    for (const ciStatic of invalidChains) {
-      const { rootPath } = createRepository()
-      const packagePath = path.join(rootPath, 'package.json')
-      const manifest = JSON.parse(readFileSync(packagePath, 'utf8'))
-      manifest.scripts['ci:static'] = ciStatic
-      write(rootPath, 'package.json', `${JSON.stringify(manifest, null, 2)}\n`)
-
-      const failures = await checkThreatModel(rootPath)
-      expect(failures).toContain(
-        'ci:static must execute exact unconditional bun audit --production after dependencies:check and licenses:check and before threat-model:check'
-      )
-    }
+    const result = spawnSync(process.execPath, [
+      '--no-env-file',
+      fileURLToPath(new URL('../../scripts/check-threat-model.ts', import.meta.url))
+    ], { cwd: rootPath, encoding: 'utf8', env: { ...process.env, BUN_OPTIONS: '--no-env-file' } })
+    expect(result.status).toBe(status)
   })
 })
 
