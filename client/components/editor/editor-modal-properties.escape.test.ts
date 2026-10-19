@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { parse } from '@vue/compiler-sfc'
-import type { DateAdapter } from 'vuetify'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import * as cheerio from 'cheerio'
+import type { DateInstance } from 'vuetify'
 import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { document, resetBody } from '../../test/browser-dom.mts'
 
+const pug: { render(source: string): string } = createRequire(import.meta.url)('pug')
 const componentPath = join(process.cwd(), 'client/components/editor/editor-modal-properties.vue')
 const { descriptor } = parse(readFileSync(componentPath, 'utf8'), { filename: componentPath })
 const script = descriptor.script?.content ?? ''
@@ -13,6 +16,23 @@ const script = descriptor.script?.content ?? ''
 const Vue = await import('vue')
 const { createVuetify, useDate } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
+
+// Keep the owner's dialog attributes/bindings; replace only the unrelated form content.
+const markup = cheerio.load(pug.render(descriptor.template?.content ?? ''))
+const ownerDialog = markup('v-dialog').first().clone()
+if (ownerDialog.length !== 1) throw new Error('Page Properties dialog invocation is missing')
+ownerDialog.empty().append(`
+  <button class="outer-field">Field</button>
+  <v-dialog v-model="nestedOpen"><button class="nested-field">Nested</button></v-dialog>
+`)
+const dialogTemplate = compileTemplate({
+  source: ownerDialog.toString(),
+  filename: componentPath,
+  id: 'page-properties-escape-owner',
+  compilerOptions: { mode: 'function' }
+})
+if (dialogTemplate.errors.length) throw dialogTemplate.errors[0]
+const dialogRender = new Function('Vue', dialogTemplate.code)(Vue)
 
 /** Returns the source text of one options-API method, braces balanced. */
 const methodSource = (name: string): string => {
@@ -32,6 +52,8 @@ const { handleDialogKeydown } = new Function(`${handlerCode}\nreturn methods`)()
   handleDialogKeydown: (this: { brandingPickerShown: boolean; cancel: () => void; closeBrandingPicker: () => void }, event: KeyboardEvent) => void
 }
 
+const cancelCode = new Bun.Transpiler({ loader: 'ts' }).transformSync(`const methods = { ${methodSource('cancel')} }`)
+const { cancel } = new Function(`${cancelCode}\nreturn methods`)()
 const unmounts: Array<() => void> = []
 const settle = async (): Promise<void> => {
   for (let pass = 0; pass < 6; pass += 1) {
@@ -40,8 +62,46 @@ const settle = async (): Promise<void> => {
   }
 }
 
+const settleOverlay = async (): Promise<void> => {
+  await settle()
+  vi.advanceTimersByTime(0)
+  await settle()
+}
+
+const mountOwnerDialog = async () => {
+  const rollbackDraft = vi.fn()
+  const context = Vue.reactive({ isShown: true, brandingPickerShown: false, nestedOpen: false })
+  const host = document.body.appendChild(document.createElement('div'))
+  const OwnerDialog = Vue.defineComponent({
+    data: () => context,
+    methods: {
+      handleDialogKeydown,
+      cancel,
+      rollbackDraft,
+      closeBrandingPicker() {
+        this.brandingPickerShown = false
+      }
+    },
+    render: dialogRender
+  })
+  const app = Vue.createApp({
+    render: () => Vue.h(vuetifyComponents.VApp, null, () => Vue.h(OwnerDialog))
+  })
+  app.use(createVuetify({ components: vuetifyComponents }))
+  app.mount(host)
+  unmounts.push(() => {
+    app.unmount()
+    host.remove()
+  })
+  await settleOverlay()
+  const field = document.querySelector<HTMLElement>('.outer-field')
+  if (!field) throw new Error('Page Properties dialog content did not render')
+  return { field, rollbackDraft, context }
+}
+
 afterEach(() => {
   for (const unmount of unmounts.splice(0)) unmount()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   resetBody()
 })
@@ -50,13 +110,6 @@ const escapeKey = (init: KeyboardEventInit = {}): KeyboardEvent =>
   new document.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...init })
 
 describe('Page Properties Esc', () => {
-  test('binds Esc on the persistent dialog itself', () => {
-    const pug = descriptor.template?.content ?? ''
-    const root = pug.slice(pug.indexOf('v-dialog('), pug.indexOf(')', pug.indexOf('v-dialog(')))
-    expect(root).toContain('persistent')
-    expect(root).toContain("@keydown='handleDialogKeydown'")
-  })
-
   test('Esc cancels like Cancel, but first closes an open branding picker', () => {
     const context = { brandingPickerShown: false, cancel: vi.fn(), closeBrandingPicker: vi.fn() }
     const first = escapeKey()
@@ -81,33 +134,53 @@ describe('Page Properties Esc', () => {
     expect(context.closeBrandingPicker).not.toHaveBeenCalled()
   })
 
-  test('Vuetify forwards Esc from a persistent dialog only while it is the top overlay', async () => {
-    const onKeydown = vi.fn()
-    const host = document.body.appendChild(document.createElement('div'))
-    const nestedOpen = Vue.ref(false)
-    const app = Vue.createApp({
-      render: () => Vue.h(vuetifyComponents.VApp, null, () => Vue.h(vuetifyComponents.VDialog, { modelValue: true, persistent: true, onKeydown }, () => [
-        Vue.h('button', { class: 'outer-field' }, 'Field'),
-        Vue.h(vuetifyComponents.VDialog, { modelValue: nestedOpen.value }, () => Vue.h('button', { class: 'nested-field' }, 'Nested'))
-      ]))
-    })
-    app.use(createVuetify({ components: vuetifyComponents }))
-    app.mount(host)
-    unmounts.push(() => { app.unmount(); host.remove() })
+  test('the owner keeps scrim clicks and child-handled Esc from discarding edits, then cancels on Esc', async () => {
+    vi.useFakeTimers()
+    const { field, rollbackDraft } = await mountOwnerDialog()
+    const scrim = document.querySelector<HTMLElement>('.v-overlay--active .v-overlay__scrim')
+    if (!scrim) throw new Error('Page Properties scrim did not render')
+    scrim.dispatchEvent(new document.defaultView!.MouseEvent('mousedown', { bubbles: true }))
+    scrim.click()
+    // Run ClickOutside's deferred handler rather than guessing a wall-clock delay.
+    await settleOverlay()
+    expect(document.querySelector('.v-overlay--active .outer-field')).toBe(field)
+    expect(rollbackDraft).not.toHaveBeenCalled()
+
+    field.dispatchEvent(escapeKey({ isComposing: true }))
+    const handled = escapeKey()
+    handled.preventDefault()
+    field.dispatchEvent(handled)
     await settle()
-    const field = document.querySelector<HTMLElement>('.outer-field')
-    if (!field) throw new Error('Dialog content did not render')
+    expect(document.querySelector('.v-overlay--active .outer-field')).toBe(field)
+    expect(rollbackDraft).not.toHaveBeenCalled()
+
+    field.focus()
+    const escapeEvent = escapeKey()
+    field.dispatchEvent(escapeEvent)
+    await settle()
+    expect(escapeEvent.defaultPrevented).toBe(true)
+    expect(rollbackDraft).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.v-overlay--active .outer-field')).toBeNull()
+  })
+
+  test('the owner leaves Esc to the top nested overlay before cancelling Page Properties', async () => {
+    vi.useFakeTimers()
+    const { field, rollbackDraft, context } = await mountOwnerDialog()
+    context.nestedOpen = true
+    await settleOverlay()
+    const nestedField = document.querySelector<HTMLElement>('.nested-field')
+    if (!nestedField) throw new Error('Nested dialog content did not render')
+    nestedField.focus()
+    nestedField.dispatchEvent(escapeKey())
+    await settleOverlay()
+    expect(context.nestedOpen).toBe(false)
+    expect(rollbackDraft).not.toHaveBeenCalled()
+    expect(document.querySelector('.v-overlay--active .outer-field')).toBe(field)
     field.focus()
     field.dispatchEvent(escapeKey())
-    expect(onKeydown).toHaveBeenCalledTimes(1)
-
-    nestedOpen.value = true
     await settle()
-    // Vuetify updates its overlay stack after a frame.
-    await new Promise(resolve => setTimeout(resolve, 50))
-    await settle()
-    field.dispatchEvent(escapeKey())
-    expect(onKeydown).toHaveBeenCalledTimes(1)
+    expect(rollbackDraft).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.v-overlay--active .outer-field')).toBeNull()
   })
 })
 
@@ -127,7 +200,7 @@ const scheduleCode = new Bun.Transpiler({ loader: 'ts' }).transformSync(`
 `)
 const scheduleBehavior = new Function(`${scheduleCode}\nreturn behavior`)()
 type ScheduleHarness = {
-  dateAdapter: DateAdapter
+  dateAdapter: DateInstance
   publishStartDate: string
   publishEndDate: string
   publishStartDraft: unknown
@@ -154,7 +227,10 @@ const mountSchedule = (): ScheduleHarness => {
   })
   app.use(createVuetify({ components: vuetifyComponents }))
   const context = app.mount(host)
-  unmounts.push(() => { app.unmount(); host.remove() })
+  unmounts.push(() => {
+    app.unmount()
+    host.remove()
+  })
   return context as unknown as ScheduleHarness
 }
 

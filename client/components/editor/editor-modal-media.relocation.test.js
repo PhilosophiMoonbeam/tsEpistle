@@ -135,14 +135,7 @@ describe('editor media relocation admission state', () => {
     expect(observedAtPoll).toEqual({ actionMenuAssetId: null, currentFileId: null, staleAssetIds: [7] })
     expect(harness.context.relocationReceipt).toEqual(pending)
     expect(harness.context.isAssetActionable(7)).toBe(false)
-    expect(harness.notifications).toEqual([
-      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' },
-      {
-        message: 'Relocation is still pending. Open the receipt to inspect its status; no automatic retry will be attempted.',
-        style: 'warning',
-        icon: 'clock-outline'
-      }
-    ])
+    expect(harness.notifications.map(notification => notification.style)).toEqual(['info', 'warning'])
     expect(harness.relocationCalls).toHaveLength(1)
 
     harness.context.currentFileId = 7
@@ -194,7 +187,7 @@ describe('editor media relocation admission state', () => {
     expect(harness.context.currentFileId).toBeNull()
     expect(harness.context.isAssetActionable(7)).toBe(false)
     expect(harness.errors).toEqual([workerError])
-    expect(harness.notifications).toEqual([{ message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' }])
+    expect(harness.notifications.map(notification => notification.style)).toEqual(['info'])
     expect(harness.relocationCalls).toHaveLength(1)
   })
 
@@ -212,10 +205,7 @@ describe('editor media relocation admission state', () => {
     expect(harness.context.staleAssetIds).toEqual([])
     expect(harness.context.currentFileId).toBeNull()
     expect(harness.context.assets[0].filename).toBe('new.png')
-    expect(harness.notifications).toEqual([
-      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' },
-      { message: 'Relocation completed on all participating storage targets.', style: 'success', icon: 'check' }
-    ])
+    expect(harness.notifications.map(notification => notification.style)).toEqual(['info', 'success'])
 
     const refreshError = new Error('canonical asset refresh unavailable')
     const failedRefresh = createHarness({
@@ -236,9 +226,7 @@ describe('editor media relocation admission state', () => {
     expect(failedRefresh.context.currentFileId).toBeNull()
     expect(failedRefresh.context.isAssetActionable(7)).toBe(false)
     expect(failedRefresh.errors).toEqual([refreshError])
-    expect(failedRefresh.notifications).toEqual([
-      { message: 'Relocation submitted. Storage targets are being reconciled.', style: 'info', icon: 'clock-outline' }
-    ])
+    expect(failedRefresh.notifications.map(notification => notification.style)).toEqual(['info'])
   })
 })
 

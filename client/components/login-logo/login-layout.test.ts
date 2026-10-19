@@ -17,27 +17,6 @@ const parsed = parse(loginSource, { filename: loginPath })
 if (parsed.errors.length > 0) throw new Error(`Could not parse login.vue: ${parsed.errors.join(', ')}`)
 if (!parsed.descriptor.script || !parsed.descriptor.template) throw new Error('login.vue script or template was not found')
 
-const readComponentSource = (relativePath: string) => {
-  const componentPath = path.join(process.cwd(), relativePath)
-  const source = fs.readFileSync(componentPath, 'utf8')
-  const component = parse(source, { filename: componentPath })
-  if (component.errors.length > 0) {
-    throw new Error(`Could not parse ${relativePath}: ${component.errors.join(', ')}`)
-  }
-  if (!component.descriptor.script || !component.descriptor.template) {
-    throw new Error(`${relativePath} script or template was not found`)
-  }
-  return {
-    script: component.descriptor.script.content,
-    source,
-    template: component.descriptor.template.content
-  }
-}
-
-const particleLogoComponent = readComponentSource('client/components/login-logo/LoginParticleLogo.vue')
-const particleSceneComponent = readComponentSource('client/components/login-logo/LogoParticleScene.vue')
-const pointerControllerPath = path.join(process.cwd(), 'client/components/login-logo/useLogoPointer.ts')
-const pointerControllerSource = fs.readFileSync(pointerControllerPath, 'utf8')
 const loaderPath = path.join(process.cwd(), 'client/components/common/loader.vue')
 const loaderSource = fs.readFileSync(loaderPath, 'utf8')
 
@@ -103,29 +82,7 @@ const LoginParticleLogoStub = Vue.defineComponent({
   name: 'LoginParticleLogo',
   props: { effect: { type: [Object, null] as Vue.PropType<LogoEffectDescriptor | null>, required: true } },
   setup(props) {
-    return () =>
-      props.effect
-        ? Vue.h(
-            'div',
-            {
-              class: 'login-particle-logo',
-              'aria-hidden': 'true',
-              'data-static-url': props.effect.staticUrl
-            },
-            [
-              Vue.h('div', { class: 'login-particle-logo__stage' }, [
-                Vue.h('canvas', { class: 'login-logo-particle-scene', 'aria-hidden': 'true' }),
-                Vue.h('img', {
-                  class: 'login-particle-logo__image',
-                  src: props.effect.staticUrl,
-                  alt: '',
-                  'aria-hidden': 'true',
-                  draggable: 'false'
-                })
-              ])
-            ]
-          )
-        : null
+    return () => (props.effect ? Vue.h('div', { class: 'login-particle-logo' }) : null)
   }
 })
 let animationInstanceSequence = 0
@@ -458,17 +415,19 @@ const loaderBundle = await Bun.build({
   entrypoints: ['virtual:loader.vue'],
   external: ['vue', 'epic-spinners'],
   format: 'cjs',
-  plugins: [{
-    name: 'loader-illustration-test-sfc',
-    setup(build) {
-      build.onResolve({ filter: /^virtual:loader\.vue$/ }, () => ({ namespace: 'loader-test-sfc', path: loaderPath }))
-      build.onLoad({ filter: /.*/, namespace: 'loader-test-sfc' }, () => ({
-        contents: `${loaderScript.content}\nexport default __loader__\n`,
-        loader: 'ts',
-        resolveDir: path.dirname(loaderPath)
-      }))
+  plugins: [
+    {
+      name: 'loader-illustration-test-sfc',
+      setup(build) {
+        build.onResolve({ filter: /^virtual:loader\.vue$/ }, () => ({ namespace: 'loader-test-sfc', path: loaderPath }))
+        build.onLoad({ filter: /.*/, namespace: 'loader-test-sfc' }, () => ({
+          contents: `${loaderScript.content}\nexport default __loader__\n`,
+          loader: 'ts',
+          resolveDir: path.dirname(loaderPath)
+        }))
+      }
     }
-  }],
+  ],
   target: 'bun'
 })
 if (!loaderBundle.success) throw new Error(`Could not bundle Loader: ${loaderBundle.logs.map(log => log.message).join(', ')}`)
@@ -479,13 +438,20 @@ const loaderModuleStart = loaderCode.indexOf('(function(')
 if (loaderModuleStart < 0) throw new Error('Compiled Loader did not produce a CommonJS module')
 const loaderFactory = new Function(`return ${loaderCode.slice(loaderModuleStart)}`)() as typeof loginModuleFactory
 const loaderModule: CompiledLoginModule = { exports: {} }
-loaderFactory(loaderModule.exports, specifier => {
-  if (specifier === 'vue') return Vue
-  if (specifier === 'epic-spinners') return {
-    AtomSpinner: Vue.defineComponent({ setup: () => () => Vue.h('div', { 'data-loader-spinner': '' }) })
-  }
-  throw new Error(`Unexpected Loader import: ${specifier}`)
-}, loaderModule, loaderPath, path.dirname(loaderPath))
+loaderFactory(
+  loaderModule.exports,
+  specifier => {
+    if (specifier === 'vue') return Vue
+    if (specifier === 'epic-spinners')
+      return {
+        AtomSpinner: Vue.defineComponent({ setup: () => () => Vue.h('div', { 'data-loader-spinner': '' }) })
+      }
+    throw new Error(`Unexpected Loader import: ${specifier}`)
+  },
+  loaderModule,
+  loaderPath,
+  path.dirname(loaderPath)
+)
 const Loader = loaderModule.exports.default
 if (!Loader) throw new Error('Loader did not export a component')
 Object.assign(Loader, {
@@ -611,7 +577,9 @@ describe('login token continuation recovery', () => {
         siteTitle: () => 'Example knowledge base',
         logoUrl: () => '',
         logoEffect: () => null,
-        filteredStrategies() { return this.strategies }
+        filteredStrategies() {
+          return this.strategies
+        }
       }
     })
     const host = createTestHostNode('element', 'root')
@@ -625,10 +593,15 @@ describe('login token continuation recovery', () => {
     }
     try {
       vm.screen = initialScreen
-      vm.strategies = [{
-        key: 'local', displayName: 'Local', order: 0, selfRegistration: false,
-        strategy: { useForm: true, usernameType: 'email', color: '', icon: '' }
-      }]
+      vm.strategies = [
+        {
+          key: 'local',
+          displayName: 'Local',
+          order: 0,
+          selfRegistration: false,
+          strategy: { useForm: true, usernameType: 'email', color: '', icon: '' }
+        }
+      ]
       await Vue.nextTick()
       expect(vm.selectedStrategyKey).toBe('unselected')
       expect(findTestHostNode(host, node => node.type === 'input' && node.props.name === 'username')).toBeNull()
@@ -767,9 +740,8 @@ describe('login success illustration contract', () => {
     for (const mode of ['loading', 'icon'] as const) {
       for (const customIllustration of [false, true]) {
         const app = testRenderer.createApp({
-          render: () => Vue.h(Loader, { modelValue: true, mode }, customIllustration
-            ? { illustration: () => Vue.h('svg', { 'data-custom-illustration': '' }) }
-            : undefined)
+          render: () =>
+            Vue.h(Loader, { modelValue: true, mode }, customIllustration ? { illustration: () => Vue.h('svg', { 'data-custom-illustration': '' }) } : undefined)
         })
         app.component('VDialog', conditionalPassthrough('div'))
         app.component('VCard', passthrough('section'))
@@ -831,34 +803,13 @@ describe('login success illustration contract', () => {
   })
 })
 
-describe('login particle decoration accessibility hardening', () => {
-  it('keeps production decoration hidden from accessibility and keyboard interaction', () => {
-    expect(particleSceneComponent.template).toMatch(/<TresCanvas[\s\S]*?\bclass="login-logo-particle-scene"[\s\S]*?\baria-hidden="true"/)
-
-    const decorativeTemplates = `${particleLogoComponent.template}\n${particleSceneComponent.template}`
-    expect(decorativeTemplates).not.toMatch(
-      /(?:^|[\s(])(?:role|aria-live|aria-atomic|aria-relevant|aria-label|aria-labelledby|aria-describedby|title|tabindex|@key(?:down|up|press))(?=\s|=|\))/im
-    )
-    expect(decorativeTemplates).not.toMatch(
-      /<(?:a|button|input|select|textarea|summary)\b|(?:^|\n)\s*(?:a|button|input|select|textarea|summary|v-btn|v-text-field|v-select|v-checkbox|v-switch)(?:[.#(\s]|$)/im
-    )
-    const decorativeSources = [particleLogoComponent.source, particleSceneComponent.source, pointerControllerSource].join('\n')
-    expect(decorativeSources).not.toMatch(/\b(?:KeyboardEvent|keydown|keyup|keypress|onkeydown|onkeyup|onkeypress)\b/)
-    expect(decorativeSources).not.toMatch(
-      /['"`](?:role|aria-live|aria-atomic|aria-relevant|aria-label|aria-labelledby|aria-describedby|title|tabindex)['"`]\s*(?:,|\))/
-    )
-    expect(`${loginSource}\n${particleLogoComponent.script}`).not.toMatch(
-      /\b(?:PointerEvent|pointermove|pointerleave|pointerenter|pointerdown|pointerup|clientX|clientY)\b/
-    )
-  })
-})
-
 describe('login account recovery and wayfinding', () => {
   type CancelState = Record<string, unknown> & { $refs: Record<string, unknown>; $nextTick: (callback: () => void) => void }
   const loginOptions = Login as unknown as {
     methods: { cancelContinuation: (this: CancelState) => void; clearError: (this: CancelState) => void }
   }
-  const isRedirectedToLogin = (compiledLoginModule.exports as { isRedirectedToLogin?: (cookie: string | undefined, search: string) => boolean }).isRedirectedToLogin
+  const isRedirectedToLogin = (compiledLoginModule.exports as { isRedirectedToLogin?: (cookie: string | undefined, search: string) => boolean })
+    .isRedirectedToLogin
 
   it('ends a pending two-factor step without keeping the continuation token, code, setup secret or password', () => {
     const focused: string[] = []

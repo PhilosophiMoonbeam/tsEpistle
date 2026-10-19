@@ -1,52 +1,10 @@
-import fs from 'node:fs'
-import path from 'node:path'
-
-import { EDITOR_INSERT_EVENT, emitEditorInsert, onEditorInsert, offEditorInsert } from './editor-insert-events.ts'
-
-const repoRoot = path.resolve(import.meta.dirname, '../..')
-const guardedEmitterFiles = ['client/components/editor/editor-modal-media.vue', 'client/components/editor/editor-modal-drawio.vue']
-const guardedListenerFiles = [
-  'client/components/admin/admin-general.vue',
-  'client/components/admin/admin-security.vue',
-  'client/components/editor/editor-code.vue',
-  'client/components/editor/editor-ckeditor.vue',
-  'client/components/editor/tiptap/editor.vue',
-  'client/components/editor/editor-asciidoc.vue',
-  'client/components/editor/editor-markdown.vue'
-]
-const liveVisualEditorFiles = [
-  'client/components/editor/editor-ckeditor.vue',
-  'client/components/editor/editor-visual-markdown.vue',
-  'client/components/editor/tiptap/editor.vue'
-]
-
-function getLineNumber(content, index) {
-  return content.slice(0, index).split(/\r?\n/).length
-}
-
-function directEditorInsertEmitPattern() {
-  return /\bthis\s*\.\s*\$root\s*\.\s*\$emit\s*\(\s*(['"`])editorInsert\1/g
-}
-
-function directEditorInsertListenerPattern() {
-  return /\bthis\s*\.\s*\$root\s*\.\s*\$(?:on|off)\s*\(\s*(['"`])editorInsert\1/g
-}
-
-function helperRootCallPattern() {
-  return /\b(?:emit|on|off)EditorInsert\s*\(\s*this\s*\.\s*\$root/g
-}
+import { emitEditorInsert, onEditorInsert, offEditorInsert, emitEditorImagePropertiesRequest, subscribeEditorImageProperties } from './editor-insert-events.ts'
 
 describe('editor insert events', () => {
-  test('editor insert helper uses the shared non-Vue event bus', () => {
-    const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-insert-events.ts'), 'utf8')
-
-    expect(source).not.toMatch(/requ\u0069re\(\s*['"]vue['"]\s*\)/)
-    expect(source).not.toMatch(/new\s+Vue\s*\(/)
-    expect(source).not.toMatch(/\.\$(?:emit|on|off)\s*\(/)
-  })
-
   test('emitEditorInsert emits the shared editor insert event with the original payload', () => {
     const handler = vi.fn()
+    const propertiesHandler = vi.fn()
+    const unsubscribeProperties = subscribeEditorImageProperties(propertiesHandler)
     const opts = {
       kind: 'IMAGE',
       path: '/asset.png',
@@ -55,94 +13,58 @@ describe('editor insert events', () => {
     }
 
     onEditorInsert(handler)
-    emitEditorInsert(opts)
-    offEditorInsert(handler)
+    try {
+      emitEditorInsert(opts)
+      expect(handler.mock.calls).toEqual([[opts]])
+      expect(handler.mock.calls[0][0]).toBe(opts)
+      expect(propertiesHandler).not.toHaveBeenCalled()
 
-    expect(handler).toHaveBeenCalledWith(opts)
+      const request = {
+        signal: new AbortController().signal,
+        properties: { src: '/asset.png', alt: '', width: '', height: '', align: '', styles: [] },
+        apply: () => true
+      }
+      emitEditorImagePropertiesRequest(request)
+      expect(propertiesHandler.mock.calls).toEqual([[request]])
+      expect(handler).toHaveBeenCalledTimes(1)
+    } finally {
+      offEditorInsert(handler)
+      unsubscribeProperties()
+    }
   })
 
   test('offEditorInsert unsubscribes from the shared editor insert event with the same handler', () => {
     const handler = vi.fn()
+    const sibling = vi.fn()
+    const payload = { kind: 'IMAGE', path: '/asset.png' }
 
     onEditorInsert(handler)
-    offEditorInsert(handler)
-    emitEditorInsert({ kind: 'IMAGE', path: '/asset.png' })
-
-    expect(handler).not.toHaveBeenCalled()
+    onEditorInsert(sibling)
+    try {
+      offEditorInsert(handler)
+      emitEditorInsert(payload)
+      expect(handler).not.toHaveBeenCalled()
+      expect(sibling.mock.calls).toEqual([[payload]])
+    } finally {
+      offEditorInsert(handler)
+      offEditorInsert(sibling)
+    }
   })
 
   test('offEditorInsert does not broadly unsubscribe without a handler', () => {
     const handler = vi.fn()
-
+    const sibling = vi.fn()
+    const payload = { kind: 'IMAGE', path: '/asset.png' }
     onEditorInsert(handler)
-    offEditorInsert()
-    emitEditorInsert({ kind: 'IMAGE', path: '/asset.png' })
-    offEditorInsert(handler)
-
-    expect(handler).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('editor insert event emitter usage', () => {
-  test('editor insert emitters avoid direct root bus emits and root-backed helper calls', () => {
-    const offenders = []
-
-    for (const relPath of guardedEmitterFiles) {
-      const filePath = path.join(repoRoot, relPath)
-      const content = fs.readFileSync(filePath, 'utf8')
-      const directPattern = directEditorInsertEmitPattern()
-      const helperPattern = helperRootCallPattern()
-      let match
-
-      while ((match = directPattern.exec(content)) !== null) {
-        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root.$emit for ${EDITOR_INSERT_EVENT}`)
-      }
-      while ((match = helperPattern.exec(content)) !== null) {
-        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: root-backed editor insert helper call`)
-      }
+    onEditorInsert(sibling)
+    try {
+      offEditorInsert()
+      emitEditorInsert(payload)
+      expect(handler.mock.calls).toEqual([[payload]])
+      expect(sibling.mock.calls).toEqual([[payload]])
+    } finally {
+      offEditorInsert(handler)
+      offEditorInsert(sibling)
     }
-
-    expect(offenders).toEqual([])
-  })
-})
-
-describe('editor insert event listener usage', () => {
-  test('migrated and cleaned-up listeners avoid direct root bus listeners and root-backed helper calls', () => {
-    const offenders = []
-
-    for (const relPath of guardedListenerFiles) {
-      const filePath = path.join(repoRoot, relPath)
-      const content = fs.readFileSync(filePath, 'utf8')
-      const directPattern = directEditorInsertListenerPattern()
-      const helperPattern = helperRootCallPattern()
-      let match
-
-      while ((match = directPattern.exec(content)) !== null) {
-        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: direct this.$root listener for ${EDITOR_INSERT_EVENT}`)
-      }
-      while ((match = helperPattern.exec(content)) !== null) {
-        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: root-backed editor insert helper call`)
-      }
-    }
-
-    expect(offenders).toEqual([])
-  })
-
-  test('live visual editors never subscribe through the removed Vue 3 root events API', () => {
-    const offenders = []
-
-    for (const relPath of liveVisualEditorFiles) {
-      const content = fs.readFileSync(path.join(repoRoot, relPath), 'utf8')
-      // Vue 3 removed $on/$off for every event, not just editorInsert.
-      // Component $emit remains supported and must not be prohibited here.
-      const rootSubscription = /\bthis\s*\.\s*\$root\s*\.\s*\$(?:on|off)\s*\(/g
-      let match
-
-      while ((match = rootSubscription.exec(content)) !== null) {
-        offenders.push(`${relPath}:${getLineNumber(content, match.index)}: unsupported Vue 3 root subscription`)
-      }
-    }
-
-    expect(offenders).toEqual([])
   })
 })

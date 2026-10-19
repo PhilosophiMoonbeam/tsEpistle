@@ -3,116 +3,61 @@ import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 const connection = getPostgresTestConnection('_controller_index_test', import.meta.path)
 
 if (!connection) {
-vi.mockModule('express', import.meta.url, () => {
-  const routers = []
-  const express = {
-    Router: () => {
-      const router = {
-        delete: vi.fn(),
-        get: vi.fn(),
-        patch: vi.fn(),
-        post: vi.fn(),
-        put: vi.fn(),
-        use: vi.fn()
+  const { default: express } = await import('express')
+  const originalWiki = global.WIKI
+  const indexUrl = new URL('../../controllers/api/index.ts', import.meta.url)
+  const imports = new Bun.Transpiler({ loader: 'ts' }).scan(await Bun.file(indexUrl).text()).imports
+  const subrouterUrls = imports.filter(({ path }) => path.startsWith('./')).map(({ path }) => new URL(path, indexUrl).href)
+  const failure = new Error('private-database-connection')
+  let server, baseUrl
+
+  describe('controllers/api route shell over HTTP', () => {
+    beforeEach(async () => {
+      global.WIKI = { logger: { error: vi.fn() } }
+      for (const url of subrouterUrls) {
+        const subrouter = express.Router()
+        if (url === new URL('./assets.ts', indexUrl).href) {
+          subrouter.get('/shell-failure', () => { throw failure })
+        }
+        vi.mockModule(url, import.meta.url, () => ({ default: subrouter }))
       }
-      routers.push(router)
-      return router
-    },
-    __routers: routers
-  }
+      const { default: router } = await vi.importFresh('../../controllers/api/index.ts', import.meta.url)
+      const app = express()
+      app.use(express.json())
+      app.use('/_api', router)
+      server = app.listen(0, '127.0.0.1')
+      await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject) })
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('API shell test server did not bind a TCP port')
+      baseUrl = `http://127.0.0.1:${address.port}/_api`
+    })
 
-  return { default: express, ...express }
-})
+    afterEach(async () => {
+      try {
+        if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      } finally {
+        server = undefined
+        for (const url of subrouterUrls) vi.unmockModule(url, import.meta.url)
+        global.WIKI = originalWiki
+      }
+    })
 
-const { default: express } = await import('express')
+    it('returns a JSON 404 for an unknown mounted API route', async () => {
+      const response = await fetch(`${baseUrl}/unknown-controller-route`)
+      expect(response.status).toBe(404)
+      expect(response.headers.get('content-type')).toContain('application/json')
+      expect(await response.json()).toEqual({ error: 'Not Found' })
+      expect(global.WIKI.logger.error).not.toHaveBeenCalled()
+    })
 
-const API_MOUNTS = [
-  ['assets', '/assets'],
-  ['system', '/system'],
-  ['analytics', '/analytics'],
-  ['search', '/search'],
-  ['theming', '/theming'],
-  ['logging', '/logging'],
-  ['navigation', '/navigation'],
-  ['mail', '/mail'],
-  ['storage', '/storage'],
-  ['site', '/site'],
-  ['rendering', '/rendering'],
-  ['comments', '/comments'],
-  ['content-extensions', '/content-extensions'],
-  ['locales', '/locales'],
-  ['groups', '/groups'],
-  ['users', '/users'],
-  ['pages', '/pages'],
-  ['auth', '/auth']
-]
-
-const loadRouter = async () => {
-  const subrouters = Object.fromEntries(API_MOUNTS.map(([name]) => [name, {}]))
-
-  for (const [name] of API_MOUNTS) {
-    vi.mockModule(`../../controllers/api/${name}.ts`, import.meta.url, () => ({
-      default: subrouters[name]
-    }))
-  }
-
-  try {
-    await vi.importFresh('../../controllers/api/index.ts', import.meta.url)
-  } finally {
-    for (const [name] of API_MOUNTS) {
-      vi.unmockModule(`../../controllers/api/${name}.ts`, import.meta.url)
-    }
-  }
-
-  return {
-    router: express.__routers.at(-1),
-    subrouters
-  }
-}
-
-describe('controllers/api route shell', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    express.__routers.length = 0
-    global.WIKI = { logger: { error: vi.fn() } }
+    it('bounds a mounted subrouter failure with a generic JSON 500 and logs its private detail', async () => {
+      const response = await fetch(`${baseUrl}/assets/shell-failure`)
+      expect(response.status).toBe(500)
+      expect(response.headers.get('content-type')).toContain('application/json')
+      expect(await response.json()).toEqual({ error: 'Internal Server Error' })
+      expect(global.WIKI.logger.error).toHaveBeenCalledWith(failure)
+    })
   })
-
-  it('mounts every API subrouter', async () => {
-    const { router, subrouters } = await loadRouter()
-
-    for (const [name, path] of API_MOUNTS) {
-      expect(router.use).toHaveBeenCalledWith(path, subrouters[name])
-    }
-  })
-
-  it('returns a JSON 404 for unknown API routes', async () => {
-    const { router } = await loadRouter()
-    const notFoundHandler = router.use.mock.calls.find(
-      ([handler]) => typeof handler === 'function' && handler.length === 2
-    )[0]
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-
-    notFoundHandler({}, res)
-
-    expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Not Found' })
-  })
-
-  it('returns a generic JSON 500 for unexpected API failures', async () => {
-    const { router } = await loadRouter()
-    const errorHandler = router.use.mock.calls.find(
-      ([handler]) => typeof handler === 'function' && handler.length === 4
-    )[0]
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-    const err = new Error('boom')
-
-    errorHandler(err, {}, res, vi.fn())
-    expect(global.WIKI.logger.error).toHaveBeenCalledWith(err)
-
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Internal Server Error' })
-  })
-})
 } else {
   const { default: knex } = await import('knex')
   const { default: express } = await import('express')

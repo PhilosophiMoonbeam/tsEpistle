@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from '../../../test/bun-test.mts'
 import * as childProcess from 'node:child_process'
-import { rmSync } from 'node:fs'
+import { constants as fsConstants, rmSync, type Dir } from 'node:fs'
 import * as fileSystem from 'node:fs/promises'
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -16,6 +16,17 @@ const runNode = (script: string, options: Partial<Parameters<typeof runBoundedPr
     deadlineMs: 2_000,
     ...options
   })
+
+const refersTo = async (candidate: unknown, expected: string): Promise<boolean> => {
+  if (candidate === expected) return true
+  if (typeof candidate !== 'string' || !candidate.startsWith('/proc/self/fd/')) return false
+  try {
+    return (await fileSystem.realpath(candidate)) === expected
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return false
+    throw error
+  }
+}
 
 describe('bounded Git process execution', () => {
   it('observes a nested tree without closing an already exhausted directory', async () => {
@@ -50,7 +61,8 @@ describe('bounded Git process execution', () => {
       let stats = 0
       let removed = false
       const lstatSpy = vi.spyOn(fileSystem, 'lstat').mockImplementation((async (...args: Parameters<typeof realLstat>) => {
-        if (args[0] === transient) {
+        const matchesTransient = await refersTo(args[0], transient)
+        if (matchesTransient) {
           stats += 1
           if (!removed && scenario.removeAfterStat === 0) {
             await rm(transient, { recursive: true })
@@ -58,7 +70,7 @@ describe('bounded Git process execution', () => {
           }
         }
         const result = await realLstat(...args)
-        if (args[0] === transient && !removed && stats === scenario.removeAfterStat) {
+        if (matchesTransient && !removed && stats === scenario.removeAfterStat) {
           await rm(transient, { recursive: true })
           removed = true
         }
@@ -83,7 +95,7 @@ describe('bounded Git process execution', () => {
     const realOpendir = fileSystem.opendir
     const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
       const directory = await realOpendir(...args)
-      if (args[0] === child) await rm(child, { recursive: true })
+      if (await refersTo(args[0], child)) await rm(child, { recursive: true })
       return directory
     }) as typeof realOpendir)
     try {
@@ -94,6 +106,106 @@ describe('bounded Git process execution', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('observes surviving bytes when a removed child is recreated before its native scan rejection is delivered', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-recreated-'))
+    const child = path.join(root, 'en')
+    await mkdir(child)
+    await writeFile(path.join(child, 'removed.md'), 'removed')
+    await writeFile(path.join(root, 'survivor.md'), 'wiki')
+    const original = await fileSystem.open(child, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW)
+    const originalIdentity = await original.stat()
+    const realOpendir = fileSystem.opendir
+    let readSpy: { mockRestore(): void } | undefined
+    let nativeFailure: unknown
+    let scannedPath: unknown
+    const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
+      const isChild = await refersTo(args[0], child)
+      const directory = await realOpendir(...args)
+      if (isChild) {
+        scannedPath = args[0]
+        const realRead = directory.read.bind(directory)
+        readSpy = vi.spyOn(directory, 'read').mockImplementation((async () => {
+          await rm(child, { recursive: true })
+          await expect(fileSystem.lstat(child)).rejects.toMatchObject({ code: 'ENOENT' })
+          try {
+            return await realRead()
+          } catch (error: unknown) {
+            nativeFailure = error
+            // Deliver the genuine native read error only after the same name
+            // belongs to a new directory, just as a Git checkout can arrange.
+            await mkdir(child)
+            throw error
+          }
+        }) as typeof directory.read)
+      }
+      return directory
+    }) as typeof realOpendir)
+    try {
+      expect(await observeDirectoryTree(root, { maxEntries: 2, maxBytes: 4 })).toEqual({ entries: 2, bytes: 4 })
+      expect(nativeFailure).toMatchObject({ code: 'ENOENT', syscall: 'scandir', path: scannedPath })
+      expect((await original.stat()).nlink).toBe(0)
+      const recreated = await fileSystem.lstat(child)
+      expect(recreated.isDirectory()).toBe(true)
+      expect(recreated.ino).not.toBe(originalIdentity.ino)
+    } finally {
+      readSpy?.mockRestore()
+      opendirSpy.mockRestore()
+      await original.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  for (const replacement of ['directory', 'file', 'dangling symlink', 'live symlink'] as const) {
+    it(
+      replacement === 'directory'
+        ? 'observes surviving bytes when a removed child is recreated before its native open rejection is delivered'
+        : `rejects a child replaced by a ${replacement} before its native open rejection is delivered`,
+      async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-open-recreated-'))
+        const child = path.join(root, 'en')
+        await mkdir(child)
+        await writeFile(path.join(child, 'removed.md'), 'removed')
+        await writeFile(path.join(root, 'survivor.md'), 'wiki')
+        const original = await fileSystem.open(child, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW)
+        const originalIdentity = await original.stat()
+        const realOpen = fileSystem.open
+        let nativeFailure: unknown
+        let openedPath: unknown
+        const openSpy = vi.spyOn(fileSystem, 'open').mockImplementation((async (...args: Parameters<typeof realOpen>) => {
+          if (!(await refersTo(args[0], child))) return await realOpen(...args)
+          openedPath = args[0]
+          await rm(child, { recursive: true })
+          await expect(fileSystem.lstat(child)).rejects.toMatchObject({ code: 'ENOENT' })
+          try {
+            return await realOpen(...args)
+          } catch (error: unknown) {
+            nativeFailure = error
+            // Deliver the genuine native open error after the removed name
+            // already denotes its replacement, as a Git checkout can arrange.
+            if (replacement === 'directory') await mkdir(child)
+            else if (replacement === 'file') await writeFile(child, 'replacement')
+            else await symlink(replacement === 'live symlink' ? root : path.join(root, 'missing-target'), child)
+            throw error
+          }
+        }) as typeof realOpen)
+        try {
+          const result = await observeDirectoryTree(root, { maxEntries: 2, maxBytes: 4 }).catch((error: unknown) => error)
+          expect(nativeFailure).toMatchObject({ code: 'ENOENT', errno: -os.constants.errno.ENOENT, syscall: 'open', path: openedPath })
+          if (replacement === 'directory') expect(result).toEqual({ entries: 2, bytes: 4 })
+          else expect(result).toBe(nativeFailure)
+          expect((await original.stat()).nlink).toBe(0)
+          const recreated = await fileSystem.lstat(child)
+          expect(replacement === 'directory' ? recreated.isDirectory() : replacement === 'file' ? recreated.isFile() : recreated.isSymbolicLink()).toBe(true)
+          expect(recreated.ino).not.toBe(originalIdentity.ino)
+        } finally {
+          openSpy.mockRestore()
+          await original.close()
+          await rm(root, { recursive: true, force: true })
+        }
+      }
+    )
+  }
 
   it('keeps encountered but removed names inside the entry bound', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-entry-bound-'))
@@ -125,7 +237,7 @@ describe('bounded Git process execution', () => {
       let removed = false
       const lstatSpy = vi.spyOn(fileSystem, 'lstat').mockImplementation((async (...args: Parameters<typeof realLstat>) => {
         const result = await realLstat(...args)
-        if (args[0] === root && stage === 'after root lstat' && !removed) {
+        if ((await refersTo(args[0], root)) && stage === 'after root lstat' && !removed) {
           await rm(root, { recursive: true })
           removed = true
         }
@@ -133,7 +245,7 @@ describe('bounded Git process execution', () => {
       }) as typeof realLstat)
       const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
         const directory = await realOpendir(...args)
-        if (args[0] === root && stage === 'after root opendir' && !removed) {
+        if ((await refersTo(args[0], root)) && stage === 'after root opendir' && !removed) {
           await rm(root, { recursive: true })
           removed = true
         }
@@ -186,27 +298,24 @@ describe('bounded Git process execution', () => {
     })
   }
 
-  for (const replacement of [
-    { type: 'file', code: 'ENOTDIR' },
-    { type: 'dangling symlink', code: 'ENOENT' }
-  ] as const) {
-    it(`does not mistake a child replaced by a ${replacement.type} for removal`, async () => {
+  for (const replacement of ['file', 'dangling symlink', 'live symlink'] as const) {
+    it(`does not mistake a child replaced by a ${replacement} for removal`, async () => {
       const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-replaced-'))
       const child = path.join(root, 'child')
       await mkdir(child)
       const realOpendir = fileSystem.opendir
       const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
-        if (args[0] === child) {
+        if (await refersTo(args[0], child)) {
           await rm(child, { recursive: true })
-          if (replacement.type === 'file') await writeFile(child, 'wiki')
-          else await symlink(path.join(root, 'missing-target'), child)
+          if (replacement === 'file') await writeFile(child, 'wiki')
+          else await symlink(replacement === 'live symlink' ? root : path.join(root, 'missing-target'), child)
         }
         return await realOpendir(...args)
       }) as typeof realOpendir)
       try {
-        await expect(observeDirectoryTree(root, { maxEntries: 1, maxBytes: 4 })).rejects.toMatchObject({ code: replacement.code })
+        await expect(observeDirectoryTree(root, { maxEntries: 1, maxBytes: 4 })).rejects.toMatchObject({ kind: 'monitor', quarantine: true })
         const remaining = await fileSystem.lstat(child)
-        expect(replacement.type === 'file' ? remaining.isFile() : remaining.isSymbolicLink()).toBe(true)
+        expect(replacement === 'file' ? remaining.isFile() : remaining.isSymbolicLink()).toBe(true)
       } finally {
         opendirSpy.mockRestore()
         await rm(root, { recursive: true, force: true })
@@ -214,28 +323,79 @@ describe('bounded Git process execution', () => {
     })
   }
 
-  for (const operation of ['lstat', 'opendir'] as const) {
-    for (const code of ['EACCES', 'EIO'] as const) {
+  for (const replacement of ['file', 'symlink', 'directory'] as const) {
+    it(`rejects root replacement by a ${replacement} after opening its iterator`, async () => {
+      const temporary = await mkdtemp(path.join(os.tmpdir(), 'git-observe-root-replaced-'))
+      const root = path.join(temporary, 'root')
+      const outside = path.join(temporary, 'outside')
+      await mkdir(root)
+      await mkdir(outside)
+      await writeFile(path.join(outside, 'sentinel.md'), 'protected')
+      const realOpendir = fileSystem.opendir
+      let replaced = false
+      const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
+        const isRoot = await refersTo(args[0], root)
+        const directory = await realOpendir(...args)
+        if (isRoot && !replaced) {
+          await fileSystem.rename(root, path.join(temporary, 'displaced'))
+          if (replacement === 'file') await writeFile(root, '')
+          else if (replacement === 'symlink') await symlink(outside, root)
+          else await mkdir(root)
+          replaced = true
+        }
+        return directory
+      }) as typeof realOpendir)
+      try {
+        await expect(observeDirectoryTree(root, { maxEntries: 0, maxBytes: 0 })).rejects.toThrow()
+        expect(replaced).toBe(true)
+        const remaining = await fileSystem.lstat(root)
+        expect(replacement === 'file' ? remaining.isFile() : replacement === 'symlink' ? remaining.isSymbolicLink() : remaining.isDirectory()).toBe(true)
+        expect(await fileSystem.readFile(path.join(outside, 'sentinel.md'), 'utf8')).toBe('protected')
+      } finally {
+        opendirSpy.mockRestore()
+        await rm(temporary, { recursive: true, force: true })
+      }
+    })
+  }
+
+  for (const operation of ['lstat', 'open', 'opendir', 'read'] as const) {
+    for (const code of operation === 'open' || operation === 'read' ? ['ENOENT', 'EACCES', 'EIO'] : ['EACCES', 'EIO']) {
       it(`propagates child ${operation} ${code} failures instead of accepting an incomplete observation`, async () => {
         const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-error-'))
         const child = path.join(root, 'child')
         await mkdir(child)
         const failure = Object.assign(new Error(`filesystem ${code}`), { code })
         const realLstat = fileSystem.lstat
+        const realOpen = fileSystem.open
         const realOpendir = fileSystem.opendir
+        let readSpy: { mockRestore(): void } | undefined
         const failureSpy =
           operation === 'lstat'
-            ? vi.spyOn(fileSystem, 'lstat').mockImplementation(((...args: Parameters<typeof realLstat>) => {
-                if (args[0] === child) return Promise.reject(failure)
+            ? vi.spyOn(fileSystem, 'lstat').mockImplementation((async (...args: Parameters<typeof realLstat>) => {
+                if (await refersTo(args[0], child)) throw failure
                 return realLstat(...args)
               }) as typeof realLstat)
-            : vi.spyOn(fileSystem, 'opendir').mockImplementation(((...args: Parameters<typeof realOpendir>) => {
-                if (args[0] === child) return Promise.reject(failure)
-                return realOpendir(...args)
-              }) as typeof realOpendir)
+            : operation === 'open'
+              ? vi.spyOn(fileSystem, 'open').mockImplementation((async (...args: Parameters<typeof realOpen>) => {
+                  if (await refersTo(args[0], child)) throw failure
+                  return realOpen(...args)
+                }) as typeof realOpen)
+              : vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
+                  const isChild = await refersTo(args[0], child)
+                  if (isChild && operation === 'opendir') throw failure
+                  const directory = await realOpendir(...args)
+                  if (isChild) {
+                    readSpy = vi.spyOn(directory, 'read').mockImplementation(async () => {
+                      throw failure
+                    })
+                  }
+                  return directory
+                }) as typeof realOpendir)
         try {
           await expect(observeDirectoryTree(root, { maxEntries: 1, maxBytes: 0 })).rejects.toBe(failure)
+          expect((await realLstat(child)).nlink).toBeGreaterThan(0)
         } finally {
+          readSpy?.mockRestore()
           failureSpy.mockRestore()
           await rm(root, { recursive: true, force: true })
         }
@@ -255,6 +415,44 @@ describe('bounded Git process execution', () => {
         await writeFile(path.join(root, 'nested', 'page.md'), 'wiki')
         await expect(observeDirectoryTree(root, boundary)).rejects.toMatchObject({ kind: boundary.kind, quarantine: true })
       } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  for (const outcome of ['completion', 'entry limit', 'byte limit'] as const) {
+    it(`closes every acquired directory descriptor and iterator after ${outcome}`, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'git-observe-cleanup-'))
+      await mkdir(path.join(root, 'nested'))
+      await writeFile(path.join(root, 'nested', 'page.md'), 'wiki')
+      const realOpen = fileSystem.open
+      const realOpendir = fileSystem.opendir
+      const handles: fileSystem.FileHandle[] = []
+      const directories: Dir[] = []
+      const openSpy = vi.spyOn(fileSystem, 'open').mockImplementation((async (...args: Parameters<typeof realOpen>) => {
+        const handle = await realOpen(...args)
+        handles.push(handle)
+        return handle
+      }) as typeof realOpen)
+      const opendirSpy = vi.spyOn(fileSystem, 'opendir').mockImplementation((async (...args: Parameters<typeof realOpendir>) => {
+        const directory = await realOpendir(...args)
+        directories.push(directory)
+        return directory
+      }) as typeof realOpendir)
+      try {
+        const observation = observeDirectoryTree(root, {
+          maxEntries: outcome === 'entry limit' ? 1 : 2,
+          maxBytes: outcome === 'byte limit' ? 3 : 4
+        })
+        if (outcome === 'completion') expect(await observation).toEqual({ entries: 2, bytes: 4 })
+        else await expect(observation).rejects.toMatchObject({ kind: 'monitor', quarantine: true })
+        expect(handles.length).toBeGreaterThan(0)
+        expect(directories.length).toBeGreaterThan(0)
+        for (const handle of handles) await expect(handle.stat()).rejects.toMatchObject({ code: 'EBADF' })
+        for (const directory of directories) await expect(directory.read()).rejects.toMatchObject({ code: 'ERR_DIR_CLOSED' })
+      } finally {
+        openSpy.mockRestore()
+        opendirSpy.mockRestore()
         await rm(root, { recursive: true, force: true })
       }
     })

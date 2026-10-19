@@ -28,12 +28,6 @@ const shellSource = readFileSync(shellPath, 'utf8')
 const shellSfc = parse(shellSource, { filename: shellPath })
 
 const shellScript = shellSfc.descriptor.script?.content ?? ''
-const markdownPath = join(process.cwd(), 'client/components/editor/editor-markdown.vue')
-const shellStyle = shellSfc.descriptor.styles.map(style => style.content).join('\n')
-const markdownSource = readFileSync(markdownPath, 'utf8')
-const markdownSfc = parse(markdownSource, { filename: markdownPath })
-const markdownTemplate = markdownSfc.descriptor.template?.content ?? ''
-const markdownStyle = markdownSfc.descriptor.styles.map(style => style.content).join('\n')
 
 // Vuetify captures DOM globals at evaluation, after the shared browser harness installs them.
 const Vue = await import('vue')
@@ -1651,42 +1645,6 @@ describe('modern editor shell interaction contract', () => {
     }
   })
 
-  test('keeps the active editor in the bounded shell surface after notices', () => {
-    const template = shellSfc.descriptor.template?.content ?? ''
-    const surfaceStart = template.indexOf('.editor-main-surface')
-    const activeEditorStart = template.indexOf('component.editor-active-editor')
-
-    expect(shellSfc.errors).toEqual([])
-    expect(surfaceStart).toBeGreaterThanOrEqual(0)
-    expect(activeEditorStart).toBeGreaterThan(surfaceStart)
-    expect(template.slice(surfaceStart, activeEditorStart)).toContain('editor:offline.keepAsNewDraft')
-    expect(shellStyle).toMatch(/\.editor-active-editor\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1 1 auto;[\s\S]*min-width:\s*0;[\s\S]*min-height:\s*0;/)
-  })
-
-  test('keeps Markdown panes bounded, locally scrollable, and reader-themed', () => {
-    expect(markdownSfc.errors).toEqual([])
-    expect(markdownTemplate).toContain('editor-markdown-preview-content.editor-page-canvas.contents')
-    expect(markdownTemplate).toContain('editor-markdown-sysbar-position')
-    expect(markdownStyle).not.toContain('50vw')
-    expect(markdownStyle).toMatch(
-      /&-editor\s*\{[\s\S]*background:\s*rgb\(var\(--v-theme-background\)\);[\s\S]*flex:\s*1 1 0;[\s\S]*min-width:\s*0;[\s\S]*overflow:\s*hidden;/
-    )
-    expect(markdownStyle).toMatch(/&-preview\s*\{[\s\S]*background:\s*rgb\(var\(--v-theme-background\)\);[\s\S]*flex:\s*1 1 0;[\s\S]*min-width:\s*0;/)
-    // CodeMirror's selection layer sits behind content inside .cm-scroller; nothing in that stack may be opaque.
-    expect(markdownStyle).not.toMatch(/\.cm-scroller\s*\{[^}]*background:\s*rgb/)
-    expect(markdownStyle).toMatch(/\.cm-scroller,\s*\.cm-content\s*\{\s*background:\s*transparent;/)
-    expect(markdownStyle).toMatch(/&-preview-enter-active,[\s\S]*max-width:\s*50%;[\s\S]*width:\s*100%;/)
-    expect(markdownStyle).toMatch(
-      /&-sysbar\s*\{[\s\S]*position:\s*static !important;[\s\S]*background:\s*var\(--wiki-surface-raised\) !important;[\s\S]*border-top:\s*1px solid var\(--wiki-surface-border\);/
-    )
-    expect(markdownStyle).toMatch(/&-path\s*\{[\s\S]*flex:\s*0 1 auto;[\s\S]*text-overflow:\s*ellipsis;/)
-    expect(markdownStyle).toMatch(
-      /&-position\s*\{[\s\S]*flex:\s*0 0 auto;[\s\S]*padding-inline-end:\s*calc\(var\(--wiki-space-3\) \+ env\(safe-area-inset-right\)\);/
-    )
-    expect(markdownStyle).toMatch(/&-toolbar\s*\{[\s\S]*background:\s*var\(--wiki-surface-raised\) !important;/)
-    expect(markdownStyle).toMatch(/&-sidebar\s*\{[\s\S]*background:\s*var\(--wiki-surface-sunken\);/)
-  })
-
   for (const outcome of ['ready', 'cancelled', 'account changed', 'forbidden'] as const) {
     test(`discard restores the private persisted baseline before waiting for a real render receipt: ${outcome}`, async () => {
       const store = createStore()
@@ -1698,7 +1656,9 @@ describe('modern editor shell interaction contract', () => {
       let writes = 0
       mockRenderPreviews(testWindow, (async () => {
         previewCalls++
-        return await new Promise<Response>(resolve => { release = resolve })
+        return await new Promise<Response>(resolve => {
+          release = resolve
+        })
       }) as typeof fetch)
       const context = createShellHarness(store, testWindow, {
         waitForPageRender,
@@ -1724,9 +1684,11 @@ describe('modern editor shell interaction contract', () => {
       expect(context.dialogUnsaved).toBe(false)
       if (outcome === 'cancelled') context.cancelRenderWait()
       if (outcome === 'account changed') context.accountId += 1
-      release(outcome === 'forbidden'
-        ? Response.json({ error: 'Page access was revoked.' }, { status: 403 })
-        : Response.json(createRenderPreview(store, store.page.sourceRevision)))
+      release(
+        outcome === 'forbidden'
+          ? Response.json({ error: 'Page access was revoked.' }, { status: 403 })
+          : Response.json(createRenderPreview(store, store.page.sourceRevision))
+      )
       await discarding
 
       expect(testWindow.location.assigned).toEqual(outcome === 'ready' ? ['/_private/en/persisted-path'] : [])

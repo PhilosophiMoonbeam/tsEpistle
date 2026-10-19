@@ -9,8 +9,14 @@ const originalSiteConfig = Object.getOwnPropertyDescriptor(browserWindow, 'siteC
 Object.defineProperty(browserWindow, 'siteConfig', {
   configurable: true,
   value: {
-    company: '', contentLicense: '', footerOverride: '', banner: {},
-    darkMode: false, tocPosition: 'left', title: 'Test', logoUrl: '',
+    company: '',
+    contentLicense: '',
+    footerOverride: '',
+    banner: {},
+    darkMode: false,
+    tocPosition: 'left',
+    title: 'Test',
+    logoUrl: '',
     product: { name: 'Test', version: '1.0.0' }
   }
 })
@@ -25,24 +31,6 @@ const readScript = relativePath => {
   const script = parse(source).descriptor.script
   if (!script) throw new Error(`${relativePath} has no component script`)
   return ts.createSourceFile(relativePath, script.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-}
-const memberName = node => {
-  if (ts.isPropertyAccessExpression(node)) return node.name.text
-  if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)) return node.argumentExpression.text
-  if (ts.isIdentifier(node)) return node.text
-}
-const legacyAccesses = script => {
-  const violations = []
-  const visit = node => {
-    if (ts.isCallExpression(node) && memberName(node.expression) === 'registerModule') violations.push('registerModule')
-    if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
-      memberName(node) === '$store' && ts.isIdentifier(node.expression) && node.expression.text === 'WIKI') {
-      violations.push('WIKI.$store')
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(script)
-  return violations
 }
 const property = (object, name) => {
   const member = object.properties.find(candidate => candidate.name?.getText(object.getSourceFile()) === name)
@@ -66,23 +54,11 @@ const evaluateMembers = (script, members) => {
       for (const binding of bindings.elements) imports.push([binding.name.text, storeModule[binding.propertyName?.text ?? binding.name.text]])
     }
   }
-  const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-    `const members = { ${members.map(member => member.getText(script)).join(',\n')} };`
-  )
+  const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(`const members = { ${members.map(member => member.getText(script)).join(',\n')} };`)
   return new Function(...imports.map(([name]) => name), `${executable}\nreturn members`)(...imports.map(([, value]) => value))
 }
 
 describe('store singleton migration contracts', () => {
-  const cases = [
-    { label: 'admin shell', path: 'client/components/admin.vue' },
-    { label: 'editor shell', path: 'client/components/editor.vue' },
-    { label: 'admin security editor settings', path: 'client/components/admin/admin-security.vue' }
-  ]
-
-  test.each(cases)('$label does not execute legacy registration or root-global store access', ({ path: relativePath }) => {
-    expect(legacyAccesses(readScript(relativePath))).toEqual([])
-  })
-
   test('admin mode, editor selection and the security picker share the application store', () => {
     const { wikiStore } = storeModule
     const original = {

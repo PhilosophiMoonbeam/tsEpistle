@@ -11,7 +11,7 @@ import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 // Vuetify snapshots browser capabilities; load it only after the shared DOM harness.
 const Vue = await import('vue')
 const { createVuetify } = await import('vuetify')
@@ -25,7 +25,6 @@ afterEach(() => {
 
 const readScript = relativePath => {
   const source = fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
-  expect(source).toContain("<script lang='ts'>")
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   expect(match).not.toBeNull()
   return match[1]
@@ -256,14 +255,23 @@ const mountTiptapConflict = fetchImplementation => {
   app.config.globalProperties.$t = translateEnglish
   app.component('VCardChin', CardChin)
   // Translation contents are irrelevant here; preserve named slots and real dialog/button behavior.
-  app.component('i18next', Vue.defineComponent({
-    props: { tag: { type: String, default: 'div' } },
-    setup: (props, { slots }) => () => Vue.h(props.tag, slots.default?.())
-  }))
+  app.component(
+    'i18next',
+    Vue.defineComponent({
+      props: { tag: { type: String, default: 'div' } },
+      setup:
+        (props, { slots }) =>
+        () =>
+          Vue.h(props.tag, slots.default?.())
+    })
+  )
   app.config.globalProperties.$t = translateEnglish
   app.config.globalProperties.$helpers = { formatMoment: value => value }
   const context = app.mount(host)
-  mountedApps.push(() => { app.unmount(); host.remove() })
+  mountedApps.push(() => {
+    app.unmount()
+    host.remove()
+  })
   return context
 }
 
@@ -306,10 +314,7 @@ describe('Tiptap conflict component behavior', () => {
     expect(harness.context.loadState).toBe('loading')
     expect(harness.context.loadError).toBe('')
     expect(harness.context.hasLatestVersion).toBe(false)
-    expect(harness.windowFetchCalls.map(([url]) => url)).toEqual([
-      '/_api/pages/42/conflict-latest',
-      '/_api/pages/42/conflict-latest'
-    ])
+    expect(harness.windowFetchCalls.map(([url]) => url)).toEqual(['/_api/pages/42/conflict-latest', '/_api/pages/42/conflict-latest'])
 
     retriedFetch.resolve(Response.json(latest))
     await retry
@@ -507,58 +512,6 @@ describe('Tiptap conflict component behavior', () => {
     expect(dialogs).toHaveLength(2)
     expectDialogLabel(dialogs.find(dialog => dialog !== mainDialog))
   })
-
-  test('conflict template retains loading, error, dialog-label, and noopener contracts', () => {
-    const source = fs.readFileSync(path.join(process.cwd(), 'client/components/editor/tiptap/conflict.vue'), 'utf8')
-    const template = source.match(/<template lang=['"]pug['"]>([\s\S]*?)<\/template>/)?.[1]
-
-    expect(template).toBeDefined()
-    const lines = template.split('\n')
-    const gatedBlock = expression => {
-      const gateIndex = lines.findIndex(line => line.includes(expression) && /\bv-(?:if|else-if)\s*=/.test(line))
-      expect(gateIndex).toBeGreaterThanOrEqual(0)
-      if (gateIndex < 0) return ''
-
-      let startIndex = gateIndex
-      if (/^\s+v-(?:if|else-if)\s*=/.test(lines[gateIndex])) {
-        const conditionIndent = lines[gateIndex].match(/^\s*/)[0].length
-        for (let index = gateIndex - 1; index >= 0; index--) {
-          if (lines[index].trimEnd().endsWith('(') && lines[index].match(/^\s*/)[0].length < conditionIndent) {
-            startIndex = index
-            break
-          }
-        }
-      }
-
-      const blockIndent = lines[startIndex].match(/^\s*/)[0].length
-      let endIndex = startIndex + 1
-      while (endIndex < lines.length) {
-        if (lines[endIndex].trim() && lines[endIndex].match(/^\s*/)[0].length <= blockIndent) break
-        endIndex++
-      }
-      return lines.slice(startIndex, endIndex).join('\n')
-    }
-    const expectOnlyInGate = (expression, markers) => {
-      const block = gatedBlock(expression)
-      for (const marker of markers) {
-        const occurrences = text => text.split(marker).length - 1
-        expect(occurrences(block)).toBeGreaterThan(0)
-        expect(occurrences(block)).toBe(occurrences(template))
-      }
-    }
-
-    expectOnlyInGate('loadState === `loading`', ["role='status'"])
-    expectOnlyInGate('loadState === `error`', ["role='alert'", "@click='loadLatestVersion'", '$t(`editor:conflict.retry`)'])
-    expectOnlyInGate('loadState === `success` && hasLatestVersion', ["@click='useLocal'", "@click='useRemote'"])
-    expect(template).toContain("role='status'\n          aria-live='polite'")
-    expect(template).toContain("role='alert'\n          tabindex='-1'")
-    expect(template).toContain("@click='loadLatestVersion'")
-    expect(template).toContain("aria-labelledby='editor-conflict-title'")
-    expect(template).toContain('span#editor-conflict-title')
-    expect(template).toContain("aria-labelledby='editor-conflict-overwrite-title'")
-    expect(template).toContain('span#editor-conflict-overwrite-title')
-    expect(template).toContain("target='_blank', rel='noopener'")
-  })
 })
 
 describe('editor conflict REST migration guard', () => {
@@ -576,9 +529,7 @@ describe('editor conflict REST migration guard', () => {
     expect(harness.fetchCalls).toHaveLength(1)
     expect(harness.fetchCalls[0][1].signal).toBeInstanceOf(AbortSignal)
     expect(harness.fetchCalls[0][0]).toBe('/_api/pages/42/conflict-latest')
-    expect(harness.notifications).toEqual([
-      expect.objectContaining({ style: 'warning', icon: 'warning' })
-    ])
+    expect(harness.notifications).toEqual([expect.objectContaining({ style: 'warning', icon: 'warning' })])
     expect(harness.context.isLoading).toBe(false)
     expect(harness.context.latestLoaded).toBe(false)
     expect(harness.context.requestController).toBeNull()

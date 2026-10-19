@@ -158,7 +158,8 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 start_lane() {
-  local suite=$1 lane="$artifact_root/$1"
+  local suite=$1 lane="$artifact_root/$1" workers=1
+  if [[ "$suite" != core && "$browser_jobs" == 1 ]]; then workers=2; fi
   echo "Starting browser suite $suite (log: $lane/run.log)"
   # Fixtures keep authentication/browser storage in fresh contexts. Every filesystem
   # output is testInfo.outputPath except the explicit runtime metrics file below.
@@ -167,7 +168,7 @@ start_lane() {
     PLAYWRIGHT_JSON_OUTPUT_FILE="$lane/report.json" \
     PLAYWRIGHT_HTML_OUTPUT_DIR="$lane/html-report" \
     PLAYWRIGHT_BLOB_OUTPUT_DIR="$lane/blob-report" \
-    setsid dev/e2e/ci-run.sh --workers=1 --retries=0 --reporter=list,json \
+    setsid dev/e2e/ci-run.sh --workers="$workers" --retries=0 --reporter=list,json \
       --output="$lane/test-results" > "$lane/run.log" 2>&1 &
   active[$!]=$suite
 }

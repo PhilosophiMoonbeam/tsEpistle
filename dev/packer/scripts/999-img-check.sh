@@ -164,20 +164,12 @@ function checkRoot {
 
                                 if [ "$(wc -c < "${key}")" -gt 50 ]; then
                                     echo -en "\e[41m[FAIL]\e[0m User \e[1m${user}\e[0m has a populated authorized_keys file in \e[93m${key}\e[0m\n"
-                                    akey=$(cat "${key}")
-                                    echo "File Contents:"
-                                    echo "$akey"
-                                    echo "--------------"
                                     ((FAIL++))
                                     STATUS=2
                                 fi
                             elif  [ "${key}" == "${uhome}/.ssh/id_rsa" ]; then
                                 if [ "$(wc -c < "${key}")" -gt 0 ]; then
                                   echo -en "\e[41m[FAIL]\e[0m User \e[1m${user}\e[0m has a private key file in \e[93m${key}\e[0m\n"
-                                      akey=$(cat "${key}")
-                                      echo "File Contents:"
-                                      echo "$akey"
-                                      echo "--------------"
                                       ((FAIL++))
                                       STATUS=2
                                 else
@@ -236,7 +228,7 @@ function checkRoot {
 
 function checkUsers {
     # Check each user-created account
-    awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' < /etc/passwd | while IFS= read -r user;
+    while IFS= read -r user;
     do
       # Skip some other non-user system accounts
       if [[ $user == "centos" ]]; then
@@ -251,11 +243,9 @@ function checkUsers {
           if [[ "${u[0]}" == "${user}" ]]; then
               if [[ ${u[1]} == "!" ]] || [[ ${u[1]} == "!!" ]] || [[ ${u[1]} == "*" ]]; then
                   echo -en "\e[32m[PASS]\e[0m User ${user} has no password set.\n"
-                  # shellcheck disable=SC2030
                   ((PASS++))
               else
                   echo -en "\e[41m[FAIL]\e[0m User ${user} has a password set on their account. Only system users are allowed on the image.\n"
-                  # shellcheck disable=SC2030
                   ((FAIL++))
                   STATUS=2
               fi
@@ -265,31 +255,22 @@ function checkUsers {
         uhome="/home/${user}"
         if [ -d "${uhome}/" ]; then
             if [ -d "${uhome}/.ssh/" ]; then
-                if  ls "${uhome}/.ssh/*"> /dev/null 2>&1; then
+                if  ls "${uhome}"/.ssh/*> /dev/null 2>&1; then
                     for key in "${uhome}"/.ssh/*
                         do
                             if  [ "${key}" == "${uhome}/.ssh/authorized_keys" ]; then
                                 if [ "$(wc -c < "${key}")" -gt 50 ]; then
                                     echo -en "\e[41m[FAIL]\e[0m User \e[1m${user}\e[0m has a populated authorized_keys file in \e[93m${key}\e[0m\n"
-                                    akey=$(cat "${key}")
-                                    echo "File Contents:"
-                                    echo "$akey"
-                                    echo "--------------"
                                     ((FAIL++))
                                     STATUS=2
                                 fi
                               elif  [ "${key}" == "${uhome}/.ssh/id_rsa" ]; then
                                 if [ "$(wc -c < "${key}")" -gt 0 ]; then
                                   echo -en "\e[41m[FAIL]\e[0m User \e[1m${user}\e[0m has a private key file in \e[93m${key}\e[0m\n"
-                                      akey=$(cat "${key}")
-                                      echo "File Contents:"
-                                      echo "$akey"
-                                      echo "--------------"
                                       ((FAIL++))
                                       STATUS=2
                                 else
                                   echo -en "\e[93m[WARN]\e[0m User \e[1m${user}\e[0m has empty private key file in \e[93m${key}\e[0m\n"
-                                  # shellcheck disable=SC2030
                                   ((WARN++))
                                   if [[ $STATUS != 2 ]]; then
                                     STATUS=1
@@ -341,7 +322,7 @@ function checkUsers {
                            echo -en "\n\n"
                          fi
         fi
-    done
+    done < <(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' < /etc/passwd)
 }
 function checkFirewall {
 
@@ -350,11 +331,9 @@ function checkFirewall {
       ufwa=$(ufw status |head -1| sed -e "s/^Status:\ //")
       if [[ $ufwa == "active" ]]; then
         FW_VER="\e[32m[PASS]\e[0m Firewall service (${fw}) is active\n"
-        # shellcheck disable=SC2031
         ((PASS++))
       else
         FW_VER="\e[93m[WARN]\e[0m No firewall is configured. Ensure ${fw} is installed and configured\n"
-        # shellcheck disable=SC2031
         ((WARN++))
       fi
     elif [[ $OS == "CentOS Linux" ]] || [[ $OS == "CentOS Stream" ]] || [[ $OS == "Rocky Linux" ]] || [[ $OS == "AlmaLinux" ]] || [[ $OS == "CloudLinux" ]]; then
@@ -449,7 +428,6 @@ function checkUpdates {
             sleep 2
             apt-get --just-print upgrade | grep -i security | awk '{print $2}' | awk '!seen[$0]++'
             echo -en
-            # shellcheck disable=SC2031
             ((FAIL++))
             STATUS=2
         else

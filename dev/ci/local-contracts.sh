@@ -16,7 +16,7 @@ if [ "$#" -ne 0 ]; then
   fi
   phase=$2
   case "$phase" in
-    ledger-pg16|ledger-pg17|private-pages-pg18|page-index-pg15|page-index-pg16|page-index-pg17|page-index-pg18|\
+    ledger-pg16|ledger-pg17|native-pg18|page-index-pg15|page-index-pg16|page-index-pg17|page-index-pg18|\
     upgrade-pg15|upgrade-pg16|upgrade-pg17|upgrade-pg18|recovery-pg15|recovery-pg18|kubernetes-tools|\
     helm-lifecycle|agent-browser-multiarch|linux-bundle|arm64-application|site-logo-amd64|site-logo-arm64) ;;
     *) printf 'Unknown local contract phase: %s\n' "$phase" >&2; exit 2 ;;
@@ -124,6 +124,14 @@ memory_gib() {
 }
 app_gib=$(memory_gib "$WIKI_CI_APP_MEMORY")
 postgres_gib=$(memory_gib "$WIKI_CI_POSTGRES_MEMORY")
+# The complete native suite stores a 250 MiB original; keep its PostgreSQL cap
+# at least 4 GiB without lowering a larger configured cap or changing other lanes.
+native_postgres_memory=4g
+native_postgres_gib=4
+if [ "$postgres_gib" -gt "$native_postgres_gib" ]; then
+  native_postgres_memory=$WIKI_CI_POSTGRES_MEMORY
+  native_postgres_gib=$postgres_gib
+fi
 kind_gib=$(memory_gib "$WIKI_LOCAL_CI_KIND_MEMORY")
 run_phase() {
   local name=$1 host_gib=$2 docker_gib=$3 status receipt
@@ -183,7 +191,10 @@ postgres_contract() (
     exit 1
   fi
   database=wiki_agents_test
-  if [ "$suite" = private-pages ]; then database=wiki_private_pages_test; fi
+  if [ "$suite" = native ]; then
+    database=wiki_native_test
+    ci_fill_docker_resources ci_postgres_docker_args "$native_postgres_memory" "${WIKI_CI_POSTGRES_CPUS:-}"
+  fi
   container_id=$(docker run -d "${ci_postgres_docker_args[@]}" --name "$namespace-db" \
     --label "tsepistle-ci.owner=$namespace" -p 127.0.0.1:0:5432 \
     -e POSTGRES_USER=wiki -e POSTGRES_PASSWORD=test -e "POSTGRES_DB=$database" \
@@ -203,7 +214,7 @@ postgres_contract() (
     bun run test:postgres server/test/db/agents-migration.postgres.integration.test.ts
     bun run test:postgres server/test/agents/repository.postgres.test.ts
   else
-    bun run test:postgres server/test/db/private-pages.postgres.integration.test.ts
+    bun run test:postgres
   fi
 )
 provision_tools() (
@@ -346,8 +357,8 @@ execute_phase() {
     ledger-pg16|ledger-pg17)
       postgres_contract "${name#ledger-pg}" ledger
       ;;
-    private-pages-pg18)
-      postgres_contract 18 private-pages
+    native-pg18)
+      postgres_contract 18 native
       ;;
     page-index-pg15|page-index-pg16|page-index-pg17|page-index-pg18)
       version=${name#page-index-pg}
@@ -391,7 +402,8 @@ fi
 
 # Budgets cover maximum simultaneous allocations, not just application services.
 for version in 16 17; do run_phase "ledger-pg$version" 4 "$postgres_gib"; done
-run_phase private-pages-pg18 4 "$postgres_gib"
+# Admission includes 4 GiB host + the native PostgreSQL cap + 4 GiB headroom.
+run_phase native-pg18 4 "$native_postgres_gib"
 for version in 15 16 17 18; do run_phase "page-index-pg$version" 4 "$postgres_gib"; done
 # Migration monitoring runs a second app-capped volume helper alongside Wiki/PG.
 for version in 15 16 17 18; do run_phase "upgrade-pg$version" 2 "$((2 * app_gib + postgres_gib))"; done

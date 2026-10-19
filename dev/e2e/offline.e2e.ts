@@ -192,11 +192,22 @@ async function guestReadablePublicPages(page: Page, count: number): Promise<Read
   const pages = (await pagesResponse.json()) as PageRow[]
   const origin = new URL(page.url()).origin
   const result: ReaderPageTarget[] = []
+  // Keep a non-home candidate available even when the caller requests one page.
+  const selectionLimit = Math.max(count, 2)
+  // Prefer pre-existing fixtures over newer pages owned and removed by parallel stories.
+  pages.sort((left, right) => {
+    const leftId = typeof left.id === 'number' ? left.id : Number.POSITIVE_INFINITY
+    const rightId = typeof right.id === 'number' ? right.id : Number.POSITIVE_INFINITY
+    return leftId - rightId
+  })
 
   // Public navigation alone does not imply offline eligibility: publication, editor type, and source projection are checked by this endpoint.
   for (const row of pages) {
     if (row.visibility !== 'public' || row.locale !== 'en' || typeof row.path !== 'string' || !row.path || typeof row.id !== 'number') continue
-    const encodedPath = row.path.split('/').map(segment => encodeURIComponent(segment)).join('/')
+    const encodedPath = row.path
+      .split('/')
+      .map(segment => encodeURIComponent(segment))
+      .join('/')
     const localizedPath = `/${row.locale}/${encodedPath}`
     const response = await page.request.get(localizedPath, { headers: { Accept: 'text/html' } })
     if (!response.ok() || !/^text\/html(?:;|$)/iu.test(response.headers()['content-type'] ?? '')) continue
@@ -206,6 +217,7 @@ async function guestReadablePublicPages(page: Page, count: number): Promise<Read
     const snapshot = await page.request.get(`/_api/pages/${row.id}/offline-snapshot`)
     if (!snapshot.ok()) continue
     result.push({ path: row.path, locale: row.locale, canonicalPath: resolved.pathname })
+    if (result.length >= selectionLimit) break
   }
 
   if (result.length < count) throw new Error(`Expected ${count} guest-readable public English pages for offline E2E coverage; found ${result.length}.`)

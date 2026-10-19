@@ -146,9 +146,9 @@ async function openEditor(page: Page, options: EditorFixtureOptions = {}) {
   await expect(markdownSource).toBeVisible()
   await expect(markdownSource).toBeEditable()
   await expect
-    .poll(() => page.locator('.editor-markdown').evaluate(root =>
-      (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getValue()
-    ))
+    .poll(() =>
+      page.locator('.editor-markdown').evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getValue())
+    )
     .toBe(content)
 }
 
@@ -160,11 +160,14 @@ async function closeVisualEditor(page: Page, readerPath: string, expectUnsavedCh
     await close.click()
   } else {
     await page.getByRole('button', { name: 'More editor actions', exact: true }).click()
-    await page.getByRole('listitem').filter({ hasText: /^Close$/u }).click()
+    await page
+      .getByRole('listitem')
+      .filter({ hasText: /^Close$/u })
+      .click()
   }
   const discard = page.getByRole('button', { name: 'Discard Changes', exact: true })
   if (expectUnsavedChanges) await expect(discard).toBeVisible()
-  else await expect.poll(async () => await discard.isVisible() || new URL(page.url()).pathname === readerPath).toBe(true)
+  else await expect.poll(async () => (await discard.isVisible()) || new URL(page.url()).pathname === readerPath).toBe(true)
   if (await discard.isVisible()) await discard.click()
   await page.waitForURL(readerPath, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('.editor-tiptap')).toHaveCount(0)
@@ -191,15 +194,24 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         const selectionReady = await editor.evaluateHandle(root => {
           const doc = root.ownerDocument
           const controller = new AbortController()
-          const state = { ready: false, dispose() { controller.abort() } }
-          doc.addEventListener('selectionchange', () => {
-            const selection = doc.getSelection()
-            if (!selection?.rangeCount) return
-            const range = selection.getRangeAt(0)
-            if (!root.contains(range.commonAncestorContainer) || range.toString() !== root.textContent) return
-            state.ready = true
-            controller.abort()
-          }, { signal: controller.signal })
+          const state = {
+            ready: false,
+            dispose() {
+              controller.abort()
+            }
+          }
+          doc.addEventListener(
+            'selectionchange',
+            () => {
+              const selection = doc.getSelection()
+              if (!selection?.rangeCount) return
+              const range = selection.getRangeAt(0)
+              if (!root.contains(range.commonAncestorContainer) || range.toString() !== root.textContent) return
+              state.ready = true
+              controller.abort()
+            },
+            { signal: controller.signal }
+          )
           return state
         })
         try {
@@ -240,7 +252,7 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         await expect(page.getByRole('status').filter({ hasText: /^Unsaved changes$/u })).toHaveCount(0)
         await closeVisualEditor(page, readerPath)
       } finally {
-        if (!page.isClosed() && await page.locator('.editor-tiptap').count()) await closeVisualEditor(page, readerPath)
+        if (!page.isClosed() && (await page.locator('.editor-tiptap').count())) await closeVisualEditor(page, readerPath)
       }
     })
   }
@@ -386,6 +398,96 @@ routedEditorTest('preview follows the cursor by default and stops when toggled o
   await openEditor(page)
   const preview = page.locator('.editor-markdown-preview-content')
   if (!(await preview.isVisible())) await page.getByRole('button', { name: 'Show preview', exact: true }).click()
+  const assertBoundedCanvas = async () => {
+    await expect
+      .poll(
+        () =>
+          page.locator('.editor-markdown').evaluate(root => {
+            const failures: string[] = []
+            const surface = root.closest('.editor-main-surface')
+            const main = root.querySelector('.editor-markdown-main')
+            const status = root.querySelector('.editor-markdown-sysbar')
+            const position = root.querySelector('.editor-markdown-sysbar-position')
+            const application = root.closest('.v-application')
+            if (!surface || !main || !status || !application) return ['Editor layout did not mount']
+            if (innerWidth >= 960 && !position) return ['Desktop cursor status did not mount']
+            const within = (child: Element, parent: DOMRect, name: string) => {
+              const box = child.getBoundingClientRect()
+              if (
+                box.width <= 0 ||
+                box.height <= 0 ||
+                box.left < parent.left - 1 ||
+                box.right > parent.right + 1 ||
+                box.top < parent.top - 1 ||
+                box.bottom > parent.bottom + 1
+              )
+                failures.push(name)
+            }
+            const viewport = new DOMRect(0, 0, innerWidth, innerHeight)
+            within(surface, viewport, 'Shell surface exceeds viewport')
+            within(root, surface.getBoundingClientRect(), 'Active editor exceeds shell')
+            within(main, root.getBoundingClientRect(), 'Panes exceed editor')
+            within(status, root.getBoundingClientRect(), 'Status bar exceeds editor')
+            if (position) within(position, status.getBoundingClientRect(), 'Cursor position is clipped')
+            if (main.getBoundingClientRect().bottom > status.getBoundingClientRect().top + 1) failures.push('Panes cover status bar')
+            const notices = surface.querySelector('.editor-notices')
+            if (notices && notices.getBoundingClientRect().bottom > root.getBoundingClientRect().top + 1) failures.push('Notices cover editor')
+            const canvas = document.createElement('canvas')
+            canvas.width = canvas.height = 1
+            const context = canvas.getContext('2d')
+            if (!context) return ['Canvas color comparison is unavailable']
+            // Composite mounted background colors front-to-back using the browser's
+            // color parser and source-over math, not their serialized CSS spelling.
+            // Exposed images and nontrivial compositing need pixel sampling instead;
+            // fail closed rather than silently treating those paints as flat colors.
+            const canvasBackground = (element: Element): number[] | null => {
+              context.clearRect(0, 0, 1, 1)
+              context.globalCompositeOperation = 'destination-over'
+              let pixel = context.getImageData(0, 0, 1, 1).data
+              for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+                const style = getComputedStyle(ancestor)
+                if (Number(style.opacity) !== 1 || style.mixBlendMode !== 'normal' || style.filter !== 'none' || style.backdropFilter !== 'none') {
+                  return null
+                }
+                // An opaque foreground hides ancestor images, but ancestor group
+                // opacity/filters still affect it, so keep checking those above.
+                if (pixel[3] === 255) continue
+                if (style.backgroundImage !== 'none' || style.backgroundBlendMode !== 'normal') return null
+                context.fillStyle = style.backgroundColor
+                context.fillRect(0, 0, 1, 1)
+                pixel = context.getImageData(0, 0, 1, 1).data
+              }
+              return pixel[3] === 255 ? Array.from(pixel) : null
+            }
+            const background = canvasBackground(application)
+            if (!background) failures.push('Application canvas needs supported opaque background paint')
+            for (const selector of ['.editor-markdown-editor', '.cm-editor', '.editor-markdown-preview', '.editor-markdown-preview-content']) {
+              const pane = root.querySelector(selector)
+              if (!pane) continue
+              const box = pane.getBoundingClientRect()
+              if (!box.width || !box.height) continue // Narrow screens show one pane at a time.
+              within(pane, main.getBoundingClientRect(), `${selector} exceeds pane area`)
+              const paintedBackground = canvasBackground(pane)
+              if (!background || !paintedBackground || paintedBackground.some((channel, index) => channel !== background[index])) {
+                failures.push(`${selector} loses the application canvas theme`)
+              }
+            }
+            const previewContent = root.querySelector('.editor-markdown-preview-content')
+            if (!previewContent || previewContent.scrollHeight <= previewContent.clientHeight) failures.push('Preview has no local scroll range')
+            if (previewContent) {
+              const overflow = getComputedStyle(previewContent).overflowY
+              if (overflow !== 'auto' && overflow !== 'scroll') failures.push('Preview has no user-scrollable vertical overflow')
+            }
+            if (document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1) {
+              failures.push('Editor content escapes into document scrolling')
+            }
+            return failures
+          }),
+        'Visible editor panes and cursor status remain bounded and use the active canvas theme'
+      )
+      .toEqual([])
+  }
+  await assertBoundedCanvas()
   const toggle = page.getByRole('button', { name: 'Align preview to cursor', exact: true })
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   await selectLine(page, 80)
@@ -404,6 +506,20 @@ routedEditorTest('preview follows the cursor by default and stops when toggled o
   })
   await page.waitForTimeout(900)
   expect(await preview.evaluate(element => element.scrollTop)).toBe(300)
+  const otherScrollPositions = await page.locator('.editor-markdown').evaluate(root => ({
+    source: root.querySelector('.cm-scroller')?.scrollTop ?? 0,
+    document: window.scrollY
+  }))
+  // Mobile WebKit has no wheel injection; the real scroll API still dispatches browser scroll events.
+  await preview.evaluate(element => element.scrollBy(0, 200))
+  await expect.poll(() => preview.evaluate(element => element.scrollTop), 'Browser scrolling moves the preview locally').toBeGreaterThan(300)
+  expect(
+    await page.locator('.editor-markdown').evaluate(root => ({
+      source: root.querySelector('.cm-scroller')?.scrollTop ?? 0,
+      document: window.scrollY
+    })),
+    'Preview scrolling does not move the source pane or document'
+  ).toEqual(otherScrollPositions)
   const paneToggle = page.locator('.editor-markdown-toolbar').getByRole('button', { name: /toggle preview|show editor|show preview/i })
   await paneToggle.click()
   await expect(preview).not.toBeVisible()
@@ -428,6 +544,14 @@ routedEditorTest('preview follows the cursor by default and stops when toggled o
     await page.locator('.cm-content').focus()
     await page.keyboard.press('ControlOrMeta+End')
     await expect.poll(() => preview.evaluate(element => element.scrollTop)).toBeGreaterThan(1000)
+  }
+  // A real offline event shows the supported save notice without replacing the editor or its DOM.
+  await page.context().setOffline(true)
+  try {
+    await expect(page.locator('.editor-notices')).toBeVisible()
+    await assertBoundedCanvas()
+  } finally {
+    await page.context().setOffline(false)
   }
 })
 
@@ -460,7 +584,7 @@ routedEditorTest('applies formatting from the toolbar or its mobile overflow', a
   const selectedPixels = await page.screenshot({ clip: selectionClip!, caret: 'hide', animations: 'disabled' })
   const hiddenSelectionStyle = await page.addStyleTag({ content: '.cm-selectionBackground { visibility: hidden !important; }' })
   const unselectedPixels = await page.screenshot({ clip: selectionClip!, caret: 'hide', animations: 'disabled' })
-  await hiddenSelectionStyle.evaluate(element => element.remove())
+  await hiddenSelectionStyle.evaluate(element => element.parentNode?.removeChild(element))
   expect(selectedPixels.equals(unselectedPixels), 'Selection must visibly paint over the editor background').toBe(false)
 
   const bold = page.getByRole('button', { name: 'Bold', exact: true })
@@ -741,7 +865,7 @@ routedEditorTest('Draw.io parent modal isolates the editor and restores its nati
   const leaveFrame = async (key: 'Tab' | 'Shift+Tab') => {
     await page.keyboard.press(key)
     const frameElementStop = await iframe.evaluate(element => document.hasFocus() && document.activeElement === element)
-    if (frameElementStop && !await frameStart.evaluate(() => document.hasFocus())) {
+    if (frameElementStop && !(await frameStart.evaluate(() => document.hasFocus()))) {
       // Gecko can stop on the parent iframe element after leaving its document.
       // One further native key must reach the modal, never an arbitrary Tab loop.
       await expect(iframe).toBeFocused()
@@ -753,18 +877,28 @@ routedEditorTest('Draw.io parent modal isolates the editor and restores its nati
   const enterFrameForward = async (allowRetainedEnd = false) => {
     await page.keyboard.press('Tab')
     await expect(iframe).toBeFocused()
-    await expect.poll(() => frameStart.evaluate(element => ({
-      hasFocus: document.hasFocus(),
-      target: document.activeElement === element ? 'start' : document.activeElement === document.body ? 'body'
-        : document.activeElement?.matches('input') ? 'end' : 'other'
-    }))).toEqual({ hasFocus: true, target: expect.stringMatching(allowRetainedEnd ? /^(body|start|end)$/ : /^(body|start)$/) })
+    await expect
+      .poll(() =>
+        frameStart.evaluate(element => ({
+          hasFocus: document.hasFocus(),
+          target:
+            document.activeElement === element
+              ? 'start'
+              : document.activeElement === document.body
+                ? 'body'
+                : document.activeElement?.matches('input')
+                  ? 'end'
+                  : 'other'
+        }))
+      )
+      .toEqual({ hasFocus: true, target: expect.stringMatching(allowRetainedEnd ? /^(body|start|end)$/ : /^(body|start)$/) })
     // Some native browsers enter the frame document before its first control.
     // Accept only that real focused-body stop, then require one Tab to the button.
     if (await frameBody.evaluate(element => document.activeElement === element)) {
       await expect(frameBody).toBeFocused()
       await page.keyboard.press('Tab')
     }
-    if (allowRetainedEnd && await frameEnd.evaluate(element => document.activeElement === element)) {
+    if (allowRetainedEnd && (await frameEnd.evaluate(element => document.activeElement === element))) {
       await expect(frameEnd).toBeFocused()
       expect(await page.evaluate(() => document.hasFocus())).toBe(true)
       return 'end'
@@ -798,12 +932,21 @@ routedEditorTest('Draw.io parent modal isolates the editor and restores its nati
   // Reverse entry can land on the frame document or one of its native controls.
   // Each accepted state has a specific remaining sequence; never retry Tab
   // until focus happens to escape an opaque frame.
-  await expect.poll(() => frameStart.evaluate(element => ({
-    hasFocus: document.hasFocus(),
-    target: document.activeElement === document.body ? 'body'
-      : document.activeElement === element ? 'start'
-        : document.activeElement?.matches('input') ? 'end' : 'other'
-  }))).toEqual({ hasFocus: true, target: expect.stringMatching(/^(body|start|end)$/) })
+  await expect
+    .poll(() =>
+      frameStart.evaluate(element => ({
+        hasFocus: document.hasFocus(),
+        target:
+          document.activeElement === document.body
+            ? 'body'
+            : document.activeElement === element
+              ? 'start'
+              : document.activeElement?.matches('input')
+                ? 'end'
+                : 'other'
+      }))
+    )
+    .toEqual({ hasFocus: true, target: expect.stringMatching(/^(body|start|end)$/) })
   if (await frameBody.evaluate(element => document.activeElement === element)) {
     await expect(frameBody).toBeFocused()
     await page.keyboard.press('Shift+Tab')

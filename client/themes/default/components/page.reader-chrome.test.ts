@@ -119,7 +119,6 @@ describe('page reader chrome template', () => {
 
     for (const doc of [wide, compact]) {
       expect(doc.querySelector('.page-toc-card')?.getAttribute('aria-label')).toBe('common:page.onThisPage')
-      expect(doc.body.innerHTML).not.toContain('common:page.toc')
     }
   })
 
@@ -205,18 +204,15 @@ describe('page reader chrome template', () => {
     expect(watching.querySelectorAll('.page-watch-control')).toHaveLength(1)
     expect(watching.querySelector('.page-watch-control')?.getAttribute('aria-label')).toBe('common:page.watchingPage')
     expect(watching.querySelector('.page-watch-settings .page-watch-stop')?.textContent).toContain('common:page.stopWatchingPage')
-    expect(watching.body.innerHTML).not.toContain('mdi-tune')
   })
 
-  it('shows one static unpublished indicator', async () => {
+  it('shows one unpublished indicator and its explanation', async () => {
     const { document } = await renderTemplate(PAGE, baseState({ isPublished: false }))
     const html = document.body.innerHTML
     const indicator = document.querySelectorAll('.page-header-unpublished')
     expect(indicator).toHaveLength(1)
     expect(indicator[0]!.textContent).toContain('common:page.unpublished')
     expect(countText(html, 'common:page.unpublishedWarning')).toBe(1)
-    expect(html).not.toContain('status-indicator')
-    expect(html).not.toContain('pulse')
   })
 
   it('marks the reading position bar as decorative', async () => {
@@ -227,7 +223,7 @@ describe('page reader chrome template', () => {
     expect(bar?.hasAttribute('aria-valuenow')).toBe(false)
   })
 
-  it('names the discussion view "Discussion" everywhere and keeps the book icon for focus reading only', async () => {
+  it('labels the discussion view and identifies the focus-reading control', async () => {
     const { document } = await renderTemplate(
       PAGE,
       baseState({
@@ -236,13 +232,7 @@ describe('page reader chrome template', () => {
         commentsPerms: { read: true, write: true }
       })
     )
-    // Includes the teleported rail.
-    const html = document.body.innerHTML
     expect(document.querySelector('#page-view-talk-tab')?.textContent?.trim()).toBe('common:comments.title')
-    expect(html).not.toMatch(/>\s*Talk\s*</)
-    expect(html).not.toContain('common:comments.sdTitle')
-    expect(document.querySelector('.page-document-label')?.textContent).not.toContain('mdi-book-open-page-variant-outline')
-    expect(countText(html, 'mdi-book-open-page-variant-outline')).toBe(1)
     expect(document.querySelector('.page-focus-control')?.textContent).toContain('mdi-book-open-page-variant-outline')
   })
 

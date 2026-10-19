@@ -40,7 +40,17 @@ The material emits already-encoded sRGB with straight RGB/alpha, `premultipliedA
 
 The `performance-webgpu`, `performance-webgl2`, and `performance-webgl2-swiftshader` Playwright projects are the profiling entry points. Every report must identify `requestedBackend` and `effectiveBackend`, retain backend diagnostics for each eligible context/generation, and record graphics identity plus its `representative-hardware`, `software-diagnostic`, or `unavailable` classification. Keep the scheduling `renderCallbackGap` separate from direct synchronous `renderInvocationCpuMs` (and the other phase-CPU samples). GPU timer-query samples are a separate field; an unavailable query is unavailable, never zero.
 
-Current local headless evidence is diagnostic, not a runtime-budget pass. At 1440×900 and DPR 1.5, the strict WebGPU profile observed active frame p95/p99 of 17.2/19.8 ms and callback CPU p95 of 0.6 ms, but failed complete profiling: 5 of 20 cold starts exceeded the 2 s gate, Chromium reported SharedImage backing failures, and a follow-up run exhausted the 180 s harness timeout during context churn. The strict forced-WebGL2 profile completed backend identity and 20 of 20 cold starts (p95 696.9 ms) with callback CPU p95 1.0 ms, but missed the active frame target at p95/p99 148.6/186.8 ms with only 87 interval samples. These headless profiles classify graphics as `software-diagnostic`; they do not establish representative hardware throughput or a passed runtime budget. The SwiftShader project is likewise a software diagnostic.
+Local headless checks on 2026-10-19 passed all three strict profiles with unchanged tests, renderer, fixture density, viewport (1440×900), and DPR (1.5). The WebGL2 failures under an eight-CPU bandwidth cap were quota-induced frame stalls: rerunning only those unchanged profiles with 16 CPU-equivalents removed throttling and passed every runtime gate. The run kept one browser worker, one Wiki/PostgreSQL pair, a 6 GiB host memory cap, zero swap, and low `CPUWeight=10`; measured host peak was 1.12 GiB.
+
+| Profile | CPU bandwidth | Frame p95 (≤20 ms) | Frame p99 (≤34 ms) | Result |
+| --- | ---: | ---: | ---: | --- |
+| Strict WebGPU | 8 CPU-equivalents | 17.0 ms | 17.2 ms | Pass |
+| Strict WebGL2 | 8 CPU-equivalents | 41.0 ms | 45.1 ms | Fail |
+| Strict WebGL2 | 16 CPU-equivalents | 20.0 ms | 21.3 ms | Pass |
+| SwiftShader WebGL2 diagnostic | 8 CPU-equivalents | 62.6 ms | 65.6 ms | Fail |
+| SwiftShader WebGL2 diagnostic | 16 CPU-equivalents | 17.8 ms | 21.0 ms | Pass |
+
+All measured graphics identities were SwiftShader and remain classified `software-diagnostic`; these passes do not establish representative hardware throughput. Preserve that distinction and the existing budgets rather than masking a mismatched profiling resource envelope with relaxed thresholds or retries.
 
 Historical WebGL renderer measurements (retained for comparison; not results for the current WebGPU/TSL scene):
 

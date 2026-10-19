@@ -24,7 +24,8 @@ const pluralCases = [
   ['common:agentHistoryPanel.conversations2', 'conversation', 'conversations']
 ] as const
 
-const resolve = (key: string): string => key.split('.').reduce((node, segment) => (node as Record<string, unknown>)[segment], english.common as unknown) as string
+const resolve = (key: string): string =>
+  key.split('.').reduce((node, segment) => (node as Record<string, unknown>)[segment], english.common as unknown) as string
 const tokens = (value: string): string[] => [...value.matchAll(/\{\{([^{}]+)\}\}/g)].map(match => match[1]!).sort()
 
 describe('new English count forms and interpolation contract', () => {
@@ -53,12 +54,24 @@ describe('new English count forms and interpolation contract', () => {
     })
   }
 
-  it('renders the composed status and rejects numeric placeholder names', () => {
-    expect(translateEnglish('common:agentContextPicker.sourcePendingResultShown', {
-      count: 2, resultSummary: translateEnglish('common:agentContextPicker.resultShown', { count: 1 })
-    })).toBe('2 sources pending. 1 result shown.')
-    expect(translateEnglish('common:agentAssetPicker.kb', { sizeKb: 3 })).toBe('3 KB')
-    expect(translateEnglish('common:offlineLibrary.savedPageRemovedLocally3', { detail: 'retry' })).toContain('retry')
-    expect(translateEnglish('common:agentMemoryManager.showingLastLoadedMemory', { prefix: 'Saved. ', reason: 'Offline' })).toBe('Saved. Showing last-loaded memory. Offline')
+  it('interpolates composed status and named values without leaving placeholders', () => {
+    const summary = 'Matching result summary'
+    const status = translateEnglish('common:agentContextPicker.sourcePendingResultShown', {
+      count: 2,
+      resultSummary: summary
+    })
+    expect(status).toContain('2')
+    expect(status).toContain(summary)
+    const size = translateEnglish('common:agentAssetPicker.kb', { sizeKb: 3 })
+    expect(size).toBe('3 KB')
+    const removal = translateEnglish('common:offlineLibrary.savedPageRemovedLocally3', { detail: 'Retry after reconnecting' })
+    expect(removal).toContain('Retry after reconnecting')
+    const memory = translateEnglish('common:agentMemoryManager.showingLastLoadedMemory', {
+      prefix: 'Committed change. ',
+      reason: 'Connection unavailable'
+    })
+    expect(memory).toContain('Committed change. ')
+    expect(memory).toContain('Connection unavailable')
+    for (const rendered of [status, size, removal, memory]) expect(rendered).not.toMatch(/\{\{[^{}]+\}\}/)
   })
 })

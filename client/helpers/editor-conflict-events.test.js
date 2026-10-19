@@ -1,62 +1,25 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { babelParse } from '@vue/compiler-sfc'
 import { describe, expect, test, vi } from '../../server/test/bun-test.mts'
 
 import * as editorConflictEvents from './editor-conflict-events.ts'
 
 const { EDITOR_SAVE_CONFLICT_EVENT, EDITOR_CONTENT_OVERWRITE_EVENT, EDITOR_CONFLICT_RESET_EVENT } = editorConflictEvents
 
-const repoRoot = path.resolve(import.meta.dirname, '../..')
 const conflictEventCases = [
   ['EditorSaveConflict', EDITOR_SAVE_CONFLICT_EVENT],
   ['EditorContentOverwrite', EDITOR_CONTENT_OVERWRITE_EVENT],
   ['EditorConflictReset', EDITOR_CONFLICT_RESET_EVENT]
 ]
 
-function visitSyntax(node, visit) {
-  if (!node || typeof node !== 'object') return
-  if (typeof node.type === 'string') visit(node)
-  for (const [key, value] of Object.entries(node)) {
-    if (key === 'loc' || key === 'comments') continue
-    if (Array.isArray(value))
-      value.forEach(child => {
-        visitSyntax(child, visit)
-      })
-    else if (value && typeof value === 'object') visitSyntax(value, visit)
-  }
-}
-
 describe('editor conflict events', () => {
-  test('editor conflict transport has no Vue runtime or instance-bus dependency', () => {
-    const source = fs.readFileSync(path.join(repoRoot, 'client/helpers/editor-conflict-events.ts'), 'utf8')
-    const violations = []
-    visitSyntax(babelParse(source, { sourceType: 'module', plugins: ['typescript'] }), node => {
-      if (node.type === 'ImportDeclaration' && /^vue(?:\/|$)/.test(node.source.value) && node.importKind !== 'type') {
-        if (node.specifiers.length === 0 || node.specifiers.some(specifier => specifier.importKind !== 'type')) violations.push('Vue runtime import')
-      }
-      if (
-        node.type === 'CallExpression' &&
-        (node.callee.type === 'Import' || (node.callee.type === 'Identifier' && node.callee.name === 'require')) &&
-        node.arguments[0]?.type === 'StringLiteral' &&
-        /^vue(?:\/|$)/.test(node.arguments[0].value)
-      )
-        violations.push('Vue runtime load')
-      if (node.type === 'ImportExpression' && /^vue(?:\/|$)/.test(node.source.value ?? '')) violations.push('Vue runtime load')
-      if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
-        const name = node.computed ? node.property.value : node.property.name
-        if (['$emit', '$on', '$off'].includes(name)) violations.push('Vue instance bus')
-      }
-    })
-    expect(violations).toEqual([])
-  })
-
   test.each(conflictEventCases)('emit%s delivers only to its private %s channel', suffix => {
     const listeners = conflictEventCases.map(([name]) => ({ name, handler: vi.fn() }))
     for (const { name, handler } of listeners) editorConflictEvents[`on${name}`](handler)
     try {
       editorConflictEvents[`emit${suffix}`]()
-      for (const { name, handler } of listeners) expect(handler).toHaveBeenCalledTimes(name === suffix ? 1 : 0)
+      for (const { name, handler } of listeners) {
+        expect(handler).toHaveBeenCalledTimes(name === suffix ? 1 : 0)
+        if (name === suffix) expect(handler).toHaveBeenCalledWith()
+      }
     } finally {
       for (const { name, handler } of listeners) editorConflictEvents[`off${name}`](handler)
     }

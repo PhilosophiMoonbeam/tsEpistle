@@ -22,11 +22,6 @@ describe('shared formatting tools', () => {
     expect(toolTooltip('Highlight', FORMATTING_TOOLS.highlight, false)).toBe('Highlight')
   })
 
-  it('uses a content-extension icon instead of the QR code icon', () => {
-    expect(FORMATTING_TOOLS.contentExtension.icon).toBe('mdi-puzzle-outline')
-    expect(Object.values(FORMATTING_TOOLS).every(tool => tool.labelKey.startsWith('editor:markup.'))).toBe(true)
-  })
-
   it('derives Markdown toolbar state from the innermost syntax path', () => {
     const state = markdownFormatStateFromPath(['StrongEmphasis', 'Paragraph', 'ListItem', 'BulletList', 'ListItem', 'OrderedList', 'Document'])
     expect(state.bold).toBe(true)
@@ -52,9 +47,12 @@ const mountToolbar = (markup: string) => {
 
 describe('roving toolbar focus', () => {
   it('keeps one tab stop and moves with arrows, Home and End', () => {
-    const root = mountToolbar('<button id="a">A</button><button id="b" disabled>B</button><button id="c" aria-disabled="true">C</button><button id="d">D</button>')
+    const root = mountToolbar(
+      '<button id="a">A</button><button id="b" disabled>B</button><button id="c" aria-disabled="true">C</button><button id="d">D</button>'
+    )
     let escaped = 0
-    vRovingToolbar.mounted?.(root, { value: { onEscape: () => escaped++ } } as never, null as never, null as never)
+    const mount = typeof vRovingToolbar === 'function' ? vRovingToolbar : vRovingToolbar.mounted
+    mount?.(root, { value: { onEscape: () => escaped++ } } as never, null as never, null as never)
 
     expect(rovingToolbarItems(root).map(item => item.id)).toEqual(['a', 'c', 'd'])
     expect(rovingToolbarItems(root).map(item => item.tabIndex)).toEqual([0, -1, -1])

@@ -41,16 +41,42 @@ const template = compileTemplate({
 if (template.errors.length) throw template.errors[0]
 const render = new Function('Vue', template.code)(Vue)
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const createOptions = wikiStore => new Function(
-  'defineComponent', 'markRaw', '_', 'd3', 'AsyncState', 'getErrorMessage', 'fetchPageLinks', 'wikiStore', 'siteLangs', 'siteConfig', 'window',
-  executable
-)(
-  Vue.defineComponent, Vue.markRaw, _, d3, { render: () => null }, error => error.message, fetchPageLinks, wikiStore,
-  [{ code: 'en', name: 'English' }, { code: 'fr', name: 'French' }], { lang: 'en' }, browserWindow
-)
+const createOptions = wikiStore =>
+  new Function(
+    'defineComponent',
+    'markRaw',
+    '_',
+    'd3',
+    'AsyncState',
+    'getErrorMessage',
+    'fetchPageLinks',
+    'wikiStore',
+    'siteLangs',
+    'siteConfig',
+    'window',
+    executable
+  )(
+    Vue.defineComponent,
+    Vue.markRaw,
+    _,
+    d3,
+    { render: () => null },
+    error => error.message,
+    fetchPageLinks,
+    wikiStore,
+    [
+      { code: 'en', name: 'English' },
+      { code: 'fr', name: 'French' }
+    ],
+    { lang: 'en' },
+    browserWindow
+  )
 const mounted = []
 afterEach(() => {
-  for (const { app, host } of mounted.splice(0)) { app.unmount(); host.remove() }
+  for (const { app, host } of mounted.splice(0)) {
+    app.unmount()
+    host.remove()
+  }
   vi.restoreAllMocks()
 })
 const settle = async () => {
@@ -58,7 +84,13 @@ const settle = async () => {
   await Vue.nextTick()
 }
 const mountAtlas = () => {
-  const options = createOptions({ startLoading() {}, stopLoading() {}, showError: error => { throw error } })
+  const options = createOptions({
+    startLoading() {},
+    stopLoading() {},
+    showError: error => {
+      throw error
+    }
+  })
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({ ...options, render })
@@ -72,15 +104,12 @@ const mountAtlas = () => {
 }
 
 describe('admin pages visualize REST facade', () => {
-  it('loads locale-scoped REST links on mount and after a locale change without Apollo', async () => {
-    expect(script).not.toContain('graphql-tag')
-    expect(script).not.toMatch(/apollo\s*:/)
-    expect(script).not.toContain('this.$apollo')
+  it('loads locale-scoped REST links on mount and after a locale change', async () => {
     const rows = {
       en: [{ id: 7, path: 'en/docs/alpha', title: 'Alpha', links: [] }],
       fr: [{ id: 8, path: 'fr/docs/beta', title: 'Beta', links: [] }]
     }
-    const fetch = vi.spyOn(browserWindow, 'fetch').mockImplementation(async (url) => ({
+    const fetch = vi.spyOn(browserWindow, 'fetch').mockImplementation(async url => ({
       ok: true,
       headers: { get: () => 'application/json' },
       json: async () => rows[new URL(url, browserWindow.location.href).searchParams.get('locale')]
@@ -148,7 +177,10 @@ describe('admin pages visualize REST facade', () => {
     const options = createOptions({})
     const pushed = []
     const opened = []
-    const open = vi.spyOn(browserWindow, 'open').mockImplementation((...args) => { opened.push(args); return null })
+    const open = vi.spyOn(browserWindow, 'open').mockImplementation((...args) => {
+      opened.push(args)
+      return null
+    })
     const container = document.createElement('div')
     document.body.append(container)
     const prototype = browserWindow.SVGElement.prototype
@@ -181,7 +213,10 @@ describe('admin pages visualize REST facade', () => {
       for (const modifier of ['ctrlKey', 'metaKey']) {
         label.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', [modifier]: true, cancelable: true }))
       }
-      expect(opened).toEqual([['/a/pages/7', '_blank', 'noopener'], ['/a/pages/7', '_blank', 'noopener']])
+      expect(opened).toEqual([
+        ['/a/pages/7', '_blank', 'noopener'],
+        ['/a/pages/7', '_blank', 'noopener']
+      ])
       const folder = [...container.querySelectorAll('text')].find(node => node.getAttribute('aria-hidden') !== 'true' && node.__data__?.data.id === undefined)
       expect(folder).toBeDefined()
       folder.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', cancelable: true }))

@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -548,7 +548,8 @@ export async function runPhase(
       `--property=MemoryMax=${hostGiB}G`,
       '--property=MemorySwapMax=0',
       '--property=TimeoutStopSec=10s',
-      '--property=CPUQuota=800%',
+      // Avoid quota-induced software-renderer stalls; worker and memory caps remain separate.
+      name === 'browsers' ? '--property=CPUQuota=1600%' : '--property=CPUQuota=800%',
       '--property=CPUWeight=10',
       process.execPath,
       import.meta.path,
