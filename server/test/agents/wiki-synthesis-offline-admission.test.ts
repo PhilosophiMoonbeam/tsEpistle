@@ -1,10 +1,10 @@
 import { setImmediate } from 'node:timers/promises'
 import createKnex, { type Knex } from 'knex'
-import { Agent, MockAgent, type Dispatcher } from 'undici/index.js'
+import { Agent, MockAgent, Response as UndiciResponse, type Dispatcher } from 'undici/index.js'
 import { ax, axGlobals, type AxAIServiceOptions } from '@ax-llm/ax'
 import { createNoopMeter, ProxyTracerProvider, type Meter, type Span } from '@opentelemetry/api'
 import { AgentProviderRegistry, type AgentProviderTransportKind } from '../../agents/providers/registry.ts'
-import { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import { AgentProviderFactory, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createWikiOfflineDispatchAdmission, type WikiOfflineAdmission } from '../../agents/providers/wiki-synthesis-offline-admission.ts'
 import type { AgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { createRoutingTables } from './runtime-routing.fixture.ts'
@@ -550,6 +550,120 @@ describe('offline synthesis measured pricing admission', () => {
     })
     mock.assertNoPendingInterceptors()
   })
+
+  it.each(['declared body limit', 'chunk limit', 'caller abort', 'close'] as const)(
+    'drains and settles unknown exposure without waiting for uncooperative cancellation (%s)',
+    async failure => {
+      const sharedAllowance = { calls: 0, tokens: 0, costMicros: 0 }
+      const input = {
+        ownerId: 7, profileVersionId, registry, secrets,
+        maximumCalls: 3, maximumTokens: 10_000, maximumCostMicros: 100_000, maximumOutputTokens: 8,
+        sharedAllowance
+      }
+      admitted = await createWikiOfflineDispatchAdmission(db, { ...input, label: 'cancelled body student' })
+      const admission = admitted
+      const teacher = await createWikiOfflineDispatchAdmission(db, { ...input, label: 'queued teacher' })
+      const controller = new AbortController()
+      const read = Promise.withResolvers<void>()
+      const cancelling = Promise.withResolvers<void>()
+      const cleanup = Promise.withResolvers<void>()
+      const cleanupOutcome = Promise.allSettled([cleanup.promise])
+      const limits = deriveAgentProviderResourceLimits(8)
+      let cleanupSettled = false
+      void cleanupOutcome.then(() => { cleanupSettled = true })
+      const body = new ReadableStream<Uint8Array>({
+        start(source) {
+          source.enqueue(failure === 'chunk limit'
+            ? new Uint8Array(limits.rawChunkBytes + 1)
+            : new TextEncoder().encode(JSON.stringify(measuredResponse)))
+          // Even complete JSON and usage are not a receipt without genuine EOF.
+        },
+        pull() { read.resolve() },
+        cancel() {
+          cancelling.resolve()
+          return cleanup.promise
+        }
+      })
+      const descriptor = Object.getOwnPropertyDescriptor(UndiciResponse.prototype, 'body')!
+      // Keep the real admitted HTTP send and native SDK, replacing only the
+      // provider body source with a deterministic uncooperative cleanup.
+      Object.defineProperty(UndiciResponse.prototype, 'body', { ...descriptor, get: () => body })
+      mock.get(origin).intercept({ path: '/v1/messages', method: 'POST' }).reply(200, measuredResponse, {
+        headers: {
+          'content-type': 'application/json',
+          ...(failure === 'declared body limit' ? { 'content-length': String(limits.rawBodyBytes + 1) } : {})
+        }
+      })
+      const first = admission.service.chat(request, { stream: false, abortSignal: controller.signal })
+      const queued = teacher.service.chat(request, { stream: false })
+      const outcomes = Promise.allSettled([first, queued])
+      let settled = false
+      void outcomes.then(() => { settled = true })
+      let closing: Promise<void> | undefined
+      try {
+        if (failure === 'caller abort' || failure === 'close') {
+          await waitForEntry(read.promise, first)
+          if (failure === 'caller abort') controller.abort()
+          else closing = admission.close()
+        }
+        await waitForEntry(cancelling.promise, first)
+        closing ??= admission.close()
+        let drained = false
+        void closing.then(() => { drained = true })
+        // The broken await-cancel path never settles either flag. The bounded
+        // assertion fails before finally releases cleanup, avoiding a hung suite.
+        await vi.waitFor(() => {
+          expect(settled).toBe(true)
+          expect(drained).toBe(true)
+        })
+        expect(cleanupSettled).toBe(false)
+        expect((await outcomes).map(outcome => outcome.status)).toEqual(['rejected', 'rejected'])
+        const summary = admission.summary()
+        expect(summary).toMatchObject({
+          calls: 1, dispatchedCalls: 1, failedCalls: 1,
+          inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0
+        })
+        expect(summary.unknownExposureTokens).toBeGreaterThan(8)
+        expect(summary.unknownExposureCostMicros).toBe(summary.unknownExposureTokens * 3 + 16)
+        expect(sharedAllowance).toMatchObject({
+          calls: 1, tokens: summary.unknownExposureTokens, costMicros: summary.unknownExposureCostMicros
+        })
+        expect(teacher.summary()).toMatchObject({ calls: 0, dispatchedCalls: 0, totalTokens: 0, unknownExposureTokens: 0 })
+        const reservationRows: { status: string; consumedTokens: number; consumedCostMicros: number }[] =
+          await db('agentQuotaReservations').select('status', 'consumedTokens', 'consumedCostMicros')
+        expect(reservationRows).toEqual([
+          { status: 'consumed', consumedTokens: summary.unknownExposureTokens, consumedCostMicros: summary.unknownExposureCostMicros }
+        ])
+        const runRows: { status: string; totalTokens: number; estimatedCostMicros: number | null }[] =
+          await db('agentRuns').select('status', 'totalTokens', 'estimatedCostMicros')
+        expect(runRows).toEqual([
+          { status: 'failed', totalTokens: 0, estimatedCostMicros: null }
+        ])
+        const journal = (await db('agentEvents').where({ type: 'usage.updated' }).orderBy('sequence')).map(row => JSON.parse(row.data))
+        expect(journal).toHaveLength(1)
+        expect(journal[0]).toMatchObject({
+          unknownExposure: true, receiptTotalTokens: 0, receiptCostMicros: 0,
+          unsettledExposureTokens: summary.unknownExposureTokens,
+          unsettledExposureCostMicros: summary.unknownExposureCostMicros
+        })
+        expect(body.locked).toBe(false)
+        cleanup.reject(new Error('Synthetic late cancellation failure'))
+        await cleanupOutcome
+        await setImmediate()
+        expect(admission.summary()).toEqual(summary)
+        expect(await db('agentEvents').where({ type: 'usage.updated' }).select('id')).toHaveLength(1)
+        mock.assertNoPendingInterceptors()
+      } finally {
+        Object.defineProperty(UndiciResponse.prototype, 'body', descriptor)
+        controller.abort()
+        cleanup.resolve()
+        await cleanupOutcome
+        await outcomes
+        await closing
+        await teacher.close()
+      }
+    }
+  )
 
   it.each(['provider failure', 'limiter rejection'] as const)('halts queued teacher spending after unmeasured %s with shared allowance remaining', async failure => {
     const sent = Promise.withResolvers<void>()

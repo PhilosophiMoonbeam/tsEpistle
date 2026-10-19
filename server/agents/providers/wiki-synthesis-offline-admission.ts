@@ -518,7 +518,7 @@ export const createWikiOfflineDispatchAdmission = async (
     const limits = deriveAgentProviderResourceLimits(dispatch.outputTokens)
     const declared = Number(response.headers.get('content-length') ?? 0)
     if (Number.isFinite(declared) && declared > limits.rawBodyBytes) {
-      await response.body?.cancel().catch(() => {})
+      void response.body?.cancel().catch(() => {})
       throw offlineFailure()
     }
     const reader = response.body?.getReader()
@@ -539,7 +539,11 @@ export const createWikiOfflineDispatchAdmission = async (
         bytes += item.value.byteLength
       }
     } finally {
-      if (!complete) await reader.cancel().catch(() => {})
+      // Cancellation closes this reader synchronously, but an underlying source's
+      // cleanup promise may never settle. Do not let it hold the owned dispatch,
+      // durable unknown-exposure settlement or shared queue drain hostage.
+      // Only the EOF path below can publish a receipt or a native response.
+      if (!complete) void reader.cancel().catch(() => {})
       reader.releaseLock()
     }
     const buffered = new Uint8Array(bytes)

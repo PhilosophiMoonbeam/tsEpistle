@@ -152,6 +152,27 @@ suite('personal MCP credential authority on PostgreSQL', () => {
     expect((await db('apiKeys').where({ id: issued.item.id }).first()).isRevoked).toBe(true)
   })
 
+  it('rejects list, issue and revoke after the owner session generation changes', async () => {
+    const issued = await issuePersonalMcpKey(owner, '42', input)
+    const before = await db('apiKeys').orderBy('id')
+    await db('users').where({ id: 42 }).update({ authVersion: 1 })
+    for (const stale of [owner, { ...owner, authVersion: 0 }]) {
+      await expect(listPersonalMcpKeys(stale, '42')).rejects.toMatchObject({ name: 'AUTHENTICATION_REQUIRED', status: 401 })
+      await expect(issuePersonalMcpKey(stale, '42', input)).rejects.toMatchObject({ name: 'AUTHENTICATION_REQUIRED', status: 401 })
+      await expect(revokePersonalMcpKey(stale, '42', issued.item.id)).rejects.toMatchObject({ name: 'AUTHENTICATION_REQUIRED', status: 401 })
+    }
+    expect(await db('apiKeys').orderBy('id')).toEqual(before)
+    expect(await loadMcpApiPrincipal(issued.item.id, 1)).toMatchObject({ ownershipUserId: 42, personalMcpAccess: 'read-only' })
+
+    const current = { ...owner, authVersion: 1 }
+    expect((await listPersonalMcpKeys(current, '42')).keys).toEqual([issued.item])
+    const replacement = await issuePersonalMcpKey(current, '42', input)
+    expect(replacement.item.id).not.toBe(issued.item.id)
+    await revokePersonalMcpKey(current, '42', issued.item.id)
+    expect((await db('apiKeys').where({ id: issued.item.id }).first()).isRevoked).toBe(true)
+    expect((await db('apiKeys').where({ id: replacement.item.id }).first()).isRevoked).toBe(false)
+  })
+
   it('rechecks membership, permissions, owner status, expiry and revocation on every resolution', async () => {
     const issued = await issuePersonalMcpKey(owner, '42', { ...input, access: 'read-write' })
     await db('userGroups').where({ userId: 42, groupId: 4 }).delete()

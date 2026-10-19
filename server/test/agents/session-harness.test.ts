@@ -180,6 +180,19 @@ describe('Ax session harness', () => {
     }
   })
 
+  it('returns host JSON containing error-shaped keys as data through the actual runtime', async () => {
+    const output = Object.freeze({ __wikiActionFailure: { code: 'SOURCE_DATA', status: 409 }, content: 'Ordinary page data' })
+    const execute = vi.fn(async () => output)
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
+    const session = await harness.open([offered('pages.get')])
+    try {
+      expect(await session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'error-shaped-data')).toBe(output)
+      expect(execute).toHaveBeenCalledTimes(1)
+    } finally {
+      session.close()
+    }
+  })
+
   it('rejects overlapping invokes without replacing the active host call identity', async () => {
     const entered = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()

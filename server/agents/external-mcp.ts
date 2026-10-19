@@ -2,7 +2,17 @@ import { randomUUID } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import type { LookupAddress } from 'node:dns'
 import { BlockList, isIP } from 'node:net'
-import { AxMCPClient, AxMCPStreamableHTTPTransport, type AxMCPCatalogSnapshot, type AxMCPClientOptions, type AxMCPEra, type AxMCPTask } from '@ax-llm/ax'
+import {
+  AxMCPClient,
+  AxMCPStreamableHTTPTransport,
+  type AxMCPCatalogSnapshot,
+  type AxMCPClientOptions,
+  type AxMCPEra,
+  type AxMCPJSONRPCRequest,
+  type AxMCPJSONRPCResponse,
+  type AxMCPRequestOptions,
+  type AxMCPTask
+} from '@ax-llm/ax'
 import type { Knex } from 'knex'
 // Bun's built-in fetch ignores Undici dispatchers; the explicit entry point is required for DNS pinning.
 import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici/index.js'
@@ -551,6 +561,9 @@ class OwnerScopedMcpTransport extends AxMCPStreamableHTTPTransport {
   readonly #session: { id: string | undefined }
   #era: AxMCPEra | undefined
   #protocolVersion: string | undefined
+  // Discovery/status knowledge is not creation authority. Only this transport's
+  // matching successful tool responses can nominate handles for owner cleanup.
+  readonly ownedTaskIds = new Set<string>()
   constructor(endpoint: string, guard: ExternalMcpEndpointGuard) {
     const session: { id: string | undefined } = { id: undefined }
     super(endpoint, {
@@ -584,6 +597,22 @@ class OwnerScopedMcpTransport extends AxMCPStreamableHTTPTransport {
   override setProtocolVersion(protocolVersion: string): void {
     super.setProtocolVersion(protocolVersion)
     this.#protocolVersion = protocolVersion
+  }
+  override async send(message: Readonly<AxMCPJSONRPCRequest<unknown>>, options?: Readonly<AxMCPRequestOptions>): Promise<AxMCPJSONRPCResponse<unknown>> {
+    const response = await super.send(message, options)
+    if (message.method === 'tools/call' && response.id === message.id && !('error' in response) && 'result' in response) {
+      const result = response.result
+      if (result && typeof result === 'object') {
+        const task =
+          this.#era === 'modern' && 'resultType' in result && result.resultType === 'task'
+            ? result
+            : this.#era === 'legacy' && message.params && typeof message.params === 'object' && 'task' in message.params && 'task' in result
+              ? result.task
+              : undefined
+        if (task && typeof task === 'object' && 'taskId' in task && typeof task.taskId === 'string') this.ownedTaskIds.add(task.taskId)
+      }
+    }
+    return response
   }
   override async terminateSession(): Promise<void> {
     const sessionId = this.#session.id
@@ -622,10 +651,11 @@ class OwnerScopedMcpTransport extends AxMCPStreamableHTTPTransport {
 class OwnerScopedMcpClient extends AxMCPClient {
   readonly #authorize: () => Promise<void>
   readonly #guard: ExternalMcpEndpointGuard
+  readonly #transport: OwnerScopedMcpTransport
   #closed = false
   #closePromise: Promise<void> | undefined
   readonly #taskCancellations = new Map<string, Promise<AxMCPTask | undefined>>()
-  constructor(transport: AxMCPStreamableHTTPTransport, options: AxMCPClientOptions, authorize: () => Promise<void>, guard: ExternalMcpEndpointGuard) {
+  constructor(transport: OwnerScopedMcpTransport, options: AxMCPClientOptions, authorize: () => Promise<void>, guard: ExternalMcpEndpointGuard) {
     super(transport, {
       ...options,
       authorizeToolCall: async () => {
@@ -635,6 +665,7 @@ class OwnerScopedMcpClient extends AxMCPClient {
       }
     })
     this.#authorize = authorize
+    this.#transport = transport
     this.#guard = guard
   }
   override async init(): Promise<void> {
@@ -656,12 +687,21 @@ class OwnerScopedMcpClient extends AxMCPClient {
     await this.#authorize()
     return catalog
   }
+  override getKnownTasks(): readonly AxMCPTask[] {
+    // Native task knowledge includes unsolicited status notifications and arbitrary
+    // task inspection. Neither grants this invocation cancellation authority.
+    return super.getKnownTasks().filter(task => this.#transport.ownedTaskIds.has(task.taskId))
+  }
   override cancelTask(taskId: string): Promise<AxMCPTask | undefined> {
     const pending = this.#taskCancellations.get(taskId)
     if (pending) return pending
     if (!this.getKnownTasks().some(task => task.taskId === taskId && (task.status === 'working' || task.status === 'input_required')))
       return Promise.reject(new AgentRepositoryError('EXTERNAL_MCP_ACCESS_DENIED', 'External MCP task is not owned by this invocation', 403))
-    const cancellation = super.cancelTask(taskId)
+    const cancellation = super.cancelTask(taskId).catch(error => {
+      // A rejected attempt must not suppress a later explicit, freshly authorized cleanup.
+      this.#taskCancellations.delete(taskId)
+      throw error
+    })
     this.#taskCancellations.set(taskId, cancellation)
     return cancellation
   }

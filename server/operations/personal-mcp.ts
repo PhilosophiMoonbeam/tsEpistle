@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken'
 import { IssuePersonalMcpKeyInputSchema, type PersonalMcpKey } from '../../shared/personal-mcp.ts'
 import { loadPersonalMcpOwner, personalMcpEligible, personalMcpEnabled, personalMcpEndpoint, personalMcpRuntime, type McpKeyRecord } from '../helpers/personal-mcp.ts'
 import { isApiPrincipal } from '../helpers/api-principal.ts'
+import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import errors from './errors.ts'
 
 const { ApplicationError } = errors
@@ -23,7 +24,13 @@ const requireOwner = async (requester: Express.User | undefined, expectedAccount
   if (typeof expectedAccountId !== 'string' || !/^[1-9]\d*$/.test(expectedAccountId) || !Number.isSafeInteger(Number(expectedAccountId)))
     throw new ApplicationError('The profile account identity is required.', { code: 'INVALID_PROFILE_ACCOUNT', status: 400 })
   if (Number(expectedAccountId) !== id) throw new ApplicationError('Your signed-in account changed. Reload your profile.', { code: 'STALE_PROFILE', status: 409 })
-  return loadPersonalMcpOwner(id, database)
+  const current = await loadPersonalMcpOwner(id, database)
+  if (!accountSessionIsCurrent(
+    { id, authVersion: Reflect.get(requester!, 'authVersion') },
+    { id: current.owner.id, isActive: true, authVersion: current.owner.authVersion }
+  ))
+    throw new ApplicationError('Your account session changed. Sign in again.', { code: 'AUTHENTICATION_REQUIRED', status: 401 })
+  return current
 }
 
 export const listPersonalMcpKeys = async (requester: Express.User | undefined, expectedAccountId: unknown) => {

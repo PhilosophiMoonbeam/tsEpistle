@@ -728,6 +728,92 @@ describe('external MCP owner-scoped native clients', () => {
     expect(independentTask.task.status).toBe('working')
   })
 
+  it.each(['legacy', 'modern'] as const)('never adopts unsolicited or inspected %s task handles for cancellation cleanup', async era => {
+    protocol = protocolFixture(era, true)
+    const scoped = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: publicResolver,
+      fetch: async (url, init) => {
+        if (init.method === 'DELETE') return protocol.fetch(url, init)
+        const request = JSON.parse(String(init.body)) as { id: string; method: string; params?: { taskId?: string } }
+        const response = await protocol.fetch(url, init)
+        if (request.method !== 'tools/call' && request.method !== 'tasks/get') return response
+        const message = (await response.json()) as { jsonrpc: string; id: string; result: Record<string, unknown> }
+        if (request.method === 'tasks/get') {
+          return Response.json({ ...message, result: { ...message.result, taskId: request.params?.taskId } })
+        }
+        const task = era === 'legacy' ? message.result.task : message.result
+        const foreign = { ...(task as Record<string, unknown>), taskId: 'foreign-task' }
+        return new Response(
+          `data: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tasks/status', params: { task: foreign } })}\n\n` +
+            `data: ${JSON.stringify(message)}\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    })
+    const server = await scoped.createAdmin(admin, { ...input(), groupIds: [20] })
+    const lease = await scoped.openForUser(owner.id, { serverIds: [server.id] })
+    leases.push(lease)
+    const client = lease.clients[0]!
+    await lease.inspectCatalog(server.id)
+    if (era === 'legacy') await client.callToolTask('web_search', {})
+    else expect(await client.callToolOutcome('web_search', {})).toHaveProperty('kind', 'task')
+    // Native Ax receives the unsolicited status and records task inspections too.
+    // Neither operation means this invocation created the foreign task.
+    expect(await client.getTask('foreign-task')).toHaveProperty('taskId', 'foreign-task')
+    await expect(client.cancelTask('foreign-task')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    expect(client.getKnownTasks().map(task => task.taskId)).toEqual(['owned-task'])
+    await lease.close()
+    expect(protocol.calls.filter(call => call.method === 'tasks/cancel').map(call => call.params)).toMatchObject([{ taskId: 'owned-task' }])
+    expect(protocol.calls.filter(call => call.method === 'tools/call')).toHaveLength(1)
+  })
+
+  it.each(['legacy', 'modern'] as const)('allows %s close cleanup after a failed owned cancellation without replay or duplicate cleanup', async era => {
+    protocol = protocolFixture(era, true)
+    let failCancellation = true
+    const scoped = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: publicResolver,
+      fetch: async (url, init) => {
+        const response = await protocol.fetch(url, init)
+        if (init.method === 'DELETE') return response
+        const request = JSON.parse(String(init.body)) as { id: string; method: string }
+        if (request.method === 'tasks/cancel' && failCancellation) {
+          failCancellation = false
+          return Response.json({
+            jsonrpc: '2.0',
+            id: request.id,
+            error: { code: -32603, message: 'Temporary task cancellation failure' }
+          })
+        }
+        return response
+      }
+    })
+    const server = await scoped.createAdmin(admin, { ...input(), groupIds: [20] })
+    const lease = await scoped.openForUser(owner.id, { serverIds: [server.id] })
+    leases.push(lease)
+    const client = lease.clients[0]!
+    await lease.inspectCatalog(server.id)
+    if (era === 'legacy') await client.callToolTask('web_search', {})
+    else expect(await client.callToolOutcome('web_search', {})).toHaveProperty('kind', 'task')
+    const cancellations = [client.cancelTask('owned-task'), client.cancelTask('owned-task')]
+    await Promise.all(cancellations.map(cancellation => expect(cancellation).rejects.toThrow('Temporary task cancellation failure')))
+    expect(protocol.calls.filter(call => call.method === 'tasks/cancel')).toHaveLength(1)
+    expect(client.getKnownTasks()).toMatchObject([{ taskId: 'owned-task', status: 'working' }])
+    await expect(client.cancelTask('foreign-task')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    await Promise.all([lease.close(), client.cancelTask('owned-task'), lease.close()])
+    await client.cancelTask('owned-task')
+    expect(protocol.calls.filter(call => call.method === 'tasks/cancel').map(call => call.params)).toMatchObject([
+      { taskId: 'owned-task' },
+      { taskId: 'owned-task' }
+    ])
+    expect(protocol.calls.filter(call => call.method === 'tools/call')).toHaveLength(1)
+  })
+
   it.each(['membership', 'account', 'session', 'server', 'switch', 'grants', 'personal-policy', 'endpoint'] as const)(
     'reauthorizes legacy task polls, final result and abort cleanup after %s revocation without replay',
     async change => {

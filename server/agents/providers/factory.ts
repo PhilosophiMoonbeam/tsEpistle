@@ -1237,7 +1237,25 @@ const createRequestScopedService = (
 ): ProviderChatService => {
   const ceiling = capabilities.maxOutputTokens
   const featureService = build({ limits: deriveAgentProviderResourceLimits(ceiling), onLimit: () => {}, onError: () => {} })
-  const defaults = featureService.getOptions()
+  // Content exclusion does not redact native decoder exceptions or provider-
+  // authored tool names in metrics. Ambient hooks must not observe either;
+  // explicitly supplied request/service hooks still take normal precedence.
+  // Ax getOptions() includes live ambient hooks and cancellation. Only fetch
+  // and timeout are constructor-owned fields; never persist its effective view.
+  // setOptions() replaces rather than patches native options, including Gemini.
+  const { fetch, timeout } = featureService.getOptions()
+  const defaults: AxAIServiceOptions = {
+    ...(fetch === undefined ? {} : { fetch }),
+    ...(timeout === undefined ? {} : { timeout }),
+    debug: false,
+    verbose: false,
+    retry: { maxRetries: 0 },
+    includeRequestBodyInErrors: false,
+    excludeContentFromTrace: true,
+    tracer: absentRuntimeTracer,
+    meter: absentRuntimeMeter
+  }
+  featureService.setOptions(defaults)
   let lastService = featureService
   let nativeMediaCapabilities = featureService.getFeatures(model).media
   const safeOptions = (options: Readonly<AxAIServiceOptions>, fetch: AxAIServiceOptions['fetch']): AxAIServiceOptions => {

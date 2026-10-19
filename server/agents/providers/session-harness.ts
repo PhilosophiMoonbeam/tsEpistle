@@ -8,7 +8,6 @@ import { AgentRepositoryError } from '../repository.ts'
 const MAX_SNAPSHOT_BYTES = 256 * 1_024
 const MAX_ACTION_RESULT_BYTES = 128 * 1_024
 const RESERVED_NAMES = ['__wikiActions'] as const
-const ACTION_FAILURE_KEY = '__wikiActionFailure'
 const NO_HOST_RESULT = Symbol('no-host-result')
 
 export interface AxHarnessFunction {
@@ -84,7 +83,7 @@ export class AxSessionHarness {
 
   async open(actions: readonly OfferedAction[], initialSnapshot?: Readonly<Record<string, unknown>>): Promise<AxActionSession> {
     const offered = new Map(actions.map(action => [action.definition.descriptor.name, action]))
-    let invocation: { readonly signal: AbortSignal; readonly actionCallId: string; hostResult: unknown } | undefined
+    let invocation: { readonly signal: AbortSignal; readonly actionCallId: string; hostResult: unknown; hostFailure?: AgentRepositoryError } | undefined
     let closed = false
     const assertOpen = (): void => {
       if (closed) throw new AgentRepositoryError('ACTION_SESSION_CLOSED', 'Action session is closed', 409)
@@ -98,6 +97,7 @@ export class AxSessionHarness {
           assertOpen()
           active.signal.throwIfAborted()
           let result: unknown
+          let failure: AgentRepositoryError | undefined
           try {
             result = await this.#execute(action, JSON.parse(inputJson) as unknown, active.signal, active.actionCallId)
             boundedJson(result, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
@@ -106,7 +106,8 @@ export class AxSessionHarness {
             const rawStatus = typeof error === 'object' && error !== null ? Reflect.get(error, 'status') : undefined
             const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(rawCode) ? rawCode : 'ACTION_FAILED'
             const status = Number.isInteger(rawStatus) && Number(rawStatus) >= 400 && Number(rawStatus) <= 599 ? Number(rawStatus) : 500
-            result = { [ACTION_FAILURE_KEY]: { code, status } }
+            failure = new AgentRepositoryError(code, 'Action failed', status)
+            result = null
           }
           // Ax can reject execute (abort/timeout/close) while its host callback
           // is still pending. Never publish that callback's late completion.
@@ -114,6 +115,7 @@ export class AxSessionHarness {
           active.signal.throwIfAborted()
           if (invocation !== active) throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback no longer owns its request', 500)
           active.hostResult = result
+          if (failure) active.hostFailure = failure
           return result
         }
       ])
@@ -160,7 +162,11 @@ export class AxSessionHarness {
         // keys must remain data, and Ax scans source for quoted directives.
         const inputLiteral = JSON.stringify(inputJson).replaceAll("'", '\\u0027')
         signal.throwIfAborted()
-        const active = { signal, actionCallId, hostResult: NO_HOST_RESULT as unknown }
+        const active: { readonly signal: AbortSignal; readonly actionCallId: string; hostResult: unknown; hostFailure?: AgentRepositoryError } = {
+          signal,
+          actionCallId,
+          hostResult: NO_HOST_RESULT
+        }
         invocation = active
         try {
           try {
@@ -179,12 +185,7 @@ export class AxSessionHarness {
           const hostResult = active.hostResult
           if (hostResult === NO_HOST_RESULT)
             throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action worker completed without invoking its host callback', 500)
-          if (typeof hostResult === 'object' && hostResult !== null && Object.hasOwn(hostResult, ACTION_FAILURE_KEY)) {
-            const failure = Reflect.get(hostResult, ACTION_FAILURE_KEY)
-            const code = typeof failure === 'object' && failure !== null ? Reflect.get(failure, 'code') : undefined
-            const status = typeof failure === 'object' && failure !== null ? Reflect.get(failure, 'status') : undefined
-            throw new AgentRepositoryError(typeof code === 'string' ? code : 'ACTION_FAILED', 'Action failed', Number.isInteger(status) ? Number(status) : 500)
-          }
+          if (active.hostFailure) throw active.hostFailure
           return hostResult
         } finally {
           if (invocation === active) invocation = undefined

@@ -1,4 +1,6 @@
 import type { LookupAddress } from 'node:dns'
+import { axGlobals, axRuntimeHookFrame, type AxAIServiceOptions, type AxChatResponse } from '@ax-llm/ax'
+import { createNoopMeter, ProxyTracerProvider, type Meter, type Span } from '@opentelemetry/api'
 import createKnex, { type Knex } from 'knex'
 import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import {
@@ -806,6 +808,185 @@ const seedInputProvider = async (db: Knex): Promise<string> => {
 describe('Ax provider factory', () => {
   let db: Knex | undefined
   afterEach(async () => db?.destroy())
+
+  it('keeps native decoder failures out of ambient debug logs and recording traces', async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const id = await seedInputProvider(db)
+    await db('agentProviderProfileVersions').where({ id }).update({
+      transportKind: 'openai-chat', model: 'model-test', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer'
+    })
+    const prior = { debug: axGlobals.debug, logger: axGlobals.logger, tracer: axGlobals.tracer }
+    const tracer = new ProxyTracerProvider().getTracer('factory-inherited-fixture')
+    const span = new ProxyTracerProvider().getTracer('factory-recording-fixture').startSpan('private-provider')
+    const captured: unknown[] = []
+    const recording = vi.spyOn(span, 'isRecording').mockReturnValue(true)
+    const exceptions = vi.spyOn(span, 'recordException').mockImplementation(exception => { captured.push(exception) })
+    const statuses = vi.spyOn(span, 'setStatus').mockImplementation(status => { captured.push(status); return span })
+    const events = vi.spyOn(span, 'addEvent').mockImplementation((name, attributes) => { captured.push({ name, attributes }); return span })
+    const activeSpans = vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (current: Span) => unknown
+      return callback(span)
+    }) as typeof tracer.startActiveSpan)
+    const logger = vi.fn()
+    let dispatches = 0
+    axGlobals.debug = true
+    axGlobals.logger = logger
+    axGlobals.tracer = tracer
+    try {
+      const provider = await new AgentProviderFactory(db, { get: () => 'private-provider-key' }, (async () => {
+        dispatches++
+        return Response.json({
+          id: 'private-refusal-fixture', object: 'chat.completion', created: 0, model: 'model-test',
+          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: '', refusal: 'PRIVATE_FACTORY_RESPONSE_DO_NOT_RECORD' } }],
+          usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 }
+        })
+      }) as unknown as typeof fetch, publicResolver as never).create(id)
+      await expect(provider.service.chat(
+        { chatPrompt: [{ role: 'user', content: 'PRIVATE_FACTORY_PROMPT_DO_NOT_RECORD' }] },
+        { stream: false, debug: true, verbose: true }
+      )).rejects.toThrow('PRIVATE_FACTORY_RESPONSE_DO_NOT_RECORD')
+      expect(dispatches).toBe(1)
+      expect(logger).not.toHaveBeenCalled()
+      expect(captured).toEqual([])
+    } finally {
+      axGlobals.debug = prior.debug
+      axGlobals.logger = prior.logger
+      axGlobals.tracer = prior.tracer
+      activeSpans.mockRestore()
+      events.mockRestore()
+      statuses.mockRestore()
+      exceptions.mockRestore()
+      recording.mockRestore()
+    }
+  })
+
+  it('isolates provider-authored tool metrics from ambient meters while preserving explicit request hooks and usage', async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const id = await seedInputProvider(db)
+    await db('agentProviderProfileVersions').where({ id }).update({
+      transportKind: 'openai-chat', model: 'model-test', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer'
+    })
+    const prior = { meter: axGlobals.meter }
+    const inherited: unknown[] = []
+    const explicit: unknown[] = []
+    const recordingMeter = (captured: unknown[]): Meter => {
+      const meter = Object.create(createNoopMeter()) as Meter
+      meter.createCounter = name => ({ add(value, attributes) { captured.push({ name, value, attributes }) } })
+      meter.createHistogram = name => ({ record(value, attributes) { captured.push({ name, value, attributes }) } })
+      meter.createUpDownCounter = meter.createCounter
+      meter.createGauge = meter.createHistogram
+      return meter
+    }
+    axGlobals.meter = recordingMeter(inherited)
+    const requestTracer = new ProxyTracerProvider().getTracer('factory-explicit-fixture')
+    const requestSpans = vi.spyOn(requestTracer, 'startActiveSpan')
+    let dispatches = 0
+    try {
+      const provider = await new AgentProviderFactory(db, { get: () => 'private-provider-key' }, (async () => {
+        dispatches++
+        return Response.json({
+          id: 'private-tool-fixture', object: 'chat.completion', created: 0, model: 'model-test',
+          choices: [{
+            index: 0, finish_reason: 'tool_calls',
+            message: { role: 'assistant', content: null, tool_calls: [{ id: 'call-private', type: 'function',
+              function: { name: 'PRIVATE_FACTORY_FUNCTION_DO_NOT_RECORD', arguments: '{}' } }] }
+          }],
+          usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 }
+        })
+      }) as unknown as typeof fetch, publicResolver as never).create(id)
+      const request = { chatPrompt: [{ role: 'user' as const, content: 'Private factory request' }] }
+      const response = await provider.service.chat(request, { stream: false }) as AxChatResponse
+      expect(response.results[0]?.functionCalls?.[0]?.function.name).toBe('PRIVATE_FACTORY_FUNCTION_DO_NOT_RECORD')
+      expect(response.modelUsage?.tokens).toMatchObject({ promptTokens: 4, completionTokens: 1, totalTokens: 5 })
+      expect(inherited).toEqual([])
+      const options: AxAIServiceOptions = { stream: false, meter: recordingMeter(explicit), tracer: requestTracer }
+      const scoped = await provider.service.chat(request, options) as AxChatResponse
+      expect(scoped.modelUsage?.tokens).toMatchObject({ promptTokens: 4, completionTokens: 1, totalTokens: 5 })
+      expect(requestSpans).toHaveBeenCalled()
+      expect(JSON.stringify(explicit)).toContain('PRIVATE_FACTORY_FUNCTION_DO_NOT_RECORD')
+      expect(inherited).toEqual([])
+      expect(dispatches).toBe(2)
+    } finally {
+      axGlobals.meter = prior.meter
+      requestSpans.mockRestore()
+    }
+  })
+
+  it.each([
+    { transportKind: 'openai-chat', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer', model: 'model-test' },
+    { transportKind: 'openai-responses', baseUrl: 'https://responses.example.test/v1', authMode: 'bearer', model: 'model-test' },
+    { transportKind: 'openresponses', baseUrl: 'https://openresponses.example.test/v1', authMode: 'bearer', model: 'model-test' },
+    { transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key', model: 'claude-test' },
+    { transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key', model: 'gemini-3.7-flash' },
+    { transportKind: 'legacy-completions', baseUrl: 'https://legacy.example.test/v1', authMode: 'bearer', model: 'model-test' }
+  ] as const)('keeps ambient hooks live after $transportKind construction without weakening explicit or resolved scope', async settings => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const id = await seedInputProvider(db)
+    await db('agentProviderProfileVersions').where({ id }).update(settings)
+    const prior = { rateLimiter: axGlobals.rateLimiter, abortSignal: axGlobals.abortSignal }
+    const limiterCalls: string[] = []
+    const limiter = (name: string): NonNullable<AxAIServiceOptions['rateLimiter']> => next => {
+      limiterCalls.push(name)
+      return next()
+    }
+    const originalAbort = new AbortController()
+    const replacementAbort = new AbortController()
+    axGlobals.rateLimiter = limiter('original')
+    axGlobals.abortSignal = originalAbort.signal
+    let dispatches = 0
+    try {
+      const provider = await new AgentProviderFactory(db, { get: () => 'private-runtime-key' }, (async (_input, init) => {
+        dispatches++
+        expect(init?.signal?.aborted).toBe(false)
+        // A deliberate HTTP failure exercises each real native client's hook
+        // and cancellation path without depending on its response decoder.
+        return Response.json({ error: { message: 'Fixture unavailable' } }, { status: 503 })
+      }) as typeof fetch, publicResolver as never).create(id)
+      const request = { chatPrompt: [{ role: 'user' as const, content: 'Private ambient lifecycle request' }] }
+      expect(dispatches).toBe(0)
+      expect(limiterCalls).toEqual([])
+      // Updating an unrelated local setting must not capture ambient defaults.
+      provider.service.setOptions({ timeout: 5_000 })
+      axGlobals.rateLimiter = limiter('replacement')
+      axGlobals.abortSignal = replacementAbort.signal
+      originalAbort.abort()
+      await expect(provider.service.chat(request, { stream: false })).rejects.toThrow()
+      expect(dispatches).toBe(1)
+      expect(limiterCalls).toEqual(['replacement'])
+
+      // The replacement global signal, not merely its removal, is authoritative.
+      replacementAbort.abort()
+      await expect(provider.service.chat(request, { stream: false })).rejects.toThrow()
+      expect(dispatches).toBe(1)
+      limiterCalls.length = 0
+      axGlobals.abortSignal = undefined
+      await expect(provider.service.chat(request, { stream: false })).rejects.toThrow()
+      expect(dispatches).toBe(2)
+      expect(limiterCalls).toEqual(['replacement'])
+
+      axGlobals.rateLimiter = undefined
+      await expect(provider.service.chat(request, { stream: false })).rejects.toThrow()
+      expect(dispatches).toBe(3)
+      expect(limiterCalls).toEqual(['replacement'])
+
+      axGlobals.rateLimiter = limiter('ambient')
+      provider.service.setOptions({ rateLimiter: limiter('service') })
+      await expect(provider.service.chat(request, { stream: false })).rejects.toThrow()
+      expect(dispatches).toBe(4)
+      expect(limiterCalls).toEqual(['replacement', 'service'])
+      await expect(provider.service.chat(request, { stream: false, rateLimiter: limiter('request') })).rejects.toThrow()
+      expect(dispatches).toBe(5)
+      expect(limiterCalls).toEqual(['replacement', 'service', 'request'])
+
+      const resolvedOptions = { stream: false, [axRuntimeHookFrame]: { globals: {}, resolved: true } }
+      await expect(provider.service.chat(request, resolvedOptions)).rejects.toThrow()
+      expect(dispatches).toBe(6)
+      expect(limiterCalls).toEqual(['replacement', 'service', 'request'])
+    } finally {
+      axGlobals.rateLimiter = prior.rateLimiter
+      axGlobals.abortSignal = prior.abortSignal
+    }
+  })
 
   it.each([
     { transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key', model: 'claude-test' },

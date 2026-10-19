@@ -20,6 +20,7 @@ export interface McpKeyRecord {
 interface OwnerRecord {
   id: number
   isActive: boolean | number
+  authVersion: number
   name: string
   email: string
   pictureUrl: string | null
@@ -54,7 +55,7 @@ const stringArray = (value: unknown): string[] => {
 }
 export const loadPersonalMcpOwner = async (ownerId: number, database: Knex | Knex.Transaction = personalMcpRuntime().models.knex) => {
   if (!Number.isSafeInteger(ownerId) || ownerId < 1 || ownerId === 2) return denied('Personal MCP owner is unavailable.')
-  const owner = await database<OwnerRecord>('users').select('id', 'isActive', 'name', 'email', 'pictureUrl', 'timezone', 'localeCode').where({ id: ownerId }).first()
+  const owner = await database<OwnerRecord>('users').select('id', 'isActive', 'authVersion', 'name', 'email', 'pictureUrl', 'timezone', 'localeCode').where({ id: ownerId }).first()
   if (!owner || !(owner.isActive === true || owner.isActive === 1)) return denied('Personal MCP owner is unavailable.')
   const groups = await database<GroupRecord>('groups').join('userGroups', 'groups.id', 'userGroups.groupId')
     .where('userGroups.userId', ownerId).select('groups.id', 'groups.permissions').orderBy('groups.id')
