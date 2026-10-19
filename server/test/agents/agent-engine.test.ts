@@ -326,6 +326,35 @@ const questionProposalAction: AxHarnessFunction = {
   capability: ACTION_CATALOG['pages.prepareCreate'].capability
 }
 
+const ownedReadFixture = (
+  read: (name: string, input: unknown) => unknown | Promise<unknown>,
+  authoritativeOutputs?: readonly unknown[]
+) => {
+  const authoritativeSnapshots = authoritativeOutputs?.map(output => canonicalJson(output))
+  const observations: { readonly name: string; readonly input: string; readonly output: unknown; readonly snapshot: string }[] = []
+  const invoke = vi.fn(async (name: string, input: unknown) => {
+    const output = await read(name, input)
+    if (typeof output !== 'object' || output === null || Array.isArray(output) || 'error' in output) return output
+    const snapshot = canonicalJson(output)
+    if (authoritativeSnapshots === undefined || authoritativeSnapshots.includes(snapshot))
+      observations.push({ name, input: canonicalJson(input), output, snapshot })
+    return output
+  })
+  const validateObservation = async (name: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => {
+    if (signal.aborted || typeof output !== 'object' || output === null || Array.isArray(output) || 'error' in output) return false
+    const snapshot = canonicalJson(output)
+    const input = originalInput === undefined ? undefined : canonicalJson(originalInput)
+    return observations.some(
+      observation =>
+        observation.name === name &&
+        (input === undefined || observation.input === input) &&
+        observation.snapshot === snapshot &&
+        canonicalJson(observation.output) === observation.snapshot
+    )
+  }
+  return { invoke, validateObservation }
+}
+
 const questionFixture = (
   mode: QuestionMode,
   steps: readonly QuestionStep[],
@@ -336,7 +365,7 @@ const questionFixture = (
     readonly maxOutputTokens?: number
     readonly countContextTokens?: (input: Readonly<AxChatRequest>, signal: AbortSignal) => Promise<number>
     readonly coverage?: AxAIService['chat']
-    readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
+    readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => Promise<boolean>
   } = {},
   requestOptions: Partial<AgentEngineRequest> = {},
   decisionProviders: typeof fixtureDecisionProviders = fixtureDecisionProviders
@@ -375,7 +404,57 @@ const questionFixture = (
       ...(providerOptions.countContextTokens === undefined ? {} : { countContextTokens: providerOptions.countContextTokens })
     })
   } as unknown as AgentProviderFactory
-  const invoke = vi.fn(async (name: string, input: unknown) => invokeAction(name as QuestionActionName, input))
+  const ownedObservations = new Map<string, { readonly name: string; readonly input: string; readonly output: unknown; readonly snapshot: string }>()
+  const rememberOwnedApplication = (input: unknown, output: unknown): void => {
+    const binding = ACTION_CATALOG['pages.applyProposal'].input.safeParse(input)
+    const receipt = ACTION_CATALOG['pages.applyProposal'].output.safeParse(output)
+    if (!binding.success || !receipt.success || receipt.data.proposalId !== binding.data.proposalId) return
+    const originalInput = canonicalJson(input)
+    ownedObservations.set(`pages.applyProposal:${originalInput}`, {
+      name: 'pages.applyProposal', input: originalInput, output, snapshot: canonicalJson(output)
+    })
+  }
+  if (providerOptions.validateObservation === undefined && requestOptions.recoveredAction?.actionName === 'pages.applyProposal') {
+    rememberOwnedApplication(requestOptions.recoveredAction.actionInput, requestOptions.recoveredAction.output)
+  }
+  const invoke = vi.fn(async (name: string, input: unknown) => {
+    const output = await invokeAction(name as QuestionActionName, input)
+    if (providerOptions.validateObservation === undefined && typeof output === 'object' && output !== null && !Array.isArray(output) && !('error' in output)) {
+      const source = output as Record<string, unknown>
+      const argumentsRecord = typeof input === 'object' && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : {}
+      const supported =
+        ((name === 'pages.get' || name === 'pages.getVersion') && typeof source.content === 'string' &&
+          source.id === (name === 'pages.get' ? argumentsRecord.id : argumentsRecord.pageId) &&
+          (name !== 'pages.getVersion' || source.versionId === argumentsRecord.versionId)) ||
+        (name === 'pages.getOkf' && typeof source.document === 'string' && source.pageId === argumentsRecord.id) ||
+        (name === 'pages.search' && Array.isArray(source.results)) ||
+        ((name === 'pages.discover' || name === 'pages.related') && Array.isArray(source.pages)) ||
+        (name === 'pages.listRecent' && source.kind === 'recent-page-evidence' && Array.isArray(source.pages))
+      if (supported) {
+        const originalInput = canonicalJson(input)
+        ownedObservations.set(`${name}:${originalInput}`, { name, input: originalInput, output, snapshot: canonicalJson(output) })
+      }
+      if (name === 'pages.applyProposal') rememberOwnedApplication(input, output)
+      if (
+        name === 'pages.prepareCreate' &&
+        source.status === 'applied' &&
+        source.actionName === name &&
+        ACTION_CATALOG['pages.prepareCreate'].output.safeParse(output).success
+      )
+        rememberOwnedApplication({ proposalId: source.proposalId, approvalId: source.approvalId }, source.application)
+    }
+    return output
+  })
+  const validateObservation = providerOptions.validateObservation ?? (async (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => {
+    if (signal.aborted) return false
+    const snapshot = canonicalJson(output)
+    const boundInput = originalInput === undefined ? undefined : canonicalJson(originalInput)
+    for (const observation of ownedObservations.values()) {
+      if (observation.name !== actionName || (boundInput !== undefined && observation.input !== boundInput)) continue
+      if (snapshot === observation.snapshot && canonicalJson(observation.output) === observation.snapshot) return true
+    }
+    return false
+  })
   const close = vi.fn()
   const actions: AgentActionSessionProvider = {
     open: async () => ({
@@ -383,7 +462,7 @@ const questionFixture = (
       invoke,
       snapshot: async () => ({}),
       close,
-      ...(providerOptions.validateObservation === undefined ? {} : { validateObservation: providerOptions.validateObservation })
+      validateObservation
     })
   }
   const text = vi.fn(async (_message: string) => {})
@@ -1585,11 +1664,25 @@ describe('Ax agent engine', () => {
         )
         const result = await fixture.execute('What does Alpha require? Read the full Alpha page.')
         expect(result.executionLimit).toBeUndefined()
-        expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(
-          truncated ? ['pages.get', 'pages.listRecent', 'pages.get'] : ['pages.get', 'pages.listRecent']
-        )
         expect(fixture.providerCalls).toHaveLength(truncated ? 4 : 3)
-        if (truncated) expect(JSON.stringify(fixture.providerCalls[2]?.chatPrompt)).toContain('collection_not_finished')
+        if (truncated) {
+          expect(JSON.stringify(fixture.providerCalls[2]?.chatPrompt)).toContain('collection_not_finished')
+          const currentRead = questionRecord(fixture.event.mock.calls.filter(
+            ([type, data]) => type === 'tool.completed' && questionRecord(data).actionName === 'pages.get'
+          ).at(-1)?.[1])
+          if (mode === 'native') expect(currentRead.actionCallId).toBe('follow-up-full-read')
+          expect(currentRead).not.toHaveProperty('contextExclusion')
+          expect(questionRecord(JSON.parse(String(currentRead.result)))).toMatchObject({
+            id: 42, sourceRevision: '1', content: page.content, citation: page.citation
+          })
+          expect(fixture.event.mock.calls.some(
+            ([type, data]) => type === 'tool.started' && questionRecord(data).actionName === 'pages.get' &&
+              questionRecord(data).actionCallId === currentRead.actionCallId
+          )).toBe(true)
+          expect(fixture.providerCalls.flatMap(synthesisReadsFromRequest)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ evidenceId: 'page:42:revision:1', complete: true, readText: page.content })
+          ]))
+        }
         expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
         expect(result.citations).toEqual(expectedReadCitations([expect.objectContaining({ evidenceId: 'page:42:revision:1' })]))
       }
@@ -1804,9 +1897,7 @@ describe('Ax agent engine', () => {
   it('accepts native null optional fields without discarding a paid source-bound answer', async () => {
     const fixture = typedRootFixture(input => {
       const source = synthesisSourcesFromRequest(input)[0]!
-      const output = JSON.parse(
-        synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] })
-      ) as Record<string, unknown>
+      const output = JSON.parse(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] })) as Record<string, unknown>
       output.attachmentClaims = null
       output.recommendations = null
       return typedFixtureReceipt(JSON.stringify(output))
@@ -2043,16 +2134,23 @@ describe('Ax agent engine', () => {
     expect(performance.unknownExposureTokens).toBe(Number(performance.serializedRequestBytes) + 4_000)
   })
 
-  it.each(['buffered', 'streamed EOF'] as const)('rejects terminal-error typed synthesis without replay and settles its paid EOF receipt (%s)', async mode => {
+  it.each([
+    ['buffered', 'error'],
+    ['streamed EOF', 'error'],
+    ['buffered', 'content_filter'],
+    ['streamed EOF', 'content_filter']
+  ] as const)('rejects failed-terminal typed synthesis without replay and settles its paid EOF receipt (%s, %s)', async (mode, finishReason) => {
     const fixture = typedRootFixture(input => {
       const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(fixture.production))!
       const content = synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] })
       const receipt = typedFixtureReceipt(content)
-      if (mode === 'buffered') return { ...receipt, results: [{ index: 0, content, finishReason: 'error' }] }
+      if (mode === 'buffered') return { ...receipt, results: [{ index: 0, content, finishReason }] }
       return new ReadableStream<AxChatResponse>({
         start(controller) {
           controller.enqueue({ results: [{ index: 0, content }] })
-          controller.enqueue({ results: [{ index: 0, finishReason: 'error' }] })
+          controller.enqueue({ results: [{ index: 0, finishReason: 'length' }] })
+          controller.enqueue({ results: [{ index: 0, finishReason }] })
+          controller.enqueue({ results: [{ index: 0, finishReason: 'length' }] })
           controller.enqueue({ ...receipt, results: [{ index: 0, finishReason: 'stop' }] })
           controller.close()
         }
@@ -2066,29 +2164,30 @@ describe('Ax agent engine', () => {
     expect(fixture.settled.filter(usage => usage.totalTokens === 12)).toHaveLength(2)
   })
 
-  it('rejects terminal-error synthesis cancelled before EOF while retaining unknown paid exposure', async () => {
-    const cancel = vi.fn(async () => {})
-    const fixture = typedRootFixture(() => {
-      return new ReadableStream<AxChatResponse>({
-        start(controller) {
-          controller.enqueue({
-            ...typedFixtureReceipt(''),
-            results: [
-              { index: 0, finishReason: 'error', content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }
-            ]
-          })
-        },
-        cancel
+  it.each(['error', 'content_filter'] as const)(
+    'rejects failed-terminal synthesis cancelled before EOF while retaining unknown paid exposure (%s)',
+    async finishReason => {
+      const cancel = vi.fn(async () => {})
+      const fixture = typedRootFixture(() => {
+        return new ReadableStream<AxChatResponse>({
+          start(controller) {
+            controller.enqueue({
+              ...typedFixtureReceipt(''),
+              results: [{ index: 0, finishReason, content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }]
+            })
+          },
+          cancel
+        })
       })
-    })
-    await expect(fixture.execute()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-    expect(cancel).toHaveBeenCalledOnce()
-    expect(fixture.attempts).toBe(1)
-    expect(fixture.invoke).toHaveBeenCalledOnce()
-    expect(fixture.text).not.toHaveBeenCalled()
-    expect(fixture.outstanding.size).toBe(1)
-    expect(fixture.settled.filter(usage => usage.totalTokens === 12)).toHaveLength(1)
-  })
+      await expect(fixture.execute()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(fixture.attempts).toBe(1)
+      expect(fixture.invoke).toHaveBeenCalledOnce()
+      expect(fixture.text).not.toHaveBeenCalled()
+      expect(fixture.outstanding.size).toBe(1)
+      expect(fixture.settled.filter(usage => usage.totalTokens === 12)).toHaveLength(1)
+    }
+  )
 
   it('does not repair a structurally rejected length-limited synthesis stream', async () => {
     const fixture = typedRootFixture(() => {
@@ -2547,7 +2646,7 @@ describe('Ax agent engine', () => {
         }
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 42,
       locale: 'en',
       path: 'guide',
@@ -2557,7 +2656,9 @@ describe('Ax agent engine', () => {
       content: '# Guide\n\n## Install\nThe install steps are documented.',
       citation: { evidenceId: 'page:42:revision:1', label: 'Guide', href: '/en/guide' },
       citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Guide › Install', href: '/en/guide#install' }]
-    }))
+    }
+    const pageSnapshot = canonicalJson(page)
+    const invoke = vi.fn(async () => page)
     const publicationOrder: string[] = []
     const close = vi.fn(() => {
       publicationOrder.push('close')
@@ -2574,6 +2675,8 @@ describe('Ax agent engine', () => {
           }
         ],
         invoke,
+        validateObservation: async (name, output, signal) =>
+          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close
       })
@@ -2728,8 +2831,10 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
+    const { invoke, validateObservation } = ownedReadFixture(async () => ({
       id: 6,
+      locale: 'en',
+      path: 'runbook',
       sourceRevision: '1',
       title: 'Incident Runbook',
       contentType: 'markdown',
@@ -2741,6 +2846,7 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -2823,7 +2929,7 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 42,
       locale: 'en',
       path: scenario.path,
@@ -2834,11 +2940,15 @@ describe('Ax agent engine', () => {
       citation: { evidenceId: 'page:42:revision:1', label: scenario.title, href: `/en/${scenario.path}` },
       citationSections: scenario.citationSections,
       ...(scenario.internalDiagnostic === undefined ? {} : { debugDiagnostics: { message: scenario.internalDiagnostic } })
-    }))
+    }
+    const pageSnapshot = canonicalJson(page)
+    const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation: async (name, output, signal) =>
+          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4020,7 +4130,7 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 1,
       locale: 'en',
       path: 'home',
@@ -4044,11 +4154,15 @@ describe('Ax agent engine', () => {
         { evidenceId: 'page:1:revision:1:section:4', label: 'Homepage › MFG Directory', href: '/en/home#mfg-directory' },
         { evidenceId: 'page:1:revision:1:section:5', label: 'Homepage › MFG Directory › Acme', href: '/en/home#acme' }
       ]
-    }))
+    }
+    const pageSnapshot = canonicalJson(page)
+    const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation: async (name, output, signal) =>
+          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4141,7 +4255,7 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 42,
       locale: 'en',
       path: 'guide',
@@ -4154,11 +4268,15 @@ describe('Ax agent engine', () => {
         { evidenceId: 'page:42:revision:9:section:1', label: 'Current page › General Info', href: '/en/guide#general-info' },
         { evidenceId: 'page:42:revision:9:section:2', label: 'Current page › MFG Directory', href: '/en/guide#mfg-directory' }
       ]
-    }))
+    }
+    const pageSnapshot = canonicalJson(page)
+    const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation: async (name, output, signal) =>
+          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4234,7 +4352,7 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 43,
       locale: 'en',
       path: 'operations',
@@ -4248,11 +4366,15 @@ describe('Ax agent engine', () => {
         { evidenceId: 'page:43:revision:10:section:2', label: 'Operations Guide › Returns', href: '/en/operations#returns' },
         { evidenceId: 'page:43:revision:10:section:3', label: 'Operations Guide › Quick Links', href: '/en/operations#quick-links' }
       ]
-    }))
+    }
+    const pageSnapshot = canonicalJson(page)
+    const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation: async (name, output, signal) =>
+          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4467,11 +4589,14 @@ describe('Ax agent engine', () => {
         { evidenceId: 'page:1:revision:9:section:4', label: 'Homepage › Directory › Outdoor', href: '/en/home#outdoor-1' }
       ]
     }
+    const pageSnapshot = canonicalJson(page)
     const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation: async (name, output, signal) =>
+          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -5491,7 +5616,7 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async (name: string) =>
+    const { invoke, validateObservation } = ownedReadFixture(async (name: string) =>
       name === 'pages.search'
         ? {
             results: [
@@ -5532,6 +5657,7 @@ describe('Ax agent engine', () => {
           { name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }
         ],
         invoke,
+        validateObservation,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -5802,66 +5928,6 @@ describe('Ax agent engine', () => {
         supported: true
       })
     )
-  })
-
-  it.each(['pages.discover', 'pages.listRecent'] as const)('keeps %s candidate rows non-citeable in the provider projection', async actionName => {
-    const candidate = questionCandidate(91, '7', 'Candidate Only')
-    const resultPayload = actionName === 'pages.discover' ? { pages: [candidate], totalInWindow: 1, windowLimit: 20, nextOffset: null } : { pages: [candidate] }
-    const callId = actionName === 'pages.discover' ? 'discover-candidates' : 'legacy-recent-candidates'
-    const steps: QuestionStep[] = []
-    if (actionName === 'pages.discover') steps.push({ calls: [{ id: 'enable-explore', name: 'wiki_enable_tools', arguments: { category: 'explore' } }] })
-    steps.push({
-      calls: [
-        {
-          id: callId,
-          name: actionName,
-          arguments: actionName === 'pages.discover' ? { locale: 'en' } : { limit: 10 }
-        }
-      ]
-    })
-    steps.push({
-      answer: input => {
-        if (actionName !== 'pages.discover') return synthesisFixtureAnswer(input, { claims: [], observations: [], unresolvedFacets: [0] })
-        const output = questionRecord(providerActionResult(fixture.providerCalls, 'native', callId, AGENT_TOOL_NAMES[actionName]))
-        if (typeof output.coverageNotice !== 'string') throw new Error('Expected a delivered bounded-window observation.')
-        const observation = synthesisObservationsFromRequest(input).find(line => line === output.coverageNotice)
-        if (observation === undefined) throw new Error('Expected the discovery observation in the host whitelist.')
-        return synthesisFixtureAnswer(input, { claims: [], observations: [observation], unresolvedFacets: [0] })
-      }
-    })
-    const fixture = questionFixture('native', steps, async name => {
-      if (name !== actionName) throw new Error(`Unexpected action in question fixture: ${name}`)
-      return resultPayload
-    })
-
-    const result = await fixture.execute('Find a page I could inspect for the deployment checklist.')
-    expect(result.citations).toBeUndefined()
-
-    const providerName = AGENT_TOOL_NAMES[actionName]
-    const projected = questionRecord(providerActionResult(fixture.providerCalls, 'native', callId, providerName))
-    const projectedPages = projected.pages
-    if (!Array.isArray(projectedPages)) throw new Error('Expected projected page candidates.')
-    const projectedCandidate = questionRecord(projectedPages[0])
-    expect(projectedCandidate).toMatchObject({
-      id: 91,
-      locale: 'en',
-      path: 'operations/candidate-91',
-      title: 'Candidate Only',
-      sourceRevision: '7',
-      description: 'Candidate description for Candidate Only.',
-      authority: { state: 'valid', trust: { trustTier: 'human-reviewed' } },
-      knowledge: { summary: 'Knowledge hint for Candidate Only.' }
-    })
-    expect(projectedCandidate).not.toHaveProperty('citation')
-    expect(projectedCandidate).not.toHaveProperty('okfResourceUri')
-    expect(questionRecord(projectedCandidate.authority)).not.toHaveProperty('metadata')
-    expect(questionRecord(projectedCandidate.knowledge)).not.toHaveProperty('provenance')
-    if (actionName === 'pages.discover') {
-      expect(projected).toMatchObject({ nextOffset: null })
-      expect(projected.discovery).toEqual(candidateDiscovery(1, 1, 0, 'not_reported'))
-    } else {
-      expect(projected).not.toHaveProperty('discovery')
-    }
   })
 
   it.each(['native', 'prompt'] as const)('delivers bounded empty search windows for no-match and synonym queries on %s tools', async mode => {
@@ -6427,7 +6493,7 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async (name: string) => {
+    const { invoke, validateObservation } = ownedReadFixture(async (name: string) => {
       if (name === 'pages.get') {
         return {
           id: 42,
@@ -6496,6 +6562,7 @@ describe('Ax agent engine', () => {
           }
         ],
         invoke,
+        validateObservation,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -7220,7 +7287,7 @@ describe('Ax agent engine', () => {
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
-        invoke: async () => ({
+        ...ownedReadFixture(async () => ({
           id: 42,
           locale: 'en',
           path: 'guide',
@@ -7230,7 +7297,7 @@ describe('Ax agent engine', () => {
           content: '# Guide\n\n## Install\nThe install steps are documented.',
           citation: { evidenceId: 'page:42:revision:1', label: 'Guide', href: '/en/guide' },
           citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Guide › Install', href: '/en/guide#install' }]
-        }),
+        })),
         snapshot: async () => ({ open: true }),
         close
       }),
@@ -7876,7 +7943,7 @@ describe('Ax agent engine', () => {
         group: 'explore' as const
       })
     ])
-    const invoke = vi.fn(async () => ({
+    const { invoke, validateObservation } = ownedReadFixture(async () => ({
       results: [
         {
           id: 1,
@@ -7892,6 +7959,7 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions,
         invoke,
+        validateObservation,
         snapshot: async () => ({}),
         close: vi.fn(),
         authoritySha256: null
@@ -8003,7 +8071,7 @@ describe('Ax agent engine', () => {
         group: 'authoring' as const
       })
     ])
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 1,
       locale: 'en',
       path: 'alpha',
@@ -8014,11 +8082,15 @@ describe('Ax agent engine', () => {
       citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
       citationSections: [],
       knowledge: { schemaVersion: 1, sourceRevision: 'rev-1', state: 'complete', summary: 'Alpha retrieval hint.' }
-    }))
+    }
+    const pageSnapshot = canonicalJson(page)
+    const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions,
         invoke,
+        validateObservation: async (actionName, output, signal) =>
+          !signal.aborted && actionName === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn(),
         authoritySha256: 'd'.repeat(64)
@@ -8144,7 +8216,7 @@ describe('Ax agent engine', () => {
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
       return rootFixtureResponse(input, responses)
     })
-    const invoke = vi.fn(async (name: string, input: unknown) => {
+    const { invoke, validateObservation } = ownedReadFixture(async (name: string, input: unknown) => {
       if (name === 'pages.listRecent') return { kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: rows }
       if (name === 'pages.get' && questionRecord(input).id === 10)
         return {
@@ -8176,6 +8248,7 @@ describe('Ax agent engine', () => {
           }
         ],
         invoke,
+        validateObservation,
         snapshot: async () => ({}),
         close: vi.fn(),
         authoritySha256: null
@@ -8290,7 +8363,7 @@ describe('Ax agent engine', () => {
       calls.push(input)
       return rootFixtureResponse(input, responses)
     })
-    const invoke = vi.fn(async (_name: string, input: unknown) => {
+    const { invoke, validateObservation } = ownedReadFixture(async (_name: string, input: unknown) => {
       const id = typeof input === 'object' && input !== null && typeof Reflect.get(input, 'id') === 'number' ? Number(Reflect.get(input, 'id')) : 0
       return {
         id,
@@ -8321,6 +8394,7 @@ describe('Ax agent engine', () => {
           }
         ],
         invoke,
+        validateObservation,
         snapshot: async () => ({}),
         close: vi.fn(),
         authoritySha256: null
@@ -8384,6 +8458,7 @@ describe('Ax agent engine', () => {
     const run = async (scenario: {
       readonly reads: readonly { readonly callId: string; readonly actionName: AgentActionName; readonly params: string }[]
       readonly outputs: readonly unknown[]
+      readonly authoritativeOutputs?: readonly unknown[]
       readonly drafts: readonly (string | ((input: Readonly<AxChatRequest<unknown>>) => string))[]
       readonly rejectedStatements?: readonly string[]
       readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
@@ -8414,7 +8489,7 @@ describe('Ax agent engine', () => {
         return rootFixtureResponse(input, responses)
       })
       const outputs = [...scenario.outputs]
-      const invoke = vi.fn(async () => outputs.shift())
+      const { invoke, validateObservation } = ownedReadFixture(async () => outputs.shift(), scenario.authoritativeOutputs)
       const actionNames = [...new Set(scenario.reads.map(read => read.actionName))]
       const actions: AgentActionSessionProvider = {
         open: async () => ({
@@ -8430,7 +8505,7 @@ describe('Ax agent engine', () => {
           snapshot: async () => ({}),
           close: vi.fn(),
           authoritySha256: null,
-          ...(scenario.validateObservation === undefined ? {} : { validateObservation: scenario.validateObservation })
+          validateObservation: scenario.validateObservation ?? validateObservation
         })
       }
       const event = vi.fn(async (...args: [string, unknown]) => {
@@ -8495,6 +8570,7 @@ describe('Ax agent engine', () => {
         { callId: 'history-conflict', actionName: 'pages.getVersion', params: '{"id":42,"versionId":9,"purpose":"conflict"}' }
       ],
       outputs: [historical, { ...historical, content: '# Archive\n\nCobalt workflow is rejected.' }],
+      authoritativeOutputs: [historical],
       drafts: [`Cobalt workflow is rejected.[[cite:${historicalEvidenceId}]]`, `Amber workflow is approved.[[cite:${historicalEvidenceId}]]`],
       rejectedStatements: ['Cobalt workflow is rejected.']
     })
@@ -8562,6 +8638,7 @@ describe('Ax agent engine', () => {
           citation: { ...historical.citation, href: '/en/manual?v=9' }
         }
       ],
+      authoritativeOutputs: [historical],
       drafts: [`Amber workflow is approved.[[cite:${historicalEvidenceId}]]`]
     })
     expect(changedTarget.error).toBeUndefined()
@@ -8597,6 +8674,18 @@ describe('Ax agent engine', () => {
       contentTruncated: true,
       citation: currentCitation
     }
+    const authorizedRecent = { kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [currentRow] }
+    const authorizedCurrent = {
+      id: 42,
+      locale: 'en',
+      path: 'guide',
+      sourceRevision: '30',
+      title: 'Guide',
+      contentType: 'markdown',
+      content: completeSource,
+      citation: currentCitation,
+      citationSections: []
+    }
     const representationConflict = await run({
       reads: [
         { callId: 'recent-read', actionName: 'pages.listRecent', params: '{"locale":"en","limit":1}' },
@@ -8604,18 +8693,8 @@ describe('Ax agent engine', () => {
         { callId: 'okf-read', actionName: 'pages.getOkf', params: '{"id":42}' }
       ],
       outputs: [
-        { kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [currentRow] },
-        {
-          id: 42,
-          locale: 'en',
-          path: 'guide',
-          sourceRevision: '30',
-          title: 'Guide',
-          contentType: 'markdown',
-          content: completeSource,
-          citation: currentCitation,
-          citationSections: []
-        },
+        authorizedRecent,
+        authorizedCurrent,
         {
           id: 42,
           versionId: null,
@@ -8627,6 +8706,7 @@ describe('Ax agent engine', () => {
           citation: currentCitation
         }
       ],
+      authoritativeOutputs: [authorizedRecent, authorizedCurrent],
       drafts: [`Emergency route is closed.[[cite:${currentEvidenceId}]]`, `Release window is staged.[[cite:${currentEvidenceId}]]`],
       rejectedStatements: ['Emergency route is closed.']
     })
@@ -8722,6 +8802,7 @@ describe('Ax agent engine', () => {
 
     const nonPrefixExcerpt = '# Guide\n\nThe opening note confirms a staged release.'
     const nonPrefixFull = '# Guide\n\nThe emergency route is closed after audit and verification.'
+    const nonPrefixPage = { ...fullPage, content: nonPrefixFull, citationSections: [] }
     const nonPrefix = await run({
       reads: [
         { callId: 'non-prefix-recent', actionName: 'pages.listRecent', params: '{"locale":"en","limit":1}' },
@@ -8734,8 +8815,9 @@ describe('Ax agent engine', () => {
           exhausted: true,
           pages: [{ ...currentRow, content: nonPrefixExcerpt, sourceContentCharacters: nonPrefixFull.length }]
         },
-        { ...fullPage, content: nonPrefixFull, citationSections: [] }
+        nonPrefixPage
       ],
+      authoritativeOutputs: [nonPrefixPage],
       drafts: [
         `The emergency route is closed after audit.[[cite:${currentEvidenceId}]]`,
         `The opening note confirms a staged release.[[cite:${currentEvidenceId}]]`
@@ -8810,6 +8892,7 @@ describe('Ax agent engine', () => {
           citation: { ...historical.citation, evidenceId: wrongVersionEvidenceId, href: '/en/guide?v=10' }
         }
       ],
+      authoritativeOutputs: [],
       drafts: [`Cobalt workflow is rejected.[[cite:${wrongVersionEvidenceId}]]`, input => synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] })]
     })
     expect(wrongVersion.error).toBeUndefined()
@@ -8861,6 +8944,7 @@ describe('Ax agent engine', () => {
           citationSections: []
         }
       ],
+      authoritativeOutputs: [],
       drafts: ['Evidence line available.[[cite:page:42:revision:32]]', 'Evidence line available.[[cite:page:42:revision:32]]']
     })
     expect(incompletePage.result).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
@@ -9979,7 +10063,9 @@ describe('request-derived evidence coverage', () => {
       ): Promise<DecisionBatchResult> => {
         if (Object.hasOwn(nativeRequest.questions, 'context_readiness')) return fixtureDecisionProviders.decideBatch(nativeRequest, options)
         await options?.onPreDispatch?.()
-        metadataStates.push(questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state))
+        const metadataState = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
+        options?.onRequestDispatched?.()
+        metadataStates.push(metadataState)
         const answers = Object.fromEntries(
           Object.entries(nativeRequest.questions).map(([id, question]) => {
             const choice = Object.hasOwn(question.criteria, 'supports')
@@ -10273,6 +10359,8 @@ describe('request-derived evidence coverage', () => {
     })}</wiki-request-plan>`
     let providerRevision = 1
     let pendingSemanticReceipt = false
+    const sourceAuthority = { invalidated: false }
+    const nativeDispatches: { readonly sourceInvalidated: boolean; readonly reservationId: number | undefined }[] = []
     const nativeCalls: {
       readonly owners: readonly string[]
       readonly originalReads: readonly string[]
@@ -10291,17 +10379,25 @@ describe('request-derived evidence coverage', () => {
         nativeRequest: DecisionBatchRequest,
         options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]
       ): Promise<DecisionBatchResult> => {
-        if (Object.hasOwn(nativeRequest.questions, 'context_readiness')) return fixtureDecisionProviders.decideBatch(nativeRequest, options)
-        await options?.onPreDispatch?.()
+        const observedOptions = {
+          ...options,
+          onRequestDispatched: () => {
+            options?.onRequestDispatched?.()
+            nativeDispatches.push({ sourceInvalidated: sourceAuthority.invalidated, reservationId: [...outstanding.keys()][0] })
+          }
+        }
+        if (Object.hasOwn(nativeRequest.questions, 'context_readiness')) return fixtureDecisionProviders.decideBatch(nativeRequest, observedOptions)
+        await observedOptions.onPreDispatch?.()
         const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
+        let nativeCall: (typeof nativeCalls)[number]
         if (typeof state.source === 'string') {
           const evidenceReads = state.evidence as readonly { readonly evidenceId: string }[]
           const originalSource = state.source
-          nativeCalls.push({
+          nativeCall = {
             owners: [...new Set(evidenceReads.map(read => read.evidenceId))],
             originalReads: [originalSource],
             projectionTexts: [originalSource]
-          })
+          }
         } else {
           const sources = decodeWikiVerificationSources(
             state.sources as Parameters<typeof decodeWikiVerificationSources>[0],
@@ -10312,12 +10408,14 @@ describe('request-derived evidence coverage', () => {
             readonly source: Parameters<typeof unpackWikiReadTexts>[0]['sources'][number]
           }[]
           const physicalReadSources = [...new Map(evidenceReads.map(read => [read.readId, read.source] as const)).values()]
-          nativeCalls.push({
+          nativeCall = {
             owners: [...new Set(sources.map(source => source.evidenceId))],
             originalReads: unpackWikiReadTexts({ texts: state.readTexts as readonly string[], sources: physicalReadSources }),
             projectionTexts: sources.map(source => source.text)
-          })
+          }
         }
+        observedOptions.onRequestDispatched()
+        nativeCalls.push(nativeCall)
         const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
         for (const [id, question] of Object.entries(nativeRequest.questions)) {
           const choice = Object.hasOwn(question.criteria, 'supports')
@@ -10339,7 +10437,10 @@ describe('request-derived evidence coverage', () => {
         const provider = await fixtureDecisionProviders.selectRuntime()
         pendingSemanticReceipt = true
         if (nativeCalls.length === 1) {
-          if (mode === 'source mutation') unrelated.content += '\n\nAn original unselected read requirement changed.'
+          if (mode === 'source mutation') {
+            unrelated.content += '\n\nAn original unselected read requirement changed.'
+            sourceAuthority.invalidated = true
+          }
           if (mode === 'provider mutation') providerRevision++
         }
         if (mode === 'request mutation' && nativeCalls.at(-1)!.owners.includes('page:42:revision:1'))
@@ -10438,6 +10539,7 @@ describe('request-derived evidence coverage', () => {
     let reservationId = 0
     const outstanding = new Map<number, { readonly tokens: number; readonly costMicros: number }>()
     const settled: Parameters<NonNullable<AgentEngineRequest['dispatchBudget']>['reconcile']>[1][] = []
+    const settledReservationIds: number[] = []
     const reserve = vi.fn(async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
       if (outstanding.size > 0) throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'An earlier dispatch retains unsettled exposure', 429)
       if (settled.reduce((sum, actual) => sum + actual.totalTokens, 0) + maximum.tokens > 192_000)
@@ -10456,6 +10558,7 @@ describe('request-derived evidence coverage', () => {
         pendingSemanticReceipt = false
         outstanding.delete(reservation.id)
         settled.push(actual)
+        settledReservationIds.push(reservation.id)
       },
       release: async reservation => {
         outstanding.delete(reservation.id)
@@ -10484,7 +10587,7 @@ describe('request-derived evidence coverage', () => {
         },
         { text, event }
       )
-    return { execute, text, event, nativeCalls, reserve, settled, dispatchBudget, originalContents }
+    return { execute, text, event, nativeCalls, nativeDispatches, sourceAuthority, reserve, settled, settledReservationIds, dispatchBudget, originalContents }
   }
 
   it('publishes protected original fields only after complete-read native proof', async () => {
@@ -10544,11 +10647,20 @@ describe('request-derived evidence coverage', () => {
   ] as const)('rejects %s of original read authority before publishing approved facts', async (mode, code) => {
     const fixture = originalCoverageFixture(mode)
     await expect(fixture.execute()).rejects.toMatchObject({ code })
-    expect(fixture.nativeCalls.map(call => call.owners)).toEqual(
-      mode === 'source mutation' ? [['page:42:revision:1'], ['page:44:revision:1']] : [['page:42:revision:1']]
-    )
+    if (mode === 'source mutation') {
+      expect(fixture.sourceAuthority.invalidated).toBe(true)
+      expect(fixture.nativeDispatches.length).toBeGreaterThan(0)
+      expect(fixture.nativeDispatches.some(dispatch => dispatch.sourceInvalidated)).toBe(false)
+    } else {
+      expect(fixture.nativeCalls.map(call => call.owners)).toEqual([['page:42:revision:1']])
+    }
+    expect(new Set(fixture.nativeDispatches.map(dispatch => dispatch.reservationId)).size).toBe(fixture.nativeDispatches.length)
+    for (const dispatch of fixture.nativeDispatches) {
+      expect(dispatch.reservationId).toBeDefined()
+      expect(fixture.settledReservationIds.filter(id => id === dispatch.reservationId)).toHaveLength(1)
+    }
     expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Lentil skillet')
+    expect(fixture.text).not.toHaveBeenCalled()
     expect(fixture.event.mock.calls.some(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
   })
 
@@ -11076,9 +11188,12 @@ describe('request-derived evidence coverage', () => {
   ] as const)('final %s repair respects whole-read proof and %s/%s coverage with %s claims', async (mode, auditVerdict, auditFinish, selection) => {
     const question = 'Summarize the most recently updated Wiki pages.'
     const instruction = 'INSTRUCTION_BODY_SENTINEL'
-    const userRequest = selection === 'all-supported-long'
-      ? `${question} ${'Preserve the original source constraints and governing qualifications. '.repeat(8)} ${instruction}`
-      : selection === 'all-supported-multiline' ? `${question}\n\n# Context\n${instruction}\nRetain source constraints.` : question
+    const userRequest =
+      selection === 'all-supported-long'
+        ? `${question} ${'Preserve the original source constraints and governing qualifications. '.repeat(8)} ${instruction}`
+        : selection === 'all-supported-multiline'
+          ? `${question}\n\n# Context\n${instruction}\nRetain source constraints.`
+          : question
     const allSupported = selection.startsWith('all-supported')
     const qualified = recentRows[0]!.content
     const unsupported = 'Release 94 does not require a separate review.'
@@ -11104,10 +11219,7 @@ describe('request-derived evidence coverage', () => {
       results: [
         {
           index: 0,
-          content:
-            mode === 'native'
-              ? JSON.stringify({ verdict: auditVerdict, feedback })
-              : `Verdict: ${auditVerdict}\nFeedback: ${feedback}`,
+          content: mode === 'native' ? JSON.stringify({ verdict: auditVerdict, feedback }) : `Verdict: ${auditVerdict}\nFeedback: ${feedback}`,
           finishReason: auditFinish
         }
       ]
@@ -11116,9 +11228,12 @@ describe('request-derived evidence coverage', () => {
       mode,
       [
         {
-          metadata: selection === 'all-supported' ? '' : `<wiki-request-plan>${JSON.stringify({
-            facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: allSupported ? 'source' : 'recent-window' }]
-          })}</wiki-request-plan>`,
+          metadata:
+            selection === 'all-supported'
+              ? ''
+              : `<wiki-request-plan>${JSON.stringify({
+                  facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: allSupported ? 'source' : 'recent-window' }]
+                })}</wiki-request-plan>`,
           calls: [{ id: 'partially-supported-recent', name: 'pages.listRecent', arguments: { limit: 10 } }]
         },
         { answer },
@@ -11169,7 +11284,9 @@ describe('request-derived evidence coverage', () => {
     const answer = (input: Readonly<AxChatRequest>) =>
       sourceBoundAnswer(input, [{ evidenceId: 'page:42:revision:3:section:1', sourceText: fact, statement: fact }])
     const coverage = vi.fn(async () => ({
-      results: [{ index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'Requested coverage remains unestablished.' }), finishReason: 'stop' as const }]
+      results: [
+        { index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'Requested coverage remains unestablished.' }), finishReason: 'stop' as const }
+      ]
     }))
     const fixture = questionFixture(
       'native',
@@ -11184,7 +11301,7 @@ describe('request-derived evidence coverage', () => {
         { answer },
         { answer }
       ],
-      name => name === 'pages.listRecent' ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows } : page,
+      name => (name === 'pages.listRecent' ? { kind: 'recent-page-evidence', requestedLimit: 2, exhausted: true, pages: recentRows } : page),
       [],
       { coverage }
     )
@@ -11284,9 +11401,9 @@ describe('request-derived evidence coverage', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
-    const invoke = vi.fn(async () => page)
+    const { invoke, validateObservation } = ownedReadFixture(async () => page)
     const actions: AgentActionSessionProvider = {
-      open: async () => ({ functions: questionFunctions, invoke, snapshot: async () => ({}), close: () => {} })
+      open: async () => ({ functions: questionFunctions, invoke, validateObservation, snapshot: async () => ({}), close: () => {} })
     }
     const text = vi.fn(async (_delta: string) => {})
     const result = await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(

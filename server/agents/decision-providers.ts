@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { BlockList, isIP } from 'node:net'
 import { ai, AxAIServiceNetworkError, typesafe } from '@ax-llm/ax'
+import { createNoopMeter, ProxyTracerProvider } from '@opentelemetry/api'
 import type { Knex } from 'knex'
 import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici/index.js'
 import { z } from 'zod'
@@ -23,10 +24,15 @@ import {
 } from '../../shared/agents/decision-providers.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { AgentRepositoryError } from './repository.ts'
+import { captureAgentSourceAuthorization, currentAgentSourceAuthorization, withAgentSourceAuthorization } from './source-authorization.ts'
 import { environmentSecretValue, type AgentSecretRegistry } from './providers/secrets.ts'
 
 const MAX_REQUEST_BYTES = 128 * 1_024
 const MAX_RESPONSE_BYTES = 256 * 1_024
+// Content flags do not redact native decoder errors recorded by inherited tracers.
+const privateTracer = new ProxyTracerProvider().getTracer('decision-provider-private')
+// Native metrics record returned tool names before the host rejects unexpected calls.
+const privateMeter = createNoopMeter()
 const TokenCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const NativeUsage = z.object({ input_tokens: TokenCount, output_tokens: TokenCount, total_tokens: TokenCount.optional() })
 const CompatibleUsage = z.object({ prompt_tokens: TokenCount, completion_tokens: TokenCount, total_tokens: TokenCount.optional() })
@@ -404,7 +410,7 @@ export class DecisionProviderClient {
     snapshot: DecisionProviderRuntime,
     key: string,
     request: DecisionRequest,
-    options: { signal?: AbortSignal; check?: boolean } = {}
+    options: { signal?: AbortSignal; check?: boolean; onPreDispatch?: () => Promise<void>; onRequestDispatched?: () => void } = {}
   ): Promise<DecisionResult & { availableModels: readonly string[] }> {
     validateRequest(request)
     const { answers, ...result } = await this.#execute(snapshot, key, request, options)
@@ -415,7 +421,7 @@ export class DecisionProviderClient {
     snapshot: DecisionProviderRuntime,
     key: string,
     request: DecisionBatchRequest,
-    options: { signal?: AbortSignal; onPreDispatch?: () => Promise<void> } = {}
+    options: { signal?: AbortSignal; onPreDispatch?: () => Promise<void>; onRequestDispatched?: () => void } = {}
   ): Promise<DecisionBatchResult> {
     validateDecisionBatchRequest(request)
     const { availableModels: _models, ...result } = await this.#execute(snapshot, key, request, options)
@@ -426,8 +432,9 @@ export class DecisionProviderClient {
     snapshot: DecisionProviderRuntime,
     key: string,
     request: DecisionRequest | DecisionBatchRequest,
-    options: { signal?: AbortSignal; check?: boolean; onPreDispatch?: () => Promise<void> }
+    options: { signal?: AbortSignal; check?: boolean; onPreDispatch?: () => Promise<void>; onRequestDispatched?: () => void }
   ): Promise<DecisionBatchResult & { availableModels: readonly string[] }> {
+    const sourceScope = captureAgentSourceAuthorization()
     const config = validateDecisionProviderConfig(snapshot.config)
     if (config.kind !== 'typesafe' && 'questions' in request)
       throw new AgentRepositoryError('DECISION_BATCH_UNSUPPORTED', 'Decision batches require a TypeSafe provider', 400)
@@ -472,9 +479,11 @@ export class DecisionProviderClient {
       if (typeof init.body !== 'string' && init.body !== undefined && init.body !== null) throw invalid('INVALID_DECISION_REQUEST', 400)
       if (typeof init.body === 'string' && Buffer.byteLength(init.body) > MAX_REQUEST_BYTES) throw invalid('INVALID_DECISION_REQUEST', 400)
       assertPublic(await abortable(resolve(url.hostname, { all: true, verbatim: true }), signal))
-      if (!isModels && options.onPreDispatch !== undefined) {
+      if (!isModels) {
         try {
-          await abortable(options.onPreDispatch(), signal)
+          if (options.onPreDispatch !== undefined) await abortable(options.onPreDispatch(), signal)
+          const sourceAuthorization = currentAgentSourceAuthorization()
+          if (sourceAuthorization !== undefined) await abortable(sourceAuthorization(), signal)
           signal.throwIfAborted()
         } catch (error) {
           preDispatchRejected = true
@@ -482,7 +491,12 @@ export class DecisionProviderClient {
           throw error
         }
       }
-      if (!isModels) payloadDispatched = true
+      // Notify only after the final source-only check. Model discovery is not
+      // a paid/source-bearing dispatch; this hook never enters native SDK options.
+      if (!isModels) {
+        payloadDispatched = true
+        options.onRequestDispatched?.()
+      }
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${key}` }
       const response = await abortable(
         (implementation as unknown as typeof undiciFetch)(url, {
@@ -550,7 +564,7 @@ export class DecisionProviderClient {
             })
           }
         }
-        const payload = await fetchJson(url, outgoing)
+        const payload = await sourceScope(() => fetchJson(url, outgoing))
         if (config.kind === 'openai-compatible') {
           if (
             !plain(payload) ||
@@ -559,11 +573,14 @@ export class DecisionProviderClient {
             !plain(payload.choices[0]) ||
             payload.choices[0].finish_reason !== 'stop' ||
             !usage ||
-            typeof payload.model !== 'string' ||
-            !payload.model ||
-            payload.model.length > 255
+            !safeModelId(payload.model)
           )
             throw invalid()
+          // Ax's global usage observer sees response IDs and token details.
+          // Neither is part of this classifier contract: export measured counters,
+          // not untrusted fields that can reflect the credential or decision data.
+          delete payload.id
+          payload.usage = { prompt_tokens: usage.inputTokens, completion_tokens: usage.outputTokens, total_tokens: usage.totalTokens }
           if (legacy) {
             if (typeof payload.choices[0].text !== 'string') throw invalid()
             return Response.json({
@@ -660,7 +677,11 @@ export class DecisionProviderClient {
             debug: false,
             verbose: false,
             includeRequestBodyInErrors: false,
-            excludeContentFromTrace: true
+            excludeContentFromTrace: true,
+            tracer: privateTracer,
+            meter: privateMeter,
+            // The host owns the single paid dispatch and its mandatory receipt.
+            rateLimiter: async next => next()
           }
         })
         const response = await service.chat(
@@ -978,22 +999,23 @@ export class DecisionProviderRegistry {
     return { id: row.id, revision: row.revision, config: this.#config(row) }
   }
   async decide(request: DecisionRequest, options: { providerId?: string; signal?: AbortSignal } = {}): Promise<DecisionResult> {
-    return this.#dispatchRuntime(options, async (snapshot, key) => {
-      const { availableModels: _models, ...result } = await this.#client.execute(snapshot, key, request, options)
+    return this.#dispatchRuntime(options, async (snapshot, key, onPreDispatch) => {
+      const { availableModels: _models, ...result } = await this.#client.execute(snapshot, key, request, { ...options, onPreDispatch })
       return result
     })
   }
 
   async decideBatch(
     request: DecisionBatchRequest,
-    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal; onPreDispatch?: () => Promise<void> } = {}
+    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal; onPreDispatch?: () => Promise<void>; onRequestDispatched?: () => void } = {}
   ): Promise<DecisionBatchResult> {
-    return this.#dispatchRuntime(options, (snapshot, key) => this.#client.executeBatch(snapshot, key, request, options))
+    return this.#dispatchRuntime(options, (snapshot, key, onPreDispatch) =>
+      this.#client.executeBatch(snapshot, key, request, { ...options, onPreDispatch }))
   }
 
   async #dispatchRuntime<Result extends Pick<DecisionBatchResult, 'usage' | 'latencyMs'>>(
-    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal; onPreDispatch?: () => Promise<void> },
-    dispatch: (snapshot: DecisionProviderRuntime, key: string) => Promise<Result>
+    options: { providerId?: string; providerRevision?: number; signal?: AbortSignal; onPreDispatch?: () => Promise<void>; onRequestDispatched?: () => void },
+    dispatch: (snapshot: DecisionProviderRuntime, key: string, onPreDispatch: () => Promise<void>) => Promise<Result>
   ): Promise<Result> {
     const snapshot = await this.selectRuntime(options.providerId)
     const row = await this.#row(this.#knex, snapshot.id, options.providerRevision === undefined ? snapshot.revision : options.providerRevision)
@@ -1002,7 +1024,14 @@ export class DecisionProviderRegistry {
     if (!key) throw new AgentRepositoryError('DECISION_CREDENTIAL_UNAVAILABLE', 'Decision provider credential is unavailable', 503)
     const ready = await this.#row(this.#knex, snapshot.id, snapshot.revision)
     if (!ready.enabled) throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider is disabled', 503)
-    const result = await dispatch(snapshot, key)
+    const checkBinding = async (): Promise<void> => {
+      const current = await this.#row(this.#knex, snapshot.id, snapshot.revision)
+      if (!current.enabled) throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider is disabled', 503)
+    }
+    const result = await withAgentSourceAuthorization(checkBinding, () => dispatch(snapshot, key, async () => {
+      if (options.onPreDispatch !== undefined) await options.onPreDispatch()
+      await checkBinding()
+    }))
     try {
       const current = await this.#row(this.#knex, snapshot.id, snapshot.revision)
       if (!current.enabled) throw new AgentRepositoryError('DECISION_PROVIDER_UNAVAILABLE', 'Decision provider is disabled', 503)

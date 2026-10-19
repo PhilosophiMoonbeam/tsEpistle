@@ -2,6 +2,7 @@ import type { Knex } from 'knex'
 
 import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import { ActionKernel, type ActionAdmissionSnapshot } from '../../agents/actions/kernel.ts'
+import { createPageEvidenceValidator } from '../../agents/actions/page-reads.ts'
 import { pageAuthority, serializeCanonicalOkfPage } from '../../agents/okf.ts'
 import { KernelActionSessionProvider } from '../../agents/providers/action-sessions.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
@@ -163,26 +164,59 @@ describe('page evidence validation on action sessions', () => {
     session?.close()
   })
 
-  it('admits current OKF and historical sources but rejects history navigation candidates', async () => {
-    const validateObservation = vi.fn(async () => true)
+  it('authorizes bound history navigation only while page and history reads remain allowed', async () => {
+    let pageAllowed = true
+    let historyAllowed = true
+    const unexpected = async () => { throw new Error('Unexpected page operation') }
+    const validatePageEvidence = createPageEvidenceValidator({
+      operations: {
+        search: unexpected,
+        searchTags: unexpected,
+        listTags: unexpected,
+        discover: unexpected,
+        getByPath: unexpected,
+        listRecent: unexpected,
+        getVersion: unexpected,
+        listLinks: unexpected,
+        listRelated: unexpected,
+        get: async () => {
+          if (!pageAllowed) throw Object.assign(new Error('Page denied'), { status: 403 })
+          return { ...actionOutput, localeCode: 'en', visibility: 'public', authorId: userId, ownerId: null }
+        },
+        getHistory: async () => {
+          if (!historyAllowed) throw Object.assign(new Error('History denied'), { status: 403 })
+          return {
+            trail: [{ versionId: 9, sourceRevision: '8', actionType: 'updated', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Author' }],
+            total: 1
+          }
+        }
+      },
+      resolveRequester: async () => ({ id: userId, permissions: ['use:agents', 'read:pages', 'read:history'], groups: [] }) as Express.User,
+      snapshotSigningSecret: Buffer.alloc(32, 3)
+    })
     const provider = new KernelActionSessionProvider({
       knex: database,
       kernel: kernelWithReadActions(),
-      resolveAdmission: async () => admission(['pages.getOkf', 'pages.getVersion', 'pages.listHistory']),
-      refreshAdmission: async () => admission(['pages.getOkf', 'pages.getVersion', 'pages.listHistory']),
-      validateObservation
+      resolveAdmission: async () => admission(['pages.listHistory']),
+      refreshAdmission: async () => admission(['pages.listHistory']),
+      validateObservation: (request, authority, name, output, signal, input) =>
+        validatePageEvidence(authority, request.knowledgeContext, name, output, signal, input)
     })
-    const session = await provider.open(request(new AbortController().signal))
-
-    expect(session?.functions.map(action => action.name).sort()).toEqual(['pages.getOkf', 'pages.getVersion', 'pages.listHistory'].sort())
-    expect(await session?.validateObservation?.('pages.getOkf', okfOutput, new AbortController().signal)).toBe(true)
-    expect(await session?.validateObservation?.('pages.getVersion', historicalOutput, new AbortController().signal)).toBe(true)
-    validateObservation.mockClear()
-    expect(await session?.validateObservation?.('pages.listHistory', historyOutput, new AbortController().signal)).toBe(false)
-    expect(validateObservation).not.toHaveBeenCalled()
-    expect(await session?.validateObservation?.('pages.listHistory', { versions: [] }, new AbortController().signal)).toBe(false)
-    expect(validateObservation).not.toHaveBeenCalled()
-    session?.close()
+    const signal = new AbortController().signal
+    const session = await provider.open(request(signal))
+    const input = { pageId: 42, limit: 10 }
+    try {
+      expect(await session?.validateObservation?.('pages.listHistory', historyOutput, signal, input)).toBe(true)
+      expect(await session?.validateObservation?.('pages.listHistory', historyOutput, signal)).toBe(false)
+      expect(await session?.validateObservation?.('pages.listHistory', historyOutput, signal, { pageId: 43, limit: 10 })).toBe(false)
+      historyAllowed = false
+      expect(await session?.validateObservation?.('pages.listHistory', historyOutput, signal, input)).toBe(false)
+      historyAllowed = true
+      pageAllowed = false
+      expect(await session?.validateObservation?.('pages.listHistory', historyOutput, signal, input)).toBe(false)
+    } finally {
+      session?.close()
+    }
   })
 
   it('rejects non-Wiki candidate, skill, and receipt observations', async () => {

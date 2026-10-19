@@ -21,6 +21,7 @@ import type { AgentMediaInputs } from '../../../shared/agents/media-providers.ts
 import { agentMediaInputModality, assertAgentMediaInput } from './media-input-policy.ts'
 import { type ExternalMcpLease, type ExternalMcpService, EXTERNAL_MCP_LIMITS } from '../external-mcp.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import { withAgentSourceAuthorization } from '../source-authorization.ts'
 import type { AgentProviderTransportKind } from './registry.ts'
 import { ExternalMcpSchemaValidator } from './external-mcp-schema-validator.ts'
 
@@ -123,6 +124,7 @@ export class ExternalMcpEngineContext {
   readonly #lifetime = new AbortController()
   readonly #schemaValidator: ExternalMcpSchemaValidator
   #bindings: ReadonlyMap<string, ExternalMcpEngineBinding> = new Map()
+  #catalogRevision: string | undefined
   #closed = false
   private constructor(lease: ExternalMcpLease, signal: AbortSignal) {
     this.#lease = lease
@@ -161,6 +163,7 @@ export class ExternalMcpEngineContext {
   }
   async refresh(): Promise<ReadonlyMap<string, ExternalMcpEngineBinding>> {
     await this.revalidate()
+    const catalogRevision = this.#context.getCatalogRevision()
     const bindings = new Map<string, ExternalMcpEngineBinding>()
     for (const native of this.#context.getToolBindings()) {
       const server = this.#lease.servers.find(server => server.namespace === native.protocol?.namespace)
@@ -231,24 +234,44 @@ export class ExternalMcpEngineContext {
     await this.#schemaValidator.prepare(
       Array.from(bindings.values(), binding => ({ name: binding.providerName, schema: binding.native.parameters ?? { type: 'object' } }))
     )
+    if (this.#context.getCatalogRevision() !== catalogRevision) fail('EXTERNAL_MCP_ACCESS_DENIED')
+    this.#catalogRevision = catalogRevision
     this.#bindings = bindings
     return bindings
   }
   get bindings(): ReadonlyMap<string, ExternalMcpEngineBinding> {
     return this.#bindings
   }
-  async invoke(binding: ExternalMcpEngineBinding, input: unknown, callId: string): Promise<Extract<AxChatRequest['chatPrompt'][number], { role: 'function' }>> {
+  async invoke(
+    binding: ExternalMcpEngineBinding,
+    input: unknown,
+    callId: string,
+    authorizeEvidence?: () => Promise<void>
+  ): Promise<Extract<AxChatRequest['chatPrompt'][number], { role: 'function' }>> {
+    // Native catalog notifications can refresh the client while inference or
+    // schema validation is pending. Never dispatch under an older advertised schema.
     await this.revalidate()
-    if (this.#bindings.get(binding.providerName) !== binding) fail('EXTERNAL_MCP_ACCESS_DENIED')
+    if (this.#bindings.get(binding.providerName) !== binding || this.#context.getCatalogRevision() !== this.#catalogRevision)
+      fail('EXTERNAL_MCP_ACCESS_DENIED')
     // Ax parses arguments but does not validate native MCP input schemas. The
     // bounded worker validates without rewriting the caller's original arguments.
     if (!(await this.#schemaValidator.validate(binding.providerName, input)))
       throw new AgentRepositoryError('EXTERNAL_MCP_CALL_FAILED', 'External MCP tool arguments do not match its input schema', 502)
     await this.revalidate()
-    if (this.#bindings.get(binding.providerName) !== binding) fail('EXTERNAL_MCP_ACCESS_DENIED')
-    const { rawResult: raw, formatted: encoded } = await binding.processor.executeWithDetails(
-      { name: binding.native.name, id: callId, args: JSON.stringify(input) },
-      { abortSignal: this.#signal, _mcpExecutionContext: this.#context }
+    // Repeat the pure source and binding checks at final HTTP admission, after
+    // native slot/owner/DNS/credential waits. Discovery and cleanup stay separate.
+    const authorizeInvocation = async (): Promise<void> => {
+      if (authorizeEvidence) await authorizeEvidence()
+      this.#signal.throwIfAborted()
+      if (this.#bindings.get(binding.providerName) !== binding || this.#context.getCatalogRevision() !== this.#catalogRevision)
+        fail('EXTERNAL_MCP_ACCESS_DENIED')
+    }
+    await authorizeInvocation()
+    const { rawResult: raw, formatted: encoded } = await withAgentSourceAuthorization(authorizeInvocation, () =>
+      binding.processor.executeWithDetails(
+        { name: binding.native.name, id: callId, args: JSON.stringify(input) },
+        { abortSignal: this.#signal, _mcpExecutionContext: this.#context }
+      )
     )
     this.#signal.throwIfAborted()
     if (encoded === undefined || Buffer.byteLength(encoded, 'utf8') > EXTERNAL_MCP_LIMITS.responseBytes) fail('EXTERNAL_MCP_RESULT_LIMIT')

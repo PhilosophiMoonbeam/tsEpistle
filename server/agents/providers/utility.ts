@@ -147,8 +147,7 @@ const boundedTranscript = (messages: readonly AgentConversationTitleMessage[]): 
 const invalidProviderUsage = (): AgentRepositoryError =>
   new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
 
-const mergedUsage = (current: AgentProviderUsage | null, next: AgentProviderUsage): AgentProviderUsage =>
-  acceptCumulativeAgentProviderUsage(current, next)
+const mergedUsage = (current: AgentProviderUsage | null, next: AgentProviderUsage): AgentProviderUsage => acceptCumulativeAgentProviderUsage(current, next)
 
 const consumeUtilityResponse = async (
   response: AxChatResponse | ReadableStream<AxChatResponse>,
@@ -261,6 +260,7 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
     this.#factory = factory
   }
   async classifyGoalBudget(request: AgentGoalBudgetClassificationRequest): Promise<AgentGoalBudgetClassificationResult> {
+    request.signal.throwIfAborted()
     const fallback = {
       tier: 'extended' as const,
       selection: 'fallback' as const,
@@ -280,16 +280,17 @@ export class AgentUtilityModel implements AgentConversationTitleGenerator, Agent
       try {
         provider = await this.#factory.create(request.profileVersionId, { purpose: 'utility' })
       } catch {
+        request.signal.throwIfAborted()
         return fallback
       }
+      request.signal.throwIfAborted()
       const maximumOutputTokens = providerOutputTokens(provider.capabilities.maxOutputTokens, GOAL_BUDGET_MAXIMUM_OUTPUT_TOKENS)
       const signal = AbortSignal.any([request.signal, AbortSignal.timeout(GOAL_BUDGET_TIMEOUT_MILLISECONDS)])
       const providerRequest = {
         chatPrompt: [
           {
             role: 'system' as const,
-            content:
-              `# Goal
+            content: `# Goal
 Classify the bounded Wiki goal objective by its complete expected workload.
 # Return Format
 Exactly one lowercase token: small, standard, or extended.

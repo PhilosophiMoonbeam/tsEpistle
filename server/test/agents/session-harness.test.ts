@@ -14,7 +14,21 @@ const offered = (name: 'pages.get'): OfferedAction => ({
     requester: { kind: 'user', userId: 7 },
     groupIds: [3],
     permissions: ['use:agents', 'read:pages'],
-    featureFlags: { 'agents.enabled': true, 'agents.provider.enabled': true, 'agents.orchestration.enabled': false, 'agents.skills.enabled': true, 'agents.browser.enabled': false, 'agents.proposals.enabled': false, 'agents.writes.enabled': false, 'agents.writes.create.enabled': false, 'agents.writes.patch.enabled': false, 'agents.writes.move.enabled': false, 'agents.writes.restore.enabled': false, 'agents.writes.delete.enabled': false, 'agents.mcp.enabled': false },
+    featureFlags: {
+      'agents.enabled': true,
+      'agents.provider.enabled': true,
+      'agents.orchestration.enabled': false,
+      'agents.skills.enabled': true,
+      'agents.browser.enabled': false,
+      'agents.proposals.enabled': false,
+      'agents.writes.enabled': false,
+      'agents.writes.create.enabled': false,
+      'agents.writes.patch.enabled': false,
+      'agents.writes.move.enabled': false,
+      'agents.writes.restore.enabled': false,
+      'agents.writes.delete.enabled': false,
+      'agents.mcp.enabled': false
+    },
     allowedActions: null,
     authoritySha256: '0'.repeat(64)
   }
@@ -37,7 +51,9 @@ describe('Ax session harness', () => {
     const close = vi.fn()
     const createSession = vi.spyOn(AxJSRuntime.prototype, 'createSession').mockReturnValueOnce({
       execute: async () => undefined,
-      patchGlobals: async () => { throw failure },
+      patchGlobals: async () => {
+        throw failure
+      },
       close
     })
     const harness = new AxSessionHarness({ execute: async () => ({}) })
@@ -55,13 +71,17 @@ describe('Ax session harness', () => {
     const session = await harness.open([offered('pages.get')])
     try {
       expect(await session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-1')).toEqual({ received: { id: 42 } })
-      await expect(Promise.resolve(session.invoke('pages.search', { query: 'x' }, new AbortController().signal, 'call-2'))).rejects.toMatchObject({ code: 'ACTION_NOT_OFFERED' })
+      await expect(Promise.resolve(session.invoke('pages.search', { query: 'x' }, new AbortController().signal, 'call-2'))).rejects.toMatchObject({
+        code: 'ACTION_NOT_OFFERED'
+      })
       expect(session.functions).toEqual([expect.objectContaining({ name: 'pages.get', risk: 'read' })])
       expect(execute).toHaveBeenCalledTimes(1)
     } finally {
       session.close()
     }
-    await expect(Promise.resolve(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-3'))).rejects.toMatchObject({ code: 'ACTION_SESSION_CLOSED' })
+    await expect(Promise.resolve(session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'call-3'))).rejects.toMatchObject({
+      code: 'ACTION_SESSION_CLOSED'
+    })
   })
 
   it('returns the authoritative host result after an approval-length pause', async () => {
@@ -106,7 +126,9 @@ describe('Ax session harness', () => {
       release.resolve()
       expect(await first).toEqual({ input: { id: 42 }, aborted: false, actionCallId: 'first' })
       expect(await session.invoke('pages.get', { id: 99 }, firstSignal, 'next')).toEqual({
-        input: { id: 99 }, aborted: false, actionCallId: 'next'
+        input: { id: 99 },
+        aborted: false,
+        actionCallId: 'next'
       })
       expect(execute).toHaveBeenCalledTimes(2)
       expect(execute.mock.calls.map(call => call[3])).toEqual(['first', 'next'])
@@ -117,10 +139,108 @@ describe('Ax session harness', () => {
     }
   })
 
-  it('preserves structured action errors across the worker boundary', async () => {
-    const execute = vi.fn(async () => {
-      throw Object.assign(new Error('sensitive detail'), { code: 'INVALID_SNAPSHOT_TOKEN', status: 409 })
+  it.each(['abort', 'close'] as const)('keeps an active session closed after %s while its host callback completes', async cancellation => {
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const execute = vi.fn(async (_action: OfferedAction, input: unknown, signal: AbortSignal, actionCallId: string) => {
+      entered.resolve()
+      await release.promise
+      return { input, aborted: signal.aborted, actionCallId }
     })
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 1_000 })
+    const session = await harness.open([offered('pages.get')])
+    const controller = new AbortController()
+    const invocation = session.invoke('pages.get', { id: 42 }, controller.signal, 'cancelled')
+    const settled = invocation.then(value => ({ value }), (error: unknown) => ({ error }))
+    try {
+      await Promise.race([
+        entered.promise,
+        settled.then(result => {
+          throw new Error('Invocation settled before its host callback entered', { cause: result })
+        })
+      ])
+      if (cancellation === 'abort') controller.abort(new Error('Request cancelled'))
+      else session.close()
+      expect(await settled).toMatchObject({
+        error: {
+          message: cancellation === 'abort' ? expect.stringContaining('Request cancelled') : 'Worker terminated'
+        }
+      })
+      await expect(session.invoke('pages.get', { id: 99 }, new AbortController().signal, 'next')).rejects.toMatchObject({
+        code: 'ACTION_SESSION_CLOSED'
+      })
+      await expect(session.snapshot(new AbortController().signal)).rejects.toMatchObject({ code: 'ACTION_SESSION_CLOSED' })
+      release.resolve()
+      await execute.mock.results[0]?.value
+      await expect(session.invoke('pages.get', { id: 99 }, new AbortController().signal, 'after-callback')).rejects.toMatchObject({
+        code: 'ACTION_SESSION_CLOSED'
+      })
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute.mock.calls[0]?.[2]).toBe(controller.signal)
+      expect(execute.mock.calls[0]?.[3]).toBe('cancelled')
+    } finally {
+      release.resolve()
+      session.close()
+      await Promise.allSettled([settled, ...execute.mock.results.map(result => result.value)])
+    }
+  })
+
+  it('retires a timed-out worker before its late host result can cross into another invocation', async () => {
+    const firstEntered = Promise.withResolvers<void>()
+    const firstRelease = Promise.withResolvers<void>()
+    const secondEntered = Promise.withResolvers<void>()
+    const secondRelease = Promise.withResolvers<void>()
+    const firstResult = Object.freeze({ owner: 'first' })
+    const secondResult = Object.freeze({ owner: 'second' })
+    const execute = vi.fn(async (_action: OfferedAction, _input: unknown, _signal: AbortSignal, actionCallId: string) => {
+      if (actionCallId === 'first') {
+        firstEntered.resolve()
+        await firstRelease.promise
+        return firstResult
+      }
+      secondEntered.resolve()
+      await secondRelease.promise
+      return secondResult
+    })
+    const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 1_000 })
+    const session = await harness.open([offered('pages.get')])
+    const first = session.invoke('pages.get', { id: 42 }, new AbortController().signal, 'first')
+    const firstSettled = first.then(value => ({ value }), (error: unknown) => ({ error }))
+    let secondSettled: Promise<unknown> | undefined
+    try {
+      await Promise.race([
+        firstEntered.promise,
+        firstSettled.then(result => {
+          throw new Error('Invocation settled before its host callback entered', { cause: result })
+        })
+      ])
+      expect(await firstSettled).toMatchObject({ error: { message: 'Execution timed out' } })
+      secondSettled = session.invoke('pages.get', { id: 99 }, new AbortController().signal, 'second')
+        .then(value => ({ value }), (error: unknown) => ({ error }))
+      // The unsafe harness restarts its worker and enters this second callback.
+      // Releasing only the first callback then delivers the wrong owned result.
+      await Promise.race([secondSettled, secondEntered.promise])
+      firstRelease.resolve()
+      expect(await secondSettled).toMatchObject({ error: { code: 'ACTION_SESSION_CLOSED' } })
+      await execute.mock.results[0]?.value
+      await expect(session.invoke('pages.get', { id: 99 }, new AbortController().signal, 'after-callback')).rejects.toMatchObject({
+        code: 'ACTION_SESSION_CLOSED'
+      })
+      await expect(session.snapshot(new AbortController().signal)).rejects.toMatchObject({ code: 'ACTION_SESSION_CLOSED' })
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute.mock.calls[0]?.[3]).toBe('first')
+    } finally {
+      firstRelease.resolve()
+      secondRelease.resolve()
+      session.close()
+      await Promise.allSettled([firstSettled, secondSettled, ...execute.mock.results.map(result => result.value)])
+    }
+  })
+
+  it('preserves structured action errors across the worker boundary', async () => {
+    const execute = vi.fn(async () => ({ recovered: true })).mockRejectedValueOnce(
+      Object.assign(new Error('sensitive detail'), { code: 'INVALID_SNAPSHOT_TOKEN', status: 409 })
+    )
     const harness = new AxSessionHarness({ execute, timeoutMilliseconds: 5_000 })
     const session = await harness.open([offered('pages.get')])
     try {
@@ -132,6 +252,8 @@ describe('Ax session harness', () => {
       const error = await invocation.catch((cause: unknown) => cause)
       expect(error).toHaveProperty('message', expect.any(String))
       expect((error as Error).message).not.toContain('sensitive detail')
+      expect(await session.invoke('pages.get', { id: 99 }, new AbortController().signal, 'call-2')).toEqual({ recovered: true })
+      expect(execute).toHaveBeenCalledTimes(2)
     } finally {
       session.close()
     }

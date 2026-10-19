@@ -32,7 +32,8 @@ export interface AxActionSession {
   /** Refreshes those restrictions before a synthetic action bypasses kernel.execute. */
   authorizeSyntheticAction?(name: AgentActionName, signal: AbortSignal): Promise<boolean>
   invoke(name: string, input: unknown, signal: AbortSignal, actionCallId: string): Promise<unknown>
-  validateObservation?(actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean>
+  /** Bound metadata projections require the matching original function input. */
+  validateObservation?(actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown): Promise<boolean>
   snapshot(signal: AbortSignal): Promise<Readonly<Record<string, unknown>>>
   close(): void
 }
@@ -40,7 +41,7 @@ export interface AxActionSession {
 export interface AxSessionHarnessOptions {
   readonly timeoutMilliseconds?: number
   readonly execute: (action: OfferedAction, input: unknown, signal: AbortSignal, actionCallId: string) => Promise<unknown>
-  readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => Promise<boolean>
+  readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => Promise<boolean>
 }
 
 const boundedJson = (value: unknown, maxBytes: number, code: string): string => {
@@ -82,27 +83,37 @@ export class AxSessionHarness {
 
   async open(actions: readonly OfferedAction[], initialSnapshot?: Readonly<Record<string, unknown>>): Promise<AxActionSession> {
     const offered = new Map(actions.map(action => [action.definition.descriptor.name, action]))
-    let invocationSignal: AbortSignal | undefined
-    let invocationActionCallId: string | undefined
-    let hostResult: unknown = NO_HOST_RESULT
+    let invocation: { readonly signal: AbortSignal; readonly actionCallId: string; hostResult: unknown } | undefined
+    let closed = false
+    const assertOpen = (): void => {
+      if (closed) throw new AgentRepositoryError('ACTION_SESSION_CLOSED', 'Action session is closed', 409)
+    }
     const callbacks = Object.fromEntries(
       actions.map(action => [
         action.definition.descriptor.name,
         async (input: unknown) => {
-          if (!invocationSignal || !invocationActionCallId)
-            throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback was invoked outside an active request', 500)
+          const active = invocation
+          if (!active) throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback was invoked outside an active request', 500)
+          assertOpen()
+          active.signal.throwIfAborted()
+          let result: unknown
           try {
-            const output = await this.#execute(action, input, invocationSignal, invocationActionCallId)
-            boundedJson(output, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
-            hostResult = output
+            result = await this.#execute(action, input, active.signal, active.actionCallId)
+            boundedJson(result, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
           } catch (error: unknown) {
             const rawCode = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined
             const rawStatus = typeof error === 'object' && error !== null ? Reflect.get(error, 'status') : undefined
             const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(rawCode) ? rawCode : 'ACTION_FAILED'
             const status = Number.isInteger(rawStatus) && Number(rawStatus) >= 400 && Number(rawStatus) <= 599 ? Number(rawStatus) : 500
-            hostResult = { [ACTION_FAILURE_KEY]: { code, status } }
+            result = { [ACTION_FAILURE_KEY]: { code, status } }
           }
-          return hostResult
+          // Ax can reject execute (abort/timeout/close) while its host callback
+          // is still pending. Never publish that callback's late completion.
+          assertOpen()
+          active.signal.throwIfAborted()
+          if (invocation !== active) throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback no longer owns its request', 500)
+          active.hostResult = result
+          return result
         }
       ])
     )
@@ -122,15 +133,16 @@ export class AxSessionHarness {
       capability: action.definition.capability
     }))
     const session: AxCodeSession = this.#runtime.createSession({ __wikiActions: Object.freeze(callbacks) })
+    const close = (): void => {
+      if (closed) return
+      closed = true
+      session.close()
+    }
     try {
       if (bindings) await session.patchGlobals(bindings)
     } catch (error) {
-      session.close()
+      close()
       throw error
-    }
-    let closed = false
-    const assertOpen = (): void => {
-      if (closed) throw new AgentRepositoryError('ACTION_SESSION_CLOSED', 'Action session is closed', 409)
     }
     return {
       authoritySha256: null,
@@ -139,15 +151,28 @@ export class AxSessionHarness {
         assertOpen()
         // SDK execution is queued, but host authority/result slots belong to one
         // invocation. Reject overlap before it can replace the active identity.
-        if (invocationSignal) throw new AgentRepositoryError('ACTION_SESSION_BUSY', 'Action session already has an active request', 409)
+        if (invocation) throw new AgentRepositoryError('ACTION_SESSION_BUSY', 'Action session already has an active request', 409)
         if (!offered.has(name as AgentActionName)) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider requested an unavailable action', 403)
         if (!actionCallId || actionCallId.length > 128) throw new AgentRepositoryError('INVALID_ACTION_CALL_ID', 'Action call identity is invalid', 400)
         const inputJson = boundedJson(input, 64 * 1_024, 'INVALID_ACTION_INPUT')
-        invocationSignal = signal
-        invocationActionCallId = actionCallId
-        hostResult = NO_HOST_RESULT
+        signal.throwIfAborted()
+        const active = { signal, actionCallId, hostResult: NO_HOST_RESULT as unknown }
+        invocation = active
         try {
-          await session.execute(`await __wikiActions[${JSON.stringify(name)}](${inputJson})`, { signal, reservedNames: RESERVED_NAMES })
+          try {
+            await session.execute(`await __wikiActions[${JSON.stringify(name)}](${inputJson})`, { signal, reservedNames: RESERVED_NAMES })
+          } catch (error) {
+            // A timed-out worker may restart, and an aborted worker is already
+            // closed. Neither can safely retain this host invocation's ownership.
+            close()
+            throw error
+          }
+          if (signal.aborted) {
+            close()
+            signal.throwIfAborted()
+          }
+          assertOpen()
+          const hostResult = active.hostResult
           if (hostResult === NO_HOST_RESULT)
             throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action worker completed without invoking its host callback', 500)
           if (typeof hostResult === 'object' && hostResult !== null && Object.hasOwn(hostResult, ACTION_FAILURE_KEY)) {
@@ -158,31 +183,33 @@ export class AxSessionHarness {
           }
           return hostResult
         } finally {
-          invocationSignal = undefined
-          invocationActionCallId = undefined
+          if (invocation === active) invocation = undefined
         }
       },
       ...(this.#validateObservation
         ? {
-            validateObservation: async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
+            validateObservation: async (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown): Promise<boolean> => {
               if (signal.aborted) return false
-              const valid = await this.#validateObservation?.(actionName, output, signal)
+              const valid = await this.#validateObservation?.(actionName, output, signal, originalInput)
               return valid === true && !signal.aborted
             }
           }
         : {}),
       snapshot: async signal => {
         assertOpen()
-        if (!session.snapshotGlobals) return {}
-        const snapshot = await session.snapshotGlobals({ signal, reservedNames: RESERVED_NAMES })
-        const encoded = boundedJson(snapshot.bindings, MAX_SNAPSHOT_BYTES, 'RUNTIME_SNAPSHOT_TOO_LARGE')
-        return JSON.parse(encoded) as Record<string, unknown>
+        try {
+          if (!session.snapshotGlobals) return {}
+          const snapshot = await session.snapshotGlobals({ signal, reservedNames: RESERVED_NAMES })
+          assertOpen()
+          signal.throwIfAborted()
+          const encoded = boundedJson(snapshot.bindings, MAX_SNAPSHOT_BYTES, 'RUNTIME_SNAPSHOT_TOO_LARGE')
+          return JSON.parse(encoded) as Record<string, unknown>
+        } catch (error) {
+          close()
+          throw error
+        }
       },
-      close: () => {
-        if (closed) return
-        closed = true
-        session.close()
-      }
+      close
     }
   }
 }

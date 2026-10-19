@@ -15,6 +15,7 @@ import {
 import { readAgentProviderUsage, readAgentUsageEvent, type AgentProviderUsage } from '../../agents/providers/usage.ts'
 import { createWikiSynthesisProgram, encodeWikiSynthesisSources } from '../../agents/providers/wiki-synthesis.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
+import { withAgentSourceAuthorization } from '../../agents/source-authorization.ts'
 import type { AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
@@ -1088,6 +1089,175 @@ describe('Ax provider factory', () => {
     expect(denial).toBeInstanceOf(AgentRepositoryError)
     expect(denial).toMatchObject({ code, status })
   })
+
+  it.each(['DNS', 'live binding authorization'] as const)(
+    'denies source-only revocation during media %s before actual-send accounting with the provider grant intact',
+    async boundary => {
+      db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+      const secrets = await seedMediaProvider(db)
+      const resolving = Promise.withResolvers<void>()
+      const resolved = Promise.withResolvers<LookupAddress[]>()
+      const resolver = async (): Promise<LookupAddress[]> => {
+        resolving.resolve()
+        return boundary === 'DNS' ? resolved.promise : publicResolver()
+      }
+      const sent: RequestInit[] = []
+      const factory = new AgentProviderFactory(db, secrets, (async (_input, init) => {
+        sent.push(init ?? {})
+        return Response.json({
+          data: [{ b64_json: mediaImage.toString('base64') }],
+          usage: { input_tokens: 7, output_tokens: 11, total_tokens: 18 }
+        })
+      }) as typeof fetch, resolver as never)
+      const bound = await factory.createMediaBinding(7, 'image', mediaVersionId)
+      let readable = true
+      const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
+      const authorize = vi.fn(async () => {
+        if (!readable) throw denial
+      })
+      // Observe a real pending grant query, rather than substituting the final
+      // binding authorizer. Only source authority changes; its grant stays valid.
+      const onQuery = ({ sql }: { sql: string }): void => {
+        if (boundary === 'live binding authorization' && sql.includes('agentMediaProviderGrants')) readable = false
+      }
+      db.on('query', onQuery)
+      const beforeDispatch = vi.fn(async () => {
+        await authorize()
+      })
+      const onDispatch = vi.fn()
+      const generation = withAgentSourceAuthorization(authorize, async () => bound.transport.generate({
+        prompt: 'Copied private Wiki source text',
+        beforeDispatch,
+        onDispatch
+      })).catch((error: unknown) => error)
+      try {
+        await resolving.promise
+        if (boundary === 'DNS') readable = false
+        resolved.resolve(await publicResolver())
+        expect(await generation).toBe(denial)
+        expect(sent).toEqual([])
+        expect(onDispatch).not.toHaveBeenCalled()
+        expect(beforeDispatch).toHaveBeenCalledTimes(1)
+        expect(authorize).toHaveBeenCalledTimes(2)
+      } finally {
+        db.removeListener('query', onQuery)
+        resolved.resolve(await publicResolver())
+        await generation
+      }
+      expect(await db('agentMediaProviderGrants').where({ providerId: mediaProviderId, groupId: 100 }).first())
+        .toMatchObject({ providerId: mediaProviderId, groupId: 100 })
+      expect(await db('agentMediaProviders').where({ id: mediaProviderId }).first()).toMatchObject({ currentVersionId: mediaVersionId, enabled: 1 })
+    }
+  )
+
+  it.each(['native context count', 'media context count', 'upload metadata', 'upload bytes'] as const)(
+    'rejects source revocation during %s DNS without sending the copied input',
+    async operation => {
+      db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+      const versionId = await seedInputProvider(db)
+      const resolving = Promise.withResolvers<void>()
+      const resolved = Promise.withResolvers<LookupAddress[]>()
+      let dnsCalls = 0
+      const resolver = async (): Promise<LookupAddress[]> => {
+        dnsCalls++
+        if (operation === 'upload bytes' && dnsCalls === 1) return publicResolver()
+        resolving.resolve()
+        return resolved.promise
+      }
+      const sent: { url: string; body: unknown }[] = []
+      const factory = new AgentProviderFactory(db, { get: () => 'still-authorized-input-key' }, (async (input, init) => {
+        sent.push({ url: String(input), body: init?.body })
+        if (String(input) === 'https://generativelanguage.googleapis.com/upload/v1beta/files')
+          return new Response(null, { headers: {
+            'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=owned-upload&upload_protocol=resumable'
+          } })
+        return Response.json({ totalTokens: 23 })
+      }) as typeof fetch, resolver as never)
+      const provider = await factory.create(versionId)
+      const media = await factory.createMediaInput(versionId)
+      let readable = true
+      const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
+      const authorize = vi.fn(async () => {
+        if (!readable) throw denial
+      })
+      await authorize()
+      const running = withAgentSourceAuthorization(authorize, async () => {
+        if (operation === 'native context count')
+          return provider.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Copied private Wiki source text' }] }, new AbortController().signal)
+        if (operation === 'media context count')
+          return media.transport.countTokens('gemini-3.7-flash', [{ type: 'text', text: 'Copied private Wiki source text' }])
+        return media.transport.upload({
+          bytes: mediaImage,
+          mimeType: 'image/png',
+          ...(operation === 'upload metadata' ? { displayName: 'Copied private Wiki source title' } : {})
+        })
+      }).catch((error: unknown) => error)
+      await resolving.promise
+      readable = false
+      resolved.resolve(await publicResolver())
+      expect(await running).toBe(denial)
+      if (operation === 'upload bytes') {
+        expect(sent).toHaveLength(1)
+        expect(sent[0]).toEqual({
+          url: 'https://generativelanguage.googleapis.com/upload/v1beta/files',
+          body: JSON.stringify({ file: { display_name: 'Wiki Agent attachment' } })
+        })
+      } else expect(sent).toEqual([])
+      expect(authorize).toHaveBeenCalledTimes(operation === 'upload bytes' ? 3 : 2)
+    }
+  )
+
+  it.each(['source revocation', 'source revocation and caller abort'] as const)(
+    'preserves owned file status and failure cleanup after %s without reauthorizing copied input',
+    async revocation => {
+      db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+      const versionId = await seedInputProvider(db)
+      const caller = new AbortController()
+      let readable = true
+      const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
+      const authorize = vi.fn(async () => {
+        if (!readable) throw denial
+      })
+      const requests: { method: string; url: string; signal?: AbortSignal | null }[] = []
+      const file = {
+        name: 'files/owned-upload',
+        uri: 'https://generativelanguage.googleapis.com/v1beta/files/owned-upload',
+        mimeType: 'image/png'
+      }
+      const factory = new AgentProviderFactory(db, { get: () => 'still-authorized-input-key' }, (async (input, init) => {
+        const url = String(input)
+        const method = init?.method ?? 'GET'
+        requests.push({ method, url, signal: init?.signal })
+        if (method === 'DELETE') return new Response(null)
+        if (method === 'GET') {
+          if (revocation === 'source revocation and caller abort') {
+            caller.abort()
+            init?.signal?.throwIfAborted()
+          }
+          return Response.json({ ...file, state: 'FAILED' })
+        }
+        if (new URL(url).search) {
+          readable = false
+          return Response.json({ file: { ...file, state: 'PROCESSING' } })
+        }
+        return new Response(null, { headers: {
+          'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=owned-upload&upload_protocol=resumable'
+        } })
+      }) as typeof fetch, publicResolver as never)
+      const media = await factory.createMediaInput(versionId)
+      const result = await withAgentSourceAuthorization(authorize, async () =>
+        media.transport.upload({ bytes: mediaImage, mimeType: 'image/png' }, caller.signal)
+      ).catch((error: unknown) => error)
+      expect(result).toMatchObject({
+        code: revocation === 'source revocation' ? 'AGENT_MEDIA_PROCESSING_FAILED' : 'AGENT_MEDIA_CANCELLED'
+      })
+      expect(requests.map(request => request.method)).toEqual(['POST', 'POST', 'GET', 'DELETE'])
+      expect(requests[2]?.url).toBe(file.uri)
+      expect(requests[3]?.url).toBe(file.uri)
+      expect(requests[3]?.signal?.aborted).toBe(false)
+      expect(authorize).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it('uses the LLM credential and model for opted-in context input, without a media-generation profile', async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })

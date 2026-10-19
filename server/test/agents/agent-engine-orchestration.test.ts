@@ -343,6 +343,7 @@ describe('Ax orchestration stages', () => {
             return fixtureDecisionProviders.decideBatch(input, options)
           }
           await options?.onPreDispatch?.()
+          options?.onRequestDispatched?.()
           readinessRequests.push(input)
           return readinessFixtureReceipt('answerable')
         }
@@ -485,6 +486,7 @@ describe('Ax orchestration stages', () => {
         if (mode === 'native pre-admission denied')
           throw new AgentRepositoryError('DECISION_BATCH_UNSUPPORTED', 'Optional native request capacity is unavailable', 400)
         await options?.onPreDispatch?.()
+        options?.onRequestDispatched?.()
         paidReadiness.push(input)
         if (mode === 'paid timeout')
           throw new AgentRepositoryError('DECISION_TIMEOUT', 'A dispatched readiness call timed out', 503)
@@ -987,7 +989,7 @@ describe('Ax orchestration stages', () => {
       }
     ]
     const chat = vi.fn(async () => responses.shift()!)
-    const invoke = vi.fn(async () => ({
+    const page = {
       id: 1,
       locale: 'en',
       path: 'alpha',
@@ -997,12 +999,15 @@ describe('Ax orchestration stages', () => {
       content: 'Alpha requires review.',
       citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
       citationSections: []
-    }))
+    }
+    const invoke = vi.fn(async () => page)
     const authoritySha256 = 'b'.repeat(64)
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation: async (actionName, output, signal) =>
+          !signal.aborted && actionName === 'pages.get' && JSON.stringify(output) === JSON.stringify(page),
         snapshot: async () => ({}),
         close: vi.fn(),
         authoritySha256
@@ -1824,10 +1829,11 @@ describe('Ax orchestration stages', () => {
       { results: [{ index: 0, content: packet }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
+    const ownedSnapshots = new Set<string>()
     const invoke = vi.fn(async (_action: string, input: unknown) => {
       if (typeof input !== 'object' || input === null || !('id' in input) || typeof input.id !== 'number') throw new Error('Expected a numeric page id')
       const id = input.id
-      return {
+      const page = {
         id,
         locale: 'en',
         path: id === 1 ? 'alpha' : 'beta',
@@ -1838,11 +1844,15 @@ describe('Ax orchestration stages', () => {
         citation: { evidenceId: `page:${id}:revision:rev-${id}`, label: id === 1 ? 'Alpha' : 'Beta', href: `/en/${id === 1 ? 'alpha' : 'beta'}` },
         citationSections: []
       }
+      ownedSnapshots.add(JSON.stringify(page))
+      return page
     })
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
+        validateObservation: async (actionName, output, signal) =>
+          !signal.aborted && actionName === 'pages.get' && ownedSnapshots.has(JSON.stringify(output)),
         snapshot: async () => ({}),
         close: vi.fn(),
         authoritySha256: 'c'.repeat(64)
@@ -1984,7 +1994,10 @@ describe('Ax orchestration stages', () => {
       ],
       modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
     } satisfies AxChatResponse
-    const chat = vi.fn(async () => response)
+    const chat = vi.fn<AgentProviderService['service']['chat']>(async (_request, options) => {
+      options?.onRequestDispatched?.()
+      return response
+    })
     const factory = {
       create: async () => ({
         service: { chat },
@@ -2042,7 +2055,10 @@ describe('Ax orchestration stages', () => {
       results: [{ index: 0, content: '<wiki-tool-call>not-json</wiki-tool-call>' }],
       modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
     } satisfies AxChatResponse
-    const chat = vi.fn(async () => response)
+    const chat = vi.fn<AgentProviderService['service']['chat']>(async (_request, options) => {
+      options?.onRequestDispatched?.()
+      return response
+    })
     const factory = {
       create: async () => ({
         service: { chat },

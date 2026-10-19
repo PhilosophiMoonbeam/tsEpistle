@@ -1,7 +1,12 @@
 import type { LookupAddress } from 'node:dns'
 import { ax, f, type AxChatRequest, type AxChatResponse, type AxFunctionJSONSchema } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
-import { AgentProviderAttemptError, AgentProviderFactory, decodeAgentProviderContinuation, encodeAgentProviderContinuation } from '../../agents/providers/factory.ts'
+import {
+  AgentProviderAttemptError,
+  AgentProviderFactory,
+  decodeAgentProviderContinuation,
+  encodeAgentProviderContinuation
+} from '../../agents/providers/factory.ts'
 import { classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
@@ -79,14 +84,23 @@ describe('Ax native Gemini application transport', () => {
     }) as typeof fetch)
     const parts = [{ text: 'Prior answer.', thoughtSignature: 'signed-answer' }]
     const schema: AxFunctionJSONSchema = {
-      type: 'object', properties: { result: { type: 'string', enum: ['yes', 'no'] } }, required: ['result'], additionalProperties: false
+      type: 'object',
+      properties: { result: { type: 'string', enum: ['yes', 'no'] } },
+      required: ['result'],
+      additionalProperties: false
     }
     const request: AxChatRequest = {
       chatPrompt: [
         { role: 'system', content: 'Private system instructions.' },
         { role: 'user', content: 'Earlier question.' },
         { role: 'assistant', content: 'Prior answer.', thoughtBlocks: [{ data: 'wiki.gemini.generate-content.v1:' + JSON.stringify(parts), encrypted: true }] },
-        { role: 'user', content: [{ type: 'text', text: 'Inspect this image.' }, { type: 'image', mimeType: 'image/png', image: 'aW1hZ2U=' }] }
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Inspect this image.' },
+            { type: 'image', mimeType: 'image/png', image: 'aW1hZ2U=' }
+          ]
+        }
       ],
       functions: [{ name: 'record_result', description: 'Record the result', parameters: schema }],
       responseFormat: { type: 'json_schema', schema: { name: 'result', schema } },
@@ -118,27 +132,43 @@ describe('Ax native Gemini application transport', () => {
   it('rejects malformed native counts and sanitizes provider failures without dispatching generation', async () => {
     for (const totalTokens of [-1, 1.5, '12', Number.MAX_SAFE_INTEGER + 1, null]) {
       let calls = 0
-      const service = await provider((async () => { calls++; return Response.json({ totalTokens }) }) as typeof fetch)
-      await expect(service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal))
-        .rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      const service = await provider((async () => {
+        calls++
+        return Response.json({ totalTokens })
+      }) as typeof fetch)
+      await expect(
+        service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal)
+      ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
       expect(calls).toBe(1)
     }
-    for (const body of ['{}', '{', JSON.stringify({ totalTokens: 2, error: { message: 'Private prompt.' } }), JSON.stringify({ totalTokens: 2, padding: 'x'.repeat(65_536) })]) {
+    for (const body of [
+      '{}',
+      '{',
+      JSON.stringify({ totalTokens: 2, error: { message: 'Private prompt.' } }),
+      JSON.stringify({ totalTokens: 2, padding: 'x'.repeat(65_536) })
+    ]) {
       const service = await provider((async () => new Response(body, { headers: { 'content-type': 'application/json' } })) as typeof fetch)
-      await expect(service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal))
-        .rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      await expect(
+        service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal)
+      ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
     }
     let calls = 0
-    const service = await provider((async () => { calls++; throw new Error('credential-fixture Private prompt.') }) as typeof fetch)
-    const failure: unknown = await service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal)
-      .catch((error: unknown) => error)
+    const service = await provider((async () => {
+      calls++
+      throw new Error('credential-fixture Private prompt.')
+    }) as typeof fetch)
+    const failure: unknown = await service.countContextTokens!(
+      { chatPrompt: [{ role: 'user', content: 'Private prompt.' }] },
+      new AbortController().signal
+    ).catch((error: unknown) => error)
     expect(failure).toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', message: 'Gemini returned an invalid or incomplete response' })
     expect(`${String(failure)} ${JSON.stringify(failure)}`).not.toContain('credential-fixture')
     expect(`${String(failure)} ${JSON.stringify(failure)}`).not.toContain('Private prompt.')
     const controller = new AbortController()
     controller.abort()
-    await expect(service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, controller.signal))
-      .rejects.toMatchObject({ name: 'AbortError' })
+    await expect(service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
     expect(calls).toBe(1)
   })
 
@@ -160,8 +190,10 @@ describe('Ax native Gemini application transport', () => {
     }) as typeof fetch)
     const priorModel = service.service.getLastUsedChatModel()
     const priorMetrics = structuredClone(service.service.getMetrics())
-    const error: unknown = await service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, new AbortController().signal)
-      .catch((failure: unknown) => failure)
+    const error: unknown = await service.countContextTokens!(
+      { chatPrompt: [{ role: 'user', content: 'Private prompt.' }] },
+      new AbortController().signal
+    ).catch((failure: unknown) => failure)
     expect(error).toBeInstanceOf(AgentProviderAttemptError)
     expect(error).toMatchObject({ status, code: providerCode, message: 'Provider request failed', retryAfterMilliseconds: 2_000, retryable: status >= 429 })
     const failure = classifyAgentExecutionFailure(error, 'context_admission')
@@ -192,8 +224,7 @@ describe('Ax native Gemini application transport', () => {
     service.service.setOptions({ abortSignal: defaultController.signal })
     const priorModel = service.service.getLastUsedChatModel()
     const priorMetrics = structuredClone(service.service.getMetrics())
-    const failure = service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, caller.signal)
-      .catch((error: unknown) => error)
+    const failure = service.countContextTokens!({ chatPrompt: [{ role: 'user', content: 'Private prompt.' }] }, caller.signal).catch((error: unknown) => error)
     try {
       const transportSignal = await entered.promise
       expect(transportSignal.aborted).toBe(false)
@@ -384,18 +415,26 @@ describe('Ax native Gemini application transport', () => {
       requests.push(JSON.parse(String(init?.body)))
       return Response.json(reply([{ text: '{"claims":[{"evidenceId":"page-42","statement":"The maximum is 42."}],"unresolvedFacets":[1]}' }]))
     }) as typeof fetch)
-    const program = ax(f()
-      .input('userRequest', f.string())
-      .output('claims', f.object({ evidenceId: f.string(), statement: f.string() }).array())
-      .output('unresolvedFacets', f.number().array())
-      .useStructured().build(), { maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1 })
+    const program = ax(
+      f()
+        .input('userRequest', f.string())
+        .output('claims', f.object({ evidenceId: f.string(), statement: f.string() }).array())
+        .output('unresolvedFacets', f.number().array())
+        .useStructured()
+        .build(),
+      { maxRetries: 0, maxSteps: 1, asyncMode: 'off', sampleCount: 1 }
+    )
     let admittedChats = 0
-    const hostedService = { ...service.service, chat: async (...args: Parameters<typeof service.service.chat>) => {
-      admittedChats++
-      return service.service.chat(...args)
-    } }
+    const hostedService = {
+      ...service.service,
+      chat: async (...args: Parameters<typeof service.service.chat>) => {
+        admittedChats++
+        return service.service.chat(...args)
+      }
+    }
     expect(await program.forward(hostedService, { userRequest: 'Report the maximum.' }, { stream: false, structuredOutputMode: 'native' })).toEqual({
-      claims: [{ evidenceId: 'page-42', statement: 'The maximum is 42.' }], unresolvedFacets: [1]
+      claims: [{ evidenceId: 'page-42', statement: 'The maximum is 42.' }],
+      unresolvedFacets: [1]
     })
     expect(admittedChats).toBe(1)
     expect(requests).toHaveLength(1)
@@ -403,11 +442,20 @@ describe('Ax native Gemini application transport', () => {
       generationConfig: {
         responseMimeType: 'application/json',
         responseJsonSchema: {
-          type: 'object', required: ['claims', 'unresolvedFacets'], additionalProperties: false,
-          properties: { claims: { type: 'array', items: {
-            type: 'object', required: ['evidenceId', 'statement'], additionalProperties: false,
-            properties: { evidenceId: { type: 'string' }, statement: { type: 'string' } }
-          } } }
+          type: 'object',
+          required: ['claims', 'unresolvedFacets'],
+          additionalProperties: false,
+          properties: {
+            claims: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['evidenceId', 'statement'],
+                additionalProperties: false,
+                properties: { evidenceId: { type: 'string' }, statement: { type: 'string' } }
+              }
+            }
+          }
         }
       }
     })
@@ -418,10 +466,15 @@ describe('Ax native Gemini application transport', () => {
 
   it('applies purpose-local default efforts with native family clamping and isolated created services', async () => {
     const requests: { url: string; body: Record<string, unknown> }[] = []
-    const factory = new AgentProviderFactory(db, { get: () => 'credential-fixture' }, (async (input, init) => {
-      requests.push({ url: String(input), body: JSON.parse(String(init?.body)) })
-      return Response.json(reply())
-    }) as typeof fetch, publicResolver as never)
+    const factory = new AgentProviderFactory(
+      db,
+      { get: () => 'credential-fixture' },
+      (async (input, init) => {
+        requests.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+        return Response.json(reply())
+      }) as typeof fetch,
+      publicResolver as never
+    )
     const explicitAgent = await factory.create(id, { reasoningEffort: 'minimal' })
     expect(explicitAgent.reasoningEffort).toBe('medium')
     await db('agentProviderProfileVersions').where({ id }).update({ utilityModel: 'gemini-3-pro-preview' })
@@ -432,9 +485,11 @@ describe('Ax native Gemini application transport', () => {
       url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent',
       body: { generationConfig: { thinkingConfig: { thinkingLevel: 'low' } } }
     })
-    await db('agentProviderProfileVersions').where({ id }).update({
-      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} })
-    })
+    await db('agentProviderProfileVersions')
+      .where({ id })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} })
+      })
     const defaultMinimal = await factory.create(id, { reasoningEffort: 'minimal' })
     const defaultHigh = await factory.create(id, { reasoningEffort: 'high' })
     await buffered(defaultMinimal.service.chat({ chatPrompt: [{ role: 'user', content: 'minimal' }] }, { stream: false }))
@@ -462,14 +517,21 @@ describe('Ax native Gemini application transport', () => {
       })
     }) as typeof fetch)
     const schema: AxFunctionJSONSchema = {
-      type: 'object', additionalProperties: false,
+      type: 'object',
+      additionalProperties: false,
       properties: { value: { type: ['number', 'string'], anyOf: [{ type: 'number' }, { type: 'string' }] } },
       required: ['value']
     }
-    const firstResponse = buffered(service.service.chat({
-      chatPrompt: [{ role: 'user', content: 'first' }], modelConfig: { maxTokens: 31 },
-      responseFormat: { type: 'json_schema', schema: { name: 'bounded_value', schema } }
-    }, { stream: false }))
+    const firstResponse = buffered(
+      service.service.chat(
+        {
+          chatPrompt: [{ role: 'user', content: 'first' }],
+          modelConfig: { maxTokens: 31 },
+          responseFormat: { type: 'json_schema', schema: { name: 'bounded_value', schema } }
+        },
+        { stream: false }
+      )
+    )
     await firstDispatched.promise
     let second: AxChatResponse
     try {
@@ -489,6 +551,27 @@ describe('Ax native Gemini application transport', () => {
     expect(second.results[0]?.thoughtBlocks?.[0]?.data).toContain('second-signature')
     expect(readAgentProviderUsage('gemini-api', first)).toEqual({ inputTokens: 10, outputTokens: 2, totalTokens: 15, cachedInputTokens: 4 })
     expect(readAgentProviderUsage('gemini-api', second)).toEqual({ inputTokens: 20, outputTokens: 3, totalTokens: 23, cachedInputTokens: 0 })
+  })
+
+  it('does not expose private buffered response bytes through native JSON parse errors', async () => {
+    const service = await provider(
+      (async () =>
+        new Response('secret-key private-response-payload', {
+          headers: { 'content-type': 'application/json' }
+        })) as typeof fetch
+    )
+    const failure: unknown = await buffered(
+      service.service.chat(
+        {
+          chatPrompt: [{ role: 'user', content: 'Hello.' }]
+        },
+        { stream: false }
+      )
+    ).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    const exposed = `${String(failure)} ${JSON.stringify(failure)}`
+    expect(exposed).not.toContain('secret-key')
+    expect(exposed).not.toContain('private-response-payload')
   })
 
   it('does not dispatch an already aborted request', async () => {
@@ -524,6 +607,84 @@ describe('Ax native Gemini application transport', () => {
         .join('')
     ).toBe('Hello world.')
     expect(readAgentProviderUsage('gemini-api', chunks.at(-1)!)).toEqual({ inputTokens: 10, outputTokens: 2, totalTokens: 15, cachedInputTokens: 4 })
+  })
+
+  it('retains signed replay on a delayed usage-only terminal frame only for matching canonical history', async () => {
+    const requests: Record<string, unknown>[] = []
+    const wire = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>()
+    const nativeParts = [{ text: 'Hello.', thoughtSignature: 'signed-answer' }]
+    const service = await provider((async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)))
+      if (requests.length > 1) return Response.json(reply())
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ candidates: reply(nativeParts).candidates })}\n\n`))
+            wire.resolve(controller)
+          }
+        }),
+        { headers: { 'content-type': 'text/event-stream' } }
+      )
+    }) as typeof fetch)
+    const response = await service.service.chat({ chatPrompt: [{ role: 'user', content: 'Hello.' }] }, { stream: true })
+    if (!(response instanceof ReadableStream)) throw new Error('Expected native stream')
+    const reader = response.getReader()
+    let terminal: AxChatResponse | undefined
+    try {
+      const first = await reader.read()
+      expect(first.value?.results[0]?.content).toBe('Hello.')
+      expect(first.value?.results[0]?.thoughtBlocks).toBeUndefined()
+      const controller = await wire.promise
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ candidates: [], usageMetadata })}\n\n`))
+      controller.close()
+      while (true) {
+        const item = await reader.read()
+        if (item.done) break
+        terminal = item.value
+      }
+    } finally {
+      await reader.cancel().catch(() => {})
+      reader.releaseLock()
+    }
+    if (!terminal) throw new Error('Expected terminal usage receipt')
+    expect(readAgentProviderUsage('gemini-api', terminal)).toEqual({ inputTokens: 10, outputTokens: 2, totalTokens: 15, cachedInputTokens: 4 })
+    const thoughtBlocks = terminal.results[0]?.thoughtBlocks
+    expect(thoughtBlocks).toEqual([{ data: 'wiki.gemini.generate-content.v1:' + JSON.stringify(nativeParts), encrypted: true }])
+    for (const content of ['Hello.', 'Changed answer.']) {
+      await buffered(
+        service.service.chat(
+          {
+            chatPrompt: [
+              { role: 'assistant', content, thoughtBlocks },
+              { role: 'user', content: 'Continue.' }
+            ],
+            functions: []
+          },
+          { stream: false }
+        )
+      )
+    }
+    expect(requests[1]).toHaveProperty('contents', [
+      { role: 'model', parts: nativeParts },
+      { role: 'user', parts: [{ text: 'Continue.' }] }
+    ])
+    expect(requests[2]).toHaveProperty('contents', [
+      { role: 'model', parts: [{ text: 'Changed answer.' }] },
+      { role: 'user', parts: [{ text: 'Continue.' }] }
+    ])
+    for (const request of requests.slice(1)) {
+      expect(request).not.toHaveProperty('tools')
+      expect(request).not.toHaveProperty('toolConfig')
+    }
+  })
+
+  it.each([false, true])('rejects thought-token receipts exceeding the native total with stream=%s', async stream => {
+    const payload = { ...reply(), usageMetadata: { ...usageMetadata, totalTokenCount: 12 } }
+    const service = await provider((async () =>
+      stream
+        ? new Response(`data: ${JSON.stringify(payload)}\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+        : Response.json(payload)) as typeof fetch)
+    await expect(consume(service.service.chat({ chatPrompt: [{ role: 'user', content: 'Hello.' }] }, { stream }))).rejects.toThrow()
   })
 
   it.each(['missing_finish', 'missing_usage', 'partial_json', 'malformed_json', 'invalid_usage', 'trailing_content'] as const)(

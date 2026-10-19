@@ -196,8 +196,8 @@ export const createWikiActionSessionProvider = (
     kernel,
     resolveAdmission,
     refreshAdmission: resolveAdmission,
-    validateObservation: (request, authority, actionName, output, signal) =>
-      validatePageEvidence(authority, request.knowledgeContext, actionName, output, signal),
+    validateObservation: (request, authority, actionName, output, signal, originalInput) =>
+      validatePageEvidence(authority, request.knowledgeContext, actionName, output, signal, originalInput),
     timeoutMilliseconds: 16 * 60_000
   })
 }

@@ -248,7 +248,9 @@ describe('Gemini independent media and input factory configuration', () => {
 
   it('dispatches an image model absent from the bundled catalog with its own credential and immutable pricing', async () => {
     const configured = { ...mediaConfig, model: 'gemini-nano-banana-2.1' }
-    await db('agentMediaProviderVersions').where({ id: mediaVersion }).update({ config: JSON.stringify(configured) })
+    await db('agentMediaProviderVersions')
+      .where({ id: mediaVersion })
+      .update({ config: JSON.stringify(configured) })
     await db('agentProviderProfiles').update({ status: 'disabled', conformed: false })
     const requests: { url: string; init: RequestInit }[] = []
     const factory = new AgentProviderFactory(
@@ -474,7 +476,14 @@ describe('Ax-backed Gemini media transport', () => {
   })
   it('generates private raster bytes through GenerateContent with measured usage and no tools', async () => {
     const { requests, transport } = setup(() =>
-      Response.json(generated([{ text: 'A blue sky' }, { inlineData: { mimeType: 'image/png', data: png.toString('base64') }, thoughtSignature: 'opaque' }]))
+      Response.json(
+        generated([
+          { text: 'A blue ' },
+          { text: 'private thought', thought: true, thoughtSignature: 'private-signature' },
+          { inlineData: { mimeType: 'image/png', data: png.toString('base64') }, thoughtSignature: 'opaque' },
+          { text: 'sky' }
+        ])
+      )
     )
     const result = await transport.generateImage({ prompt: 'Draw a sky' })
     expect(result).toEqual({ text: 'A blue sky', images: [{ bytes: png, mimeType: 'image/png' }], usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 } })
@@ -956,6 +965,36 @@ describe('Gemini Files API application integration', () => {
       await expect(transport.upload({ bytes: png, mimeType: 'image/png' })).rejects.toThrow()
       expect(requests.at(-1)?.init.method).toBe('DELETE')
     }
+  })
+
+  it.each(['count', 'upload'] as const)('sanitizes %s response-body failures and cleans known uploads', async operation => {
+    const { requests, transport } = setup((url, init) => {
+      if (init.method === 'DELETE') return new Response(null, { status: 204 })
+      if (operation === 'upload' && init.method !== 'GET') {
+        return url.includes('?') ? Response.json({ file: file('PROCESSING') }) : start()
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(new Error('test-key private attachment payload'))
+          }
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      )
+    })
+    const failure: unknown = await (operation === 'count'
+      ? transport.countTokens('gemini-3.8-flash', [{ type: 'text', text: 'Private input' }])
+      : transport.upload({ bytes: png, mimeType: 'image/png' })
+    ).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: 'AGENT_MEDIA_PROVIDER_FAILED', message: 'The media provider request failed' })
+    const exposed = `${String(failure)} ${JSON.stringify(failure)}`
+    expect(exposed).not.toContain('test-key')
+    expect(exposed).not.toContain('private attachment payload')
+    if (operation === 'upload') {
+      expect(requests.at(-1)?.init.method).toBe('DELETE')
+      expect(requests.at(-1)?.url).toBe(`${origin}/v1beta/files/abc123`)
+      expect(requests.at(-1)?.init.signal?.aborted).toBe(false)
+    } else expect(requests).toHaveLength(1)
   })
 
   it('cleans processing uploads on cancellation with a fresh signal', async () => {

@@ -59,6 +59,7 @@ import type {
   AgentEngineSink
 } from '../runtime.ts'
 import { WIKI_AGENT_SOUL } from '../soul.ts'
+import { type AgentSourceAuthorizer, withAgentSourceAuthorization } from '../source-authorization.ts'
 import { presentDomainObservation } from './action-observations.ts'
 import {
   type AgentCompactionPromptState,
@@ -137,6 +138,8 @@ import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verifi
 import { assessWikiContextReadiness, buildWikiContextReadinessRequest } from './wiki-context-readiness.ts'
 import { createWikiCoverageProgram, encodeWikiCoverageInput, type WikiCoverageResult, type WikiCoverageWireInput } from './wiki-coverage.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
+import type { AgentMediaInput } from './media-transport.ts'
+import type { GeminiMediaInputTransport } from './gemini-media.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -3525,6 +3528,7 @@ interface NativeDraft {
   readonly allRequestFacetsUnresolved: boolean
   readonly inputMediaSources?: readonly WikiSynthesisInputMedia[]
   readonly evidence: ReadonlyMap<string, CitationEvidence>
+  readonly authorizeSourceInputs: AgentSourceAuthorizer
   readonly readSources: ReadonlyMap<string, WikiVerificationSource>
   readonly readLiterals: ReadonlyMap<string, ReadLiteralSnapshot>
   readonly content: string
@@ -4033,6 +4037,26 @@ const wikiConversationContext = (conversation: readonly ChatPromptMessage[]): st
     return content.trim() ? [`${message.role}:\n${content}`] : []
   })
   return previousConversation.length > 0 ? previousConversation.join('\n\n') : undefined
+}
+
+const externalMcpSynthesisContext = (messages: readonly ChatPromptMessage[]): readonly ChatPromptMessage[] => {
+  const results = new Map(messages.flatMap(message => (message.role === 'function' ? [[message.functionId, message] as const] : [])))
+  const retainedCalls = new Set<string>()
+  const assistants = new Set<ChatPromptMessage>()
+  for (const message of messages) {
+    if (message.role !== 'assistant' || !message.functionCalls?.length) continue
+    // Signed provider state binds the whole assistant batch, not an MCP-only
+    // subset. Retain only complete exchanges and their already-delivered
+    // responses; never manufacture a response for an unfinished candidate.
+    if (
+      message.functionCalls.some(call => results.get(call.id)?.protocolResult?.protocol.kind === 'mcp') &&
+      message.functionCalls.every(call => results.has(call.id))
+    ) {
+      assistants.add(message)
+      for (const call of message.functionCalls) retainedCalls.add(call.id)
+    }
+  }
+  return messages.filter(message => assistants.has(message) || (message.role === 'function' && retainedCalls.has(message.functionId)))
 }
 
 const validateSpecialistNativeContinuation = (
@@ -5075,7 +5099,8 @@ const recentExcerptDisclosure = (citationIds: readonly string[], evidenceView: R
     ? '\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.'
     : ''
 const requestEvidenceDisclosure = (facets: readonly RootRequestFacet[] | undefined, unresolved: readonly number[], unestablishedCoverage: boolean): string => {
-  const coverageLimit = 'Coverage of the requested scope was not established for this answer; the cited findings do not establish that missing information is absent.'
+  const coverageLimit =
+    'Coverage of the requested scope was not established for this answer; the cited findings do not establish that missing information is absent.'
   const lines = unestablishedCoverage ? [coverageLimit] : []
   for (const index of unresolved) {
     const facet = facets?.[index]
@@ -5323,7 +5348,8 @@ export class AxAgentEngine implements AgentEngine {
     sink: AgentEngineSink,
     kind: AgentMediaKind,
     prompt?: string,
-    attachmentIds?: readonly string[]
+    attachmentIds?: readonly string[],
+    authorizeEvidence?: () => Promise<void>
   ): Promise<AgentEngineResult & { media: readonly AgentMediaView[]; count: number }> {
     request.signal.throwIfAborted()
     if (
@@ -5337,7 +5363,23 @@ export class AxAgentEngine implements AgentEngine {
     if (!versionId) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'No media provider is bound to this request', 403)
     if (!request.dispatchBudget) throw new AgentRepositoryError('MEDIA_BUDGET_REQUIRED', 'Media requires an admitted Agent run', 409)
     await this.#authorizeMedia(request)
-    const provider = await this.#factory.createMediaBinding(request.run.ownerId, kind, versionId)
+    const latest = request.messages.filter(message => message.role === 'user').at(-1)
+    const candidates = request.messages.flatMap(message => message.attachments ?? [])
+    const files =
+      attachmentIds === undefined
+        ? [...(latest?.attachments ?? [])]
+        : attachmentIds.map(id => {
+            const file = candidates.find(item => item.id === id)
+            if (!file) throw new AgentRepositoryError('AGENT_MEDIA_NOT_FOUND', 'The attachment is unavailable in this conversation', 404)
+            return file
+          })
+    const authorizeInputSources = async (): Promise<void> => {
+      await this.#authorizeMedia(request)
+      for (const file of files) await file.authorizePayload?.(request.signal)
+      await authorizeEvidence?.()
+      request.signal.throwIfAborted()
+    }
+    const provider = await withAgentSourceAuthorization(authorizeInputSources, () => this.#factory.createMediaBinding(request.run.ownerId, kind, versionId))
     if (kind !== 'transcription' && !sink.media) throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media artifact storage is unavailable', 403)
     const pricing = provider.config.pricing
     const tokenPricing =
@@ -5354,16 +5396,6 @@ export class AxAgentEngine implements AgentEngine {
         : kind === 'video'
           ? agentVideoCostMicros({ ...tokenPricing!, textOutputMicrosPerMillionTokens: pricing.textOutputMicrosPerMillionTokens! }, usage, breakdown)
           : agentProviderCostMicros(tokenPricing!, usage.inputTokens, usage.outputTokens, usage.totalTokens)
-    const latest = request.messages.filter(message => message.role === 'user').at(-1)
-    const candidates = request.messages.flatMap(message => message.attachments ?? [])
-    const files =
-      attachmentIds === undefined
-        ? [...(latest?.attachments ?? [])]
-        : attachmentIds.map(id => {
-            const file = candidates.find(item => item.id === id)
-            if (!file) throw new AgentRepositoryError('AGENT_MEDIA_NOT_FOUND', 'The attachment is unavailable in this conversation', 404)
-            return file
-          })
     if (
       files.length > 4 ||
       new Set(files.map(file => file.id)).size !== files.length ||
@@ -5378,6 +5410,7 @@ export class AxAgentEngine implements AgentEngine {
       await request.authorizeDispatch?.()
       // Lazy owned sources recheck permission, ownership, expiry and integrity at each transfer boundary.
       for (const file of files) await file.authorizePayload?.(request.signal)
+      await authorizeEvidence?.()
       request.signal.throwIfAborted()
     }
     const beforeDispatch = async (exposure: AgentTokenUsage): Promise<void> => {
@@ -5404,27 +5437,30 @@ export class AxAgentEngine implements AgentEngine {
       reservation = admitted
       await authorize()
     }
-    const inputs = []
+    const inputs: AgentMediaInput[] = []
     for (const file of files) {
       await file.authorizePayload?.(request.signal)
       inputs.push({ bytes: await loadAgentMediaPayload(file, request.signal), mimeType: file.mimeType, displayName: file.filename.slice(0, 128) })
     }
     let result
     try {
-      result = await provider.transport.generate(
-        {
-          ...(kind === 'transcription' ? {} : { prompt: prompt ?? latest?.content ?? '' }),
-          files: inputs,
-          maxInputTokens: provider.config.maxInputTokens,
-          maxOutputTokens: provider.config.maxOutputTokens,
-          beforeUpload: authorize,
-          beforeDispatch,
-          onDispatch: () => {
-            if (!reservation || dispatched) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Media dispatch was not admitted', 500)
-            dispatched = true
-          }
-        },
-        request.signal
+      if (authorizeEvidence !== undefined) await authorize()
+      result = await withAgentSourceAuthorization(authorizeInputSources, () =>
+        provider.transport.generate(
+          {
+            ...(kind === 'transcription' ? {} : { prompt: prompt ?? latest?.content ?? '' }),
+            files: inputs,
+            maxInputTokens: provider.config.maxInputTokens,
+            maxOutputTokens: provider.config.maxOutputTokens,
+            beforeUpload: authorize,
+            beforeDispatch,
+            onDispatch: () => {
+              if (!reservation || dispatched) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Media dispatch was not admitted', 500)
+              dispatched = true
+            }
+          },
+          request.signal
+        )
       )
     } catch (error) {
       // Paid failures retain conservative unsettled exposure; only proven pre-dispatch failures release it.
@@ -5463,8 +5499,14 @@ export class AxAgentEngine implements AgentEngine {
     chatPrompt: AxChatRequest['chatPrompt'],
     llm: AgentProviderService,
     textBytes: number,
-    maxOutputTokens: number
-  ): Promise<{ chatPrompt: AxChatRequest['chatPrompt']; mediaTokens: number | null; cleanup: () => Promise<void> }> {
+    maxOutputTokens: number,
+    authorizeEvidence?: () => Promise<void>
+  ): Promise<{
+    chatPrompt: AxChatRequest['chatPrompt']
+    mediaTokens: number | null
+    cleanup: () => Promise<void>
+    authorizeSourceInputs: AgentSourceAuthorizer | undefined
+  }> {
     for (const message of chatPrompt) {
       if (message.role !== 'user' || typeof message.content === 'string') continue
       for (const part of message.content) {
@@ -5478,17 +5520,17 @@ export class AxAgentEngine implements AgentEngine {
     const references = chatPrompt.flatMap(message =>
       message.role === 'user' && Array.isArray(message.content) ? message.content.filter(part => part.type === 'file') : []
     )
-    if (!references.length) return { chatPrompt, mediaTokens: null, cleanup: async () => {} }
+    if (!references.length) return { chatPrompt, mediaTokens: null, cleanup: async () => {}, authorizeSourceInputs: authorizeEvidence }
     await this.#authorizeMedia(request)
-    const nativeInput = llm.transportKind === 'gemini-api' ? await this.#factory.createMediaInput(request.run.providerProfileVersionId) : undefined
     type Attachment = NonNullable<(typeof request.messages)[number]['attachments']>[number]
     type PreparedPdf = Awaited<ReturnType<typeof prepareAgentPdf>>
     type ExpandedPart = { type: 'text'; text: string } | { type: 'file'; fileUri: string; mimeType: string; filename: string }
     const sources = new Map<string, { file: Attachment; pdf?: PreparedPdf; bytes?: Buffer }>()
     const expanded = new Map<string, ExpandedPart[]>()
     const uploaded: { name: string; uri: string }[] = []
+    let nativeTransport: GeminiMediaInputTransport | undefined
     const cleanup = async (): Promise<void> => {
-      await Promise.allSettled(uploaded.map(file => nativeInput!.transport.delete(file.name, AbortSignal.timeout(5_000))))
+      await Promise.allSettled(uploaded.map(file => nativeTransport!.delete(file.name, AbortSignal.timeout(5_000))))
     }
     try {
       // Validate and prepare the complete prompt before sending any document to Google.
@@ -5503,7 +5545,7 @@ export class AxAgentEngine implements AgentEngine {
         const file = request.messages.flatMap(message => message.attachments ?? []).find(item => item.id === id)
         if (!file || file.mimeType !== reference.mimeType) throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'Attachment is unavailable', 400)
         assertAgentMediaInput(file.mimeType, file.byteLength, llm.mediaInputs, llm.transportKind, llm.nativeMediaCapabilities)
-        if (!nativeInput) {
+        if (llm.transportKind !== 'gemini-api') {
           inlineDataBytes = safeUsageAddition(inlineDataBytes, 4 * Math.ceil(file.byteLength / 3), 'Inline serialized media bytes')
           if (inlineDataBytes + textBytes + maxOutputTokens > llm.capabilities.maxContextTokens)
             throw new AgentRepositoryError(
@@ -5540,6 +5582,18 @@ export class AxAgentEngine implements AgentEngine {
         if (expandedBlocks > 32)
           throw new AgentRepositoryError('AGENT_MEDIA_PART_LIMIT', 'The attachments require too many document parts. Use fewer files in this request.', 413)
       }
+      const payloadFiles = Object.freeze(Array.from(sources.values(), source => source.file))
+      const authorizeSourceInputs = async (): Promise<void> => {
+        await this.#authorizeMedia(request)
+        for (const file of payloadFiles) await file.authorizePayload?.(request.signal)
+        await authorizeEvidence?.()
+        request.signal.throwIfAborted()
+      }
+      const nativeInput =
+        llm.transportKind === 'gemini-api'
+          ? await withAgentSourceAuthorization(authorizeSourceInputs, () => this.#factory.createMediaInput(request.run.providerProfileVersionId))
+          : undefined
+      nativeTransport = nativeInput?.transport
       if (!nativeInput) {
         const inline = new Map<string, UserMediaPart[]>()
         let mediaBytes = 0
@@ -5597,10 +5651,17 @@ export class AxAgentEngine implements AgentEngine {
           // OpenAI Responses/Anthropic have official counting endpoints, but this profile path does not use them.
           // Keep the serialized-size guard and full-window reservation; null never claims measured token usage.
           mediaTokens: null,
+          authorizeSourceInputs,
           cleanup
         }
       }
       for (const [reference, source] of sources) {
+        const authorizeFileSource = async (): Promise<void> => {
+          await this.#authorizeMedia(request)
+          await source.file.authorizePayload?.(request.signal)
+          await authorizeEvidence?.()
+          request.signal.throwIfAborted()
+        }
         const parts: ExpandedPart[] = []
         if (source.pdf) {
           const split = source.pdf.parts.length > 1
@@ -5610,7 +5671,9 @@ export class AxAgentEngine implements AgentEngine {
             await source.file.authorizePayload?.(request.signal)
             assertAgentMediaInput('application/pdf', bytes.length, llm.mediaInputs, llm.transportKind, llm.nativeMediaCapabilities)
             const filename = split ? `${source.file.filename} (part ${index + 1})` : source.file.filename
-            const remote = await nativeInput.transport.upload({ bytes, mimeType: 'application/pdf', displayName: filename.slice(0, 128) }, request.signal)
+            const remote = await withAgentSourceAuthorization(authorizeFileSource, () =>
+              nativeInput.transport.upload({ bytes, mimeType: 'application/pdf', displayName: filename.slice(0, 128) }, request.signal)
+            )
             uploaded.push(remote)
             if (split)
               parts.push({
@@ -5622,13 +5685,15 @@ export class AxAgentEngine implements AgentEngine {
         } else {
           await this.#authorizeMedia(request)
           await source.file.authorizePayload?.(request.signal)
-          const remote = await nativeInput.transport.upload(
-            {
-              bytes: source.bytes ?? (await loadAgentMediaPayload(source.file, request.signal)),
-              mimeType: source.file.mimeType,
-              displayName: source.file.filename.slice(0, 128)
-            },
-            request.signal
+          const remote = await withAgentSourceAuthorization(authorizeFileSource, async () =>
+            nativeInput.transport.upload(
+              {
+                bytes: source.bytes ?? (await loadAgentMediaPayload(source.file, request.signal)),
+                mimeType: source.file.mimeType,
+                displayName: source.file.filename.slice(0, 128)
+              },
+              request.signal
+            )
           )
           uploaded.push(remote)
           parts.push({ type: 'file', fileUri: remote.uri, mimeType: source.file.mimeType, filename: source.file.filename })
@@ -5658,7 +5723,11 @@ export class AxAgentEngine implements AgentEngine {
       await this.#authorizeMedia(request)
       for (const source of sources.values()) await source.file.authorizePayload?.(request.signal)
       await request.authorizeDispatch?.()
-      const mediaTokens = await nativeInput.transport.countTokens(llm.model, contents, request.signal)
+      await authorizeEvidence?.()
+      request.signal.throwIfAborted()
+      const mediaTokens = await withAgentSourceAuthorization(authorizeSourceInputs, () =>
+        nativeInput.transport.countTokens(llm.model, contents, request.signal)
+      )
       if (mediaTokens + textBytes + maxOutputTokens > llm.capabilities.maxContextTokens)
         throw Object.assign(
           new AgentRepositoryError(
@@ -5695,8 +5764,17 @@ export class AxAgentEngine implements AgentEngine {
           await this.#authorizeMedia(request)
           await source.file.authorizePayload?.(request.signal)
           await request.authorizeDispatch?.()
+          await authorizeEvidence?.()
           request.signal.throwIfAborted()
-          const sourceTokens = await nativeInput.transport.countTokens(llm.model, sourceContents, request.signal)
+          const sourceTokens = await withAgentSourceAuthorization(
+            async () => {
+              await this.#authorizeMedia(request)
+              await source.file.authorizePayload?.(request.signal)
+              await authorizeEvidence?.()
+              request.signal.throwIfAborted()
+            },
+            () => nativeInput.transport.countTokens(llm.model, sourceContents, request.signal)
+          )
           this.#measuredMediaPromptTokens.set(source.file.id, sourceTokens)
           try {
             await source.file.recordPromptTokens?.(sourceTokens)
@@ -5727,6 +5805,7 @@ export class AxAgentEngine implements AgentEngine {
               }
         ),
         mediaTokens,
+        authorizeSourceInputs,
         cleanup
       }
     } catch (error) {
@@ -5817,8 +5896,8 @@ export class AxAgentEngine implements AgentEngine {
             : {}),
           ...(base.validateObservation
             ? {
-                validateObservation: (actionName: AgentActionName, output: unknown, signal: AbortSignal) =>
-                  base.validateObservation!(actionName, output, signal)
+                validateObservation: (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) =>
+                  base.validateObservation!(actionName, output, signal, originalInput)
               }
             : {}),
           snapshot: signal => base.snapshot(signal),
@@ -6119,7 +6198,13 @@ export class AxAgentEngine implements AgentEngine {
     if (synthesisNames !== undefined && [...synthesisNames.keys()].some(name => name !== '__axOutput'))
       throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Synthesis cannot offer application tools', 500)
     const observeFinishReason = (finishReason: AxChatResponseResult['finishReason']): void => {
-      if (finishReason === undefined || accumulator.finishReason === 'error' || (accumulator.finishReason === 'length' && finishReason !== 'error')) return
+      if (
+        finishReason === undefined ||
+        accumulator.finishReason === 'error' ||
+        (accumulator.finishReason === 'content_filter' && finishReason !== 'error') ||
+        (accumulator.finishReason === 'length' && finishReason !== 'error' && finishReason !== 'content_filter')
+      )
+        return
       accumulator.finishReason = finishReason
     }
     const accept = async (response: AxChatResponse): Promise<void> => {
@@ -6168,9 +6253,14 @@ export class AxAgentEngine implements AgentEngine {
     const serializationStartedAt = performance.now()
     const preliminaryExposure = providerExposureFor(provider, tools, chatPrompt, maxOutputTokens, synthesis?.request)
     const serializationMs = performance.now() - serializationStartedAt
-    let preparedMedia: { chatPrompt: AxChatRequest['chatPrompt']; mediaTokens: number | null; cleanup: () => Promise<void> }
+    let preparedMedia: {
+      chatPrompt: AxChatRequest['chatPrompt']
+      mediaTokens: number | null
+      cleanup: () => Promise<void>
+      authorizeSourceInputs: AgentSourceAuthorizer | undefined
+    }
     try {
-      preparedMedia = await this.#prepareMediaPrompt(request, chatPrompt, provider, preliminaryExposure.serializedRequestBytes, maxOutputTokens)
+      preparedMedia = await this.#prepareMediaPrompt(request, chatPrompt, provider, preliminaryExposure.serializedRequestBytes, maxOutputTokens, authorizeEvidence)
     } catch (error) {
       throw classifyAgentExecutionFailure(error, 'setup')
     }
@@ -6224,6 +6314,7 @@ export class AxAgentEngine implements AgentEngine {
     let streamReleaseFailed = false
     let reservationReconciled = false
     let reservationReconcileAttempted = false
+    let reservationReleaseAttempted = false
     const dispatchAbortController = new AbortController()
     const dispatchSignal = AbortSignal.any([request.signal, dispatchAbortController.signal])
     const reconcileReservation = async (actual: AgentTokenUsage & { readonly costMicros: number }): Promise<void> => {
@@ -6237,6 +6328,23 @@ export class AxAgentEngine implements AgentEngine {
     let firstChunkAt: number | null = null
     let providerEndedAt = 0
     let providerDispatched = false
+    const releaseUndispatchedReservation = async (): Promise<void> => {
+      if (
+        providerDispatched ||
+        !dispatchReservation ||
+        !dispatchBudget ||
+        reservationReconciled ||
+        reservationReconcileAttempted ||
+        reservationReleaseAttempted
+      )
+        return
+      reservationReleaseAttempted = true
+      try {
+        await dispatchBudget.release(dispatchReservation)
+      } catch (error) {
+        throw classifyAgentExecutionFailure(error, 'usage_reconciliation')
+      }
+    }
     try {
       const providerRequest = providerRequestFor(provider, tools, preparedMedia.chatPrompt, maxOutputTokens, limits, synthesis?.request)
       request.signal.throwIfAborted()
@@ -6254,43 +6362,52 @@ export class AxAgentEngine implements AgentEngine {
         }
       }
       assertCompactionContextFresh(request)
-      await authorizeEvidence?.()
       await request.authorizeDispatch?.()
+      await authorizeEvidence?.()
       assertCompactionContextFresh(request)
       request.signal.throwIfAborted()
-      providerDispatched = true
       dispatchedAt = performance.now()
-      response = await provider.service.chat(providerRequest, {
-        ...wikiProviderCacheOptions(provider, request, cachePhase),
-        // Preserve native run hooks without allowing AxGen to override host
-        // dispatch admission, transport, retries, or publication ownership.
-        ...(generationOptions === undefined
-          ? {}
-          : {
-              rateLimiter: generationOptions.rateLimiter,
-              tracer: generationOptions.tracer,
-              meter: generationOptions.meter,
-              customLabels: generationOptions.customLabels,
-              traceContext: generationOptions.traceContext,
-              usageContext: generationOptions.usageContext,
-              [axRuntimeHookFrame]: axGetRuntimeHookFrame(generationOptions)
-            }),
-        debug: false,
-        verbose: false,
-        excludeContentFromTrace: true,
-        includeRequestBodyInErrors: false,
-        stream: streamResponse && provider.capabilities.streaming,
-        abortSignal: dispatchSignal,
-        functionCallMode: 'native',
-        retry: { maxRetries: 0 }
-      })
+      response = await withAgentSourceAuthorization(preparedMedia.authorizeSourceInputs, () =>
+        provider.service.chat(providerRequest, {
+          ...wikiProviderCacheOptions(provider, request, cachePhase),
+          // Preserve native run hooks without allowing AxGen to override host
+          // dispatch admission, transport, retries, or publication ownership.
+          ...(generationOptions === undefined
+            ? {}
+            : {
+                rateLimiter: generationOptions.rateLimiter,
+                tracer: generationOptions.tracer,
+                meter: generationOptions.meter,
+                customLabels: generationOptions.customLabels,
+                traceContext: generationOptions.traceContext,
+                usageContext: generationOptions.usageContext,
+                [axRuntimeHookFrame]: axGetRuntimeHookFrame(generationOptions)
+              }),
+          debug: false,
+          verbose: false,
+          excludeContentFromTrace: true,
+          includeRequestBodyInErrors: false,
+          stream: streamResponse && provider.capabilities.streaming,
+          abortSignal: dispatchSignal,
+          functionCallMode: 'native',
+          onRequestDispatched: () => {
+            providerDispatched = true
+          },
+          retry: { maxRetries: 0 }
+        })
+      )
     } catch (error) {
-      await preparedMedia.cleanup()
-      if (!providerDispatched && dispatchReservation && dispatchBudget) await dispatchBudget.release(dispatchReservation)
+      if (!providerDispatched) dispatchAbortController.abort(error)
+      try {
+        await releaseUndispatchedReservation()
+      } finally {
+        await preparedMedia.cleanup().catch(() => {})
+      }
       throw classifyAgentExecutionFailure(error, 'provider_request')
     }
     let failureStage: AgentExecutionFailureStage = 'provider_response'
     let estimatedUsage = false
+    let responseFailed = false
     try {
       if (response instanceof ReadableStream) {
         const reader = (response as ReadableStream<AxChatResponse>).getReader()
@@ -6300,7 +6417,7 @@ export class AxAgentEngine implements AgentEngine {
         let cancelAttempted = false
         try {
           while (true) {
-            const item = await reader.read().catch(error => {
+            const item = await withAgentSourceAuthorization(preparedMedia.authorizeSourceInputs, () => reader.read()).catch(error => {
               throw classifyAgentExecutionFailure(error, 'provider_stream')
             })
             if (item.done) {
@@ -6356,6 +6473,8 @@ export class AxAgentEngine implements AgentEngine {
         // dispatched reservation outstanding; runtime settles its exposure
         // separately from measured usage, including after a bounded repair.
         if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated synthesis with an error')
+        if (accumulator.finishReason === 'content_filter') invalidProviderResponse('Provider filtered its synthesis response')
+        await releaseUndispatchedReservation()
         return {
           content: '',
           calls: [],
@@ -6449,10 +6568,11 @@ export class AxAgentEngine implements AgentEngine {
         await reconcileReservation({ inputTokens, outputTokens, totalTokens, costMicros })
         failureStage = 'provider_response'
       }
-      // The host buffers streams before AxGen.forward; Ax's non-streaming parser
-      // does not reject error terminals. Retain the EOF receipt, but never turn
+      // The host buffers streams before AxGen.forward; its parser does not
+      // reject every failed terminal. Retain the EOF receipt, but never turn
       // failed provider work into an answer, action, or validation replay.
       if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated its response with an error')
+      if (accumulator.finishReason === 'content_filter') invalidProviderResponse('Provider filtered its response')
       const settledAt = performance.now()
       return {
         content: deniedToolCall ? '' : content,
@@ -6484,6 +6604,9 @@ export class AxAgentEngine implements AgentEngine {
         ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason })
       }
     } catch (error) {
+      responseFailed = true
+      if (!providerDispatched) dispatchAbortController.abort(error)
+      await releaseUndispatchedReservation()
       const originalFailureStage = failureStage
       const settlementUsage = responseAccepted ? completeUsage : undefined
       if (dispatchReservation && dispatchBudget && !reservationReconciled && !reservationReconcileAttempted && settlementUsage !== undefined) {
@@ -6497,7 +6620,8 @@ export class AxAgentEngine implements AgentEngine {
       if (error instanceof AgentExecutionFailure) throw error
       throw classifyAgentExecutionFailure(error, originalFailureStage)
     } finally {
-      await preparedMedia.cleanup()
+      if (responseFailed) await preparedMedia.cleanup().catch(() => {})
+      else await preparedMedia.cleanup()
     }
   }
 
@@ -6510,6 +6634,7 @@ export class AxAgentEngine implements AgentEngine {
     input: {
       readonly userRequest: string
       readonly conversation: readonly ChatPromptMessage[]
+      readonly externalContext: readonly ChatPromptMessage[]
       readonly sourceIndexes: readonly number[]
       readonly requestFacets: readonly string[]
       readonly observations: readonly string[]
@@ -6631,6 +6756,7 @@ export class AxAgentEngine implements AgentEngine {
           allRequestFacetsUnresolved: input.requestFacets.length > 0 && answer.unresolvedFacets.length === input.requestFacets.length,
           inputMediaSources,
           evidence: sourceEvidence,
+          authorizeSourceInputs: input.authorizeEvidence,
           readSources,
           readLiterals,
           content,
@@ -6677,6 +6803,10 @@ export class AxAgentEngine implements AgentEngine {
               }
             : message
         )
+        // Complete native exchanges retain signed assistant batches, current
+        // internal response projections and raw attributed MCP results/media.
+        // This transcript grants neither Wiki evidence nor trusted action status.
+        generatedPrompt.push(...input.externalContext)
         if (inputMediaSources.length > 0)
           generatedPrompt.push({
             role: 'user',
@@ -6733,7 +6863,7 @@ export class AxAgentEngine implements AgentEngine {
             await input.authorizeEvidence()
             assertCompactionContextFresh(request)
             request.signal.throwIfAborted()
-            nativeInputTokens = await provider.countContextTokens(countRequest, request.signal)
+            nativeInputTokens = await withAgentSourceAuthorization(input.authorizeEvidence, () => provider.countContextTokens!(countRequest, request.signal))
             request.signal.throwIfAborted()
             if (!Number.isSafeInteger(nativeInputTokens) || nativeInputTokens < 0)
               throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid native context token count', 502)
@@ -6744,7 +6874,7 @@ export class AxAgentEngine implements AgentEngine {
         const contextOutputAllowance = provider.capabilities.maxContextTokens - contextInputTokens
         let planningExposure = providerExposureFor(provider, null, generatedPrompt, maxOutputTokens, generationRequest)
         const measuredMedia = measuredPromptMediaTokens(generatedPrompt, this.#measuredMediaPromptTokens)
-        if (inputMediaSources.length > 0 && !measuredMedia.unmeasured) {
+        if (inputMediaSources.length > 0 && !measuredMedia.unmeasured && !planningExposure.unmeasuredExternalMedia) {
           const inputExposureTokens = safeUsageAddition(serializedBytes, measuredMedia.total, 'Typed media input exposure')
           planningExposure = {
             ...planningExposure,
@@ -6968,9 +7098,11 @@ export class AxAgentEngine implements AgentEngine {
           await authorizeEvidence()
           assertCompactionContextFresh(request)
           request.signal.throwIfAborted()
-          contextTokens = await provider.countContextTokens(
-            providerRequestFor(provider, null, generation.chatPrompt, maxOutputTokens, undefined, generationRequest),
-            request.signal
+          contextTokens = await withAgentSourceAuthorization(authorizeEvidence, () =>
+            provider.countContextTokens!(
+              providerRequestFor(provider, null, generation.chatPrompt, maxOutputTokens, undefined, generationRequest),
+              request.signal
+            )
           )
           if (!Number.isSafeInteger(contextTokens) || contextTokens < 0)
             throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid coverage context count', 502)
@@ -7165,6 +7297,20 @@ export class AxAgentEngine implements AgentEngine {
       const trackedEvidenceMessages = new WeakMap<object, PromptEvidencePayload>()
       const trackedAttributedMessages = new WeakMap<object, readonly string[]>()
       const trackedBrowserMessages = new WeakMap<object, BrowserAttribution>()
+      const trackedInternalResponses = new WeakMap<
+        object,
+        {
+          readonly actionName: AgentActionName
+          readonly input: unknown
+          readonly output: unknown
+          readonly callId: string
+          readonly providerName: string
+        }
+      >()
+      const trackedAssistantSourceInputs = new WeakMap<object, readonly ChatPromptMessage[]>()
+      const unavailableInternalResponses = new WeakSet<object>()
+      const sourceIndependentControlResponses = new WeakSet<object>()
+      const trackedOperationReceipts = new WeakSet<object>()
       const trackedApplicationReceipts = new Map<object, unknown>()
       const authorizedApplicationReceipts = new WeakSet<object>()
       const retainedProposalDecisionLines = new Set<string>()
@@ -7186,6 +7332,15 @@ export class AxAgentEngine implements AgentEngine {
         providerName: string,
         actionCallId: string
       ): void => {
+        const capability = ACTION_CATALOG[actionName].capability
+        // These are strict presenter-produced operation acknowledgements, not
+        // page snapshots. Any Wiki-derived inputs remain tracked separately.
+        if (
+          capability.providerPresentationFamily === 'wiki.proposal' &&
+          capability.outputKinds.includes('operation-receipt') &&
+          (trackedAttributedMessages.get(message)?.length ?? 0) > 0
+        )
+          trackedOperationReceipts.add(message)
         const status = asRecord(output)?.status
         if (actionName.startsWith('pages.prepare') && (status === 'denied' || status === 'expired' || status === 'cancelled')) {
           for (const line of trackedAttributedMessages.get(message) ?? []) retainedProposalDecisionLines.add(line)
@@ -7218,10 +7373,11 @@ export class AxAgentEngine implements AgentEngine {
         role: 'user',
         content: '<wiki-evidence-context>{"status":"unavailable"}</wiki-evidence-context>\nPreviously read page evidence is unavailable.'
       })
-      const unavailableActionResult = (mode: ProviderTools['mode'], callId: string, providerName: string): ChatPromptMessage =>
-        mode === 'native'
-          ? { role: 'function', functionId: callId, result: JSON.stringify(genericUnavailableResult) }
-          : { role: 'user', content: promptToolResultMessage(callId, providerName, genericUnavailableResult) }
+      const unavailableActionResult = (mode: ProviderTools['mode'], callId: string, providerName: string): ChatPromptMessage => {
+        const message = providerResultChatMessage(mode, callId, providerName, genericUnavailableResult)
+        unavailableInternalResponses.add(message)
+        return message
+      }
       const rememberEvidenceMessage = (
         message: ChatPromptMessage,
         callId: string,
@@ -7298,14 +7454,6 @@ export class AxAgentEngine implements AgentEngine {
         }
         request.signal.throwIfAborted()
       }
-      const requireFreshPromptEvidence = async (chatPrompt: readonly ChatPromptMessage[]): Promise<void> => {
-        await requireFreshApplicationReceipts()
-        await requireFreshReceipts(
-          promptEvidencePayloadsInRequest(chatPrompt, trackedEvidenceMessages).flatMap(
-            payload => payload.receipts ?? [{ actionCallId: payload.actionCallId, actionName: payload.actionName, sourceOutput: payload.sourceOutput }]
-          )
-        )
-      }
       const requireFreshRegisteredEvidence = (evidenceView: ReadonlyMap<string, CitationEvidence>): Promise<void> =>
         requireFreshReceipts(
           [...evidenceView.values()].flatMap(evidence => evidence.readReceipts.map(receipt => ({ ...receipt, sourceOutput: evidence.sourceOutput })))
@@ -7367,6 +7515,17 @@ export class AxAgentEngine implements AgentEngine {
           )
         }
         const recoveredResultMessage = activePrompt.at(-1)
+        if (recoveredResultMessage !== undefined) {
+          if (recoveredIsPageRead && !recoveredPageEvidenceAvailable) unavailableInternalResponses.add(recoveredResultMessage)
+          else
+            trackedInternalResponses.set(recoveredResultMessage, {
+              actionName: recoveredAction.actionName,
+              input: recoveredAction.actionInput,
+              output: recoveredAction.output,
+              callId: recoveredAction.actionCallId,
+              providerName
+            })
+        }
         const recoveredStatus = trustedActionStatusLines(recoveredOutput)
         if (recoveredResultMessage !== undefined && recoveredStatus.length > 0) {
           trackedAttributedMessages.set(recoveredResultMessage, recoveredStatus)
@@ -7461,6 +7620,19 @@ export class AxAgentEngine implements AgentEngine {
         }
         return invalidEvidenceIds
       }
+      const requireFreshWikiVerificationEvidence = async (evidenceView: ReadonlyMap<string, CitationEvidence>): Promise<void> => {
+        request.signal.throwIfAborted()
+        const validations: EvidenceValidationCache = new Map()
+        for (const evidence of evidenceView.values()) {
+          for (const representation of evidence.representations) {
+            for (const receipt of representation.readReceipts) {
+              if (!(await validateReceipt(validations, receipt.actionCallId, receipt.actionName, representation.sourceOutput)))
+                throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki verification evidence changed or is no longer authorized', 409)
+            }
+          }
+        }
+        request.signal.throwIfAborted()
+      }
       const requireLiveWikiVerification = async (evidenceView: ReadonlyMap<string, CitationEvidence>): Promise<void> => {
         request.signal.throwIfAborted()
         await request.authorizeDispatch?.()
@@ -7470,21 +7642,13 @@ export class AxAgentEngine implements AgentEngine {
         const current = await this.#decisionProviders.selectRuntime(runtime.id)
         if (current.id !== runtime.id || current.revision !== runtime.revision || canonicalJson(current.config) !== canonicalJson(runtime.config))
           throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Wiki verification provider changed from its pinned revision', 503)
-        // Revalidate original read receipts at each publication boundary.
-        const validations: EvidenceValidationCache = new Map()
-        if (typeof validateObservation === 'function') {
-          for (const evidence of evidenceView.values()) {
-            for (const representation of evidence.representations) {
-              for (const receipt of representation.readReceipts) {
-                if (!(await validateReceipt(validations, receipt.actionCallId, receipt.actionName, representation.sourceOutput)))
-                  throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki verification evidence changed or is no longer authorized', 409)
-              }
-            }
-          }
-        }
-        request.signal.throwIfAborted()
+        await requireFreshWikiVerificationEvidence(evidenceView)
       }
-      const createWikiDecision = (verificationEvidence: ReadonlyMap<string, CitationEvidence>, physicalReadIds: WeakMap<ParsedSourceDocument, string>) => {
+      const createWikiDecision = (
+        verificationEvidence: ReadonlyMap<string, CitationEvidence>,
+        physicalReadIds: WeakMap<ParsedSourceDocument, string>,
+        authorizeSourceInputs?: AgentSourceAuthorizer
+      ) => {
         const decisionProviders = this.#decisionProviders
         const runtime = verificationProvider
         if (!decisionProviders || !runtime)
@@ -7521,6 +7685,7 @@ export class AxAgentEngine implements AgentEngine {
           }
           // Every paid phase retains fresh authorization, pinned revision,
           // conservative exposure and settlement before the next phase.
+          await authorizeSourceInputs?.()
           await requireLiveWikiVerification(outgoingEvidence)
           // Readiness is optional: keep the existing publication hold intact and
           // reserve only this additional native exposure from the parent budget.
@@ -7543,48 +7708,45 @@ export class AxAgentEngine implements AgentEngine {
             if (phase === 'context_readiness') return null
             throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Wiki verification exposure was not reserved', 503)
           }
+          const authorizeOutgoingEvidence = async (): Promise<void> => {
+            await authorizeSourceInputs?.()
+            await requireFreshWikiVerificationEvidence(outgoingEvidence)
+            assertCompactionContextFresh(request)
+            request.signal.throwIfAborted()
+          }
           let verified: DecisionBatchResult | undefined
           let failure: unknown
           let sourceFenceRejected = false
           let sourceFenceFailure: unknown
-          let nativeDispatchAuthorized = false
+          let nativeDispatched = false
           try {
-            verified = await decisionProviders.decideBatch(nativeRequest, {
-              providerId: runtime.id,
-              providerRevision: runtime.revision,
-              signal: request.signal,
-              onPreDispatch: async () => {
-                try {
-                  await requireLiveWikiVerification(outgoingEvidence)
-                  assertCompactionContextFresh(request)
-                  request.signal.throwIfAborted()
-                  nativeDispatchAuthorized = true
-                } catch (error) {
-                  sourceFenceRejected = true
-                  sourceFenceFailure = error
-                  throw error
+            verified = await withAgentSourceAuthorization(authorizeOutgoingEvidence, () =>
+              decisionProviders.decideBatch(nativeRequest, {
+                providerId: runtime.id,
+                providerRevision: runtime.revision,
+                signal: request.signal,
+                onPreDispatch: async () => {
+                  try {
+                    await requireLiveWikiVerification(outgoingEvidence)
+                    assertCompactionContextFresh(request)
+                    request.signal.throwIfAborted()
+                  } catch (error) {
+                    sourceFenceRejected = true
+                    sourceFenceFailure = error
+                    throw error
+                  }
+                },
+                onRequestDispatched: () => {
+                  nativeDispatched = true
                 }
-              }
-            })
+              })
+            )
           } catch (error) {
-            failure = sourceFenceRejected && !nativeDispatchAuthorized ? (sourceFenceFailure ?? error) : error
+            failure = sourceFenceRejected && !nativeDispatched ? (sourceFenceFailure ?? error) : error
           }
-          const predispatchFailure =
-            !nativeDispatchAuthorized &&
-            (sourceFenceRejected ||
-              (failure instanceof AgentRepositoryError &&
-                !(failure instanceof DecisionProviderFailure) &&
-                [
-                  'DECISION_PROVIDER_UNAVAILABLE',
-                  'DECISION_PROVIDER_NOT_FOUND',
-                  'DECISION_PROVIDER_CORRUPT',
-                  'DECISION_CREDENTIAL_UNAVAILABLE',
-                  'DECISION_PROVIDER_REVISION_CHANGED',
-                  'DECISION_BATCH_UNSUPPORTED',
-                  'DECISION_PRE_DISPATCH_REJECTED',
-                  'DECISION_ABORTED',
-                  'DECISION_TIMEOUT'
-                ].includes(failure.code)))
+          // Only the actual HTTP entry creates paid uncertainty; a later denial
+          // cannot erase an earlier dispatch in this invocation.
+          const predispatchFailure = failure !== undefined && !nativeDispatched
           const failed = failure instanceof DecisionProviderFailure ? failure : undefined
           const parsedUsage = DecisionUsageSchema.safeParse(predispatchFailure ? null : (verified?.usage ?? failed?.usage))
           const usage = parsedUsage.success ? parsedUsage.data : null
@@ -7653,7 +7815,7 @@ export class AxAgentEngine implements AgentEngine {
             phase === 'context_readiness' &&
             failed?.code === 'INVALID_DECISION_RESPONSE' &&
             failure === failed &&
-            nativeDispatchAuthorized &&
+            nativeDispatched &&
             !sourceFenceRejected &&
             usage !== null &&
             knownCost !== null &&
@@ -7749,7 +7911,7 @@ export class AxAgentEngine implements AgentEngine {
         }
         const plan = prepareVerification(draft)
         await requireLiveWikiVerification(verificationEvidence)
-        const nativeDecision = createWikiDecision(verificationEvidence, physicalReadIds)
+        const nativeDecision = createWikiDecision(verificationEvidence, physicalReadIds, draft.authorizeSourceInputs)
         const decide: WikiVerificationContext['decide'] = async (...args) => {
           const result = await nativeDecision(...args)
           if (result === null) throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Required Wiki verification was not dispatched', 503)
@@ -7993,6 +8155,9 @@ export class AxAgentEngine implements AgentEngine {
           trackedApplicationReceipts.delete(message)
           trackedApplicationReceipts.set(redacted.message, redacted.receipt)
           trackedAttributedMessages.set(redacted.message, redacted.lines)
+          if (trackedOperationReceipts.has(message)) trackedOperationReceipts.add(redacted.message)
+          const sources = trackedAssistantSourceInputs.get(message)
+          if (sources !== undefined) trackedAssistantSourceInputs.set(redacted.message, sources)
           invalidated = true
         }
         for (const messages of request.specialist ? [conversation, activePrompt] : [activePrompt]) {
@@ -8009,12 +8174,150 @@ export class AxAgentEngine implements AgentEngine {
             if (valid) continue
             if (request.specialist)
               throw new AgentRepositoryError('AGENT_SPECIALIST_CONTINUATION_INVALID', 'Specialist source evidence changed or lost authorization', 409)
-            for (const evidenceId of evidenceIdsInPayload(payload)) excludedEvidenceIds.add(evidenceId)
+            // An unregistered partial projection cannot revoke a later,
+            // independently authorized full read of the same source identity.
+            for (const evidenceId of evidenceIdsInPayload(payload)) {
+              if (citationRegistry.get(evidenceId)?.representations.some(representation => representation.sourceOutput === payload.sourceOutput))
+                excludedEvidenceIds.add(evidenceId)
+            }
             messages[index] = payload.unavailableMessage
             invalidated = true
           }
         }
         return invalidated
+      }
+      const isWikiSourceProjection = (message: ChatPromptMessage): boolean => {
+        const response = trackedInternalResponses.get(message)
+        const capability = response === undefined ? undefined : ACTION_CATALOG[response.actionName]?.capability
+        return (
+          capability === undefined ||
+          capability.providerPresentationFamily === 'unclassified' ||
+          capability.providerPresentationFamily.startsWith('wiki.')
+        )
+      }
+      const providerSourceInputs = (messages: readonly ChatPromptMessage[]): readonly ChatPromptMessage[] => {
+        const sources = new Set<ChatPromptMessage>()
+        for (const message of messages) {
+          if (sourceIndependentControlResponses.has(message)) continue
+          if (
+            trackedEvidenceMessages.has(message) ||
+            ((trackedInternalResponses.has(message) || (message.role === 'function' && message.protocolResult?.protocol.kind !== 'mcp')) &&
+              isWikiSourceProjection(message))
+          )
+            sources.add(message)
+          for (const source of trackedAssistantSourceInputs.get(message) ?? []) sources.add(source)
+        }
+        return [...sources]
+      }
+      const prepareProviderSourceContext = async (
+        retained: readonly ChatPromptMessage[],
+        collection = false
+      ): Promise<{
+        readonly messages: AxChatRequest['chatPrompt']
+        readonly authorize: () => Promise<void>
+      }> => {
+        let validationResults = new WeakMap<object, Promise<boolean>>()
+        const validateProjection = async (message: ChatPromptMessage): Promise<boolean> => {
+          if (unavailableInternalResponses.has(message)) return true
+          if (collection && sourceIndependentControlResponses.has(message)) return true
+          if (trackedApplicationReceipts.has(message))
+            return (
+              authorizedApplicationReceipts.has(message) ||
+              (typeof validateObservation !== 'function' &&
+                trackedOperationReceipts.has(message) &&
+                asRecord(trackedApplicationReceipts.get(message))?.page === null)
+            )
+          if (trackedOperationReceipts.has(message)) return true
+          // Non-Wiki domain observations keep their existing collector admission.
+          // Wiki-derived assistant inputs remain fenced independently below.
+          if (collection && trackedInternalResponses.has(message) && !isWikiSourceProjection(message)) return true
+          const payload = trackedEvidenceMessages.get(message)
+          if (payload !== undefined) {
+            const validations: EvidenceValidationCache = new Map()
+            for (const receipt of payload.receipts ?? [
+              { actionCallId: payload.actionCallId, actionName: payload.actionName, sourceOutput: payload.sourceOutput }
+            ]) {
+              if (!(await validateReceipt(validations, receipt.actionCallId, receipt.actionName, receipt.sourceOutput))) return false
+            }
+            return true
+          }
+          const response = trackedInternalResponses.get(message)
+          // The session's full-projection validator owns Wiki eligibility and
+          // current authority. Unsupported snapshots default to unavailable.
+          if (response === undefined || typeof validateObservation !== 'function') return false
+          request.signal.throwIfAborted()
+          try {
+            const valid = (await validateObservation.call(actionSession, response.actionName, response.output, request.signal, response.input)) === true
+            request.signal.throwIfAborted()
+            return valid
+          } catch {
+            request.signal.throwIfAborted()
+            return false
+          }
+        }
+        const validateInternal = (message: ChatPromptMessage): Promise<boolean> => {
+          let validation = validationResults.get(message)
+          if (validation === undefined) {
+            validation = validateProjection(message)
+            validationResults.set(message, validation)
+          }
+          return validation
+        }
+        const requireAssistantSources = async (): Promise<void> => {
+          for (const message of retained) {
+            const sources = trackedAssistantSourceInputs.get(message)
+            if (sources === undefined) {
+              if (collection || message.role !== 'assistant') continue
+              throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native assistant source authority is unavailable', 409)
+            }
+            for (const source of sources) {
+              if (!(await validateInternal(source)))
+                throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native assistant state contains source context that cannot be freshly authorized', 409)
+            }
+          }
+        }
+        // Signed assistant content and call arguments cannot be edited to remove
+        // a revoked prior source. Reject the whole exchange instead of egressing
+        // an opaque derivative, even when its function response can be redacted.
+        await requireFreshApplicationReceipts()
+        await requireAssistantSources()
+        const admitted: ChatPromptMessage[] = []
+        const retainedInternal: ChatPromptMessage[] = []
+        for (const message of retained) {
+          if (
+            (message.role !== 'function' || message.protocolResult?.protocol.kind === 'mcp') &&
+            (!collection ||
+              (!trackedEvidenceMessages.has(message) && !trackedInternalResponses.has(message) && !trackedApplicationReceipts.has(message)))
+          ) {
+            admitted.push(message)
+          } else if (await validateInternal(message)) {
+            admitted.push(message)
+            retainedInternal.push(message)
+          } else {
+            const payload = trackedEvidenceMessages.get(message)
+            const response = trackedInternalResponses.get(message)
+            admitted.push(
+              payload?.unavailableMessage ??
+                (message.role === 'function'
+                  ? unavailableActionResult('native', message.functionId, '')
+                  : response === undefined
+                    ? unavailableEvidenceContext()
+                    : unavailableActionResult('prompt', response.callId, response.providerName))
+            )
+          }
+        }
+        return {
+          messages: admitted,
+          authorize: async () => {
+            validationResults = new WeakMap()
+            await requireFreshApplicationReceipts()
+            await requireAssistantSources()
+            for (const message of retainedInternal) {
+              if (!(await validateInternal(message)))
+                throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Provider source response is no longer authorized', 409)
+            }
+          }
+        }
       }
       const recordProviderDelivery = (evidenceView: ReadonlyMap<string, CitationEvidence>): void => {
         for (const evidence of evidenceView.values()) {
@@ -8351,6 +8654,13 @@ export class AxAgentEngine implements AgentEngine {
             request.signal.throwIfAborted()
             const before = contextState()
             const previousSummary = window.scope === 'history' ? historySummary : activeSummary
+            const summarySources =
+              previousSummary === null
+                ? window.messages
+                : [(window.scope === 'history' ? before.conversation : before.active)[0]!, ...window.messages]
+            const compactionContext = await prepareProviderSourceContext(summarySources, true)
+            if (compactionContext.messages.some((message, index) => message !== summarySources[index]))
+              throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Compaction source context is no longer authorized', 409)
             const summaryPrompt = agentCompactionSummaryPrompt(window.messages, previousSummary, window.maximumSummaryBytes, policy)
             if (failedCompactions.has(summaryPrompt.sourceSha256)) {
               if (!currentFits()) throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'This context could not be compacted safely', 413)
@@ -8375,7 +8685,7 @@ export class AxAgentEngine implements AgentEngine {
               false,
               undefined,
               undefined,
-              () => requireFreshPromptEvidence(window.messages),
+              compactionContext.authorize,
               'compaction'
             )
             validationResults.clear()
@@ -8465,6 +8775,8 @@ export class AxAgentEngine implements AgentEngine {
             request.signal.throwIfAborted()
             if (window.scope === 'history') await sink.commitCompaction!(receipt)
             else await sink.event('model.turn', { ...receipt })
+            const replacement = (window.scope === 'history' ? after.conversation : after.active)[0]!
+            trackedAssistantSourceInputs.set(replacement, providerSourceInputs(summarySources))
             conversation = [...after.conversation]
             sourceIndexes = [...after.sourceIndexes]
             historySummary = after.historySummary
@@ -8605,15 +8917,16 @@ export class AxAgentEngine implements AgentEngine {
             context: representation.authoritativeTitle ?? ''
           }
         })
+        const readinessContext = await prepareProviderSourceContext(conversation, true)
         const nativeRequest = buildWikiContextReadinessRequest({
           userRequest: contextPlan.intent,
-          conversationContext: wikiConversationContext(conversation) ?? '',
+          conversationContext: wikiConversationContext(readinessContext.messages) ?? '',
           requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
           scope: { ...contextPlan.scope, selectedPageIds: contextPlan.selectedPageIds, currentPage: request.currentPage ?? null },
           reads
         })
         if (nativeRequest !== null) {
-          const readiness = await createWikiDecision(readinessEvidence, physicalReadIds)(nativeRequest, 'context_readiness')
+          const readiness = await createWikiDecision(readinessEvidence, physicalReadIds, readinessContext.authorize)(nativeRequest, 'context_readiness')
           if (readiness !== null && assessWikiContextReadiness(readiness)) {
             await requireLiveWikiVerification(readinessEvidence)
             warmReadinessEvidence = readinessEvidence
@@ -8794,6 +9107,8 @@ export class AxAgentEngine implements AgentEngine {
           // #turn reconciles only its dispatched child; the unused correction
           // hold stays in this sequence until the next dispatch or finally.
         }
+        const collectorContext = typedFinalization ? undefined : await prepareProviderSourceContext(bounded.chatPrompt, true)
+        if (collectorContext !== undefined) bounded = { ...bounded, chatPrompt: collectorContext.messages }
         const dispatchEvidence = typedEvidence ?? evidenceSnapshotForPrompt(citationRegistry, bounded.chatPrompt, trackedEvidenceMessages, excludedEvidenceIds)
         const deliveredAttributedLines = new Set<string>(retainedProposalOutcomeLines())
         const deliveredBrowserAttributions: BrowserAttribution[] = []
@@ -8831,6 +9146,8 @@ export class AxAgentEngine implements AgentEngine {
               ...deliveredAttributedLines,
               ...deliveredBrowserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))
             ]
+            const externalSynthesis = await prepareProviderSourceContext(externalMcpSynthesisContext(activePrompt))
+            const dispatchReadinessEvidence = warmReadinessEvidence
             const synthesisResult = await this.#synthesisTurn(
               synthesisProvider,
               request,
@@ -8840,6 +9157,7 @@ export class AxAgentEngine implements AgentEngine {
               {
                 userRequest: userRequestWithRecentScope(dispatchEvidence),
                 conversation,
+                externalContext: externalSynthesis.messages,
                 sourceIndexes,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [],
                 observations,
@@ -8852,10 +9170,16 @@ export class AxAgentEngine implements AgentEngine {
                 reserveRepair: rejectedDraftCount === 0 && turn + 1 < maxTurns,
                 contextMeasurements: synthesisContextMeasurements,
                 authorizeEvidence: async () => {
-                  await (warmReadinessEvidence === undefined
+                  // A mixed native batch also carries its internal responses.
+                  // Revalidate those projections before egress, including reads
+                  // that are not part of the typed Wiki evidence snapshot.
+                  if (await reauthorizeEvidencePrompt(new Map()))
+                    throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native synthesis context is no longer authorized', 409)
+                  await (dispatchReadinessEvidence === undefined
                     ? requireFreshRegisteredEvidence(dispatchEvidence)
-                    : requireLiveWikiVerification(warmReadinessEvidence))
+                    : requireFreshWikiVerificationEvidence(dispatchReadinessEvidence))
                   await requireFreshApplicationReceipts()
+                  await externalSynthesis.authorize()
                 }
               },
               sequence,
@@ -8882,7 +9206,7 @@ export class AxAgentEngine implements AgentEngine {
                   }
                 : undefined,
               undefined,
-              () => requireFreshPromptEvidence(bounded.chatPrompt)
+              collectorContext!.authorize
             )
           }
         } catch (error) {
@@ -9074,9 +9398,7 @@ export class AxAgentEngine implements AgentEngine {
                 coverage.recentGroups.length > 0 ||
                 (contextPlan.observedRecentEvidence &&
                   nativeDraft.readSources.size > 0 &&
-                  [...nativeDraft.readSources.values()].every(source =>
-                    recentWindows.some(window => window.evidenceIds.includes(source.evidenceId))
-                  ))
+                  [...nativeDraft.readSources.values()].every(source => recentWindows.some(window => window.evidenceIds.includes(source.evidenceId))))
               const { plan, evidence, decide } = await prepareWikiVerification(nativeDraft)
               const semanticResults: DecisionBatchResult[] = []
               for (const nativeRequest of plan?.requests ?? []) semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
@@ -9135,7 +9457,10 @@ export class AxAgentEngine implements AgentEngine {
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
               }
-              if ((semantic.valid || selectedRecentPartial) && (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0)) {
+              if (
+                (semantic.valid || selectedRecentPartial) &&
+                (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0)
+              ) {
                 const conversationContext = wikiConversationContext(conversation)
                 const coverageInput = encodeWikiCoverageInput({
                   userRequest: userRequestWithRecentScope(assessmentEvidence),
@@ -9156,14 +9481,18 @@ export class AxAgentEngine implements AgentEngine {
                     return { readRef: source.readId, statement: claim.statement }
                   })
                 })
+                const authorizeDraftSources = nativeDraft.authorizeSourceInputs
+                const coverageEvidence = nativeDraft.evidence
+                await requireLiveWikiVerification(evidence)
                 const audit = await this.#coverageTurn(
                   synthesisProvider!,
                   request,
                   coverageInput,
                   maxTokens === undefined ? undefined : maxTokens - totalTokens,
                   async () => {
-                    await requireLiveWikiVerification(evidence)
-                    await requireFreshRegisteredEvidence(nativeDraft.evidence)
+                    await authorizeDraftSources()
+                    await requireFreshWikiVerificationEvidence(evidence)
+                    await requireFreshRegisteredEvidence(coverageEvidence)
                   },
                   finalizationSequence
                 )
@@ -9206,8 +9535,7 @@ export class AxAgentEngine implements AgentEngine {
                 }
                 if (
                   coverageOutputLimited ||
-                  (audit.verdict !== 'complete' &&
-                    !(audit.verdict === 'incomplete' && recentPublication && nativeDraft.allRequestFacetsUnresolved))
+                  (audit.verdict !== 'complete' && !(audit.verdict === 'incomplete' && recentPublication && nativeDraft.allRequestFacetsUnresolved))
                 ) {
                   coverageAuditFeedback = audit.feedback
                   assessment = { ...assessment, valid: false, issues: [...assessment.issues, `Requested coverage: ${audit.verdict}.`] }
@@ -9394,6 +9722,7 @@ export class AxAgentEngine implements AgentEngine {
                   ? '[Rejected draft omitted: none of its cited claims passed source-grounding validation.]'
                   : result.content
             activePrompt.push({ role: 'assistant', content: rejectedContent })
+            trackedAssistantSourceInputs.set(activePrompt.at(-1)!, providerSourceInputs(bounded.chatPrompt))
             const allowMissingSourceRead =
               (request.purpose ?? 'root') === 'root' &&
               phase === 'collecting' &&
@@ -9543,6 +9872,8 @@ export class AxAgentEngine implements AgentEngine {
             reservedFinalizationTokens
           }
         })
+        const turnSourceInputs = providerSourceInputs(bounded.chatPrompt)
+        const toolBatchStart = activePrompt.length
         if (mode === 'native') {
           activePrompt.push({
             role: 'assistant',
@@ -9557,6 +9888,7 @@ export class AxAgentEngine implements AgentEngine {
             ...(result.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: result.thoughtBlocks })
           })
         }
+        trackedAssistantSourceInputs.set(activePrompt.at(-1)!, turnSourceInputs)
         let toolBudgetExhausted = false
         let contextLimitedThisTurn = false
         let deliveredSourceReadThisTurn = false
@@ -9617,6 +9949,7 @@ export class AxAgentEngine implements AgentEngine {
             const prospectiveEvidence = new Map(retained)
             for (const [evidenceId, evidence] of candidateEvidence) prospectiveEvidence.set(evidenceId, evidence)
             try {
+              const externalSynthesis = await prepareProviderSourceContext(externalMcpSynthesisContext(activePrompt))
               const plan = await this.#synthesisTurn(
                 provider,
                 request,
@@ -9626,6 +9959,7 @@ export class AxAgentEngine implements AgentEngine {
                 {
                   userRequest: userRequestWithRecentScope(prospectiveEvidence, collection.recent),
                   conversation,
+                  externalContext: externalSynthesis.messages,
                   sourceIndexes,
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
                   observations: [
@@ -9639,7 +9973,12 @@ export class AxAgentEngine implements AgentEngine {
                   coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
                   assessableContent: content => content,
                   reserveRepair: false,
-                  authorizeEvidence: () => requireFreshRegisteredEvidence(prospectiveEvidence)
+                  authorizeEvidence: async () => {
+                    if (await reauthorizeEvidencePrompt(new Map()))
+                      throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native synthesis context is no longer authorized', 409)
+                    await requireFreshRegisteredEvidence(prospectiveEvidence)
+                    await externalSynthesis.authorize()
+                  }
                 },
                 undefined,
                 undefined,
@@ -9799,6 +10138,7 @@ export class AxAgentEngine implements AgentEngine {
               discoveryTurn = null
               tools = null
             }
+            sourceIndependentControlResponses.add(activePrompt.at(-1)!)
             break
           }
           const actionCallId = actionCallIdFor(request, call.id)
@@ -9888,7 +10228,7 @@ export class AxAgentEngine implements AgentEngine {
                   throw new AgentRepositoryError('EXTERNAL_MCP_SIDE_EFFECT_FENCE_REQUIRED', 'External operations require a durable run fence', 409)
                 await request.beforeExternalTool()
                 externalInvocationStarted = true
-                return prepared.externalMcp!.invoke(externalBinding, input, call.id)
+                return prepared.externalMcp!.invoke(externalBinding, input, call.id, collectorContext!.authorize)
               })
               assertExternalMcpResultMedia(candidate.content, provider.nativeMediaCapabilities, provider.transportKind, provider.mediaInputs)
               if (
@@ -9940,6 +10280,7 @@ export class AxAgentEngine implements AgentEngine {
                   summary: 'External MCP operation was cancelled; cancellation does not undo possible external effects.'
                 })
               request.signal.throwIfAborted()
+              if (error instanceof AgentRepositoryError && error.code === 'AGENT_EVIDENCE_INVALID') throw error
               const errorCode = error instanceof AgentRepositoryError ? error.code : 'EXTERNAL_MCP_CALL_FAILED'
               providerResultMessage(
                 activePrompt,
@@ -10037,7 +10378,7 @@ export class AxAgentEngine implements AgentEngine {
               if (enabled === null) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider requested an unavailable action category', 403)
               const committedProviderEnabled = providerDiscoveryEnableResult(enabled)
               const committedEncoded = JSON.stringify(committedProviderEnabled)
-              providerResultMessage(activePrompt, mode, call.id, call.providerName, committedProviderEnabled)
+              sourceIndependentControlResponses.add(providerResultMessage(activePrompt, mode, call.id, call.providerName, committedProviderEnabled))
               await sink.event('tool.completed', {
                 actionCallId,
                 actionName: TOOL_DISCOVERY_CONTROL_NAME,
@@ -10094,7 +10435,11 @@ export class AxAgentEngine implements AgentEngine {
             const cachedOutput = asRecord(cached.output)
             for (const value of cachedOutput === null ? [] : evidenceValues(resolved.name, cachedOutput)) {
               const citation = pageCitation(value)
-              if (citation !== null) excludedEvidenceIds.add(citation.evidenceId)
+              if (
+                citation !== null &&
+                citationRegistry.get(citation.evidenceId)?.representations.some(representation => representation.sourceOutput === cached!.output)
+              )
+                excludedEvidenceIds.add(citation.evidenceId)
             }
             if (pageReadKey !== null) pageReadCache.delete(pageReadKey)
             cached = undefined
@@ -10117,7 +10462,7 @@ export class AxAgentEngine implements AgentEngine {
                   throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider requested an unavailable action', 403)
                 const parsed = ACTION_CATALOG[resolved.name].input.parse(input) as { prompt: string; attachmentIds?: string[] }
                 const kind = resolved.name === 'media.generateVideo' ? 'video' : resolved.name === 'media.generateMusic' ? 'music' : 'image'
-                const mediaUsage = await this.#media(request, sink, kind, parsed.prompt, parsed.attachmentIds ?? [])
+                const mediaUsage = await this.#media(request, sink, kind, parsed.prompt, parsed.attachmentIds ?? [], collectorContext!.authorize)
                 inputTokens = safeUsageAddition(inputTokens, mediaUsage.inputTokens, 'Media input tokens')
                 outputTokens = safeUsageAddition(outputTokens, mediaUsage.outputTokens, 'Media output tokens')
                 totalTokens = safeUsageAddition(totalTokens, mediaUsage.totalTokens, 'Media total tokens')
@@ -10132,6 +10477,7 @@ export class AxAgentEngine implements AgentEngine {
             const summary = toolCompletionSummary(resolved.name, output, cached !== undefined)
             const candidateProgress = cached === undefined ? providerCandidateProgress(resolved.name, output, seenCandidateIdentities) : null
             const cachedResident =
+              finishIndex === -1 &&
               cached !== undefined &&
               [
                 ...evidenceSnapshotForPrompt(
@@ -10204,6 +10550,9 @@ export class AxAgentEngine implements AgentEngine {
               contextLimitedThisTurn = true
             }
             const deliveredMessage = providerResultMessage(activePrompt, mode, call.id, call.providerName, deliveredOutput)
+            if (delivered)
+              trackedInternalResponses.set(deliveredMessage, { actionName: resolved.name, input, output, callId: call.id, providerName: call.providerName })
+            else unavailableInternalResponses.add(deliveredMessage)
             const deliveredStatus = delivered ? trustedActionStatusLines(deliveredOutput) : []
             const attributedLines = delivered ? [...deliveredStatus, ...(discoveryNotice === null ? [] : [discoveryNotice])] : []
             if (attributedLines.length > 0) trackedAttributedMessages.set(deliveredMessage, attributedLines)
@@ -10256,6 +10605,7 @@ export class AxAgentEngine implements AgentEngine {
                       representation.deliveries.some(
                         delivery =>
                           delivery.actionCallId === sourceActionCallId &&
+                          delivery.providerCallId === call.id &&
                           activePrompt.some(message => {
                             const payload = trackedEvidenceMessages.get(message)
                             return (
@@ -10286,6 +10636,7 @@ export class AxAgentEngine implements AgentEngine {
               if (expectedReads !== undefined && expectedReads > 0 && completeReads === expectedReads) completedFinishReads++
             }
           } catch (error) {
+            if (error instanceof AgentRepositoryError && error.code === 'AGENT_EVIDENCE_INVALID') throw error
             const code =
               typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string'
                 ? String(Reflect.get(error, 'code'))
@@ -10302,6 +10653,10 @@ export class AxAgentEngine implements AgentEngine {
               summary: `${code}: ${reason}`
             })
           }
+        }
+        for (let index = toolBatchStart + 1; index < activePrompt.length; index++) {
+          const message = activePrompt[index]!
+          if (!sourceIndependentControlResponses.has(message)) trackedAssistantSourceInputs.set(message, turnSourceInputs)
         }
         activeBatchEnds.push(activePrompt.length)
         if (deliveredSourceReadThisTurn && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
@@ -10332,6 +10687,7 @@ export class AxAgentEngine implements AgentEngine {
           })
           try {
             const remaining = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
+            const externalSynthesis = await prepareProviderSourceContext(externalMcpSynthesisContext(activePrompt))
             const plan = await this.#synthesisTurn(
               synthesisProvider,
               request,
@@ -10341,6 +10697,7 @@ export class AxAgentEngine implements AgentEngine {
               {
                 userRequest: userRequestWithRecentScope(preflightEvidence),
                 conversation,
+                externalContext: externalSynthesis.messages,
                 sourceIndexes,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
                 observations: [
@@ -10353,8 +10710,11 @@ export class AxAgentEngine implements AgentEngine {
                 reserveRepair: false,
                 contextMeasurements: synthesisContextMeasurements,
                 authorizeEvidence: async () => {
+                  if (await reauthorizeEvidencePrompt(new Map()))
+                    throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native synthesis context is no longer authorized', 409)
                   await requireFreshRegisteredEvidence(preflightEvidence)
                   await requireFreshApplicationReceipts()
+                  await externalSynthesis.authorize()
                 }
               },
               undefined,

@@ -75,7 +75,7 @@ const fileSchema = z.object({
 // Ax 25 does not expose Gemini transcription usage or normalize Gemini image
 // inlineData. Only those missing fields are read by this application bridge.
 const usageSchema = z
-  .object({
+  .looseObject({
     promptTokenCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     candidatesTokenCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     totalTokenCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -86,12 +86,12 @@ const inlineImageSchema = z.strictObject({
   mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
   data: z.string().max(GEMINI_MEDIA_OUTPUT_LIMIT)
 })
-const mediaEnvelopeSchema = z.object({
+const mediaEnvelopeSchema = z.looseObject({
   candidates: z
     .array(
-      z.object({
+      z.looseObject({
         finishReason: z.literal('STOP'),
-        content: z.object({ parts: z.array(z.record(z.string(), z.unknown())).min(1).max(64) })
+        content: z.looseObject({ parts: z.array(z.record(z.string(), z.unknown())).min(1).max(64) })
       })
     )
     .length(1),
@@ -232,6 +232,10 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
       } catch {
         throw invalid()
       }
+    } catch (error) {
+      if (signal.aborted) throw new AgentRepositoryError('AGENT_MEDIA_CANCELLED', 'The media request was cancelled or timed out', 408)
+      if (error instanceof AgentRepositoryError || error instanceof AgentProviderAttemptError) throw error
+      throw new AgentRepositoryError('AGENT_MEDIA_PROVIDER_FAILED', 'The media provider request failed', 502)
     } finally {
       signal.removeEventListener('abort', abort)
       await reader.cancel().catch(() => {})
@@ -454,7 +458,18 @@ export const createGeminiMediaTransport = (options: GeminiMediaOptions) => {
               if (part.thought !== true) images.push(decoded)
             } else if (!('text' in part) && !(audio && 'audioTranscription' in part)) throw invalid()
           }
-          return Response.json(raw)
+          if (!audio) {
+            // Ax retains only the last display text part. Preserve all caption
+            // segments without folding hidden thought text into the answer.
+            const content = parsed.data.candidates[0]!.content
+            const visible = content.parts.filter(part => typeof part.text === 'string' && part.thought !== true)
+            if (visible.length > 1) {
+              const first = content.parts.indexOf(visible[0]!)
+              content.parts = content.parts.filter((part, index) => index === first || typeof part.text !== 'string' || part.thought === true)
+              content.parts[first] = { text: visible.map(part => part.text).join('') }
+            }
+          }
+          return Response.json(parsed.data)
         } catch (error) {
           bridgeError = error
           throw error

@@ -1,6 +1,7 @@
 import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
+import type { AgentProviderChatOptions } from '../../agents/providers/factory.ts'
 import { wikiSynthesisSourceRef } from '../../agents/providers/wiki-synthesis.ts'
 
 /**
@@ -50,6 +51,7 @@ export const fixtureDecisionProviders = {
     const amount = pricing
       ? (0 / 1_000_000) * pricing.inputPerMillion + (0 / 1_000_000) * pricing.outputPerMillion + pricing.perRequest
       : 0
+    options.onRequestDispatched?.()
     return {
       providerId: provider.id,
       providerRevision: provider.revision,
@@ -115,6 +117,10 @@ export const fullAxFixtureService = (
     structuredOutputModes: options.structuredOutput === false ? [] : ['native']
   },
   chatResponse: async (request, chatOptions) => {
+    // This is the scripted HTTP entry, after host admission/source checks.
+    // A lost reply or interrupted stream must still retain paid exposure.
+    const hostOptions = chatOptions as Readonly<AgentProviderChatOptions> | undefined
+    hostOptions?.onRequestDispatched?.()
     if (!isCoverageFixtureRequest(request)) return chat(request, chatOptions)
     if (options.coverage !== undefined) return options.coverage(request, chatOptions)
     return {
@@ -145,7 +151,7 @@ const synthesisFieldText = (input: string, title: string): string => {
   const value = input.slice(start + title.length + 4)
   const end = title === 'Source Text'
     ? value.lastIndexOf('\n\nSource References: ')
-    : value.search(/\n\n(?:Conversation Context|User Request|Request Facets|Available Observations|Repair Feedback): /u)
+    : value.search(/\n\n(?:Input Media References|Conversation Context|User Request|Request Facets|Available Observations|Repair Feedback): /u)
   return end < 0 ? value : value.slice(0, end)
 }
 

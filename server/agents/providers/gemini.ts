@@ -13,7 +13,13 @@ import { z } from 'zod'
 import type { AgentReasoningEffort } from '../../../shared/agents/contracts.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
-import { AgentProviderAttemptError, type AgentProviderFetch, type AgentProviderResourceLimits, type AgentProviderService, type ProviderThoughtBlock } from './factory.ts'
+import {
+  AgentProviderAttemptError,
+  type AgentProviderFetch,
+  type AgentProviderResourceLimits,
+  type AgentProviderService,
+  type ProviderThoughtBlock
+} from './factory.ts'
 import { assertAgentTokenUsage } from './usage.ts'
 
 const STATE_PREFIX = 'wiki.gemini.generate-content.v1:'
@@ -84,7 +90,7 @@ interface GeminiWireState {
   terminal: boolean
   usage: boolean
   usageReceipt?: readonly number[]
-  usageFrames: ({ cached: number; reported: boolean } | undefined)[]
+  frames: { cached?: number; reported: boolean; complete: boolean }[]
   emittedState: boolean
 }
 
@@ -141,13 +147,14 @@ const acceptPayload = (value: unknown, state: GeminiWireState, buffered: boolean
     } = usage as Record<string, unknown>
     if (!token(input) || !token(output) || !token(total) || !token(cached) || !token(thoughts) || cached > input || thoughts > total) throw invalidUsage()
     assertAgentTokenUsage(input, output, total)
+    if (thoughts > total - input - output) throw invalidUsage()
     const receipt = [input, output, total, cached, thoughts]
     if (state.usageReceipt?.some((prior, index) => receipt[index]! < prior)) throw invalidUsage()
     state.usageReceipt = receipt
     state.usage = true
-    state.usageFrames.push({ cached, reported: Object.hasOwn(usage, 'cachedContentTokenCount') })
+    state.frames.push({ cached, reported: Object.hasOwn(usage, 'cachedContentTokenCount'), complete: state.terminal })
   } else {
-    state.usageFrames.push(undefined)
+    state.frames.push({ reported: false, complete: state.terminal && state.usage })
   }
   if (buffered && (!state.terminal || !state.usage)) throw invalid()
   return payload
@@ -156,7 +163,14 @@ const acceptPayload = (value: unknown, state: GeminiWireState, buffered: boolean
 const checkedResponse = async (response: Response, state: GeminiWireState, limits: AgentProviderResourceLimits): Promise<Response> => {
   const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (mediaType === 'application/json') {
-    const payload = acceptPayload(await response.json(), state, true, limits)
+    let value: unknown
+    try {
+      value = await response.json()
+    } catch {
+      // Native JSON parser errors can quote private response bytes.
+      throw invalid()
+    }
+    const payload = acceptPayload(value, state, true, limits)
     const headers = new Headers(response.headers)
     headers.delete('content-length')
     headers.delete('content-encoding')
@@ -228,13 +242,20 @@ export const createGeminiAxService = (
     name: 'google-gemini',
     apiKey: config.apiKey,
     config: { model: config.model as AxAIGoogleGeminiModel },
-    options: { debug: false, verbose: false, fetch: config.fetch, timeout: config.timeoutMs, retry: { maxRetries: 0 }, includeRequestBodyInErrors: false, excludeContentFromTrace: true }
+    options: {
+      debug: false,
+      verbose: false,
+      fetch: config.fetch,
+      timeout: config.timeoutMs,
+      retry: { maxRetries: 0 },
+      includeRequestBodyInErrors: false,
+      excludeContentFromTrace: true
+    }
   })
   let lastService: AxAIService = featureService
   const safeOptions = (options: Readonly<AxAIServiceOptions>): AxAIServiceOptions => {
     const timeout = options.timeout ?? config.timeoutMs
-    if (!Number.isSafeInteger(timeout) || timeout < 1)
-      throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider timeout is invalid', 400)
+    if (!Number.isSafeInteger(timeout) || timeout < 1) throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Provider timeout is invalid', 400)
     const locked: AxAIServiceOptions = {
       ...options,
       debug: false,
@@ -254,109 +275,109 @@ export const createGeminiAxService = (
   }
   let nativeMediaCapabilities = featureService.getFeatures(config.model).media
   const execute = async (request: Readonly<AxChatRequest<unknown>>, options?: Readonly<AxAIServiceOptions>, countOnly = false) => {
-      const defaults = featureService.getOptions()
-      options = safeOptions({ ...defaults, ...options })
-      const cancellation = new AbortController()
-      const signal = AbortSignal.any([
-        cancellation.signal,
-        ...(defaults.abortSignal ? [defaults.abortSignal] : []),
-        ...(options.abortSignal ? [options.abortSignal] : [])
-      ])
-      signal.throwIfAborted()
-      let counted: number | undefined
-      let countFailure: unknown
-      const countComplete = new Error('Native token count completed')
-      const state: GeminiWireState = { parts: [], partsBytes: 2, terminal: false, usage: false, usageFrames: [], emittedState: false }
-      const nativeAssistantParts = request.chatPrompt
-        .filter(message => message.role === 'assistant')
-        .map(message => {
-          if (message.role !== 'assistant' || !message.thoughtBlocks?.length) return undefined
-          if (message.thoughtBlocks.length !== 1) throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored Gemini continuation is invalid', 500)
-          const parts = decodeParts(message.thoughtBlocks[0]!)
-          const nativeCalls = parts.flatMap(part => (part.functionCall ? [part.functionCall] : []))
-          const calls = message.functionCalls ?? []
-          const display = parts
-            .filter(part => part.thought !== true)
-            .map(part => part.text ?? '')
-            .join('')
-          const matches =
-            display === (message.content ?? '') &&
-            nativeCalls.length === calls.length &&
-            nativeCalls.every((call, index) => {
-              const canonical = calls[index]!
-              const params = typeof canonical.function.params === 'string' ? JSON.parse(canonical.function.params) : canonical.function.params
-              return call.id === canonical.id && call.name === canonical.function.name && canonicalJson(call.args) === canonicalJson(params ?? {})
-            })
-          return matches ? parts : undefined
-        })
-      const transportFetch = Object.assign(
-        async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
-          // Gemini's released factory has no apiURL option. Rewrite only its exact
-          // built-in endpoint into the configured base before the guarded fetch.
-          const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
-          const official = 'https://generativelanguage.googleapis.com/v1beta'
-          const relative = url.href.slice(official.length)
-          if (
-            !url.href.startsWith(`${official}/models/${config.model}:`) ||
-            !['/models/' + config.model + ':generateContent', '/models/' + config.model + ':streamGenerateContent?alt=sse'].includes(relative)
-          )
-            throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Gemini request destination is not allowlisted', 502)
-          if (typeof init?.body !== 'string') throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Gemini request body is invalid', 500)
-          const body = JSON.parse(init.body) as AxAIGoogleGeminiChatRequest
-          const level = config.thinkingLevel
-          // Match Ax's released model-family clamping while bypassing its
-          // maxTokens/thinkingLevel incompatibility, not the application's ceiling.
-          const thinkingConfig: NonNullable<AxAIGoogleGeminiChatRequest['generationConfig']['thinkingConfig']> = {}
-          if (level !== undefined) {
-            if (config.model.startsWith('gemini-3')) {
-              thinkingConfig.thinkingLevel = config.model.includes('gemini-3-pro')
-                ? level === 'minimal' || level === 'low'
-                  ? 'low'
-                  : 'high'
-                : level === 'minimal' && /gemini-3\.(?:1-pro|7-flash|8-flash)/u.test(config.model)
-                  ? 'low'
-                  : level
-            } else {
-              thinkingConfig.thinkingBudget = ({ minimal: 200, low: 800, medium: 5_000, high: 10_000 } as const)[level]
-            }
+    const defaults = featureService.getOptions()
+    options = safeOptions({ ...defaults, ...options })
+    const cancellation = new AbortController()
+    const signal = AbortSignal.any([
+      cancellation.signal,
+      ...(defaults.abortSignal ? [defaults.abortSignal] : []),
+      ...(options.abortSignal ? [options.abortSignal] : [])
+    ])
+    signal.throwIfAborted()
+    let counted: number | undefined
+    let countFailure: unknown
+    const countComplete = new Error('Native token count completed')
+    const state: GeminiWireState = { parts: [], partsBytes: 2, terminal: false, usage: false, frames: [], emittedState: false }
+    const nativeAssistantParts = request.chatPrompt
+      .filter(message => message.role === 'assistant')
+      .map(message => {
+        if (message.role !== 'assistant' || !message.thoughtBlocks?.length) return undefined
+        if (message.thoughtBlocks.length !== 1) throw new AgentRepositoryError('AGENT_PROVIDER_STATE_CORRUPT', 'Stored Gemini continuation is invalid', 500)
+        const parts = decodeParts(message.thoughtBlocks[0]!)
+        const nativeCalls = parts.flatMap(part => (part.functionCall ? [part.functionCall] : []))
+        const calls = message.functionCalls ?? []
+        const display = parts
+          .filter(part => part.thought !== true)
+          .map(part => part.text ?? '')
+          .join('')
+        const matches =
+          display === (message.content ?? '') &&
+          nativeCalls.length === calls.length &&
+          nativeCalls.every((call, index) => {
+            const canonical = calls[index]!
+            const params = typeof canonical.function.params === 'string' ? JSON.parse(canonical.function.params) : canonical.function.params
+            return call.id === canonical.id && call.name === canonical.function.name && canonicalJson(call.args) === canonicalJson(params ?? {})
+          })
+        return matches ? parts : undefined
+      })
+    const transportFetch = Object.assign(
+      async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
+        // Gemini's released factory has no apiURL option. Rewrite only its exact
+        // built-in endpoint into the configured base before the guarded fetch.
+        const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+        const official = 'https://generativelanguage.googleapis.com/v1beta'
+        const relative = url.href.slice(official.length)
+        if (
+          !url.href.startsWith(`${official}/models/${config.model}:`) ||
+          !['/models/' + config.model + ':generateContent', '/models/' + config.model + ':streamGenerateContent?alt=sse'].includes(relative)
+        )
+          throw new AgentRepositoryError('PROVIDER_EGRESS_DENIED', 'Gemini request destination is not allowlisted', 502)
+        if (typeof init?.body !== 'string') throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Gemini request body is invalid', 500)
+        const body = JSON.parse(init.body) as AxAIGoogleGeminiChatRequest
+        const level = config.thinkingLevel
+        // Match Ax's released model-family clamping while bypassing its
+        // maxTokens/thinkingLevel incompatibility, not the application's ceiling.
+        const thinkingConfig: NonNullable<AxAIGoogleGeminiChatRequest['generationConfig']['thinkingConfig']> = {}
+        if (level !== undefined) {
+          if (config.model.startsWith('gemini-3')) {
+            thinkingConfig.thinkingLevel = config.model.includes('gemini-3-pro')
+              ? level === 'minimal' || level === 'low'
+                ? 'low'
+                : 'high'
+              : level === 'minimal' && /gemini-3\.(?:1-pro|7-flash|8-flash)/u.test(config.model)
+                ? 'low'
+                : level
+          } else {
+            thinkingConfig.thinkingBudget = ({ minimal: 200, low: 800, medium: 5_000, high: 10_000 } as const)[level]
           }
-          // Replace Ax's generated thinking defaults rather than passing present
-          // undefined config keys to disable them.
-          const { thinkingConfig: _defaultThinking, ...generationConfig } = body.generationConfig
-          body.generationConfig = {
-            ...generationConfig,
-            maxOutputTokens: Math.min(config.maxOutputTokens, request.modelConfig?.maxTokens ?? config.maxOutputTokens),
-            ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
-            ...(level === undefined ? {} : { thinkingConfig })
+        }
+        // Replace Ax's generated thinking defaults rather than passing present
+        // undefined config keys to disable them.
+        const { thinkingConfig: _defaultThinking, ...generationConfig } = body.generationConfig
+        body.generationConfig = {
+          ...generationConfig,
+          maxOutputTokens: Math.min(config.maxOutputTokens, request.modelConfig?.maxTokens ?? config.maxOutputTokens),
+          ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
+          ...(level === undefined ? {} : { thinkingConfig })
+        }
+        let assistantIndex = 0
+        for (const content of body.contents ?? []) {
+          if (content.role !== 'model') continue
+          const native = nativeAssistantParts[assistantIndex++]
+          if (native !== undefined) content.parts = native.map(replayPart)
+        }
+        // Ax's JSON-schema cleaner narrows union action arguments. The native
+        // JSON-schema field supports them; preserve the application's original schema.
+        for (const tool of body.tools ?? []) {
+          if (Object.keys(tool).some(key => key !== 'function_declarations'))
+            throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Native Gemini search tools are disabled', 500)
+          for (const declaration of tool.function_declarations ?? []) {
+            const original = request.functions?.find(fn => fn.name === declaration.name)
+            if (original?.parameters) declaration.parametersJsonSchema = original.parameters
           }
-          let assistantIndex = 0
-          for (const content of body.contents ?? []) {
-            if (content.role !== 'model') continue
-            const native = nativeAssistantParts[assistantIndex++]
-            if (native !== undefined) content.parts = native.map(replayPart)
-          }
-          // Ax's JSON-schema cleaner narrows union action arguments. The native
-          // JSON-schema field supports them; preserve the application's original schema.
-          for (const tool of body.tools ?? []) {
-            if (Object.keys(tool).some(key => key !== 'function_declarations'))
-              throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Native Gemini search tools are disabled', 500)
-            for (const declaration of tool.function_declarations ?? []) {
-              const original = request.functions?.find(fn => fn.name === declaration.name)
-              if (original?.parameters) declaration.parametersJsonSchema = original.parameters
-            }
-          }
-          if (request.responseFormat?.type === 'json_schema' && request.responseFormat.schema) {
-            const schema = request.responseFormat.schema
-            body.generationConfig.responseJsonSchema = schema.schema ?? schema
-          }
-          if (!request.functions?.length) {
-            delete body.tools
-            delete body.toolConfig
-          }
-          if (countOnly) {
-            // Official models.countTokens accepts the full GenerateContentRequest:
-            // https://ai.google.dev/api/tokens#method:-models.counttokens
-            try {
+        }
+        if (request.responseFormat?.type === 'json_schema' && request.responseFormat.schema) {
+          const schema = request.responseFormat.schema
+          body.generationConfig.responseJsonSchema = schema.schema ?? schema
+        }
+        if (!request.functions?.length) {
+          delete body.tools
+          delete body.toolConfig
+        }
+        if (countOnly) {
+          // Official models.countTokens accepts the full GenerateContentRequest:
+          // https://ai.google.dev/api/tokens#method:-models.counttokens
+          try {
             // Ax's request signal includes its effective service timeout; do not
             // replace it with the configured ceiling or caller cancellation.
             const transportSignal = init.signal ? AbortSignal.any([signal, init.signal]) : signal
@@ -384,134 +405,144 @@ export const createGeminiAxService = (
               }
               text += decoder.decode()
               const payload: unknown = JSON.parse(text)
-              if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || 'error' in payload || !('totalTokens' in payload) || !token(payload.totalTokens)) throw invalid()
+              if (
+                typeof payload !== 'object' ||
+                payload === null ||
+                Array.isArray(payload) ||
+                'error' in payload ||
+                !('totalTokens' in payload) ||
+                !token(payload.totalTokens)
+              )
+                throw invalid()
               counted = payload.totalTokens
             } finally {
               await reader.cancel().catch(() => {})
               reader.releaseLock()
             }
-            } catch (error) {
-              countFailure = error
-              throw error
-            }
-            // Stop Ax after its native conversion: counting never parses a generation
-            // response, dispatches generation, or manufactures a usage receipt.
-            throw countComplete
-          }
-          const response = await config.fetch(config.baseUrl.replace(/\/$/u, '') + relative, { ...init, body: JSON.stringify(body) })
-          return checkedResponse(response, state, config.limits)
-        },
-        { preconnect: config.fetch.preconnect }
-      ) as AgentProviderFetch
-      const service = ai({
-        name: 'google-gemini',
-        apiKey: config.apiKey,
-        config: { model: config.model as AxAIGoogleGeminiModel },
-        options: {
-          debug: false,
-          verbose: false,
-          fetch: transportFetch,
-          timeout: config.timeoutMs,
-          retry: { maxRetries: 0 },
-          includeRequestBodyInErrors: false,
-          excludeContentFromTrace: true
-        }
-      })
-      // Capture the actual bound model's facts without another service or transport request.
-      nativeMediaCapabilities = service.getFeatures(config.model).media
-      const modelConfig = { ...request.modelConfig }
-      delete modelConfig.maxTokens
-      const chatPrompt = request.chatPrompt.map(message => {
-        if (message.role !== 'assistant') return message
-        const { thoughtBlocks: _thoughtBlocks, ...canonical } = message
-        return canonical
-      })
-      // The application binds this service to its profile model; Ax's generic
-      // public request permits unknown model keys, which must not override it.
-      const { model: _model, ...profileRequest } = request
-      const { thinkingTokenBudget: _thinkingTokenBudget, contextCache: _contextCache, ...chatOptions } = options ?? {}
-      let response: AxChatResponse | ReadableStream<AxChatResponse>
-      try {
-        response = await service.chat(
-          { ...profileRequest, chatPrompt, modelConfig },
-          { ...chatOptions, abortSignal: signal, showThoughts: false, fetch: transportFetch }
-        )
-      } catch (error) {
-        if (!countOnly) throw error
-        signal.throwIfAborted()
-        if (counted !== undefined) return counted
-        if (countFailure instanceof AgentRepositoryError || countFailure instanceof AgentProviderAttemptError) throw countFailure
-        if (error instanceof AgentRepositoryError || error instanceof AgentProviderAttemptError) throw error
-        throw invalid()
-      }
-      lastService = service
-      const normalize = (chunk: AxChatResponse): AxChatResponse => {
-        for (const result of chunk.results) delete result.thoughtBlocks
-        const frameUsage = state.usageFrames.shift()
-        if (chunk.modelUsage?.tokens && frameUsage?.reported && frameUsage.cached === 0) chunk.modelUsage.tokens.cacheReadTokens = 0
-        // Retain one full native assistant part sequence only at the terminal
-        // boundary. Streamed deltas are never concatenated as signature state.
-        if (state.terminal && state.usage && !state.emittedState && chunk.results.length) {
-          state.emittedState = true
-          if (state.parts.some(part => part.thoughtSignature || part.thought_signature)) {
-            const block = { data: STATE_PREFIX + JSON.stringify(state.parts), encrypted: true }
-            decodeParts(block)
-            chunk.results[0]!.thoughtBlocks = [block]
-          }
-        }
-        return chunk
-      }
-      if (!(response instanceof ReadableStream)) return normalize(response)
-      // Bind normalization and consumer cancellation to the same request signal
-      // used by the pinned transport, including failures in our native guards.
-      const reader = response.getReader()
-      let closed = false
-      let onAbort: (() => void) | undefined
-      const finish = (): void => {
-        closed = true
-        if (onAbort) signal.removeEventListener('abort', onAbort)
-        try {
-          reader.releaseLock()
-        } catch {
-          /* an active read releases when it settles */
-        }
-      }
-      return new ReadableStream<AxChatResponse>({
-        start(controller) {
-          onAbort = () => {
-            if (closed) return
-            const reason = signal.reason ?? new DOMException('The request was aborted', 'AbortError')
-            void reader.cancel(reason).catch(() => {})
-            finish()
-            controller.error(reason)
-          }
-          signal.addEventListener('abort', onAbort, { once: true })
-          if (signal.aborted) onAbort()
-        },
-        async pull(controller) {
-          if (closed) return
-          try {
-            const item = await reader.read()
-            if (closed) return
-            if (item.done) {
-              finish()
-              controller.close()
-            } else controller.enqueue(normalize(item.value))
           } catch (error) {
-            if (closed) return
-            finish()
-            cancellation.abort(error)
-            controller.error(error)
+            countFailure = error
+            throw error
           }
-        },
-        cancel(reason) {
+          // Stop Ax after its native conversion: counting never parses a generation
+          // response, dispatches generation, or manufactures a usage receipt.
+          throw countComplete
+        }
+        const response = await config.fetch(config.baseUrl.replace(/\/$/u, '') + relative, { ...init, body: JSON.stringify(body) })
+        return checkedResponse(response, state, config.limits)
+      },
+      { preconnect: config.fetch.preconnect }
+    ) as AgentProviderFetch
+    const service = ai({
+      name: 'google-gemini',
+      apiKey: config.apiKey,
+      config: { model: config.model as AxAIGoogleGeminiModel },
+      options: {
+        debug: false,
+        verbose: false,
+        fetch: transportFetch,
+        timeout: config.timeoutMs,
+        retry: { maxRetries: 0 },
+        includeRequestBodyInErrors: false,
+        excludeContentFromTrace: true
+      }
+    })
+    // Capture the actual bound model's facts without another service or transport request.
+    nativeMediaCapabilities = service.getFeatures(config.model).media
+    const modelConfig = { ...request.modelConfig }
+    delete modelConfig.maxTokens
+    const chatPrompt = request.chatPrompt.map(message => {
+      if (message.role !== 'assistant') return message
+      const { thoughtBlocks: _thoughtBlocks, ...canonical } = message
+      return canonical
+    })
+    // The application binds this service to its profile model; Ax's generic
+    // public request permits unknown model keys, which must not override it.
+    const { model: _model, ...profileRequest } = request
+    const { thinkingTokenBudget: _thinkingTokenBudget, contextCache: _contextCache, ...chatOptions } = options ?? {}
+    let response: AxChatResponse | ReadableStream<AxChatResponse>
+    try {
+      response = await service.chat(
+        { ...profileRequest, chatPrompt, modelConfig },
+        { ...chatOptions, abortSignal: signal, showThoughts: false, fetch: transportFetch }
+      )
+    } catch (error) {
+      if (!countOnly) throw error
+      signal.throwIfAborted()
+      if (counted !== undefined) return counted
+      if (countFailure instanceof AgentRepositoryError || countFailure instanceof AgentProviderAttemptError) throw countFailure
+      if (error instanceof AgentRepositoryError || error instanceof AgentProviderAttemptError) throw error
+      throw invalid()
+    }
+    lastService = service
+    const normalize = (chunk: AxChatResponse): AxChatResponse => {
+      for (const result of chunk.results) delete result.thoughtBlocks
+      const frame = state.frames.shift()
+      if (chunk.modelUsage?.tokens && frame?.reported && frame.cached === 0) chunk.modelUsage.tokens.cacheReadTokens = 0
+      // Guard transforms can read ahead; use this frame's receipt rather than
+      // later wire state. A usage-only terminal frame must still carry replay.
+      if (frame?.complete && !state.emittedState) {
+        state.emittedState = true
+        if (state.parts.some(part => part.thoughtSignature || part.thought_signature)) {
+          const block = { data: STATE_PREFIX + JSON.stringify(state.parts), encrypted: true }
+          decodeParts(block)
+          const result = chunk.results[0]
+          if (!result) return { ...chunk, results: [{ index: 0, thoughtBlocks: [block] }] }
+          result.thoughtBlocks = [block]
+        }
+      }
+      return chunk
+    }
+    if (!(response instanceof ReadableStream)) return normalize(response)
+    // Bind normalization and consumer cancellation to the same request signal
+    // used by the pinned transport, including failures in our native guards.
+    const reader = response.getReader()
+    let closed = false
+    let onAbort: (() => void) | undefined
+    const finish = (): void => {
+      closed = true
+      if (onAbort) signal.removeEventListener('abort', onAbort)
+      try {
+        reader.releaseLock()
+      } catch {
+        /* an active read releases when it settles */
+      }
+    }
+    return new ReadableStream<AxChatResponse>({
+      start(controller) {
+        onAbort = () => {
           if (closed) return
+          const reason = signal.reason ?? new DOMException('The request was aborted', 'AbortError')
           void reader.cancel(reason).catch(() => {})
           finish()
-          cancellation.abort(reason ?? new DOMException('The stream was cancelled', 'AbortError'))
+          controller.error(reason)
         }
-      })
-    }
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
+      },
+      async pull(controller) {
+        if (closed) return
+        try {
+          const item = await reader.read()
+          if (closed) return
+          if (item.done) {
+            finish()
+            controller.close()
+          } else controller.enqueue(normalize(item.value))
+        } catch (error) {
+          if (closed) return
+          finish()
+          cancellation.abort(error)
+          controller.error(error)
+        }
+      },
+      cancel(reason) {
+        if (closed) return
+        void reader.cancel(reason).catch(() => {})
+        finish()
+        cancellation.abort(reason ?? new DOMException('The stream was cancelled', 'AbortError'))
+      }
+    })
+  }
   return {
     getId: () => featureService.getId(),
     getName: () => featureService.getName(),
@@ -530,7 +561,9 @@ export const createGeminiAxService = (
     transcribe: unsupported,
     speak: unsupported,
     openChatSession: unsupported,
-    get nativeMediaCapabilities() { return nativeMediaCapabilities },
+    get nativeMediaCapabilities() {
+      return nativeMediaCapabilities
+    },
     chat: async (request, options) => {
       const response = await execute(request, options)
       if (typeof response === 'number') throw invalid()

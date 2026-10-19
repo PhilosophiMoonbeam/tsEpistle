@@ -493,6 +493,8 @@ describe('mandatory Wiki verification publication and accounting', () => {
         if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports')))
           return fixtureDecisionProviders.decideBatch(input, options)
         if (mode === 'predispatch-revision') throw new AgentRepositoryError('DECISION_PROVIDER_REVISION_CHANGED', 'Decision provider revision changed', 409)
+        await options?.onPreDispatch?.()
+        options?.onRequestDispatched?.()
         throw new DecisionProviderFailure('INVALID_DECISION_RESPONSE', snapshot,
           mode === 'known-paid' ? { inputTokens: 100, outputTokens: 2, totalTokens: 102, totalTokensSource: 'reported' } : null, 7)
       }

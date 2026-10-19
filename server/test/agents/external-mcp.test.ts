@@ -11,6 +11,9 @@ import {
   type ExternalMcpLease
 } from '../../agents/external-mcp.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
+import { ExternalMcpEngineContext } from '../../agents/providers/external-mcp-engine.ts'
+import { AgentRepositoryError } from '../../agents/repository.ts'
+import { withAgentSourceAuthorization } from '../../agents/source-authorization.ts'
 import { up } from '../../db/migrations/tsepistle-000050-agent-external-mcp.ts'
 
 const publicResolver = async () => [{ address: '93.184.216.34', family: 4 }]
@@ -227,6 +230,230 @@ describe('external MCP owner-scoped native clients', () => {
     const requestsAfterClose = protocol.calls.length
     await expect(lease.clients[0]!.inspectCatalog()).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
     expect(protocol.calls).toHaveLength(requestsAfterClose)
+  })
+
+  it.each([
+    ['legacy', 'DNS'],
+    ['legacy', 'credential'],
+    ['modern', 'DNS'],
+    ['modern', 'credential']
+  ] as const)('denies copied source revoked during final %s %s admission before native HTTP tools/call', async (era, stage) => {
+    protocol = protocolFixture(era)
+    const admissionStarted = Promise.withResolvers<void>()
+    const admissionReleased = Promise.withResolvers<void>()
+    let holdAdmission = false
+    let sourceAllowed = true
+    let admittedWithSource = false
+    const sourceDenied = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Copied Wiki source is no longer readable', 403)
+    const authorizeSource = async (): Promise<void> => {
+      if (!sourceAllowed) throw sourceDenied
+      admittedWithSource = true
+    }
+    const waitForRevocation = async (): Promise<void> => {
+      if (!holdAdmission) return
+      holdAdmission = false
+      admissionStarted.resolve()
+      await admissionReleased.promise
+    }
+    const guardedService = new ExternalMcpService({
+      knex: db,
+      secrets: {
+        has: vault.has.bind(vault),
+        store: vault.store.bind(vault),
+        delete: vault.delete.bind(vault),
+        get: async reference => {
+          if (stage === 'credential') await waitForRevocation()
+          return vault.get(reference)
+        }
+      },
+      enabled: () => true,
+      resolve: async () => {
+        if (stage === 'DNS') await waitForRevocation()
+        return publicResolver()
+      },
+      fetch: (...args) => protocol.fetch(...args)
+    })
+    const server = await guardedService.createAdmin(admin, { ...input(), authMode: 'bearer', secretValue: 'fixture-mcp-credential', groupIds: [20] })
+    const context = await ExternalMcpEngineContext.open(guardedService, owner.id, new AbortController().signal)
+    if (!context) throw new Error('Expected a live external MCP engine context')
+    try {
+      const binding = [...context.bindings.values()][0]!
+      await context.invoke(binding, { query: 'Public control request' }, 'public-control')
+      const control = protocol.calls.filter(call => call.method === 'tools/call')
+      expect(control).toHaveLength(1)
+      expect(control[0]!.headers.get('mcp-method')).toBe(era === 'modern' ? 'tools/call' : null)
+      holdAdmission = true
+      const pending = context.invoke(binding, { query: 'PRIVATE-WIKI-SNAPSHOT: internal stock review' }, 'copied-source', authorizeSource)
+      const outcome = pending.catch((error: unknown) => error)
+      await admissionStarted.promise
+      expect(admittedWithSource).toBe(true)
+      expect(sourceAllowed).toBe(true)
+      sourceAllowed = false
+      admissionReleased.resolve()
+      // The repository error must survive both native SDK and host HTTP wrappers.
+      expect(await outcome).toBe(sourceDenied)
+      expect(protocol.calls.filter(call => call.method === 'tools/call')).toEqual(control)
+      expect(JSON.stringify(protocol.calls)).not.toContain('PRIVATE-WIKI-SNAPSHOT')
+      expect(await guardedService.listForUser(owner)).toMatchObject([{ id: server.id, status: 'enabled' }])
+    } finally {
+      admissionReleased.resolve()
+      await context.close()
+    }
+  })
+
+  it('rejects an advertised binding invalidated by native catalog refresh during final HTTP DNS admission', async () => {
+    const resolving = Promise.withResolvers<void>()
+    const resolved = Promise.withResolvers<void>()
+    let holdNextResolution = false
+    const guardedService = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: async () => {
+        if (holdNextResolution) {
+          holdNextResolution = false
+          resolving.resolve()
+          await resolved.promise
+        }
+        return publicResolver()
+      },
+      fetch: (...args) => protocol.fetch(...args)
+    })
+    await guardedService.createAdmin(admin, { ...input(), groupIds: [20] })
+    // Observe the real service's lease so the race refreshes the exact native
+    // client used by the engine; do not replace its owner/HTTP implementation.
+    const opened = vi.spyOn(guardedService, 'openForUser')
+    const context = await ExternalMcpEngineContext.open(guardedService, owner.id, new AbortController().signal)
+    if (!context) throw new Error('Expected a live external MCP engine context')
+    try {
+      const lease = await opened.mock.results[0]!.value
+      const client = lease.clients[0]!
+      const revision = client.getCatalogRevision()
+      const binding = [...context.bindings.values()][0]!
+      holdNextResolution = true
+      // No Wiki callback: the advertised binding's own authority must still
+      // remain live through the final transport admission.
+      const pending = context.invoke(binding, { query: 'STALE-CATALOG-ARGUMENT' }, 'stale-catalog').catch((error: unknown) => error)
+      await resolving.promise
+      protocol.setToolCount(2)
+      await client.refresh({ force: true })
+      expect(client.getTools().map(tool => tool.name)).toEqual(['web_search', 'tool_1'])
+      expect(client.getCatalogRevision()).toBeGreaterThan(revision)
+      resolved.resolve()
+      expect(await pending).toHaveProperty('code', 'EXTERNAL_MCP_ACCESS_DENIED')
+      expect(protocol.calls.filter(call => call.method === 'tools/call')).toEqual([])
+      expect(JSON.stringify(protocol.calls)).not.toContain('STALE-CATALOG-ARGUMENT')
+    } finally {
+      resolved.resolve()
+      await context.close()
+      opened.mockRestore()
+    }
+  })
+
+  it.each(['legacy', 'modern'] as const)('isolates concurrent %s native invocation source authority across delayed final DNS', async era => {
+    protocol = protocolFixture(era)
+    const resolving = Promise.withResolvers<void>()
+    const resolved = Promise.withResolvers<void>()
+    let holdNextResolution = false
+    let firstSourceAllowed = true
+    let firstSourceAdmitted = false
+    const sourceDenied = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'First invocation lost Wiki source access', 403)
+    const guardedService = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: async () => {
+        if (holdNextResolution) {
+          holdNextResolution = false
+          resolving.resolve()
+          await resolved.promise
+        }
+        return publicResolver()
+      },
+      fetch: (...args) => protocol.fetch(...args)
+    })
+    await guardedService.createAdmin(admin, { ...input(), groupIds: [20] })
+    const context = await ExternalMcpEngineContext.open(guardedService, owner.id, new AbortController().signal)
+    if (!context) throw new Error('Expected a live external MCP engine context')
+    try {
+      const binding = [...context.bindings.values()][0]!
+      holdNextResolution = true
+      const first = context.invoke(binding, { query: 'PRIVATE-FIRST-INVOCATION' }, 'first-source', async () => {
+        if (!firstSourceAllowed) throw sourceDenied
+        firstSourceAdmitted = true
+      }).catch((error: unknown) => error)
+      await resolving.promise
+      expect(firstSourceAdmitted).toBe(true)
+      const second = await context.invoke(binding, { query: 'Independently authorized source' }, 'second-source', async () => {})
+      expect(second).toHaveProperty('protocolResult.value.structuredContent.source', 'external')
+      firstSourceAllowed = false
+      resolved.resolve()
+      expect(await first).toBe(sourceDenied)
+      const sent = protocol.calls.filter(call => call.method === 'tools/call')
+      expect(sent).toHaveLength(1)
+      expect(sent[0]!.params).toMatchObject({ arguments: { query: 'Independently authorized source' } })
+      expect(JSON.stringify(protocol.calls)).not.toContain('PRIVATE-FIRST-INVOCATION')
+    } finally {
+      resolved.resolve()
+      await context.close()
+    }
+  })
+
+  it.each(['modern', 'legacy'] as const)('isolates same-origin endpoint eras when %s initializes first', async firstEra => {
+    const origin = `https://eras-${randomUUID()}.example.com`
+    const fixtures = { modern: protocolFixture('modern'), legacy: protocolFixture('legacy') }
+    fixtures.modern.setToolCount(2)
+    const scoped = new ExternalMcpService({
+      knex: db,
+      secrets: vault,
+      enabled: () => true,
+      resolve: publicResolver,
+      fetch: async (url, init) => {
+        const era = url.pathname === '/modern' ? 'modern' : url.pathname === '/legacy' ? 'legacy' : undefined
+        if (!era) throw new Error(`Unexpected fixture endpoint ${url.href}`)
+        if (era === 'modern' && init.method !== 'DELETE') {
+          const request = JSON.parse(String(init.body)) as { id?: string; method: string }
+          if (request.method === 'initialize')
+            return Response.json({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Modern-only endpoint' } })
+        }
+        return fixtures[era].fetch(url, init)
+      }
+    })
+    const order = firstEra === 'modern' ? ['modern', 'legacy'] as const : ['legacy', 'modern'] as const
+    const opened: { era: 'modern' | 'legacy'; lease: ExternalMcpLease; serverId: string }[] = []
+    try {
+      for (const era of order) {
+        const server = await scoped.createAdmin(admin, { ...input(), endpointUrl: `${origin}/${era}`, groupIds: [20] })
+        const lease = await scoped.openForUser(owner.id, { serverIds: [server.id] })
+        leases.push(lease)
+        opened.push({ era, lease, serverId: server.id })
+        const discovery = await lease.inspectCatalog(server.id)
+        expect(lease.clients[0]!.getEra()).toBe(era)
+        expect(discovery.catalog.tools.map(tool => tool.name)).toEqual(era === 'modern' ? ['web_search', 'tool_1'] : ['web_search'])
+      }
+      // Exercise both clients after both have initialized, not only the last one.
+      for (const { era, lease, serverId } of opened) {
+        expect((await lease.inspectCatalog(serverId)).catalog.tools).toHaveLength(era === 'modern' ? 2 : 1)
+        expect(await lease.clients[0]!.callTool('web_search', { query: era })).toMatchObject({
+          content: [{ type: 'text', text: 'External claim, not Wiki evidence' }, { type: 'image', mimeType: 'image/png', data: 'AA==' }],
+          structuredContent: { source: 'external' }
+        })
+        const calls = fixtures[era].calls.filter(call => call.method === 'tools/call')
+        expect(calls).toHaveLength(1)
+        expect(calls[0]!.params).toMatchObject({ name: 'web_search', arguments: { query: era } })
+      }
+    } finally {
+      await Promise.all(opened.map(({ lease }) => lease.close()))
+    }
+    expect(fixtures.legacy.calls.filter(call => call.method === 'initialize')).toHaveLength(1)
+    expect(fixtures.legacy.calls.filter(call => call.method === 'session/terminate')).toHaveLength(1)
+    expect(fixtures.modern.calls.filter(call => call.method === 'session/terminate')).toHaveLength(0)
+    for (const { era, lease } of opened) {
+      const count = fixtures[era].calls.length
+      await lease.close()
+      await expect(lease.clients[0]!.inspectCatalog()).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+      expect(fixtures[era].calls).toHaveLength(count)
+    }
   })
 
   it('streams inspected bearer SSE ping and task-handle frames through native Ax before EOF', async () => {
@@ -465,7 +692,7 @@ describe('external MCP owner-scoped native clients', () => {
     expect(await service.listForUser(owner)).toHaveLength(1)
   })
 
-  it('uses the bounded native task cleanup lane on abort and isolates task handles by owner and endpoint', async () => {
+  it('keeps owned native task and session cleanup authorized after source revocation and abort, isolating handles by owner and endpoint', async () => {
     protocol = protocolFixture('legacy', true)
     const server = await service.createAdmin(admin, { ...input(), groupIds: [20] })
     const second = await service.createAdmin(admin, { ...input(), groupIds: [20] })
@@ -476,14 +703,26 @@ describe('external MCP owner-scoped native clients', () => {
     leases.push(lease, independent, anotherServer)
     for (const selected of [lease, independent, anotherServer]) await selected.clients[0]!.inspectCatalog()
     const client = lease.clients[0]!
-    await client.callToolTask('web_search', {})
-    expect(client.getKnownTasks()).toMatchObject([{ taskId: 'owned-task', status: 'working' }])
-    await expect(independent.clients[0]!.cancelTask('owned-task')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
-    await expect(anotherServer.clients[0]!.cancelTask('owned-task')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
-    controller.abort(new DOMException('User cancelled', 'AbortError'))
-    await lease.close()
-    expect(protocol.calls.filter(call => call.method === 'tasks/cancel')).toHaveLength(1)
-    expect(client.getKnownTasks()).toMatchObject([{ taskId: 'owned-task', status: 'cancelled' }])
+    let sourceAllowed = true
+    const sourceDenied = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
+    await withAgentSourceAuthorization(async () => {
+      if (!sourceAllowed) throw sourceDenied
+    }, async () => {
+      await client.callToolTask('web_search', {})
+      expect(client.getKnownTasks()).toMatchObject([{ taskId: 'owned-task', status: 'working' }])
+      await expect(independent.clients[0]!.cancelTask('owned-task')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+      await expect(anotherServer.clients[0]!.cancelTask('owned-task')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+      sourceAllowed = false
+      // Native discovery remains usable without the previous tool's Wiki rights.
+      const listings = protocol.calls.filter(call => call.method === 'tools/list').length
+      await client.refresh({ force: true })
+      expect(protocol.calls.filter(call => call.method === 'tools/list')).toHaveLength(listings + 1)
+      controller.abort(new DOMException('User cancelled', 'AbortError'))
+      await lease.close()
+      expect(protocol.calls.filter(call => call.method === 'tasks/cancel')).toHaveLength(1)
+      expect(client.getKnownTasks()).toMatchObject([{ taskId: 'owned-task', status: 'cancelled' }])
+      expect(protocol.calls.filter(call => call.method === 'session/terminate')).toHaveLength(1)
+    })
     expect(independent.clients[0]!.getKnownTasks()).toEqual([])
     const independentTask = await independent.clients[0]!.callToolTask('web_search', {})
     expect(independentTask.task.status).toBe('working')
@@ -528,12 +767,13 @@ describe('external MCP owner-scoped native clients', () => {
     }
   )
 
-  it.each(['legacy', 'modern'] as const)('cancels an in-flight %s invocation promptly without closing another owner lease', async era => {
+  it.each(['legacy', 'modern'] as const)('cancels an in-flight negotiated %s invocation promptly without closing another owner lease', async era => {
     protocol = protocolFixture(era)
     const controller = new AbortController()
     const started = Promise.withResolvers<void>()
     const cancelled = Promise.withResolvers<void>()
-    let networkRequests = 0
+    const invocations: { params: unknown; headers: Headers; signal: AbortSignal | null | undefined }[] = []
+    const terminatedSessionIds = () => protocol.calls.filter(call => call.method === 'session/terminate').map(call => call.headers.get('mcp-session-id'))
     let interruptedInvocation = false
     const cancellable = new ExternalMcpService({
       knex: db,
@@ -541,10 +781,16 @@ describe('external MCP owner-scoped native clients', () => {
       enabled: () => true,
       resolve: publicResolver,
       fetch: async (url, init) => {
-        networkRequests++
         if (init.method === 'DELETE') return protocol.fetch(url, init)
-        const request = JSON.parse(String(init.body)) as { method: string }
-        if (request.method !== 'tools/call' || interruptedInvocation) return protocol.fetch(url, init)
+        const request = JSON.parse(String(init.body)) as { method: string; params?: unknown }
+        if (request.method === 'initialize') {
+          const response = await protocol.fetch(url, init)
+          response.headers.set('mcp-session-id', randomUUID())
+          return response
+        }
+        if (request.method !== 'tools/call') return protocol.fetch(url, init)
+        invocations.push({ params: request.params, headers: new Headers(init.headers), signal: init.signal })
+        if (interruptedInvocation) return protocol.fetch(url, init)
         interruptedInvocation = true
         const pending = Promise.withResolvers<Response>()
         const onAbort = (): void => {
@@ -561,26 +807,58 @@ describe('external MCP owner-scoped native clients', () => {
         }
       }
     })
-    const server = await cancellable.createAdmin(admin, { ...input(), groupIds: [20] })
+    // Fresh origins keep cancellation fixtures independently negotiated.
+    const server = await cancellable.createAdmin(admin, {
+      ...input(),
+      endpointUrl: `https://${era}-${randomUUID()}.example.com/mcp`,
+      groupIds: [20]
+    })
     const lease = await cancellable.openForUser(owner.id, { serverIds: [server.id], signal: controller.signal })
     leases.push(lease)
+    const client = lease.clients[0]!
     await lease.inspectCatalog(server.id)
+    expect(client.getEra()).toBe(era)
+    const cancelledSessionId = protocol.calls.findLast(call => call.method === 'tools/list')!.headers.get('mcp-session-id')
     const independent = await cancellable.openForUser(9, { serverIds: [server.id] })
     leases.push(independent)
+    const independentClient = independent.clients[0]!
     await independent.inspectCatalog(server.id)
-    const count = networkRequests
-    const pending = lease.clients[0]!.callTool('web_search', {})
+    expect(independentClient.getEra()).toBe(era)
+    const independentSessionId = protocol.calls.findLast(call => call.method === 'tools/list')!.headers.get('mcp-session-id')
+    if (client.getEra() === 'legacy') {
+      expect(cancelledSessionId).not.toBeNull()
+      expect(independentSessionId).not.toBeNull()
+      expect(independentSessionId).not.toBe(cancelledSessionId)
+    } else {
+      expect(cancelledSessionId).toBeNull()
+      expect(independentSessionId).toBeNull()
+    }
+    const pending = client.callTool('web_search', { query: 'cancelled-owner' })
     const rejection = pending.catch((error: unknown) => error)
     await started.promise
     controller.abort(new DOMException('User cancelled', 'AbortError'))
     expect(await rejection).toHaveProperty('name', 'AbortError')
     await cancelled.promise
     await lease.close()
-    expect(networkRequests).toBe(count + 1)
-    await expect(lease.clients[0]!.inspectCatalog()).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
-    const independentResult = await independent.clients[0]!.callTool('web_search', {})
+    expect(invocations).toHaveLength(1)
+    expect(invocations[0]!.params).toMatchObject({ name: 'web_search', arguments: { query: 'cancelled-owner' } })
+    expect(invocations[0]!.signal?.aborted).toBe(true)
+    expect(invocations[0]!.headers.get('mcp-session-id')).toBe(cancelledSessionId)
+    // Cancellation must never replay the interrupted side effect through the fixture.
+    expect(protocol.calls.filter(call => call.method === 'tools/call')).toHaveLength(0)
+    expect(terminatedSessionIds()).toEqual(cancelledSessionId === null ? [] : [cancelledSessionId])
+    await expect(client.inspectCatalog()).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    const independentResult = await independentClient.callTool('web_search', { query: 'surviving-owner' })
     expect(independentResult).toHaveProperty('structuredContent.source', 'external')
-    expect(networkRequests).toBe(count + 2)
+    expect(invocations.map(call => call.params)).toMatchObject([
+      { name: 'web_search', arguments: { query: 'cancelled-owner' } },
+      { name: 'web_search', arguments: { query: 'surviving-owner' } }
+    ])
+    expect(protocol.calls.filter(call => call.method === 'tools/call')).toHaveLength(1)
+    expect(invocations[1]!.headers.get('mcp-session-id')).toBe(independentSessionId)
+    expect(terminatedSessionIds()).toEqual(cancelledSessionId === null ? [] : [cancelledSessionId])
+    await independent.close()
+    expect(terminatedSessionIds()).toEqual([cancelledSessionId, independentSessionId].filter(sessionId => sessionId !== null))
   })
 
   it('bounds legacy session cleanup, cancels active invocation and shares the pending close promise', async () => {
@@ -653,6 +931,34 @@ describe('external MCP untrusted endpoint boundary', () => {
     expect(() => normalizeExternalMcpEndpoint(endpoint)).toThrow()
   })
 
+  it.each([false, true])('guards unknown argument-bearing methods with modern routing headers present: %s', async modernHeaders => {
+    const sourceDenied = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
+    const captured: unknown[] = []
+    const guard = createExternalMcpEndpointGuard({
+      endpointUrl: 'https://public.example.com/mcp',
+      authorize: async () => {},
+      credential: async () => null,
+      resolve: publicResolver,
+      fetch: async (_url, init) => {
+        captured.push(init.body)
+        return Response.json({})
+      }
+    })
+    try {
+      const pending = withAgentSourceAuthorization(async () => { throw sourceDenied }, () =>
+        guard.fetch('https://public.example.com/mcp', {
+          method: 'POST',
+          headers: modernHeaders ? { 'mcp-method': 'extension/export' } : {},
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'extension-call', method: 'extension/export', params: { query: 'PRIVATE-EXTENSION-ARGUMENT' } })
+        })
+      )
+      await expect(pending).rejects.toBe(sourceDenied)
+      expect(captured).toEqual([])
+    } finally {
+      await guard.close()
+    }
+  })
+
   it.each(['10.0.0.1', '169.254.169.254', '::ffff:93.184.216.34', 'fd00::1', 'fe80::1'])('rejects DNS answer %s without calling HTTP', async address => {
     let dispatched = false
     const guard = createExternalMcpEndpointGuard({
@@ -673,21 +979,32 @@ describe('external MCP untrusted endpoint boundary', () => {
     }
   })
 
-  it('pins and revalidates DNS at the actual Undici connection, rejecting a public-to-private rebind', async () => {
-    let resolutions = 0
-    const guard = createExternalMcpEndpointGuard({
-      endpointUrl: 'https://rebind.example.com/mcp',
-      authorize: async () => {},
-      credential: async () => null,
-      resolve: async () => [{ address: ++resolutions === 1 ? '93.184.216.34' : '127.0.0.1', family: 4 }]
-    })
-    try {
-      await expect(guard.fetch('https://rebind.example.com/mcp', { method: 'POST', body: '{}' })).rejects.toMatchObject({ status: 502 })
-      expect(resolutions).toBe(2)
-    } finally {
-      await guard.close()
+  it.each(['invocation', 'aborted-task-cleanup', 'aborted-session-cleanup'] as const)(
+    'pins and revalidates DNS at the actual Undici connection for %s, rejecting a public-to-private rebind',
+    async operation => {
+      let resolutions = 0
+      const controller = new AbortController()
+      if (operation !== 'invocation') controller.abort(new DOMException('User cancelled', 'AbortError'))
+      const guard = createExternalMcpEndpointGuard({
+        endpointUrl: 'https://rebind.example.com/mcp',
+        signal: controller.signal,
+        authorize: async () => {},
+        credential: async () => null,
+        resolve: async () => [{ address: ++resolutions === 1 ? '93.184.216.34' : '127.0.0.1', family: 4 }]
+      })
+      try {
+        await expect(
+          guard.fetch('https://rebind.example.com/mcp', {
+            method: operation === 'aborted-session-cleanup' ? 'DELETE' : 'POST',
+            ...(operation === 'aborted-session-cleanup' ? {} : { body: operation === 'aborted-task-cleanup' ? '{"method":"tasks/cancel"}' : '{}' })
+          })
+        ).rejects.toMatchObject({ status: 502 })
+        expect(resolutions).toBe(2)
+      } finally {
+        await guard.close()
+      }
     }
-  })
+  )
 
   it('denies redirects without following them or crossing bearer credentials and denies arbitrary headers', async () => {
     let calls = 0,

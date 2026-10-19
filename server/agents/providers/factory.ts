@@ -20,6 +20,7 @@ import { AgentProviderPricingRevisionSchema, type AgentReasoningEffort, agentPro
 import { type AgentMediaInputs, type AgentMediaKind, type AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { assertAgentMediaBinding } from '../media-providers.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import { captureAgentSourceAuthorization, currentAgentSourceAuthorization, type AgentSourceScopeRunner } from '../source-authorization.ts'
 import { createGeminiAxService, isGeminiChatModel, isGeminiContinuation, preserveGeminiContinuation } from './gemini.ts'
 import {
   createGeminiMediaTransport,
@@ -57,7 +58,7 @@ const MAX_STRUCTURED_DEPTH = 64
 const MAX_STRUCTURED_VALUES = 16_384
 const MAX_STRUCTURED_BYTES = 65_536
 
-// Exact native chat capabilities in Ax 25.4.1 and Google's thinking-level table:
+// Exact native chat capabilities and Google's thinking-level table:
 // https://ai.google.dev/gemini-api/docs/thinking
 // Portable catalog levels may collapse to a different native level. Unknown
 // models (including Gemini 2.x) keep provider defaults instead of guessing.
@@ -494,8 +495,20 @@ export const agentProviderMeasuredCostMicros = (pricing: AgentProviderPricing, r
   return providerCostMicros(pricing, receipt.inputTokens, receipt.outputTokens, receipt.totalTokens, receipt)
 }
 
+export interface AgentProviderChatOptions extends AxAIServiceOptions {
+  /** Observe the guarded HTTP handoff; never authorize or reserve from this callback. */
+  readonly onRequestDispatched?: (() => void) | undefined
+}
+
+export interface AgentProviderChatService extends AxAIService {
+  chat(
+    request: Readonly<AxChatRequest>,
+    options?: Readonly<AgentProviderChatOptions>
+  ): Promise<AxChatResponse | ReadableStream<AxChatResponse>>
+}
+
 export interface AgentProviderService {
-  readonly service: AxAIService
+  readonly service: AgentProviderChatService
   /** Unpaid native input preflight; does not represent billable usage. */
   readonly countContextTokens?: (request: Readonly<AxChatRequest>, signal: AbortSignal) => Promise<number>
   readonly capabilities: AgentProviderCapabilities
@@ -980,6 +993,11 @@ export const createGuardedProviderFetch = (
       // Authorization is fresh at host dispatch, not atomic with a remote RPC.
       // The dispatcher independently validates connection-time DNS addresses.
       if (authorizeDispatch) await authorizeDispatch()
+      // File status/deletion contains only an already-owned provider identifier;
+      // source revocation must not strand uploads or block their cleanup.
+      const sourceAuthorization = currentAgentSourceAuthorization()
+      if (sourceAuthorization && !(endpoint === 'gemini-media' && ['GET', 'DELETE'].includes(init?.method?.toUpperCase() ?? 'GET')))
+        await sourceAuthorization()
       signal?.throwIfAborted()
       const response = (await (implementation as unknown as typeof undiciFetch)(url, {
         ...init,
@@ -1013,6 +1031,12 @@ export const createGuardedProviderFetch = (
     },
     { preconnect: disabledProviderPreconnect }
   )
+}
+
+const sourceScopedProviderFetch = (implementation: AgentProviderFetch, sourceScope: AgentSourceScopeRunner): AgentProviderFetch => {
+  const fetch = (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> =>
+    sourceScope(() => implementation(input, init))
+  return Object.assign(fetch, { preconnect: implementation.preconnect }) as AgentProviderFetch
 }
 
 const createAnthropicEffortFetch = (
@@ -1181,6 +1205,8 @@ interface ProviderRequestScope {
   readonly limits: AgentProviderResourceLimits
   readonly onLimit: (error: AgentRepositoryError) => void
   readonly onError: (error: AgentRepositoryError) => void
+  readonly onRequestDispatched?: (() => void) | undefined
+  readonly sourceScope?: AgentSourceScopeRunner
   readonly promptCacheKey?: string | undefined
   readonly cachePrompt?: AxChatRequest['chatPrompt']
 }
@@ -1193,7 +1219,7 @@ const requestOutputTokens = (request: Readonly<AxChatRequest<unknown>>, ceiling:
   return Math.min(requested, ceiling)
 }
 
-type ProviderChatService = AxAIService & Pick<AgentProviderService, 'nativeMediaCapabilities' | 'countContextTokens'>
+type ProviderChatService = AgentProviderChatService & Pick<AgentProviderService, 'nativeMediaCapabilities' | 'countContextTokens'>
 
 const createRequestScopedService = (
   capabilities: AgentProviderCapabilities,
@@ -1278,6 +1304,7 @@ const createRequestScopedService = (
         const defaultsSnapshot = featureService.getOptions()
         const service = build({
           limits,
+          sourceScope: captureAgentSourceAuthorization(),
           onLimit: error => controller.abort(error),
           onError: error => { applicationError ??= error }
         })
@@ -1322,10 +1349,14 @@ const createRequestScopedService = (
       try {
         const service = build({
           limits, onLimit, onError,
+          onRequestDispatched: options?.onRequestDispatched,
+          sourceScope: captureAgentSourceAuthorization(),
           promptCacheKey: options?.promptCacheKey ?? defaultsSnapshot.promptCacheKey,
           cachePrompt: boundedRequest.chatPrompt
         })
-        const scopedOptions = safeOptions({ ...defaultsSnapshot, ...options, abortSignal: signal }, service.getOptions().fetch)
+        const nativeOptions = { ...defaultsSnapshot, ...options, abortSignal: signal }
+        delete nativeOptions.onRequestDispatched
+        const scopedOptions = safeOptions(nativeOptions, service.getOptions().fetch)
         // Host-owned native cache controls cover official models newer than this SDK's catalog.
         if (caching !== undefined && !service.getFeatures(model).caching.supported) delete scopedOptions.contextCache
         const response = await service.chat(boundedRequest, scopedOptions)
@@ -1395,7 +1426,7 @@ export class AgentProviderFactory {
         // Notify accounting only after DNS, live authorization and abort checks;
         // a proven no-HTTP denial must release, not consume, its reservation.
         let pendingDispatch: (() => void) | undefined
-        const guarded = createGuardedProviderFetch(
+        const guardedFetch = createGuardedProviderFetch(
           config.baseUrl,
           endpoint,
           {},
@@ -1419,6 +1450,7 @@ export class AgentProviderFactory {
               throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'Media binding is no longer current', 403)
           }
         )
+        const guarded = sourceScopedProviderFetch(guardedFetch, captureAgentSourceAuthorization())
         const scopedInput = {
           ...input,
           onDispatch: () => {
@@ -1489,27 +1521,27 @@ export class AgentProviderFactory {
       rawBodyBytes: GEMINI_MEDIA_OUTPUT_LIMIT,
       rawChunkBytes: GEMINI_MEDIA_OUTPUT_LIMIT
     }
-    const gemini = createGeminiMediaTransport({
-      apiKey,
-      baseUrl: row.baseUrl,
-      timeoutMs: adapterConfig.timeoutMs,
-      countModels,
-      fetch: createGuardedProviderFetch(
-        row.baseUrl,
-        'gemini-media',
-        adapterConfig.additionalHeaders,
-        this.#fetch,
-        this.#resolve,
-        limits,
-        undefined,
-        undefined,
-        {
-          generateModels: [],
-          countModels,
-          files: true
-        }
-      )
-    })
+    const guarded = createGuardedProviderFetch(
+      row.baseUrl,
+      'gemini-media',
+      adapterConfig.additionalHeaders,
+      this.#fetch,
+      this.#resolve,
+      limits,
+      undefined,
+      undefined,
+      {
+        generateModels: [],
+        countModels,
+        files: true
+      }
+    )
+    const geminiOptions = { apiKey, baseUrl: row.baseUrl, timeoutMs: adapterConfig.timeoutMs, countModels }
+    const gemini = createGeminiMediaTransport({ ...geminiOptions, fetch: guarded })
+    const createInputTransport = (): GeminiMediaInputTransport => {
+      const sourceScope = captureAgentSourceAuthorization()
+      return createGeminiMediaTransport({ ...geminiOptions, fetch: sourceScopedProviderFetch(guarded, sourceScope) })
+    }
     const modalityByMime: Readonly<Record<string, keyof AgentMediaInputs>> = {
       'image/png': 'images',
       'image/jpeg': 'images',
@@ -1535,7 +1567,7 @@ export class AgentProviderFactory {
           const modality = Object.hasOwn(modalityByMime, input.mimeType) ? modalityByMime[input.mimeType] : undefined
           if (!modality || !mediaInputs[modality])
             throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'This LLM profile does not opt into this media input', 400)
-          return gemini.upload(input, signal)
+          return createInputTransport().upload(input, signal)
         },
         async countTokens(model, input, signal) {
           for (const block of input) {
@@ -1544,7 +1576,7 @@ export class AgentProviderFactory {
             if (!modality || !mediaInputs[modality])
               throw new AgentRepositoryError('INVALID_MEDIA_INPUT', 'This LLM profile does not opt into this media input', 400)
           }
-          return gemini.countTokens(model, input, signal)
+          return createInputTransport().countTokens(model, input, signal)
         },
         delete: gemini.delete
       }
@@ -1611,31 +1643,45 @@ export class AgentProviderFactory {
               ? 'gemini-chat'
               : '/chat/completions'
     const createTransportFetch = (scope: ProviderRequestScope): AgentProviderFetch => {
+      const notify = scope.onRequestDispatched
+      const implementation = notify
+        ? Object.assign(
+            (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]) => {
+              notify()
+              return this.#fetch(input, init)
+            },
+            { preconnect: this.#fetch.preconnect }
+          )
+        : this.#fetch
       const guardedFetch = createGuardedProviderFetch(
         row.baseUrl,
         endpoint,
         adapterConfig.additionalHeaders,
-        this.#fetch,
+        implementation,
         this.#resolve,
         scope.limits,
         scope.onLimit,
         row.transportKind === 'gemini-api' ? model : undefined
       )
-      return row.transportKind === 'openresponses' ? createOpenResponsesFetch(guardedFetch) : guardedFetch
+      const sourceFetch = scope.sourceScope ? sourceScopedProviderFetch(guardedFetch, scope.sourceScope) : guardedFetch
+      return row.transportKind === 'openresponses' ? createOpenResponsesFetch(sourceFetch) : sourceFetch
+    }
+    const scopedTransportFetch = (scope: ProviderRequestScope, transportFetch: AgentProviderFetch): AgentProviderFetch => {
+      // Native SDK errors may wrap fetch failures; preserve application denials
+      // in the request's own error channel, including Gemini chat and counting.
+      const fetch = async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
+        try {
+          return await transportFetch(input, init)
+        } catch (error) {
+          if (error instanceof AgentRepositoryError) scope.onError(error)
+          throw error
+        }
+      }
+      return Object.assign(fetch, { preconnect: transportFetch.preconnect }) as AgentProviderFetch
     }
     const createOptions = (scope: ProviderRequestScope, transportFetch: AgentProviderFetch) =>
       ({
-        fetch: Object.assign(
-          async (input: Parameters<AgentProviderFetch>[0], init?: RequestInit): Promise<Response> => {
-            try {
-              return await transportFetch(input, init)
-            } catch (error) {
-              if (error instanceof AgentRepositoryError) scope.onError(error)
-              throw error
-            }
-          },
-          { preconnect: transportFetch.preconnect }
-        ) as AgentProviderFetch,
+        fetch: scopedTransportFetch(scope, transportFetch),
         timeout: adapterConfig.timeoutMs,
         debug: false,
         verbose: false,
@@ -1743,7 +1789,7 @@ export class AgentProviderFactory {
           apiKey: secret,
           baseUrl: row.baseUrl,
           model,
-          fetch: createTransportFetch(scope),
+          fetch: scopedTransportFetch(scope, createTransportFetch(scope)),
           timeoutMs: adapterConfig.timeoutMs,
           maxOutputTokens: scope.limits.maxOutputTokens,
           limits: scope.limits,

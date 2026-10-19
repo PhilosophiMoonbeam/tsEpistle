@@ -1,5 +1,5 @@
 import type { LookupAddress } from 'node:dns'
-import { ax, axGlobals, f } from '@ax-llm/ax'
+import { ax, axGlobals, f, type AxRateLimiterFunction } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
 import { z } from 'zod'
 import { AgentProviderConformanceRunner } from '../../agents/providers/conformance.ts'
@@ -7,6 +7,8 @@ import { AgentProviderFactory, createGuardedProviderFetch, deriveAgentProviderRe
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { parsePromptToolCall, promptToolInstructions, promptToolResultMessage } from '../../agents/providers/prompt-tools.ts'
 import { readAgentProviderUsage } from '../../agents/providers/usage.ts'
+import { AgentRepositoryError } from '../../agents/repository.ts'
+import { withAgentSourceAuthorization } from '../../agents/source-authorization.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
@@ -58,6 +60,122 @@ describe('additional provider transports', () => {
       conformed: true
     })
   }
+
+  it.each([
+    ['openai-responses', 'https://responses.example.test/v1', 'model-test'],
+    ['openresponses', 'https://openresponses.example.test/v1', 'model-test'],
+    ['openai-chat', 'https://chat.example.test/v1', 'model-test'],
+    ['anthropic-messages', 'https://anthropic.example.test/v1', 'claude-sonnet-4-6'],
+    ['gemini-api', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-3.7-flash'],
+    ['legacy-completions', 'https://legacy.example.test/v1', 'model-test']
+  ] as const)('retains typed source denial after queued %s DNS without sending copied Wiki text', async (transportKind, baseUrl, model) => {
+    const id = '00000000-0000-4000-8000-000000000045'
+    await insert({
+      id, transportKind, baseUrl, model,
+      authMode: transportKind === 'gemini-api' ? 'google-api-key' : transportKind === 'anthropic-messages' ? 'anthropic-api-key' : 'bearer'
+    })
+    const resolving = Promise.withResolvers<void>()
+    const resolved = Promise.withResolvers<LookupAddress[]>()
+    const resolver = async (): Promise<LookupAddress[]> => {
+      resolving.resolve()
+      return resolved.promise
+    }
+    const sent: RequestInit[] = []
+    const provider = await new AgentProviderFactory(db, { get: () => 'still-authorized-provider-key' }, (async (_input, init) => {
+      sent.push(init ?? {})
+      return Response.json({ error: { code: 'fixture_unavailable' } }, { status: 503 })
+    }) as typeof fetch, resolver as never).create(id)
+    let readable = true
+    const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
+    const authorize = vi.fn(async () => {
+      if (!readable) throw denial
+    })
+    await authorize()
+    const generation = withAgentSourceAuthorization(authorize, async () =>
+      provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Copied private Wiki source text' }] }, { stream: false })
+    ).catch((error: unknown) => error)
+    await resolving.promise
+    readable = false
+    resolved.resolve(await publicResolver())
+    expect(await generation).toBe(denial)
+    expect(sent).toEqual([])
+    expect(authorize).toHaveBeenCalledTimes(2)
+    expect(await db('agentProviderProfileVersions').where({ id }).first('conformed')).toMatchObject({ conformed: 1 })
+  })
+
+  it('isolates queued native SDK callbacks from an unrelated scheduler source scope while only the revoked request is denied', async () => {
+    const id = '00000000-0000-4000-8000-000000000046'
+    await insert({ id, transportKind: 'openai-chat', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer' })
+    const resolving = Promise.withResolvers<void>()
+    const resolutions = [Promise.withResolvers<LookupAddress[]>(), Promise.withResolvers<LookupAddress[]>()]
+    let dnsCalls = 0
+    const resolver = async (): Promise<LookupAddress[]> => {
+      const resolution = resolutions[dnsCalls++]!
+      if (dnsCalls === 2) resolving.resolve()
+      return resolution.promise
+    }
+    const queued: (() => Promise<void>)[] = []
+    const enqueued = Promise.withResolvers<void>()
+    const rateLimiter: AxRateLimiterFunction = <T>(next: () => Promise<T | ReadableStream<T>>) => {
+      const result = Promise.withResolvers<T | ReadableStream<T>>()
+      queued.push(async () => {
+        try {
+          result.resolve(await next())
+        } catch (error) {
+          result.reject(error)
+        }
+      })
+      if (queued.length === 2) enqueued.resolve()
+      return result.promise
+    }
+    const sent: string[] = []
+    const provider = await new AgentProviderFactory(db, { get: () => 'still-authorized-provider-key' }, (async (_input, init) => {
+      sent.push(String(init?.body))
+      return Response.json({
+        id: 'chat_authorized', object: 'chat.completion', created: 1, model: 'model-test',
+        choices: [{ index: 0, message: { role: 'assistant', content: 'Authorized answer' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 }
+      })
+    }) as typeof fetch, resolver as never).create(id)
+    const readableSources = new Set(['first', 'second'])
+    const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'First Wiki source access was revoked', 403)
+    const authorizeFirst = vi.fn(async () => {
+      if (!readableSources.has('first')) throw denial
+    })
+    const authorizeSecond = vi.fn(async () => {
+      if (!readableSources.has('second')) throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Second Wiki source access was revoked', 403)
+    })
+    const first = withAgentSourceAuthorization(authorizeFirst, async () =>
+      provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Revoked copied Wiki source' }] }, { stream: false, rateLimiter })
+    ).catch((error: unknown) => error)
+    const second = withAgentSourceAuthorization(authorizeSecond, async () =>
+      provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Authorized independent Wiki source' }] }, { stream: false, rateLimiter })
+    )
+    await enqueued.promise
+    const schedulerAuthorization = vi.fn(async () => {
+      throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Unrelated scheduler source was revoked', 403)
+    })
+    const scheduled = withAgentSourceAuthorization(schedulerAuthorization, async () => {
+      await Promise.all(queued.map(run => run()))
+    })
+    await resolving.promise
+    readableSources.delete('first')
+    resolutions[0]!.resolve(await publicResolver())
+    const firstResult = await first
+    const sendsBeforeSecond = sent.length
+    resolutions[1]!.resolve(await publicResolver())
+    const answer = await second
+    await scheduled
+    expect(firstResult).toBe(denial)
+    expect(sendsBeforeSecond).toBe(0)
+    expect(answer).toMatchObject({ results: [{ content: 'Authorized answer' }] })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('Authorized independent Wiki source')
+    expect(sent[0]).not.toContain('Revoked copied Wiki source')
+    expect(authorizeFirst).toHaveBeenCalledTimes(1)
+    expect(authorizeSecond).toHaveBeenCalledTimes(1)
+    expect(schedulerAuthorization).not.toHaveBeenCalled()
+  })
 
   it.each([
     ['openai-responses', 'https://responses.example.test/v1', 'model-test'],

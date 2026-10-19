@@ -1,8 +1,12 @@
 import type { lookup } from 'node:dns/promises'
-import { describe, expect, it } from '../bun-test.mts'
+import { axGlobals } from '@ax-llm/ax'
+import createKnex from 'knex'
+import { createNoopMeter, ProxyTracerProvider, type Meter, type Span } from '@opentelemetry/api'
+import { describe, expect, it, vi } from '../bun-test.mts'
 import {
   DecisionProviderClient,
   DecisionProviderFailure,
+  DecisionProviderRegistry,
   decisionCostMicros,
   estimateDecisionCost,
   normalizeDecisionAnswer,
@@ -16,6 +20,9 @@ import {
   type DecisionBatchRequest,
   type DecisionRequest
 } from '../../../shared/agents/decision-providers.ts'
+import { AgentRepositoryError } from '../../agents/repository.ts'
+import { withAgentSourceAuthorization } from '../../agents/source-authorization.ts'
+import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 
 const publicDns = (async () => [{ address: '93.184.216.34', family: 4 }]) as unknown as typeof lookup
 const request: DecisionRequest = {
@@ -211,6 +218,207 @@ describe('decision provider protocols', () => {
     })
   }
 
+  it('keeps private compatible decoder failures out of inherited debug logs and recording traces', async () => {
+    const prior = { debug: axGlobals.debug, logger: axGlobals.logger, tracer: axGlobals.tracer }
+    const tracer = new ProxyTracerProvider().getTracer('decision-inherited-fixture')
+    const span = new ProxyTracerProvider().getTracer('decision-recording-fixture').startSpan('private-decision')
+    const captured: unknown[] = []
+    const recording = vi.spyOn(span, 'isRecording').mockReturnValue(true)
+    const exceptions = vi.spyOn(span, 'recordException').mockImplementation(exception => {
+      captured.push(exception)
+    })
+    const statuses = vi.spyOn(span, 'setStatus').mockImplementation(status => {
+      captured.push(status)
+      return span
+    })
+    const events = vi.spyOn(span, 'addEvent').mockImplementation((name, attributes) => {
+      captured.push({ name, attributes })
+      return span
+    })
+    const activeSpans = vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (current: Span) => unknown
+      return callback(span)
+    }) as typeof tracer.startActiveSpan)
+    const logger = vi.fn()
+    axGlobals.debug = true
+    axGlobals.logger = logger
+    axGlobals.tracer = tracer
+    try {
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() =>
+          Response.json({
+            id: 'private-refusal-fixture',
+            object: 'chat.completion',
+            created: 0,
+            model: 'decision-model',
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'stop',
+                message: {
+                  role: 'assistant',
+                  content: JSON.stringify(answer),
+                  refusal: 'PRIVATE_DECISION_RESPONSE_DO_NOT_RECORD'
+                }
+              }
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 5 }
+          })
+        )
+      })
+      const failure = await client
+        .execute(custom('chat-completions'), 'fixture-private-key', { ...request, state: 'PRIVATE_DECISION_STATE_DO_NOT_RECORD' })
+        .catch((value: unknown) => value)
+      expect(failure).toBeInstanceOf(DecisionProviderFailure)
+      expect(failure).toMatchObject({ usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, totalTokensSource: 'derived' } })
+      expect(JSON.stringify(failure)).not.toContain('PRIVATE_DECISION')
+      expect(logger).not.toHaveBeenCalled()
+      expect(captured).toEqual([])
+    } finally {
+      axGlobals.debug = prior.debug
+      axGlobals.logger = prior.logger
+      axGlobals.tracer = prior.tracer
+      activeSpans.mockRestore()
+      events.mockRestore()
+      statuses.mockRestore()
+      exceptions.mockRestore()
+      recording.mockRestore()
+    }
+  })
+
+  it('keeps unexpected compatible tool names out of inherited metrics while retaining the measured rejection receipt', async () => {
+    const prior = { meter: axGlobals.meter, onUsage: axGlobals.onUsage }
+    const captured: unknown[] = []
+    // Inherit no-op observables without mutating the shared no-op Meter instance.
+    const meter = Object.create(createNoopMeter()) as Meter
+    meter.createCounter = name => ({
+      add(value, attributes) {
+        captured.push({ name, value, attributes })
+      }
+    })
+    meter.createHistogram = name => ({
+      record(value, attributes) {
+        captured.push({ name, value, attributes })
+      }
+    })
+    meter.createUpDownCounter = meter.createCounter
+    meter.createGauge = meter.createHistogram
+    const observed: unknown[] = []
+    let transportCalls = 0
+    const preDispatch = vi.fn(async () => {})
+    axGlobals.meter = meter
+    axGlobals.onUsage = event => {
+      observed.push(event)
+    }
+    try {
+      const client = new DecisionProviderClient({
+        resolve: publicDns,
+        fetch: fakeFetch(() => {
+          transportCalls++
+          return Response.json({
+            id: 'PRIVATE_FUNCTION_RESPONSE_FIXTURE',
+            object: 'chat.completion',
+            created: 0,
+            model: 'decision-model',
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'stop',
+                message: {
+                  role: 'assistant',
+                  content: JSON.stringify(answer),
+                  tool_calls: [{ id: 'private-tool-fixture', type: 'function', function: { name: 'PRIVATE_FUNCTION_NAME_FIXTURE', arguments: '{}' } }]
+                }
+              }
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 5, completion_tokens_details: { reasoning_tokens: 'PRIVATE_FUNCTION_USAGE_FIXTURE' } }
+          })
+        })
+      })
+      const base = custom('chat-completions')
+      const failure = await client
+        .execute({ ...base, config: { ...base.config, pricing: TYPESAFE_JEV_PRICING } }, 'fixture-key', request, { onPreDispatch: preDispatch })
+        .catch((value: unknown) => value)
+      expect(failure).toBeInstanceOf(DecisionProviderFailure)
+      expect(failure).toMatchObject({
+        code: 'INVALID_DECISION_RESPONSE',
+        usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, totalTokensSource: 'derived' },
+        estimatedCostMicros: 5
+      })
+      expect(transportCalls).toBe(1)
+      expect(preDispatch).toHaveBeenCalledTimes(1)
+      expect(observed).toEqual([
+        expect.objectContaining({
+          operation: 'chat',
+          model: 'decision-model',
+          streaming: false,
+          tokens: expect.objectContaining({ promptTokens: 100, completionTokens: 5, totalTokens: 105 })
+        })
+      ])
+      expect(JSON.stringify(observed)).not.toContain('PRIVATE_FUNCTION')
+      expect(JSON.stringify(failure)).not.toContain('PRIVATE_FUNCTION')
+      expect(captured).toEqual([])
+    } finally {
+      axGlobals.meter = prior.meter
+      axGlobals.onUsage = prior.onUsage
+    }
+  })
+
+  for (const snapshot of [native, custom('chat-completions'), custom('completions')]) {
+    it(`keeps ${snapshot.config.kind}${snapshot.config.kind === 'openai-compatible' ? ` ${snapshot.config.dialect}` : ''} paid dispatch and receipts independent of global runtime hooks`, async () => {
+      const prior = { rateLimiter: axGlobals.rateLimiter, onUsage: axGlobals.onUsage }
+      let limiterCalls = 0
+      let transportCalls = 0
+      const observed: unknown[] = []
+      axGlobals.rateLimiter = async next => {
+        limiterCalls++
+        await next()
+        return next()
+      }
+      axGlobals.onUsage = event => {
+        observed.push(event)
+        throw new Error('Usage telemetry is unavailable')
+      }
+      try {
+        const client = new DecisionProviderClient({
+          resolve: publicDns,
+          fetch: fakeFetch(() => {
+            transportCalls++
+            return Response.json(
+              snapshot.config.kind === 'typesafe'
+                ? nativePayload()
+                : {
+                    id: 'PRIVATE_DECISION_PAYLOAD',
+                    object: snapshot.config.dialect === 'completions' ? 'text_completion' : 'chat.completion',
+                    created: 0,
+                    model: 'decision-model',
+                    choices: [
+                      {
+                        index: 0,
+                        finish_reason: 'stop',
+                        ...(snapshot.config.dialect === 'completions'
+                          ? { text: JSON.stringify(answer) }
+                          : { message: { role: 'assistant', content: JSON.stringify(answer) } })
+                      }
+                    ],
+                    usage: { prompt_tokens: 100, completion_tokens: 5, completion_tokens_details: { reasoning_tokens: 'PRIVATE_DECISION_PAYLOAD' } }
+                  }
+            )
+          })
+        })
+        const result = await client.execute(snapshot, 'fixture-key', { ...request, state: 'PRIVATE_DECISION_PAYLOAD' })
+        expect(result).toMatchObject({ choice: 'simple', usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105, totalTokensSource: 'derived' } })
+        expect(transportCalls).toBe(1)
+        expect(limiterCalls).toBe(0)
+        expect(JSON.stringify(observed)).not.toContain('PRIVATE_DECISION_PAYLOAD')
+      } finally {
+        axGlobals.rateLimiter = prior.rateLimiter
+        axGlobals.onUsage = prior.onUsage
+      }
+    })
+  }
+
   it('preserves custom alias resolution as observed model identity without assigning a price', async () => {
     const client = new DecisionProviderClient({
       resolve: publicDns,
@@ -249,10 +457,18 @@ describe('decision provider protocols', () => {
           })
         )
       })
-      const error = await client.execute(custom('chat-completions'), 'fixture-secret', request).catch(value => value)
-      expect(error).toBeInstanceOf(DecisionProviderFailure)
-      expect(error).toMatchObject({ usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110, totalTokensSource: 'derived' } })
-      expect(JSON.stringify(error)).not.toContain('fixture-secret')
+      const priorObserver = axGlobals.onUsage
+      const observer = vi.fn()
+      axGlobals.onUsage = observer
+      try {
+        const error = await client.execute(custom('chat-completions'), 'fixture-secret', request).catch(value => value)
+        expect(error).toBeInstanceOf(DecisionProviderFailure)
+        expect(error).toMatchObject({ usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110, totalTokensSource: 'derived' } })
+        expect(JSON.stringify(error)).not.toContain('fixture-secret')
+        expect(observer).not.toHaveBeenCalled()
+      } finally {
+        axGlobals.onUsage = priorObserver
+      }
     })
   }
 
@@ -688,6 +904,152 @@ describe('native decision batches', () => {
     })
   })
 
+  it('rejects a committed Registry disable and revision change during final DNS or source authorization for decisions and batches without a caller admission hook', async () => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    try {
+      await db.schema.createTable('agentDecisionProviders', table => {
+        table.uuid('id').primary()
+        table.string('displayName')
+        table.integer('revision')
+        table.text('config')
+        table.string('secretReference').nullable()
+        table.boolean('enabled')
+        table.boolean('isDefault')
+      })
+      const id = '00000000-0000-4000-8000-000000000047'
+      await db('agentDecisionProviders').insert({
+        id, displayName: 'Native decision fixture', revision: native.revision,
+        config: JSON.stringify(native.config), secretReference: null, enabled: true, isDefault: true
+      })
+      const secrets = new DatabaseAgentSecretRegistry(db, { currentKeyId: 'fixture', keys: { fixture: Buffer.alloc(32, 7) } })
+      for (const [batched, boundary] of [[false, 'DNS'], [true, 'DNS'], [false, 'source authorization'], [true, 'source authorization']] as const) {
+        await db('agentDecisionProviders').where({ id }).update({ enabled: true, revision: native.revision })
+        const resolving = Promise.withResolvers<void>()
+        const dnsReady = Promise.withResolvers<{ address: string; family: number }[]>()
+        const sourceAuthorizing = Promise.withResolvers<void>()
+        const sourceReady = Promise.withResolvers<void>()
+        const authorizeSources = vi.fn(async () => {
+          sourceAuthorizing.resolve()
+          await sourceReady.promise
+        })
+        const outgoing: RequestInit[] = []
+        const onRequestDispatched = vi.fn()
+        const registry = new DecisionProviderRegistry(db, secrets, {
+          environmentKey: () => 'still-valid-native-key',
+          resolve: (async () => {
+            resolving.resolve()
+            return boundary === 'DNS' ? dnsReady.promise : [{ address: '93.184.216.34', family: 4 }]
+          }) as unknown as typeof lookup,
+          fetch: fakeFetch((_url, init) => {
+            outgoing.push(init)
+            return Response.json(batched
+              ? { model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } }
+              : nativePayload())
+          })
+        })
+        const running = withAgentSourceAuthorization(boundary === 'source authorization' ? authorizeSources : undefined, async () => batched
+          ? registry.decideBatch(batchRequest, { providerId: id, providerRevision: native.revision, onRequestDispatched })
+          : registry.decide(request, { providerId: id }))
+        const pending = running.catch((error: unknown) => error)
+        if (boundary === 'DNS') await resolving.promise
+        else await sourceAuthorizing.promise
+        try {
+          await db('agentDecisionProviders').where({ id }).update({ enabled: false, revision: native.revision + 1 })
+        } finally {
+          dnsReady.resolve([{ address: '93.184.216.34', family: 4 }])
+          sourceReady.resolve()
+        }
+        const failure = await pending
+        expect(failure).toBeInstanceOf(AgentRepositoryError)
+        expect(failure).not.toBeInstanceOf(DecisionProviderFailure)
+        expect(failure).toMatchObject({ code: 'DECISION_PROVIDER_REVISION_CHANGED', status: 409 })
+        expect(failure).not.toHaveProperty('usage')
+        expect(failure).not.toHaveProperty('estimatedCost')
+        expect(outgoing).toEqual([])
+        expect(onRequestDispatched).not.toHaveBeenCalled()
+        expect(authorizeSources).toHaveBeenCalledTimes(boundary === 'source authorization' ? 1 : 0)
+      }
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it.each(['DNS', 'pre-dispatch authorization'] as const)(
+    'retains source-only denial during native Decision %s without actual-send proof or a paid receipt',
+    async boundary => {
+      const resolving = Promise.withResolvers<void>()
+      const dnsReady = Promise.withResolvers<{ address: string; family: number }[]>()
+      const authorizing = Promise.withResolvers<void>()
+      const authorizationReady = Promise.withResolvers<void>()
+      const outgoing: RequestInit[] = []
+      const client = new DecisionProviderClient({
+        resolve: (async () => {
+          resolving.resolve()
+          if (boundary === 'DNS') return dnsReady.promise
+          return [{ address: '93.184.216.34', family: 4 }]
+        }) as unknown as typeof lookup,
+        fetch: fakeFetch((_url, init) => {
+          outgoing.push(init)
+          return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+        })
+      })
+      let readable = true
+      const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Copied Wiki source access was revoked', 403)
+      const authorize = vi.fn(async () => {
+        if (!readable) throw denial
+      })
+      const onPreDispatch = vi.fn(async () => {
+        authorizing.resolve()
+        if (boundary === 'pre-dispatch authorization') await authorizationReady.promise
+      })
+      const onRequestDispatched = vi.fn()
+      await authorize()
+      const pending = withAgentSourceAuthorization(authorize, async () => client.executeBatch(native, 'still-valid-native-key', {
+        ...batchRequest,
+        state: { source: 'Copied private Wiki evidence and proposed answer' }
+      }, { onPreDispatch, onRequestDispatched })).catch((error: unknown) => error)
+      if (boundary === 'DNS') await resolving.promise
+      else await authorizing.promise
+      readable = false
+      dnsReady.resolve([{ address: '93.184.216.34', family: 4 }])
+      authorizationReady.resolve()
+      const failure = await pending
+      expect(failure).toBe(denial)
+      expect(failure).not.toBeInstanceOf(DecisionProviderFailure)
+      expect(failure).not.toHaveProperty('usage')
+      expect(failure).not.toHaveProperty('estimatedCost')
+      expect(outgoing).toEqual([])
+      expect(onRequestDispatched).not.toHaveBeenCalled()
+      expect(onPreDispatch).toHaveBeenCalledTimes(1)
+      expect(authorize).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('keeps native model discovery available under revoked source rights while denying the following source-bearing check', async () => {
+    const outgoing: { method: string | undefined; path: string }[] = []
+    const client = new DecisionProviderClient({
+      resolve: publicDns,
+      fetch: fakeFetch((url, init) => {
+        outgoing.push({ method: init.method, path: url.pathname })
+        return Response.json(url.pathname === '/v1/models'
+          ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] }
+          : nativePayload())
+      })
+    })
+    const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
+    const authorize = vi.fn(async () => {
+      throw denial
+    })
+    const onRequestDispatched = vi.fn()
+    const failure = await withAgentSourceAuthorization(authorize, async () =>
+      client.execute(native, 'still-valid-native-key', request, { check: true, onRequestDispatched })
+    ).catch((error: unknown) => error)
+    expect(failure).toBe(denial)
+    expect(outgoing).toEqual([{ method: 'GET', path: '/v1/models' }])
+    expect(authorize).toHaveBeenCalledTimes(1)
+    expect(onRequestDispatched).not.toHaveBeenCalled()
+  })
+
   it('redacts a rejected final source guard without posting raw state or manufacturing a paid receipt', async () => {
     const outgoing: RequestInit[] = []
     let dnsAdmitted = false
@@ -746,20 +1108,24 @@ describe('native decision batches', () => {
   it('cancels an in-flight batch without retrying or fabricating usage when its transport stalls', async () => {
     const started = Promise.withResolvers<void>()
     let calls = 0
+    const onRequestDispatched = vi.fn()
     const client = new DecisionProviderClient({
       resolve: publicDns,
       fetch: fakeFetch(() => {
         calls++
+        expect(onRequestDispatched).toHaveBeenCalledTimes(1)
         started.resolve()
         return Promise.withResolvers<Response>().promise
       })
     })
     const controller = new AbortController()
-    const pending = client.executeBatch(native, 'fixture', batchRequest, { signal: controller.signal })
+    const pending = client.executeBatch(native, 'fixture', batchRequest, { signal: controller.signal, onRequestDispatched })
     await started.promise
     controller.abort('sensitive-cancellation-reason')
     const failure = await pending.catch((value: unknown) => value)
     expect(failure).toMatchObject({ code: 'DECISION_ABORTED', status: 499, usage: null, estimatedCost: null })
+    expect(failure).toBeInstanceOf(DecisionProviderFailure)
+    expect(onRequestDispatched).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(failure)).not.toContain('sensitive-cancellation-reason')
     expect(calls).toBe(1)
   })

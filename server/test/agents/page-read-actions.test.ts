@@ -157,7 +157,8 @@ const setup = (
     output: unknown,
     knowledgeContext?: AgentKnowledgeContext,
     userId = 7,
-    signal = new AbortController().signal
+    signal = new AbortController().signal,
+    originalInput?: unknown
   ) => {
     const validationAuth = {
       kind: 'user' as const,
@@ -165,7 +166,7 @@ const setup = (
       ownershipUserId: userId,
       principal: userId === 7 ? principal : ({ id: userId, permissions, groups: [3] } as Express.User)
     }
-    return validatePageEvidence(createActionAuthority(name, requestId, validationAuth, admission), knowledgeContext, name, output, signal)
+    return validatePageEvidence(createActionAuthority(name, requestId, validationAuth, admission), knowledgeContext, name, output, signal, originalInput)
   }
   return { execute, operations, resolveRequester, validateEvidence }
 }
@@ -1790,5 +1791,87 @@ describe('live page evidence validation', () => {
     const aborted = new AbortController()
     aborted.abort()
     expect(await validateEvidence('pages.readForPatch', snapshot, undefined, 7, aborted.signal)).toBe(false)
+  })
+
+  it('binds retained history to the original page and rechecks page and history authority even for an empty trail', async () => {
+    let pageAllowed = true
+    let historyAllowed = true
+    let trail = [{ versionId: 9, sourceRevision: '6', actionType: 'edit', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Private editor' }]
+    const { execute, validateEvidence } = setup({
+      get: async () => {
+        if (!pageAllowed) throw new PageLocked()
+        return page()
+      },
+      getHistory: async () => {
+        if (!historyAllowed) throw new PageLocked()
+        return { trail, total: trail.length }
+      }
+    })
+    const input = { pageId: 42, limit: 10 }
+    const signal = new AbortController().signal
+    const output = await execute('pages.listHistory', input)
+    expect(await validateEvidence('pages.listHistory', output, undefined, 7, signal, input)).toBe(true)
+    expect(await validateEvidence('pages.listHistory', output)).toBe(false)
+    expect(await validateEvidence('pages.listHistory', output, undefined, 7, signal, { pageId: 43, limit: 10 })).toBe(false)
+    trail = [{ ...trail[0], authorName: 'Current editor' }]
+    expect(await validateEvidence('pages.listHistory', output, undefined, 7, signal, input)).toBe(false)
+    trail = []
+    const empty = await execute('pages.listHistory', input)
+    expect(await validateEvidence('pages.listHistory', empty, undefined, 7, signal, input)).toBe(true)
+    expect(await validateEvidence('pages.listHistory', empty)).toBe(false)
+    historyAllowed = false
+    expect(await validateEvidence('pages.listHistory', empty, undefined, 7, signal, input)).toBe(false)
+    historyAllowed = true
+    pageAllowed = false
+    expect(await validateEvidence('pages.listHistory', empty, undefined, 7, signal, input)).toBe(false)
+  })
+
+  it('retains only the currently visible scoped tag search and paginated taxonomy projections', async () => {
+    let visible = true
+    const { execute, validateEvidence } = setup({
+      searchTags: async () => (visible ? ['Private category'] : []),
+      listTags: async () => (visible ? [{ tag: 'Private category', title: 'Private taxonomy label' }] : [])
+    })
+    const context: AgentKnowledgeContext = {
+      scope: { kind: 'selected' },
+      sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }]
+    }
+    const searchInput = { query: 'Private', limit: 5 }
+    const listInput = { limit: 10, offset: 0 }
+    const signal = new AbortController().signal
+    const searched = await execute('pages.searchTags', searchInput, context)
+    const listed = await execute('pages.listTags', listInput, context)
+    expect(await validateEvidence('pages.searchTags', searched, context, 7, signal, searchInput)).toBe(true)
+    expect(await validateEvidence('pages.listTags', listed, context, 7, signal, listInput)).toBe(true)
+    visible = false
+    expect(await Promise.all([
+      validateEvidence('pages.searchTags', searched, context, 7, signal, searchInput),
+      validateEvidence('pages.listTags', listed, context, 7, signal, listInput)
+    ])).toEqual([false, false])
+    const current = await execute('pages.listTags', listInput, context)
+    expect(await validateEvidence('pages.listTags', current, context, 7, signal, listInput)).toBe(true)
+  })
+
+  it('binds retained outgoing links to a readable source and rejects revoked targets and empty-source revocation', async () => {
+    let sourceAllowed = true
+    let targetVisible = true
+    const { execute, validateEvidence } = setup({
+      get: async () => {
+        if (!sourceAllowed) throw new PageLocked()
+        return page()
+      },
+      listLinks: async () => [{ id: 42, links: targetVisible ? ['en/docs/related'] : [] }]
+    })
+    const input = { pageId: 42, limit: 5 }
+    const signal = new AbortController().signal
+    const output = await execute('pages.listLinks', input)
+    expect(await validateEvidence('pages.listLinks', output, undefined, 7, signal, input)).toBe(true)
+    expect(await validateEvidence('pages.listLinks', output)).toBe(false)
+    targetVisible = false
+    expect(await validateEvidence('pages.listLinks', output, undefined, 7, signal, input)).toBe(false)
+    const empty = await execute('pages.listLinks', input)
+    expect(await validateEvidence('pages.listLinks', empty, undefined, 7, signal, input)).toBe(true)
+    sourceAllowed = false
+    expect(await validateEvidence('pages.listLinks', empty, undefined, 7, signal, input)).toBe(false)
   })
 })

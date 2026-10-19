@@ -2,13 +2,15 @@
 
 ## Assessment and the original defects
 
-The maintained integration uses `@ax-llm/ax` **25.4.1** for generative inference, image chat and transcription. The application owns authorization, run leases, tool execution, accounting, context compaction and continuation integrity. Request-scoped Ax services sit behind the existing DNS-pinned, bounded provider fetch. Keeping that host loop is intentional: replacing it with an independent AxAgent/AxBalancer loop would not automatically preserve these application contracts.
+The maintained integration uses `@ax-llm/ax` **25.4.3** for generative inference, image chat and transcription. The application owns authorization, run leases, tool execution, accounting, context compaction and continuation integrity. Request-scoped Ax services sit behind the existing DNS-pinned, bounded provider fetch. Keeping that host loop is intentional: replacing it with an independent AxAgent/AxBalancer loop would not automatically preserve these application contracts.
 
 The original image-model lock had four independent causes: a readonly administration field, a client save payload containing a fixed model, a server `z.literal` model schema, and a transport dispatching a module constant instead of the configured model. Changing only the field would not fix the API request. The separate media configuration now binds the editable model to the actual guarded endpoint and request.
 
 Gemini image model IDs are validated for safe wire syntax and the Gemini prefix, not a numeric generation, `flash`/`pro` family or `-image` suffix. Administrators can configure newly released IDs such as `gemini-nano-banana-2.1` without updating an application catalog. Google's API determines availability and image-output support; configured pricing remains explicit. Invalid configuration feedback identifies the model field and does not misattribute every failure to pricing.
 
 Gemini **LLM** inference still uses Ax's stateless GenerateContent transport, not the Interactions API. The former Omni video and Lyria music settings therefore could not perform those operations. They were neither LLM input capabilities nor working generation controls. Interactions is now a separate **media-only** adapter; it does not change Gemini chat, provider-native continuation or the canonical conversation store.
+
+Gemini image captions preserve every visible text segment without including hidden thoughts. Malformed JSON and response-body failures expose only safe adapter errors; known uploaded files still receive bounded cleanup. Native chat continuation remains attached to its own terminal frame even when measured usage arrives later.
 
 Native SDK feature hints are not complete protocol proof. With this pinned Ax version, actual Responses requests support images/PDFs even when `getFeatures()` reports false; Anthropic PDF parts fail before dispatch; Gemini's native file path supports video/WebM despite incomplete hints. The shared implemented transport/format matrix and an administrator's exact-model opt-in govern admission. Positive native size/duration restrictions remain additional limits. A checkbox is not evidence that a vendor account can access a model.
 

@@ -10,7 +10,7 @@ interface DataFile {
 }
 
 const requiredVersions = {
-  '@ax-llm/ax': '25.4.1',
+  '@ax-llm/ax': '25.4.3',
   '@modelcontextprotocol/server': '2.1.0',
   '@modelcontextprotocol/node': '2.1.0',
   '@modelcontextprotocol/express': '2.0.1',
@@ -30,8 +30,7 @@ for (const [name, version] of Object.entries(requiredVersions)) {
     failures.push(`${name} must not be duplicated outside runtime dependencies`)
 }
 const mcpClient = '@modelcontextprotocol/client'
-if (manifest.devDependencies?.[mcpClient] !== '2.1.0')
-  failures.push(`${mcpClient} must remain a test-only exact 2.1.0 dependency`)
+if (manifest.devDependencies?.[mcpClient] !== '2.1.0') failures.push(`${mcpClient} must remain a test-only exact 2.1.0 dependency`)
 if (manifest.dependencies?.[mcpClient] !== undefined || manifest.optionalDependencies?.[mcpClient] !== undefined)
   failures.push(`${mcpClient} must not be a runtime dependency`)
 

@@ -4,14 +4,16 @@ import { promisify } from 'node:util'
 import createKnex, { type Knex } from 'knex'
 import sharp from 'sharp'
 import { z } from 'zod'
-import { ai, AxAIGoogleGeminiModel } from '@ax-llm/ax'
+import { ai, AxAIGoogleGeminiModel, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
+import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
-import { AgentProviderFactory, type AgentProviderFetch } from '../../agents/providers/factory.ts'
+import { AgentProviderFactory, type AgentProviderFetch, type AgentProviderService } from '../../agents/providers/factory.ts'
 import { createGeminiMediaTransport } from '../../agents/providers/gemini-media.ts'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
+import { issueWikiLineSnapshot, WikiLineSnapshotV1Schema } from '../../agents/patch/wiki-line-patch.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
-import { fixtureDecisionProviders } from './synthesis-fixture.ts'
+import { fixtureDecisionProviders, fullAxFixtureService } from './synthesis-fixture.ts'
 import { PdfFixtureDocument } from './pdf-fixture.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import type { AgentMediaGenerationInput } from '../../agents/providers/media-transport.ts'
@@ -72,12 +74,14 @@ const budget = () => ({
   consumeTool: vi.fn(async () => {}),
   unsettledExposure: { tokens: 0, costMicros: 0 }
 })
-const setup = (response: () => Response) => {
+const setup = (response: () => Response, llm?: { readonly provider: AgentProviderService; readonly actions: AgentActionSessionProvider }) => {
   const urls: string[] = []
+  const wire: { readonly url: string; readonly body: unknown }[] = []
   const fetch = Object.assign(
-    async (input: URL | RequestInfo) => {
+    async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = String(input)
       urls.push(url)
+      wire.push({ url, body: init?.body })
       return url.endsWith(':countTokens') ? Response.json({ totalTokens: 100 }) : response()
     },
     { preconnect: () => {} }
@@ -92,6 +96,7 @@ const setup = (response: () => Response) => {
     fetch
   })
   const factory = {
+    ...(llm === undefined ? {} : { create: async () => llm.provider }),
     createMediaBinding: async (_ownerId: number, kind: string) => {
       if (kind !== 'image') throw new AgentRepositoryError('AGENT_MEDIA_DISABLED', 'No provider is bound for this operation', 403)
       return {
@@ -117,7 +122,7 @@ const setup = (response: () => Response) => {
       }
     }
   } as unknown as AgentProviderFactory
-  return { urls, engine: new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }) }
+  return { urls, wire, engine: new AxAgentEngine(factory, llm?.actions, undefined, { decisionProviders: fixtureDecisionProviders }) }
 }
 const output = () =>
   Response.json({
@@ -144,6 +149,103 @@ describe('Ax media protocol and engine accounting boundary', () => {
     expect(media).toHaveBeenCalledWith([{ payload: png, mimeType: 'image/png', kind: 'generated-image', filename: 'generated-image-1.png' }])
     expect(result.totalTokens).toBe(13)
     expect(dispatchBudget.release).not.toHaveBeenCalled()
+  })
+
+  it('blocks copied private Wiki bytes at final media dispatch after an authorized collector delivery', async () => {
+    const privateFact = 'PRIVATE-WIKI-IMAGE: use the unreleased copper observatory design.'
+    const snapshot = issueWikiLineSnapshot({
+      page: { id: 42, locale: 'en', path: 'private-observatory', contentType: 'markdown' },
+      sourceRevision: '1', source: `# Observatory\n\n${privateFact}`,
+      requesterScope: 'fixture-owner-7', signingSecret: Buffer.alloc(32, 7)
+    })
+    const originalSnapshot = JSON.stringify(snapshot)
+    let sourceAuthorized = true
+    let revokedAtMediaDispatch = false
+    const sourceChecks: boolean[] = []
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        authoritySha256: null,
+        functions: [{
+          name: 'pages.readForPatch', title: 'Read observatory source', description: 'Read the authorized observatory source.',
+          risk: 'read', group: 'core', capability: ACTION_CATALOG['pages.readForPatch'].capability,
+          parameters: z.toJSONSchema(ACTION_CATALOG['pages.readForPatch'].input)
+        }],
+        invoke: async () => snapshot,
+        validateObservation: async (name, observed, signal) => {
+          const valid = !signal.aborted && sourceAuthorized && name === 'pages.readForPatch' && JSON.stringify(observed) === originalSnapshot
+          sourceChecks.push(valid)
+          return valid
+        },
+        snapshot: async () => ({}),
+        close: () => {}
+      })
+    }
+    const collectorRequests: Readonly<AxChatRequest>[] = []
+    let copiedPrompt: string | undefined
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      collectorRequests.push(input)
+      let functionCall: { id: string; type: 'function'; function: { name: string; params: string } }
+      if (collectorRequests.length === 1) {
+        const read = input.functions?.find(tool => tool.name === AGENT_TOOL_NAMES['pages.readForPatch'])
+        if (!read) throw new Error('Expected the admitted source read')
+        functionCall = { id: 'private-source', type: 'function', function: { name: read.name, params: '{"pageId":42}' } }
+      } else if (collectorRequests.length === 2) {
+        const source = input.chatPrompt.find(message => message.role === 'function' && message.functionId === 'private-source')
+        const image = input.functions?.find(tool => tool.name === 'wiki_generate_image')
+        if (source?.role !== 'function' || !image) throw new Error('Expected a genuine source delivery and admitted image tool')
+        copiedPrompt = WikiLineSnapshotV1Schema.parse(JSON.parse(source.result)).disclosed.flatMap(range => range.lines.map(line => line.text)).join('\n')
+        functionCall = { id: 'private-image', type: 'function', function: { name: image.name, params: JSON.stringify({ prompt: copiedPrompt }) } }
+      } else throw new Error('Unexpected collector dispatch after revoked media authority')
+      return {
+        results: [{ index: 0, finishReason: 'function_call', functionCalls: [functionCall] }],
+        modelUsage: { ai: 'test', model: 'gemini-3.8-flash', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+      }
+    })
+    const fixture = setup(output, {
+      actions,
+      provider: {
+        service: fullAxFixtureService(chat),
+        capabilities: {
+          streaming: false, toolCalling: 'native', parallelToolCalls: false, structuredOutput: 'native-json-schema',
+          usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 512
+        },
+        mediaInputs: { images: false, documents: false, audio: false, video: false },
+        transportKind: 'gemini-api', model: 'gemini-3.8-flash', continuationDialect: null,
+        capabilityRevision: 'cap-1', pricingRevision: 'main-1',
+        pricing: { revision: 'main-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 },
+        preserveCachePrefix: false, preserveThoughtBlock: (_id, block) => block
+      }
+    })
+    const dispatchBudget = budget()
+    dispatchBudget.reserve.mockImplementation(async exposure => {
+      if (fixture.urls.some(url => url.endsWith(':countTokens'))) {
+        sourceAuthorized = false
+        revokedAtMediaDispatch = true
+      }
+      return { id: 1, ...exposure }
+    })
+    const media = vi.fn(async () => [])
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (_type: string, _data: unknown) => {})
+    const { mediaRequest: _directMediaRequest, ...base } = request()
+    const failure = await fixture.engine.execute({
+      ...base, dispatchBudget, generationTools: ['image'],
+      messages: [{ role: 'user', content: 'Read the authorized observatory design and generate an image from that design.' }],
+      limits: { maxTurns: 4, maxToolCalls: 4, maxTokens: 1_000_000, maxOutputTokens: 512 }
+    }, { media, text, event }).then(() => undefined, (error: unknown) => error)
+    expect(revokedAtMediaDispatch).toBe(true)
+    expect(copiedPrompt).toContain(privateFact)
+    expect(JSON.stringify(collectorRequests[1])).toContain(privateFact)
+    expect(fixture.urls).toEqual([`${origin}/v1beta/models/gemini-3.1-flash-image:countTokens`])
+    expect(String(fixture.wire[0]?.body)).toContain(privateFact)
+    expect(failure).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(sourceChecks).toContain(true)
+    expect(sourceChecks).toContain(false)
+    expect(media).not.toHaveBeenCalled()
+    expect(text).not.toHaveBeenCalled()
+    expect(event.mock.calls.some(([type, data]) => type === 'tool.completed' && typeof data === 'object' && data !== null && 'actionName' in data && data.actionName === 'media.generateImage')).toBe(false)
+    expect(dispatchBudget.release).toHaveBeenCalledWith(expect.objectContaining({ tokens: 4_100 }))
   })
 
   it('retains dispatched exposure and publishes no bytes when usage cannot be trusted', async () => {
@@ -369,6 +471,127 @@ describe('ordinary Gemini attachment setup through the production factory', () =
       conformed: true
     })
   }
+
+  it.each([
+    ['releases an unsent inline-file request when file authority expires during final production DNS', true],
+    ['retains dispatched inline-file exposure after a real HTTP 503 without a usage receipt', false]
+  ] as const)('%s', async (_name, expireDuringDns) => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    try {
+      await seed(db, false)
+      await db('agentProviderProfileVersions').where({ id: versionId }).update({
+        transportKind: 'openai-responses', model: 'gpt-4.1-mini', utilityModel: null,
+        baseUrl: 'https://api.openai.com/v1', authMode: 'bearer',
+        adapterConfig: JSON.stringify({
+          timeoutMs: 5_000, maxRetries: 0, additionalHeaders: {},
+          mediaInputs: { images: true, documents: false, audio: false, video: false }
+        }),
+        capabilities: JSON.stringify({ ...capabilities, maxContextTokens: 100_000, maxOutputTokens: 1_024 }),
+        capabilityRevision: 'wiki-protocol-capabilities-v4:openai-responses'
+      })
+      const held = new Map<number, { readonly tokens: number; readonly costMicros: number }>()
+      let reservationId = 0
+      const dispatchBudget = {
+        reserve: vi.fn(async (maximum: { tokens: number; costMicros: number }) => {
+          const reservation = { id: ++reservationId, ...maximum }
+          held.set(reservation.id, maximum)
+          return reservation
+        }),
+        release: vi.fn(async (reservation: { id: number }) => { held.delete(reservation.id) }),
+        reconcile: vi.fn(async (reservation: { id: number }) => { held.delete(reservation.id) }),
+        consumeTool: vi.fn(async () => {}),
+        get unsettledExposure() {
+          let tokens = 0
+          let costMicros = 0
+          for (const exposure of held.values()) {
+            tokens += exposure.tokens
+            costMicros += exposure.costMicros
+          }
+          return { tokens, costMicros }
+        }
+      }
+      const wire: { readonly url: string; readonly body: unknown }[] = []
+      const implementation = Object.assign(
+        async (input: URL | RequestInfo, init?: RequestInit) => {
+          wire.push({ url: String(input), body: init?.body })
+          return new Response(null, { status: 503 })
+        },
+        { preconnect: () => {} }
+      ) as AgentProviderFetch
+      let fileAvailable = true
+      let revokedDuringFinalDns = false
+      let reachedFinalDns = false
+      const fileChecks: boolean[] = []
+      const authorizePayload = vi.fn(async (signal: AbortSignal) => {
+        signal.throwIfAborted()
+        fileChecks.push(fileAvailable)
+        if (!fileAvailable) throw new AgentRepositoryError('AGENT_MEDIA_CORRUPT', 'The selected file binding expired during DNS.', 500)
+      })
+      const loadPayload = vi.fn(async (signal: AbortSignal) => {
+        signal.throwIfAborted()
+        expect(fileAvailable).toBe(true)
+        return png
+      })
+      const resolve = (async (hostname: string) => {
+        if (hostname === 'api.openai.com' && loadPayload.mock.calls.length > 0 && dispatchBudget.reserve.mock.calls.length > 0) {
+          reachedFinalDns = true
+          if (expireDuringDns) {
+            fileAvailable = false
+            revokedDuringFinalDns = true
+          }
+        }
+        return [{ address: '93.184.216.34', family: 4 }]
+      }) as unknown as typeof lookup
+      const engine = new AxAgentEngine(new AgentProviderFactory(db, { get: async () => 'fixture-key' }, implementation, resolve), undefined, undefined, {
+        decisionProviders: fixtureDecisionProviders
+      })
+      const { mediaRequest: _mediaRequest, ...base } = request()
+      const text = vi.fn(async () => {})
+      const failure = await engine.execute({
+        ...base,
+        run: {
+          ...base.run, transportKind: 'openai-responses', model: 'gpt-4.1-mini',
+          capabilityRevision: 'wiki-protocol-capabilities-v4:openai-responses', pricingRevision: 'fixture-main|1000000|2000000'
+        },
+        generationTools: [], mediaBindings: {}, dispatchBudget,
+        messages: [{
+          role: 'user', content: 'Describe the authorized private image.',
+          attachments: [{
+            id: '00000000-0000-4000-8000-000000000088', filename: 'private-pixel.png',
+            mimeType: 'image/png', byteLength: png.length, authorizePayload, loadPayload
+          }]
+        }],
+        limits: { maxTurns: 2, maxToolCalls: 1, maxTokens: 1_000_000, maxOutputTokens: 512 }
+      }, { text, event: async () => {} }).then(() => undefined, (error: unknown) => error)
+      expect(reachedFinalDns).toBe(true)
+      expect(loadPayload).toHaveBeenCalledOnce()
+      expect(dispatchBudget.reserve).toHaveBeenCalledOnce()
+      expect(dispatchBudget.reconcile).not.toHaveBeenCalled()
+      expect(fileChecks).toContain(true)
+      if (expireDuringDns) {
+        expect(revokedDuringFinalDns).toBe(true)
+        expect(wire).toEqual([])
+        expect(failure).toMatchObject({ code: 'AGENT_MEDIA_CORRUPT' })
+        expect(fileChecks).toContain(false)
+        expect(dispatchBudget.release).toHaveBeenCalledOnce()
+        expect(dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+      } else {
+        expect(revokedDuringFinalDns).toBe(false)
+        expect(fileChecks).not.toContain(false)
+        expect(wire).toHaveLength(1)
+        expect(wire[0]?.url).toBe('https://api.openai.com/v1/responses')
+        expect(String(wire[0]?.body)).toContain(png.toString('base64'))
+        expect(failure).toMatchObject({ stage: 'provider_request' })
+        expect(dispatchBudget.release).not.toHaveBeenCalled()
+        const reservation = await dispatchBudget.reserve.mock.results[0]!.value
+        expect(dispatchBudget.unsettledExposure).toEqual({ tokens: reservation.tokens, costMicros: reservation.costMicros })
+      }
+      expect(text).not.toHaveBeenCalled()
+      expect(await db('agentProviderProfiles').where({ id: 'profile' }).first('status')).toEqual({ status: 'enabled' })
+    } finally {
+      await db.destroy()
+    }
+  })
 
   for (const mimeType of ['image/png', 'application/pdf'] as const)
     for (const legacy of [true, false])

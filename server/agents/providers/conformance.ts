@@ -125,6 +125,8 @@ const consume = async (
   const thoughtBlocks = new Map<string, NonNullable<AxChatResponseResult['thoughtBlocks']>[number]>()
   const accept = (value: AxChatResponse): void => {
     for (const result of value.results) {
+      if (result.finishReason === 'length' || result.finishReason === 'content_filter' || result.finishReason === 'error')
+        throw new AgentRepositoryError('CONFORMANCE_INCOMPLETE_OUTPUT', 'Provider conformance did not complete successfully', 502)
       if (result.content) content += result.content
       if (Buffer.byteLength(content, 'utf8') > MAX_SMOKE_OUTPUT)
         throw new AgentRepositoryError('CONFORMANCE_OUTPUT_TOO_LARGE', 'Provider conformance output exceeded its limit', 502)
@@ -166,6 +168,10 @@ const consume = async (
         if (item.done) break
         accept(item.value)
       }
+    } catch (error) {
+      // Cancellation must not mask the failure or wait on an unresponsive source.
+      void reader.cancel(error).catch(() => {})
+      throw error
     } finally {
       reader.releaseLock()
     }

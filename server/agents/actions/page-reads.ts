@@ -510,6 +510,118 @@ const matchesKnowledgeFilter = (view: KnowledgeProjectionView, filter?: Knowledg
   return filter.conceptType === undefined || view.conceptType?.toLocaleLowerCase() === filter.conceptType.toLocaleLowerCase()
 }
 
+const searchTagProjection = async (
+  operations: PageReadActionDependencies['operations'],
+  requester: Express.User,
+  scope: PageOperationScope | undefined,
+  input: SearchTagsInput
+) => {
+  const tags = z
+    .array(z.string())
+    .max(20)
+    .safeParse(
+      await operations.searchTags({
+        query: input.query,
+        limit: input.limit,
+        ...(scope === undefined ? {} : { agentScope: scope }),
+        requester
+      })
+    )
+  if (!tags.success) throw operationFailure('Tag search returned an invalid result')
+  return { tags: tags.data.slice(0, input.limit) }
+}
+
+const listTagProjection = async (
+  operations: PageReadActionDependencies['operations'],
+  requester: Express.User,
+  scope: PageOperationScope | undefined,
+  input: ListTagsInput
+) => {
+  const response = z.array(TagRowSchema).safeParse(await operations.listTags(scope === undefined ? requester : { requester, agentScope: scope }))
+  if (!response.success) throw operationFailure('Tag listing returned an invalid result')
+  const unique = [
+    ...new Map(
+      response.data
+        .map(item => {
+          const tag = item.tag.trim()
+          return [tag.toLocaleLowerCase(), { tag, title: item.title?.trim().slice(0, 255) || null }] as const
+        })
+        .filter((entry): entry is readonly [string, { tag: string; title: string | null }] => Boolean(entry[0]))
+    ).values()
+  ].sort((left, right) => left.tag.localeCompare(right.tag))
+  const selected = unique.slice(input.offset, input.offset + input.limit)
+  return {
+    tags: selected,
+    nextOffset: input.offset + selected.length < unique.length ? input.offset + selected.length : null
+  }
+}
+
+const readHistoryProjection = async (
+  operations: PageReadActionDependencies['operations'],
+  requester: Express.User,
+  scope: PageOperationScope | undefined,
+  input: HistoryInput
+) => {
+  const { page } = await readPageWithinScope(operations, requester, { id: input.pageId }, scope, false)
+  let value: unknown
+  try {
+    value = await operations.getHistory({ id: page.id, offsetPage: 0, offsetSize: input.limit, requester })
+  } catch (error: unknown) {
+    if (scope && pageUnavailable(error)) throw unavailablePage()
+    throw error
+  }
+  const history = HistorySchema.safeParse(value)
+  if (!history.success) throw operationFailure('Page history operation returned an invalid result')
+  return {
+    versions: history.data.trail.slice(0, input.limit).map(version => ({
+      id: version.versionId,
+      sourceRevision: String(version.sourceRevision),
+      resourceUri: okfResourceUri(page.id, version.versionId, version.sourceRevision),
+      action: version.actionType,
+      versionDate: version.versionDate instanceof Date ? version.versionDate.toISOString() : version.versionDate,
+      authorName: version.authorName
+    }))
+  }
+}
+
+const readLinkProjection = async (
+  operations: PageReadActionDependencies['operations'],
+  requester: Express.User,
+  scope: PageOperationScope | undefined,
+  input: LinksInput
+) => {
+  const { page } = await readPageWithinScope(operations, requester, { id: input.pageId }, scope, false)
+  const parsedLinks = LinksSchema.safeParse(
+    await operations.listLinks({ locale: page.locale, ...(scope === undefined ? {} : { agentScope: scope }), requester })
+  )
+  if (!parsedLinks.success) throw operationFailure('Page links operation returned an invalid result')
+  const selected = parsedLinks.data.find(row => row.id === page.id)
+  let inScope = (selected?.links ?? []).filter(target => safeWikiLinkTarget(target, scope))
+  if (scope?.kind === 'selected' && inScope.length > 0) {
+    const admittedTargets = await Promise.all(
+      inScope.map(async target => {
+        const separator = target.indexOf('/')
+        const selector = { locale: target.slice(0, separator), path: target.slice(separator + 1) }
+        try {
+          const rawTarget = await getPageBySelector(operations, requester, selector)
+          const targetPage = parsePage(rawTarget, false)
+          return targetPage.locale === selector.locale && targetPage.path === selector.path && withinPageScope(scope, targetPage) ? target : null
+        } catch (error: unknown) {
+          if (pageUnavailable(error)) return null
+          throw error
+        }
+      })
+    )
+    inScope = admittedTargets.filter((target): target is string => target !== null)
+  }
+  const links = inScope.slice(0, input.limit).map(target => ({
+    label: target,
+    target,
+    kind: 'page' as const
+  }))
+  return { links, truncated: inScope.length > links.length }
+}
+
 export const registerPageReadActions = (kernel: ActionKernel, dependencies: PageReadActionDependencies): void => {
   const operations = dependencies.operations
 
@@ -599,42 +711,14 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const input = rawInput as SearchTagsInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const scope = hostPageScope(context.knowledgeContext)
-    const tags = z
-      .array(z.string())
-      .max(20)
-      .safeParse(
-        await operations.searchTags({
-          query: input.query,
-          limit: input.limit,
-          ...(scope === undefined ? {} : { agentScope: scope }),
-          requester
-        })
-      )
-    if (!tags.success) throw operationFailure('Tag search returned an invalid result')
-    return { tags: tags.data.slice(0, input.limit) }
+    return searchTagProjection(operations, requester, scope, input)
   })
 
   kernel.register('pages.listTags', async (rawInput, context) => {
     const input = rawInput as ListTagsInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const scope = hostPageScope(context.knowledgeContext)
-    const response = z.array(TagRowSchema).safeParse(await operations.listTags(scope === undefined ? requester : { requester, agentScope: scope }))
-    if (!response.success) throw operationFailure('Tag listing returned an invalid result')
-    const unique = [
-      ...new Map(
-        response.data
-          .map(item => {
-            const tag = item.tag.trim()
-            return [tag.toLocaleLowerCase(), { tag, title: item.title?.trim().slice(0, 255) || null }] as const
-          })
-          .filter((entry): entry is readonly [string, { tag: string; title: string | null }] => Boolean(entry[0]))
-      ).values()
-    ].sort((left, right) => left.tag.localeCompare(right.tag))
-    const selected = unique.slice(input.offset, input.offset + input.limit)
-    return {
-      tags: selected,
-      nextOffset: input.offset + selected.length < unique.length ? input.offset + selected.length : null
-    }
+    return listTagProjection(operations, requester, scope, input)
   })
 
   kernel.register('pages.discover', async (rawInput, context) => {
@@ -869,26 +953,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const input = rawInput as HistoryInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const scope = hostPageScope(context.knowledgeContext)
-    const { page } = await readPageWithinScope(operations, requester, { id: input.pageId }, scope, false)
-    let value: unknown
-    try {
-      value = await operations.getHistory({ id: page.id, offsetPage: 0, offsetSize: input.limit, requester })
-    } catch (error: unknown) {
-      if (scope && pageUnavailable(error)) throw unavailablePage()
-      throw error
-    }
-    const history = HistorySchema.safeParse(value)
-    if (!history.success) throw operationFailure('Page history operation returned an invalid result')
-    return {
-      versions: history.data.trail.slice(0, input.limit).map(version => ({
-        id: version.versionId,
-        sourceRevision: String(version.sourceRevision),
-        resourceUri: okfResourceUri(page.id, version.versionId, version.sourceRevision),
-        action: version.actionType,
-        versionDate: version.versionDate instanceof Date ? version.versionDate.toISOString() : version.versionDate,
-        authorName: version.authorName
-      }))
-    }
+    return readHistoryProjection(operations, requester, scope, input)
   })
 
   kernel.register('pages.getVersion', async (rawInput, context) => {
@@ -926,36 +991,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const input = rawInput as LinksInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const scope = hostPageScope(context.knowledgeContext)
-    const { page } = await readPageWithinScope(operations, requester, { id: input.pageId }, scope, false)
-    const parsedLinks = LinksSchema.safeParse(
-      await operations.listLinks({ locale: page.locale, ...(scope === undefined ? {} : { agentScope: scope }), requester })
-    )
-    if (!parsedLinks.success) throw operationFailure('Page links operation returned an invalid result')
-    const selected = parsedLinks.data.find(row => row.id === page.id)
-    let inScope = (selected?.links ?? []).filter(target => safeWikiLinkTarget(target, scope))
-    if (scope?.kind === 'selected' && inScope.length > 0) {
-      const admittedTargets = await Promise.all(
-        inScope.map(async target => {
-          const separator = target.indexOf('/')
-          const selector = { locale: target.slice(0, separator), path: target.slice(separator + 1) }
-          try {
-            const rawTarget = await getPageBySelector(operations, requester, selector)
-            const targetPage = parsePage(rawTarget, false)
-            return targetPage.locale === selector.locale && targetPage.path === selector.path && withinPageScope(scope, targetPage) ? target : null
-          } catch (error: unknown) {
-            if (pageUnavailable(error)) return null
-            throw error
-          }
-        })
-      )
-      inScope = admittedTargets.filter((target): target is string => target !== null)
-    }
-    const links = inScope.slice(0, input.limit).map(target => ({
-      label: target,
-      target,
-      kind: 'page' as const
-    }))
-    return { links, truncated: inScope.length > links.length }
+    return readLinkProjection(operations, requester, scope, input)
   })
 
   kernel.register('pages.related', async (rawInput, context) => {
@@ -1078,6 +1114,9 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
 }
 const PAGE_EVIDENCE_ACTIONS: Readonly<Partial<Record<AgentActionName, true>>> = {
   'pages.search': true,
+  'pages.searchTags': true,
+  'pages.listTags': true,
+  'pages.listLinks': true,
   'pages.discover': true,
   'pages.get': true,
   'pages.getOkf': true,
@@ -1146,9 +1185,10 @@ export const createPageEvidenceValidator = (
   knowledgeContext: AgentKnowledgeContext | undefined,
   actionName: AgentActionName,
   output: unknown,
-  signal: AbortSignal
+  signal: AbortSignal,
+  originalInput?: unknown
 ) => Promise<boolean>) => {
-  return async (authority, knowledgeContext, actionName, output, signal) => {
+  return async (authority, knowledgeContext, actionName, output, signal, originalInput) => {
     if (signal.aborted) return false
     if (!PAGE_EVIDENCE_ACTIONS[actionName]) return true
     const parsedOutput = actionDefinition(actionName).output.safeParse(output)
@@ -1161,6 +1201,26 @@ export const createPageEvidenceValidator = (
       if (signal.aborted) return false
       const requester = await requesterFor(dependencies.resolveRequester, authority)
       if (signal.aborted) return false
+      if (actionName === 'pages.listHistory' || actionName === 'pages.searchTags' || actionName === 'pages.listTags' || actionName === 'pages.listLinks') {
+        const input = actionDefinition(actionName).input.safeParse(originalInput)
+        if (!input.success) return false
+        let expected: unknown
+        switch (actionName) {
+          case 'pages.listHistory':
+            expected = await readHistoryProjection(dependencies.operations, requester, scope, input.data as HistoryInput)
+            break
+          case 'pages.searchTags':
+            expected = await searchTagProjection(dependencies.operations, requester, scope, input.data as SearchTagsInput)
+            break
+          case 'pages.listTags':
+            expected = await listTagProjection(dependencies.operations, requester, scope, input.data as ListTagsInput)
+            break
+          case 'pages.listLinks':
+            expected = await readLinkProjection(dependencies.operations, requester, scope, input.data as LinksInput)
+            break
+        }
+        return !signal.aborted && sameCanonicalValue(result, expected)
+      }
       const readCurrent = async (pageId: number, includeContent: boolean): Promise<{ readonly rawPage: unknown; readonly page: ParsedPage } | null> => {
         if (signal.aborted) return null
         const current = await readPageWithinScope(dependencies.operations, requester, { id: pageId }, scope, includeContent)
@@ -1374,30 +1434,6 @@ export const createPageEvidenceValidator = (
         return sameCanonicalValue(result.disclosed, disclosed) && sameCanonicalValue(result.warnings, expectedWarnings) && !signal.aborted
       }
 
-      if (actionName === 'pages.listHistory') {
-        const versions = result.versions
-        if (!Array.isArray(versions)) return false
-        if (versions.length === 0) return !signal.aborted
-        const first = validationRecord(versions[0])
-        const uri =
-          typeof first?.resourceUri === 'string'
-            ? /^wiki:\/\/pages\/([1-9][0-9]*)\/versions\/([1-9][0-9]*)\/revisions\/([1-9][0-9]*)\/okf$/u.exec(first.resourceUri)
-            : null
-        if (!uri) return false
-        const pageId = Number(uri[1])
-        if (!Number.isSafeInteger(pageId) || !(await readCurrent(pageId, false))) return false
-        const history = HistorySchema.safeParse(await dependencies.operations.getHistory({ id: pageId, offsetPage: 0, offsetSize: versions.length, requester }))
-        if (signal.aborted || !history.success) return false
-        const expected = history.data.trail.slice(0, versions.length).map(version => ({
-          id: version.versionId,
-          sourceRevision: String(version.sourceRevision),
-          resourceUri: okfResourceUri(pageId, version.versionId, version.sourceRevision),
-          action: version.actionType,
-          versionDate: normalizedDate(version.versionDate),
-          authorName: version.authorName
-        }))
-        return expected.length === versions.length && sameCanonicalValue(versions, expected)
-      }
 
       if (actionName === 'pages.applyProposal') {
         const pageValue = result.page

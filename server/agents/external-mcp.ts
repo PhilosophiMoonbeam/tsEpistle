@@ -20,6 +20,7 @@ import {
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { AgentRepositoryError } from './repository.ts'
 import type { AgentSecretRegistry } from './providers/secrets.ts'
+import { currentAgentSourceAuthorization } from './source-authorization.ts'
 
 export const EXTERNAL_MCP_LIMITS = Object.freeze({
   timeoutMs: 30_000,
@@ -194,6 +195,25 @@ const requestHeaders: Readonly<Record<string, true>> = {
   'mcp-name': true,
   'last-event-id': true
 }
+// Only protocol/discovery and existing task handles are independent of copied
+// host-source arguments. Unknown methods fail closed in both protocol eras.
+const sourceIndependentMcpMethods: Readonly<Record<string, true>> = {
+  initialize: true,
+  'server/discover': true,
+  ping: true,
+  'tools/list': true,
+  'prompts/list': true,
+  'resources/list': true,
+  'resources/templates/list': true,
+  'tasks/list': true,
+  'tasks/get': true,
+  'tasks/result': true,
+  'tasks/cancel': true,
+  'subscriptions/listen': true,
+  'notifications/initialized': true,
+  'notifications/cancelled': true,
+  'logging/setLevel': true
+}
 
 const abortable = async <T>(work: () => T, signal: AbortSignal): Promise<Awaited<T>> => {
   signal.throwIfAborted()
@@ -256,7 +276,9 @@ export const createExternalMcpEndpointGuard = (options: {
     connect: {
       timeout: EXTERNAL_MCP_LIMITS.timeoutMs,
       lookup: (hostname, lookupOptions, callback) => {
-        const signal = options.signal ? AbortSignal.any([lifetime.signal, options.signal]) : lifetime.signal
+        // Request signals cancel their own dispatch; the shared connection lane
+        // must remain usable for live-authorized cleanup after caller abort.
+        const signal = lifetime.signal
         void abortable(() => resolve(hostname, { all: true, verbatim: true }), signal).then(
           async addresses => {
             try {
@@ -283,20 +305,29 @@ export const createExternalMcpEndpointGuard = (options: {
     const inputUrl = typeof input === 'string' || input instanceof URL ? input.toString() : input.url
     if (normalizeExternalMcpEndpoint(inputUrl) !== endpoint || (typeof input !== 'string' && !(input instanceof URL))) return egressDenied()
     const method = (init?.method ?? 'GET').toUpperCase()
-    // Only task cancellation gets the cleanup lane. The owner-scoped client checks
-    // that this handle was created on this client; polling/result requests never do.
-    let taskCancellation = false
-    if (method === 'POST' && typeof init?.body === 'string') {
-      try {
-        const request: unknown = JSON.parse(init.body)
-        taskCancellation = !!request && typeof request === 'object' && 'method' in request && request.method === 'tasks/cancel'
-      } catch {
-        /* The SDK owns JSON-RPC validation. */
-      }
-    }
     if (!['POST', 'GET', 'DELETE'].includes(method) || (init?.body != null && typeof init.body !== 'string')) return egressDenied()
     if (typeof init?.body === 'string' && Buffer.byteLength(init.body) > EXTERNAL_MCP_LIMITS.requestBytes)
       fail('EXTERNAL_MCP_REQUEST_TOO_LARGE', 'External MCP request exceeds its byte limit', 400)
+    // Only task cancellation gets the cleanup lane. The owner-scoped client checks
+    // that this handle was created on this client; polling/result requests never do.
+    let taskCancellation = false
+    let requiresSourceAuthorization = method === 'POST'
+    if (method === 'POST' && typeof init?.body === 'string') {
+      try {
+        const request: unknown = JSON.parse(init.body)
+        if (request && typeof request === 'object' && !Array.isArray(request)) {
+          if ('method' in request && typeof request.method === 'string') {
+            taskCancellation = request.method === 'tasks/cancel'
+            requiresSourceAuthorization = !Object.hasOwn(sourceIndependentMcpMethods, request.method)
+          } else if ('jsonrpc' in request && request.jsonrpc === '2.0' && 'id' in request && ('result' in request || 'error' in request)) {
+            // Replies to native server control requests (for example ping).
+            requiresSourceAuthorization = false
+          }
+        }
+      } catch {
+        /* The SDK owns JSON-RPC validation; unclassified bodies stay guarded. */
+      }
+    }
     const headers = new Headers(init?.headers)
     for (const [key, value] of headers)
       if (!Object.hasOwn(requestHeaders, key) || value.length > 2_048 || hasUnsafeRequestCharacters(value)) return egressDenied()
@@ -309,7 +340,7 @@ export const createExternalMcpEndpointGuard = (options: {
       lifetime.signal,
       timeout.signal,
       ...(method === 'DELETE' || taskCancellation ? [] : [requests.signal]),
-      ...(options.signal && !taskCancellation ? [options.signal] : []),
+      ...(options.signal && method !== 'DELETE' && !taskCancellation ? [options.signal] : []),
       ...(init?.signal ? [init.signal] : [])
     ])
     let returnedBody = false
@@ -327,6 +358,8 @@ export const createExternalMcpEndpointGuard = (options: {
       }
       // Recheck after asynchronous DNS/secret work and immediately before dispatch.
       await abortable(options.authorize, signal)
+      const authorizeSource = requiresSourceAuthorization ? currentAgentSourceAuthorization() : undefined
+      if (authorizeSource) await abortable(authorizeSource, signal)
       const response = await abortable(
         () =>
           implementation(new URL(endpoint), {
@@ -512,6 +545,7 @@ const assertCatalogBounds = (catalog: Pick<AxMCPCatalogSnapshot, 'tools' | 'prom
 }
 /** Installed Ax terminates legacy sessions without a deadline and logs raw failures. Keep only that lifecycle step host-owned. */
 class OwnerScopedMcpTransport extends AxMCPStreamableHTTPTransport {
+  override readonly eraCacheKey: string
   readonly #endpoint: string
   readonly #guard: ExternalMcpEndpointGuard
   readonly #session: { id: string | undefined }
@@ -535,6 +569,10 @@ class OwnerScopedMcpTransport extends AxMCPStreamableHTTPTransport {
       timeoutMs: EXTERNAL_MCP_LIMITS.timeoutMs,
       maxResponseBytes: EXTERNAL_MCP_LIMITS.responseBytes
     })
+    // Ax's public transport cache key defaults to origin, but permitted endpoints
+    // on that origin can negotiate different eras. Keep native auto detection
+    // and its cache scoped to the complete normalized endpoint instead.
+    this.eraCacheKey = normalizeExternalMcpEndpoint(endpoint)
     this.#endpoint = endpoint
     this.#guard = guard
     this.#session = session

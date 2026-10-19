@@ -475,6 +475,7 @@ describe('Ax agent engine context compaction', () => {
         results: [{ index: 0, functionCalls: [{ id: 'finish', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }] }]
       }
     })
+    const searchOutput = { results: [], suggestions: [], totalInWindow: 0, windowLimit: 250, windowTruncated: false, nextOffset: null }
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [
@@ -496,7 +497,12 @@ describe('Ax agent engine context compaction', () => {
             capability: ACTION_CATALOG['pages.applyProposal'].capability
           }
         ],
-        invoke: async () => ({ results: [], suggestions: [], totalInWindow: 0, windowLimit: 250, windowTruncated: false, nextOffset: null }),
+        invoke: async () => searchOutput,
+        validateObservation: async (actionName, output, signal) =>
+          !signal.aborted && (
+            (actionName === 'pages.applyProposal' && JSON.stringify(output) === JSON.stringify(receipt)) ||
+            (actionName === 'pages.search' && JSON.stringify(output) === JSON.stringify(searchOutput))
+          ),
         snapshot: async () => ({}),
         close: () => undefined
       })
@@ -2242,13 +2248,14 @@ ${sourceUnit}`,
       }
     })
     const { factory } = factoryFor(chat)
+    const ownedSnapshots = new Set<string>()
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke: async (_name, input) => {
           if (typeof input !== 'object' || input === null || !('id' in input) || typeof input.id !== 'number') throw new Error('invalid page id')
           const id = input.id
-          return {
+          const page = {
             id,
             locale: 'en',
             path: `evidence-${id}`,
@@ -2259,7 +2266,11 @@ ${sourceUnit}`,
             citation: { evidenceId: `page:${id}:revision:${id}`, label: `Evidence ${id}`, href: `/en/evidence-${id}` },
             citationSections: []
           }
+          ownedSnapshots.add(JSON.stringify(page))
+          return page
         },
+        validateObservation: async (name, output, signal) =>
+          !signal.aborted && name === 'pages.get' && ownedSnapshots.has(JSON.stringify(output)),
         snapshot: async () => ({}),
         close: async () => undefined,
         authoritySha256: 'f'.repeat(64)

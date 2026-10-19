@@ -28,7 +28,8 @@ export interface KernelActionSessionDependencies {
     authority: ActionAuthority,
     actionName: AgentActionName,
     output: unknown,
-    signal: AbortSignal
+    signal: AbortSignal,
+    originalInput?: unknown
   ) => Promise<boolean>
   readonly timeoutMilliseconds?: number
 }
@@ -41,6 +42,12 @@ const isAdmissionRejection = (error: unknown): boolean => {
 const WIKI_PAGE_SOURCE_CAPABILITIES: Readonly<
   Partial<Record<AgentActionName, { readonly providerPresentationFamily: ActionProviderPresentationFamily; readonly outputKind: ActionCapabilityOutputKind }>>
 > = {
+  'pages.search': { providerPresentationFamily: 'wiki.page-candidates', outputKind: 'candidate-lead' },
+  'pages.discover': { providerPresentationFamily: 'wiki.page-candidates', outputKind: 'candidate-lead' },
+  'pages.related': { providerPresentationFamily: 'wiki.page-candidates', outputKind: 'candidate-lead' },
+  'pages.searchTags': { providerPresentationFamily: 'wiki.taxonomy', outputKind: 'candidate-lead' },
+  'pages.listTags': { providerPresentationFamily: 'wiki.taxonomy', outputKind: 'candidate-lead' },
+  'pages.listLinks': { providerPresentationFamily: 'wiki.links', outputKind: 'candidate-lead' },
   'pages.get': { providerPresentationFamily: 'wiki.page', outputKind: 'verified-source' },
   'pages.getOkf': { providerPresentationFamily: 'wiki.okf', outputKind: 'verified-source' },
   'pages.readForPatch': { providerPresentationFamily: 'wiki.patch-snapshot', outputKind: 'verified-source' },
@@ -96,12 +103,11 @@ const hasWikiPageSourceCapability = (actionName: AgentActionName, capability: Ac
 }
 
 const hasWikiPageSourceOutput = (actionName: AgentActionName, output: unknown): boolean => {
-  if (actionName === 'pages.listHistory') return false
   if (actionName !== 'pages.listRecent') return true
   if (typeof output !== 'object' || output === null || Array.isArray(output)) return false
   if (Reflect.get(output, 'kind') !== 'recent-page-evidence') return false
   const rows = Reflect.get(output, 'pages')
-  return Array.isArray(rows) && rows.some(hasRecentPageSourceEvidenceRow)
+  return Array.isArray(rows) && (rows.length === 0 || rows.some(hasRecentPageSourceEvidenceRow))
 }
 
 const hasWikiApplicationCapability = (actionName: AgentActionName, capability: ActionCapability | undefined): boolean =>
@@ -228,7 +234,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
       .first(request.purpose === 'subagent' ? 'id' : 'runtimeStateCiphertext')) as RuntimeSnapshotRow | undefined
     if (!row) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before opening its action session', 409)
     const revalidateObservation = this.#dependencies.validateObservation
-      ? async (actionName: AgentActionName, output: unknown, signal: AbortSignal): Promise<boolean> => {
+      ? async (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown): Promise<boolean> => {
           const originalAction = offered.find(action => action.definition.descriptor.name === actionName)
           if (
             signal.aborted ||
@@ -237,6 +243,11 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
               hasWikiApplicationCapability(actionName, originalAction.definition.capability) ||
               (hasWikiPageSourceCapability(actionName, originalAction.definition.capability) && hasWikiPageSourceOutput(actionName, output))
             )
+          )
+            return false
+          if (
+            (actionName === 'pages.listHistory' || actionName === 'pages.searchTags' || actionName === 'pages.listTags' || actionName === 'pages.listLinks') &&
+            originalInput === undefined
           )
             return false
           let currentAdmission: ActionAdmissionSnapshot
@@ -264,7 +275,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
             // committed result before checking current read authority below.
             if (actionName === 'pages.applyProposal' && !(await validateCommittedApplication(this.#dependencies.knex, currentAction.authority, output)))
               return false
-            const valid = await this.#dependencies.validateObservation?.(request, currentAction.authority, actionName, output, signal)
+            const valid = await this.#dependencies.validateObservation?.(request, currentAction.authority, actionName, output, signal, originalInput)
             return valid === true && !signal.aborted
           } catch (error: unknown) {
             if (signal.aborted || isAdmissionRejection(error)) return false
@@ -286,7 +297,8 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
         }),
       ...(revalidateObservation
         ? {
-            validateObservation: (actionName: AgentActionName, output: unknown, signal: AbortSignal) => revalidateObservation(actionName, output, signal)
+            validateObservation: (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) =>
+              revalidateObservation(actionName, output, signal, originalInput)
           }
         : {})
     })

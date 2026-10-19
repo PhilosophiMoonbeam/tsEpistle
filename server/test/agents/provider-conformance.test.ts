@@ -262,33 +262,44 @@ describe('provider conformance runner', () => {
     expect(factory.create).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000002', { requireConformed: false, purpose: 'utility' })
     expect(requests).toEqual(expect.arrayContaining([{ purpose: 'utility', model: 'model-test-mini' }]))
   })
-  it('verifies a native function call and no-tools result round trip', async () => {
+  it.each([false, true])('verifies a native function call and no-tools result round trip (streaming=%s)', async streaming => {
     const setConformed = vi.fn(async () => {})
     let finalRequest: Readonly<AxChatRequest> | undefined
+    const respond = (response: AxChatResponse): AxChatResponse | ReadableStream<AxChatResponse> =>
+      streaming
+        ? new ReadableStream<AxChatResponse>({
+            start(controller) {
+              controller.enqueue({ results: response.results })
+              controller.enqueue({ results: [], modelUsage: response.modelUsage })
+              controller.close()
+            }
+          })
+        : response
     const factory = {
       create: async () =>
         service(
           async input => {
             if (typeof input.functionCall === 'object') {
               const token = readProbeToken(input)
-              return {
+              return respond({
                 results: [
                   {
                     index: 0,
+                    finishReason: 'function_call',
                     functionCalls: [{ id: 'native-call-1', type: 'function', function: { name: 'wiki_conformance_echo', params: JSON.stringify({ token }) } }]
                   }
                 ],
                 modelUsage: usage
-              }
+              })
             }
             const receipt = readResultReceipt(input)
             if (receipt) {
               finalRequest = input
-              return { results: [{ index: 0, content: `ACKNOWLEDGED ${receipt}` }], modelUsage: usage }
+              return respond({ results: [{ index: 0, content: `ACKNOWLEDGED ${receipt}`, finishReason: 'stop' }], modelUsage: usage })
             }
-            return { results: [{ index: 0, content: 'ok' }], modelUsage: usage }
+            return respond({ results: [{ index: 0, content: 'ok', finishReason: 'stop' }], modelUsage: usage })
           },
-          { toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' }
+          { streaming, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' }
         )
     } as unknown as AgentProviderFactory
 
@@ -624,6 +635,110 @@ describe('provider conformance runner', () => {
         { name: 'prompt-tool-round-trip', passed: true }
       ])
     })
+  })
+  it.each(
+    (['smoke', 'utility', 'native-call', 'final'] as const).flatMap(stage =>
+      (['length', 'content_filter', 'error'] as const).map(finishReason => ({ stage, finishReason }))
+    )
+  )('does not enable a profile after $stage returns $finishReason with usable output and usage', async ({ stage, finishReason }) => {
+    const setConformed = vi.fn(async () => {})
+    let dispatched = 0
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      dispatched += 1
+      const token = readProbeToken(input)
+      const nativeCall = typeof input.functionCall === 'object'
+      const final = readResultReceipt(input) !== undefined
+      const response: AxChatResponse = nativeCall
+        ? {
+            results: [
+              {
+                index: 0,
+                functionCalls: [{ id: 'call-1', type: 'function', function: { name: 'wiki_conformance_echo', params: JSON.stringify({ token }) } }],
+                finishReason: 'function_call'
+              }
+            ],
+            modelUsage: usage
+          }
+        : successfulPromptResponse(input)
+      const fail = stage === 'smoke' ? dispatched === 1 : stage === 'utility' ? input.model === 'model-test-mini' : stage === 'native-call' ? nativeCall : final
+      return fail ? { ...response, results: response.results.map(result => ({ ...result, finishReason })) } : response
+    })
+    const factory = {
+      create: async (_profileVersionId: string, options?: { purpose?: 'agent' | 'utility' }) => ({
+        ...service(chat, { toolCalling: 'native' }),
+        model: stage === 'utility' && options?.purpose === 'utility' ? 'model-test-mini' : 'model-test'
+      })
+    } as unknown as AgentProviderFactory
+
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+
+    expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_INCOMPLETE_OUTPUT' })
+    expect(setConformed).toHaveBeenCalledWith(expect.any(String), expect.any(String), false, 7)
+    expect(chat).toHaveBeenCalledTimes(stage === 'smoke' ? 1 : stage === 'final' ? 3 : 2)
+  })
+
+  it.each(['length', 'content_filter', 'error'] as const)('cancels a stream after %s even when a later chunk would stop successfully', async finishReason => {
+    const setConformed = vi.fn(async () => {})
+    const cancel = vi.fn()
+    const chunks: AxChatResponse[] = [
+      { results: [{ index: 0, content: 'usable answer' }], modelUsage: usage },
+      { results: [{ index: 0, finishReason }] },
+      { results: [{ index: 0, finishReason: 'stop' }] }
+    ]
+    const response = new ReadableStream<AxChatResponse>(
+      {
+        pull(controller) {
+          const chunk = chunks.shift()
+          if (chunk) controller.enqueue(chunk)
+          else controller.close()
+        },
+        cancel
+      },
+      { highWaterMark: 0 }
+    )
+    let dispatched = 0
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>) => (++dispatched === 1 ? response : successfulPromptResponse(input)))
+    const factory = { create: async () => service(chat, { streaming: true }) } as unknown as AgentProviderFactory
+
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+
+    expect(report).toMatchObject({ status: 'failed', errorCode: 'CONFORMANCE_INCOMPLETE_OUTPUT' })
+    expect(setConformed).toHaveBeenCalledWith(expect.any(String), expect.any(String), false, 7)
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(response.locked).toBe(false)
+  })
+
+  it('cancels and releases its reader after reading fails without exposing or replacing the original failure', async () => {
+    const setConformed = vi.fn(async () => {})
+    const failure = new AgentRepositoryError('PROVIDER_STREAM_INTERRUPTED', 'Provider response was interrupted', 502)
+    let emitted = false
+    const response = new ReadableStream<AxChatResponse>(
+      {
+        pull(controller) {
+          if (emitted) controller.error(failure)
+          else {
+            emitted = true
+            controller.enqueue({ results: [{ index: 0, content: 'private-partial-answer', finishReason: 'stop' }], modelUsage: usage })
+          }
+        }
+      },
+      { highWaterMark: 0 }
+    )
+    const reader = response.getReader()
+    const cancel = vi.spyOn(reader, 'cancel')
+    vi.spyOn(response, 'getReader').mockReturnValue(reader)
+    const chat = vi.fn(async () => response)
+    const factory = { create: async () => service(chat, { streaming: true }) } as unknown as AgentProviderFactory
+
+    const report = await new AgentProviderConformanceRunner(db, factory, { setConformed } as never).run('00000000-0000-4000-8000-000000000001', 7)
+
+    expect(report).toMatchObject({ status: 'failed', errorCode: 'PROVIDER_STREAM_INTERRUPTED', message: 'Provider response was interrupted' })
+    expect(setConformed).toHaveBeenCalledWith(expect.any(String), expect.any(String), false, 7)
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(cancel).toHaveBeenCalledWith(failure)
+    expect(response.locked).toBe(false)
+    expect(JSON.stringify(report)).not.toContain('private-partial-answer')
   })
   it.each([
     ['stream', true],
