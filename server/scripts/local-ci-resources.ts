@@ -67,14 +67,14 @@ export function cleanEnvironment(): NodeJS.ProcessEnv {
     ...env,
     CI: '1',
     BUILDX_BUILDER: builder,
-    BUN_TEST_JOBS: '2',
+    BUN_TEST_JOBS: '8',
     WIKI_CI_APP_MEMORY: '2g',
     WIKI_CI_APP_CPUS: '2',
     WIKI_CI_POSTGRES_MEMORY: '1g',
     WIKI_CI_POSTGRES_CPUS: '1',
     WIKI_LOCAL_CI_KIND_MEMORY: '6g',
     WIKI_LOCAL_CI_KIND_CPUS: '4',
-    WIKI_LOCAL_CI_BROWSER_JOBS: '1',
+    WIKI_LOCAL_CI_BROWSER_JOBS: '4',
     WIKI_LOCAL_CI_TOOLS: path.join(state, 'tools')
   }
 }

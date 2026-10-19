@@ -202,6 +202,8 @@ async function openTags(page: Page, path = '/t', options: TagApiOptions = {}) {
   await installTagApi(page, options)
   await page.goto(path, { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: /tags/i }).first()).toBeVisible()
+  // The asynchronously loaded app bar changes the main layout's top inset.
+  await expect(page.locator('.nav-header')).toBeVisible()
 }
 async function expectTagFooterReachability(page: Page, resultName: RegExp, surface: string, shortResult: boolean, isMobile: boolean) {
   const resultLink = page.getByRole('link', { name: resultName }).last()

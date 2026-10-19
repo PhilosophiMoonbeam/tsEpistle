@@ -8,7 +8,7 @@ ARG WIKI_PRODUCT_VERSION
 ARG WIKI_SOURCE_REPOSITORY
 ARG WIKI_UPSTREAM_BASE
 
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS build
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS build
 ARG WIKI_BUILD_DATE
 ARG WIKI_BUILD_REVISION
 ENV CI=true \
@@ -29,7 +29,7 @@ COPY server ./server
 COPY vite.config.mts tsconfig.client.json tsconfig.server.json tsconfig.shared.json ./
 RUN bun run build
 
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS dependencies
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS dependencies
 ARG TARGETARCH
 ENV NODE_ENV=production
 WORKDIR /wiki
@@ -43,7 +43,7 @@ RUN --mount=type=cache,id=wiki-bun-production,target=/root/.bun/install/cache \
     esac && \
     bun install --production --frozen-lockfile --os=linux --cpu="$BUN_CPU"
 
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS runtime
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS runtime
 
 ARG TARGETARCH
 ARG WIKI_BUILD_DATE

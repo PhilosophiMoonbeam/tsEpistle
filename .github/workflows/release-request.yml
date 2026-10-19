@@ -1,0 +1,25 @@
+name: Release Request
+run-name: "Release request ${{ github.ref_name }} ${{ github.sha }}"
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  signal:
+    name: Read-only Release Signal
+    runs-on: ubuntu-latest
+    steps:
+    # No checkout, environment, credential, publication or application code execution.
+    - name: Record Immutable Tag Request
+      env:
+        APPLICATION_REF: ${{ github.ref }}
+        APPLICATION_SHA: ${{ github.sha }}
+      run: |
+        [[ "$APPLICATION_REF" =~ ^refs/tags/v[0-9A-Za-z][0-9A-Za-z.+-]{0,79}$ ]]
+        [[ "$APPLICATION_SHA" =~ ^[0-9a-f]{40}$ ]]
+        printf 'Release signal only: %s at %s\n' "$APPLICATION_REF" "$APPLICATION_SHA"

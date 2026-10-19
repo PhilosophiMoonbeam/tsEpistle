@@ -76,27 +76,26 @@ suite('PostgreSQL knowledge projection search', () => {
     return `${local}${offsetMinutes >= 0 ? '+' : '-'}${hours}:${minutes}`
   }
 
-  const persistProjection = async (page: PageFixture, storedRevision = page.sourceRevision): Promise<void> => {
-    const content = `# ${page.title}\n\n${page.title} source content.`
-    const source = {
-      pageId: page.id,
-      sourceRevision: String(storedRevision),
-      locale: 'en',
-      path: page.path,
-      visibility: page.visibility ?? 'public',
-      contentType: 'markdown',
-      content,
-      title: page.title,
-      description: null,
-      tags: [...(page.tags ?? [])].sort(),
-      updatedAt: '2026-09-09T00:00:00.000Z',
-      authorId: 1,
-      metadata: { type: 'Procedure', status: 'stable' }
-    }
-    const projection = projectPageKnowledge(source)
+  const projectionSource = (page: PageFixture, storedRevision = page.sourceRevision) => ({
+    pageId: page.id,
+    sourceRevision: String(storedRevision),
+    locale: 'en',
+    path: page.path,
+    visibility: page.visibility ?? 'public',
+    contentType: 'markdown',
+    content: `# ${page.title}\n\n${page.title} source content.`,
+    title: page.title,
+    description: null,
+    tags: [...(page.tags ?? [])].sort(),
+    updatedAt: '2026-09-09T00:00:00.000Z',
+    authorId: 1,
+    metadata: { type: 'Procedure', status: 'stable' }
+  })
+
+  const projectionRow = (page: PageFixture, dictionary: string, query: Knex, storedRevision = page.sourceRevision) => {
+    const projection = projectPageKnowledge(projectionSource(page, storedRevision))
     const searchText = knowledgeSearchText(projection)
-    const dictionary = String((await db('pagesSearchMetadata').where({ contractId: 1 }).first('dictionary')).dictionary)
-    await db('pageKnowledgeProjections').insert({
+    return {
       pageId: page.id,
       sourceRevision: projection.source.sourceRevision,
       sourceSha256: projection.source.sha256,
@@ -108,7 +107,7 @@ suite('PostgreSQL knowledge projection search', () => {
       summary: projection.concept.summary,
       searchText,
       searchDictionary: dictionary,
-      searchTokens: db.raw('to_tsvector(?::regconfig, ?)', [dictionary, searchText]),
+      searchTokens: query.raw('to_tsvector(?::regconfig, ?)', [dictionary, searchText]),
       lifecycleStatus: projection.lifecycle.status,
       trustTier: projection.lifecycle.trustTier,
       verification: projection.lifecycle.verification,
@@ -122,39 +121,60 @@ suite('PostgreSQL knowledge projection search', () => {
       lastError: null,
       createdAt: '2026-09-09T00:00:00.000Z',
       updatedAt: '2026-09-09T00:00:00.000Z'
-    })
+    }
   }
 
-  const insertPage = async (page: PageFixture): Promise<void> => {
-    const content = `# ${page.title}\n\n${page.title} source content.`
-    await db('pages').insert({
-      id: page.id,
+  const pageRow = (page: PageFixture) => {
+    const source = projectionSource(page)
+    return {
+      id: source.pageId,
       sourceRevision: page.sourceRevision,
-      path: page.path,
-      localeCode: 'en',
-      title: page.title,
-      description: null,
-      content,
-      contentType: 'markdown',
-      authorId: 1,
+      path: source.path,
+      localeCode: source.locale,
+      title: source.title,
+      description: source.description,
+      content: source.content,
+      contentType: source.contentType,
+      authorId: source.authorId,
       ownerId: page.ownerId ?? null,
-      extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }),
-      updatedAt: '2026-09-09T00:00:00.000Z',
+      extra: JSON.stringify({ okf: source.metadata }),
+      updatedAt: source.updatedAt,
       render: `<article>${page.title} source content.</article>`,
       renderedSourceRevision: page.sourceRevision,
-      visibility: page.visibility ?? 'public',
+      visibility: source.visibility,
       isPublished: page.isPublished ?? true,
       ...(page.isSearchable === undefined ? {} : { isSearchable: page.isSearchable }),
       publishStartDate: page.publishStartDate ?? null,
       publishEndDate: page.publishEndDate ?? null
-    })
-    for (const tag of [...new Set(page.tags ?? [])].sort()) {
-      await db('tags').insert({ tag }).onConflict('tag').ignore()
-      const stored = await db('tags').where({ tag }).first('id')
-      await db('pageTags').insert({ pageId: page.id, tagId: stored.id })
     }
-    await persistProjection(page)
   }
+
+  const persistProjection = async (page: PageFixture, storedRevision = page.sourceRevision): Promise<void> => {
+    const dictionary = String((await db('pagesSearchMetadata').where({ contractId: 1 }).first('dictionary')).dictionary)
+    await db('pageKnowledgeProjections').insert(projectionRow(page, dictionary, db, storedRevision))
+  }
+
+  const insertPages = async (pages: readonly PageFixture[]): Promise<void> => {
+    await db.transaction(async transaction => {
+      const dictionary = String((await transaction('pagesSearchMetadata').where({ contractId: 1 }).first('dictionary')).dictionary)
+      // Bound SQL/parameter size without serializing three database round trips per page.
+      const batchSize = 100
+      for (let offset = 0; offset < pages.length; offset += batchSize) {
+        const batch = pages.slice(offset, offset + batchSize)
+        await transaction('pages').insert(batch.map(pageRow))
+        for (const page of batch) {
+          for (const tag of [...new Set(page.tags ?? [])].sort()) {
+            await transaction('tags').insert({ tag }).onConflict('tag').ignore()
+            const stored = await transaction('tags').where({ tag }).first('id')
+            await transaction('pageTags').insert({ pageId: page.id, tagId: stored.id })
+          }
+        }
+        await transaction('pageKnowledgeProjections').insert(batch.map(page => projectionRow(page, dictionary, transaction)))
+      }
+    })
+  }
+
+  const insertPage = (page: PageFixture): Promise<void> => insertPages([page])
 
   const enableUtilityEnrichment = async (): Promise<void> => {
     const profileVersionId = '00000000-0000-4000-8000-000000000001'
@@ -394,18 +414,18 @@ suite('PostgreSQL knowledge projection search', () => {
 
   it('filters empty, offset, and invalid publication windows beyond 500 excluded matches before result caps', async () => {
     const now = Date.now()
-    for (let id = 1; id <= 501; id += 1) {
-      await insertPage(
-        fixture({
-          id,
-          sourceRevision: id,
-          path: `knowledge/expired-${id}`,
-          title: `Signal Expired ${id}`,
-          publishEndDate: '2000-01-01T00:00:00+00:00'
-        })
-      )
-    }
-    await insertPage(
+    const expired = Array.from({ length: 501 }, (_, index) => {
+      const id = index + 1
+      return fixture({
+        id,
+        sourceRevision: id,
+        path: `knowledge/expired-${id}`,
+        title: `Signal Expired ${id}`,
+        publishEndDate: '2000-01-01T00:00:00+00:00'
+      })
+    })
+    await insertPages([
+      ...expired,
       fixture({
         id: 502,
         sourceRevision: 502,
@@ -413,9 +433,7 @@ suite('PostgreSQL knowledge projection search', () => {
         title: 'Signal Empty Window',
         publishStartDate: '',
         publishEndDate: ''
-      })
-    )
-    await insertPage(
+      }),
       fixture({
         id: 503,
         sourceRevision: 503,
@@ -423,9 +441,7 @@ suite('PostgreSQL knowledge projection search', () => {
         title: 'Signal Offset Window',
         publishStartDate: offsetDate(now - 3_600_000, 600),
         publishEndDate: offsetDate(now + 3_600_000, -600)
-      })
-    )
-    await insertPage(
+      }),
       fixture({
         id: 504,
         sourceRevision: 504,
@@ -433,7 +449,7 @@ suite('PostgreSQL knowledge projection search', () => {
         title: 'Signal Invalid Window',
         publishEndDate: 'not-a-date'
       })
-    )
+    ])
 
     const repository = new PageKnowledgeRepository(db)
     const requester = { id: 9, canReadPublic: true } as never

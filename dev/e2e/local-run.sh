@@ -16,9 +16,9 @@ if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ||
   echo 'Expected a Docker-safe tsepistle-ci- namespace, immutable image ID, and committed revision.' >&2
   exit 1
 fi
-browser_jobs=${WIKI_LOCAL_CI_BROWSER_JOBS:-1}
-if [[ "$browser_jobs" != 1 && "$browser_jobs" != 2 ]]; then
-  echo 'WIKI_LOCAL_CI_BROWSER_JOBS must be 1 or 2.' >&2
+browser_jobs=${WIKI_LOCAL_CI_BROWSER_JOBS:-4}
+if [[ ! "$browser_jobs" =~ ^[1-4]$ ]]; then
+  echo 'WIKI_LOCAL_CI_BROWSER_JOBS must be an integer between 1 and 4.' >&2
   exit 1
 fi
 if [[ "$WIKI_LOCAL_CI_ARTIFACTS" != /* || ! -d "$WIKI_LOCAL_CI_ARTIFACTS" ||
@@ -202,7 +202,7 @@ finish_lane() {
   echo "Browser suite $suite exited $status (log: $artifact_root/$suite/run.log)"
 }
 
-# Start Chromium and WebKit first, then let Firefox use whichever slot frees first.
+# Only three engine lanes exist; a fourth slot is spare capacity, never a fourth fixture.
 queue=(chromium webkit firefox)
 next=0
 while (( next < ${#queue[@]} || ${#active[@]} )); do

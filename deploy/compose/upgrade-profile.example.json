@@ -8,7 +8,7 @@
   "project": "tsepistle",
   "appService": "app",
   "databaseService": "database",
-  "imageRepository": "local/tsepistle",
+  "imageRepository": "ghcr.io/philosophimoonbeam/wiki",
   "publicUrl": "https://canary.example.com",
   "proxyNetwork": "tsepistle-proxy",
   "proxyAlias": "tsepistle",
@@ -20,7 +20,6 @@
     "wiki",
     "wiki-database"
   ],
-  "playwrightImage": "mcr.microsoft.com/playwright:v1.62.1-noble",
   "planLifetimeSeconds": 3600,
   "waitTimeoutSeconds": 300
 }

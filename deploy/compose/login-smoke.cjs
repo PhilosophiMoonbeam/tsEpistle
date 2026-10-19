@@ -1,5 +1,5 @@
 async function main() {
-  const { chromium } = require('playwright')
+  const { chromium } = require('@playwright/test')
   const baseURL = process.env.TSEPISTLE_SMOKE_URL?.replace(/\/$/u, '')
   if (!baseURL || !URL.canParse(baseURL) || new URL(baseURL).protocol !== 'https:') {
     throw new Error('TSEPISTLE_SMOKE_URL must be an HTTPS origin')
@@ -43,12 +43,13 @@ async function main() {
   if (!response || response.status() !== 200) throw new Error(`Login returned ${response?.status() ?? 'no response'}`)
   await page.locator('#login-site-title').waitFor({ state: 'visible' })
   const providerPicker = page.getByText('Select Authentication Provider', { exact: true })
+  const email = page.getByLabel('Email Address', { exact: true })
+  await email.or(providerPicker).first().waitFor({ state: 'visible' })
   if (await providerPicker.isVisible()) {
     const localProvider = process.env.TSEPISTLE_SMOKE_LOCAL_PROVIDER ||
       ((await page.getByRole('option', { name: 'Backend', exact: true }).count()) ? 'Backend' : 'Local')
     await page.getByRole('option', { name: localProvider, exact: true }).click()
   }
-  const email = page.getByLabel('Email Address', { exact: true })
   await email.waitFor({ state: 'visible' })
   await page.getByLabel('Password', { exact: true }).waitFor({ state: 'visible' })
   if (!(await page.getByRole('button', { name: 'Log In', exact: true }).isEnabled())) throw new Error('Login button is disabled')

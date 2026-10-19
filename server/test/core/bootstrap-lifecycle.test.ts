@@ -1,3 +1,5 @@
+import semver from 'semver'
+import packageJson from '../../../package.json' with { type: 'json' }
 import type * as BootstrapModule from '../../index.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
@@ -7,6 +9,8 @@ interface KernelMock {
 }
 
 const EXIT_CODE_SENTINEL = 23
+const minimumBunVersion = semver.minVersion(packageJson.engines.bun)
+if (!minimumBunVersion) throw new Error('Package policy must define a minimum supported Bun version')
 const overrideBunVersion = (version: string): (() => void) => {
   const descriptor = Object.getOwnPropertyDescriptor(process.versions, 'bun')
   Object.defineProperty(process.versions, 'bun', {
@@ -53,8 +57,8 @@ describe('bootstrap lifecycle', () => {
     return { configService, logger, main }
   }
 
-  it('rejects an unsupported Bun runtime before configuration or kernel initialization', async () => {
-    const restoreBunVersion = overrideBunVersion('1.4.1')
+  it.each(['1.4.2', '2.0.0'])('rejects unsupported Bun %s before configuration or kernel initialization', async version => {
+    const restoreBunVersion = overrideBunVersion(version)
     const initialSigtermListeners = process.listenerCount('SIGTERM')
     const initialUncaughtExceptionListeners = process.listenerCount('uncaughtException')
     try {
@@ -79,7 +83,7 @@ describe('bootstrap lifecycle', () => {
   })
 
   it('continues bootstrap on the minimum supported Bun runtime', async () => {
-    const restoreBunVersion = overrideBunVersion('1.4.2')
+    const restoreBunVersion = overrideBunVersion(minimumBunVersion.version)
     try {
       const kernel = {
         init: vi.fn().mockResolvedValue(undefined),

@@ -9,7 +9,11 @@ const runner = fileURLToPath(new URL('../../scripts/run-local-ci.ts', import.met
 
 describe('local CI resource option admission', () => {
   it.each([
-    { args: ['--browser-jobs=3'], option: '--browser-jobs' },
+    { args: ['--browser-jobs=5'], option: '--browser-jobs' },
+    { args: ['--browser-jobs=0'], option: '--browser-jobs' },
+    { args: ['--test-jobs=9'], option: '--test-jobs' },
+    { args: ['--browser-jobs=3', '--test-jobs=9'], option: '--test-jobs' },
+    { args: ['--browser-jobs=4', '--test-jobs=9'], option: '--test-jobs' },
     { args: ['--test-jobs', '2x'], option: '--test-jobs' },
     { args: ['--browser-jobs', '1', '--browser-jobs', '2'], option: '--browser-jobs' }
   ])('rejects unsafe or ambiguous resource options before preparing a run: $args', ({ args, option }) => {

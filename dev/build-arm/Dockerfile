@@ -8,7 +8,7 @@ ARG WIKI_PRODUCT_VERSION
 ARG WIKI_SOURCE_REPOSITORY
 ARG WIKI_UPSTREAM_BASE
 
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS dependencies
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS dependencies
 ENV CI=true \
     NODE_ENV=production
 RUN apk add --no-cache g++ make cmake python3
@@ -20,8 +20,9 @@ COPY patches ./patches
 RUN --mount=type=cache,id=wiki-bun-arm64,target=/root/.bun/install/cache \
     bun install --production --frozen-lockfile
 
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS runtime
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS runtime
 
+ARG TARGETARCH
 ARG WIKI_BUILD_DATE
 ARG WIKI_BUILD_REVISION
 ARG WIKI_PRODUCT_DESCRIPTION
@@ -36,6 +37,7 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       org.opencontainers.image.source="${WIKI_SOURCE_REPOSITORY}" \
       org.opencontainers.image.title="${WIKI_PRODUCT_NAME}" \
       org.opencontainers.image.version="${WIKI_PRODUCT_VERSION}" \
+      io.tsepistle.image.architecture="${TARGETARCH}" \
       io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 

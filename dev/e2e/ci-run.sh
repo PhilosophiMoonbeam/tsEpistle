@@ -15,6 +15,9 @@ case "$WIKI_E2E_SUITE" in
       --project=accessibility-tablet
       --project=accessibility-wide
       --project=performance-desktop
+      --project=performance-webgpu
+      --project=performance-webgl2
+      --project=performance-webgl2-swiftshader
     )
     ;;
   chromium)

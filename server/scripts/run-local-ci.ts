@@ -13,7 +13,7 @@ process.umask(0o077)
 process.chdir(root)
 
 type Gate = { name: string; seconds: number; status: 'passed' | 'failed' }
-type Options = { browserJobs: 1 | 2; testJobs: number }
+type Options = { browserJobs: 1 | 2 | 3 | 4; testJobs: number }
 type Owner = { revision: string; namespace: string; workspace: string; options: Options }
 
 async function execute(command: string[], cwd: string, env: NodeJS.ProcessEnv, logFile: string, onFailedExit?: () => Promise<void>): Promise<number> {
@@ -88,7 +88,7 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
     owner.namespace !== namespace ||
     owner.revision !== revision ||
     !/^[a-f0-9]{40}$/.test(revision) ||
-    ![1, 2].includes(owner.options?.browserJobs) ||
+    ![1, 2, 3, 4].includes(owner.options?.browserJobs) ||
     !Number.isInteger(owner.options?.testJobs) ||
     owner.options.testJobs < 1 ||
     owner.options.testJobs > 8
@@ -142,7 +142,8 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
     imageId = image.Id
     env.WIKI_TEST_IMAGE = imageId
     await gate('contracts', ['bash', 'dev/ci/local-contracts.sh'])
-    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], owner.options.browserJobs === 1 ? 6 : 8, owner.options.browserJobs * 3)
+    // Four slots admit at most the three configured engine fixtures; core is exclusive.
+    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], owner.options.browserJobs === 1 ? 6 : 8, Math.min(owner.options.browserJobs, 3) * 3)
     for (const file of (await fs.readdir(path.join(runDir, 'resources'))).filter(file => file.endsWith('.json'))) {
       const phase = JSON.parse(await fs.readFile(path.join(runDir, 'resources', file), 'utf8'))
       if (phase.status !== 'passed' || phase.namespace !== namespace || phase.revision !== revision) throw new Error('Resource qualification is incomplete.')
@@ -171,7 +172,7 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
 }
 
 function options(args: string[]): Options {
-  const result: Options = { browserJobs: 1, testJobs: 2 }
+  const result: Options = { browserJobs: 4, testJobs: 8 }
   const seen = new Set<string>()
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!
@@ -181,9 +182,9 @@ function options(args: string[]): Options {
     if (seen.has(flag)) throw new Error(`Duplicate local CI option: ${flag}.`)
     seen.add(flag)
     const value = separator < 0 ? args[++index] : argument.slice(separator + 1)
-    const maximum = flag === '--browser-jobs' ? 2 : 8
+    const maximum = flag === '--browser-jobs' ? 4 : 8
     if (!value || !/^[1-9]\d*$/.test(value) || Number(value) > maximum) throw new Error(`${flag} must be an integer between 1 and ${maximum}.`)
-    if (flag === '--browser-jobs') result.browserJobs = Number(value) as 1 | 2
+    if (flag === '--browser-jobs') result.browserJobs = Number(value) as Options['browserJobs']
     else result.testJobs = Number(value)
   }
   return result
@@ -300,7 +301,7 @@ async function outside(options: Options): Promise<void> {
 
 if (process.argv.includes('--help')) {
   console.log(
-    'Usage: bun run ci:local [--browser-jobs 1|2] [--test-jobs 1..8]\nRuns every routine CI gate from clean committed source. Defaults: one browser lane, two unit workers. Requires Linux x64, pinned Bun/Node, local Docker with ARM64 binfmt, systemd user scopes, cgroup v2 memory accounting and native Playwright libraries. Each phase admits only its host/Docker budget plus 4 GiB headroom (default maximum 13 GiB available, not a blanket 24 GiB). Builder and fixtures stop between phases. Results, cgroup peaks and the tested image identity are retained in ~/.local/state/tsepistle-ci/. No registry publication or maintained-service replacement occurs.'
+    'Usage: bun run ci:local [--browser-jobs 1..4] [--test-jobs 1..8]\nRuns full qualification from clean committed source. Defaults: four browser slots, eight unit workers. Only three engine lanes exist; multi-lane engines use one worker each, one-lane engines use two, and core/strict renderer projects use one worker exclusively after engines. Requires Linux x64, pinned Bun/Node, local Docker with ARM64 binfmt, systemd user scopes, cgroup v2 memory accounting and native Playwright libraries. Browser CPU quota is 16 cores; other phases remain capped at eight. Admission retains 4 GiB safety headroom; default browsers require 8 GiB host + 9 GiB Docker + 4 GiB headroom (21 GiB available). Extra fixtures are not memory-neutral. Builder and fixtures stop between phases. Results, cgroup peaks and the tested image identity are retained in ~/.local/state/tsepistle-ci/. No registry publication or maintained-service replacement occurs.'
   )
 } else {
   try {

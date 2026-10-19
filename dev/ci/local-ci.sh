@@ -3,6 +3,11 @@ set -euo pipefail
 umask 077
 
 root=$(git rev-parse --show-toplevel)
+for argument in "$@"; do
+  if [[ "$argument" == --help ]]; then
+    exec bun "$root/server/scripts/run-local-ci.ts" --help
+  fi
+done
 state="${XDG_STATE_HOME:-$HOME/.local/state}/tsepistle-ci"
 mkdir -p "$state"
 if ! command -v flock >/dev/null; then

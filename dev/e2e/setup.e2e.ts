@@ -123,15 +123,8 @@ async function expectAuthenticatedAdmin(page: Page) {
 }
 
 async function openClientPage(page: Page, path: string, readySelector = '#root > *') {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await page.goto(path, { waitUntil: 'domcontentloaded' })
-    try {
-      await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15_000 })
-      return
-    } catch (error) {
-      if (attempt === 1) throw error
-    }
-  }
+  await page.goto(path, { waitUntil: 'domcontentloaded' })
+  await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15_000 })
 }
 
 async function loginAsAdmin(page: Page) {

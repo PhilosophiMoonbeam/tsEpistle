@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 
-# Two-phase, fail-closed app-only upgrader for the canonical Compose deployment.
+# Prebuilt-only, fail-closed app-only upgrader; browser acceptance runs off-box.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly SCRIPT_DIR
 readonly CONTRACTS_FILE="server/db/migration-deployment-contracts.json"
-readonly BUN_IMAGE="oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f"
 
 COMMAND=""
 PROFILE_FILE=""
 TARGET_REVISION=""
 PLAN_FILE=""
 CONFIRM_DIGEST=""
+CANDIDATE_IMAGE=""
+CANDIDATE_ID=""
+CANDIDATE_ARCH=""
+OUTPUT_JSON=false
+BROWSER_SMOKE_PASSED=false
+TARGET_CONTRACTS=""
+STATE_FILE=""
 
 REPO_ROOT=""
 COMPOSE_FILE=""
@@ -27,7 +34,6 @@ IMAGE_REPOSITORY=""
 PUBLIC_URL=""
 PROXY_NETWORK=""
 PROXY_ALIAS=""
-PLAYWRIGHT_IMAGE=""
 PLAN_LIFETIME=3600
 WAIT_TIMEOUT=300
 APP_CONTAINER=""
@@ -52,12 +58,13 @@ declare -A SENTINEL_STATE=()
 usage() {
   cat <<'EOF'
 Usage:
-  sudo deploy/compose/upgrade.sh plan  --profile PATH --revision FULL_40_SHA
+  sudo deploy/compose/upgrade.sh plan --profile PATH --revision APP_SHA --image REPOSITORY@sha256:DIGEST [--json]
   sudo deploy/compose/upgrade.sh apply --plan PATH --confirm PLAN_SHA256
+  sudo deploy/compose/upgrade.sh accept --plan PATH --confirm PLAN_SHA256 --browser-smoke-passed
 
-`plan` performs read-only live discovery and writes one mode-0600 expiring plan
-under the profile's state directory. `apply` revalidates the plan, builds the
-exact revision, and recreates only the application service.
+`plan` validates a locally present immutable image and writes a private expiring
+plan. `apply` recreates only the app and leaves it awaiting external browser
+verification. `accept` binds trusted operator browser confirmation to that app.
 
 The tool never fetches, pulls source, checks out a branch, recreates PostgreSQL,
 restores data, runs down migrations, removes volumes, or touches sentinel
@@ -73,11 +80,14 @@ require_command() { command -v "$1" >/dev/null 2>&1 || die "Required command is 
 parse_args() {
   (( $# > 0 )) || { usage; exit 2; }
   COMMAND="$1"; shift
-  case "$COMMAND" in plan|apply) ;; -h|--help) usage; exit 0 ;; *) die "Unknown command: $COMMAND" ;; esac
+  case "$COMMAND" in plan|apply|accept) ;; -h|--help) usage; exit 0 ;; *) die "Unknown command: $COMMAND" ;; esac
   while (( $# > 0 )); do
     case "$1" in
       --profile) PROFILE_FILE="${2:-}"; shift 2 ;;
       --revision) TARGET_REVISION="${2:-}"; shift 2 ;;
+      --image) CANDIDATE_IMAGE="${2:-}"; shift 2 ;;
+      --json) OUTPUT_JSON=true; shift ;;
+      --browser-smoke-passed) BROWSER_SMOKE_PASSED=true; shift ;;
       --plan) PLAN_FILE="${2:-}"; shift 2 ;;
       --confirm) CONFIRM_DIGEST="${2:-}"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
@@ -85,11 +95,18 @@ parse_args() {
     esac
   done
   if [[ "$COMMAND" == plan ]]; then
-    [[ -n "$PROFILE_FILE" && -n "$TARGET_REVISION" ]] || die 'plan requires --profile and --revision'
-    [[ -z "$PLAN_FILE$CONFIRM_DIGEST" ]] || die 'plan does not accept --plan or --confirm'
+    [[ -n "$PROFILE_FILE" && -n "$TARGET_REVISION" && -n "$CANDIDATE_IMAGE" ]] || die 'plan requires --profile, --revision and --image'
+    [[ -z "$PLAN_FILE$CONFIRM_DIGEST" && "$BROWSER_SMOKE_PASSED" == false ]] || die 'plan does not accept plan confirmation or browser confirmation'
+    [[ "$TARGET_REVISION" =~ ^[0-9a-f]{40}$ ]] || die '--revision must be a full lowercase 40-character commit SHA'
+    [[ "$CANDIDATE_IMAGE" != -* && "$CANDIDATE_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || die '--image must be an immutable repository@sha256 digest reference'
   else
-    [[ -n "$PLAN_FILE" && -n "$CONFIRM_DIGEST" ]] || die 'apply requires --plan and --confirm'
-    [[ -z "$PROFILE_FILE$TARGET_REVISION" ]] || die 'apply reads profile/revision from its plan'
+    [[ -n "$PLAN_FILE" && -n "$CONFIRM_DIGEST" ]] || die "$COMMAND requires --plan and --confirm"
+    [[ -z "$PROFILE_FILE$TARGET_REVISION$CANDIDATE_IMAGE" && "$OUTPUT_JSON" == false ]] || die "$COMMAND reads bindings from its plan"
+    if [[ "$COMMAND" == accept ]]; then
+      [[ "$BROWSER_SMOKE_PASSED" == true ]] || die 'accept requires --browser-smoke-passed'
+    else
+      [[ "$BROWSER_SMOKE_PASSED" == false ]] || die 'apply does not accept browser confirmation'
+    fi
   fi
 }
 
@@ -103,9 +120,10 @@ validate_private_file() {
 
 load_profile() {
   validate_private_file "$PROFILE_FILE" 'Operator profile'
+  [[ "$(stat -c '%u' "$PROFILE_FILE")" == 0 ]] || die 'Operator profile must be root-owned'
   jq -e '
     .schemaVersion == 1 and
-    ([.repositoryRoot,.composeFile,.envFile,.stateDirectory,.recoveryDirectory,.project,.appService,.databaseService,.imageRepository,.publicUrl,.proxyNetwork,.proxyAlias,.playwrightImage] | all(type == "string" and length > 0)) and
+    ([.repositoryRoot,.composeFile,.envFile,.stateDirectory,.recoveryDirectory,.project,.appService,.databaseService,.imageRepository,.publicUrl,.proxyNetwork,.proxyAlias] | all(type == "string" and length > 0)) and
     (.controlUrls | type == "array" and all(type == "string")) and
     (.sentinelContainers | type == "array" and all(type == "string" and length > 0)) and
     (.planLifetimeSeconds | type == "number" and . >= 300 and . <= 86400) and
@@ -123,7 +141,6 @@ load_profile() {
   PUBLIC_URL="$(jq -r '.publicUrl | sub("/$"; "")' "$PROFILE_FILE")"
   PROXY_NETWORK="$(jq -r '.proxyNetwork' "$PROFILE_FILE")"
   PROXY_ALIAS="$(jq -r '.proxyAlias' "$PROFILE_FILE")"
-  PLAYWRIGHT_IMAGE="$(jq -r '.playwrightImage' "$PROFILE_FILE")"
   PLAN_LIFETIME="$(jq -r '.planLifetimeSeconds' "$PROFILE_FILE")"
   WAIT_TIMEOUT="$(jq -r '.waitTimeoutSeconds' "$PROFILE_FILE")"
   mapfile -t CONTROL_URLS < <(jq -r '.controlUrls[] | sub("/$"; "")' "$PROFILE_FILE")
@@ -137,12 +154,15 @@ compose() { docker compose --project-name "$PROJECT" --env-file "$ENV_FILE" -f "
 psql_live() { docker exec "$DB_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U wiki -d wiki "$@"; }
 
 check_prerequisites() {
-  for command in git docker jq curl tar sha256sum stat awk grep sed find install date mktemp diff; do require_command "$command"; done
+  for command in git docker jq curl tar sha256sum stat awk grep sed find install date mktemp diff flock; do require_command "$command"; done
   docker compose version >/dev/null
-  [[ $(id -u) -eq 0 ]] || die 'Plan and apply must run as root so private state can remain mode 0600'
+  [[ $(id -u) -eq 0 ]] || die 'Upgrade commands must run as root so private state can remain mode 0600'
   git -C "$REPO_ROOT" diff --quiet --ignore-submodules -- || die 'Working tree has unstaged tracked changes'
   git -C "$REPO_ROOT" diff --cached --quiet --ignore-submodules -- || die 'Working tree has staged changes'
   [[ -z "$(git -C "$REPO_ROOT" ls-files --others --exclude-standard)" ]] || die 'Working tree has untracked files'
+  install -d -m 0700 "$STATE_DIR"
+  exec 9>"$STATE_DIR/upgrade.lock"
+  flock -n 9 || die 'Another upgrade operation is in progress'
 }
 
 resolve_containers() {
@@ -156,7 +176,7 @@ resolve_containers() {
 
 live_revision() {
   local image
-  image="$(docker inspect "$APP_CONTAINER" --format '{{.Config.Image}}')"
+  image="$(docker inspect "$APP_CONTAINER" --format '{{.Image}}')"
   docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 }
 
@@ -169,8 +189,39 @@ ledger_summary() {
 }
 
 source_migrations_json() {
-  find "$REPO_ROOT/server/db/migrations" -maxdepth 1 -type f -name 'tsepistle-*.ts' -printf '%f\n' \
-    | sort | sed 's/\.ts$/.js/' | jq -Rsc 'split("\n") | map(select(length > 0))'
+  git -C "$REPO_ROOT" ls-tree -r --name-only "$TARGET_REVISION" -- server/db/migrations/ \
+    | sed -n 's@^server/db/migrations/\(tsepistle-.*\)\.ts$@\1.js@p' | sort | jq -Rsc 'split("\n") | map(select(length > 0))'
+}
+
+target_file() { git -C "$REPO_ROOT" show "$TARGET_REVISION:$1"; }
+
+load_target_metadata() {
+  [[ "$TARGET_REVISION" =~ ^[0-9a-f]{40}$ ]] || die '--revision must be a full lowercase 40-character commit SHA'
+  git -C "$REPO_ROOT" cat-file -e "$TARGET_REVISION^{commit}" 2>/dev/null || die 'Application revision Git object is absent locally'
+  TARGET_CONTRACTS="$(target_file "$CONTRACTS_FILE")" || die 'Application revision has no migration contract registry'
+  target_file package.json | jq -e '.version | type == "string" and length > 0' >/dev/null || die 'Application package metadata is invalid'
+}
+
+validate_candidate_image() {
+  local metadata host_arch
+  [[ "$CANDIDATE_IMAGE" != -* && "$CANDIDATE_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || die '--image must be an immutable repository@sha256 digest reference'
+  [[ "${CANDIDATE_IMAGE%@*}" == "$IMAGE_REPOSITORY" ]] || die 'Candidate image repository does not match the operator profile'
+  metadata="$(docker image inspect "$CANDIDATE_IMAGE")" || die 'Candidate image is absent locally; pull the immutable image before planning'
+  host_arch="$(docker info --format '{{.Architecture}}')"
+  case "$host_arch" in x86_64|amd64) host_arch=amd64 ;; aarch64|arm64) host_arch=arm64 ;; *) die 'Unsupported Docker host architecture' ;; esac
+  jq -e --arg image "$CANDIDATE_IMAGE" --arg revision "$TARGET_REVISION" --arg architecture "$host_arch" '
+    length == 1 and (.[0] |
+      (.Id | test("^sha256:[0-9a-f]{64}$")) and
+      ((.RepoDigests // []) | index($image) != null) and
+      .Os == "linux" and .Architecture == $architecture and
+      .Config.Labels["org.opencontainers.image.revision"] == $revision and
+      .Config.Labels["org.opencontainers.image.source"] == "https://github.com/PhilosophiMoonbeam/tsEpistle" and
+      .Config.Labels["io.tsepistle.image.architecture"] == $architecture)
+  ' <<< "$metadata" >/dev/null || die 'Candidate image digest, full OCI revision, source, image ID or architecture mismatch'
+  local image_id
+  image_id="$(jq -r '.[0].Id' <<< "$metadata")"
+  [[ -z "$CANDIDATE_ID" || "$image_id" == "$CANDIDATE_ID" ]] || die 'Candidate image ID changed after planning'
+  CANDIDATE_ID="$image_id"; CANDIDATE_ARCH="$host_arch"
 }
 
 normalized_app_contract() {
@@ -188,8 +239,8 @@ plan_digest() {
 }
 
 make_plan() {
-  [[ "$TARGET_REVISION" =~ ^[0-9a-f]{40}$ ]] || die '--revision must be a full lowercase 40-character commit SHA'
-  [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$TARGET_REVISION" ]] || die 'HEAD must equal the requested revision'
+  load_target_metadata
+  validate_candidate_image
   resolve_containers
   local live_rev live_image lock ledger_count ledger_batch ledger_tail applied source pending changed_files
   live_rev="$(live_revision)"; live_image="$(docker inspect "$APP_CONTAINER" --format '{{.Config.Image}}')"
@@ -213,15 +264,15 @@ make_plan() {
     fi
   done < <(git -C "$REPO_ROOT" diff --no-renames --name-only --diff-filter=MD "$live_rev..$TARGET_REVISION")
 
-  local registry="$REPO_ROOT/$CONTRACTS_FILE" enforce sequence contract recovery=false rehearsal=false rollback='image-only'
-  jq -e '.schemaVersion == 1 and (.enforceFromSequence | type == "number") and (.migrations | type == "object")' "$registry" >/dev/null || die 'Migration deployment contract registry is invalid'
-  enforce="$(jq -r '.enforceFromSequence' "$registry")"
+  local registry="$TARGET_CONTRACTS" enforce sequence contract recovery=false rehearsal=false rollback='image-only'
+  jq -e '.schemaVersion == 1 and (.enforceFromSequence | type == "number") and (.migrations | type == "object")' <<< "$registry" >/dev/null || die 'Migration deployment contract registry is invalid'
+  enforce="$(jq -r '.enforceFromSequence' <<< "$registry")"
   while IFS= read -r migration_name; do
     [[ -n "$migration_name" ]] || continue
     [[ "$migration_name" =~ ^tsepistle-([0-9]{6})-.+\.js$ ]] || die "Unsupported pending migration identity: $migration_name"
     sequence=$((10#${BASH_REMATCH[1]}))
     (( sequence >= enforce )) || die "Pending migration predates deployment-contract enforcement: $migration_name"
-    contract="$(jq -ce --arg name "$migration_name" '.migrations[$name] // empty' "$registry")" || die "Pending migration has no deployment contract: $migration_name"
+    contract="$(jq -ce --arg name "$migration_name" '.migrations[$name] // empty' <<< "$registry")" || die "Pending migration has no deployment contract: $migration_name"
     [[ -n "$contract" ]] || die "Pending migration has no deployment contract: $migration_name"
     jq -e '
       (.persistentState | IN("none","additive","stateful","destructive")) and
@@ -258,15 +309,15 @@ make_plan() {
   fi
   jq -e 'any(.[]; . == "deploy/compose/compose.yml")' <<< "$changed_files" >/dev/null && die 'Compose topology changed; app-only automation is unsupported'
 
-  local version candidate_image now expires run_dir draft digest plan_path contract_sha profile_sha app_contract_sha sentinel_inventory
-  version="$(jq -er '.version' "$REPO_ROOT/package.json")"
-  candidate_image="${IMAGE_REPOSITORY}:${version}-${TARGET_REVISION:0:8}"
+  local version now expires run_dir draft digest plan_path contract_sha profile_sha app_contract_sha sentinel_inventory operator_head
+  version="$(target_file package.json | jq -er '.version')"
+  operator_head="$(git -C "$REPO_ROOT" rev-parse HEAD)"
   now="$(date -u +%s)"; expires=$((now + PLAN_LIFETIME))
   run_dir="$STATE_DIR/upgrade-runs"; install -d -m 0700 "$run_dir"
-  plan_path="$run_dir/$(date -u +%Y%m%dT%H%M%SZ)-${TARGET_REVISION:0:8}.json"
+  plan_path="$(mktemp "$run_dir/$(date -u +%Y%m%dT%H%M%SZ)-${TARGET_REVISION:0:8}.XXXXXX.json")"
   draft="$(mktemp "$run_dir/.plan.XXXXXX")"
   profile_sha="$(sha256sum "$PROFILE_FILE" | cut -d' ' -f1)"
-  contract_sha="$(sha256sum "$registry" | cut -d' ' -f1)"
+  contract_sha="$(printf '%s' "$TARGET_CONTRACTS" | sha256sum | cut -d' ' -f1)"
   app_contract_sha="$(normalized_app_contract | sha256sum | cut -d' ' -f1)"
   sentinel_inventory="$({
     for path in "$DB_CONTAINER" "${SENTINELS[@]}"; do
@@ -275,13 +326,15 @@ make_plan() {
   } | jq -sc 'map({name:.Name,id:.Id,image:.Config.Image}) | unique_by(.id) | sort_by(.name)')"
   jq -n \
     --arg profile "$PROFILE_FILE" --arg profileSha "$profile_sha" --arg target "$TARGET_REVISION" --arg live "$live_rev" \
-    --arg liveImage "$live_image" --arg candidateImage "$candidate_image" --arg appId "$APP_CONTAINER" --arg dbId "$DB_CONTAINER" \
+    --arg liveImage "$live_image" --arg candidateImage "$CANDIDATE_IMAGE" --arg appId "$APP_CONTAINER" --arg dbId "$DB_CONTAINER" \
+    --arg candidateId "$CANDIDATE_ID" --arg architecture "$CANDIDATE_ARCH" --arg operatorHead "$operator_head" --arg version "$version" --arg publicUrl "$PUBLIC_URL" \
     --arg ledgerTail "$ledger_tail" --arg contractSha "$contract_sha" --arg appContractSha "$app_contract_sha" \
     --argjson createdAt "$now" --argjson expiresAt "$expires" --argjson ledgerCount "$ledger_count" --argjson ledgerBatch "$ledger_batch" \
     --argjson changes "$changed_files" --argjson migrations "$pending" --argjson sentinels "$sentinel_inventory" \
     --argjson recovery "$recovery" --argjson rehearsal "$rehearsal" --arg rollback "$rollback" \
-    '{schemaVersion:1,phase:"planned",profile:$profile,profileSha256:$profileSha,createdAt:$createdAt,expiresAt:$expiresAt,
-      targetRevision:$target,liveRevision:$live,liveImage:$liveImage,candidateImage:$candidateImage,appContainerId:$appId,databaseContainerId:$dbId,
+    '{schemaVersion:2,phase:"planned",profile:$profile,profileSha256:$profileSha,createdAt:$createdAt,expiresAt:$expiresAt,
+      operatorRevision:$operatorHead,targetRevision:$target,applicationVersion:$version,publicUrl:$publicUrl,
+      liveRevision:$live,liveImage:$liveImage,candidateImage:$candidateImage,candidateImageId:$candidateId,candidateArchitecture:$architecture,appContainerId:$appId,databaseContainerId:$dbId,
       migrationLedger:{count:$ledgerCount,batch:$ledgerBatch,tail:$ledgerTail},sentinelInventory:$sentinels,
       changedFiles:$changes,pendingMigrations:$migrations,
       risk:{rehearsalRequired:$rehearsal,recoveryRequired:$recovery,rollback:$rollback},
@@ -289,22 +342,41 @@ make_plan() {
   chmod 0600 "$draft"; digest="$(plan_digest "$draft")"
   jq --arg digest "$digest" '. + {digest:$digest}' "$draft" > "$plan_path"
   chmod 0600 "$plan_path"; unlink "$draft"
-  log "Plan: $plan_path"
-  log "Digest: $digest"
-  log "Delta: $(jq 'length' <<< "$changed_files") files; $(jq 'length' <<< "$pending") pending migrations"
-  log "Risk: rehearsal=$rehearsal recovery=$recovery rollback=$rollback"
-  printf '\nApply only after reviewing the plan:\n  sudo %q apply --plan %q --confirm %q\n' "$SCRIPT_DIR/upgrade.sh" "$plan_path" "$digest"
+  if [[ "$OUTPUT_JSON" == true ]]; then
+    jq -cn --arg plan "$plan_path" --arg digest "$digest" --arg revision "$TARGET_REVISION" --arg operatorRevision "$operator_head" --arg image "$CANDIDATE_IMAGE" --arg imageId "$CANDIDATE_ID" --arg publicUrl "$PUBLIC_URL" \
+      '{schemaVersion:1,plan:$plan,confirm:$digest,operatorRevision:$operatorRevision,targetRevision:$revision,candidateImage:$image,candidateImageId:$imageId,publicUrl:$publicUrl}'
+  else
+    log "Plan: $plan_path"
+    log "Digest: $digest"
+    log "Delta: $(jq 'length' <<< "$changed_files") files; $(jq 'length' <<< "$pending") pending migrations"
+    log "Risk: rehearsal=$rehearsal recovery=$recovery rollback=$rollback"
+    printf '\nApply only after reviewing the plan:\n  sudo %q apply --plan %q --confirm %q\n' "$SCRIPT_DIR/upgrade.sh" "$plan_path" "$digest"
+  fi
+}
+
+validate_plan() {
+  validate_private_file "$PLAN_FILE" 'Deployment plan'
+  jq -e '.schemaVersion == 2 and .phase == "planned" and (.digest | type == "string")' "$PLAN_FILE" >/dev/null || die 'Deployment plan schema is invalid'
+  [[ "$(plan_digest "$PLAN_FILE")" == "$CONFIRM_DIGEST" && "$(jq -r '.digest' "$PLAN_FILE")" == "$CONFIRM_DIGEST" ]] || die 'Plan digest confirmation does not match'
+  (( $(date -u +%s) <= $(jq -r '.expiresAt' "$PLAN_FILE") )) || die 'Deployment plan expired; create a new plan'
+}
+
+load_bound_plan() {
+  PROFILE_FILE="$(jq -r '.profile' "$PLAN_FILE")"; load_profile; check_prerequisites
+  [[ "$(sha256sum "$PROFILE_FILE" | cut -d' ' -f1)" == "$(jq -r '.profileSha256' "$PLAN_FILE")" ]] || die 'Operator profile changed after planning'
+  [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$(jq -r '.operatorRevision' "$PLAN_FILE")" ]] || die 'Operator HEAD changed after planning'
+  TARGET_REVISION="$(jq -r '.targetRevision' "$PLAN_FILE")"
+  load_target_metadata
+  [[ "$(printf '%s' "$TARGET_CONTRACTS" | sha256sum | cut -d' ' -f1)" == "$(jq -r '.migrationContractsSha256' "$PLAN_FILE")" ]] || die 'Application migration contracts changed after planning'
+  CANDIDATE_IMAGE="$(jq -r '.candidateImage' "$PLAN_FILE")"; CANDIDATE_ID="$(jq -r '.candidateImageId' "$PLAN_FILE")"
+  validate_candidate_image
+  STATE_FILE="${PLAN_FILE}.state.json"
+  resolve_containers
 }
 
 load_apply_plan() {
-  validate_private_file "$PLAN_FILE" 'Deployment plan'
-  jq -e '.schemaVersion == 1 and .phase == "planned" and (.digest | type == "string")' "$PLAN_FILE" >/dev/null || die 'Deployment plan schema is invalid'
-  [[ "$(plan_digest "$PLAN_FILE")" == "$CONFIRM_DIGEST" && "$(jq -r '.digest' "$PLAN_FILE")" == "$CONFIRM_DIGEST" ]] || die 'Plan digest confirmation does not match'
-  (( $(date -u +%s) <= $(jq -r '.expiresAt' "$PLAN_FILE") )) || die 'Deployment plan expired; create a new plan'
-  PROFILE_FILE="$(jq -r '.profile' "$PLAN_FILE")"; load_profile; check_prerequisites; resolve_containers
-  [[ "$(sha256sum "$PROFILE_FILE" | cut -d' ' -f1)" == "$(jq -r '.profileSha256' "$PLAN_FILE")" ]] || die 'Operator profile changed after planning'
-  [[ "$(sha256sum "$REPO_ROOT/$CONTRACTS_FILE" | cut -d' ' -f1)" == "$(jq -r '.migrationContractsSha256' "$PLAN_FILE")" ]] || die 'Migration contracts changed after planning'
-  [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$(jq -r '.targetRevision' "$PLAN_FILE")" ]] || die 'HEAD changed after planning'
+  load_bound_plan
+  [[ ! -e "$STATE_FILE" ]] || die 'Plan has already been applied or attempted; inspect its deployment state'
   [[ "$(live_revision)" == "$(jq -r '.liveRevision' "$PLAN_FILE")" ]] || die 'Live revision changed after planning'
   [[ "$APP_CONTAINER" == "$(jq -r '.appContainerId' "$PLAN_FILE")" && "$DB_CONTAINER" == "$(jq -r '.databaseContainerId' "$PLAN_FILE")" ]] || die 'App/database container identity changed after planning'
   [[ "$(ledger_summary | cut -d'|' -f1-3)" == "$(jq -r '[.migrationLedger.count,.migrationLedger.batch,.migrationLedger.tail]|join("|")' "$PLAN_FILE")" ]] || die 'Migration ledger changed after planning'
@@ -355,21 +427,24 @@ on_exit() {
   exit "$status"
 }
 
-build_candidate() {
-  local image target existing
-  image="$(jq -r '.candidateImage' "$PLAN_FILE")"; target="$(jq -r '.targetRevision' "$PLAN_FILE")"
-  if docker image inspect "$image" >/dev/null 2>&1; then
-    existing="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-    [[ "$existing" == "$target" ]] || die 'Candidate tag already identifies a different revision'
-    log "Reusing exact candidate image: $image"
-  elif command -v bun >/dev/null 2>&1; then
-    (cd "$REPO_ROOT" && bun run docker:build "$image")
-  else
-    log 'Host Bun is unavailable; running the canonical builder in a pinned Bun container'
-    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$REPO_ROOT:/repo:ro" -w /repo "$BUN_IMAGE" \
-      sh -ec 'apk add --no-cache docker-cli docker-cli-buildx git >/dev/null && bun server/scripts/build-docker.ts "$1"' sh "$image"
-  fi
-  [[ "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "$target" ]] || die 'Candidate OCI revision label mismatch'
+write_state() {
+  local phase="$1" temp env_sha contract_sha private_sha started_at protected ledger
+  env_sha="$(sha256sum "$ENV_FILE" | cut -d' ' -f1)" || die 'Cannot fingerprint deployment environment'
+  contract_sha="$(normalized_app_contract | sha256sum | cut -d' ' -f1)" || die 'Cannot fingerprint app runtime contract'
+  private_sha="$(private_files_fingerprints | sha256sum | cut -d' ' -f1)" || die 'Cannot fingerprint configuration/secrets'
+  started_at="$(docker inspect "$APP_CONTAINER" --format '{{.State.StartedAt}}')" || die 'Cannot identify applied app start'
+  protected="$(protected_container_state)" || die 'Cannot inventory protected containers'
+  ledger="$(ledger_json)" || die 'Cannot read applied migration ledger'
+  temp="$(mktemp "${STATE_FILE}.XXXXXX")"
+  jq -n --arg phase "$phase" --arg digest "$CONFIRM_DIGEST" --arg app "$APP_CONTAINER" --arg db "$DB_CONTAINER" \
+    --arg imageId "$CANDIDATE_ID" --arg recovery "$RECOVERY_PATH" --argjson at "$(date -u +%s)" \
+    --arg envSha "$env_sha" --arg contractSha "$contract_sha" --arg privateSha "$private_sha" \
+    --arg startedAt "$started_at" --argjson protected "$protected" --argjson ledger "$ledger" \
+    '{schemaVersion:1,phase:$phase,planDigest:$digest,appContainerId:$app,databaseContainerId:$db,candidateImageId:$imageId,
+      updatedAt:$at,recoveryPath:$recovery,envSha256:$envSha,privateFilesSha256:$privateSha,appStartedAt:$startedAt,
+      protectedContainers:$protected,appRuntimeContractSha256:$contractSha,migrationLedger:$ledger,
+      browserSmokePassed:false,browserVerification:null}' > "$temp"
+  install -m 0600 "$temp" "$STATE_FILE"; unlink "$temp"
 }
 
 wait_health() {
@@ -401,7 +476,7 @@ rehearse_migrations() {
   for i in $(seq 1 60); do docker exec "$TEST_DB" pg_isready -U "$db_user" -d "$db_name" >/dev/null 2>&1 && break; (( i < 60 )) || die 'Rehearsal PostgreSQL failed readiness'; sleep 1; done
   docker exec -i "$TEST_DB" pg_restore -U "$db_user" -d "$db_name" --no-owner < "$TEMP_ROOT/live.pgdump"
   before="$(docker exec "$TEST_DB" psql -X -U "$db_user" -d "$db_name" -Atc 'SELECT count(*) FROM migrations;')"
-  docker run --name "$TEST_APP" --network "$TEST_NETWORK" \
+  docker run --pull never --name "$TEST_APP" --network "$TEST_NETWORK" \
     -e TSEPISTLE_MIGRATION_ONLY=1 -e CONFIG_FILE=/wiki/config.yml -e DB_PASS_FILE=/run/secrets/db-password \
     -v "$config_source:/wiki/config.yml:ro" -v "$TEMP_ROOT/data:/wiki/data" -v "$STATE_DIR/app-db-password:/run/secrets/db-password:ro" \
     "$candidate" >/dev/null
@@ -810,8 +885,8 @@ verify_postconditions() {
         ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac
-  done < <(jq -r --arg phase "$phase" --slurpfile registry "$REPO_ROOT/$CONTRACTS_FILE" \
-    '.pendingMigrations[] as $name | $registry[0].migrations[$name][$phase][]' "$PLAN_FILE")
+  done < <(jq -r --arg phase "$phase" --argjson registry "$TARGET_CONTRACTS" \
+    '.pendingMigrations[] as $name | $registry.migrations[$name][$phase][]' "$PLAN_FILE")
 }
 
 table_hash() {
@@ -833,14 +908,25 @@ table_hash() {
   psql_live -Atc "COPY (SELECT row_to_json(t)::text FROM $sql_table t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1
 }
 
+private_files_fingerprints() {
+  local source destination
+  docker inspect "$APP_CONTAINER" --format '{{range .Mounts}}{{printf "%s|%s\n" .Source .Destination}}{{end}}' |
+    while IFS='|' read -r source destination; do
+      if [[ "$destination" == /run/secrets/* || "$destination" == /wiki/config.yml ]]; then sha256sum "$source"; fi
+    done | sort
+}
+
+protected_container_state() {
+  docker inspect "$DB_CONTAINER" "${SENTINELS[@]}" |
+    jq -Sc 'map({id:.Id,restartCount:.RestartCount,startedAt:.State.StartedAt}) | unique_by(.id) | sort_by(.id)'
+}
+
 capture_baseline() {
   TEMP_ROOT="$(mktemp -d /opt/tsepistle-upgrade.XXXXXX)"; chmod 0700 "$TEMP_ROOT"
   local table name source destination
   for table in pages pageHistory users assets groups; do BASELINE_HASHES[$table]="$(table_hash "$table")"; done
   normalized_app_contract > "$TEMP_ROOT/app-contract-before.json"
-  docker inspect "$APP_CONTAINER" --format '{{range .Mounts}}{{println .Source "|" .Destination}}{{end}}' | while IFS='|' read -r source destination; do
-    if [[ "$destination" == /run/secrets/* || "$destination" == /wiki/config.yml ]]; then sha256sum "$source"; fi
-  done > "$TEMP_ROOT/private-files.sha256"
+  private_files_fingerprints > "$TEMP_ROOT/private-files.sha256"
   for name in "$DB_CONTAINER" "${SENTINELS[@]}"; do
     docker inspect "$name" >/dev/null 2>&1 || die "Sentinel container not found: $name"
     SENTINEL_STATE[$name]="$(docker inspect "$name" --format '{{.Id}}|{{.RestartCount}}|{{.State.StartedAt}}')"
@@ -894,13 +980,13 @@ start_candidate() {
   set_candidate_image "$candidate"
   RECREATE_BEGUN=true
   if [[ "$material" == true ]]; then
-    compose up --no-start --no-deps --no-build --force-recreate "$APP_SERVICE"
+    compose up --no-start --no-deps --no-build --pull never --force-recreate "$APP_SERVICE"
     APP_CONTAINER="$(compose ps -a -q "$APP_SERVICE")"
     docker network disconnect "$PROXY_NETWORK" "$APP_CONTAINER" >/dev/null 2>&1 || true
     docker start "$APP_CONTAINER" >/dev/null
     wait_health "$APP_CONTAINER" || { docker logs --tail 160 "$APP_CONTAINER" >&2; die 'Candidate failed internal readiness'; }
   else
-    if ! compose up -d --no-deps --no-build --force-recreate --wait --wait-timeout "$WAIT_TIMEOUT" "$APP_SERVICE"; then
+    if ! compose up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout "$WAIT_TIMEOUT" "$APP_SERVICE"; then
       APP_CONTAINER="$(compose ps -a -q "$APP_SERVICE")"
       [[ -z "$APP_CONTAINER" ]] || docker logs --tail 160 "$APP_CONTAINER" >&2
       die 'Candidate failed Compose readiness'
@@ -914,10 +1000,11 @@ start_candidate() {
 }
 
 verify_candidate() {
-  local candidate target lock pending table actual name value
+  local candidate target lock pending table name value
   candidate="$(jq -r '.candidateImage' "$PLAN_FILE")"; target="$(jq -r '.targetRevision' "$PLAN_FILE")"
   [[ "$(docker inspect "$APP_CONTAINER" --format '{{.Config.Image}}')" == "$candidate" ]] || die 'Live app image does not match candidate'
   [[ "$(docker image inspect "$candidate" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "$target" ]] || die 'Live image revision label mismatch'
+  [[ "$(docker inspect "$APP_CONTAINER" --format '{{.Image}}')" == "$CANDIDATE_ID" ]] || die 'Live container image ID mismatch'
   [[ "$(docker inspect "$APP_CONTAINER" --format '{{.State.Health.Status}}|{{.RestartCount}}')" == 'healthy|0' ]] || die 'Candidate is unhealthy or restarted'
   local elapsed=0
   while (( elapsed < WAIT_TIMEOUT )); do
@@ -928,9 +1015,7 @@ verify_candidate() {
   done
   [[ "$lock" == 0 && "$pending" == 0 ]] || die 'Migration lock or durable jobs did not settle'
   for table in pages pageHistory users assets groups; do [[ "$(table_hash "$table")" == "${BASELINE_HASHES[$table]}" ]] || die "$table changed unexpectedly"; done
-  docker inspect "$APP_CONTAINER" --format '{{range .Mounts}}{{println .Source "|" .Destination}}{{end}}' | while IFS='|' read -r source destination; do
-    if [[ "$destination" == /run/secrets/* || "$destination" == /wiki/config.yml ]]; then sha256sum "$source"; fi
-  done > "$TEMP_ROOT/private-files-after.sha256"
+  private_files_fingerprints > "$TEMP_ROOT/private-files-after.sha256"
   diff -u "$TEMP_ROOT/private-files.sha256" "$TEMP_ROOT/private-files-after.sha256" >/dev/null || die 'Config/secret path fingerprints changed'
   normalized_app_contract > "$TEMP_ROOT/app-contract-after.json"
   diff -u "$TEMP_ROOT/app-contract-before.json" "$TEMP_ROOT/app-contract-after.json" >/dev/null || die 'App runtime contract changed'
@@ -939,15 +1024,12 @@ verify_candidate() {
   docker exec "$APP_CONTAINER" curl --fail --silent http://127.0.0.1:3000/healthz >/dev/null || die 'Internal app health failed'
 }
 
-admit_and_smoke() {
+admit_and_check() {
   if [[ "$PROXY_GATED" == true ]]; then
     docker network connect --alias "$PROXY_ALIAS" "$PROXY_NETWORK" "$APP_CONTAINER"; PROXY_GATED=false
   fi
   curl --fail --silent --show-error --max-time 30 "$PUBLIC_URL/healthz" >/dev/null || die 'Public candidate health failed'
   local url; for url in "${CONTROL_URLS[@]}"; do curl --fail --silent --show-error --max-time 30 "$url/healthz" >/dev/null || die "Control URL failed: $url"; done
-  docker run --rm --ipc=host --network host -e "TSEPISTLE_SMOKE_URL=$PUBLIC_URL" \
-    -v "$SCRIPT_DIR/login-smoke.cjs:/work/login-smoke.cjs:ro" -w /tmp/smoke "$PLAYWRIGHT_IMAGE" \
-    bash -ec 'npm init -y >/dev/null && npm install --no-audit --no-fund --no-save playwright@1.62.1 >/dev/null && NODE_PATH=/tmp/smoke/node_modules node /work/login-smoke.cjs'
   local severe
   severe="$(docker logs --since 30m "$APP_CONTAINER" 2>&1 | grep -Eia '(^|[^a-z])(fatal|panic|unhandled|uncaught|migration failed)([^a-z]|$)' || true)"
   [[ -z "$severe" ]] || die "Severe candidate logs detected: $severe"
@@ -956,27 +1038,68 @@ admit_and_smoke() {
 apply_plan() {
   load_apply_plan
   trap on_exit EXIT
-  build_candidate
+  write_state applying
   rehearse_migrations
   drain_and_recover
   capture_baseline
   start_candidate
   verify_candidate
-  admit_and_smoke
-  local completed temp
-  completed="$(date -u +%s)"; temp="$(mktemp "${PLAN_FILE}.XXXXXX")"
-  jq --argjson completed "$completed" --arg recovery "$RECOVERY_PATH" \
-    '.phase="accepted" | .completedAt=$completed | if $recovery == "" then . else .recoveryPath=$recovery end' "$PLAN_FILE" > "$temp"
-  chmod 0600 "$temp"; install -m 0600 "$temp" "$PLAN_FILE"; unlink "$temp"
+  admit_and_check
+  write_state awaiting-external-browser-verification
   trap - EXIT; cleanup_temp
-  log "Deployment accepted: $(jq -r '.candidateImage' "$PLAN_FILE")"
+  log "Awaiting external browser verification: $CANDIDATE_IMAGE"
+  printf 'After off-box login smoke succeeds:\n  sudo %q accept --plan %q --confirm %q --browser-smoke-passed\n' "$SCRIPT_DIR/upgrade.sh" "$PLAN_FILE" "$CONFIRM_DIGEST"
   [[ -z "$RECOVERY_PATH" ]] || log "Recovery point: $RECOVERY_PATH"
   [[ "$MIGRATION_COMMITTED" == false ]] || warn 'Schema changed: rollback is fix-forward or an explicitly authorized matching-state restore.'
 }
 
-main() {
-  parse_args "$@"
-  if [[ "$COMMAND" == plan ]]; then load_profile; check_prerequisites; make_plan; else apply_plan; fi
+verify_applied_bindings() {
+  [[ "$APP_CONTAINER" == "$(jq -r '.appContainerId' "$STATE_FILE")" && "$DB_CONTAINER" == "$(jq -r '.databaseContainerId' "$STATE_FILE")" ]] || die 'Applied app/database candidate was replaced'
+  [[ "$(docker inspect "$APP_CONTAINER" --format '{{.Image}}')" == "$CANDIDATE_ID" && "$CANDIDATE_ID" == "$(jq -r '.candidateImageId' "$STATE_FILE")" ]] || die 'Applied candidate image ID changed'
+  [[ "$(docker inspect "$APP_CONTAINER" --format '{{.Config.Image}}')" == "$CANDIDATE_IMAGE" && "$(live_revision)" == "$TARGET_REVISION" ]] || die 'Applied candidate reference or revision changed'
+  [[ "$(docker inspect "$APP_CONTAINER" --format '{{.State.Health.Status}}|{{.RestartCount}}')" == 'healthy|0' ]] || die 'Applied candidate is unhealthy or restarted'
+  [[ "$(docker inspect "$APP_CONTAINER" --format '{{.State.StartedAt}}')" == "$(jq -r '.appStartedAt' "$STATE_FILE")" ]] || die 'Applied candidate was restarted'
+  [[ "$(sha256sum "$ENV_FILE" | cut -d' ' -f1)" == "$(jq -r '.envSha256' "$STATE_FILE")" ]] || die 'Deployment environment changed after apply'
+  [[ "$(private_files_fingerprints | sha256sum | cut -d' ' -f1)" == "$(jq -r '.privateFilesSha256' "$STATE_FILE")" ]] || die 'Applied configuration or secrets changed'
+  [[ "$(protected_container_state)" == "$(jq -Sc '.protectedContainers' "$STATE_FILE")" ]] || die 'A protected container was replaced or restarted after apply'
+  [[ "$(normalized_app_contract | sha256sum | cut -d' ' -f1)" == "$(jq -r '.appRuntimeContractSha256' "$STATE_FILE")" ]] || die 'Applied runtime contract changed'
+  [[ "$(ledger_json | jq -c .)" == "$(jq -c '.migrationLedger' "$STATE_FILE")" && "$(ledger_summary | cut -d'|' -f4)" == 0 ]] || die 'Applied migration ledger changed or locked'
+  local sentinel
+  while IFS= read -r sentinel; do
+    [[ "$(docker inspect "$(jq -r '.name' <<< "$sentinel")" --format '{{.Id}}')" == "$(jq -r '.id' <<< "$sentinel")" ]] || die 'A protected container changed after planning'
+  done < <(jq -c '.sentinelInventory[]' "$PLAN_FILE")
 }
 
-main "$@"
+accept_plan() {
+  STATE_FILE="${PLAN_FILE}.state.json"
+  validate_private_file "$STATE_FILE" 'Applied deployment state'
+  jq -e --arg digest "$CONFIRM_DIGEST" '.schemaVersion == 1 and .phase == "awaiting-external-browser-verification" and .planDigest == $digest' "$STATE_FILE" >/dev/null || die 'Plan is not awaiting external browser verification'
+  load_bound_plan
+  validate_private_file "$STATE_FILE" 'Applied deployment state'
+  jq -e --arg digest "$CONFIRM_DIGEST" '.schemaVersion == 1 and .phase == "awaiting-external-browser-verification" and .planDigest == $digest' "$STATE_FILE" >/dev/null || die 'Applied state changed before acceptance acquired the upgrade lock'
+  verify_applied_bindings
+  verify_postconditions runtimePostconditions "$DB_CONTAINER" wiki wiki
+  admit_and_check
+  verify_applied_bindings
+  local accepted_state
+  accepted_state="$(mktemp "${STATE_FILE}.XXXXXX")"
+  jq --argjson at "$(date -u +%s)" '
+    .phase = "accepted" | .updatedAt = $at | .browserSmokePassed = true |
+    .browserVerification = "trusted-operator-confirmation"
+  ' "$STATE_FILE" > "$accepted_state"
+  install -m 0600 "$accepted_state" "$STATE_FILE"; unlink "$accepted_state"
+  log "Deployment accepted after operator-confirmed external browser verification: $CANDIDATE_IMAGE"
+}
+
+main() {
+  parse_args "$@"
+  case "$COMMAND" in
+    plan) load_profile; check_prerequisites; make_plan ;;
+    apply) validate_plan; apply_plan ;;
+    accept) validate_plan; accept_plan ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

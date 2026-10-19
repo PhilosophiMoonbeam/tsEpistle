@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises'
+import { access, readFile, readdir } from 'node:fs/promises'
 import { load as loadYaml } from 'js-yaml'
 
 interface DataFile {
@@ -63,8 +63,8 @@ else {
 
 const browserDockerfile = await readFile('dev/build/Dockerfile.agent-browser', 'utf8')
 const browserRuntime = await readFile('server/agents/browser/runtime.ts', 'utf8')
-if (!browserDockerfile.includes('oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895')) {
-  failures.push('browser worker base image must retain the reviewed Bun 1.4.2 multi-arch digest')
+if (!browserDockerfile.includes('oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598')) {
+  failures.push('browser worker base image must retain the reviewed Bun 1.4.3 multi-arch digest')
 }
 if (!browserDockerfile.includes('USER bun')) failures.push('browser worker image must run as bun')
 if (!browserRuntime.includes('chromiumSandbox: true')) failures.push('browser worker must launch Chromium with its sandbox enabled')
@@ -91,23 +91,114 @@ const master = await readFile('server/master.ts', 'utf8')
 for (const obsolete of ['agentsPublicOrigin', 'agentVite', 'agentLaunchHandoff']) {
   if (master.includes(obsolete)) failures.push(`server/master.ts retains obsolete isolated-agent wiring: ${obsolete}`)
 }
-const workflowText = await readFile('.github/workflows/build.yml', 'utf8')
-const workflow = loadYaml(workflowText) as { jobs?: Record<string, unknown> }
-for (const job of ['agent-postgres', 'agent-browser-image', 'publish-amd64', 'arm', 'beta', 'release']) {
-  if (!workflow.jobs?.[job]) failures.push(`release workflow is missing required job ${job}`)
+// Public checks must be runnable from an unprivileged application checkout.
+// Publication policy belongs to the private controller, not a source copy here.
+interface PublicStep {
+  id?: string
+  uses?: string
+  run?: string
+  if?: string
+  shell?: string
+  env?: Record<string, unknown>
+  with?: Record<string, unknown>
 }
-for (const pgversion of [16, 17]) {
-  if (!workflowText.includes(`pgversion: ${pgversion}`)) failures.push(`agent PostgreSQL release matrix must include PostgreSQL ${pgversion}`)
+interface PublicJob {
+  'runs-on'?: unknown
+  if?: string
+  needs?: string[]
+  environment?: string | { name?: string }
+  permissions?: Record<string, unknown>
+  env?: Record<string, unknown>
+  steps?: PublicStep[]
 }
-for (const evidence of [
-  'server/test/db/agents-migration.postgres.integration.test.ts',
-  '--platform linux/amd64,linux/arm64',
-  'dev/build/Dockerfile.agent-browser',
-  'docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0',
-  'wiki-agent-browser.spdx.json',
-  'AGENT_BROWSER_IMAGE_DIGEST'
-]) {
-  if (!workflowText.includes(evidence)) failures.push(`release workflow is missing agent evidence: ${evidence}`)
+interface PublicWorkflow {
+  on?: Record<string, unknown>
+  permissions?: Record<string, unknown>
+  env?: Record<string, unknown>
+  jobs?: Record<string, PublicJob>
+}
+const relayPolicies: Record<string, { job: string; condition: string }> = {
+  'build.yml': {
+    job: 'full-controller',
+    condition: "github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'))"
+  },
+  'packer.yml': {
+    job: 'marketplace-controller',
+    condition: "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
+  }
+}
+const publicWorkflows = (await readdir('.github/workflows')).filter(file => /\.ya?ml$/.test(file))
+for (const file of ['build.yml', 'helm.yml', 'scarlett-upstream.yml', 'packer.yml', 'release-request.yml']) {
+  if (!publicWorkflows.includes(file)) failures.push(`public workflow is missing: ${file}`)
+}
+for (const file of publicWorkflows) {
+  const workflow = loadYaml(await readFile(`.github/workflows/${file}`, 'utf8')) as PublicWorkflow
+  if (!workflow?.jobs || Object.keys(workflow.jobs).length === 0) {
+    failures.push(`${file} must define public hosted jobs`)
+    continue
+  }
+  if (!workflow.permissions || workflow.permissions.contents !== 'read' || Object.values(workflow.permissions).some(value => value !== 'read' && value !== 'none'))
+    failures.push(`${file} must default to explicit read-only permissions`)
+  if (JSON.stringify(workflow.env ?? {}).includes('secrets.CI_CONTROLLER_TOKEN'))
+    failures.push(`${file} must not expose the controller credential at workflow scope`)
+  if (workflow.on && 'pull_request_target' in workflow.on)
+    failures.push(`${file} must not execute through privileged PR triggers`)
+  if (workflow.on && 'workflow_run' in workflow.on) {
+    const trigger = workflow.on.workflow_run as { workflows?: string[]; types?: string[] }
+    if (file !== 'build.yml' || JSON.stringify(trigger.workflows) !== '["Release Request"]' || JSON.stringify(trigger.types) !== '["completed"]')
+      failures.push(`${file} must accept only the read-only completed Release Request signal`)
+  }
+  const relay = relayPolicies[file]
+  if (relay && !workflow.jobs[relay.job]) failures.push(`${file} is missing its protected controller relay`)
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (typeof job['runs-on'] !== 'string' || !/^(ubuntu|windows|macos)-(latest|\d+(?:\.\d+)?)(?:-(?:arm|large|xlarge))?$/.test(job['runs-on']))
+      failures.push(`${file}/${name} must use a literal GitHub-hosted runner, never a public self-hosted selector`)
+    for (const [permission, value] of Object.entries(job.permissions ?? {})) {
+      const developmentWrite = file === 'build.yml' && name === 'development' && permission === 'packages'
+      const finishWrite = file === 'build.yml' && name === 'release-finish' && ['attestations', 'contents', 'id-token', 'packages'].includes(permission)
+      if (value !== 'read' && value !== 'none' && !(value === 'write' && (developmentWrite || finishWrite)))
+        failures.push(`${file}/${name} grants unauthorized ${permission}:${String(value)}`)
+    }
+    if (relay?.job === name) {
+      if (JSON.stringify(job.env ?? {}).includes('secrets.CI_CONTROLLER_TOKEN'))
+        failures.push(`${file}/${name} must scope the controller credential to dispatch/download steps`)
+      const environment = typeof job.environment === 'string' ? job.environment : job.environment?.name
+      const condition = typeof job.if === 'string' ? job.if.replace(/^\s*\$\{\{|\}\}\s*$/g, '').replace(/\s+/g, ' ').trim() : ''
+      if (environment !== 'trusted-ci-controller' || condition !== relay.condition)
+        failures.push(`${file}/${name} must use the trusted environment and main-only implementation boundary`)
+      const checkout = job.steps?.find(step => step.uses?.startsWith('actions/checkout@'))
+      if (checkout?.with?.ref !== '${{ github.sha }}' || checkout.with['persist-credentials'] !== false || job.steps?.[0] !== checkout)
+        failures.push(`${file}/${name} must checkout only its immutable main implementation without persisted credentials`)
+      const dispatch = job.steps?.filter(step => step.run === 'bun --no-env-file .github/scripts/controller-relay.mjs')
+      if (dispatch?.length !== 1 || dispatch[0]?.env?.GH_TOKEN !== '${{ secrets.CI_CONTROLLER_TOKEN }}')
+        failures.push(`${file}/${name} must invoke the exact-run main relay with step-scoped authority`)
+      for (const step of job.steps ?? []) {
+        if (!JSON.stringify(step).includes('secrets.CI_CONTROLLER_TOKEN')) continue
+        const exactDownload = file === 'build.yml' && step.uses?.startsWith('actions/download-artifact@') &&
+          step.if === "steps.relay.outputs.INTENT == 'release'" && step.with?.name === 'official-release-candidate' &&
+          step.with.repository === 'PhilosophiMoonbeam/tsEpistle-ci' && step.with['run-id'] === '${{ steps.relay.outputs.PRIVATE_RUN_ID }}' &&
+          step.with['github-token'] === '${{ secrets.CI_CONTROLLER_TOKEN }}'
+        if (step !== dispatch?.[0] && !exactDownload)
+          failures.push(`${file}/${name} exposes controller authority outside exact dispatch/artifact transfer`)
+      }
+    } else if (JSON.stringify(job).includes('secrets.CI_CONTROLLER_TOKEN')) {
+      failures.push(`${file}/${name} must not receive the private controller credential`)
+    }
+    if (file === 'build.yml' && name === 'release-finish') {
+      const environment = typeof job.environment === 'string' ? job.environment : job.environment?.name
+      if (environment !== 'prod' || JSON.stringify(job.needs) !== '["full-controller"]' ||
+        job.if !== "needs.full-controller.result == 'success' && startsWith(needs.full-controller.outputs.APP_REF, 'refs/tags/v')")
+        failures.push('public release finishing must depend on the exact successful protected relay')
+      const checkout = job.steps?.find(step => step.uses?.startsWith('actions/checkout@'))
+      if (checkout?.with?.ref !== '${{ github.sha }}' || checkout.with['persist-credentials'] !== false)
+        failures.push('public release signer implementation must remain truthful main, never target-tag checkout')
+      if ([job.env, ...(job.steps ?? []).map(step => step.env)].some(env => Object.keys(env ?? {}).some(key => key.startsWith('GITHUB_'))))
+        failures.push('public release signer must not spoof GitHub identity')
+    }
+    if (file === 'release-request.yml' && (job.environment || Object.values(job.permissions ?? {}).some(value => value !== 'read' && value !== 'none') ||
+      (job.steps ?? []).some(step => step.uses || JSON.stringify(step).includes('secrets.'))))
+      failures.push('release tag signal must remain checkout-free, credential-free and read-only')
+  }
 }
 
 const requiredReleaseInputs = [
@@ -132,4 +223,4 @@ for (const file of requiredReleaseInputs) {
 }
 
 if (failures.length > 0) throw new Error(`Agent release gate failed:\n${failures.map(failure => `- ${failure}`).join('\n')}`)
-console.log('Agent release gate valid: dependencies frozen, defaults inert, durable goals guarded, PostgreSQL and multi-arch release evidence present')
+console.log('Agent release gate valid: dependencies frozen, defaults inert, runtime inputs retained, public CI hosted and controller relays protected')

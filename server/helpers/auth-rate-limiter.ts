@@ -96,23 +96,24 @@ class KnexRateLimiter extends RateLimiterStoreAbstract {
     const now = Date.now()
     const newExpire = msDuration > 0 ? now + msDuration : null
 
-    return this.knex.transaction(async transaction => {
-      const current = await transaction<RateLimitRow>(this.tableName).where('key', key).forUpdate().first()
-
-      if (current === undefined) {
-        const inserted: RateLimitRow = { key, points, expire: newExpire }
-        await transaction<RateLimitRow>(this.tableName).insert(inserted)
-        return inserted
-      }
-
-      const currentExpire = current.expire === null ? null : Number(current.expire)
-      const startsNewDuration = forceExpire || (currentExpire !== null && currentExpire <= now)
-      const nextPoints = startsNewDuration ? points : Number(current.points) + points
-      const nextExpire = startsNewDuration ? newExpire : currentExpire
-      await transaction<RateLimitRow>(this.tableName).where('key', key).update({ points: nextPoints, expire: nextExpire })
-
-      return { key, points: nextPoints, expire: nextExpire }
-    })
+    // Locking a missing row cannot serialize first consumption. Resolve both
+    // insertion and expiry-aware accounting in the database's conflict update.
+    const [row] = await this.knex<RateLimitRow>(this.tableName)
+      .insert({ key, points, expire: newExpire })
+      .onConflict('key')
+      .merge(forceExpire ? { points, expire: newExpire } : {
+        points: this.knex.raw(
+          'CASE WHEN ?? <= ? THEN excluded.?? ELSE ?? + excluded.?? END',
+          [`${this.tableName}.expire`, now, 'points', `${this.tableName}.points`, 'points']
+        ),
+        expire: this.knex.raw(
+          'CASE WHEN ?? <= ? THEN excluded.?? ELSE ?? END',
+          [`${this.tableName}.expire`, now, 'expire', `${this.tableName}.expire`]
+        )
+      })
+      .returning(['key', 'points', 'expire'])
+    if (row === undefined) throw new Error('Auth rate limiter did not persist consumption')
+    return row
   }
 
   async _get(key: string): Promise<RateLimitRow | null> {

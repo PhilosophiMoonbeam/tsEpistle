@@ -78,7 +78,9 @@ Feature flags expose the runtime but do not grant access or select a model. Admi
 
 ## Upgrades
 
-Use [`upgrade.sh`](./upgrade.sh) for repeated app-only redeployments. It never fetches or changes the checkout, so first update the repository by your normal reviewed, fast-forward-only workflow. The checkout must be clean and `--revision` must be its complete 40-character `HEAD` SHA.
+Use [`upgrade.sh`](./upgrade.sh) for prebuilt-only app redeployments. The VPS never builds images, compiles, installs dependencies, or launches a verification browser. Produce and qualify the image off-box, publish it to the configured registry, and select its immutable `REPOSITORY@sha256:DIGEST` reference. Normal beta candidates follow the fast plus risk-selected development checks; official-release qualification is a separate requirement, not inferred from deployment acceptance.
+
+The clean deployment-tool checkout's `HEAD` is the **operator revision**, recorded independently from the full 40-character **application revision** (`APP_SHA`). Both the live and target application's Git commit objects must already exist locally; the tool never fetches or checks out source. Migration filenames, deployment contracts, package version, and the live-to-target risk diff come from the application commit, not from arbitrary operator `HEAD`. Keep the operator checkout unchanged until acceptance.
 
 Create the root-owned operator profile once, outside the repository:
 
@@ -87,19 +89,66 @@ install -m 600 deploy/compose/upgrade-profile.example.json /opt/tsepistle/upgrad
 $EDITOR /opt/tsepistle/upgrade-profile.json
 ```
 
-Each deployment is deliberately two-phase. Planning is read-only: it inventories the live image, migration ledger, app runtime contract, and protected containers; classifies the diff; then writes a private, expiring JSON plan with a confirmation digest.
+Deployments have three steps: **plan → apply → accept**. Create the root-owned profile outside the repository. Its `imageRepository` must exactly match the selected image's repository. Registry credentials remain in the existing remote root Docker credential store; never put them in a profile, command argument, or plan.
+
+### Off-box orchestration
+
+From a clean off-box checkout at the same operator revision as the remote deployment-tool checkout:
 
 ```console
-revision=$(git rev-parse HEAD)
-sudo deploy/compose/upgrade.sh plan \
+bash deploy/compose/upgrade-remote.sh \
+  --host your-reviewed-ssh-host \
+  --repository /path/to/tsEpistle \
   --profile /opt/tsepistle/upgrade-profile.json \
-  --revision "$revision"
+  --revision "$APP_SHA" \
+  --image "$IMMUTABLE_IMAGE"
 ```
 
-Review the printed plan and run the exact `apply` command it prints. Apply revalidates that nothing changed, builds the exact revision, replaces only the app service, waits for health, verifies data/config/container continuity, and exercises the public login flow. It never recreates PostgreSQL, runs `compose down`, prunes volumes, or touches the control Wiki.js stack.
+Provision trusted SSH host keys, SSH authentication, noninteractive `sudo`, registry login, Bun **1.4.3**, and the repository's locked dependencies and Chromium **before** deployment. The off-box runner uses Bun with automatic dotenv loading disabled and requires the installed `@playwright/test` version to match the exact package pin and an existing Chromium executable; it never installs dependencies or downloads browsers. The smoke launches the Playwright library, not its Node-only CLI; Bun and browsers remain off-box, never installed on the VPS. SSH uses `BatchMode=yes`, `StrictHostKeyChecking=yes`, no TTY, and no agent/port forwarding. Remote paths are safely quoted, including whitespace and quotes. SSH aliases/options such as ports or jump hosts belong in the operator's existing SSH configuration.
 
-Routine code-only changes do not create a database backup. A new migration must have reviewed metadata in [`server/db/migration-deployment-contracts.json`](../../server/db/migration-deployment-contracts.json). When that contract marks persistent-state risk, apply additionally gates public traffic, drains writers, rehearses the migration against a disposable database clone, and captures a paired PostgreSQL plus complete `/wiki/data` recovery point before replacement. Unknown migration, storage, key, or topology risk stops rather than guessing.
+The runner pulls the immutable image remotely using existing registry authentication, requests safe JSON plan output, checks the operator/application/image bindings, and invokes the same upgrader's `apply`. It then runs the actual [`login-smoke.cjs`](./login-smoke.cjs) locally against the planned public URL. Only a successful browser process permits remote `accept` of that exact plan. Browser failure exits nonzero and leaves the applied app explicitly unaccepted; it does not restore an old image.
 
-If apply fails before replacement begins, it restarts the unchanged app. Once candidate creation has begun, it does not automatically start the old image: inspect the reported state first. If a migration committed, rollback is fix-forward or an explicitly authorized restore of the matching database and data recovery point—never simply starting old code.
+### Manual lifecycle
 
-The built-in login browser check is an operational smoke test, not a replacement for change-specific CI. Run the relevant tests before creating a deployment plan.
+Pull before planning, using the same root Docker authentication context as the upgrader:
+
+```console
+sudo docker image pull -- "$IMMUTABLE_IMAGE"
+sudo bash deploy/compose/upgrade.sh plan \
+  --profile /opt/tsepistle/upgrade-profile.json \
+  --revision "$APP_SHA" \
+  --image "$IMMUTABLE_IMAGE"
+```
+
+Planning inventories the live image, migration ledger, app runtime contract, and protected containers without changing services. It validates the locally present candidate's repository digest, complete OCI revision and source labels, Linux architecture (including its application architecture label), and image ID. Missing/wrong images fail closed; neither host-Bun nor Dockerized-Bun build fallbacks exist.
+
+Review the private expiring plan and run the printed `apply --plan PATH --confirm SHA256` command. Apply revalidates bindings, rehearses and captures recovery when required, replaces only the app with `--no-build --pull never`, and checks health plus data/config/container continuity. It never recreates PostgreSQL, runs `compose down`, prunes volumes, or touches the control Wiki.js stack.
+
+The immutable mode-0600 plan remains unchanged, preserving its confirmation digest. Its mode-0600 `PLAN.state.json` companion records `applying`, then **`awaiting-external-browser-verification`** with the applied container/image IDs, start time, database and protected-container state, environment/config/secret fingerprints, migration ledger, and recovery location. An attempted plan cannot be reapplied. A fresh apply never claims acceptance.
+
+Run the browser smoke on the provisioned off-box repository, then explicitly acknowledge its success:
+
+```console
+TSEPISTLE_SMOKE_URL=https://canary.example.com bun --no-env-file deploy/compose/login-smoke.cjs
+# Only after the command above succeeds:
+sudo bash deploy/compose/upgrade.sh accept \
+  --plan /opt/tsepistle/upgrade-runs/PLAN.json \
+  --confirm PLAN_SHA256 \
+  --browser-smoke-passed
+```
+
+The last command runs on the VPS, not the browser host. `--browser-smoke-passed` is trusted operator confirmation, like `--confirm`; it does not run or simulate a browser. Prefer the off-box runner to enforce the success-to-accept sequence. Acceptance rechecks the original plan/operator/profile bindings, expiration, candidate identity/start time/health, DB identity/ledger, protected containers, and configuration/secrets before recording `accepted`. Changed/replaced/stale candidates fail closed. Complete browser verification and acceptance within `planLifetimeSeconds`; expiration is not an authorization bypass.
+
+For automation, `plan ... --json` emits one secret-free JSON object on stdout (errors remain on stderr):
+
+```json
+{"schemaVersion":1,"plan":"/opt/tsepistle/upgrade-runs/PLAN.json","confirm":"PLAN_SHA256","operatorRevision":"OPERATOR_SHA","targetRevision":"APP_SHA","candidateImage":"REPOSITORY@sha256:DIGEST","candidateImageId":"sha256:IMAGE_ID","publicUrl":"https://canary.example.com"}
+```
+
+Do not scrape human-readable output or read/copy registry credentials. Plans, state, and recovery points are private operational state, not release qualification artifacts.
+
+Routine code-only changes do not create a database backup. A new migration must have reviewed metadata in [`server/db/migration-deployment-contracts.json`](../../server/db/migration-deployment-contracts.json) **at the application commit**. When that contract marks persistent-state risk, apply additionally gates public traffic, drains writers, rehearses the migration against a disposable database clone, and captures a paired PostgreSQL plus complete `/wiki/data` recovery point before replacement. Unknown migration, storage, key, or topology risk stops rather than guessing.
+
+If apply fails before replacement begins, it restarts the unchanged app. Once candidate creation has begun, it does not automatically start the old image: inspect the reported state first. If a migration committed, rollback is fix-forward or an explicitly authorized restore of the matching database and data recovery point—never simply starting old code. Browser rejection likewise never triggers automatic rollback.
+
+The login browser check is an operational smoke test, not a replacement for change-specific CI. Run the relevant tests before creating a deployment plan. Focused local contract verification is `bun run test server/test/scripts/compose-upgrade.test.ts`; native end-to-end verification additionally requires an isolated real Compose deployment, registry candidate, root profile, verified SSH access, and the off-box pinned browser installation. Never exercise failure/replacement scenarios against the maintained VPS.

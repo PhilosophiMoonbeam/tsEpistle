@@ -34,15 +34,8 @@ export async function authenticateAsAdmin(page: Page): Promise<void> {
 
 export async function openAuthenticatedPage(page: Page, path: string, readySelector: string) {
   await authenticateAsAdmin(page)
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await page.goto(path, { waitUntil: 'networkidle' })
-    try {
-      await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15_000 })
-      return
-    } catch (error) {
-      if (attempt === 1) throw error
-    }
-  }
+  await page.goto(path, { waitUntil: 'networkidle' })
+  await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15_000 })
 }
 
 export async function openSearch(page: Page) {

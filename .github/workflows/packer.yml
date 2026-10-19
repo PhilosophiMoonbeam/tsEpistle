@@ -1,4 +1,5 @@
 name: Build DigitalOcean Image
+run-name: "Marketplace ${{ github.sha }} | ${{ inputs.version }} | ${{ inputs.apt_snapshot }}"
 
 on:
   workflow_dispatch:
@@ -12,146 +13,32 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
+env:
+  BUN_OPTIONS: --no-env-file
+
 jobs:
-  build-do-image:
-    name: Build DigitalOcean Image
-    runs-on: [self-hosted, linux, x64, tsepistle-ci]
-    permissions:
-      attestations: read
-      contents: read
-
+  marketplace-controller:
+    name: Request Private DigitalOcean Image Build
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    environment: trusted-ci-controller
     steps:
+    # Only the immutable main implementation executes with the controller credential.
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-    - name: Set up Packer
-      uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
       with:
-        version: 1.16.0
-
-    - name: Resolve Verified Release Application Image
-      id: release
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+      with:
+        bun-version: 1.4.3
+    - name: Dispatch Once and Await Exact Private Marketplace Run
       env:
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ secrets.CI_CONTROLLER_TOKEN }}
+        RELAY_MODE: marketplace
         APPLICATION_VERSION: ${{ inputs.version }}
-      run: |
-        release_dir="$(mktemp -d)"
-        trap 'rm -rf "$release_dir"' EXIT
-
-        gh release download "v$APPLICATION_VERSION" \
-          --repo "$GITHUB_REPOSITORY" \
-          --dir "$release_dir" \
-          --pattern release-manifest.json \
-          --pattern SHA256SUMS
-        gh attestation verify "$release_dir/release-manifest.json" --repo "$GITHUB_REPOSITORY"
-        (
-          cd "$release_dir"
-          sha256sum --check --strict --ignore-missing SHA256SUMS
-        )
-
-        manifest="$release_dir/release-manifest.json"
-        jq -e --arg version "$APPLICATION_VERSION" '
-          (.schemaVersion == 1)
-          and (.product.version == $version)
-          and (.release.tag == ("v" + $version))
-          and (.release.revision | type == "string" and test("^[0-9a-f]{40}$"))
-          and (.containerImage.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
-          and (.containerImage.reference == ("ghcr.io/philosophimoonbeam/wiki@" + .containerImage.digest))
-        ' "$manifest" >/dev/null
-
-        {
-          echo "application_image=$(jq -er '.containerImage.reference' "$manifest")"
-          echo "application_digest=$(jq -er '.containerImage.digest' "$manifest")"
-          echo "source_revision=$(jq -er '.release.revision' "$manifest")"
-          echo "release_version=$(jq -er '.product.version' "$manifest")"
-        } >> "$GITHUB_OUTPUT"
-
-    - name: Resolve Immutable Runtime Inputs
-      id: runtime
-      env:
         APT_SNAPSHOT: ${{ inputs.apt_snapshot }}
-        DO_TOKEN: ${{ secrets.DO_TOKEN }}
-      run: dev/packer/scripts/resolve-runtime-inputs.sh
-
-    - name: Build Droplet Image
-      env:
-        PKR_VAR_api_token: ${{ secrets.DO_TOKEN }}
-        PKR_VAR_application_image: ${{ steps.release.outputs.application_image }}
-        PKR_VAR_release_version: ${{ steps.release.outputs.release_version }}
-        PKR_VAR_source_revision: ${{ steps.release.outputs.source_revision }}
-        PKR_VAR_apt_snapshot: ${{ steps.runtime.outputs.apt_snapshot }}
-        PKR_VAR_base_image_id: ${{ steps.runtime.outputs.base_image_id }}
-        PKR_VAR_docker_package_manifest_sha256: ${{ steps.runtime.outputs.docker_package_manifest_sha256 }}
-        PKR_VAR_postgres_image: ${{ steps.runtime.outputs.postgres_image }}
-      working-directory: dev/packer
-      run: |
-        packer init .
-        packer build .
-
-    - name: Record Snapshot Provenance
-      env:
-        APPLICATION_DIGEST: ${{ steps.release.outputs.application_digest }}
-        APPLICATION_IMAGE: ${{ steps.release.outputs.application_image }}
-        RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
-        SOURCE_REVISION: ${{ steps.release.outputs.source_revision }}
-        APT_SNAPSHOT: ${{ steps.runtime.outputs.apt_snapshot }}
-        BASE_IMAGE_ID: ${{ steps.runtime.outputs.base_image_id }}
-        DOCKER_PACKAGE_MANIFEST_SHA256: ${{ steps.runtime.outputs.docker_package_manifest_sha256 }}
-        POSTGRES_DIGEST: ${{ steps.runtime.outputs.postgres_digest }}
-        POSTGRES_IMAGE: ${{ steps.runtime.outputs.postgres_image }}
-      working-directory: dev/packer
-      run: |
-        jq -e \
-          --arg application_digest "$APPLICATION_DIGEST" \
-          --arg application_image "$APPLICATION_IMAGE" \
-          --arg release_version "$RELEASE_VERSION" \
-          --arg source_revision "$SOURCE_REVISION" \
-          --arg apt_snapshot "$APT_SNAPSHOT" \
-          --arg base_image_id "$BASE_IMAGE_ID" \
-          --arg docker_package_manifest_sha256 "$DOCKER_PACKAGE_MANIFEST_SHA256" \
-          --arg postgres_digest "$POSTGRES_DIGEST" \
-          --arg postgres_image "$POSTGRES_IMAGE" \
-          --slurpfile runtime_inputs runtime-inputs/runtime-inputs.json '
-            ($runtime_inputs[0]) as $runtime
-            | ($runtime.schemaVersion == 1)
-            and ($runtime.digitalOceanBaseImage.id == $base_image_id)
-            and ($runtime.ubuntuAptSnapshot.id == $apt_snapshot)
-            and ($runtime.postgresqlImage.reference == $postgres_image)
-            and ($runtime.postgresqlImage.digest == $postgres_digest)
-            and ($runtime.dockerPackages.manifestSha256 == $docker_package_manifest_sha256)
-            and (.builds | length == 1)
-            and (.builds[0].artifact_id | type == "string" and length > 0)
-            and (.builds[0].custom_data == {
-              application_digest: $application_digest,
-              application_image: $application_image,
-              apt_snapshot: $apt_snapshot,
-              base_image_id: $base_image_id,
-              docker_package_manifest_sha256: $docker_package_manifest_sha256,
-              postgres_digest: $postgres_digest,
-              postgres_image: $postgres_image,
-              release_version: $release_version,
-              source_revision: $source_revision
-            })
-          ' packer-manifest.json >/dev/null
-        jq \
-          --arg application_digest "$APPLICATION_DIGEST" \
-          --arg application_image "$APPLICATION_IMAGE" \
-          --arg release_version "$RELEASE_VERSION" \
-          --arg source_revision "$SOURCE_REVISION" \
-          --slurpfile runtime_inputs runtime-inputs/runtime-inputs.json '
-            .builds[0] | {
-              schemaVersion: 2,
-              snapshotId: .artifact_id,
-              applicationDigest: $application_digest,
-              applicationImage: $application_image,
-              sourceRevision: $source_revision,
-              releaseVersion: $release_version,
-              runtimeInputs: $runtime_inputs[0]
-            }
-          ' packer-manifest.json > snapshot-provenance.json
-
-    - name: Upload Snapshot Provenance
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: digitalocean-snapshot-provenance-${{ inputs.version }}
-        path: dev/packer/snapshot-provenance.json
-        if-no-files-found: error
+      run: bun --no-env-file .github/scripts/controller-relay.mjs
