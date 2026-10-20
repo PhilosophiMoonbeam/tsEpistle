@@ -42,6 +42,7 @@ for suite in "${suites[@]}"; do
   namespace="$WIKI_TEST_NAMESPACE-e2e-$suite"
   if docker container inspect "$namespace-wiki" >/dev/null 2>&1 ||
      docker container inspect "$namespace-db" >/dev/null 2>&1 ||
+     docker container inspect "$namespace-hardware-browser" >/dev/null 2>&1 ||
      docker volume inspect "$namespace-data" >/dev/null 2>&1 ||
      docker network inspect "$namespace-network" >/dev/null 2>&1; then
     echo "Browser namespace $namespace is already in use; refusing to touch it." >&2
@@ -86,7 +87,7 @@ owns_container() {
 
 cleanup_lane() {
   local suite=$1 namespace="$WIKI_TEST_NAMESPACE-e2e-$1" name container_id
-  for name in "$namespace-wiki" "$namespace-db"; do
+  for name in "$namespace-hardware-browser" "$namespace-wiki" "$namespace-db"; do
     if owns_container "$name"; then
       if [[ -n "${WIKI_LOCAL_CI_PHASE_RUNNER:-}" ]]; then
         container_id=$(docker container inspect --format '{{.Id}}' "$name")

@@ -17,7 +17,7 @@ if (!artifacts || !path.isAbsolute(artifacts)) throw new Error('An absolute brow
 await fs.mkdir(artifacts, { mode: 0o700 })
 await writeJson(path.join(artifacts, 'owner.json'), { revision, namespace, workspace: root })
 await fs.mkdir(state, { recursive: true, mode: 0o700 })
-const child = spawn('flock', ['--nonblock', '--no-fork', '--conflict-exit-code', '75', path.join(state, 'ci.lock'), process.execPath, path.join(root, 'server/scripts/local-ci-resources.ts'), 'run', '--name', 'browsers', '--host-gib', '6', '--docker-gib', '3', '--', 'bash', 'dev/e2e/local-run.sh'], {
+const child = spawn('flock', ['--nonblock', '--no-fork', '--conflict-exit-code', '75', path.join(state, 'ci.lock'), process.execPath, path.join(root, 'server/scripts/local-ci-resources.ts'), 'run', '--name', 'browsers', '--host-gib', '4', '--docker-gib', '5', '--', 'bash', 'dev/e2e/local-run.sh'], {
   cwd: root,
   env: {
     ...process.env,

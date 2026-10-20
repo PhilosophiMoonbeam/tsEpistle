@@ -16,7 +16,6 @@ case "$WIKI_E2E_SUITE" in
       --project=accessibility-wide
       --project=performance-desktop
       --project=performance-webgpu
-      --project=performance-webgl2
       --project=performance-webgl2-swiftshader
     )
     ;;
@@ -48,4 +47,13 @@ dev/e2e/ci-setup.sh
 wiki_port=$(docker port "${WIKI_TEST_NAMESPACE}-wiki" 3000/tcp)
 wiki_port=${wiki_port##*:}
 export PLAYWRIGHT_BASE_URL="http://127.0.0.1:$wiki_port"
+if [[ "$WIKI_E2E_SUITE" == core ]]; then
+  # Preserve every project, but close the host browser before device-scoped execution.
+  status=0
+  bun run e2e "${suite_args[@]}" "$@" || status=$?
+  hardware_status=0
+  bun server/scripts/run-hardware-e2e.ts "$@" || hardware_status=$?
+  if (( status != 0 )); then exit "$status"; fi
+  exit "$hardware_status"
+fi
 bun run e2e "${suite_args[@]}" "$@"

@@ -1863,6 +1863,14 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
         ? projectMetadata.headless
         : true
   const graphicsClassification = classifyGraphicsIdentity(performanceProfile, environmentMetadata.graphics)
+  if (performanceProfile === 'hardware-angle-webgl2') {
+    addExactViolation(
+      violations,
+      'hardware WebGL2 profile observes representative unmasked hardware',
+      graphicsClassification.classification === 'representative-hardware' && environmentMetadata.graphics.webgl2.unmaskedRenderer !== null ? 1 : 0,
+      1
+    )
+  }
   const report = {
     schemaVersion: 4,
     status: violations.length === 0 ? 'passed' : 'failed',

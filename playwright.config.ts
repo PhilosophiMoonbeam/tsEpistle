@@ -6,7 +6,11 @@ const performanceExecution = {
   retries: process.env.CI ? 2 : 0
 }
 const linuxWebGpuCapabilityFlags = process.platform === 'linux' ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan'] : []
-const hardwareWebGlLaunchFlags = ['--use-gl=angle', '--use-angle=gl']
+const hardwareWebGlLaunchFlags =
+  process.platform === 'linux'
+    ? ['--enable-gpu', '--ozone-platform=headless', '--use-gl=angle', '--use-angle=gl-egl']
+    : ['--use-gl=angle', '--use-angle=gl']
+const hardwareBrowserEndpoint = process.env.PLAYWRIGHT_HARDWARE_WS_ENDPOINT
 const swiftShaderLaunchFlags = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
 
 export default defineConfig({
@@ -174,6 +178,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         headless: true,
         viewport: performanceViewport,
+        connectOptions: hardwareBrowserEndpoint ? { wsEndpoint: hardwareBrowserEndpoint, exposeNetwork: '<loopback>' } : undefined,
         launchOptions: { args: hardwareWebGlLaunchFlags }
       }
     },

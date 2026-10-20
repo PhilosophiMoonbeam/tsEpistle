@@ -86,6 +86,8 @@ The shared-host safety policy permits **one browser lane, one Playwright worker 
 
 Core/accessibility/runtime-performance, including all three strict renderer profiles, runs with one worker only after every engine lane has completed and cleaned up. Browser host scopes retain 16 CPU-equivalents at `CPUWeight=10`; other scopes and BuildKit retain eight-CPU ceilings. Extra CPU bandwidth does not create additional browser instances. Both CI coordinators have separate 512 MiB hard limits, and the canonical wrapper holds the shared-state CI lock through cleanup.
 
+The hardware-WebGL2 project runs after the other nine core projects against the same seeded application. Its matching, digest-pinned Playwright image receives only `/dev/dri/renderD128` and that device's supplemental group: non-root, read-only root filesystem, all capabilities dropped, no-new-privileges, 2 GiB RAM and zero swap. A loopback-published broker on the owned fixture network forwards client loopback without host mounts or secrets; the official image's Node runs only the upstream Playwright broker, while Bun orchestrates it. The active canvas must report unmasked representative hardware, not SwiftShader or llvmpipe. The separate host SwiftShader diagnostic retains its original workload and budgets.
+
 | Workload | Host cap | Maximum simultaneous Docker allocation | Admission with safety headroom |
 | --- | ---: | ---: | ---: |
 | Frozen dependency installation | 4 GiB | None | 12 GiB available |
@@ -95,7 +97,7 @@ Core/accessibility/runtime-performance, including all three strict renderer prof
 | Complete native PostgreSQL 18 suite | 4 GiB | 4 GiB PostgreSQL | 16 GiB available |
 | Upgrade or recovery contract | 2 GiB | 5 GiB, including concurrent helpers | 15 GiB available |
 | Helm contract | 2 GiB | 6 GiB kind node, including nested workloads | 16 GiB available |
-| Browser qualification, one lane and one worker | 6 GiB | 2 GiB Wiki + 1 GiB PostgreSQL | 17 GiB available |
+| Browser qualification, one lane and one worker | 4 GiB | 2 GiB Wiki + 1 GiB PostgreSQL + 2 GiB hardware browser | 17 GiB available |
 
 These are enforced limits and conservative admission budgets, **not measured usage or a universal minimum machine size**. A serialized phase is capped at 9 GiB across its host scope and declared Docker limits; the two 512 MiB coordinators bring the CI allocation ceiling to 10 GiB. Live sampling stops a phase if its owned running containers lack hard limits, exceed its Docker budget, or available host memory drops below 8 GiB. Before validation, the sampler also caps the exact namespace-owned kind control-plane node if it discovers it before the bootstrap poller. The largest default admission budget is 17 GiB. BuildKit retains its cache but stops between image phases. Wiki fixtures retain 2 GiB, ordinary PostgreSQL 1 GiB, native PostgreSQL 18 4 GiB and kind 6 GiB; maintained services are unchanged. Larger custom allocations must still fit the combined ceiling. Kind startup retains its documented brief pre-cap interval while the owned node is being discovered.
 
@@ -110,6 +112,8 @@ Use focused existing `bun run test`/`bun run e2e` commands for the inner loop. A
 `dev/e2e/ci-run.sh`, `dev/e2e/upgrade-smoke.sh`, and `dev/e2e/multi-instance-smoke.sh` require a fresh `WIKI_TEST_NAMESPACE` beginning with `tsepistle-ci-` (lowercase letters, digits, hyphens). CI assigns a distinct namespace per run attempt, job, PostgreSQL version, and E2E suite where applicable; local callers should choose a new one for each invocation. These scripts refuse to reuse existing Docker resources. The application binds a Docker-assigned loopback port, and `ci-run.sh` passes the discovered URL to Playwright. Do not assume port 3000 is free or delete another run's containers, networks, or volumes during local cleanup.
 
 `ci-run.sh` requires `POSTGRES_MAJOR`, `WIKI_TEST_NAMESPACE`, and `WIKI_E2E_SUITE=core|chromium|firefox|webkit`; invalid or missing suites fail before Docker setup. Each invocation owns one application/database pair. `dev/e2e/local-run.sh` schedules these exact selections with isolated outputs and fresh PostgreSQL 18 fixtures. Core retains ten setup/accessibility/runtime-performance projects, including WebGPU, WebGL2, and SwiftShader diagnostics; engine suites retain all four Chromium, one Firefox, and three WebKit responsive profiles, each with its Chromium setup dependency. The same bounded scheduler is used for private full qualification. Do not drop projects, alter conditional exclusions, or relax assertions, viewports, budgets, or cleanup.
+
+Core preserves its ordinary `report.json` and records the hardware-only invocation under `e2e/core/hardware-webgl2/results.json`; either invocation failing fails the core lane. The host browser exits before the GPU broker is used, and owned cleanup removes the hardware container before Wiki or PostgreSQL.
 
 Offline browser fixtures prefer the oldest eligible pre-seeded public pages and stop after the required cohort is found, preserving the non-home-first canonical navigation case. Do not borrow temporary pages that another parallel story owns and deletes; retain the real publication, editor, canonical URL, and source-projection admission checks.
 

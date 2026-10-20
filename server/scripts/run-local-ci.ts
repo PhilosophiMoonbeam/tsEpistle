@@ -143,7 +143,7 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
     env.WIKI_TEST_IMAGE = imageId
     await gate('contracts', ['bash', 'dev/ci/local-contracts.sh'])
     // Engine families run serially; core and strict renderers remain exclusive.
-    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], 6, 3)
+    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], 4, 5)
     for (const file of (await fs.readdir(path.join(runDir, 'resources'))).filter(file => file.endsWith('.json'))) {
       const phase = JSON.parse(await fs.readFile(path.join(runDir, 'resources', file), 'utf8'))
       if (phase.status !== 'passed' || phase.namespace !== namespace || phase.revision !== revision) throw new Error('Resource qualification is incomplete.')
