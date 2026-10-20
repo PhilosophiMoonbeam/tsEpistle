@@ -193,7 +193,7 @@ The controlled reader Edit HTML fixture alone blocks service workers so its vali
 
 Controlled RTL boot qualification uses the same fixture-specific worker block as the reader Edit payload patch; a worker-owned navigation can otherwise bypass the intended RTL shell. Agent logout qualification retains workers and its existing story budget, but waits for the native anonymous `whoami` response and reader surface, not network idleness while background channels remain active.
 
-Media qualification enters Wiki Agent through its documented native shortcut; Search-to-Agent admission has separate coverage. Keep all media operations in the same conversation, including independent creation-tool deselection and the next turn's explicit empty whitelist, rather than repeating unrelated entry or pre-generation selection rehearsals.
+Media qualification enters Wiki Agent once through its visible header action, opening the phone overflow only when needed. That authority-gated action supplies readiness without an unrelated menu-close/reopen rehearsal. Native shortcuts, Escape/focus restoration, and Search-to-Agent admission retain separate keyboard and responsive coverage. Keep all media operations in the same conversation, including independent creation-tool deselection and the next turn's explicit empty whitelist, rather than repeating unrelated entry or pre-generation selection rehearsals.
 
 Keep emulated user agents consistent with their browser engine. Chromium tablet profiles retain their viewport, touch, mobile and device-scale settings but use a Chromium tablet user agent, not Safari's; otherwise Monaco selects a WebKit-only clipboard workaround in Chromium.
 

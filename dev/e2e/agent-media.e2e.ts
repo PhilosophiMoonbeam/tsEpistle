@@ -23,16 +23,12 @@ const generated: AgentMediaView = {
 async function openAgent(page: Page, waitForComposer = true): Promise<Locator> {
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
-  // The neutral header can paint before the authoritative user and transport refresh.
+  // The actual header action becomes available after user and transport verification.
   const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
   const compact = (page.viewportSize()?.width ?? 1280) < 600
-  if (compact) await page.locator('.nav-header-mobile-actions').press('Enter')
+  if (compact) await page.locator('.nav-header-mobile-actions').click()
   await expect(entrance).toBeVisible()
-  if (compact) {
-    await page.keyboard.press('Escape')
-    await expect(entrance).toBeHidden()
-  }
-  await page.keyboard.press('ControlOrMeta+Shift+A')
+  await entrance.click()
   const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
   await expect(agent).toBeVisible()
   if (waitForComposer) await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
