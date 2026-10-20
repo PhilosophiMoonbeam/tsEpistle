@@ -29,8 +29,8 @@ RUN apk add --no-cache bash curl git openssh gnupg ffmpeg && \
     chown -R bun:bun /wiki /logs
 WORKDIR /wiki
 
-COPY --chown=bun:bun build/assets ./assets
 COPY --chown=bun:bun --from=dependencies /wiki/node_modules ./node_modules
+COPY --chown=bun:bun build/assets ./assets
 COPY --chown=bun:bun build/server ./server
 COPY --chown=bun:bun build/shared ./shared
 COPY --chown=bun:bun tsconfig.server.json tsconfig.shared.json ./

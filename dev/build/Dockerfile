@@ -54,8 +54,8 @@ RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg 'qpdf
     chown -R bun:bun /wiki /logs
 WORKDIR /wiki
 
-COPY --chown=bun:bun --from=build /wiki/assets ./assets
 COPY --chown=bun:bun --from=dependencies /wiki/node_modules ./node_modules
+COPY --chown=bun:bun --from=build /wiki/assets ./assets
 COPY --chown=bun:bun shared ./shared
 COPY --chown=bun:bun --from=build /wiki/server ./server
 COPY --chown=bun:bun tsconfig.server.json tsconfig.shared.json ./
