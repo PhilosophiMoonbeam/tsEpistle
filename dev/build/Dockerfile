@@ -9,11 +9,7 @@ ARG WIKI_SOURCE_REPOSITORY
 ARG WIKI_UPSTREAM_BASE
 
 FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS build
-ARG WIKI_BUILD_DATE
-ARG WIKI_BUILD_REVISION
-ENV CI=true \
-    WIKI_BUILD_DATE=$WIKI_BUILD_DATE \
-    WIKI_BUILD_REVISION=$WIKI_BUILD_REVISION
+ENV CI=true
 
 RUN apk add --no-cache g++ make cmake python3
 WORKDIR /wiki
@@ -27,6 +23,12 @@ COPY client ./client
 COPY shared ./shared
 COPY server ./server
 COPY vite.config.mts tsconfig.client.json tsconfig.server.json tsconfig.shared.json ./
+
+ARG WIKI_BUILD_DATE
+ARG WIKI_BUILD_REVISION
+ENV WIKI_BUILD_DATE=$WIKI_BUILD_DATE \
+    WIKI_BUILD_REVISION=$WIKI_BUILD_REVISION
+
 RUN bun run build
 
 FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS dependencies
@@ -44,24 +46,6 @@ RUN --mount=type=cache,id=wiki-bun-production,target=/root/.bun/install/cache \
     bun install --production --frozen-lockfile --os=linux --cpu="$BUN_CPU"
 
 FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS runtime
-
-ARG TARGETARCH
-ARG WIKI_BUILD_DATE
-ARG WIKI_BUILD_REVISION
-ARG WIKI_PRODUCT_DESCRIPTION
-ARG WIKI_PRODUCT_NAME
-ARG WIKI_PRODUCT_VERSION
-ARG WIKI_SOURCE_REPOSITORY
-ARG WIKI_UPSTREAM_BASE
-LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
-      org.opencontainers.image.description="${WIKI_PRODUCT_DESCRIPTION}" \
-      org.opencontainers.image.licenses="AGPL-3.0-only" \
-      org.opencontainers.image.revision="${WIKI_BUILD_REVISION}" \
-      org.opencontainers.image.source="${WIKI_SOURCE_REPOSITORY}" \
-      org.opencontainers.image.title="${WIKI_PRODUCT_NAME}" \
-      org.opencontainers.image.version="${WIKI_PRODUCT_VERSION}" \
-      io.tsepistle.image.architecture="${TARGETARCH}" \
-      io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
 RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg 'qpdf>=11.9.1-r0' ffmpeg tini && \
@@ -80,6 +64,24 @@ COPY --chown=bun:bun package.json ./
 COPY --chown=bun:bun LICENSE ./
 COPY --chown=bun:bun NOTICE ./
 COPY --chown=bun:bun COPYING.GPL-3.0 ./
+
+ARG TARGETARCH
+ARG WIKI_BUILD_DATE
+ARG WIKI_BUILD_REVISION
+ARG WIKI_PRODUCT_DESCRIPTION
+ARG WIKI_PRODUCT_NAME
+ARG WIKI_PRODUCT_VERSION
+ARG WIKI_SOURCE_REPOSITORY
+ARG WIKI_UPSTREAM_BASE
+LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
+      org.opencontainers.image.description="${WIKI_PRODUCT_DESCRIPTION}" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.revision="${WIKI_BUILD_REVISION}" \
+      org.opencontainers.image.source="${WIKI_SOURCE_REPOSITORY}" \
+      org.opencontainers.image.title="${WIKI_PRODUCT_NAME}" \
+      org.opencontainers.image.version="${WIKI_PRODUCT_VERSION}" \
+      io.tsepistle.image.architecture="${TARGETARCH}" \
+      io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 
 USER 1000:1000
 VOLUME ["/wiki/data/content"]
