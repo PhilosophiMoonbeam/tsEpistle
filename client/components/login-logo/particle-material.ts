@@ -239,9 +239,15 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
   const halfPixel = state.halfPixel.toVarying('particleHalfPixel')
   const bead = state.bead.toVarying('particleBead')
   const particleColor = attribute<'vec4'>('particleColor', 'vec4')
-  // Each quad has one immutable color; only bead lighting needs fragment-stage encoding.
-  // r186 declares the transfer's explicit vec3 layout as the base Node type.
-  const unlitColor = (sRGBTransferOETF(particleColor.rgb) as Node<'vec3'>).toVarying('particleUnlitRgb')
+  // Keep one color varying: unlit RGB is encoded; beads retain linear RGB until fragment lighting.
+  const displayColor = Fn(() => {
+    const rgb = particleColor.rgb.toVar('particleVertexRgb')
+    If(state.bead.lessThanEqual(0), () => {
+      // r186 declares the transfer's explicit vec3 layout as the base Node type.
+      rgb.assign(sRGBTransferOETF(rgb) as Node<'vec3'>)
+    })
+    return vec4(rgb, particleColor.a)
+  })().toVarying('particleDisplayColor')
 
   const material = new SpriteNodeMaterial()
   material.positionNode = state.positionNode
@@ -251,7 +257,7 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
     const r2 = uv.dot(uv).toVar('particleR2')
     r2.greaterThan(1).discard()
     const coverage = float(1).sub(smoothstep(float(1).sub(float(3).mul(halfPixel)), 1, r2))
-    const color = unlitColor.toVar('particleRgb')
+    const color = displayColor.rgb.toVar('particleRgb')
 
     If(bead.greaterThan(0), () => {
       const z = float(1).sub(r2).max(0).sqrt()
@@ -262,12 +268,12 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
         .max(0)
         .pow(22)
       const k = mix(1.0, float(0.55).add(float(0.65).mul(diffuse)), bead).add(float(0.38).mul(glint).mul(bead))
-      const maxChannel = particleColor.r.max(particleColor.g.max(particleColor.b))
-      const litColor = particleColor.rgb.mul(k.div(float(1).max(k.mul(maxChannel))))
-      color.assign(sRGBTransferOETF(litColor) as Node<'vec3'>)
+      const maxChannel = color.r.max(color.g.max(color.b))
+      color.mulAssign(k.div(float(1).max(k.mul(maxChannel))))
+      color.assign(sRGBTransferOETF(color) as Node<'vec3'>)
     })
 
-    return vec4(color, particleColor.a.mul(lifecycle).mul(coverage))
+    return vec4(color, displayColor.a.mul(lifecycle).mul(coverage))
   })()
   material.blending = NormalBlending
   material.transparent = true
