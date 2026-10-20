@@ -13,7 +13,7 @@ process.umask(0o077)
 process.chdir(root)
 
 type Gate = { name: string; seconds: number; status: 'passed' | 'failed' }
-type Options = { browserJobs: 1 | 2 | 3 | 4; testJobs: number }
+type Options = { browserJobs: 1; testJobs: number }
 type Owner = { revision: string; namespace: string; workspace: string; options: Options }
 
 async function execute(command: string[], cwd: string, env: NodeJS.ProcessEnv, logFile: string, onFailedExit?: () => Promise<void>): Promise<number> {
@@ -88,10 +88,10 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
     owner.namespace !== namespace ||
     owner.revision !== revision ||
     !/^[a-f0-9]{40}$/.test(revision) ||
-    ![1, 2, 3, 4].includes(owner.options?.browserJobs) ||
+    owner.options?.browserJobs !== 1 ||
     !Number.isInteger(owner.options?.testJobs) ||
     owner.options.testJobs < 1 ||
-    owner.options.testJobs > 8
+    owner.options.testJobs > 4
   )
     throw new Error('Frozen local CI invocation does not match its owner.')
   if (capture(['git', 'rev-parse', 'HEAD']) !== revision) throw new Error('Frozen local CI revision changed.')
@@ -142,8 +142,8 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
     imageId = image.Id
     env.WIKI_TEST_IMAGE = imageId
     await gate('contracts', ['bash', 'dev/ci/local-contracts.sh'])
-    // Four slots admit at most the three configured engine fixtures; core is exclusive.
-    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], owner.options.browserJobs === 1 ? 6 : 8, Math.min(owner.options.browserJobs, 3) * 3)
+    // Engine families run serially; core and strict renderers remain exclusive.
+    await gate('browsers', ['bash', 'dev/e2e/local-run.sh'], 6, 3)
     for (const file of (await fs.readdir(path.join(runDir, 'resources'))).filter(file => file.endsWith('.json'))) {
       const phase = JSON.parse(await fs.readFile(path.join(runDir, 'resources', file), 'utf8'))
       if (phase.status !== 'passed' || phase.namespace !== namespace || phase.revision !== revision) throw new Error('Resource qualification is incomplete.')
@@ -172,7 +172,7 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
 }
 
 function options(args: string[]): Options {
-  const result: Options = { browserJobs: 4, testJobs: 8 }
+  const result: Options = { browserJobs: 1, testJobs: 4 }
   const seen = new Set<string>()
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!
@@ -182,7 +182,7 @@ function options(args: string[]): Options {
     if (seen.has(flag)) throw new Error(`Duplicate local CI option: ${flag}.`)
     seen.add(flag)
     const value = separator < 0 ? args[++index] : argument.slice(separator + 1)
-    const maximum = flag === '--browser-jobs' ? 4 : 8
+    const maximum = flag === '--browser-jobs' ? 1 : 4
     if (!value || !/^[1-9]\d*$/.test(value) || Number(value) > maximum) throw new Error(`${flag} must be an integer between 1 and ${maximum}.`)
     if (flag === '--browser-jobs') result.browserJobs = Number(value) as Options['browserJobs']
     else result.testJobs = Number(value)
@@ -200,8 +200,8 @@ async function outside(options: Options): Promise<void> {
     .split('\n')
     .filter(file => file && !/\.(example|sample|template)$/.test(file))
   if (liveFiles.length) throw new Error('Live configuration/credential paths are tracked; refusing to copy them into local CI.')
-  if ((await availableMemory()) < 4 * gib)
-    throw new Error('Local CI cannot start below its 4 GiB host safety headroom; no maintained service has been changed.')
+  if ((await availableMemory()) < 8 * gib)
+    throw new Error('Local CI cannot start below its 8 GiB host safety headroom; no maintained service has been changed.')
   const selectedContext = process.env.DOCKER_CONTEXT || capture(['docker', 'context', 'show'])
   const endpoint =
     process.env.DOCKER_CONTEXT || !process.env.DOCKER_HOST
@@ -216,7 +216,7 @@ async function outside(options: Options): Promise<void> {
   const workspace = path.join(runDir, 'workspace')
   const unit = `${namespace}.scope`
   console.log(
-    `Local CI source: ${revision}\nArtifacts: ${runDir}\nPer-phase host/Docker admission with 4 GiB safety headroom; ${options.browserJobs} browser lane(s), ${options.testJobs} unit worker(s). All qualification gates remain enabled.`
+    `Local CI source: ${revision}\nArtifacts: ${runDir}\nPer-phase host/Docker allocation is capped at 9 GiB with 8 GiB safety headroom; ${options.browserJobs} browser lane, ${options.testJobs} unit worker(s). All qualification gates remain enabled.`
   )
   let added = false
   let namespaceAvailable = false
@@ -301,7 +301,7 @@ async function outside(options: Options): Promise<void> {
 
 if (process.argv.includes('--help')) {
   console.log(
-    'Usage: bun run ci:local [--browser-jobs 1..4] [--test-jobs 1..8]\nRuns full qualification from clean committed source. Defaults: four browser slots, eight unit workers. Only three engine lanes exist; multi-lane engines use one worker each, one-lane engines use two, and core/strict renderer projects use one worker exclusively after engines. Requires Linux x64, pinned Bun/Node, local Docker with ARM64 binfmt, systemd user scopes, cgroup v2 memory accounting and native Playwright libraries. Browser CPU quota is 16 cores; other phases remain capped at eight. Admission retains 4 GiB safety headroom; default browsers require 8 GiB host + 9 GiB Docker + 4 GiB headroom (21 GiB available). Extra fixtures are not memory-neutral. Builder and fixtures stop between phases. Results, cgroup peaks and the tested image identity are retained in ~/.local/state/tsepistle-ci/. No registry publication or maintained-service replacement occurs.'
+    'Usage: bun run ci:local [--browser-jobs 1] [--test-jobs 1..4]\nRuns every qualification gate from clean committed source. One browser lane and one Playwright worker run at a time; isolated tests use at most four workers. Core and strict renderer projects remain exclusive. Requires Linux x64, pinned Bun/Node, local Docker with ARM64 binfmt, systemd user scopes, cgroup v2 accounting and native Playwright libraries. Browser CPU quota remains 16 cores; other phases remain capped at eight. Each phase admits at most 9 GiB combined host/Docker limits plus 8 GiB free headroom. Both coordinators have 512 MiB hard limits; the canonical command holds the host-wide CI lock. No swap, registry publication or maintained-service replacement occurs. Results and tested image identity remain in ~/.local/state/tsepistle-ci/.'
   )
 } else {
   try {

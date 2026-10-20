@@ -16,9 +16,9 @@ if [[ ! "$WIKI_TEST_NAMESPACE" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ||
   echo 'Expected a Docker-safe tsepistle-ci- namespace, immutable image ID, and committed revision.' >&2
   exit 1
 fi
-browser_jobs=${WIKI_LOCAL_CI_BROWSER_JOBS:-4}
-if [[ ! "$browser_jobs" =~ ^[1-4]$ ]]; then
-  echo 'WIKI_LOCAL_CI_BROWSER_JOBS must be an integer between 1 and 4.' >&2
+browser_jobs=${WIKI_LOCAL_CI_BROWSER_JOBS:-1}
+if [[ "$browser_jobs" != 1 ]]; then
+  echo 'WIKI_LOCAL_CI_BROWSER_JOBS must be 1 under the shared-host memory safety policy.' >&2
   exit 1
 fi
 if [[ "$WIKI_LOCAL_CI_ARTIFACTS" != /* || ! -d "$WIKI_LOCAL_CI_ARTIFACTS" ||
@@ -159,7 +159,6 @@ trap 'exit 129' HUP
 
 start_lane() {
   local suite=$1 lane="$artifact_root/$1" workers=1
-  if [[ "$suite" != core && "$browser_jobs" == 1 ]]; then workers=2; fi
   echo "Starting browser suite $suite (log: $lane/run.log)"
   # Fixtures keep authentication/browser storage in fresh contexts. Every filesystem
   # output is testInfo.outputPath except the explicit runtime metrics file below.
@@ -202,7 +201,7 @@ finish_lane() {
   echo "Browser suite $suite exited $status (log: $artifact_root/$suite/run.log)"
 }
 
-# Only three engine lanes exist; a fourth slot is spare capacity, never a fourth fixture.
+# Engine fixtures are serial; a single lane never expands to multiple browser workers.
 queue=(chromium webkit firefox)
 next=0
 while (( next < ${#queue[@]} || ${#active[@]} )); do

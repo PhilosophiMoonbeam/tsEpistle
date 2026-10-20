@@ -8,7 +8,7 @@ const root = path.resolve(import.meta.dir, '../..')
 const state = path.join(process.env.XDG_STATE_HOME || path.join(homedir(), '.local/state'), 'tsepistle-ci')
 const builder = 'tsepistle-local-ci'
 const gib = 1024 ** 3
-const headroom = 4 * gib
+const headroom = 8 * gib
 process.umask(0o077)
 
 type Owner = { revision: string; namespace: string; workspace: string }
@@ -67,14 +67,14 @@ export function cleanEnvironment(): NodeJS.ProcessEnv {
     ...env,
     CI: '1',
     BUILDX_BUILDER: builder,
-    BUN_TEST_JOBS: '8',
+    BUN_TEST_JOBS: '4',
     WIKI_CI_APP_MEMORY: '2g',
     WIKI_CI_APP_CPUS: '2',
     WIKI_CI_POSTGRES_MEMORY: '1g',
     WIKI_CI_POSTGRES_CPUS: '1',
     WIKI_LOCAL_CI_KIND_MEMORY: '6g',
     WIKI_LOCAL_CI_KIND_CPUS: '4',
-    WIKI_LOCAL_CI_BROWSER_JOBS: '4',
+    WIKI_LOCAL_CI_BROWSER_JOBS: '1',
     WIKI_LOCAL_CI_TOOLS: path.join(state, 'tools')
   }
 }
@@ -368,16 +368,36 @@ async function worker(name: string, command: string[], useBuilder: boolean): Pro
     const available = await availableMemory()
     minimumHostAvailableBytes = Math.min(minimumHostAvailableBytes, available)
     if (available < headroom) {
-      measurementError = new Error('Local CI stopped: fewer than 4 GiB remain available.')
+      measurementError = new Error('Local CI stopped: fewer than 8 GiB remain available.')
       terminate()
     }
     const entries = capture(['docker', 'ps', '--no-trunc', '--format', '{{.ID}} {{.Names}}']).split('\n').filter(Boolean)
     let total = host.currentBytes
+    let allocatedDockerBytes = 0
     for (const entry of entries) {
       const [id, containerName] = entry.split(' ')
       if (!containerName?.startsWith(`${record.namespace}-`) && !(useBuilder && containerName === `buildx_buildkit_${builder}0`)) continue
-      const value = await containerMemory(id!, name, record.namespace, useBuilder)
+      let value = await containerMemory(id!, name, record.namespace, useBuilder)
       if (!value) continue
+      // Either the bootstrap poller or this sampler may discover the new kind node first.
+      if (
+        value.running &&
+        value.limitBytes <= 0 &&
+        name === 'helm-lifecycle' &&
+        record.dockerBudgetBytes > 0 &&
+        value.name === `${record.namespace}-helm-control-plane` &&
+        capture(['docker', 'inspect', '--format', '{{index .Config.Labels "io.x-k8s.kind.cluster"}}', value.id]) === `${record.namespace}-helm`
+      ) {
+        const limit = String(record.dockerBudgetBytes)
+        capture(['docker', 'update', '--memory', limit, '--memory-swap', limit, value.id])
+        value = await containerMemory(value.id, name, record.namespace, useBuilder)
+        if (!value) continue
+      }
+      if (value.running) {
+        if (value.limitBytes <= 0) throw new Error(`Running CI container ${value.name} has no hard memory limit.`)
+        allocatedDockerBytes += value.limitBytes
+        if (allocatedDockerBytes > record.dockerBudgetBytes) throw new Error('Running CI containers exceed the declared Docker memory budget.')
+      }
       const previous = containers.get(value.id)
       if (previous?.memory && value.memory) value.memory.peakBytes = Math.max(previous.memory.peakBytes, value.memory.peakBytes)
       if (!value.memory && previous?.memory) value.memory = { ...previous.memory, currentBytes: 0 }
@@ -483,11 +503,11 @@ export async function runPhase(
     hostGiB > 8 ||
     !Number.isInteger(dockerGiB) ||
     dockerGiB < 0 ||
-    dockerGiB > 32 ||
+    hostGiB + dockerGiB > 9 ||
     (useBuilder && dockerGiB < 8) ||
     !command.length
   )
-    throw new Error('Invalid local CI phase budget or command.')
+    throw new Error('Invalid local CI phase budget or command; combined host/Docker allocation must not exceed 9 GiB.')
   const context = await owner()
   const directory = path.join(context.runDir, 'resources')
   await fs.mkdir(directory, { recursive: true, mode: 0o700 })
@@ -514,11 +534,11 @@ export async function runPhase(
   const available = await availableMemory()
   if (available < required) {
     record.status = 'failed'
-    record.error = `${name} needs ${hostGiB + dockerGiB + 4} GiB available (${hostGiB} host + ${dockerGiB} Docker + 4 headroom); ${(available / gib).toFixed(1)} GiB are available.`
+    record.error = `${name} needs ${hostGiB + dockerGiB + 8} GiB available (${hostGiB} host + ${dockerGiB} Docker + 8 headroom); ${(available / gib).toFixed(1)} GiB are available.`
     await writeJson(file, record)
     throw new Error(record.error)
   }
-  console.log(`Local CI resources: ${name}: host ${hostGiB} GiB, Docker ${dockerGiB} GiB, headroom 4 GiB`)
+  console.log(`Local CI resources: ${name}: host ${hostGiB} GiB, Docker ${dockerGiB} GiB, headroom 8 GiB`)
   let cancelled = false
   let child: ChildProcess | undefined
   const stop = () => {

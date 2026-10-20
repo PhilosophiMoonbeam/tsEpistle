@@ -402,7 +402,7 @@ fi
 
 # Budgets cover maximum simultaneous allocations, not just application services.
 for version in 16 17; do run_phase "ledger-pg$version" 4 "$postgres_gib"; done
-# Admission includes 4 GiB host + the native PostgreSQL cap + 4 GiB headroom.
+# Admission includes 4 GiB host + the native PostgreSQL cap + 8 GiB headroom.
 run_phase native-pg18 4 "$native_postgres_gib"
 for version in 15 16 17 18; do run_phase "page-index-pg$version" 4 "$postgres_gib"; done
 # Migration monitoring runs a second app-capped volume helper alongside Wiki/PG.

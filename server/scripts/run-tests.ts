@@ -155,8 +155,8 @@ const main = async (): Promise<void> => {
   if (postgres && process.env.WIKI_TEST_POSTGRES_DATABASE !== undefined) throw new Error('WIKI_TEST_POSTGRES_DATABASE is child-only output. Remove it and use bun run test:postgres with disposable service credentials.')
   const jobs = await discoverTests()
   if (jobs.length === 0) throw new Error('No test files matched this execution mode.')
-  const defaults = postgres ? 1 : 8
-  const workerCount = Math.max(1, Math.min(Number.parseInt(Bun.env.BUN_TEST_JOBS ?? String(defaults), 10) || defaults, jobs.length))
+  const defaults = postgres ? 1 : 4
+  const workerCount = Math.max(1, Math.min(4, Number.parseInt(Bun.env.BUN_TEST_JOBS ?? String(defaults), 10) || defaults, jobs.length))
   const failures: TestFailure[] = []
   const env = childEnvironment()
   const active = new Set<Bun.Subprocess<'ignore', 'pipe', 'pipe'>>()
