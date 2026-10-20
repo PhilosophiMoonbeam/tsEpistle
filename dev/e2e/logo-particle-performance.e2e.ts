@@ -760,7 +760,10 @@ async function createMeasuredPage(
       }
       const pollTimerQueryState = (state: TimerQueryState): void => {
         const extension = state.extension
-        if (!extension) return
+        if (!extension) {
+          markGpuUnavailable(state, 'EXT_disjoint_timer_query_webgl2 is unavailable')
+          return
+        }
         const context = state.context
         const currentEpoch = benchmark.gpuTimingEpoch ?? 0
         let disjoint = false
@@ -845,6 +848,7 @@ async function createMeasuredPage(
           const frameId = state.nextFrameId
           state.nextFrameId += 1
           slot.frameId = frameId
+          slot.epoch = benchmark.gpuTimingEpoch ?? 0
           let began = false
           try {
             context.beginQuery(state.extension.TIME_ELAPSED_EXT, slot.query)
@@ -2016,5 +2020,9 @@ test('enforces managed login cloud runtime budgets with bounded explosions', asy
     violations
   }
   writeReportAtomically(reportPath, report)
+  await testInfo.attach('logo-particle-performance', {
+    body: Buffer.from(JSON.stringify(report)),
+    contentType: 'application/json'
+  })
   expect(violations, 'logo particle runtime budget violations').toEqual([])
 })

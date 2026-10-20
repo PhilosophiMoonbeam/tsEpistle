@@ -133,6 +133,10 @@ Particle performance qualification uses the indexed-batch/shared-motion-texture 
 
 Backend-specific `logo-particle-performance*.json` files are generated check artifacts, like `runtime-performance*.json`, and are ignored rather than committed as build inputs. Preserve failure reports outside the working tree when carrying evidence across revisions; do not bypass the build metadata generator's dirty-tree guard.
 
+The existing 1,500 ms enhancement deadline can settle the login logo to its static image before a backend exists. Opt-in startup diagnostics record only an actually fired, current, uncommitted epoch deadline; replacement epochs clear it and late callbacks cannot publish it. Generic UI checks require static opacity `1`, zero canvases and settled resources for this explicit `bounded-startup-fallback`; it is neither unsupported-capability evidence nor animated coverage. Animated outcomes retain all cursor/scatter/recovery assertions, and strict renderer profiles still require real animation within every unchanged budget.
+
+Particle sprite raster bounds omit only the padding already rejected by the fragment's unit-disc discard. Preserve the original padded diameter in its coverage equation, physical fragment coordinates, every particle, all six explosion slots and all nonzero motion/shading equations; a smaller quad must not shrink the visible core. GPU timer-query slots must capture the current measurement epoch on reuse, preserve unavailable-extension reasons across resets, and attach full startup/performance diagnostics before assertions so workspace cleanup cannot erase failure evidence.
+
 First-run setup autofocus must not override a field the user has already focused or redirect subsequent password typing. Preserve the native regression that drains startup timers after choosing the password field.
 
 Confirmation sessions mount `VDialog` with its active model. Reusing an inactive overlay defers Vuetify's `globalTop` ownership and can drop an immediate Escape after reopening. Keep queued requests in the same overlay, retain leave-transition opener restoration, and preserve native keyboard qualification without added delays.

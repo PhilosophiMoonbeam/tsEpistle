@@ -219,16 +219,18 @@ const createVertexState = (uniforms: ParticleNodeUniforms, motionTexture: DataTe
   const sourceCoverage = mix(0.65, 1.0, logoParameters.y)
   const coreCssPixels = diameter.mul(sourceCoverage).mul(depthScale).mul(uniforms.renderedLongAxis).div(1024).min(22)
   const coreDevicePixels = coreCssPixels.mul(uniforms.pixelRatio).max(1.25).toVar('coreDevicePixels')
+  // Retain the original padded diameter in the coverage equation, not the raster bounds.
   const pointSize = coreDevicePixels.add(2).toVar('pointSize')
-  const scale = vec2(pointSize.mul(2).div(safeViewport.x.mul(uniforms.pixelRatio)), pointSize.mul(2).div(safeViewport.y.mul(uniforms.pixelRatio))).toVar(
-    'spriteScale'
-  )
+  // The former two-pixel quad padding was wholly outside the fragment's unit disc.
+  const scale = vec2(
+    coreDevicePixels.mul(2).div(safeViewport.x.mul(uniforms.pixelRatio)),
+    coreDevicePixels.mul(2).div(safeViewport.y.mul(uniforms.pixelRatio))
+  ).toVar('spriteScale')
   const halfPixel = float(1).div(pointSize).toVar('halfPixel')
-  const coreRatio = coreDevicePixels.div(pointSize).toVar('coreRatio')
   const bead = smoothstep(0.7, 0.98, logoParameters.z).toVar('bead')
 
   const positionNode = vec3(position, depth.mul(0.04))
-  return { bead, coreRatio, halfPixel, lifecycle, position, positionNode, scale }
+  return { bead, halfPixel, lifecycle, position, positionNode, scale }
 }
 
 /** Build the one-draw sprite material and its immutable TSL graph. */
@@ -236,7 +238,6 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
   const state = createVertexState(uniforms, motionTexture)
   const lifecycle = state.lifecycle.toVarying('particleLifecycle')
   const halfPixel = state.halfPixel.toVarying('particleHalfPixel')
-  const coreRatio = state.coreRatio.toVarying('particleCoreRatio')
   const bead = state.bead.toVarying('particleBead')
   const particleColor = attribute<'vec4'>('particleColor', 'vec4')
 
@@ -244,7 +245,7 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
   material.positionNode = state.positionNode
   material.scaleNode = state.scale
   material.fragmentNode = Fn(() => {
-    const uv = positionGeometry.xy.mul(2).div(coreRatio)
+    const uv = positionGeometry.xy.mul(2)
     const r2 = uv.dot(uv).toVar('particleR2')
     r2.greaterThan(1).discard()
     const coverage = float(1).sub(smoothstep(float(1).sub(float(3).mul(halfPixel)), 1, r2))

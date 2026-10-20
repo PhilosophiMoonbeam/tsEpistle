@@ -32,6 +32,8 @@ export interface LogoStartupMilestones {
   readonly initEndedAt?: number
   readonly firstSubmissionAt?: number
   readonly visibleCommitAt?: number
+  /** Actual current-epoch startup deadline expiry, never an inferred capability failure. */
+  readonly deadlineExpiredAt?: number
 }
 
 export interface LogoResumeSample {

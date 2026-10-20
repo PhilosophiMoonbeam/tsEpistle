@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import type { App } from 'vue'
+import { waitForPageRender } from '../../client/helpers/pages-api.ts'
 import { decodeWikiPagePayload, type WikiPagePayload } from '../../client/helpers/wiki-navigation.ts'
 import { installEnabledAgentFixture } from './agent-fixture.ts'
 import {
@@ -2908,6 +2909,12 @@ test.describe('responsive UI quality matrix', () => {
       expect(pageId).toEqual(expect.any(Number))
       expect(sourceRevision).toEqual(expect.any(String))
       if (pageId === undefined || sourceRevision === undefined) throw new Error('Reader Mermaid fixture response omitted page identity.')
+
+      // Page creation acknowledges the source write before its exact render is published.
+      await waitForPageRender(async url => {
+        const response = await page.request.get(url)
+        return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+      }, { id: pageId, sourceRevision, locale: 'en', path, visibility: 'public' }, AbortSignal.timeout(15_000))
 
       await openAuthenticatedPage(page, `/en/${path}`, '.page-header-section')
       const reader = page.locator('article.contents')

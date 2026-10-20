@@ -88,6 +88,7 @@ interface ParticlePerformanceStartup {
   fetchEndedAt?: number
   parseStartedAt?: number
   parseEndedAt?: number
+  deadlineExpiredAt?: number
 }
 
 interface ParticlePerformanceBenchmark {
@@ -99,12 +100,6 @@ type ParticlePerformanceWindow = Window & {
 }
 
 type ParticlePerformanceMilestone = keyof ParticlePerformanceStartup
-
-const readParticlePerformanceStartup = (): ParticlePerformanceStartup | null => {
-  if (typeof window === 'undefined') return null
-  return (window as ParticlePerformanceWindow).__logoParticlePerformance?.startup ?? null
-}
-
 
 const stampParticlePerformanceStartup = (
   startup: ParticlePerformanceStartup | null,
@@ -150,7 +145,8 @@ export default defineComponent({
   },
   setup (props) {
     const instance = getCurrentInstance()
-    const particlePerformanceStartup = readParticlePerformanceStartup()
+    const particlePerformanceStartup =
+      typeof window === 'undefined' ? null : ((window as ParticlePerformanceWindow).__logoParticlePerformance?.startup ?? null)
     const mediaEligible = ref(false)
     const surfaceVisible = ref(false)
     const pageVisible = ref(false)
@@ -428,9 +424,14 @@ export default defineComponent({
       const effect = activeEffect.value
       if (!effect || terminalEffect === effect || !hardEligible.value || !activityEligible.value) return
       stampParticlePerformanceStartup(particlePerformanceStartup, 'enhancementScheduledAt')
+      if (particlePerformanceStartup) delete particlePerformanceStartup.deadlineExpiredAt
       const epoch = invalidateEnhancement()
 
-      deadlineTimer = window.setTimeout(() => failEnhancement(epoch), ENHANCEMENT_DEADLINE_MS)
+      deadlineTimer = window.setTimeout(() => {
+        if (epoch !== enhancementEpoch || sceneCommitted.value) return
+        stampParticlePerformanceStartup(particlePerformanceStartup, 'deadlineExpiredAt')
+        failEnhancement(epoch)
+      }, ENHANCEMENT_DEADLINE_MS)
       const beginLoad = (): void => {
         cancelIdleWork = null
         if (!isCurrentLoad(epoch, effect)) return

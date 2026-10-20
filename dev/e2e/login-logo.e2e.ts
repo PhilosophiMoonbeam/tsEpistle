@@ -595,9 +595,25 @@ async function installControlledWebGpuLoss(page: Page): Promise<void> {
   })
 }
 
+type LogoStaticOutcome =
+  | { readonly state: 'static'; readonly source: 'backend'; readonly diagnostic: LogoBackendDiagnostic }
+  | { readonly state: 'static'; readonly source: 'startup-deadline'; readonly expiredAt: number }
+
 type LogoBackendOutcome =
   | { readonly state: 'animated'; readonly backend: ParticleBackendKind }
-  | { readonly state: 'static'; readonly diagnostic: LogoBackendDiagnostic }
+  | LogoStaticOutcome
+
+function annotateLogoStaticOutcome(testInfo: TestInfo, outcome: LogoStaticOutcome): void {
+  testInfo.annotations.push(outcome.source === 'startup-deadline'
+    ? {
+        type: 'bounded-startup-fallback',
+        description: `The particle enhancement reached its existing 1,500 ms startup deadline at ${outcome.expiredAt} ms before creating a backend; the personalized static treatment remains visible. This is not animated coverage or an unsupported-capability claim.`
+      }
+    : {
+        type: 'capability-fallback',
+        description: `The particle backend ended startup in ${outcome.diagnostic.phase} before any visible commit; the explicit static outcome remains usable.`
+      })
+}
 
 async function waitForBackendOutcome(page: Page): Promise<LogoBackendOutcome> {
   const result = await page.waitForFunction(
@@ -605,14 +621,25 @@ async function waitForBackendOutcome(page: Page): Promise<LogoBackendOutcome> {
       const logoPerformanceWindow = (): LogoPerformanceWindow => window as LogoPerformanceWindow
       const benchmark = logoPerformanceWindow().__logoParticlePerformance
       const diagnostic = benchmark?.backendDiagnostics?.at(-1)
-      if (!benchmark || !diagnostic) return false
+      if (!benchmark) return false
+      if (!diagnostic) {
+        const expiredAt = benchmark.startup?.deadlineExpiredAt
+        if (expiredAt === undefined) return false
+        if (benchmark.startup?.visibleCommitAt !== undefined) {
+          throw new Error('The visibly committed particle field unexpectedly reported an initial startup deadline.')
+        }
+        const field = document.querySelector('.login-particle-logo')
+        const image = field?.querySelector<HTMLElement>('.login-particle-logo__image')
+        if (field?.querySelectorAll('canvas').length !== 0 || !image || getComputedStyle(image).opacity !== '1') return false
+        return { state: 'static' as const, source: 'startup-deadline' as const, expiredAt }
+      }
       if (diagnostic.phase === 'failed' || diagnostic.phase === 'lost' || diagnostic.phase === 'retired') {
         // Backend selection survives retirement and can precede the first visible frame.
         // Only an uncommitted terminal outcome is a startup capability fallback.
         if (benchmark.startup?.visibleCommitAt !== undefined) {
           throw new Error(`The visibly committed particle field unexpectedly became ${diagnostic.phase}.`)
         }
-        return { state: 'static' as const, diagnostic: { ...diagnostic } }
+        return { state: 'static' as const, source: 'backend' as const, diagnostic: { ...diagnostic } }
       }
       if (
         diagnostic.phase !== 'ready' ||
@@ -2659,8 +2686,7 @@ test.describe('managed login logo auth independence', () => {
     const staticImage = field.locator('.login-particle-logo__image')
     const outcome = await waitForBackendOutcome(page)
     if (outcome.state === 'static') {
-      const diagnostic = `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; static fallback is the explicit capability outcome.`
-      testInfo.annotations.push({ type: 'capability-fallback', description: diagnostic })
+      annotateLogoStaticOutcome(testInfo, outcome)
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
       await expectLoginValidation(page)
       return
@@ -2732,10 +2758,36 @@ test.describe('managed login logo auth independence', () => {
     await assertTransparentSourceIdentity(ordinaryLogo, squareEffect, 'ordinary')
     const field = page.locator('.login-particle-logo')
     const canvas = field.locator('canvas')
-    const outcome = await waitForBackendOutcome(page)
+    let outcome: LogoBackendOutcome
+    try {
+      outcome = await waitForBackendOutcome(page)
+    } finally {
+      await testInfo.attach('logo-startup', {
+        body: Buffer.from(JSON.stringify({
+          benchmark: await readLogoPerformance(page),
+          resources: await readLogoResourceTrace(page),
+          sceneRequests,
+          particleRequests: artifacts.particle.map(request => request.url()),
+          surface: await page.evaluate(() => ({
+            visibilityState: document.visibilityState,
+            desktopEligible: matchMedia('(min-width: 960px) and (min-height: 651px) and (hover: hover) and (pointer: fine)').matches,
+            reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+            canvasCount: document.querySelectorAll('.login-particle-logo canvas').length,
+            images: Array.from(document.querySelectorAll<HTMLImageElement>('.login-particle-logo img')).map(image => ({
+              src: image.currentSrc,
+              complete: image.complete,
+              naturalWidth: image.naturalWidth,
+              naturalHeight: image.naturalHeight,
+              opacity: getComputedStyle(image).opacity
+            })),
+            resourceTiming: performance.getEntriesByType('resource').map(resource => resource.toJSON())
+          }))
+        })),
+        contentType: 'application/json'
+      })
+    }
     if (outcome.state === 'static') {
-      const diagnostic = `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; motion coverage records the explicit static capability outcome.`
-      testInfo.annotations.push({ type: 'capability-fallback', description: diagnostic })
+      annotateLogoStaticOutcome(testInfo, outcome)
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
       return
     }
@@ -2838,10 +2890,7 @@ test.describe('managed login logo auth independence', () => {
     const staticImage = field.locator('.login-particle-logo__image')
     const outcome = await waitForBackendOutcome(page)
     if (outcome.state === 'static') {
-      testInfo.annotations.push({
-        type: 'capability-fallback',
-        description: `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; static fallback is the explicit capability outcome.`
-      })
+      annotateLogoStaticOutcome(testInfo, outcome)
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
       await expectLoginValidation(page)
       return
@@ -2906,10 +2955,7 @@ test.describe('managed login logo auth independence', () => {
     const canvas = field.locator('canvas')
     const outcome = await waitForBackendOutcome(page)
     if (outcome.state === 'static') {
-      testInfo.annotations.push({
-        type: 'capability-fallback',
-        description: `The particle field ended startup in ${outcome.diagnostic.phase} before any visible commit; request privacy is checked against the explicit static fallback.`
-      })
+      annotateLogoStaticOutcome(testInfo, outcome)
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
     } else {
       await expect(canvas).toHaveCount(1)
@@ -3091,8 +3137,7 @@ test.describe('particle compositor without service workers', () => {
       await expect(target.getByRole('button', { name: 'Log In', exact: true })).toBeEnabled()
       const outcome = await waitForBackendOutcome(target)
       if (outcome.state === 'static') {
-        const description = `Color/compositor startup ended in ${outcome.diagnostic.phase} before any visible commit; the explicit static capability outcome remains usable.`
-        testInfo.annotations.push({ type: 'capability-fallback', description })
+        annotateLogoStaticOutcome(testInfo, outcome)
         await expectSettledLoadingFailure(target, colorProbeEffect, sceneRequests, artifacts.particle)
         await expectLoginValidation(target)
         return outcome

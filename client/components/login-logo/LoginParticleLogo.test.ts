@@ -58,6 +58,7 @@ interface StartupMilestones {
   fetchEndedAt?: number
   parseStartedAt?: number
   parseEndedAt?: number
+  deadlineExpiredAt?: number
 }
 
 interface PerformanceBenchmark {
@@ -1329,19 +1330,48 @@ describe('LoginParticleLogo lazy particle enhancement', () => {
   })
 
   it('tears down an epoch that misses the import-to-first-frame wall-clock deadline', async () => {
+    const startup = installPerformanceBenchmark()
     const mounted = await mountLogo(particleEffect)
     await loadStaticRendition(mounted, particleEffect)
     await runIdleWork()
     const request = pendingFetches[0]
     const deadline = [...deadlineCallbacks.values()][0]
     if (!request || !deadline) throw new Error('Timed particle epoch did not start')
+    expect(startup.deadlineExpiredAt).toBeUndefined()
+    request.rejectOnAbort = false
 
     deadline()
     await settle()
     expect(request.signal?.aborted).toBe(true)
     expect(deadlineCallbacks.size).toBe(0)
+    expect(startup.deadlineExpiredAt).toEqual(expect.any(Number))
     expect(staticImage(mounted.host)?.style.opacity).toBe('1')
     expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
+
+    const expiredAt = startup.deadlineExpiredAt
+    request.resolve(new Response(particleFixture))
+    await settle()
+    expect(startup.deadlineExpiredAt).toBe(expiredAt)
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).toBeNull()
+
+    await setPageVisibility('hidden')
+    await setPageVisibility('visible')
+    expect(startup.deadlineExpiredAt).toBeUndefined()
+    expect(idleCallbacks.size).toBe(1)
+    deadline()
+    expect(startup.deadlineExpiredAt).toBeUndefined()
+
+    const currentDeadline = [...deadlineCallbacks.values()][0]
+    if (!currentDeadline) throw new Error('Replacement particle epoch did not start')
+    await runIdleWork()
+    pendingFetches[1]?.resolve(new Response(particleFixture))
+    await settle()
+    sceneControls[0]?.firstFrame()
+    await settle()
+    expect(staticImage(mounted.host)?.style.opacity).toBe('0')
+    currentDeadline()
+    expect(startup.deadlineExpiredAt).toBeUndefined()
+    expect(mounted.host.querySelector('.login-particle-logo__scene-stub')).not.toBeNull()
   })
 
   it('aborts stale fetches and ignores events from a retired scene epoch', async () => {
