@@ -5,9 +5,10 @@ import {
   FloatType,
   NormalBlending,
   RGFormat,
-  SpriteNodeMaterial
+  SpriteNodeMaterial,
+  SRGBColorSpace
 } from 'three/webgpu'
-import { If, Fn, attribute, float, ivec2, length, mix, positionGeometry, smoothstep, textureLoad, vec2, vec3, vec4, vertexIndex, sRGBTransferOETF } from 'three/tsl'
+import { If, Fn, attribute, float, ivec2, length, mix, positionGeometry, smoothstep, textureLoad, vec2, vec3, vec4, vertexIndex, workingToColorSpace } from 'three/tsl'
 import type { Node, Vector2, Vector4 } from 'three/webgpu'
 
 import {
@@ -239,15 +240,6 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
   const halfPixel = state.halfPixel.toVarying('particleHalfPixel')
   const bead = state.bead.toVarying('particleBead')
   const particleColor = attribute<'vec4'>('particleColor', 'vec4')
-  // Keep one color varying: unlit RGB is encoded; beads retain linear RGB until fragment lighting.
-  const displayColor = Fn(() => {
-    const rgb = particleColor.rgb.toVar('particleVertexRgb')
-    If(state.bead.lessThanEqual(0), () => {
-      // r186 declares the transfer's explicit vec3 layout as the base Node type.
-      rgb.assign(sRGBTransferOETF(rgb) as Node<'vec3'>)
-    })
-    return vec4(rgb, particleColor.a)
-  })().toVarying('particleDisplayColor')
 
   const material = new SpriteNodeMaterial()
   material.positionNode = state.positionNode
@@ -257,7 +249,7 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
     const r2 = uv.dot(uv).toVar('particleR2')
     r2.greaterThan(1).discard()
     const coverage = float(1).sub(smoothstep(float(1).sub(float(3).mul(halfPixel)), 1, r2))
-    const color = displayColor.rgb.toVar('particleRgb')
+    const color = particleColor.rgb.toVar('particleRgb')
 
     If(bead.greaterThan(0), () => {
       const z = float(1).sub(r2).max(0).sqrt()
@@ -270,10 +262,9 @@ export const createParticleSpriteMaterial = (uniforms: ParticleNodeUniforms, mot
       const k = mix(1.0, float(0.55).add(float(0.65).mul(diffuse)), bead).add(float(0.38).mul(glint).mul(bead))
       const maxChannel = color.r.max(color.g.max(color.b))
       color.mulAssign(k.div(float(1).max(k.mul(maxChannel))))
-      color.assign(sRGBTransferOETF(color) as Node<'vec3'>)
     })
 
-    return vec4(color, displayColor.a.mul(lifecycle).mul(coverage))
+    return workingToColorSpace(vec4(color, particleColor.a.mul(lifecycle).mul(coverage)), SRGBColorSpace)
   })()
   material.blending = NormalBlending
   material.transparent = true
