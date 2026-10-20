@@ -3327,10 +3327,45 @@ describe('ordinary-origin agent session API', () => {
             await emitRead('truncated-source', { ...page(44, '1'), contentTruncated: true })
             await emitRead('incomplete-source', { ...page(45, '1'), complete: false })
             await emitRead('expired-source', { ...page(46, '1'), groundedExpiresAt: '2000-01-01T00:00:00.000Z' })
-            // Cross both the telemetry window and the metadata scan page boundary.
-            for (let index = 0; index < 132; index += 1) {
-              await emitRead(`cached-${index}`, page(42, '2'), 'pages.get', { cacheHit: true, reusedActionCallId: 'original-current' })
-            }
+            // This fixture exercises context scans, not serial event-write throughput.
+            // Keep all 132 cached reads across both scan boundaries, but seed them
+            // atomically instead of spending the test deadline on 264 transactions.
+            await db.transaction(async transaction => {
+              const run = await transaction('agentRuns').where({ id: request.run.id }).forUpdate().first('eventSequence', 'attempts')
+              if (!run) throw new Error('Missing retained-read fixture run')
+              const firstSequence = Number(run.eventSequence) + 1
+              const cachedResult = JSON.stringify(page(42, '2'))
+              const createdAt = new Date()
+              const events = Array.from({ length: 132 }, (_, index) => {
+                const actionCallId = `cached-${index}`
+                return [
+                  { type: 'tool.started', data: { actionCallId, actionName: 'pages.get', input: JSON.stringify({ id: 42 }) } },
+                  {
+                    type: 'tool.completed',
+                    data: { actionCallId, actionName: 'pages.get', result: cachedResult, cacheHit: true, reusedActionCallId: 'original-current' }
+                  }
+                ]
+              })
+                .flat()
+                .map((event, index) => {
+                  const data = JSON.stringify(event.data)
+                  return {
+                    id: randomUUID(),
+                    runId: request.run.id,
+                    sequence: firstSequence + index,
+                    type: event.type,
+                    attempt: Number(run.attempts),
+                    schemaVersion: 1,
+                    dataSha256: createHash('sha256').update(data).digest('hex'),
+                    data,
+                    createdAt
+                  }
+                })
+              await transaction('agentEvents').insert(events)
+              await transaction('agentRuns')
+                .where({ id: request.run.id })
+                .update({ eventSequence: firstSequence + events.length - 1 })
+            })
             // An odd final event deliberately leaves the bounded telemetry tail
             // starting at a completed action whose real start is just outside it.
             await sink.event('model.turn', {
