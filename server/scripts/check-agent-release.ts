@@ -10,10 +10,10 @@ interface DataFile {
 }
 
 const requiredVersions = {
-  '@ax-llm/ax': '25.4.3',
-  '@modelcontextprotocol/server': '2.1.0',
+  '@ax-llm/ax': '25.4.5',
+  '@modelcontextprotocol/server': '2.3.0',
   '@modelcontextprotocol/node': '2.1.0',
-  '@modelcontextprotocol/express': '2.0.1',
+  '@modelcontextprotocol/express': '2.0.2',
   'playwright-core': '1.62.1'
 } as const
 const manifest = JSON.parse(await readFile('package.json', 'utf8')) as {

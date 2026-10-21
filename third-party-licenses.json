@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "34ecabadbdc4783ba46327f5d3558a362c14569c5a35879d1e547e59683efc25",
+    "sha256": "97062fe93e6ec24aa3cbe7f95e4af52668fabc6390a4faded438d5390d9082a1",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -386,7 +386,7 @@
     {
       "name": "@ax-llm/ax",
       "versions": [
-        "25.4.3"
+        "25.4.5"
       ],
       "license": "Apache-2.0",
       "author": "Vikram <https://twitter.com/dosco>",
@@ -1449,18 +1449,18 @@
     {
       "name": "@modelcontextprotocol/core",
       "versions": [
-        "2.1.0"
+        "2.3.0"
       ],
-      "license": "MIT",
+      "license": "Apache-2.0",
       "author": "Anthropic, PBC (https://anthropic.com)",
       "homepage": "https://modelcontextprotocol.io"
     },
     {
       "name": "@modelcontextprotocol/express",
       "versions": [
-        "2.0.1"
+        "2.0.2"
       ],
-      "license": "MIT",
+      "license": "Apache-2.0",
       "author": "Anthropic, PBC (https://anthropic.com)",
       "homepage": "https://modelcontextprotocol.io"
     },
@@ -1476,9 +1476,9 @@
     {
       "name": "@modelcontextprotocol/server",
       "versions": [
-        "2.1.0"
+        "2.3.0"
       ],
-      "license": "MIT",
+      "license": "Apache-2.0",
       "author": "Anthropic, PBC (https://anthropic.com)",
       "homepage": "https://modelcontextprotocol.io"
     },
@@ -2626,7 +2626,7 @@
     {
       "name": "argparse",
       "versions": [
-        "3.0.2"
+        "3.0.3"
       ],
       "license": "PSF-2.0"
     },
@@ -3997,7 +3997,7 @@
     {
       "name": "hono",
       "versions": [
-        "4.13.7"
+        "4.13.11"
       ],
       "license": "MIT",
       "author": "Yusuke Wada <yusuke@kamawada.com> (https://github.com/yusukebe)",
@@ -4570,7 +4570,7 @@
       "name": "markdown-it",
       "versions": [
         "14.3.2",
-        "15.0.1"
+        "15.0.3"
       ],
       "license": "MIT"
     },

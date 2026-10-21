@@ -675,6 +675,69 @@ describe('Wiki MCP transport', () => {
     }
   )
 
+  it.each(['modern', 'legacy'] as const)('bounds malformed tool validation and preserves subsequent %s reads', async era => {
+    personalMcpAccess = 'read-only'
+    const port = (server.address() as AddressInfo).port
+    let inspectRejection = false
+    let rejectedResponse: { status: number; requestBytes: number; responseBytes: number } | undefined
+    client = new Client(
+      { name: 'wiki-mcp-input-boundary-test', version: '1.0.0' },
+      { capabilities: {}, versionNegotiation: { mode: era === 'legacy' ? 'legacy' : 'auto' } }
+    )
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+        authProvider: { token: async () => 'test-api-token' },
+        fetch: async (input, init) => {
+          const response = await fetch(input, init)
+          if (inspectRejection) {
+            rejectedResponse = {
+              status: response.status,
+              requestBytes: Buffer.byteLength(String(init?.body)),
+              responseBytes: Buffer.byteLength(await response.clone().text())
+            }
+          }
+          return response
+        }
+      })
+    )
+    expect(client.getProtocolEra()).toBe(era)
+
+    // Three root members plus the range entries make exactly 50,000 elements.
+    // Both payloads violate the same range schema and fit the byte limit; only
+    // the additional element should bypass per-entry errors via the SDK guard.
+    inspectRejection = true
+    const atLimit = await client.callTool({
+      name: 'wiki_read_page_for_patch',
+      arguments: { pageId: 42, ranges: Array(49_997).fill(0), previousSnapshotToken: null }
+    })
+    expect(atLimit.isError).toBe(true)
+    expect(rejectedResponse?.status).toBe(200)
+    expect(rejectedResponse?.requestBytes).toBeLessThan(128 * 1024)
+    expect(rejectedResponse?.responseBytes).toBeGreaterThan(1024)
+    const rejected = await client.callTool({
+      name: 'wiki_read_page_for_patch',
+      arguments: { pageId: 42, ranges: Array(49_998).fill(0), previousSnapshotToken: null }
+    })
+    inspectRejection = false
+    expect(rejected.isError).toBe(true)
+    expect(rejectedResponse?.status).toBe(200)
+    expect(rejectedResponse?.requestBytes).toBeLessThan(128 * 1024)
+    expect(rejectedResponse?.responseBytes).toBeLessThan(1024)
+    expect(getPage).not.toHaveBeenCalled()
+
+    const read = await client.callTool({ name: 'wiki_read_page_for_patch', arguments: { pageId: 42, previousSnapshotToken: null } })
+    expect(read.isError).not.toBe(true)
+    expect(read.structuredContent).toMatchObject({
+      version: 'wiki-line-snapshot-v1',
+      page: { id: 42 },
+      disclosed: [expect.objectContaining({ lines: [expect.objectContaining({ text: '# Start' })] })],
+      snapshotToken: expect.any(String)
+    })
+    expect(await db('agentProposals')).toEqual([])
+    expect(await db('agentActionExecutions')).toEqual([])
+    expect(authorizeMutation).not.toHaveBeenCalled()
+  })
+
   it('rejects modern requests when the protocol-version header is missing', async () => {
     const port = (server.address() as AddressInfo).port
     let omitProtocolVersion = false

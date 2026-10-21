@@ -30,6 +30,13 @@ import { getMcpProposal } from './proposals/repository.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import { validateSkillVirtualPath } from './skills/virtual-path.ts'
 
+// Current MCP arrays contain strings (at least 3 JSON bytes per entry) or
+// structured objects, including up to 1,000 patch operations with 5,000 lines each.
+// Within the independent 128 KiB body limit, valid inputs stay below 44,000
+// members/elements; 50,000 preserves them while bounding denser malformed input
+// before SDK schema validation can amplify it into per-element errors.
+const MAX_MCP_TOOL_INPUT_ELEMENTS = 50_000
+
 const UUIDSchema = z.uuid()
 const IdentitySchema = z.strictObject({ apiKeyId: z.number().int().positive(), groupId: z.number().int().positive() })
 const ApprovalResponseSchema = z.object({ acknowledge: z.boolean() })
@@ -146,7 +153,7 @@ const toolInputSchema = (name: AgentActionName): z.ZodType => {
   return (definition.input as z.ZodObject<z.ZodRawShape>).extend({ requestId: z.uuid() })
 }
 
-// SDK 2.1 form input-required legs use the validated per-request capability envelope.
+// SDK v2 form input-required legs use the validated per-request capability envelope.
 // A bare elicitation declaration retains form support; URL-only elicitation does not.
 const supportsApprovalContinuation = (context: ServerContext): boolean => {
   const capabilities: unknown = Reflect.get(context.mcpReq.envelope ?? {}, CLIENT_CAPABILITIES_META_KEY)
@@ -292,6 +299,7 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
         { name: 'tsEpistle', version: '1.0.0' },
         {
           capabilities: { tools: {}, resources: {} },
+          maxToolInputElements: MAX_MCP_TOOL_INPUT_ELEMENTS,
           requestState: { verify: verifyState },
           cacheHints: {
             'tools/list': { ttlMs: 0, cacheScope: 'private' },
