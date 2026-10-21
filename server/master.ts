@@ -362,13 +362,11 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     mediaProviders = new AgentMediaProviderRegistry(wiki.models.knex, secrets)
     const googleClientId = environmentSecretValue('GOOGLE_WORKSPACE_MCP_CLIENT_ID')
     const googleClientSecret = environmentSecretValue('GOOGLE_WORKSPACE_MCP_CLIENT_SECRET')
-    if (Boolean(googleClientId) !== Boolean(googleClientSecret))
-      throw new Error('Google Workspace MCP requires both GOOGLE_WORKSPACE_MCP_CLIENT_ID and GOOGLE_WORKSPACE_MCP_CLIENT_SECRET (or their _FILE variants)')
     externalMcp = new ExternalMcpService({
       knex: wiki.models.knex,
       secrets,
       enabled: () => wiki.config.agents.enabled && wiki.config.agents.provider.enabled,
-      ...(googleClientId && googleClientSecret ? { googleOAuth: { clientId: googleClientId, clientSecret: googleClientSecret, siteOrigin: wiki.config.host } } : {})
+      oauth: { siteOrigin: wiki.config.host, ...(googleClientId && googleClientSecret ? { googleWorkspace: { clientId: googleClientId, clientSecret: googleClientSecret } } : {}) }
     })
     routingPolicies = new AgentRoutingPolicyRegistry(wiki.models.knex)
     const router = new AgentTurnRouter(routingPolicies, decisionProviders)

@@ -179,14 +179,14 @@ export default function createAgentControls(services: AgentControlServices): exp
       z.strictObject({}).parse(req.body)
       if (!req.sessionID || !req.session) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Current browser session is required', 401)
       res.set('Cache-Control', 'private, no-store')
-      return res.json(await required(services.externalMcp).connectGoogle(actor(req), id(req), req.sessionID))
+      return res.json(await required(services.externalMcp).connectOAuth(actor(req), id(req), req.sessionID))
     })
   )
   router.delete(
     '/external-mcp/:id/oauth',
     route(async (req, res) => {
       z.strictObject({}).parse(req.body)
-      await required(services.externalMcp).disconnectGoogle(actor(req), id(req))
+      await required(services.externalMcp).disconnectOAuth(actor(req), id(req))
       return res.json({ disconnected: true })
     })
   )

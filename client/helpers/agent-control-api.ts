@@ -70,8 +70,17 @@ const Server: z.ZodType<ExternalMcpServerView> = z.object({
   ownerId: z.number().nullable(),
   status: z.enum(['enabled', 'disabled']),
   revision: z.number().int().positive(),
-  authMode: z.enum(['none', 'bearer', 'google']),
+  authMode: z.enum(['none', 'bearer', 'oauth']),
   secretConfigured: z.boolean(),
+  oauth: z.object({
+    preset: z.literal('google-workspace').optional(),
+    issuer: z.string().optional(),
+    scopes: z.array(z.string()).optional(),
+    registrationMode: z.enum(['automatic', 'preregistered']),
+    clientId: z.string().optional(),
+    tokenEndpointAuthMethod: z.enum(['none', 'client_secret_post', 'client_secret_basic']).optional(),
+    clientSecretConfigured: z.boolean()
+  }).optional(),
   groupIds: z.array(z.number().int().positive()),
   trust: z.literal('untrusted'),
   createdAt: z.string(),
@@ -153,35 +162,43 @@ const listServers = async (f: typeof fetch, c: string, path: string, signal?: Ab
 export const listAdminExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/admin/external-mcp', signal)
 export const listPersonalExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/personal-mcp', signal)
 export const listAvailableExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/external-mcp', signal)
-const GoogleMcpOAuth = z.object({
+const ExternalMcpOAuth = z.object({
   configured: z.boolean(),
   connected: z.boolean(),
   scopes: z.array(z.string()),
-  reconnectRequired: z.boolean()
+  reconnectRequired: z.boolean(),
+  issuer: z.string().optional(),
+  registrationMode: z.enum(['automatic', 'preregistered']).optional(),
+  callbackUrl: z.string().optional()
 })
-export type GoogleMcpOAuthStatus = z.infer<typeof GoogleMcpOAuth>
-const GoogleAuthorizationUrl = z.string().max(16_384).refine(value => {
+export type ExternalMcpOAuthStatus = z.infer<typeof ExternalMcpOAuth>
+const AuthorizationUrl = z.string().max(16_384).refine(value => {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x20 || code === 0x7f) return false
+  }
   try {
     const url = new URL(value)
-    return url.origin === 'https://accounts.google.com' && url.pathname === '/o/oauth2/v2/auth' && !url.username && !url.password && !url.hash
+    return url.protocol === 'https:' && !url.username && !url.password && !url.hash
   } catch { return false }
 })
-export const getExternalMcpOAuth = async (f: typeof fetch, c: string, id: string, signal?: AbortSignal) =>
-  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ oauth: GoogleMcpOAuth }), { signal })).oauth
-export const connectExternalMcpOAuth = async (f: typeof fetch, c: string, id: string) =>
-  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth/connect`, z.object({ authorizationUrl: GoogleAuthorizationUrl }), body('POST', {}))).authorizationUrl
+export const getExternalMcpOAuth = async (f: typeof fetch, c: string, id: string, signal?: AbortSignal): Promise<ExternalMcpOAuthStatus> =>
+  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ oauth: ExternalMcpOAuth }), { signal })).oauth
+export const connectExternalMcpOAuth = async (f: typeof fetch, c: string, id: string): Promise<string> =>
+  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth/connect`, z.object({ authorizationUrl: AuthorizationUrl }), body('POST', {}))).authorizationUrl
 export const disconnectExternalMcpOAuth = async (f: typeof fetch, c: string, id: string): Promise<void> => {
   await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ disconnected: z.literal(true) }), body('DELETE', {}))
 }
-export const googleMcpErrorKey = (error: unknown): string => {
+export const externalMcpOAuthErrorKey = (error: unknown): string => {
   if (error instanceof AgentApiError) {
     if (error.status === 401) return 'signInRequired'
     if (error.status === 403 || error.status === 404) return 'accessChanged'
     switch (error.code) {
-      case 'GOOGLE_MCP_NOT_CONFIGURED': return 'notConfigured'
-      case 'GOOGLE_MCP_RECONNECT_REQUIRED': return 'reconnectRequired'
-      case 'GOOGLE_MCP_INVALID_ENDPOINT': return 'invalidEndpoint'
-      case 'GOOGLE_MCP_OAUTH_INVALID': return 'authorizationFailed'
+      case 'EXTERNAL_MCP_OAUTH_NOT_CONFIGURED': return 'notConfigured'
+      case 'EXTERNAL_MCP_RECONNECT_REQUIRED': return 'reconnectRequired'
+      case 'EXTERNAL_MCP_OAUTH_INVALID': return 'authorizationFailed'
+      case 'EXTERNAL_MCP_OAUTH_UNAVAILABLE': return 'registrationUnavailable'
+      case 'EXTERNAL_MCP_OAUTH_DISCOVERY_FAILED': return 'discoveryFailed'
     }
   }
   return 'operationFailed'

@@ -30,14 +30,14 @@
             <h3 id="personal-mcp-editor-title">{{ editingId ? 'Edit personal connection' : 'Add personal connection' }}</h3>
             <v-form id="personal-mcp-form" @submit.prevent="save">
               <v-text-field v-model="displayName" label="Server name" maxlength="100" :disabled="busy || networkBlocked" autocomplete="off" />
-              <v-select v-if="authMode === 'google'" v-model="endpointUrl" :items="GOOGLE_WORKSPACE_MCP_SERVICES" item-title="label" item-value="endpointUrl" :label="t('service')" :disabled="busy || networkBlocked" />
-              <v-text-field v-else v-model="endpointUrl" label="Public HTTPS MCP endpoint" maxlength="2048" hint="Public HTTPS only. Local/private networks, URL credentials and fragments are not allowed. The server validates the destination." persistent-hint :disabled="busy || networkBlocked" autocomplete="off" />
+              <v-text-field v-model="endpointUrl" label="Public HTTPS MCP endpoint" maxlength="2048" hint="Public HTTPS only. Local/private networks, URL credentials and fragments are not allowed. The server validates the destination." persistent-hint :disabled="busy || networkBlocked" autocomplete="off" />
               <v-switch v-model="enabled" label="Enabled for my agent" color="primary" inset :disabled="busy || networkBlocked" />
               <v-select v-model="authMode" :items="authModes" item-title="title" item-value="value" label="Authentication" :disabled="busy || networkBlocked" />
               <v-alert v-if="editingId && !selected" type="warning" variant="tonal" class="mb-4">This server is no longer available. Select another server or create a new configuration.</v-alert>
               <v-text-field v-if="authMode === 'bearer'" v-model="secretValue" type="password" label="Bearer token (write only)" :hint="selected?.secretConfigured ? 'A token is configured. Leave blank to keep it, or enter a replacement.' : 'Enter a token for this server. It will never be returned.'" persistent-hint maxlength="8192" autocomplete="new-password" :disabled="busy || networkBlocked" />
-              <template v-else-if="authMode === 'google'"><p>{{ t('setupHelp') }}</p><ul><li v-for="scope in googleService?.scopes ?? []" :key="scope"><code>{{ scope }}</code></li></ul></template>
-              <p v-else>Unauthenticated mode removes any previously configured credential.</p>
+              <agent-mcp-oauth-settings v-if="authMode === 'oauth'" v-model="oauthDraft" v-model:endpoint-url="endpointUrl" :client-secret-configured="selected?.oauth?.clientSecretConfigured" :disabled="busy || networkBlocked" />
+              <p v-if="authMode === 'none'">Unauthenticated mode removes any previously configured credential.</p>
+              <v-alert v-if="authMode === 'oauth' && !parsed.success && parsed.error.issues.some(issue => issue.path[0] === 'oauth')" type="warning" variant="tonal">{{ t('invalidConfiguration') }}</v-alert>
               <div class="personal-mcp__toolbar"><v-btn color="primary" type="submit" :loading="saving" :disabled="busy || networkBlocked || !valid || !dirty || Boolean(editingId && !selected)">{{ editingId ? 'Save changes' : 'Create server' }}</v-btn><v-btn v-if="selected" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="busy || networkBlocked" @click="removing = selected">Delete server</v-btn></div>
             </v-form>
           </section>
@@ -47,8 +47,8 @@
           <p v-if="!available.length">No enabled external servers are available.</p>
           <div v-for="server in available" :key="server.id" class="personal-mcp__available">
             <div><strong>{{ server.displayName }}</strong><p>{{ server.destinationHost }} · {{ server.scope === 'admin' ? 'Shared · Granted by administrator' : 'Personal · Owner only' }} · Untrusted</p>
-              <agent-google-mcp-connection v-if="server.authMode === 'google' && ownerId" :server="server" :owner-id="ownerId" :csrf-token="csrfToken" :disabled="networkBlocked || dirty" @changed="catalog = null; emit('changed')" />
-              <p v-if="server.authMode === 'google' && dirty">{{ t('saveBeforeConnecting') }}</p>
+              <agent-mcp-oauth-connection v-if="server.authMode === 'oauth' && ownerId" :server="server" :owner-id="ownerId" :csrf-token="csrfToken" :disabled="networkBlocked || dirty" @changed="catalog = null; emit('changed')" />
+              <p v-if="server.authMode === 'oauth' && dirty">{{ t('saveBeforeConnecting') }}</p>
             </div>
             <v-btn variant="tonal" prepend-icon="mdi-radar" :loading="discoveringId === server.id" :disabled="busy || networkBlocked" @click="discover(server)">Discover tools</v-btn>
           </div>
@@ -70,16 +70,18 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { AgentApiError } from '../../helpers/agents-api.ts'
-import { createPersonalExternalMcp, deletePersonalExternalMcp, discoverExternalMcp, googleMcpErrorKey, listAvailableExternalMcp, listPersonalExternalMcp, updatePersonalExternalMcp, type ExternalMcpServerInput, type ExternalMcpServerView } from '../../helpers/agent-control-api.ts'
-import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
+import { createPersonalExternalMcp, deletePersonalExternalMcp, discoverExternalMcp, externalMcpOAuthErrorKey, listAvailableExternalMcp, listPersonalExternalMcp, updatePersonalExternalMcp, type ExternalMcpDiscovery, type ExternalMcpServerInput, type ExternalMcpServerView } from '../../helpers/agent-control-api.ts'
+import { ExternalMcpServerInputSchema } from '../../../shared/agents/external-mcp.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
-import AgentGoogleMcpConnection from './agent-google-mcp-connection.vue'
+import AgentMcpOauthConnection from './agent-mcp-oauth-connection.vue'
+import AgentMcpOauthSettings from './agent-mcp-oauth-settings.vue'
+import { createExternalMcpOAuthDraft, externalMcpOAuthInput } from '../../helpers/external-mcp-oauth-form.ts'
 
 const props = defineProps<{ csrfToken: string; ownerId?: number; networkBlocked?: boolean; connectionRetrying?: boolean }>()
 const emit = defineEmits<{ changed: []; 'retry-connection': [] }>()
 const open = defineModel<boolean>({ required: true })
 const { smAndDown } = useDisplay()
-const t = useTranslate('profile:googleMcp')
+const t = useTranslate('profile:externalMcpOAuth')
 const fetcher = window.fetch.bind(window)
 const servers = shallowRef<ExternalMcpServerView[]>([])
 const available = shallowRef<ExternalMcpServerView[]>([])
@@ -87,10 +89,10 @@ const editingId = ref<string | null>(null)
 const displayName = ref('')
 const endpointUrl = ref('')
 const enabled = ref(false)
-const authMode = ref<'none' | 'bearer' | 'google'>('none')
+const authMode = ref<'none' | 'bearer' | 'oauth'>('none')
 const secretValue = ref('')
-const authModes = computed(() => [{ title: 'None', value: 'none' }, { title: 'Bearer token', value: 'bearer' }, { title: t('authentication'), value: 'google' }])
-const googleService = computed(() => GOOGLE_WORKSPACE_MCP_SERVICES.find(service => service.endpointUrl === endpointUrl.value))
+const oauthDraft = ref(createExternalMcpOAuthDraft())
+const authModes = computed(() => [{ title: 'None', value: 'none' }, { title: 'Bearer token', value: 'bearer' }, { title: t('authentication'), value: 'oauth' }])
 const loading = ref(false)
 const saving = ref(false)
 const accepted = ref(false)
@@ -103,7 +105,7 @@ const availableError = ref('')
 const catalogError = ref('')
 const removing = shallowRef<ExternalMcpServerView | null>(null)
 const discoveringId = ref<string | null>(null)
-const catalog = shallowRef<Awaited<ReturnType<typeof discoverExternalMcp>> | null>(null)
+const catalog = shallowRef<ExternalMcpDiscovery | null>(null)
 const catalogName = ref('')
 const catalogText = computed(() => {
   const remote = catalog.value?.catalog
@@ -122,25 +124,36 @@ let disposed = false
 let controller: AbortController | null = null
 const selected = computed(() => servers.value.find(server => server.id === editingId.value) ?? null)
 const busy = computed(() => loading.value || saving.value || discoveringId.value !== null)
-const snapshot = () => JSON.stringify([displayName.value, endpointUrl.value, enabled.value, authMode.value])
+const snapshot = () => JSON.stringify([displayName.value, endpointUrl.value, enabled.value, authMode.value, oauthDraft.value])
 const baseline = ref(snapshot())
 const dirty = computed(() => snapshot() !== baseline.value || secretValue.value !== '')
+const input = computed<ExternalMcpServerInput>(() => ({
+  displayName: displayName.value.trim(),
+  endpointUrl: endpointUrl.value.trim(),
+  status: enabled.value ? 'enabled' : 'disabled',
+  authMode: authMode.value,
+  ...(authMode.value === 'bearer' && secretValue.value ? { secretValue: secretValue.value } : {}),
+  ...(authMode.value === 'oauth' ? { oauth: externalMcpOAuthInput(oauthDraft.value) } : {})
+}))
+const parsed = computed(() => ExternalMcpServerInputSchema.safeParse(input.value))
 const valid = computed(() => {
-  if (!displayName.value.trim() || displayName.value.trim().length > 100 || /[\u0000-\u001f\u007f]/u.test(displayName.value)) return false
-  try { const url = new URL(endpointUrl.value.trim()); if (url.protocol !== 'https:' || url.username || url.password || url.hash) return false } catch { return false }
-  if (authMode.value === 'google' && !googleService.value) return false
-  if (authMode.value === 'bearer' && !secretValue.value && !(selected.value?.authMode === 'bearer' && selected.value.secretConfigured)) return false
-  return !secretValue.value || /^[\x21-\x7e]{1,8192}$/.test(secretValue.value)
+  if (!parsed.value.success) return false
+  try {
+    const url = new URL(endpointUrl.value.trim())
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash) return false
+  } catch { return false }
+  return authMode.value !== 'bearer' || Boolean(secretValue.value || (selected.value?.authMode === 'bearer' && selected.value.secretConfigured))
 })
 const edit = (server: ExternalMcpServerView | null) => {
-  editingId.value = server?.id ?? null; displayName.value = server?.displayName ?? ''; endpointUrl.value = server?.endpointUrl ?? ''; enabled.value = server?.status === 'enabled'; authMode.value = server?.authMode ?? 'none'; secretValue.value = ''; baseline.value = snapshot(); error.value = ''
+  editingId.value = server?.id ?? null; displayName.value = server?.displayName ?? ''; endpointUrl.value = server?.endpointUrl ?? ''; enabled.value = server?.status === 'enabled'; authMode.value = server?.authMode ?? 'none'; secretValue.value = ''; oauthDraft.value = createExternalMcpOAuthDraft(server?.oauth); baseline.value = snapshot(); error.value = ''
 }
 const navigate = (action: () => void) => { if (busy.value) return; if (dirty.value) { pendingNavigation = action; discardOpen.value = true } else action() }
-const requestClose = () => navigate(() => { secretValue.value = ''; open.value = false })
+const clearDraftSecrets = () => { secretValue.value = ''; oauthDraft.value.clientSecret = '' }
+const requestClose = () => navigate(() => { clearDraftSecrets(); open.value = false })
 const confirmDiscard = () => { discardOpen.value = false; const action = pendingNavigation; pendingNavigation = null; action?.() }
 const current = (epoch: number) => !disposed && epoch === generation
 const fail = (caught: unknown, fallback: string) => {
-  if (caught instanceof AgentApiError && caught.code?.startsWith('GOOGLE_MCP_')) return t(googleMcpErrorKey(caught))
+  if (caught instanceof AgentApiError && (caught.code?.startsWith('EXTERNAL_MCP_OAUTH_') || caught.code === 'EXTERNAL_MCP_RECONNECT_REQUIRED')) return t(externalMcpOAuthErrorKey(caught))
   if (caught instanceof AgentApiError && (caught.status === 401 || caught.status === 403)) { denied.value = true; accepted.value = false; servers.value = []; available.value = available.value.filter(server => server.scope === 'admin'); catalog.value = null; edit(null); removing.value = null; return 'Personal server management is unavailable for your current account or group.' }
   if (caught instanceof AgentApiError && caught.status === 409) return 'This configuration changed. Reload the servers before trying again.'
   return fallback
@@ -165,10 +178,12 @@ const load = async () => {
 const save = async () => {
   if (busy.value || !accepted.value || denied.value || props.networkBlocked || !valid.value || !dirty.value || (editingId.value && !selected.value)) return
   const epoch = generation; const existing = selected.value
-  const input: ExternalMcpServerInput = { displayName: displayName.value.trim(), endpointUrl: endpointUrl.value.trim(), status: enabled.value ? 'enabled' : 'disabled', authMode: authMode.value, ...(authMode.value === 'bearer' && secretValue.value ? { secretValue: secretValue.value } : {}) }
-  saving.value = true; error.value = ''; notice.value = ''; secretValue.value = ''
+  const result = parsed.value
+  if (!result.success) return
+  const write = result.data
+  saving.value = true; error.value = ''; notice.value = ''; clearDraftSecrets()
   try {
-    const server = existing ? await updatePersonalExternalMcp(fetcher, props.csrfToken, existing.id, { ...input, expectedRevision: existing.revision }) : await createPersonalExternalMcp(fetcher, props.csrfToken, input)
+    const server = existing ? await updatePersonalExternalMcp(fetcher, props.csrfToken, existing.id, { ...write, expectedRevision: existing.revision }) : await createPersonalExternalMcp(fetcher, props.csrfToken, write)
     if (!current(epoch)) return
     edit(server); notice.value = existing ? 'Server configuration saved.' : 'Personal server created.'; emit('changed')
   } catch (caught) { if (current(epoch)) { accepted.value = false; error.value = fail(caught, 'Server configuration could not be saved. Reload before retrying. Re-enter any replacement token.'); } }
@@ -188,7 +203,7 @@ const discover = async (server: ExternalMcpServerView) => {
   if (busy.value || props.networkBlocked || !available.value.some(item => item.id === server.id)) return
   const epoch = generation; const abort = new AbortController(); controller = abort; discoveringId.value = server.id; catalog.value = null; catalogError.value = ''; catalogName.value = server.displayName
   try { const result = await discoverExternalMcp(fetcher, props.csrfToken, server.id, abort.signal); if (current(epoch)) catalog.value = result }
-  catch (caught) { if (current(epoch) && !abort.signal.aborted) catalogError.value = server.authMode === 'google' ? t(googleMcpErrorKey(caught)) : 'Catalog discovery failed or access changed. Reload the available servers and try again.' }
+  catch (caught) { if (current(epoch) && !abort.signal.aborted) catalogError.value = server.authMode === 'oauth' ? t(externalMcpOAuthErrorKey(caught)) : 'Catalog discovery failed or access changed. Reload the available servers and try again.' }
   finally { if (current(epoch)) { discoveringId.value = null; controller = null } }
 }
 const reset = () => {
@@ -197,7 +212,7 @@ const reset = () => {
 watch(() => [props.ownerId, props.csrfToken], () => { reset(); if (open.value) void load() })
 watch(() => props.networkBlocked, blocked => { if (blocked) reset(); else if (open.value) void load() })
 watch(open, value => { if (value) void load(); else reset() }, { immediate: true })
-watch(authMode, () => { secretValue.value = '' })
+watch(authMode, () => { secretValue.value = ''; oauthDraft.value = createExternalMcpOAuthDraft() }, { flush: 'sync' })
 onBeforeUnmount(() => { disposed = true; reset() })
 </script>
 

@@ -17,6 +17,7 @@ import { withAgentSourceAuthorization } from '../../agents/source-authorization.
 import { up } from '../../db/migrations/tsepistle-000050-agent-external-mcp.ts'
 
 import { up as addGoogleOAuth } from '../../db/migrations/tsepistle-000063-google-workspace-mcp-oauth.ts'
+import { up as addGenericOAuth } from '../../db/migrations/tsepistle-000064-generic-mcp-oauth.ts'
 import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
 const publicResolver = async () => [{ address: '93.184.216.34', family: 4 }]
 const admin = { id: 1, authVersion: 0 },
@@ -185,6 +186,7 @@ describe('external MCP owner-scoped native clients', () => {
     })
     await up(db)
     await addGoogleOAuth(db)
+    await addGenericOAuth(db)
     await db('users').insert([1, 7, 8, 9].map(id => ({ id, isActive: true, authVersion: 0 })))
     await db('groups').insert([
       { id: 10, permissions: JSON.stringify(['manage:system']) },
@@ -206,12 +208,206 @@ describe('external MCP owner-scoped native clients', () => {
     await Promise.all(leases.splice(0).map(lease => lease.close()))
     await db.destroy()
   })
-  const googleEndpoint = () => ({ ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google' as const, groupIds: [20] })
+  const genericFixture = (options: { registration?: 'manual' | 'metadata' | 'dynamic'; method?: 'none' | 'client_secret_post' | 'client_secret_basic'; discovery?: 'header' | 'post' | 'path' | 'root'; oidc?: boolean; requireIssuer?: boolean; noExpiry?: boolean; noRefresh?: boolean } = {}) => {
+    const endpointUrl = 'https://mcp.vendor.test/api/mcp', issuer = 'https://identity.vendor.test/tenant'
+    const calls: { url: string; headers: Headers; body: string | undefined }[] = []
+    const metadata = {
+      issuer, authorization_endpoint: issuer + '/authorize', token_endpoint: issuer + '/token',
+      code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: [options.method ?? 'none'],
+      authorization_response_iss_parameter_supported: options.requireIssuer ?? true,
+      ...(options.registration === 'metadata' ? { client_id_metadata_document_supported: true } : {}),
+      ...(['metadata', 'dynamic'].includes(options.registration ?? '') ? { registration_endpoint: issuer + '/register' } : {})
+    }
+    const resource = { resource: endpointUrl, authorization_servers: [issuer], scopes_supported: ['vendor.read'] }
+    const tokenResponse = { access_token: 'vendor-access-token', token_type: 'Bearer', scope: 'vendor.read', ...(options.noExpiry ? {} : { expires_in: 3_600 }), ...(options.noRefresh ? {} : { refresh_token: 'vendor-refresh-token' }) }
+    const dependencies = {
+      knex: db, secrets: vault, enabled: () => enabled, resolve: publicResolver, oauth: { siteOrigin: 'https://wiki.example.test' },
+      fetch: async (url: URL, init: Parameters<ExternalMcpFetchImplementation>[1]) => {
+        const headers = new Headers(init.headers)
+        calls.push({ url: url.href, headers, body: init.body == null ? undefined : String(init.body) })
+        if (url.href === endpointUrl) {
+          if (headers.has('authorization')) return protocol.fetch(url, init)
+          if (options.discovery === 'post' && init.method === 'GET') return new Response(null, { status: 405 })
+          return new Response(null, { status: 401, headers: ['path', 'root'].includes(options.discovery ?? '') ? {} : { 'www-authenticate': 'Bearer resource_metadata="https://mcp.vendor.test/protected-metadata"' } })
+        }
+        if (url.href === 'https://mcp.vendor.test/protected-metadata' ||
+          (options.discovery === 'path' && url.href === 'https://mcp.vendor.test/.well-known/oauth-protected-resource/api/mcp') ||
+          (options.discovery === 'root' && url.href === 'https://mcp.vendor.test/.well-known/oauth-protected-resource')) return Response.json(resource)
+        if (url.href === 'https://identity.vendor.test/.well-known/oauth-authorization-server/tenant' && !options.oidc) return Response.json(metadata)
+        if (url.href === issuer + '/.well-known/openid-configuration' && options.oidc) return Response.json(metadata)
+        if (url.href === issuer + '/register') return Response.json({ client_id: 'dynamic-client', ...(options.method && options.method !== 'none' ? { client_secret: 'dynamic-secret' } : {}), token_endpoint_auth_method: options.method ?? 'none' })
+        if (url.href === issuer + '/token') return Response.json(tokenResponse)
+        return new Response(null, { status: 404 })
+      }
+    }
+    service = new ExternalMcpService(dependencies)
+    const configuration = { ...input(), endpointUrl, authMode: 'oauth' as const, oauth: {
+      registrationMode: options.registration === 'manual' || options.registration === undefined ? 'preregistered' as const : 'automatic' as const,
+      ...(options.registration === 'manual' || options.registration === undefined ? { issuer, clientId: 'manual-client', tokenEndpointAuthMethod: options.method ?? 'none', ...(options.method && options.method !== 'none' ? { clientSecretValue: 'manual-secret' } : {}) } : {})
+    }, groupIds: [20] }
+    return { calls, issuer, metadata, resource, tokenResponse, configuration, restart: () => { service = new ExternalMcpService(dependencies) } }
+  }
+
+  it.each(['none', 'client_secret_post', 'client_secret_basic'] as const)('runs non-Google %s clients through PKCE, durable callback and native MCP', async method => {
+    const fixture = genericFixture({ method })
+    fixture.metadata.client_id_metadata_document_supported = true
+    fixture.metadata.registration_endpoint = fixture.issuer + '/register'
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    expect(endpoint.oauth?.clientSecretConfigured).toBe(method !== 'none')
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'generic-browser')).authorizationUrl)
+    expect(authorization.origin + authorization.pathname).toBe(fixture.issuer + '/authorize')
+    expect(authorization.searchParams.get('resource')).toBe(endpoint.endpointUrl)
+    fixture.restart()
+    const callback = { state: authorization.searchParams.get('state')!, code: 'vendor-code', iss: fixture.issuer, sessionId: 'generic-browser', callbackPath: '/agents/oauth/callback' }
+    expect(await service.oauthCallback(owner, { ...callback, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
+    expect(await service.oauthCallback(owner, callback)).toBe('connected')
+    const exchange = fixture.calls.find(call => call.url.endsWith('/token'))!
+    const parameters = new URLSearchParams(exchange.body)
+    expect(parameters.get('resource')).toBe(endpoint.endpointUrl)
+    expect(parameters.get('code_verifier')).toMatch(/^[A-Za-z0-9_-]{64}$/u)
+    expect(parameters.get('client_secret')).toBe(method === 'client_secret_post' ? 'manual-secret' : null)
+    expect(exchange.headers.get('authorization')).toBe(method === 'client_secret_basic' ? 'Basic ' + Buffer.from('manual-client:manual-secret').toString('base64') : null)
+    expect(fixture.calls.filter(call => !call.url.endsWith('/token')).every(call => !call.headers.has('authorization') && !call.body?.includes('manual-secret'))).toBe(true)
+    expect((await service.discoverForUser(owner, endpoint.id)).catalog.tools[0]?.name).toBe('web_search')
+    expect(protocol.calls.every(call => call.headers.get('authorization') === 'Bearer vendor-access-token')).toBe(true)
+  })
+
+  it('preserves the advertised root resource audience in authorization and token requests', async () => {
+    const fixture = genericFixture()
+    fixture.resource.resource = 'https://mcp.vendor.test'
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'root-resource')).authorizationUrl)
+    expect(authorization.searchParams.get('resource')).toBe('https://mcp.vendor.test')
+    expect(await service.oauthCallback(owner, {
+      state: authorization.searchParams.get('state')!, code: 'vendor-code', iss: fixture.issuer,
+      sessionId: 'root-resource', callbackPath: '/agents/oauth/callback'
+    })).toBe('connected')
+    const exchange = fixture.calls.find(call => call.url.endsWith('/token'))!
+    expect(new URLSearchParams(exchange.body).get('resource')).toBe('https://mcp.vendor.test')
+  })
+
+  it.each([
+    { registration: 'metadata' as const, discovery: 'post' as const, oidc: false },
+    { registration: 'dynamic' as const, discovery: 'path' as const, oidc: false },
+    { registration: 'dynamic' as const, discovery: 'root' as const, oidc: true }
+  ])('discovers and persists $registration clients using $discovery protected-resource metadata', async options => {
+    const fixture = genericFixture(options)
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    expect(await service.oauthStatus(owner, endpoint.id)).toMatchObject({ configured: true, connected: false })
+    expect(await db('agentExternalMcpOAuthRegistrations')).toEqual([])
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'automatic')).authorizationUrl)
+    if (options.registration === 'metadata') expect(authorization.searchParams.get('client_id')).toBe('https://wiki.example.test/agents/oauth/client-metadata')
+    else {
+      expect(authorization.searchParams.get('client_id')).toBe('dynamic-client')
+      const registration = JSON.parse(fixture.calls.find(call => call.url.endsWith('/register'))!.body!)
+      expect(registration).toMatchObject({ application_type: 'web', redirect_uris: ['https://wiki.example.test/agents/oauth/callback'], token_endpoint_auth_method: 'none' })
+    }
+    fixture.restart()
+    expect(await service.oauthCallback(owner, { state: authorization.searchParams.get('state')!, code: 'automatic-code', iss: fixture.issuer, sessionId: 'automatic', callbackPath: '/agents/oauth/callback' })).toBe('connected')
+    await service.connectOAuth({ id: 9, authVersion: 0 }, endpoint.id, 'second-person')
+    expect(fixture.calls.filter(call => call.url.endsWith('/register'))).toHaveLength(options.registration === 'dynamic' ? 1 : 0)
+    expect((await service.discoverForUser(owner, endpoint.id)).catalog.tools).not.toHaveLength(0)
+  })
+
+  it.each([true, false])('enforces exact response issuer binding when issuer metadata flag is %s', async requireIssuer => {
+    const fixture = genericFixture({ requireIssuer })
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'issuer-browser')).authorizationUrl)
+    const callback = { state: authorization.searchParams.get('state')!, code: 'issuer-code', sessionId: 'issuer-browser', callbackPath: '/agents/oauth/callback' }
+    expect(await service.oauthCallback(owner, { ...callback, iss: fixture.issuer + '/' })).toBe('error')
+    expect(await service.oauthCallback(owner, { ...callback, error: 'access_denied', iss: 'https://attacker.test' })).toBe('error')
+    if (requireIssuer) {
+      expect(await service.oauthCallback(owner, callback)).toBe('error')
+      expect(await service.oauthCallback(owner, { ...callback, iss: fixture.issuer })).toBe('connected')
+    } else expect(await service.oauthCallback(owner, callback)).toBe('connected')
+  })
+
+  it('accepts unknown token expiry without inventing a lifetime or requiring a refresh token', async () => {
+    const fixture = genericFixture({ noExpiry: true, noRefresh: true })
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'unknown-expiry')).authorizationUrl)
+    expect(await service.oauthCallback(owner, { state: authorization.searchParams.get('state')!, code: 'valid-code', iss: fixture.issuer, sessionId: 'unknown-expiry', callbackPath: '/agents/oauth/callback' })).toBe('connected')
+    fixture.restart()
+    expect(await service.oauthStatus(owner, endpoint.id)).toMatchObject({ connected: true })
+    await service.discoverForUser(owner, endpoint.id)
+    expect(fixture.calls.filter(call => call.url.endsWith('/token'))).toHaveLength(1)
+  })
+
+  it('never redirects a saved client secret to changed discovered token endpoints', async () => {
+    const fixture = genericFixture({ method: 'client_secret_post' })
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    await service.connectOAuth(owner, endpoint.id, 'pinned-client')
+    const { groupIds: _groups, ...edit } = fixture.configuration
+    const { clientSecretValue: _secret, ...retainedClient } = edit.oauth
+    const renamed = await service.updateAdmin(admin, endpoint.id, endpoint.revision, { ...edit, displayName: 'Renamed without replacing credentials', oauth: retainedClient })
+    await service.setAdminGrants(admin, endpoint.id, renamed.revision, { groupIds: [20] })
+    fixture.metadata.token_endpoint = 'https://attacker.test/token'
+    await expect(service.connectOAuth(owner, endpoint.id, 'new-consent')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_OAUTH_DISCOVERY_FAILED' })
+    expect(fixture.calls.some(call => call.url.startsWith('https://attacker.test'))).toBe(false)
+    expect(fixture.calls.every(call => !call.body?.includes('manual-secret'))).toBe(true)
+  })
+
+  it('allows generic personal OAuth configuration only after live group policy approval', async () => {
+    const fixture = genericFixture()
+    const { groupIds: _groups, ...personal } = fixture.configuration
+    await expect(service.createPersonal(owner, personal)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 0)
+    const endpoint = await service.createPersonal(owner, personal)
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'personal')).authorizationUrl)
+    expect(await service.oauthCallback(owner, { state: authorization.searchParams.get('state')!, code: 'personal-code', iss: fixture.issuer, sessionId: 'personal', callbackPath: '/agents/oauth/callback' })).toBe('connected')
+    expect((await service.discoverForUser(owner, endpoint.id)).catalog.tools).not.toHaveLength(0)
+  })
+
+  it.each(['authorization', 'token', 'issuer', 'resource'] as const)('rejects unsafe or mismatched discovered %s before releasing credentials', async destination => {
+    const fixture = genericFixture({ method: 'client_secret_post' })
+    if (destination === 'authorization') fixture.metadata.authorization_endpoint = 'https://127.0.0.1/authorize'
+    if (destination === 'token') fixture.metadata.token_endpoint = 'https://user:password@identity.vendor.test/token'
+    if (destination === 'issuer') fixture.metadata.issuer = fixture.issuer + '/'
+    if (destination === 'resource') fixture.resource.resource = 'https://other.vendor.test/mcp'
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    await expect(service.connectOAuth(owner, endpoint.id, 'unsafe-destination')).rejects.toMatchObject({ code: expect.stringMatching(/^EXTERNAL_MCP_(?:EGRESS_DENIED|OAUTH_DISCOVERY_FAILED)$/u) })
+    expect(fixture.calls.every(call => !call.headers.has('authorization') && !call.body?.includes('manual-secret'))).toBe(true)
+    expect(await db('agentExternalMcpOAuthPending')).toEqual([])
+  })
+
+  it('binds refresh to the original resource and requires reconnect when granted scopes shrink', async () => {
+    const fixture = genericFixture()
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'scope-browser')).authorizationUrl)
+    expect(await service.oauthCallback(owner, { state: authorization.searchParams.get('state')!, code: 'scope-code', iss: fixture.issuer, sessionId: 'scope-browser', callbackPath: '/agents/oauth/callback' })).toBe('connected')
+    await db.transaction(async tx => {
+      const grant = await tx('agentExternalMcpOAuthGrants').where('serverId', endpoint.id).first()
+      const token = JSON.parse((await vault.get(grant.secretReference, tx))!)
+      const secretReference = await vault.store(JSON.stringify({ ...token, expiresAt: 0 }), owner.id, tx)
+      await tx('agentExternalMcpOAuthGrants').where('id', grant.id).update({ secretReference })
+      await vault.delete(grant.secretReference, tx)
+    })
+    fixture.tokenResponse.scope = 'less'
+    await expect(service.discoverForUser(owner, endpoint.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
+    const exchange = fixture.calls.filter(call => call.url.endsWith('/token')).at(-1)!
+    expect(new URLSearchParams(exchange.body).get('resource')).toBe(endpoint.endpointUrl)
+    expect(new URLSearchParams(exchange.body).get('grant_type')).toBe('refresh_token')
+    expect(await service.oauthStatus(owner, endpoint.id)).toMatchObject({ connected: false, reconnectRequired: true })
+  })
+
+  it('keeps ordinary none/bearer MCP available on HTTP installations while OAuth reports not configured', async () => {
+    const fixture = genericFixture()
+    service = new ExternalMcpService({ knex: db, secrets: vault, enabled: () => true, resolve: publicResolver, fetch: protocol.fetch, oauth: { siteOrigin: 'http://wiki.example.test' } })
+    for (const authMode of ['none', 'bearer'] as const) {
+      const endpoint = await service.createAdmin(admin, { ...input(), authMode, ...(authMode === 'bearer' ? { secretValue: 'http-install-bearer' } : {}), groupIds: [20] })
+      expect((await service.discoverForUser(owner, endpoint.id)).catalog.tools).not.toHaveLength(0)
+    }
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    expect(await service.oauthStatus(owner, endpoint.id)).toMatchObject({ configured: false, connected: false })
+    await expect(service.connectOAuth(owner, endpoint.id, 'http-oauth')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_OAUTH_NOT_CONFIGURED' })
+  })
+
+  const googleEndpoint = () => ({ ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'oauth' as const, oauth: { preset: 'google-workspace' as const, registrationMode: 'preregistered' as const }, groupIds: [20] })
   const googleFixture = (options: { refreshError?: boolean; expiresIn?: number } = {}) => {
     const oauthCalls: { url: string; body: URLSearchParams }[] = []
     service = new ExternalMcpService({
       knex: db, secrets: vault, enabled: () => enabled, resolve: publicResolver,
-      googleOAuth: { clientId: 'fixture.apps.googleusercontent.com', clientSecret: 'server-only-client-secret', siteOrigin: 'https://wiki.example.test' },
+      oauth: { siteOrigin: 'https://wiki.example.test', googleWorkspace: { clientId: 'fixture.apps.googleusercontent.com', clientSecret: 'server-only-client-secret' } },
       fetch: async (url, init) => {
         if (url.hostname !== 'oauth2.googleapis.com') return protocol.fetch(url, init)
         const body = new URLSearchParams(String(init.body))
@@ -226,18 +422,41 @@ describe('external MCP owner-scoped native clients', () => {
     return oauthCalls
   }
   const finishGoogleConsent = async (serverId: string, sessionId = 'browser-session') => {
-    const { authorizationUrl } = await service.connectGoogle(owner, serverId, sessionId)
+    const { authorizationUrl } = await service.connectOAuth(owner, serverId, sessionId)
     const url = new URL(authorizationUrl)
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth')
     expect(url.searchParams.get('redirect_uri')).toBe('https://wiki.example.test/agents/oauth/google/callback')
     const state = url.searchParams.get('state')!
     const pending = await db('agentExternalMcpOAuthPending').first('secretReference')
-    const verifier = (await vault.get(pending.secretReference))!
+    const { verifier } = JSON.parse((await vault.get(pending.secretReference))!) as { verifier: string }
     expect(url.searchParams.get('code_challenge')).toBe(createHash('sha256').update(verifier).digest('base64url'))
     expect(url.searchParams.get('code_challenge_method')).toBe('S256')
-    expect(await service.googleCallback(owner, { state, code: 'controlled-code', sessionId })).toBe('connected')
+    expect(await service.oauthCallback(owner, { ...{ state, code: 'controlled-code', sessionId }, callbackPath: '/agents/oauth/google/callback' })).toBe('connected')
     return state
   }
+
+  it('keeps generic clients usable without Google credentials while the optional preset safely reports unavailable', async () => {
+    const fixture = genericFixture()
+    const preset = await service.createAdmin(admin, googleEndpoint())
+    expect(await service.oauthStatus(owner, preset.id)).toMatchObject({ configured: false, connected: false })
+    await expect(service.connectOAuth(owner, preset.id, 'missing-preset')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_OAUTH_NOT_CONFIGURED' })
+    expect(fixture.calls).toHaveLength(0)
+    const generic = await service.createAdmin(admin, fixture.configuration)
+    expect(new URL((await service.connectOAuth(owner, generic.id, 'generic-without-google')).authorizationUrl).origin).toBe('https://identity.vendor.test')
+  })
+
+  it('removes confidential client secrets rather than retaining them when switching to automatic or non-OAuth authentication', async () => {
+    const fixture = genericFixture({ method: 'client_secret_post' })
+    const endpoint = await service.createAdmin(admin, fixture.configuration)
+    await service.connectOAuth(owner, endpoint.id, 'confidential')
+    const { groupIds: _groups, ...edit } = fixture.configuration
+    const automatic = await service.updateAdmin(admin, endpoint.id, endpoint.revision, { ...edit, oauth: { registrationMode: 'automatic' } })
+    expect(automatic.oauth?.clientSecretConfigured).toBe(false)
+    expect(await db('agentExternalMcpOAuthRegistrations')).toEqual([])
+    expect(await db('agentProviderSecrets')).toEqual([])
+    const ordinary = await service.updateAdmin(admin, endpoint.id, automatic.revision, { ...input(), endpointUrl: endpoint.endpointUrl, authMode: 'none' })
+    expect(ordinary.oauth).toBeUndefined()
+  })
 
   it('keeps Google credentials per user, skips disconnected automatic clients, and exchanges PKCE through the consumer', async () => {
     const calls = googleFixture()
@@ -246,11 +465,11 @@ describe('external MCP owner-scoped native clients', () => {
     const unconnected = await service.openForUser(owner.id)
     leases.push(unconnected)
     expect(unconnected.clients).toHaveLength(0)
-    await expect(service.discoverForUser(owner, server.id)).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+    await expect(service.discoverForUser(owner, server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
     const state = await finishGoogleConsent(server.id)
     expect(calls).toHaveLength(1)
     expect(calls[0]!.body.get('code_verifier')).toMatch(/^[A-Za-z0-9_-]{64}$/u)
-    expect(await service.googleCallback(owner, { state, code: 'replay', sessionId: 'browser-session' })).toBe('error')
+    expect(await service.oauthCallback(owner, { ...{ state, code: 'replay', sessionId: 'browser-session' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
     expect(calls).toHaveLength(1)
     expect(await service.oauthStatus(owner, server.id)).toMatchObject({ connected: true, configured: true, reconnectRequired: false })
     expect(await service.oauthStatus({ id: 9, authVersion: 0 }, server.id)).toMatchObject({ connected: false })
@@ -265,14 +484,14 @@ describe('external MCP owner-scoped native clients', () => {
   it('rejects browser/user mixup and expired state without consuming the legitimate consent or exchanging a code', async () => {
     const calls = googleFixture()
     const server = await service.createAdmin(admin, googleEndpoint())
-    const url = new URL((await service.connectGoogle(owner, server.id, 'initiator-session')).authorizationUrl)
+    const url = new URL((await service.connectOAuth(owner, server.id, 'initiator-session')).authorizationUrl)
     const state = url.searchParams.get('state')!
-    expect(await service.googleCallback(owner, { state, code: 'code', sessionId: 'different-browser' })).toBe('error')
-    expect(await service.googleCallback({ id: 9, authVersion: 0 }, { state, code: 'code', sessionId: 'initiator-session' })).toBe('error')
+    expect(await service.oauthCallback(owner, { ...{ state, code: 'code', sessionId: 'different-browser' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
+    expect(await service.oauthCallback({ id: 9, authVersion: 0 }, { ...{ state, code: 'code', sessionId: 'initiator-session' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
     await db('agentExternalMcpOAuthPending').update({ expiresAt: new Date(Date.now() - 1_000) })
-    expect(await service.googleCallback(owner, { state, code: 'code', sessionId: 'initiator-session' })).toBe('error')
+    expect(await service.oauthCallback(owner, { ...{ state, code: 'code', sessionId: 'initiator-session' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
     expect(await db('agentExternalMcpOAuthPending')).toEqual([])
-    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).toEqual([])
     expect(calls).toHaveLength(0)
   })
 
@@ -286,13 +505,13 @@ describe('external MCP owner-scoped native clients', () => {
     leases.push(lease)
     await lease.inspectCatalog(server.id)
     const before = protocol.calls.length
-    await service.disconnectGoogle(owner, server.id)
+    await service.disconnectOAuth(owner, server.id)
     expect(calls).toHaveLength(2)
     expect(await service.oauthStatus(owner, secondEndpoint.id)).toMatchObject({ connected: true })
-    expect(await db('agentProviderSecrets')).toHaveLength(1)
-    await expect(lease.clients[0]!.callTool('web_search', {})).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).toHaveLength(1)
+    await expect(lease.clients[0]!.callTool('web_search', {})).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
     expect(protocol.calls).toHaveLength(before)
-    expect(await service.googleCallback(owner, { state, code: 'late-code', sessionId: 'browser-session' })).toBe('error')
+    expect(await service.oauthCallback(owner, { ...{ state, code: 'late-code', sessionId: 'browser-session' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
   })
 
   it('refreshes before native dispatch without replaying tools and removes invalid Google grants', async () => {
@@ -305,8 +524,8 @@ describe('external MCP owner-scoped native clients', () => {
     expect(calls.filter(call => call.body.get('grant_type') === 'refresh_token').length).toBeGreaterThan(0)
     expect(protocol.calls.every(call => call.headers.get('authorization') === 'Bearer refreshed-google-token')).toBe(true)
     googleFixture({ refreshError: true })
-    await expect(service.discoverForUser(owner, server.id)).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
-    expect(await db('agentProviderSecrets')).toEqual([])
+    await expect(service.discoverForUser(owner, server.id)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).toEqual([])
     expect(await service.oauthStatus(owner, server.id)).toMatchObject({ connected: false, reconnectRequired: true })
   })
 
@@ -314,12 +533,12 @@ describe('external MCP owner-scoped native clients', () => {
     googleFixture()
     const server = await service.createAdmin(admin, googleEndpoint())
     await finishGoogleConsent(server.id)
-    const pending = new URL((await service.connectGoogle({ id: 9, authVersion: 0 }, server.id, 'other-browser')).authorizationUrl).searchParams.get('state')!
+    const pending = new URL((await service.connectOAuth({ id: 9, authVersion: 0 }, server.id, 'other-browser')).authorizationUrl).searchParams.get('state')!
     await service.setAdminGrants(admin, server.id, server.revision, { groupIds: [20] })
-    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentProviderSecrets').whereIn('createdBy', [owner.id, 9])).toEqual([])
     expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
-    expect(await service.googleCallback({ id: 9, authVersion: 0 }, { state: pending, code: 'late', sessionId: 'other-browser' })).toBe('error')
-    await expect(service.createAdmin(admin, { ...googleEndpoint(), endpointUrl: 'https://gmailmcp.googleapis.com.evil.test/mcp/v1' })).rejects.toMatchObject({ code: 'GOOGLE_MCP_INVALID_ENDPOINT' })
+    expect(await service.oauthCallback({ id: 9, authVersion: 0 }, { ...{ state: pending, code: 'late', sessionId: 'other-browser' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
+    await expect(service.createAdmin(admin, { ...googleEndpoint(), endpointUrl: 'https://gmailmcp.googleapis.com.evil.test/mcp/v1' })).rejects.toMatchObject({ code: 'INVALID_EXTERNAL_MCP_CONFIGURATION' })
     await expect(service.createAdmin(admin, { ...googleEndpoint(), secretValue: 'must-not-be-accepted' })).rejects.toMatchObject({ code: 'INVALID_EXTERNAL_MCP_CREDENTIAL' })
   })
   it('fails Google MCP authentication without replaying side effects or retaining rejected credentials', async () => {
@@ -334,17 +553,18 @@ describe('external MCP owner-scoped native clients', () => {
       sideEffects++
       return Response.json({ error: 'invalid_token' }, { status: 401 })
     } }
-    await expect(lease.clients[0]!.callTool('web_search', { query: 'must-not-repeat' })).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+    await expect(lease.clients[0]!.callTool('web_search', { query: 'must-not-repeat' })).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
     expect(sideEffects).toBe(1)
     expect(await service.oauthStatus(owner, server.id)).toMatchObject({ connected: false, reconnectRequired: true })
-    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).toEqual([])
   })
   it.each(['redirect', 'oversized', 'private-dns'] as const)('bounds the actual Google %s exchange and consumes state without following attacker destinations', async failure => {
     let calls = 0
+    let privateDns = false
     service = new ExternalMcpService({
       knex: db, secrets: vault, enabled: () => true,
-      googleOAuth: { clientId: 'test.apps.googleusercontent.com', clientSecret: 'secret', siteOrigin: 'https://wiki.example.test' },
-      resolve: failure === 'private-dns' ? async () => [{ address: '127.0.0.1', family: 4 }] : publicResolver,
+      oauth: { siteOrigin: 'https://wiki.example.test', googleWorkspace: { clientId: 'test.apps.googleusercontent.com', clientSecret: 'secret' } },
+      resolve: async () => privateDns ? [{ address: '127.0.0.1', family: 4 }] : publicResolver(),
       fetch: async (url, init) => {
         calls++
         expect(url.href).toBe('https://oauth2.googleapis.com/token')
@@ -353,27 +573,28 @@ describe('external MCP owner-scoped native clients', () => {
       }
     })
     const endpoint = await service.createAdmin(admin, googleEndpoint())
-    const state = new URL((await service.connectGoogle(owner, endpoint.id, 'browser')).authorizationUrl).searchParams.get('state')!
-    expect(await service.googleCallback(owner, { state, code: 'code', sessionId: 'browser' })).toBe('error')
-    expect(await service.googleCallback(owner, { state, code: 'code-again', sessionId: 'browser' })).toBe('error')
+    const state = new URL((await service.connectOAuth(owner, endpoint.id, 'browser')).authorizationUrl).searchParams.get('state')!
+    privateDns = failure === 'private-dns'
+    expect(await service.oauthCallback(owner, { ...{ state, code: 'code', sessionId: 'browser' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
+    expect(await service.oauthCallback(owner, { ...{ state, code: 'code-again', sessionId: 'browser' }, callbackPath: '/agents/oauth/google/callback' })).toBe('error')
     expect(calls).toBe(failure === 'private-dns' ? 0 : 1)
-    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).toEqual([])
     expect(await db('agentExternalMcpOAuthPending')).toEqual([])
   })
   it('cleans personal OAuth credentials and pending state on endpoint edits, policy revocation and endpoint deletion', async () => {
     googleFixture()
     await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 0)
-    const input = { displayName: 'Personal Gmail', endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google' as const, status: 'enabled' as const }
+    const { groupIds: _groups, ...input } = { ...googleEndpoint(), displayName: 'Personal Gmail' }
     const endpoint = await service.createPersonal(owner, input)
     await finishGoogleConsent(endpoint.id)
     const updated = await service.updatePersonal(owner, endpoint.id, 1, { ...input, displayName: 'Renamed Gmail' })
-    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
     await finishGoogleConsent(endpoint.id)
     await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: false }, 1)
     expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
-    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentProviderSecrets')).toHaveLength(1)
     await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 2)
-    await service.connectGoogle(owner, endpoint.id, 'browser')
+    await service.connectOAuth(owner, endpoint.id, 'browser')
     await service.deletePersonal(owner, endpoint.id, updated.revision)
     expect(await db('agentExternalMcpOAuthPending')).toEqual([])
     expect(await db('agentProviderSecrets')).toEqual([])

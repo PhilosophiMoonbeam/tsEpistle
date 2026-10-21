@@ -90,7 +90,7 @@ import {
 } from '../agents/repository.ts'
 import { streamOwnedAgentEvents } from '../agents/sse.ts'
 import createAgentControls, { type AgentControlServices } from './agent-controls.ts'
-import { GOOGLE_WORKSPACE_CALLBACK_PATH, GOOGLE_WORKSPACE_RETURN_PATH } from '../agents/google-workspace-oauth.ts'
+import { EXTERNAL_MCP_OAUTH_CALLBACK_PATH, GOOGLE_WORKSPACE_CALLBACK_PATH, EXTERNAL_MCP_OAUTH_RETURN_PATH, EXTERNAL_MCP_OAUTH_CLIENT_METADATA_PATH } from '../agents/external-mcp-oauth.ts'
 
 interface AgentHostWiki extends AgentControlServices {
   readonly auth: {
@@ -539,28 +539,33 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     return projectAgentGoal(goal, latestRun?.id ?? null)
   }
 
-  // Top-level Google navigation is intentionally outside same-origin write/CSRF admission.
+  // Top-level OAuth navigation is outside same-origin write/CSRF admission.
   // Consent remains bound to both the authenticated Wiki identity and initiating browser session.
-  router.get(GOOGLE_WORKSPACE_CALLBACK_PATH, wiki.auth.authenticate.bind(wiki.auth), async (req, res) => {
+  router.get(EXTERNAL_MCP_OAUTH_CLIENT_METADATA_PATH, (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=300')
+    if (!wiki.externalMcp) return res.sendStatus(503)
+    return res.json(wiki.externalMcp.oauthClientMetadata())
+  })
+  router.get([EXTERNAL_MCP_OAUTH_CALLBACK_PATH, GOOGLE_WORKSPACE_CALLBACK_PATH], wiki.auth.authenticate.bind(wiki.auth), async (req, res) => {
     res.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' })
     let status: 'connected' | 'denied' | 'error' = 'error'
     try {
       const query = z.object({
         state: z.string().max(128), code: z.string().max(8_192).optional(), error: z.string().max(128).optional(),
-        iss: z.string().max(256).optional()
+        iss: z.string().max(2_048).optional()
       }).parse(req.query)
       if (wiki.externalMcp && req.sessionID && req.session && req.user && req.authContext?.kind === 'user' && req.user.id === req.authContext.userId) {
         const version: unknown = Reflect.get(req.user, 'authVersion')
         if (typeof version === 'number' && Number.isSafeInteger(version) && version >= 0)
-          status = await wiki.externalMcp.googleCallback({ id: req.user.id, authVersion: version }, {
-            state: query.state, sessionId: req.sessionID,
+          status = await wiki.externalMcp.oauthCallback({ id: req.user.id, authVersion: version }, {
+            state: query.state, sessionId: req.sessionID, callbackPath: req.path,
             ...(query.code === undefined ? {} : { code: query.code }),
             ...(query.error === undefined ? {} : { error: query.error }),
             ...(query.iss === undefined ? {} : { iss: query.iss })
           })
       }
     } catch { /* Never expose provider errors, callback parameters, or credentials. */ }
-    return res.redirect(303, `${GOOGLE_WORKSPACE_RETURN_PATH}?googleOAuth=${status}#google-workspace-connections`)
+    return res.redirect(303, `${EXTERNAL_MCP_OAUTH_RETURN_PATH}?mcpOAuth=${status}#external-mcp-connections`)
   })
 
   router.use(apiPrefix, wiki.auth.authenticate.bind(wiki.auth), (req, res, next) => {

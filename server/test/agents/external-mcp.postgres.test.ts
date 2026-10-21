@@ -7,6 +7,7 @@ import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { up } from '../../db/migrations/tsepistle-000050-agent-external-mcp.ts'
 
 import { up as addGoogleOAuth } from '../../db/migrations/tsepistle-000063-google-workspace-mcp-oauth.ts'
+import { up as addGenericOAuth } from '../../db/migrations/tsepistle-000064-generic-mcp-oauth.ts'
 import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
 import { up as addSecrets } from '../../db/migrations/2.5.141.ts'
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
@@ -31,7 +32,7 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
   let refreshStarted: PromiseWithResolvers<void> | undefined
   let refreshReleased: PromiseWithResolvers<void> | undefined
   const protocol: ExternalMcpFetchImplementation = async (url, init) => {
-    if (url.hostname === 'oauth2.googleapis.com') {
+    if (url.hostname === 'oauth2.googleapis.com' || url.hostname === 'identity.vendor.test') {
       const body = new URLSearchParams(String(init.body))
       expect(url.pathname).toBe('/token')
       if (body.get('grant_type') === 'authorization_code') authorizationExchanges++
@@ -41,7 +42,7 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
         await refreshReleased?.promise
       }
       return Response.json({ access_token: `controlled-access-${refreshCalls}`, refresh_token: 'controlled-refresh', token_type: 'Bearer', expires_in: 3_600,
-        scope: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.scopes.join(' ') })
+        scope: url.hostname === 'identity.vendor.test' ? 'read' : GOOGLE_WORKSPACE_MCP_SERVICES[0]!.scopes.join(' ') })
     }
     networkCalls++
     const message = JSON.parse(String(init.body)) as { method: string; id: string }
@@ -60,7 +61,7 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
     enabled: () => true,
     resolve: async () => [{ address: '93.184.216.34', family: 4 }],
     fetch: protocol,
-    googleOAuth: { clientId: 'test.apps.googleusercontent.com', clientSecret: 'fixture-secret', siteOrigin: 'https://wiki.example.test' }
+    oauth: { siteOrigin: 'https://wiki.example.test', googleWorkspace: { clientId: 'test.apps.googleusercontent.com', clientSecret: 'fixture-secret' } }
   })
 
   beforeAll(async () => {
@@ -88,6 +89,7 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
     await addSecrets(db)
     await up(db)
     await addGoogleOAuth(db)
+    await addGenericOAuth(db)
   })
   beforeEach(async () => {
     await db('agentExternalMcpGrants').delete()
@@ -125,13 +127,96 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
       await adminDb.destroy()
     }
   })
-  it('serializes refresh across service instances and prevents disconnect racing refresh from resurrecting stale leases', async () => {
+  it('upgrades the real legacy schema without discarding encrypted Google grants or existing none/bearer endpoints', async () => {
+    const legacySchema = `legacy_oauth_${randomUUID().replaceAll('-', '')}`
+    await db.raw(`CREATE SCHEMA "${legacySchema}"`)
+    const legacy = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [legacySchema], pool: { min: 0, max: 2 } })
+    try {
+      await legacy.schema.createTable('users', table => { table.integer('id').primary(); table.boolean('isActive').notNullable(); table.integer('authVersion').notNullable() })
+      await legacy.schema.createTable('groups', table => { table.integer('id').primary(); table.jsonb('permissions').notNullable() })
+      await legacy.schema.createTable('userGroups', table => { table.integer('userId').references('id').inTable('users').onDelete('CASCADE'); table.integer('groupId').references('id').inTable('groups').onDelete('CASCADE') })
+      await addSecrets(legacy)
+      await up(legacy)
+      await addGoogleOAuth(legacy)
+      await legacy('users').insert([{ id: 1, isActive: true, authVersion: 0 }, { id: 7, isActive: true, authVersion: 0 }])
+      await legacy('groups').insert([{ id: 10, permissions: JSON.stringify(['manage:system']) }, { id: 20, permissions: JSON.stringify(['use:agents']) }])
+      await legacy('userGroups').insert([{ userId: 1, groupId: 10 }, { userId: 7, groupId: 20 }])
+      const legacyVault = new DatabaseAgentSecretRegistry(legacy, keyring)
+      const grantId = randomUUID(), googleId = randomUUID(), bearerId = randomUUID(), noneId = randomUUID()
+      const saved = await legacy.transaction(async tx => {
+        const bearer = await legacyVault.store('legacy-bearer', 7, tx)
+        const token = await legacyVault.store(JSON.stringify({ accessToken: 'legacy-google-access', refreshToken: 'legacy-google-refresh', expiresAt: 0, scopes: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.scopes }), 7, tx)
+        const pending = await legacyVault.store('legacy-pkce-verifier', 7, tx)
+        const base = { displayName: 'Existing endpoint', scope: 'admin', ownerId: null, status: 'enabled', revision: 1, createdBy: 1, updatedBy: 1, createdAt: new Date(), updatedAt: new Date() }
+        await tx('agentExternalMcpServers').insert([
+          { ...base, id: googleId, endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', secretReference: null },
+          { ...base, id: bearerId, endpointUrl: 'https://mcp.example.com/bearer', authMode: 'bearer', secretReference: bearer },
+          { ...base, id: noneId, endpointUrl: 'https://mcp.example.com/none', authMode: 'none', secretReference: null }
+        ])
+        await tx('agentExternalMcpGrants').insert([googleId, bearerId, noneId].map(serverId => ({ serverId, groupId: 20 })))
+        await tx('agentExternalMcpOAuthGrants').insert({ id: grantId, userId: 7, serverId: googleId, serverRevision: 1, authVersion: 0, authorizationStamp: '20', secretReference: token })
+        await tx('agentExternalMcpOAuthPending').insert({ stateHash: 'a'.repeat(64), grantId, sessionHash: 'b'.repeat(64), secretReference: pending, expiresAt: new Date(Date.now() + 60_000) })
+        return { bearer, token, pending }
+      })
+      await legacy.transaction(tx => addGenericOAuth(tx))
+      const migrated = new ExternalMcpService(dependencies(legacy))
+      expect(await migrated.oauthStatus(owner, googleId)).toMatchObject({ connected: false, reconnectRequired: true })
+      expect(await legacy('agentExternalMcpServers').where('id', googleId).first('authMode', 'oauthConfiguration')).toEqual({ authMode: 'oauth', oauthConfiguration: JSON.stringify({ preset: 'google-workspace', registrationMode: 'preregistered' }) })
+      expect(await legacy('agentExternalMcpOAuthGrants').where('id', grantId).first('binding', 'secretReference')).toEqual({ binding: null, secretReference: saved.token })
+      expect(await legacyVault.get(saved.token)).toContain('legacy-google-refresh')
+      expect(await legacyVault.get(saved.pending)).toBe('legacy-pkce-verifier')
+      expect(await legacyVault.get(saved.bearer)).toBe('legacy-bearer')
+      expect((await migrated.listAdmin(admin)).filter(endpoint => endpoint.authMode !== 'oauth').map(endpoint => endpoint.authMode).sort()).toEqual(['bearer', 'none'])
+      await expect(migrated.openForUser(owner.id, { serverIds: [googleId] })).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
+    } finally {
+      await legacy.destroy()
+      await db.raw(`DROP SCHEMA "${legacySchema}" CASCADE`)
+    }
+  })
+
+  const genericDependencies = (database: Knex) => ({
+    ...dependencies(database), oauth: { siteOrigin: 'https://wiki.example.test' },
+    fetch: async (url: URL, init: Parameters<ExternalMcpFetchImplementation>[1]) => {
+      if (url.href === 'https://mcp.vendor.test/mcp' && !new Headers(init.headers).has('authorization')) return new Response(null, { status: 401, headers: { 'www-authenticate': 'Bearer resource_metadata="https://mcp.vendor.test/metadata"' } })
+      if (url.href === 'https://mcp.vendor.test/metadata') return Response.json({ resource: 'https://mcp.vendor.test/mcp', authorization_servers: ['https://identity.vendor.test'], scopes_supported: ['read'] })
+      if (url.href === 'https://identity.vendor.test/.well-known/oauth-authorization-server') return Response.json({ issuer: 'https://identity.vendor.test', authorization_endpoint: 'https://identity.vendor.test/authorize', token_endpoint: 'https://identity.vendor.test/token', registration_endpoint: 'https://identity.vendor.test/register', token_endpoint_auth_methods_supported: ['none', 'client_secret_basic'], code_challenge_methods_supported: ['S256'] })
+      if (url.href === 'https://identity.vendor.test/register') return Response.json({ client_id: 'native-dynamic', token_endpoint_auth_method: 'none' })
+      return protocol(url, init)
+    }
+  })
+
+  it.each(['preregistered', 'automatic'] as const)('cleans personal %s OAuth client and registration secrets before production RESTRICT checks', async registrationMode => {
+    const generic = new ExternalMcpService(genericDependencies(db))
+    await generic.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 0)
+    const endpoint = await generic.createPersonal(owner, { ...input(), endpointUrl: 'https://mcp.vendor.test/mcp', authMode: 'oauth', oauth: {
+      registrationMode, ...(registrationMode === 'preregistered' ? { issuer: 'https://identity.vendor.test', clientId: 'native-static', clientSecretValue: 'native-static-secret', tokenEndpointAuthMethod: 'client_secret_basic' as const } : {})
+    } })
+    await generic.connectOAuth(owner, endpoint.id, 'native-browser')
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).not.toHaveLength(0)
+    await db('users').where('id', owner.id).delete()
+    expect(await db('agentExternalMcpServers').where('id', endpoint.id)).toEqual([])
+    expect(await db('agentExternalMcpOAuthRegistrations')).toEqual([])
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).toEqual([])
+  })
+
+  it('removes only OAuth-owned shared registration secrets on creator deletion and reconnects surviving null-creator endpoints', async () => {
+    const generic = new ExternalMcpService(genericDependencies(db))
+    const endpoint = await generic.createAdmin(admin, { ...input(), endpointUrl: 'https://mcp.vendor.test/mcp', authMode: 'oauth', oauth: { registrationMode: 'automatic' }, groupIds: [20, 30] })
+    await generic.connectOAuth(owner, endpoint.id, 'first-owner')
+    await db('users').where('id', admin.id).delete()
+    expect(await db('agentExternalMcpServers').where('id', endpoint.id).first('createdBy')).toEqual({ createdBy: null })
+    expect(await db('agentExternalMcpOAuthRegistrations')).toEqual([])
+    expect(new URL((await generic.connectOAuth(other, endpoint.id, 'surviving-owner')).authorizationUrl).searchParams.get('client_id')).toBe('native-dynamic')
+  })
+
+  it('serializes non-Google refresh across processes and prevents disconnect racing refresh from resurrecting stale native clients', async () => {
     const second = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [schema], pool: { min: 0, max: 4 } })
-    const otherProcess = new ExternalMcpService(dependencies(second))
-    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', groupIds: [20] })
-    const authorization = new URL((await service.connectGoogle(owner, endpoint.id, 'browser')).authorizationUrl)
+    service = new ExternalMcpService(genericDependencies(db))
+    const otherProcess = new ExternalMcpService(genericDependencies(second))
+    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: 'https://mcp.vendor.test/mcp', authMode: 'oauth', oauth: { registrationMode: 'automatic' }, groupIds: [20] })
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'browser')).authorizationUrl)
     const callback = { state: authorization.searchParams.get('state')!, code: 'controlled-code', sessionId: 'browser' }
-    expect((await Promise.all([service.googleCallback(owner, callback), otherProcess.googleCallback(owner, callback)])).sort()).toEqual(['connected', 'error'])
+    expect((await Promise.all([service.oauthCallback(owner, { ...callback, callbackPath: '/agents/oauth/callback' }), otherProcess.oauthCallback(owner, { ...callback, callbackPath: '/agents/oauth/callback' })])).sort()).toEqual(['connected', 'error'])
     expect(authorizationExchanges).toBe(1)
     const expire = async () => db.transaction(async tx => {
       const grant = await tx('agentExternalMcpOAuthGrants').where({ userId: owner.id, serverId: endpoint.id }).first('id', 'secretReference')
@@ -158,41 +243,41 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
         refreshReleased = Promise.withResolvers<void>()
         const inFlight = staleLease.clients[0]!.callTool('research', {})
         await refreshStarted.promise
-        const disconnect = otherProcess.disconnectGoogle(owner, endpoint.id)
+        const disconnect = otherProcess.disconnectOAuth(owner, endpoint.id)
         refreshReleased.resolve()
         await Promise.allSettled([inFlight, disconnect])
         await disconnect
         expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
-        expect(await db('agentProviderSecrets')).toEqual([])
+        expect(await db('agentExternalMcpOAuthGrants').whereNotNull('secretReference')).toEqual([])
         const before = networkCalls
-        await expect(staleLease.clients[0]!.callTool('research', {})).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+        await expect(staleLease.clients[0]!.callTool('research', {})).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
         expect(networkCalls).toBe(before)
       } finally { await staleLease.close() }
     } finally { refreshReleased?.resolve(); await second.destroy() }
   })
 
   it('cascades pending PKCE and token secrets on account deletion', async () => {
-    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', groupIds: [20, 30] })
-    const authorization = new URL((await service.connectGoogle(owner, endpoint.id, 'browser')).authorizationUrl)
-    expect(await service.googleCallback(owner, { state: authorization.searchParams.get('state')!, code: 'code', sessionId: 'browser' })).toBe('connected')
-    await service.connectGoogle(other, endpoint.id, 'other-browser')
-    expect(await db('agentProviderSecrets')).toHaveLength(2)
+    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'oauth', oauth: { preset: 'google-workspace', registrationMode: 'preregistered' }, groupIds: [20, 30] })
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'browser')).authorizationUrl)
+    expect(await service.oauthCallback(owner, { ...{ state: authorization.searchParams.get('state')!, code: 'code', sessionId: 'browser' }, callbackPath: '/agents/oauth/google/callback' })).toBe('connected')
+    await service.connectOAuth(other, endpoint.id, 'other-browser')
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id).orWhere('createdBy', other.id)).toHaveLength(2)
     await db('users').where('id', owner.id).delete()
-    expect(await db('agentProviderSecrets')).toHaveLength(1)
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id).orWhere('createdBy', other.id)).toHaveLength(1)
     await db('users').where('id', other.id).delete()
     expect(await db('agentExternalMcpOAuthPending')).toEqual([])
     expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
-    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id).orWhere('createdBy', other.id)).toEqual([])
   })
   it('preserves the production RESTRICT boundary for unrelated provider secrets when deleting a user', async () => {
-    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', groupIds: [20] })
-    await service.connectGoogle(owner, endpoint.id, 'browser')
+    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'oauth', oauth: { preset: 'google-workspace', registrationMode: 'preregistered' }, groupIds: [20] })
+    await service.connectOAuth(owner, endpoint.id, 'browser')
     const unrelated = await db.transaction(tx => vault.store('unrelated-provider-credential', owner.id, tx))
     await expect(Promise.resolve(db('users').where('id', owner.id).delete())).rejects.toMatchObject({ code: expect.stringMatching(/^(23503|23001)$/) })
     expect(await db('users').where('id', owner.id).first('id')).toEqual({ id: owner.id })
     expect(await vault.has(unrelated)).toBe(true)
     expect(await db('agentExternalMcpOAuthPending')).toHaveLength(1)
-    expect(await db('agentProviderSecrets')).toHaveLength(2)
+    expect(await db('agentProviderSecrets').where('createdBy', owner.id)).toHaveLength(2)
   })
 
   it('persists admin group grants and denies claimed admin authority and ungranted discovery without network', async () => {
