@@ -360,13 +360,11 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     providerRegistry = new AgentProviderRegistry(wiki.models.knex, secrets, keys)
     decisionProviders = new DecisionProviderRegistry(wiki.models.knex, secrets)
     mediaProviders = new AgentMediaProviderRegistry(wiki.models.knex, secrets)
-    const googleClientId = environmentSecretValue('GOOGLE_WORKSPACE_MCP_CLIENT_ID')
-    const googleClientSecret = environmentSecretValue('GOOGLE_WORKSPACE_MCP_CLIENT_SECRET')
     externalMcp = new ExternalMcpService({
       knex: wiki.models.knex,
       secrets,
       enabled: () => wiki.config.agents.enabled && wiki.config.agents.provider.enabled,
-      oauth: { siteOrigin: wiki.config.host, ...(googleClientId && googleClientSecret ? { googleWorkspace: { clientId: googleClientId, clientSecret: googleClientSecret } } : {}) }
+      oauth: { siteOrigin: wiki.config.host }
     })
     routingPolicies = new AgentRoutingPolicyRegistry(wiki.models.knex)
     const router = new AgentTurnRouter(routingPolicies, decisionProviders)

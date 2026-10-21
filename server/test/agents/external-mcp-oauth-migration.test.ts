@@ -8,7 +8,7 @@ import { up as addGenericOAuth } from '../../db/migrations/tsepistle-000064-gene
 import * as genericOAuthMigration from '../../db/migrations/tsepistle-000064-generic-mcp-oauth.ts'
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { ExternalMcpService } from '../../agents/external-mcp.ts'
-import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
+import { up as retireOAuthPresets } from '../../db/migrations/tsepistle-000065-retire-mcp-oauth-presets.ts'
 
 describe('SQLite legacy external MCP OAuth forward upgrade', () => {
   let db: Knex, vault: DatabaseAgentSecretRegistry
@@ -24,17 +24,17 @@ describe('SQLite legacy external MCP OAuth forward upgrade', () => {
     await addEndpoints(db)
     await addGoogleOAuth(db)
     await db('users').insert([{ id: 1, isActive: true, authVersion: 0 }, { id: 7, isActive: true, authVersion: 0 }])
-    await db('groups').insert({ id: 20, permissions: JSON.stringify(['use:agents']) })
-    await db('userGroups').insert({ userId: 7, groupId: 20 })
+    await db('groups').insert([{ id: 10, permissions: JSON.stringify(['manage:system']) }, { id: 20, permissions: JSON.stringify(['use:agents']) }])
+    await db('userGroups').insert([{ userId: 1, groupId: 10 }, { userId: 7, groupId: 20 }])
     vault = new DatabaseAgentSecretRegistry(db, { currentKeyId: 'migration', keys: { migration: Buffer.alloc(32, 29) } })
     googleId = randomUUID(); bearerId = randomUUID(); noneId = randomUUID(); grantId = randomUUID()
     await db.transaction(async tx => {
       bearerReference = await vault.store('retained-bearer-credential', 7, tx)
-      tokenReference = await vault.store(JSON.stringify({ accessToken: 'sealed-legacy-access', refreshToken: 'sealed-legacy-refresh', expiresAt: 0, scopes: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.scopes }), 7, tx)
+      tokenReference = await vault.store(JSON.stringify({ accessToken: 'sealed-legacy-access', refreshToken: 'sealed-legacy-refresh', expiresAt: 0, scopes: ['legacy.read'] }), 7, tx)
       pendingReference = await vault.store('retained-legacy-pkce-verifier', 7, tx)
       const common = { displayName: 'Existing endpoint', scope: 'admin', ownerId: null, status: 'enabled', revision: 1, createdBy: 1, updatedBy: 1, createdAt: new Date(), updatedAt: new Date() }
       await tx('agentExternalMcpServers').insert([
-        { ...common, id: googleId, endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', secretReference: null },
+        { ...common, id: googleId, endpointUrl: 'https://gmailmcp.googleapis.com/mcp/v1', authMode: 'google', secretReference: null },
         { ...common, id: bearerId, endpointUrl: 'https://mcp.example.com/bearer', authMode: 'bearer', secretReference: bearerReference },
         { ...common, id: noneId, endpointUrl: 'https://mcp.example.com/none', authMode: 'none', secretReference: null }
       ])
@@ -74,8 +74,10 @@ describe('SQLite legacy external MCP OAuth forward upgrade', () => {
     expect(await db('external_mcp_saved_view').where('id', googleId).first()).toEqual({ id: googleId, authMode: 'oauth' })
     await db('agentExternalMcpServers').where('id', googleId).update({ displayName: 'Preserved trigger' })
     expect(await db('endpointUpgradeAudit').first('serverId', 'displayName', 'endpointCount')).toEqual({ serverId: googleId, displayName: 'Preserved trigger', endpointCount: 3 })
+    await retireOAuthPresets(db)
     const service = new ExternalMcpService({ knex: db, secrets: vault, enabled: () => true, oauth: { siteOrigin: 'https://wiki.example.test' } })
-    expect(await service.oauthStatus({ id: 7, authVersion: 0 }, googleId)).toMatchObject({ connected: false, reconnectRequired: true })
+    await expect(service.oauthStatus({ id: 7, authVersion: 0 }, googleId)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    expect((await service.listAdmin({ id: 1, authVersion: 0 })).find(endpoint => endpoint.id === googleId)).toMatchObject({ status: 'disabled', revision: 2, oauth: { registrationMode: 'preregistered', clientSecretConfigured: false } })
     expect(await vault.get(tokenReference)).toContain('sealed-legacy-refresh')
     expect(await vault.get(pendingReference)).toBe('retained-legacy-pkce-verifier')
     await expect(Promise.resolve(db('agentExternalMcpServers').where('id', googleId).update({ authMode: 'google' }))).rejects.toThrow()
@@ -87,6 +89,46 @@ describe('SQLite legacy external MCP OAuth forward upgrade', () => {
     expect(await vault.get(pendingReference)).toBeNull()
     expect(await vault.get(bearerReference)).toBe('retained-bearer-credential')
     await expect(Promise.resolve(db('users').where('id', 7).delete())).rejects.toThrow()
+  })
+
+  it('retires bound presets without mutating sealed grants, registrations or PKCE, and requires explicit generic setup', async () => {
+    await addGenericOAuth(db)
+    const clientReference = await db.transaction(tx => vault.store('sealed-old-client-secret', 1, tx))
+    const oldBinding = JSON.stringify({ callbackUrl: 'https://wiki.example.test/agents/oauth/google/callback', configurationHash: 'old-preset-binding' })
+    await db('agentExternalMcpServers').where('id', googleId).update({ oauthClientSecretReference: clientReference })
+    await db('agentExternalMcpOAuthGrants').where('id', grantId).update({ binding: oldBinding })
+    await db('agentExternalMcpOAuthRegistrations').insert({ serverId: googleId, configurationHash: 'c'.repeat(64), binding: oldBinding, secretReference: clientReference })
+    const genericId = randomUUID()
+    const base = await db('agentExternalMcpServers').where('id', noneId).first()
+    await db('agentExternalMcpServers').insert({ ...base, id: genericId, authMode: 'oauth', oauthConfiguration: JSON.stringify({ registrationMode: 'automatic' }) })
+    const ordinary = await db('agentExternalMcpServers').whereIn('id', [bearerId, noneId, genericId]).orderBy('id').select('*')
+    const secrets = await db('agentProviderSecrets').orderBy('id').select('*')
+    const grants = await db('agentExternalMcpOAuthGrants').select('*')
+    const pending = await db('agentExternalMcpOAuthPending').select('*')
+    const registrations = await db('agentExternalMcpOAuthRegistrations').select('*')
+    await retireOAuthPresets(db)
+    expect(await db('agentProviderSecrets').orderBy('id').select('*')).toEqual(secrets)
+    expect(await db('agentExternalMcpOAuthGrants').select('*')).toEqual(grants)
+    expect(await db('agentExternalMcpOAuthPending').select('*')).toEqual(pending)
+    expect(await db('agentExternalMcpOAuthRegistrations').select('*')).toEqual(registrations)
+    for (const endpoint of ordinary) expect(await db('agentExternalMcpServers').where('id', endpoint.id).first()).toMatchObject(endpoint)
+    expect(await db('agentExternalMcpServers').where('id', googleId).first('status', 'revision', 'oauthConfiguration', 'retiredOAuthConfiguration', 'oauthClientSecretReference')).toEqual({
+      status: 'disabled', revision: 2, oauthConfiguration: JSON.stringify({ registrationMode: 'preregistered' }),
+      retiredOAuthConfiguration: JSON.stringify({ preset: 'google-workspace', registrationMode: 'preregistered' }), oauthClientSecretReference: clientReference
+    })
+    const service = new ExternalMcpService({ knex: db, secrets: vault, enabled: () => true, oauth: { siteOrigin: 'https://wiki.example.test' }, fetch: async () => { throw new Error('Retired endpoint must not perform network requests') } })
+    await expect(service.connectOAuth({ id: 7, authVersion: 0 }, googleId, 'browser')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    const update = { displayName: 'Explicit generic connection', endpointUrl: 'https://mcp.example.com/generic', authMode: 'oauth' as const, status: 'enabled' as const }
+    await expect(service.updateAdmin({ id: 1, authVersion: 0 }, googleId, 2, update)).rejects.toMatchObject({ code: 'INVALID_EXTERNAL_MCP_CONFIGURATION' })
+    expect(await vault.get(tokenReference)).toContain('sealed-legacy-refresh')
+    const configured = await service.updateAdmin({ id: 1, authVersion: 0 }, googleId, 2, { ...update, oauth: { registrationMode: 'preregistered', issuer: 'https://identity.example.com', clientId: 'new-client', tokenEndpointAuthMethod: 'none' } })
+    expect(configured).toMatchObject({ status: 'enabled', revision: 3, oauth: { clientId: 'new-client', clientSecretConfigured: false } })
+    expect(await db('agentExternalMcpOAuthGrants').where('serverId', googleId)).toEqual([])
+    expect(await db('agentExternalMcpOAuthRegistrations').where('serverId', googleId)).toEqual([])
+    expect(await vault.get(tokenReference)).toBeNull()
+    expect(await vault.get(pendingReference)).toBeNull()
+    expect(await vault.get(clientReference)).toBeNull()
+    expect(await vault.get(bearerReference)).toBe('retained-bearer-credential')
   })
 
   it('rolls back schema changes and restores foreign-key enforcement if reconstruction cannot start', async () => {

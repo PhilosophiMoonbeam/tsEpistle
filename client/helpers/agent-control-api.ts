@@ -73,7 +73,6 @@ const Server: z.ZodType<ExternalMcpServerView> = z.object({
   authMode: z.enum(['none', 'bearer', 'oauth']),
   secretConfigured: z.boolean(),
   oauth: z.object({
-    preset: z.literal('google-workspace').optional(),
     issuer: z.string().optional(),
     scopes: z.array(z.string()).optional(),
     registrationMode: z.enum(['automatic', 'preregistered']),

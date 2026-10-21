@@ -10,7 +10,7 @@ describe('External MCP OAuth client boundary', () => {
     for (const authorizationUrl of [
       'https://identity.example.net/tenant/oauth/authorize?client_id=public-client&state=opaque&code_challenge=challenge',
       'https://login.example.org:8443/authorize',
-      'https://accounts.google.com/o/oauth2/v2/auth?state=opaque'
+      'https://accounts.example.com/oauth2/authorize?state=opaque'
     ]) {
       fetcher.mockImplementation(async () => Response.json({ authorizationUrl }))
       await expect(connectExternalMcpOAuth(fetcher as typeof fetch, 'csrf', endpointId)).resolves.toBe(authorizationUrl)
@@ -37,7 +37,7 @@ describe('External MCP OAuth client boundary', () => {
       id: endpointId, displayName: 'Independent provider', endpointUrl: 'https://tools.example.net/mcp', destinationHost: 'tools.example.net', namespace: 'external:test',
       scope: 'admin', ownerId: null, status: 'enabled', revision: 1, authMode: 'oauth', secretConfigured: false, groupIds: [1], trust: 'untrusted', createdAt: '', updatedAt: '',
       secretValue: 'bearer-secret', secretReference: 'private-keyring-reference',
-      oauth: { issuer: 'https://identity.example.net', registrationMode: 'preregistered', clientId: 'public-client-id', tokenEndpointAuthMethod: 'client_secret_basic', clientSecretConfigured: true, clientSecretValue: 'oauth-secret', clientSecretReference: 'private-client-reference' }
+      oauth: { preset: 'unsupported-provider', issuer: 'https://identity.example.net', registrationMode: 'preregistered', clientId: 'public-client-id', tokenEndpointAuthMethod: 'client_secret_basic', clientSecretConfigured: true, clientSecretValue: 'oauth-secret', clientSecretReference: 'private-client-reference' }
     }] }))
     const [server] = await listAvailableExternalMcp(fetcher as typeof fetch, 'csrf')
     expect(server?.oauth?.clientSecretConfigured).toBe(true)
@@ -46,11 +46,14 @@ describe('External MCP OAuth client boundary', () => {
     expect(server).not.toHaveProperty('secretReference')
     expect(server?.oauth).not.toHaveProperty('clientSecretValue')
     expect(server?.oauth).not.toHaveProperty('clientSecretReference')
+    expect(server?.oauth).not.toHaveProperty('preset')
   })
 
   it('omits unchanged write-only secrets, distinguishes explicit clear, and drops inactive registration credentials', () => {
     const draft = createExternalMcpOAuthDraft({ registrationMode: 'preregistered', clientId: 'client', tokenEndpointAuthMethod: 'client_secret_basic', clientSecretConfigured: true })
     expect(externalMcpOAuthInput(draft)).not.toHaveProperty('clientSecretValue')
+    draft.clientSecret = 'replacement-secret'
+    expect(externalMcpOAuthInput(draft)?.clientSecretValue).toBe('replacement-secret')
     draft.clearClientSecret = true
     expect(externalMcpOAuthInput(draft)?.clientSecretValue).toBeNull()
     draft.registrationMode = 'automatic'
@@ -58,5 +61,12 @@ describe('External MCP OAuth client boundary', () => {
     expect(automatic).not.toHaveProperty('clientSecretValue')
     expect(automatic).not.toHaveProperty('clientId')
     expect(automatic).not.toHaveProperty('tokenEndpointAuthMethod')
+    draft.issuer = ' https://identity.example.net '
+    draft.scopes = 'read:tools\nwrite:tools  profile'
+    expect(externalMcpOAuthInput(draft)).toEqual({
+      issuer: 'https://identity.example.net',
+      scopes: ['read:tools', 'write:tools', 'profile'],
+      registrationMode: 'automatic'
+    })
   })
 })

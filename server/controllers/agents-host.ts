@@ -90,7 +90,7 @@ import {
 } from '../agents/repository.ts'
 import { streamOwnedAgentEvents } from '../agents/sse.ts'
 import createAgentControls, { type AgentControlServices } from './agent-controls.ts'
-import { EXTERNAL_MCP_OAUTH_CALLBACK_PATH, GOOGLE_WORKSPACE_CALLBACK_PATH, EXTERNAL_MCP_OAUTH_RETURN_PATH, EXTERNAL_MCP_OAUTH_CLIENT_METADATA_PATH } from '../agents/external-mcp-oauth.ts'
+import { EXTERNAL_MCP_OAUTH_CALLBACK_PATH, EXTERNAL_MCP_OAUTH_RETURN_PATH, EXTERNAL_MCP_OAUTH_CLIENT_METADATA_PATH } from '../agents/external-mcp-oauth.ts'
 
 interface AgentHostWiki extends AgentControlServices {
   readonly auth: {
@@ -546,7 +546,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     if (!wiki.externalMcp) return res.sendStatus(503)
     return res.json(wiki.externalMcp.oauthClientMetadata())
   })
-  router.get([EXTERNAL_MCP_OAUTH_CALLBACK_PATH, GOOGLE_WORKSPACE_CALLBACK_PATH], wiki.auth.authenticate.bind(wiki.auth), async (req, res) => {
+  router.get(EXTERNAL_MCP_OAUTH_CALLBACK_PATH, wiki.auth.authenticate.bind(wiki.auth), async (req, res) => {
     res.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' })
     let status: 'connected' | 'denied' | 'error' = 'error'
     try {

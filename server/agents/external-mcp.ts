@@ -21,7 +21,6 @@ import {
   ExternalMcpServerInputSchema,
   ExternalMcpGroupPolicyInputSchema,
   ExternalMcpGrantsInputSchema,
-  GOOGLE_WORKSPACE_MCP_SERVICES,
   type CreateAdminExternalMcpServerInput,
   type ExternalMcpOAuthInput,
   type ExternalMcpServerInput,
@@ -840,7 +839,6 @@ export class ExternalMcpService {
       secretConfigured: row.secretReference !== null && (await this.#dependencies.secrets.has(row.secretReference, db)),
       ...(oauth ? { oauth: {
         registrationMode: oauth.registrationMode,
-        ...(oauth.preset !== undefined ? { preset: oauth.preset } : {}),
         ...(oauth.issuer !== undefined ? { issuer: oauth.issuer } : {}),
         ...(oauth.scopes !== undefined ? { scopes: oauth.scopes } : {}),
         ...(oauth.clientId !== undefined ? { clientId: oauth.clientId } : {}),
@@ -871,17 +869,13 @@ export class ExternalMcpService {
     }
     const config: ExternalMcpOAuthInput = input.oauth ?? (row?.authMode === 'oauth' ? this.#oauthInput(row) : { registrationMode: 'automatic' })
     if (config.issuer) normalizeExternalMcpEndpoint(config.issuer)
-    if (config.preset && !GOOGLE_WORKSPACE_MCP_SERVICES.some(service => service.endpointUrl === normalizeExternalMcpEndpoint(input.endpointUrl)))
-      fail('INVALID_EXTERNAL_MCP_CONFIGURATION', 'The Google Workspace preset requires an official service endpoint', 400)
-    if (config.preset && (config.issuer || config.clientId || config.clientSecretValue != null || config.tokenEndpointAuthMethod || config.scopes?.length))
-      fail('INVALID_EXTERNAL_MCP_CONFIGURATION', 'The Google Workspace preset manages its issuer, client and scopes', 400)
-    if (!config.preset && config.registrationMode === 'preregistered' && (!config.issuer || !config.clientId))
+    if (config.registrationMode === 'preregistered' && (!config.issuer || !config.clientId))
       fail('INVALID_EXTERNAL_MCP_CONFIGURATION', 'Pre-registered clients require an explicit issuer and client ID', 400)
     const old = row?.authMode === 'oauth' ? this.#oauthInput(row) : undefined
-    const keepSecret = row && row.endpointUrl === normalizeExternalMcpEndpoint(input.endpointUrl) && old?.issuer === config.issuer && old?.clientId === config.clientId && old?.preset === config.preset && old?.tokenEndpointAuthMethod === config.tokenEndpointAuthMethod
-    let secretReference = !config.preset && config.registrationMode === 'preregistered' && config.tokenEndpointAuthMethod !== 'none' && keepSecret ? row?.oauthClientSecretReference ?? null : null
+    const keepSecret = row && row.endpointUrl === normalizeExternalMcpEndpoint(input.endpointUrl) && old?.issuer === config.issuer && old?.clientId === config.clientId && old?.tokenEndpointAuthMethod === config.tokenEndpointAuthMethod
+    let secretReference = config.registrationMode === 'preregistered' && config.tokenEndpointAuthMethod !== 'none' && keepSecret ? row?.oauthClientSecretReference ?? null : null
     if (config.clientSecretValue != null) {
-      if (config.preset || config.registrationMode !== 'preregistered' || config.tokenEndpointAuthMethod === 'none') fail('INVALID_EXTERNAL_MCP_CONFIGURATION', 'This OAuth client cannot configure a client secret', 400)
+      if (config.registrationMode !== 'preregistered' || config.tokenEndpointAuthMethod === 'none') fail('INVALID_EXTERNAL_MCP_CONFIGURATION', 'This OAuth client cannot configure a client secret', 400)
       secretReference = await this.#dependencies.secrets.store(config.clientSecretValue, actorId, tx)
     } else if (config.clientSecretValue === null) secretReference = null
     const { clientSecretValue: _secret, ...safe } = config
@@ -979,7 +973,7 @@ export class ExternalMcpService {
         const newConfig = oauth.oauthConfiguration ? JSON.parse(oauth.oauthConfiguration) as ExternalMcpOAuthInput : undefined
         // Display/scopes/grant edits cannot discard the pin while retaining a confidential client.
         const resetRegistration = input.authMode !== 'oauth' || endpointUrl !== row.endpointUrl ||
-          oauth.oauthClientSecretReference !== row.oauthClientSecretReference || oldConfig.preset !== newConfig?.preset ||
+          oauth.oauthClientSecretReference !== row.oauthClientSecretReference ||
           oldConfig.issuer !== newConfig?.issuer || oldConfig.clientId !== newConfig?.clientId ||
           oldConfig.registrationMode !== newConfig?.registrationMode || oldConfig.tokenEndpointAuthMethod !== newConfig?.tokenEndpointAuthMethod ||
           oldConfig.registrationMode === 'automatic'

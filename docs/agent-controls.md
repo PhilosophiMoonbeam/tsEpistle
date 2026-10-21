@@ -75,7 +75,7 @@ Bearer secrets are managed server-side, never reflected in list/discovery respon
 
 **OAuth is a general external-MCP authentication mode**, available for administrator-managed shared endpoints and policy-approved personal endpoints. It is not restricted to Google. The Wiki Agent remains the MCP client; the remote MCP server is the protected resource. OAuth account connections are separate from wiki sign-in and inbound Wiki MCP access keys.
 
-1. Configure the public HTTPS MCP endpoint and choose **OAuth** in **Administration → Agents → External MCP**, or in an approved user's **My tools**. The default is a generic provider, not the Google preset. Save and enable the endpoint, grant the intended groups for shared use, and review its destination and requested scopes.
+1. Configure the public HTTPS MCP endpoint and choose **OAuth** in **Administration → Agents → External MCP**, or in an approved user's **My tools**. Save and enable the endpoint, grant the intended groups for shared use, and review its destination and requested scopes.
 2. Choose the provider's client-registration arrangement:
 
    | Registration | Configuration |
@@ -85,12 +85,12 @@ Bearer secrets are managed server-side, never reflected in list/discovery respon
    | Preregistered confidential client | Enter the explicit issuer and client ID; choose `client_secret_basic` or `client_secret_post` as supported by the provider and enter the write-only client secret. |
 
    An omitted secret retains a compatible saved credential; a replacement updates it; explicit clear removes it. Changing client identity/authentication requires appropriate new credentials. Unrelated name or group edits cannot silently authorize sending an existing client secret to a changed token endpoint.
-3. Register the callback displayed in the saved endpoint's connection status. For the public deployment, the generic callback is:
+3. Register the exact callback displayed in the saved endpoint's connection status. Its deployment-neutral structure is:
    ```
-   https://wiki.example.org/agents/oauth/callback
+   <canonical-wiki-https-origin>/agents/oauth/callback
    ```
    The callback is derived from the canonical persisted Wiki `host`, never an incoming Host header or smoke-tool `SITE_URL`. Each deployment origin needs its own exact registered HTTPS callback. An HTTP Wiki origin leaves OAuth unavailable without disabling ordinary providers or none/bearer MCP connections.
-4. Each user selects **Connect account** in **Profile → External MCP connections** (`/p/profile#external-mcp-connections`) or **My tools**, completes the provider's consent flow, and returns to Wiki. Shared connections remain available when personal endpoint creation is denied. Administrators can connect their own account directly on an enabled admin endpoint for configuration discovery without a runtime group grant; that exception does not grant Agent execution access.
+4. Each user selects **Connect account** in **Profile → External tool connections** (`/p/profile#external-mcp-connections`) or **My tools**, completes the provider's consent flow, and returns to Wiki. Shared connections remain available when personal endpoint creation is denied. Administrators can connect their own account directly on an enabled admin endpoint for configuration discovery without a runtime group grant; that exception does not grant Agent execution access.
 5. Refresh live status, discover the catalog, and verify a permitted read-only tool. A callback message is not proof of a working connection. Missing registration, denied consent, expired/replayed state, changed authority, revoked access or lost Wiki permissions require the indicated recovery; tool operations are not automatically replayed.
 
 Discovery follows the [MCP authorization contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization): credential-free protected-resource challenges and path/root well-known metadata, OAuth authorization-server or OIDC metadata including issuer paths, PKCE S256, resource indicators, and exact authorization-response issuer validation. A configured issuer must match the selected advertised authority. Saved clients, callbacks, token destinations and grants are bound to their issuer, resource and configuration; a discovered authority change cannot redirect retained credentials.
@@ -101,25 +101,11 @@ Authorization state is short-lived, single-use, and bound to the initiating brow
 
 **Disconnect is endpoint-local:** it removes this Wiki user's stored grant and pending consent for that endpoint and blocks subsequent use by old bindings. It does not automatically invoke a provider-wide revocation operation that might affect sibling connections. Use the provider's account settings to revoke app access there. Account/endpoint deletion cleans up OAuth-owned secrets without weakening unrelated provider-secret deletion restrictions.
 
-#### Optional Google Workspace preset
-
-The Google preset is a convenience for the nine official Workspace services and their documented service-specific scopes. It does not impose a Google endpoint allowlist or Google credential requirement on generic OAuth connections. Follow Google's [Workspace MCP setup guide](https://developers.google.com/workspace/guides/configure-mcp-servers) for preview eligibility, API/MCP service enablement, consent-screen users/scopes and any Chat app setup.
-
-Register a **Web application** client named **tsEpistle Wiki Agent**. The preset retains the already-agreed public callback:
-```
-https://wiki.example.org/agents/oauth/google/callback
-```
-This is the preset's active registered callback, bound to its own consent attempts, not a redirect alias for the generic callback.
-
-Provide `GOOGLE_WORKSPACE_MCP_CLIENT_ID` and `GOOGLE_WORKSPACE_MCP_CLIENT_SECRET`, or their corresponding `_FILE` variables pointing to protected mounted UTF-8 files. Nonempty inline values take precedence; files are trimmed and limited to 64 KiB. A missing or partial pair leaves the preset unconfigured, not generic OAuth. Unreadable configured secret files remain configuration errors. Keep the existing provider encryption keyring; do not generate replacement roots to enable this feature.
-
-The preset requests Google's documented scopes for the selected service, including service-specific writes where required. Calendar currently uses the documented read/free-busy scopes. Google consent and Workspace policy remain separate from Wiki grants. Revoke Google-side app access through [Google Account connections](https://myaccount.google.com/connections); revocation can also invalidate sibling Workspace services using the same OAuth project.
-
 #### Migration and environment
 
-Forward migration `tsepistle-000064-generic-mcp-oauth` adds generic configuration and encrypted client-registration bindings. Existing Google endpoint rows become OAuth endpoints with the Google preset; existing encrypted grants remain preserved but require explicit reconnect to establish the new issuer/resource/client binding. None/bearer endpoints remain unchanged. Deploy the new application with the migration; do not run older writers against the new OAuth domain or discard credentials through a down migration.
+Forward migration `tsepistle-000064-generic-mcp-oauth` adds generic configuration and encrypted client-registration bindings. Migration `tsepistle-000065-retire-mcp-oauth-presets` retires the former provider-specific preset: affected endpoints are disabled and their revisions incremented, with the exact previous configuration archived and encrypted credentials/grant references preserved. An administrator or owner must explicitly configure the endpoint's generic issuer and registered client before re-enabling and reconnecting it using the generic callback. Existing bindings cannot be reused silently. Generic OAuth and none/bearer endpoints are unchanged. Deploy the new application with its migrations; do not run older writers against the new domain or discard credentials through a down migration.
 
-The root `.env.example` documents generic callbacks and the optional Google preset without secrets. Generic endpoint client credentials are configured through the protected UI, not global environment variables. Editing local `.env` does not update a container's configured environment or mounts. Keep issued secrets out of chat, Git, `VITE_*`, URLs and screenshots.
+The root `.env.example` uses a reserved example domain only for local smoke-tool setup. OAuth callbacks and public client metadata use the installation's canonical persisted HTTPS Wiki origin. Provider client credentials are configured per endpoint through the protected UI, not global provider-specific environment variables. Editing local `.env` does not update a container's configured environment or mounts. Preserve the existing encryption keyring; never generate replacement roots to enable OAuth. Keep issued secrets out of chat, Git, `VITE_*`, URLs and screenshots.
 
 
 ### Network, discovery, and execution boundaries

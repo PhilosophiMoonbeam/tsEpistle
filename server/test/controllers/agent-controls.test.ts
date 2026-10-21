@@ -16,7 +16,7 @@ import { up as addDecisions } from '../../db/migrations/tsepistle-000051-agent-d
 
 import { up as addGoogleOAuth } from '../../db/migrations/tsepistle-000063-google-workspace-mcp-oauth.ts'
 import { up as addGenericOAuth } from '../../db/migrations/tsepistle-000064-generic-mcp-oauth.ts'
-import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
+import { up as retireOAuthPresets } from '../../db/migrations/tsepistle-000065-retire-mcp-oauth-presets.ts'
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const schema = `control_http_${randomUUID().replaceAll('-', '')}`
@@ -46,12 +46,6 @@ suite('Agent controls persisted HTTP authorization boundary', () => {
       expect(new Headers(init.headers).get('authorization')).toBeNull()
       exchanges++
       return Response.json({ access_token: 'http-vendor-access', token_type: 'Bearer', scope: 'read' })
-    }
-    if (url.hostname === 'oauth2.googleapis.com') {
-      expect(url.pathname).toBe('/token')
-      exchanges++
-      return Response.json({ access_token: 'http-protected-google-access', refresh_token: 'http-protected-google-refresh', token_type: 'Bearer',
-        expires_in: 3_600, scope: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.scopes.join(' ') })
     }
     networkCalls++
     const message = JSON.parse(String(init.body))
@@ -101,6 +95,7 @@ suite('Agent controls persisted HTTP authorization boundary', () => {
     await addDecisions(db)
     await addGoogleOAuth(db)
     await addGenericOAuth(db)
+    await retireOAuthPresets(db)
     const secrets = new DatabaseAgentSecretRegistry(db, { currentKeyId: 'http', keys: { http: Buffer.alloc(32, 23) } })
     const externalMcp = new ExternalMcpService({
       knex: db,
@@ -108,7 +103,7 @@ suite('Agent controls persisted HTTP authorization boundary', () => {
       enabled: () => true,
       resolve: async () => [{ address: '93.184.216.34', family: 4 }],
       fetch: protocol,
-      oauth: { siteOrigin: 'https://wiki.example.test', googleWorkspace: { clientId: 'http.apps.googleusercontent.com', clientSecret: 'http-client-secret' } }
+      oauth: { siteOrigin: 'https://wiki.example.test' }
     })
     const decisionProviders = new DecisionProviderRegistry(db, secrets)
     const app = express()
@@ -254,21 +249,22 @@ suite('Agent controls persisted HTTP authorization boundary', () => {
     expect(await db('agentExternalMcpOAuthRegistrations')).toHaveLength(1)
   })
 
-  it('returns only safe Google denial statuses and invalidates pending consent after live account revocation', async () => {
+  it('returns only safe OAuth denial statuses and invalidates pending consent after live account revocation', async () => {
+    genericOAuth = true
     const { server: saved } = await (await request('/admin/external-mcp', 'POST', {
-      ...endpoint, endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'oauth', oauth: { preset: 'google-workspace', registrationMode: 'preregistered' }, groupIds: [20]
+      ...endpoint, authMode: 'oauth', oauth: { registrationMode: 'automatic' }, groupIds: [20]
     })).json()
     userId = 8
     permission = 'use:agents'
     const consent = async () => new URL((await (await request(`/external-mcp/${saved.id}/oauth/connect`, 'POST', {})).json()).authorizationUrl).searchParams.get('state')!
     const state = await consent()
-    const denied = await fetch(`${baseUrl}/agents/oauth/google/callback?${new URLSearchParams({ state, error: 'access_denied', error_description: 'never-copy-provider-text' })}`, {
+    const denied = await fetch(`${baseUrl}/agents/oauth/callback?${new URLSearchParams({ state, iss: 'https://identity.vendor.test/tenant', error: 'access_denied', error_description: 'never-copy-provider-text' })}`, {
       headers: { cookie }, redirect: 'manual'
     })
     expect(denied.headers.get('location')).toBe('/p/profile?mcpOAuth=denied#external-mcp-connections')
     const revokedState = await consent()
     await db('users').where('id', 8).update({ authVersion: 1 })
-    const revoked = await fetch(`${baseUrl}/agents/oauth/google/callback?${new URLSearchParams({ state: revokedState, code: 'revoked-code' })}`, {
+    const revoked = await fetch(`${baseUrl}/agents/oauth/callback?${new URLSearchParams({ state: revokedState, iss: 'https://identity.vendor.test/tenant', code: 'revoked-code' })}`, {
       headers: { cookie }, redirect: 'manual'
     })
     expect(revoked.headers.get('location')).toBe('/p/profile?mcpOAuth=error#external-mcp-connections')
