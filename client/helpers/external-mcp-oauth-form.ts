@@ -1,6 +1,7 @@
 import type { ExternalMcpServerInput, ExternalMcpServerView } from '../../shared/agents/external-mcp.ts'
 
 export interface ExternalMcpOAuthDraft {
+  preset: '' | 'google-workspace'
   issuer: string
   scopes: string
   registrationMode: 'automatic' | 'preregistered'
@@ -11,6 +12,7 @@ export interface ExternalMcpOAuthDraft {
 }
 
 export const createExternalMcpOAuthDraft = (oauth?: ExternalMcpServerView['oauth']): ExternalMcpOAuthDraft => ({
+  preset: oauth?.preset ?? '',
   issuer: oauth?.issuer ?? '',
   scopes: oauth?.scopes?.join('\n') ?? '',
   registrationMode: oauth?.registrationMode ?? 'automatic',
@@ -20,7 +22,10 @@ export const createExternalMcpOAuthDraft = (oauth?: ExternalMcpServerView['oauth
   clearClientSecret: false
 })
 
-export const externalMcpOAuthInput = (draft: ExternalMcpOAuthDraft): ExternalMcpServerInput['oauth'] => ({
+export const externalMcpOAuthInput = (draft: ExternalMcpOAuthDraft): ExternalMcpServerInput['oauth'] => draft.preset === 'google-workspace' ? {
+  preset: 'google-workspace',
+  registrationMode: 'automatic'
+} : ({
   ...(draft.issuer.trim() ? { issuer: draft.issuer.trim() } : {}),
   ...(draft.scopes.trim() ? { scopes: draft.scopes.split(/\s+/u).filter(Boolean) } : {}),
   registrationMode: draft.registrationMode,

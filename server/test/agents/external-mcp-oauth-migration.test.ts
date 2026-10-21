@@ -9,6 +9,7 @@ import * as genericOAuthMigration from '../../db/migrations/tsepistle-000064-gen
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { ExternalMcpService } from '../../agents/external-mcp.ts'
 import { up as retireOAuthPresets } from '../../db/migrations/tsepistle-000065-retire-mcp-oauth-presets.ts'
+import { up as restoreGoogleWorkspacePreset } from '../../db/migrations/tsepistle-000066-restore-google-workspace-mcp-preset.ts'
 
 describe('SQLite legacy external MCP OAuth forward upgrade', () => {
   let db: Knex, vault: DatabaseAgentSecretRegistry
@@ -129,6 +130,99 @@ describe('SQLite legacy external MCP OAuth forward upgrade', () => {
     expect(await vault.get(pendingReference)).toBeNull()
     expect(await vault.get(clientReference)).toBeNull()
     expect(await vault.get(bearerReference)).toBe('retained-bearer-credential')
+  })
+
+  it('restores the archived preset without enabling it, changing consent, or unsealing credentials', async () => {
+    await addGenericOAuth(db)
+    const clientReference = await db.transaction(tx => vault.store('sealed-preset-client', 1, tx))
+    const binding = JSON.stringify({ callbackUrl: 'https://wiki.example.test/agents/oauth/google/callback', configurationHash: 'sealed-preset-binding' })
+    await db('agentExternalMcpOAuthGrants').where('id', grantId).update({ binding })
+    await db('agentExternalMcpOAuthRegistrations').insert({ serverId: googleId, configurationHash: 'c'.repeat(64), binding, secretReference: clientReference })
+    await retireOAuthPresets(db)
+    const before = await db('agentExternalMcpServers').where('id', googleId).first()
+    const secrets = await db('agentProviderSecrets').orderBy('id').select('*')
+    const grants = await db('agentExternalMcpOAuthGrants').select('*')
+    const policies = await db('agentExternalMcpGrants').orderBy('serverId').select('*')
+    const pending = await db('agentExternalMcpOAuthPending').select('*')
+    const registrations = await db('agentExternalMcpOAuthRegistrations').select('*')
+    const ordinary = await db('agentExternalMcpServers').whereIn('id', [bearerId, noneId]).orderBy('id').select('*')
+    await restoreGoogleWorkspacePreset(db)
+    const restored = await db('agentExternalMcpServers').where('id', googleId).first()
+    expect(restored).toEqual({ ...before, oauthConfiguration: before.retiredOAuthConfiguration, revision: before.revision + 1, updatedAt: restored.updatedAt })
+    expect(restored).toMatchObject({ status: 'disabled', authMode: 'oauth', revision: 3, oauthConfiguration: JSON.stringify({ preset: 'google-workspace', registrationMode: 'preregistered' }) })
+    expect(await db('agentProviderSecrets').orderBy('id').select('*')).toEqual(secrets)
+    expect(await db('agentExternalMcpOAuthGrants').select('*')).toEqual(grants)
+    expect(await db('agentExternalMcpGrants').orderBy('serverId').select('*')).toEqual(policies)
+    expect(await db('agentExternalMcpOAuthPending').select('*')).toEqual(pending)
+    expect(await db('agentExternalMcpOAuthRegistrations').select('*')).toEqual(registrations)
+    expect(await db('agentExternalMcpServers').whereIn('id', [bearerId, noneId]).orderBy('id').select('*')).toEqual(ordinary)
+    const service = new ExternalMcpService({ knex: db, secrets: {
+      has: vault.has.bind(vault), store: vault.store.bind(vault), delete: vault.delete.bind(vault),
+      get: async () => { throw new Error('Restoration must not unseal retired credentials') }
+    }, enabled: () => true, oauth: { siteOrigin: 'https://wiki.example.test', googleWorkspace: { clientId: 'restored-client', clientSecret: 'restored-secret' } },
+    fetch: async () => { throw new Error('Disabled restored endpoints must not perform network requests') } })
+    await expect(service.oauthStatus({ id: 7, authVersion: 0 }, googleId)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    await expect(service.connectOAuth({ id: 7, authVersion: 0 }, googleId, 'old-consent')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_ACCESS_DENIED' })
+    expect((await service.listAdmin({ id: 1, authVersion: 0 })).find(endpoint => endpoint.id === googleId)?.oauth).toMatchObject({ preset: 'google-workspace' })
+    await restoreGoogleWorkspacePreset(db)
+    expect(await db('agentExternalMcpServers').where('id', googleId).first()).toEqual(restored)
+  })
+
+  it('requires explicit enable and fresh consent before using a recovered legacy preset', async () => {
+    await addGenericOAuth(db)
+    await retireOAuthPresets(db)
+    await restoreGoogleWorkspacePreset(db)
+    const exchanges: string[] = []
+    const service = new ExternalMcpService({ knex: db, secrets: vault, enabled: () => true,
+      resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+      oauth: { siteOrigin: 'https://wiki.example.test', googleWorkspace: { clientId: 'restored-client', clientSecret: 'restored-secret' } },
+      fetch: async (url, init) => {
+        exchanges.push(url.href)
+        expect(url.href).toBe('https://oauth2.googleapis.com/token')
+        expect(new URLSearchParams(String(init.body)).get('grant_type')).toBe('authorization_code')
+        return Response.json({ access_token: 'freshly-approved-access', token_type: 'Bearer' })
+      } })
+    const enabled = await service.updateAdmin({ id: 1, authVersion: 0 }, googleId, 3, { displayName: 'Explicitly enabled Google', endpointUrl: 'https://gmailmcp.googleapis.com/mcp/v1', status: 'enabled', authMode: 'oauth' })
+    expect(enabled).toMatchObject({ status: 'enabled', revision: 4, oauth: { preset: 'google-workspace' } })
+    expect(await vault.get(tokenReference)).toBeNull()
+    expect(await vault.get(pendingReference)).toBeNull()
+    expect(await service.oauthStatus({ id: 7, authVersion: 0 }, googleId)).toMatchObject({ connected: false })
+    await expect(service.discoverForUser({ id: 7, authVersion: 0 }, googleId)).rejects.toMatchObject({ code: 'EXTERNAL_MCP_RECONNECT_REQUIRED' })
+    expect(exchanges).toEqual([])
+    const authorization = new URL((await service.connectOAuth({ id: 7, authVersion: 0 }, googleId, 'fresh-browser')).authorizationUrl)
+    expect(await service.oauthCallback({ id: 7, authVersion: 0 }, { state: authorization.searchParams.get('state')!, code: 'fresh-code', sessionId: 'fresh-browser', callbackPath: '/agents/oauth/google/callback' })).toBe('connected')
+    expect(exchanges).toEqual(['https://oauth2.googleapis.com/token'])
+    expect(await service.oauthStatus({ id: 7, authVersion: 0 }, googleId)).toMatchObject({ connected: true })
+  })
+
+  it.each(['generic', 'none'] as const)('preserves subsequent user %s reconfiguration and its sealed state', async choice => {
+    await addGenericOAuth(db)
+    await retireOAuthPresets(db)
+    const service = new ExternalMcpService({ knex: db, secrets: vault, enabled: () => true })
+    await service.updateAdmin({ id: 1, authVersion: 0 }, googleId, 2, { displayName: 'User-owned replacement', endpointUrl: 'https://mcp.example.com/replacement',
+      status: 'disabled', authMode: choice === 'generic' ? 'oauth' : 'none', ...(choice === 'generic' ? { oauth: { registrationMode: 'automatic' as const } } : {}) })
+    const endpoints = await db('agentExternalMcpServers').orderBy('id').select('*')
+    const secrets = await db('agentProviderSecrets').orderBy('id').select('*')
+    await restoreGoogleWorkspacePreset(db)
+    expect(await db('agentExternalMcpServers').orderBy('id').select('*')).toEqual(endpoints)
+    expect(await db('agentProviderSecrets').orderBy('id').select('*')).toEqual(secrets)
+  })
+
+  it.each(['enabled', 'different-json', 'unknown-preset', 'invalid-json', 'nonofficial-endpoint', 'overridden-scopes'] as const)('does not recover %s rows as untouched presets', async change => {
+    await addGenericOAuth(db)
+    await retireOAuthPresets(db)
+    const changes = {
+      enabled: { status: 'enabled' },
+      'different-json': { oauthConfiguration: '{ "registrationMode": "preregistered" }' },
+      'unknown-preset': { retiredOAuthConfiguration: JSON.stringify({ preset: 'unknown', registrationMode: 'preregistered' }) },
+      'invalid-json': { retiredOAuthConfiguration: 'not-json' },
+      'nonofficial-endpoint': { endpointUrl: 'https://gmailmcp.googleapis.com.evil.test/mcp/v1' },
+      'overridden-scopes': { retiredOAuthConfiguration: JSON.stringify({ preset: 'google-workspace', registrationMode: 'preregistered', scopes: ['other.read'] }) }
+    }
+    await db('agentExternalMcpServers').where('id', googleId).update(changes[change])
+    const before = await db('agentExternalMcpServers').where('id', googleId).first()
+    await restoreGoogleWorkspacePreset(db)
+    expect(await db('agentExternalMcpServers').where('id', googleId).first()).toEqual(before)
   })
 
   it('rolls back schema changes and restores foreign-key enforcement if reconstruction cannot start', async () => {

@@ -1,12 +1,13 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import type { ExternalMcpOAuthInput, ExternalMcpOAuthView } from '../../shared/agents/external-mcp.ts'
+import { GOOGLE_WORKSPACE_MCP_SERVICES, type ExternalMcpOAuthInput, type ExternalMcpOAuthView } from '../../shared/agents/external-mcp.ts'
 import { validateExternalMcpDestination, type ExternalMcpServiceDependencies } from './external-mcp.ts'
 import { discoverOAuthServer, oauthFailure, oauthRequest, type OAuthServerMetadata } from './external-mcp-oauth-protocol.ts'
 import { AgentRepositoryError } from './repository.ts'
 
 export const EXTERNAL_MCP_OAUTH_CALLBACK_PATH = '/agents/oauth/callback'
+export const GOOGLE_WORKSPACE_CALLBACK_PATH = '/agents/oauth/google/callback'
 export const EXTERNAL_MCP_OAUTH_CLIENT_METADATA_PATH = '/agents/oauth/client-metadata'
 export const EXTERNAL_MCP_OAUTH_RETURN_PATH = '/p/profile'
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -19,7 +20,7 @@ const TokenSchema = z.object({
 const StoredTokenSchema = z.object({ accessToken: z.string(), refreshToken: z.string().optional(), expiresAt: z.number().nullable(), scopes: z.array(z.string()) })
 type StoredToken = z.infer<typeof StoredTokenSchema>
 type AuthMethod = 'none' | 'client_secret_post' | 'client_secret_basic'
-export interface ExternalMcpOAuthConfiguration { readonly siteOrigin: string }
+export interface ExternalMcpOAuthConfiguration { readonly siteOrigin: string; readonly googleWorkspace?: { readonly clientId: string; readonly clientSecret: string } }
 export interface ExternalMcpOAuthContext {
   readonly userId: number; readonly serverId: string; readonly serverRevision: number; readonly authVersion: number
   readonly authorizationStamp: string; readonly endpointUrl: string; readonly oauth: ExternalMcpOAuthInput; readonly clientSecretReference: string | null
@@ -49,6 +50,7 @@ const registrationHash = (context: ExternalMcpOAuthContext): string => {
   const { scopes: _scopes, ...identity } = context.oauth
   return hash(JSON.stringify([context.endpointUrl, identity, context.clientSecretReference]))
 }
+const googleService = (url: string) => GOOGLE_WORKSPACE_MCP_SERVICES.find(service => service.endpointUrl === url) ?? oauthFailure('The Google Workspace preset requires an official service endpoint')
 
 /** Browser consent and encrypted transaction state remain application-owned, not an SDK Promise. */
 export class ExternalMcpOAuthService {
@@ -60,7 +62,7 @@ export class ExternalMcpOAuthService {
       try {
         const origin = new URL(dependencies.oauth.siteOrigin)
         if (origin.protocol !== 'https:' || origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/') return
-        this.#configuration = { siteOrigin: origin.origin }
+        this.#configuration = { ...dependencies.oauth, siteOrigin: origin.origin }
       } catch { /* HTTP installations retain ordinary none/bearer MCP; OAuth reports not configured. */ }
     }
   }
@@ -108,21 +110,25 @@ export class ExternalMcpOAuthService {
       const connected = Boolean(token && (token.expiresAt === null || token.expiresAt > Date.now() || token.refreshToken) && binding?.scopes.every(scope => token.scopes.includes(scope)))
       // Legacy encrypted grants remain sealed until explicit connect/disconnect; never refresh unbound tokens.
       if (grant?.binding && !this.#matches(grant, context)) await this.#remove(tx, grant, true)
-      const configured = Boolean(this.#configuration)
-      const scopes = context.oauth.scopes ?? binding?.scopes ?? []
-      return { configured, connected, scopes, reconnectRequired: Boolean(grant && !connected), ...(binding ? { issuer: binding.issuer } : context.oauth.issuer ? { issuer: context.oauth.issuer } : {}), registrationMode: context.oauth.registrationMode, ...(this.#configuration ? { callbackUrl: this.#configuration.siteOrigin + EXTERNAL_MCP_OAUTH_CALLBACK_PATH } : {}) }
+      const configured = Boolean(this.#configuration && (context.oauth.preset !== 'google-workspace' || (this.#configuration.googleWorkspace?.clientId && this.#configuration.googleWorkspace.clientSecret)))
+      const scopes = context.oauth.preset === 'google-workspace' ? googleService(context.endpointUrl).scopes : context.oauth.scopes ?? binding?.scopes ?? []
+      return { configured, connected, scopes, reconnectRequired: Boolean(grant && !connected), ...(binding ? { issuer: binding.issuer } : context.oauth.issuer ? { issuer: context.oauth.issuer } : {}), registrationMode: context.oauth.registrationMode, ...(this.#configuration ? { callbackUrl: this.#configuration.siteOrigin + (context.oauth.preset ? GOOGLE_WORKSPACE_CALLBACK_PATH : EXTERNAL_MCP_OAUTH_CALLBACK_PATH) } : {}) }
     })
   }
   async #registration(tx: Knex.Transaction, context: ExternalMcpOAuthContext): Promise<{ binding: Binding; client: Client }> {
     const config = this.#config(), fingerprint = configurationHash(context)
+    if (context.oauth.preset === 'google-workspace' && (!config.googleWorkspace?.clientId || !config.googleWorkspace.clientSecret))
+      throw new AgentRepositoryError('EXTERNAL_MCP_OAUTH_NOT_CONFIGURED', 'The Google Workspace preset requires both configured client credentials', 503)
     const saved = await tx<Registration>('agentExternalMcpOAuthRegistrations').where('serverId', context.serverId).first()
     if (saved) {
       if (saved.configurationHash !== registrationHash(context)) return oauthFailure('OAuth client configuration changed; explicitly replace its credentials before reconnecting')
       const binding = JSON.parse(saved.binding) as Binding
-      const current = await discoverOAuthServer(this.#dependencies, context.endpointUrl, context.oauth.issuer)
-      if (current.issuer !== binding.issuer || current.tokenEndpoint !== binding.tokenEndpoint || current.authorizationEndpoint !== binding.authorizationEndpoint ||
-        current.resource !== binding.resource || current.requireResponseIssuer !== binding.requireResponseIssuer || !current.authMethods.includes(binding.authMethod))
-        return oauthFailure('Authorization server metadata changed; explicitly replace or reconfigure the OAuth client credentials before reconnecting')
+      if (!context.oauth.preset) {
+        const current = await discoverOAuthServer(this.#dependencies, context.endpointUrl, context.oauth.issuer)
+        if (current.issuer !== binding.issuer || current.tokenEndpoint !== binding.tokenEndpoint || current.authorizationEndpoint !== binding.authorizationEndpoint ||
+          current.resource !== binding.resource || current.requireResponseIssuer !== binding.requireResponseIssuer || !current.authMethods.includes(binding.authMethod))
+          return oauthFailure('Authorization server metadata changed; explicitly replace or reconfigure the OAuth client credentials before reconnecting')
+      }
       await validateExternalMcpDestination(binding.authorizationEndpoint, this.#dependencies.resolve)
       const value = await this.#dependencies.secrets.get(saved.secretReference, tx)
       if (!value) return reconnect()
@@ -132,29 +138,36 @@ export class ExternalMcpOAuthService {
       if (JSON.stringify(currentBinding) !== saved.binding) await tx('agentExternalMcpOAuthRegistrations').where('serverId', context.serverId).update({ binding: JSON.stringify(currentBinding) })
       return { binding: currentBinding, client }
     }
-    const callbackUrl = config.siteOrigin + EXTERNAL_MCP_OAUTH_CALLBACK_PATH
-    const metadata = await discoverOAuthServer(this.#dependencies, context.endpointUrl, context.oauth.issuer)
-    let client: Client
-    if (context.oauth.registrationMode === 'preregistered') {
-      if (!context.oauth.issuer || !context.oauth.clientId) return oauthFailure('Pre-registered clients require an explicit issuer and client ID')
-      const secret = context.clientSecretReference ? await this.#dependencies.secrets.get(context.clientSecretReference, tx) : null
-      const authMethod = context.oauth.tokenEndpointAuthMethod ?? (secret ? 'client_secret_basic' : 'none')
-      if ((authMethod === 'none' && secret) || (authMethod !== 'none' && !secret) || !metadata.authMethods.includes(authMethod)) return oauthFailure('OAuth client authentication does not match the selected issuer')
-      client = { clientId: context.oauth.clientId, authMethod, ...(secret ? { clientSecret: secret } : {}) }
-    } else if (metadata.metadataClient) {
-      if (!metadata.authMethods.includes('none')) return oauthFailure('Authorization server does not support public metadata clients')
-      client = { clientId: this.clientMetadata().client_id, authMethod: 'none' }
+    let metadata: OAuthServerMetadata, client: Client
+    const callbackUrl = config.siteOrigin + (context.oauth.preset ? GOOGLE_WORKSPACE_CALLBACK_PATH : EXTERNAL_MCP_OAUTH_CALLBACK_PATH)
+    if (context.oauth.preset === 'google-workspace') {
+      const credentials = config.googleWorkspace
+      if (!credentials?.clientId || !credentials.clientSecret) throw new AgentRepositoryError('EXTERNAL_MCP_OAUTH_NOT_CONFIGURED', 'The Google Workspace preset requires both configured client credentials', 503)
+      metadata = { issuer: 'https://accounts.google.com', authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth', tokenEndpoint: 'https://oauth2.googleapis.com/token', metadataClient: false, authMethods: ['client_secret_post'], requireResponseIssuer: false, resource: context.endpointUrl, scopes: googleService(context.endpointUrl).scopes }
+      client = { clientId: credentials.clientId, clientSecret: credentials.clientSecret, authMethod: 'client_secret_post' }
     } else {
-      if (!metadata.registrationEndpoint) return oauthFailure('This issuer requires a pre-registered client ID')
-      const authMethod = context.oauth.tokenEndpointAuthMethod ?? (metadata.authMethods.includes('none') ? 'none' : metadata.authMethods.includes('client_secret_basic') ? 'client_secret_basic' : 'client_secret_post')
-      if (!metadata.authMethods.includes(authMethod)) return oauthFailure('Unsupported token endpoint authentication method')
-      const response = await oauthRequest(this.#dependencies, metadata.registrationEndpoint, { contentType: 'application/json', body: JSON.stringify({ client_name: 'tsEpistle external MCP', redirect_uris: [callbackUrl], application_type: 'web', token_endpoint_auth_method: authMethod, grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], ...(context.oauth.scopes?.length ? { scope: context.oauth.scopes.join(' ') } : {}) }) })
-      const registration = z.object({ client_id: z.string().min(1).max(2_048), client_secret: z.string().min(1).max(8_192).optional(), token_endpoint_auth_method: z.enum(['none', 'client_secret_post', 'client_secret_basic']).optional(), client_secret_expires_at: z.number().int().nonnegative().optional(), redirect_uris: z.array(z.string()).max(16).optional() }).safeParse(response.body)
-      if (!response.ok || !registration.success || (registration.data.token_endpoint_auth_method && registration.data.token_endpoint_auth_method !== authMethod) || (authMethod !== 'none' && !registration.data.client_secret) || (registration.data.redirect_uris && !registration.data.redirect_uris.includes(callbackUrl))) return oauthFailure('OAuth client registration was rejected')
-      client = { clientId: registration.data.client_id, authMethod, ...(registration.data.client_secret ? { clientSecret: registration.data.client_secret } : {}), ...(registration.data.client_secret_expires_at ? { expiresAt: registration.data.client_secret_expires_at * 1_000 } : {}) }
+      metadata = await discoverOAuthServer(this.#dependencies, context.endpointUrl, context.oauth.issuer)
+      if (context.oauth.registrationMode === 'preregistered') {
+        if (!context.oauth.issuer || !context.oauth.clientId) return oauthFailure('Pre-registered clients require an explicit issuer and client ID')
+        const secret = context.clientSecretReference ? await this.#dependencies.secrets.get(context.clientSecretReference, tx) : null
+        const authMethod = context.oauth.tokenEndpointAuthMethod ?? (secret ? 'client_secret_basic' : 'none')
+        if ((authMethod === 'none' && secret) || (authMethod !== 'none' && !secret) || !metadata.authMethods.includes(authMethod)) return oauthFailure('OAuth client authentication does not match the selected issuer')
+        client = { clientId: context.oauth.clientId, authMethod, ...(secret ? { clientSecret: secret } : {}) }
+      } else if (metadata.metadataClient) {
+        if (!metadata.authMethods.includes('none')) return oauthFailure('Authorization server does not support public metadata clients')
+        client = { clientId: this.clientMetadata().client_id, authMethod: 'none' }
+      } else {
+        if (!metadata.registrationEndpoint) return oauthFailure('This issuer requires a pre-registered client ID')
+        const authMethod = context.oauth.tokenEndpointAuthMethod ?? (metadata.authMethods.includes('none') ? 'none' : metadata.authMethods.includes('client_secret_basic') ? 'client_secret_basic' : 'client_secret_post')
+        if (!metadata.authMethods.includes(authMethod)) return oauthFailure('Unsupported token endpoint authentication method')
+        const response = await oauthRequest(this.#dependencies, metadata.registrationEndpoint, { contentType: 'application/json', body: JSON.stringify({ client_name: 'tsEpistle external MCP', redirect_uris: [callbackUrl], application_type: 'web', token_endpoint_auth_method: authMethod, grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], ...(context.oauth.scopes?.length ? { scope: context.oauth.scopes.join(' ') } : {}) }) })
+        const registration = z.object({ client_id: z.string().min(1).max(2_048), client_secret: z.string().min(1).max(8_192).optional(), token_endpoint_auth_method: z.enum(['none', 'client_secret_post', 'client_secret_basic']).optional(), client_secret_expires_at: z.number().int().nonnegative().optional(), redirect_uris: z.array(z.string()).max(16).optional() }).safeParse(response.body)
+        if (!response.ok || !registration.success || (registration.data.token_endpoint_auth_method && registration.data.token_endpoint_auth_method !== authMethod) || (authMethod !== 'none' && !registration.data.client_secret) || (registration.data.redirect_uris && !registration.data.redirect_uris.includes(callbackUrl))) return oauthFailure('OAuth client registration was rejected')
+        client = { clientId: registration.data.client_id, authMethod, ...(registration.data.client_secret ? { clientSecret: registration.data.client_secret } : {}), ...(registration.data.client_secret_expires_at ? { expiresAt: registration.data.client_secret_expires_at * 1_000 } : {}) }
+      }
     }
     await Promise.all([metadata.authorizationEndpoint, metadata.tokenEndpoint].map(url => validateExternalMcpDestination(url, this.#dependencies.resolve)))
-    const binding: Binding = { ...metadata, configurationHash: fingerprint, callbackUrl, clientId: client.clientId, authMethod: client.authMethod, scopes: context.oauth.scopes ?? metadata.scopes }
+    const binding: Binding = { ...metadata, configurationHash: fingerprint, callbackUrl, clientId: client.clientId, authMethod: client.authMethod, scopes: context.oauth.preset ? metadata.scopes : context.oauth.scopes ?? metadata.scopes }
     const secretReference = await this.#dependencies.secrets.store(JSON.stringify(client), context.credentialOwnerId, tx)
     await tx('agentExternalMcpOAuthRegistrations').insert({ serverId: context.serverId, configurationHash: registrationHash(context), binding: JSON.stringify(binding), secretReference })
     return { binding, client }
@@ -172,7 +185,7 @@ export class ExternalMcpOAuthService {
       const secretReference = await this.#dependencies.secrets.store(JSON.stringify({ verifier, client } satisfies PendingSecret), context.userId, tx)
       await tx('agentExternalMcpOAuthPending').insert({ stateHash: hash(state), grantId: grant.id, sessionHash: hash(sessionId), secretReference, expiresAt: new Date(Date.now() + 10 * 60_000) })
       const url = new URL(binding.authorizationEndpoint)
-      for (const [key, value] of Object.entries({ client_id: client.clientId, redirect_uri: binding.callbackUrl, response_type: 'code', scope: binding.scopes.join(' '), state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', resource: binding.resource })) url.searchParams.set(key, value)
+      for (const [key, value] of Object.entries({ client_id: client.clientId, redirect_uri: binding.callbackUrl, response_type: 'code', scope: binding.scopes.join(' '), state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', resource: binding.resource, ...(context.oauth.preset ? { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'false' } : {}) })) url.searchParams.set(key, value)
       await validateExternalMcpDestination(url.href, this.#dependencies.resolve)
       return { authorizationUrl: url.href }
     })

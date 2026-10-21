@@ -1,5 +1,18 @@
 import { z } from 'zod'
 
+/** Official Workspace MCP endpoints; consent is restricted to the selected service. */
+export const GOOGLE_WORKSPACE_MCP_SERVICES = [
+  { id: 'gmail', label: 'Gmail', endpointUrl: 'https://gmailmcp.googleapis.com/mcp/v1', scopes: ['gmail.readonly', 'gmail.compose'] },
+  { id: 'drive', label: 'Google Drive', endpointUrl: 'https://drivemcp.googleapis.com/mcp/v1', scopes: ['drive.readonly', 'drive.file'] },
+  { id: 'docs', label: 'Google Docs', endpointUrl: 'https://docsmcp.googleapis.com/mcp/v1', scopes: ['drive.readonly', 'drive.file', 'documents.readonly', 'documents'] },
+  { id: 'sheets', label: 'Google Sheets', endpointUrl: 'https://sheetsmcp.googleapis.com/mcp/v1', scopes: ['drive.readonly', 'drive.file', 'spreadsheets.readonly', 'spreadsheets'] },
+  { id: 'slides', label: 'Google Slides', endpointUrl: 'https://slidesmcp.googleapis.com/mcp/v1', scopes: ['drive.readonly', 'drive.file', 'presentations.readonly', 'presentations'] },
+  { id: 'calendar', label: 'Google Calendar', endpointUrl: 'https://calendarmcp.googleapis.com/mcp/v1', scopes: ['calendar.calendarlist.readonly', 'calendar.events.freebusy', 'calendar.events.readonly'] },
+  { id: 'chat', label: 'Google Chat', endpointUrl: 'https://chatmcp.googleapis.com/mcp/v1', scopes: ['chat.spaces.readonly', 'chat.memberships.readonly', 'chat.messages.readonly', 'chat.messages.create', 'chat.users.readstate'] },
+  { id: 'people', label: 'Google People', endpointUrl: 'https://people.googleapis.com/mcp/v1', scopes: ['directory.readonly', 'userinfo.profile', 'contacts.readonly'] },
+  { id: 'classroom', label: 'Google Classroom', endpointUrl: 'https://classroommcp.googleapis.com/mcp/v1', scopes: ['classroom.announcements', 'classroom.courses.readonly', 'classroom.coursework.students', 'classroom.courseworkmaterials', 'classroom.rosters.readonly', 'classroom.student-submissions.students.readonly', 'classroom.topics.readonly'] }
+].map(service => ({ ...service, scopes: service.scopes.map(scope => `https://www.googleapis.com/auth/${scope}`) }))
+
 export interface ExternalMcpOAuthView {
   readonly configured: boolean
   readonly connected: boolean
@@ -11,6 +24,7 @@ export interface ExternalMcpOAuthView {
 }
 
 export const ExternalMcpOAuthInputSchema = z.strictObject({
+  preset: z.literal('google-workspace').optional(),
   issuer: z.string().max(2_048).url().optional(),
   scopes: z.array(z.string().min(1).max(2_048).regex(/^[\x21\x23-\x5b\x5d-\x7e]+$/u)).max(64).optional(),
   registrationMode: z.enum(['automatic', 'preregistered']).default('automatic'),
@@ -20,6 +34,7 @@ export const ExternalMcpOAuthInputSchema = z.strictObject({
 })
 export type ExternalMcpOAuthInput = z.infer<typeof ExternalMcpOAuthInputSchema>
 export interface ExternalMcpOAuthConfigurationView {
+  readonly preset?: 'google-workspace'
   readonly issuer?: string
   readonly scopes?: readonly string[]
   readonly registrationMode: 'automatic' | 'preregistered'

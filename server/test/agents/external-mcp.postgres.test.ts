@@ -9,6 +9,7 @@ import { up } from '../../db/migrations/tsepistle-000050-agent-external-mcp.ts'
 import { up as addGoogleOAuth } from '../../db/migrations/tsepistle-000063-google-workspace-mcp-oauth.ts'
 import { up as addGenericOAuth } from '../../db/migrations/tsepistle-000064-generic-mcp-oauth.ts'
 import { up as retireOAuthPresets } from '../../db/migrations/tsepistle-000065-retire-mcp-oauth-presets.ts'
+import { up as restoreGoogleWorkspacePreset } from '../../db/migrations/tsepistle-000066-restore-google-workspace-mcp-preset.ts'
 import { up as addSecrets } from '../../db/migrations/2.5.141.ts'
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -91,6 +92,7 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
     await addGoogleOAuth(db)
     await addGenericOAuth(db)
     await retireOAuthPresets(db)
+    await restoreGoogleWorkspacePreset(db)
   })
   beforeEach(async () => {
     await db('agentExternalMcpGrants').delete()
@@ -167,6 +169,19 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
         authMode: 'oauth', status: 'disabled', revision: 2, oauthConfiguration: JSON.stringify({ registrationMode: 'preregistered' }),
         retiredOAuthConfiguration: JSON.stringify({ preset: 'google-workspace', registrationMode: 'preregistered' })
       })
+      const editedId = randomUUID()
+      const retired = await legacy('agentExternalMcpServers').where('id', googleId).first()
+      await legacy('agentExternalMcpServers').insert({ ...retired, id: editedId })
+      await migrated.updateAdmin(admin, editedId, 2, { displayName: 'User-configured generic replacement', endpointUrl: 'https://mcp.example.com/replacement',
+        authMode: 'oauth', status: 'disabled', oauth: { registrationMode: 'automatic' } })
+      const edited = await legacy('agentExternalMcpServers').where('id', editedId).first()
+      const sealed = await legacy('agentProviderSecrets').orderBy('id').select('*')
+      await restoreGoogleWorkspacePreset(legacy)
+      expect(await legacy('agentExternalMcpServers').where('id', googleId).first('status', 'revision', 'oauthConfiguration', 'retiredOAuthConfiguration')).toEqual({
+        status: 'disabled', revision: 3, oauthConfiguration: retired.retiredOAuthConfiguration, retiredOAuthConfiguration: retired.retiredOAuthConfiguration
+      })
+      expect(await legacy('agentExternalMcpServers').where('id', editedId).first()).toEqual(edited)
+      expect(await legacy('agentProviderSecrets').orderBy('id').select('*')).toEqual(sealed)
       expect(await legacy('agentExternalMcpOAuthGrants').where('id', grantId).first('binding', 'secretReference')).toEqual({ binding: null, secretReference: saved.token })
       expect(await legacyVault.get(saved.token)).toContain('legacy-google-refresh')
       expect(await legacyVault.get(saved.pending)).toBe('legacy-pkce-verifier')

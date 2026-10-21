@@ -19,6 +19,8 @@ import { up } from '../../db/migrations/tsepistle-000050-agent-external-mcp.ts'
 import { up as addGoogleOAuth } from '../../db/migrations/tsepistle-000063-google-workspace-mcp-oauth.ts'
 import { up as addGenericOAuth } from '../../db/migrations/tsepistle-000064-generic-mcp-oauth.ts'
 import { up as retireOAuthPresets } from '../../db/migrations/tsepistle-000065-retire-mcp-oauth-presets.ts'
+import { up as restoreGoogleWorkspacePreset } from '../../db/migrations/tsepistle-000066-restore-google-workspace-mcp-preset.ts'
+import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
 const publicResolver = async () => [{ address: '93.184.216.34', family: 4 }]
 const admin = { id: 1, authVersion: 0 },
   owner = { id: 7, authVersion: 0 },
@@ -188,6 +190,7 @@ describe('external MCP owner-scoped native clients', () => {
     await addGoogleOAuth(db)
     await addGenericOAuth(db)
     await retireOAuthPresets(db)
+    await restoreGoogleWorkspacePreset(db)
     await db('users').insert([1, 7, 8, 9].map(id => ({ id, isActive: true, authVersion: 0 })))
     await db('groups').insert([
       { id: 10, permissions: JSON.stringify(['manage:system']) },
@@ -411,6 +414,82 @@ describe('external MCP owner-scoped native clients', () => {
     const endpoint = await service.createAdmin(admin, fixture.configuration)
     expect(await service.oauthStatus(owner, endpoint.id)).toMatchObject({ configured: false, connected: false })
     await expect(service.connectOAuth(owner, endpoint.id, 'http-oauth')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_OAUTH_NOT_CONFIGURED' })
+  })
+
+  it('keeps generic OAuth independent of the optional Google credentials', async () => {
+    const fixture = genericFixture()
+    const preset = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'oauth',
+      oauth: { preset: 'google-workspace', registrationMode: 'preregistered' }, groupIds: [20] })
+    expect(preset.oauth).toMatchObject({ preset: 'google-workspace', clientSecretConfigured: false })
+    expect(await service.oauthStatus(owner, preset.id)).toMatchObject({ configured: false, connected: false, callbackUrl: 'https://wiki.example.test/agents/oauth/google/callback' })
+    await expect(service.connectOAuth(owner, preset.id, 'missing-google')).rejects.toMatchObject({ code: 'EXTERNAL_MCP_OAUTH_NOT_CONFIGURED' })
+    expect(fixture.calls).toHaveLength(0)
+    expect(await db('agentExternalMcpOAuthRegistrations')).toEqual([])
+    const generic = await service.createAdmin(admin, fixture.configuration)
+    expect(new URL((await service.connectOAuth(owner, generic.id, 'generic-without-google')).authorizationUrl).origin).toBe('https://identity.vendor.test')
+  })
+
+  it.each([0, 5])('connects Google service %s with service-only consent, durable PKCE and pinned refresh', async index => {
+    const selected = GOOGLE_WORKSPACE_MCP_SERVICES[index]!
+    const calls: URLSearchParams[] = []
+    const dependencies = {
+      knex: db, secrets: vault, enabled: () => enabled, resolve: publicResolver,
+      oauth: { siteOrigin: 'https://deployment.example.test:8443/', googleWorkspace: { clientId: 'fixture.apps.googleusercontent.com', clientSecret: 'server-only-client-secret' } },
+      fetch: async (url: URL, init: Parameters<ExternalMcpFetchImplementation>[1]) => {
+        if (url.hostname !== 'oauth2.googleapis.com') return protocol.fetch(url, init)
+        expect(url.href).toBe('https://oauth2.googleapis.com/token')
+        expect(init.redirect).toBe('manual')
+        const body = new URLSearchParams(String(init.body))
+        calls.push(body)
+        expect(body.get('client_id')).toBe('fixture.apps.googleusercontent.com')
+        expect(body.get('client_secret')).toBe('server-only-client-secret')
+        expect(body.get('resource')).toBe(selected.endpointUrl)
+        return Response.json({ access_token: body.get('grant_type') === 'refresh_token' ? 'refreshed-google-token' : 'initial-google-token',
+          refresh_token: 'sealed-google-refresh', token_type: 'Bearer', expires_in: body.get('grant_type') === 'refresh_token' ? 3_600 : 1, scope: selected.scopes.join(' ') })
+      }
+    }
+    service = new ExternalMcpService(dependencies)
+    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: selected.endpointUrl, authMode: 'oauth',
+      oauth: { preset: 'google-workspace', registrationMode: 'preregistered' }, groupIds: [20] })
+    const authorization = new URL((await service.connectOAuth(owner, endpoint.id, 'google-browser')).authorizationUrl)
+    expect(authorization.origin + authorization.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth')
+    expect(authorization.searchParams.get('redirect_uri')).toBe('https://deployment.example.test:8443/agents/oauth/google/callback')
+    expect(authorization.searchParams.get('scope')?.split(' ')).toEqual(selected.scopes)
+    expect(authorization.searchParams.get('include_granted_scopes')).toBe('false')
+    expect(authorization.searchParams.get('access_type')).toBe('offline')
+    expect(authorization.searchParams.get('prompt')).toBe('consent')
+    expect(authorization.searchParams.get('code_challenge_method')).toBe('S256')
+    const state = authorization.searchParams.get('state')!
+    const pending = await db('agentExternalMcpOAuthPending').where('stateHash', createHash('sha256').update(state).digest('hex')).first('secretReference')
+    const { verifier } = JSON.parse((await vault.get(pending.secretReference))!) as { verifier: string }
+    expect(authorization.searchParams.get('code_challenge')).toBe(createHash('sha256').update(verifier).digest('base64url'))
+    service = new ExternalMcpService(dependencies)
+    const callback = { state, code: 'google-code', sessionId: 'google-browser', callbackPath: '/agents/oauth/google/callback' }
+    expect(await service.oauthCallback(owner, { ...callback, callbackPath: '/agents/oauth/callback' })).toBe('error')
+    expect(calls).toHaveLength(0)
+    expect(await service.oauthCallback(owner, callback)).toBe('connected')
+    expect(calls[0]!.get('code_verifier')).toBe(verifier)
+    expect(calls[0]!.get('redirect_uri')).toBe(authorization.searchParams.get('redirect_uri'))
+    expect(await service.oauthStatus({ id: 9, authVersion: 0 }, endpoint.id)).toMatchObject({ connected: false })
+    const lease = await service.openForUser(owner.id, { serverIds: [endpoint.id] })
+    leases.push(lease)
+    await lease.inspectCatalog(endpoint.id)
+    expect(calls.filter(body => body.get('grant_type') === 'refresh_token')).toHaveLength(1)
+    expect(protocol.calls.every(call => call.headers.get('authorization') === 'Bearer refreshed-google-token')).toBe(true)
+    expect(JSON.stringify(await db('agentProviderSecrets'))).not.toContain('sealed-google-refresh')
+    expect(JSON.stringify(await service.listForUser(owner))).not.toContain('server-only-client-secret')
+    expect(new URL((await service.connectOAuth(owner, endpoint.id, 'google-reconnect')).authorizationUrl).searchParams.get('scope')?.split(' ')).toEqual(selected.scopes)
+  })
+
+  it('rejects Google preset overrides and nonofficial endpoints without storing client credentials', async () => {
+    const preset = { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'oauth' as const,
+      oauth: { preset: 'google-workspace' as const, registrationMode: 'preregistered' as const }, groupIds: [20] }
+    for (const endpointUrl of ['https://gmailmcp.googleapis.com.evil.test/mcp/v1', 'https://gmailmcp.googleapis.com/mcp/other'])
+      await expect(service.createAdmin(admin, { ...preset, endpointUrl })).rejects.toMatchObject({ code: 'INVALID_EXTERNAL_MCP_CONFIGURATION' })
+    for (const override of [{ issuer: 'https://identity.example.test' }, { clientId: 'override' }, { scopes: ['other.read'] }, { tokenEndpointAuthMethod: 'none' as const }, { clientSecretValue: 'must-not-store' }])
+      await expect(service.createAdmin(admin, { ...preset, oauth: { ...preset.oauth, ...override } })).rejects.toMatchObject({ code: 'INVALID_EXTERNAL_MCP_CONFIGURATION' })
+    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentExternalMcpServers')).toEqual([])
   })
 
   const oauthEndpoint = () => ({ ...input(), endpointUrl: 'https://mcp.vendor.test/api/mcp', authMode: 'oauth' as const, oauth: { registrationMode: 'preregistered' as const, issuer: 'https://identity.vendor.test/tenant', clientId: 'manual-client', tokenEndpointAuthMethod: 'none' as const }, groupIds: [20] })

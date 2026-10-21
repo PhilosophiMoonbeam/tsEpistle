@@ -52,7 +52,7 @@
             <v-text-field v-model="draft.endpointUrl" :label="t('endpointUrl')" :disabled="busy || denied" :error-messages="fieldError('endpointUrl')" />
             <v-select v-model="draft.status" :label="t('status')" :items="statusOptions" :disabled="busy || denied" :error-messages="fieldError('status')" />
             <v-select v-model="draft.authMode" :label="t('authentication')" :items="authOptions" :disabled="busy || denied" :error-messages="fieldError('authMode')" />
-            <agent-mcp-oauth-settings v-if="draft.authMode === 'oauth'" v-model="draft.oauth" :client-secret-configured="editing?.oauth?.clientSecretConfigured" :disabled="busy || denied" />
+            <agent-mcp-oauth-settings v-if="draft.authMode === 'oauth'" v-model="draft.oauth" v-model:endpoint-url="draft.endpointUrl" :client-secret-configured="editing?.oauth?.clientSecretConfigured" :disabled="busy || denied" />
             <v-alert v-if="draft.authMode === 'oauth' && fieldError('oauth').length" type="error" variant="tonal">{{ t('invalidOAuth') }}</v-alert>
             <v-text-field v-if="draft.authMode === 'bearer'" v-model="draft.secret" type="password" autocomplete="new-password" :label="t('newCredential')" :disabled="busy || denied || draft.clearSecret" :error-messages="fieldError('secretValue')" />
             <v-checkbox v-if="draft.authMode === 'bearer'" v-model="draft.clearSecret" :label="t('clearCredential')" :disabled="busy || denied" />

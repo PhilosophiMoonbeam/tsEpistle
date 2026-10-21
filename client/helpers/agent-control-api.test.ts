@@ -32,25 +32,30 @@ describe('External MCP OAuth client boundary', () => {
     }
   })
 
-  it('exposes only safe OAuth endpoint metadata even if a response contains credential fields', async () => {
-    const fetcher = vi.fn(async () => Response.json({ servers: [{
-      id: endpointId, displayName: 'Independent provider', endpointUrl: 'https://tools.example.net/mcp', destinationHost: 'tools.example.net', namespace: 'external:test',
-      scope: 'admin', ownerId: null, status: 'enabled', revision: 1, authMode: 'oauth', secretConfigured: false, groupIds: [1], trust: 'untrusted', createdAt: '', updatedAt: '',
-      secretValue: 'bearer-secret', secretReference: 'private-keyring-reference',
-      oauth: { preset: 'unsupported-provider', issuer: 'https://identity.example.net', registrationMode: 'preregistered', clientId: 'public-client-id', tokenEndpointAuthMethod: 'client_secret_basic', clientSecretConfigured: true, clientSecretValue: 'oauth-secret', clientSecretReference: 'private-client-reference' }
-    }] }))
-    const [server] = await listAvailableExternalMcp(fetcher as typeof fetch, 'csrf')
-    expect(server?.oauth?.clientSecretConfigured).toBe(true)
-    expect(server?.oauth?.issuer).toBe('https://identity.example.net')
-    expect(server).not.toHaveProperty('secretValue')
-    expect(server).not.toHaveProperty('secretReference')
-    expect(server?.oauth).not.toHaveProperty('clientSecretValue')
-    expect(server?.oauth).not.toHaveProperty('clientSecretReference')
-    expect(server?.oauth).not.toHaveProperty('preset')
+  it('exposes only safe generic and Google preset metadata even if a response contains credential fields', async () => {
+    for (const preset of [undefined, 'google-workspace'] as const) {
+      const fetcher = vi.fn(async () => Response.json({ servers: [{
+        id: endpointId, displayName: 'Independent provider', endpointUrl: 'https://tools.example.net/mcp', destinationHost: 'tools.example.net', namespace: 'external:test',
+        scope: 'admin', ownerId: null, status: 'enabled', revision: 1, authMode: 'oauth', secretConfigured: false, groupIds: [1], trust: 'untrusted', createdAt: '', updatedAt: '',
+        secretValue: 'bearer-secret', secretReference: 'private-keyring-reference',
+        oauth: { ...(preset ? { preset } : {}), issuer: 'https://identity.example.net', registrationMode: 'preregistered', clientId: 'public-client-id', tokenEndpointAuthMethod: 'client_secret_basic', clientSecretConfigured: true, clientSecretValue: 'oauth-secret', clientSecretReference: 'private-client-reference' }
+      }] }))
+      const [server] = await listAvailableExternalMcp(fetcher as typeof fetch, 'csrf')
+      expect(server?.oauth?.clientSecretConfigured).toBe(true)
+      expect(server?.oauth?.issuer).toBe('https://identity.example.net')
+      expect(server).not.toHaveProperty('secretValue')
+      expect(server).not.toHaveProperty('secretReference')
+      expect(server?.oauth).not.toHaveProperty('clientSecretValue')
+      expect(server?.oauth).not.toHaveProperty('clientSecretReference')
+      if (preset) expect(server?.oauth?.preset).toBe(preset)
+      else expect(server?.oauth).not.toHaveProperty('preset')
+    }
   })
 
   it('omits unchanged write-only secrets, distinguishes explicit clear, and drops inactive registration credentials', () => {
     const draft = createExternalMcpOAuthDraft({ registrationMode: 'preregistered', clientId: 'client', tokenEndpointAuthMethod: 'client_secret_basic', clientSecretConfigured: true })
+    expect(createExternalMcpOAuthDraft().preset).toBe('')
+    expect(draft.preset).toBe('')
     expect(externalMcpOAuthInput(draft)).not.toHaveProperty('clientSecretValue')
     draft.clientSecret = 'replacement-secret'
     expect(externalMcpOAuthInput(draft)?.clientSecretValue).toBe('replacement-secret')
@@ -66,6 +71,23 @@ describe('External MCP OAuth client boundary', () => {
     expect(externalMcpOAuthInput(draft)).toEqual({
       issuer: 'https://identity.example.net',
       scopes: ['read:tools', 'write:tools', 'profile'],
+      registrationMode: 'automatic'
+    })
+  })
+
+  it('serializes the Google preset without inactive generic settings or write-only secrets', () => {
+    const draft = createExternalMcpOAuthDraft({ preset: 'google-workspace', registrationMode: 'automatic', clientSecretConfigured: true })
+    expect(draft.preset).toBe('google-workspace')
+    expect(draft.clientSecret).toBe('')
+    draft.issuer = 'https://identity.example.net'
+    draft.scopes = 'read:tools\nwrite:tools'
+    draft.registrationMode = 'preregistered'
+    draft.clientId = 'inactive-client'
+    draft.tokenEndpointAuthMethod = 'client_secret_basic'
+    draft.clientSecret = 'inactive-secret'
+    draft.clearClientSecret = true
+    expect(externalMcpOAuthInput(draft)).toEqual({
+      preset: 'google-workspace',
       registrationMode: 'automatic'
     })
   })
