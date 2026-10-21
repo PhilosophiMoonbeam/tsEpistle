@@ -293,6 +293,7 @@ make_plan() {
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
         native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
         personal-mcp-credential-kind-and-owner-schema) ;;
+        external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
       esac
     done < <(jq -r '.rehearsalPostconditions[],.runtimePostconditions[]' <<< "$contract")
@@ -632,10 +633,180 @@ verify_postconditions() {
       external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('agentExternalMcpServers','agentExternalMcpGrants','agentExternalMcpGroupPolicies');")"
         [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 tables)"
-        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentExternalMcpServers\" WHERE ((scope='admin' AND \"ownerId\" IS NULL) OR (scope='personal' AND \"ownerId\" IS NOT NULL)) IS NOT TRUE OR status NOT IN ('enabled','disabled') OR revision<1 OR ((\"authMode\"='none' AND \"secretReference\" IS NULL) OR (\"authMode\"='bearer' AND \"secretReference\" LIKE 'managed:%')) IS NOT TRUE;")"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"agentExternalMcpServers\" WHERE ((scope='admin' AND \"ownerId\" IS NULL) OR (scope='personal' AND \"ownerId\" IS NOT NULL)) IS NOT TRUE OR status NOT IN ('enabled','disabled') OR revision<1 OR ((\"authMode\" IN ('none','oauth') AND \"secretReference\" IS NULL) OR (\"authMode\"='bearer' AND \"secretReference\" LIKE 'managed:%')) IS NOT TRUE;")"
         [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid ownership/auth configurations)"
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT (SELECT count(*) FROM "agentExternalMcpGrants" g LEFT JOIN "agentExternalMcpServers" s ON s.id=g."serverId" LEFT JOIN groups p ON p.id=g."groupId" WHERE s.id IS NULL OR p.id IS NULL) + (SELECT count(*) FROM "agentExternalMcpGroupPolicies" p LEFT JOIN groups g ON g.id=p."groupId" WHERE g.id IS NULL OR p.revision<1);')"
         [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid grants/policies)"
+        ;;
+      external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema)
+        # All pending contracts run against the final target schema. Legacy grants may
+        # remain unbound, expired or stale until explicit reconnect/reconfiguration.
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema()
+            AND table_type='BASE TABLE' AND table_name IN ('agentExternalMcpOAuthGrants','agentExternalMcpOAuthPending');")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 OAuth grant and pending tables)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,max_length,nullable) AS (VALUES
+            ('agentExternalMcpOAuthGrants','id','uuid',NULL,'NO'),
+            ('agentExternalMcpOAuthGrants','userId','integer',NULL,'NO'),
+            ('agentExternalMcpOAuthGrants','serverId','uuid',NULL,'NO'),
+            ('agentExternalMcpOAuthGrants','serverRevision','integer',NULL,'NO'),
+            ('agentExternalMcpOAuthGrants','authVersion','integer',NULL,'NO'),
+            ('agentExternalMcpOAuthGrants','authorizationStamp','text',NULL,'NO'),
+            ('agentExternalMcpOAuthGrants','secretReference','character varying',128,'YES'),
+            ('agentExternalMcpOAuthPending','stateHash','character varying',64,'NO'),
+            ('agentExternalMcpOAuthPending','grantId','uuid',NULL,'NO'),
+            ('agentExternalMcpOAuthPending','sessionHash','character varying',64,'NO'),
+            ('agentExternalMcpOAuthPending','secretReference','character varying',128,'NO'),
+            ('agentExternalMcpOAuthPending','expiresAt','timestamp with time zone',NULL,'NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length AND c.is_nullable=e.nullable;")"
+        [[ "$result" == 12 ]] || die "Postcondition failed: $probe ($result/12 OAuth grant and pending columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,parent_table) AS (VALUES
+            ('agentExternalMcpOAuthGrants','userId','users'),
+            ('agentExternalMcpOAuthGrants','serverId','agentExternalMcpServers'),
+            ('agentExternalMcpOAuthPending','grantId','agentExternalMcpOAuthGrants')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_class t JOIN pg_constraint c ON c.conrelid=t.oid
+              JOIN pg_class parent ON parent.oid=c.confrelid
+              JOIN pg_attribute a ON a.attrelid=t.oid AND a.attname=e.column_name AND NOT a.attisdropped
+              JOIN pg_attribute referenced ON referenced.attrelid=parent.oid AND referenced.attname='id' AND NOT referenced.attisdropped
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND parent.relnamespace=current_schema()::regnamespace AND parent.relname=e.parent_table
+              AND c.contype='f' AND c.convalidated AND c.confdeltype='c'
+              AND c.conkey=ARRAY[a.attnum]::smallint[] AND c.confkey=ARRAY[referenced.attnum]::smallint[]
+          );")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 OAuth owner, endpoint and pending cascade foreign keys)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,first_column,second_column,primary_key) AS (VALUES
+            ('agentExternalMcpOAuthGrants','id',NULL,true),
+            ('agentExternalMcpOAuthGrants','userId','serverId',false),
+            ('agentExternalMcpOAuthPending','stateHash',NULL,true)
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_class t JOIN pg_index i ON i.indrelid=t.oid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisunique AND i.indisvalid AND i.indisready AND (NOT e.primary_key OR i.indisprimary)
+              AND i.indpred IS NULL AND i.indexprs IS NULL
+              AND i.indnkeyatts=CASE WHEN e.second_column IS NULL THEN 1 ELSE 2 END
+              AND pg_get_indexdef(i.indexrelid,1,true)=quote_ident(e.first_column)
+              AND (e.second_column IS NULL OR pg_get_indexdef(i.indexrelid,2,true)=quote_ident(e.second_column))
+          );")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 OAuth grant identity, owner/endpoint and state uniqueness indexes)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,trigger_name,trigger_type) AS (VALUES
+            ('agentExternalMcpOAuthGrants','external_mcp_oauth_secret_cleanup',9),
+            ('agentExternalMcpOAuthPending','external_mcp_oauth_secret_cleanup',9),
+            ('users','external_mcp_oauth_user_cleanup',11)
+          ) SELECT count(*) FROM expected e JOIN pg_class t
+            ON t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+            JOIN pg_trigger g ON g.tgrelid=t.oid AND g.tgname=e.trigger_name
+            JOIN pg_proc f ON f.oid=g.tgfoid AND f.pronamespace=t.relnamespace AND f.proname=e.trigger_name
+          WHERE NOT g.tgisinternal AND g.tgenabled IN ('O','A') AND g.tgtype=e.trigger_type
+            AND g.tgnargs=0 AND g.tgqual IS NULL AND f.prorettype='trigger'::regtype;")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe ($result/3 enabled OAuth credential/account cleanup trigger bindings)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc '
+          SELECT (SELECT count(*) FROM "agentExternalMcpOAuthGrants" g
+            LEFT JOIN users u ON u.id=g."userId" LEFT JOIN "agentExternalMcpServers" s ON s.id=g."serverId"
+            WHERE u.id IS NULL OR s.id IS NULL)
+          + (SELECT count(*) FROM "agentExternalMcpOAuthPending" p
+            LEFT JOIN "agentExternalMcpOAuthGrants" g ON g.id=p."grantId" WHERE g.id IS NULL);')"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result orphaned OAuth grant/pending records)"
+        if [[ "$probe" != external-mcp-oauth-grants-and-pending-schema ]]; then
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema()
+              AND table_type='BASE TABLE' AND table_name='agentExternalMcpOAuthRegistrations';")"
+          [[ "$result" == 1 ]] || die "Postcondition failed: $probe (OAuth registration table)"
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            WITH expected(table_name,column_name,data_type,max_length,nullable) AS (VALUES
+              ('agentExternalMcpServers','authMode','character varying',16,'NO'),
+              ('agentExternalMcpServers','secretReference','character varying',128,'YES'),
+              ('agentExternalMcpServers','oauthConfiguration','text',NULL,'YES'),
+              ('agentExternalMcpServers','oauthClientSecretReference','character varying',128,'YES'),
+              ('agentExternalMcpOAuthGrants','binding','text',NULL,'YES'),
+              ('agentExternalMcpOAuthRegistrations','serverId','uuid',NULL,'NO'),
+              ('agentExternalMcpOAuthRegistrations','configurationHash','character varying',64,'NO'),
+              ('agentExternalMcpOAuthRegistrations','binding','text',NULL,'NO'),
+              ('agentExternalMcpOAuthRegistrations','secretReference','character varying',128,'NO')
+            ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+              ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+            WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length AND c.is_nullable=e.nullable;")"
+          [[ "$result" == 9 ]] || die "Postcondition failed: $probe ($result/9 generic OAuth endpoint, binding and registration columns)"
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            SELECT count(*) FROM pg_class t JOIN pg_constraint c ON c.conrelid=t.oid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='agentExternalMcpServers'
+              AND c.contype='c' AND c.convalidated AND (
+                (c.conname='external_mcp_auth_mode' AND cardinality(c.conkey)=1
+                  AND pg_get_constraintdef(c.oid) LIKE '%authMode%'
+                  AND pg_get_constraintdef(c.oid) LIKE '%''none''%' AND pg_get_constraintdef(c.oid) LIKE '%''bearer''%'
+                  AND pg_get_constraintdef(c.oid) LIKE '%''oauth''%' AND pg_get_constraintdef(c.oid) NOT LIKE '%''google''%') OR
+                (c.conname='external_mcp_auth_secret' AND cardinality(c.conkey)=2
+                  AND pg_get_constraintdef(c.oid) LIKE '%authMode%' AND pg_get_constraintdef(c.oid) LIKE '%secretReference%'
+                  AND pg_get_constraintdef(c.oid) LIKE '%''none''%' AND pg_get_constraintdef(c.oid) LIKE '%''oauth''%'
+                  AND pg_get_constraintdef(c.oid) LIKE '%''bearer''%' AND pg_get_constraintdef(c.oid) LIKE '%managed:%'
+                  AND pg_get_constraintdef(c.oid) LIKE '%IS NULL%' AND pg_get_constraintdef(c.oid) LIKE '%IS NOT NULL%')
+              );")"
+          [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 current OAuth authentication and bearer-secret constraints)"
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            SELECT count(*) FROM pg_class t JOIN pg_constraint c ON c.conrelid=t.oid
+              JOIN pg_class parent ON parent.oid=c.confrelid
+              JOIN pg_attribute a ON a.attrelid=t.oid AND a.attname='serverId' AND NOT a.attisdropped
+              JOIN pg_attribute referenced ON referenced.attrelid=parent.oid AND referenced.attname='id' AND NOT referenced.attisdropped
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='agentExternalMcpOAuthRegistrations'
+              AND parent.relnamespace=current_schema()::regnamespace AND parent.relname='agentExternalMcpServers'
+              AND c.contype='f' AND c.convalidated AND c.confdeltype='c'
+              AND c.conkey=ARRAY[a.attnum]::smallint[] AND c.confkey=ARRAY[referenced.attnum]::smallint[];")"
+          [[ "$result" == 1 ]] || die "Postcondition failed: $probe (OAuth registration endpoint cascade foreign key)"
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            SELECT count(*) FROM pg_class t JOIN pg_index i ON i.indrelid=t.oid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='agentExternalMcpOAuthRegistrations'
+              AND i.indisprimary AND i.indisunique AND i.indisvalid AND i.indisready AND i.indnkeyatts=1
+              AND i.indpred IS NULL AND i.indexprs IS NULL
+              AND pg_get_indexdef(i.indexrelid,1,true)=quote_ident('serverId');")"
+          [[ "$result" == 1 ]] || die "Postcondition failed: $probe (OAuth registration endpoint uniqueness)"
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            WITH expected(table_name,trigger_name) AS (VALUES
+              ('agentExternalMcpOAuthRegistrations','external_mcp_oauth_secret_cleanup'),
+              ('agentExternalMcpServers','external_mcp_oauth_client_cleanup')
+            ) SELECT count(*) FROM expected e JOIN pg_class t
+              ON t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              JOIN pg_trigger g ON g.tgrelid=t.oid AND g.tgname=e.trigger_name
+              JOIN pg_proc f ON f.oid=g.tgfoid AND f.pronamespace=t.relnamespace AND f.proname=e.trigger_name
+            WHERE NOT g.tgisinternal AND g.tgenabled IN ('O','A') AND g.tgtype=9
+              AND g.tgnargs=0 AND g.tgqual IS NULL AND f.prorettype='trigger'::regtype;")"
+          [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 enabled OAuth registration/client cleanup trigger bindings)"
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            SELECT count(*) FROM \"agentExternalMcpServers\"
+            WHERE ((\"authMode\" IN ('none','oauth') AND \"secretReference\" IS NULL)
+              OR (\"authMode\"='bearer' AND \"secretReference\" LIKE 'managed:%' AND \"secretReference\" IS NOT NULL)) IS NOT TRUE;")"
+          [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid current OAuth/bearer authentication configurations)"
+          # Check references only: do not decrypt credentials, require legacy bindings,
+          # compare consent to mutable endpoint revisions, or reject expired pending state.
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            WITH credential_references AS (
+              SELECT \"secretReference\" AS reference FROM \"agentExternalMcpOAuthGrants\" WHERE \"secretReference\" IS NOT NULL
+              UNION ALL SELECT \"secretReference\" FROM \"agentExternalMcpOAuthPending\"
+              UNION ALL SELECT \"secretReference\" FROM \"agentExternalMcpOAuthRegistrations\"
+              UNION ALL SELECT \"oauthClientSecretReference\" FROM \"agentExternalMcpServers\" WHERE \"oauthClientSecretReference\" IS NOT NULL
+              UNION ALL SELECT \"secretReference\" FROM \"agentExternalMcpServers\" WHERE \"secretReference\" IS NOT NULL
+            ) SELECT count(*) FROM credential_references r LEFT JOIN \"agentProviderSecrets\" s ON r.reference='managed:'||s.id::text
+              WHERE s.id IS NULL;")"
+          [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result missing or invalid retained managed credential references)"
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc '
+            SELECT count(*) FROM "agentExternalMcpOAuthRegistrations" r
+              LEFT JOIN "agentExternalMcpServers" s ON s.id=r."serverId" WHERE s.id IS NULL;')"
+          [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result orphaned OAuth registrations)"
+        fi
+        if [[ "$probe" == external-mcp-retired-oauth-configuration-schema ]]; then
+          # Archived configuration is retained, not executable authority. Operators may
+          # legitimately reconfigure, reconsent and enable an endpoint after migrations 65/66.
+          result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+            SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema()
+              AND table_name='agentExternalMcpServers' AND column_name='retiredOAuthConfiguration'
+              AND data_type='text' AND is_nullable='YES';")"
+          [[ "$result" == 1 ]] || die "Postcondition failed: $probe (retained archived OAuth configuration column)"
+        fi
         ;;
       independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc 'SELECT count(*) FROM "agentDecisionProviderConfiguration" WHERE id=1 AND revision>0;')"

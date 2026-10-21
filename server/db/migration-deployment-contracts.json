@@ -334,6 +334,66 @@
       "runtimePostconditions": [
         "personal-mcp-credential-kind-and-owner-schema"
       ]
+    },
+    "tsepistle-000063-google-workspace-mcp-oauth.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "external-mcp-oauth-grants-and-pending-schema"
+      ],
+      "runtimePostconditions": [
+        "external-mcp-oauth-grants-and-pending-schema"
+      ]
+    },
+    "tsepistle-000064-generic-mcp-oauth.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "external-mcp-generic-oauth-schema"
+      ],
+      "runtimePostconditions": [
+        "external-mcp-generic-oauth-schema"
+      ]
+    },
+    "tsepistle-000065-retire-mcp-oauth-presets.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "external-mcp-retired-oauth-configuration-schema"
+      ],
+      "runtimePostconditions": [
+        "external-mcp-retired-oauth-configuration-schema"
+      ]
+    },
+    "tsepistle-000066-restore-google-workspace-mcp-preset.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": [
+        "external-mcp-retired-oauth-configuration-schema"
+      ],
+      "runtimePostconditions": [
+        "external-mcp-retired-oauth-configuration-schema"
+      ]
     }
   }
 }
