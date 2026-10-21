@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { AxMCPClient } from '@ax-llm/ax'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
@@ -16,6 +16,8 @@ import { AgentRepositoryError } from '../../agents/repository.ts'
 import { withAgentSourceAuthorization } from '../../agents/source-authorization.ts'
 import { up } from '../../db/migrations/tsepistle-000050-agent-external-mcp.ts'
 
+import { up as addGoogleOAuth } from '../../db/migrations/tsepistle-000063-google-workspace-mcp-oauth.ts'
+import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
 const publicResolver = async () => [{ address: '93.184.216.34', family: 4 }]
 const admin = { id: 1, authVersion: 0 },
   owner = { id: 7, authVersion: 0 },
@@ -182,6 +184,7 @@ describe('external MCP owner-scoped native clients', () => {
       table.timestamp('createdAt').notNullable()
     })
     await up(db)
+    await addGoogleOAuth(db)
     await db('users').insert([1, 7, 8, 9].map(id => ({ id, isActive: true, authVersion: 0 })))
     await db('groups').insert([
       { id: 10, permissions: JSON.stringify(['manage:system']) },
@@ -202,6 +205,199 @@ describe('external MCP owner-scoped native clients', () => {
   afterEach(async () => {
     await Promise.all(leases.splice(0).map(lease => lease.close()))
     await db.destroy()
+  })
+  const googleEndpoint = () => ({ ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google' as const, groupIds: [20] })
+  const googleFixture = (options: { refreshError?: boolean; expiresIn?: number } = {}) => {
+    const oauthCalls: { url: string; body: URLSearchParams }[] = []
+    service = new ExternalMcpService({
+      knex: db, secrets: vault, enabled: () => enabled, resolve: publicResolver,
+      googleOAuth: { clientId: 'fixture.apps.googleusercontent.com', clientSecret: 'server-only-client-secret', siteOrigin: 'https://wiki.example.test' },
+      fetch: async (url, init) => {
+        if (url.hostname !== 'oauth2.googleapis.com') return protocol.fetch(url, init)
+        const body = new URLSearchParams(String(init.body))
+        oauthCalls.push({ url: url.href, body })
+        expect(url.pathname).toBe('/token')
+        if (body.get('grant_type') === 'refresh_token' && options.refreshError) return Response.json({ error: 'invalid_grant' }, { status: 400 })
+        return Response.json({ access_token: body.get('grant_type') === 'refresh_token' ? 'refreshed-google-token' : 'initial-google-token',
+          refresh_token: 'protected-refresh-token', token_type: 'Bearer', expires_in: options.expiresIn ?? 3_600,
+          scope: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.scopes.join(' ') })
+      }
+    })
+    return oauthCalls
+  }
+  const finishGoogleConsent = async (serverId: string, sessionId = 'browser-session') => {
+    const { authorizationUrl } = await service.connectGoogle(owner, serverId, sessionId)
+    const url = new URL(authorizationUrl)
+    expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth')
+    expect(url.searchParams.get('redirect_uri')).toBe('https://wiki.example.test/agents/oauth/google/callback')
+    const state = url.searchParams.get('state')!
+    const pending = await db('agentExternalMcpOAuthPending').first('secretReference')
+    const verifier = (await vault.get(pending.secretReference))!
+    expect(url.searchParams.get('code_challenge')).toBe(createHash('sha256').update(verifier).digest('base64url'))
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+    expect(await service.googleCallback(owner, { state, code: 'controlled-code', sessionId })).toBe('connected')
+    return state
+  }
+
+  it('keeps Google credentials per user, skips disconnected automatic clients, and exchanges PKCE through the consumer', async () => {
+    const calls = googleFixture()
+    const server = await service.createAdmin(admin, googleEndpoint())
+    expect((await service.listForUser(owner))[0]?.id).toBe(server.id)
+    const unconnected = await service.openForUser(owner.id)
+    leases.push(unconnected)
+    expect(unconnected.clients).toHaveLength(0)
+    await expect(service.discoverForUser(owner, server.id)).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+    const state = await finishGoogleConsent(server.id)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.body.get('code_verifier')).toMatch(/^[A-Za-z0-9_-]{64}$/u)
+    expect(await service.googleCallback(owner, { state, code: 'replay', sessionId: 'browser-session' })).toBe('error')
+    expect(calls).toHaveLength(1)
+    expect(await service.oauthStatus(owner, server.id)).toMatchObject({ connected: true, configured: true, reconnectRequired: false })
+    expect(await service.oauthStatus({ id: 9, authVersion: 0 }, server.id)).toMatchObject({ connected: false })
+    const lease = await service.openForUser(owner.id, { serverIds: [server.id] })
+    leases.push(lease)
+    await lease.inspectCatalog(server.id)
+    expect(protocol.calls.every(call => call.headers.get('authorization') === 'Bearer initial-google-token')).toBe(true)
+    expect(JSON.stringify(await service.listForUser(owner))).not.toContain('google-token')
+    expect(JSON.stringify(await db('agentProviderSecrets'))).not.toContain('protected-refresh-token')
+  })
+
+  it('rejects browser/user mixup and expired state without consuming the legitimate consent or exchanging a code', async () => {
+    const calls = googleFixture()
+    const server = await service.createAdmin(admin, googleEndpoint())
+    const url = new URL((await service.connectGoogle(owner, server.id, 'initiator-session')).authorizationUrl)
+    const state = url.searchParams.get('state')!
+    expect(await service.googleCallback(owner, { state, code: 'code', sessionId: 'different-browser' })).toBe('error')
+    expect(await service.googleCallback({ id: 9, authVersion: 0 }, { state, code: 'code', sessionId: 'initiator-session' })).toBe('error')
+    await db('agentExternalMcpOAuthPending').update({ expiresAt: new Date(Date.now() - 1_000) })
+    expect(await service.googleCallback(owner, { state, code: 'code', sessionId: 'initiator-session' })).toBe('error')
+    expect(await db('agentExternalMcpOAuthPending')).toEqual([])
+    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(calls).toHaveLength(0)
+  })
+
+  it('invalidates callbacks and open native clients on endpoint-local disconnect without revoking other Google connections', async () => {
+    const calls = googleFixture()
+    const server = await service.createAdmin(admin, googleEndpoint())
+    const state = await finishGoogleConsent(server.id)
+    const secondEndpoint = await service.createAdmin(admin, { ...googleEndpoint(), displayName: 'Another Google connection' })
+    await finishGoogleConsent(secondEndpoint.id)
+    const lease = await service.openForUser(owner.id, { serverIds: [server.id] })
+    leases.push(lease)
+    await lease.inspectCatalog(server.id)
+    const before = protocol.calls.length
+    await service.disconnectGoogle(owner, server.id)
+    expect(calls).toHaveLength(2)
+    expect(await service.oauthStatus(owner, secondEndpoint.id)).toMatchObject({ connected: true })
+    expect(await db('agentProviderSecrets')).toHaveLength(1)
+    await expect(lease.clients[0]!.callTool('web_search', {})).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+    expect(protocol.calls).toHaveLength(before)
+    expect(await service.googleCallback(owner, { state, code: 'late-code', sessionId: 'browser-session' })).toBe('error')
+  })
+
+  it('refreshes before native dispatch without replaying tools and removes invalid Google grants', async () => {
+    const calls = googleFixture({ expiresIn: 1 })
+    const server = await service.createAdmin(admin, googleEndpoint())
+    await finishGoogleConsent(server.id)
+    const lease = await service.openForUser(owner.id, { serverIds: [server.id] })
+    leases.push(lease)
+    await lease.inspectCatalog(server.id)
+    expect(calls.filter(call => call.body.get('grant_type') === 'refresh_token').length).toBeGreaterThan(0)
+    expect(protocol.calls.every(call => call.headers.get('authorization') === 'Bearer refreshed-google-token')).toBe(true)
+    googleFixture({ refreshError: true })
+    await expect(service.discoverForUser(owner, server.id)).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await service.oauthStatus(owner, server.id)).toMatchObject({ connected: false, reconnectRequired: true })
+  })
+
+  it('removes encrypted tokens and pending consent when endpoint revisions or grants change', async () => {
+    googleFixture()
+    const server = await service.createAdmin(admin, googleEndpoint())
+    await finishGoogleConsent(server.id)
+    const pending = new URL((await service.connectGoogle({ id: 9, authVersion: 0 }, server.id, 'other-browser')).authorizationUrl).searchParams.get('state')!
+    await service.setAdminGrants(admin, server.id, server.revision, { groupIds: [20] })
+    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
+    expect(await service.googleCallback({ id: 9, authVersion: 0 }, { state: pending, code: 'late', sessionId: 'other-browser' })).toBe('error')
+    await expect(service.createAdmin(admin, { ...googleEndpoint(), endpointUrl: 'https://gmailmcp.googleapis.com.evil.test/mcp/v1' })).rejects.toMatchObject({ code: 'GOOGLE_MCP_INVALID_ENDPOINT' })
+    await expect(service.createAdmin(admin, { ...googleEndpoint(), secretValue: 'must-not-be-accepted' })).rejects.toMatchObject({ code: 'INVALID_EXTERNAL_MCP_CREDENTIAL' })
+  })
+  it('fails Google MCP authentication without replaying side effects or retaining rejected credentials', async () => {
+    googleFixture()
+    const server = await service.createAdmin(admin, googleEndpoint())
+    await finishGoogleConsent(server.id)
+    const lease = await service.openForUser(owner.id, { serverIds: [server.id] })
+    leases.push(lease)
+    await lease.inspectCatalog(server.id)
+    let sideEffects = 0
+    protocol = { ...protocol, fetch: async () => {
+      sideEffects++
+      return Response.json({ error: 'invalid_token' }, { status: 401 })
+    } }
+    await expect(lease.clients[0]!.callTool('web_search', { query: 'must-not-repeat' })).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+    expect(sideEffects).toBe(1)
+    expect(await service.oauthStatus(owner, server.id)).toMatchObject({ connected: false, reconnectRequired: true })
+    expect(await db('agentProviderSecrets')).toEqual([])
+  })
+  it.each(['redirect', 'oversized', 'private-dns'] as const)('bounds the actual Google %s exchange and consumes state without following attacker destinations', async failure => {
+    let calls = 0
+    service = new ExternalMcpService({
+      knex: db, secrets: vault, enabled: () => true,
+      googleOAuth: { clientId: 'test.apps.googleusercontent.com', clientSecret: 'secret', siteOrigin: 'https://wiki.example.test' },
+      resolve: failure === 'private-dns' ? async () => [{ address: '127.0.0.1', family: 4 }] : publicResolver,
+      fetch: async (url, init) => {
+        calls++
+        expect(url.href).toBe('https://oauth2.googleapis.com/token')
+        expect(init.redirect).toBe('manual')
+        return failure === 'redirect' ? Response.redirect('https://attacker.example/steal', 302) : new Response('x'.repeat(65_537))
+      }
+    })
+    const endpoint = await service.createAdmin(admin, googleEndpoint())
+    const state = new URL((await service.connectGoogle(owner, endpoint.id, 'browser')).authorizationUrl).searchParams.get('state')!
+    expect(await service.googleCallback(owner, { state, code: 'code', sessionId: 'browser' })).toBe('error')
+    expect(await service.googleCallback(owner, { state, code: 'code-again', sessionId: 'browser' })).toBe('error')
+    expect(calls).toBe(failure === 'private-dns' ? 0 : 1)
+    expect(await db('agentProviderSecrets')).toEqual([])
+    expect(await db('agentExternalMcpOAuthPending')).toEqual([])
+  })
+  it('cleans personal OAuth credentials and pending state on endpoint edits, policy revocation and endpoint deletion', async () => {
+    googleFixture()
+    await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 0)
+    const input = { displayName: 'Personal Gmail', endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google' as const, status: 'enabled' as const }
+    const endpoint = await service.createPersonal(owner, input)
+    await finishGoogleConsent(endpoint.id)
+    const updated = await service.updatePersonal(owner, endpoint.id, 1, { ...input, displayName: 'Renamed Gmail' })
+    expect(await db('agentProviderSecrets')).toEqual([])
+    await finishGoogleConsent(endpoint.id)
+    await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: false }, 1)
+    expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
+    expect(await db('agentProviderSecrets')).toEqual([])
+    await service.setGroupPolicy(admin, 20, { allowPersonalEndpoints: true }, 2)
+    await service.connectGoogle(owner, endpoint.id, 'browser')
+    await service.deletePersonal(owner, endpoint.id, updated.revision)
+    expect(await db('agentExternalMcpOAuthPending')).toEqual([])
+    expect(await db('agentProviderSecrets')).toEqual([])
+  })
+  it('blocks old access-token reflection after a refresh before native content can reach the agent', async () => {
+    googleFixture()
+    const endpoint = await service.createAdmin(admin, googleEndpoint())
+    await finishGoogleConsent(endpoint.id)
+    const lease = await service.openForUser(owner.id, { serverIds: [endpoint.id] })
+    leases.push(lease)
+    await lease.inspectCatalog(endpoint.id)
+    await db.transaction(async tx => {
+      const grant = await tx('agentExternalMcpOAuthGrants').where({ userId: owner.id, serverId: endpoint.id }).first()
+      const token = JSON.parse((await vault.get(grant.secretReference, tx))!)
+      const secretReference = await vault.store(JSON.stringify({ ...token, expiresAt: 0 }), owner.id, tx)
+      await tx('agentExternalMcpOAuthGrants').where('id', grant.id).update({ secretReference })
+      await vault.delete(grant.secretReference, tx)
+    })
+    protocol = { ...protocol, fetch: async (_url, init) => {
+      expect(new Headers(init.headers).get('authorization')).toBe('Bearer refreshed-google-token')
+      const message = JSON.parse(String(init.body))
+      return Response.json({ jsonrpc: '2.0', id: message.id, result: { resultType: 'complete', content: [{ type: 'text', text: 'initial-google-token' }] } })
+    } }
+    await expect(lease.clients[0]!.callTool('web_search', {})).rejects.toMatchObject({ code: 'EXTERNAL_MCP_CREDENTIAL_REFLECTED' })
   })
 
   it.each(['legacy', 'modern'] as const)('discovers %s catalogs natively and retains attributed raw multimodal results', async era => {

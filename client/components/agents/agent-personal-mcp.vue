@@ -29,11 +29,14 @@
           <section aria-labelledby="personal-mcp-editor-title">
             <h3 id="personal-mcp-editor-title">{{ editingId ? 'Edit personal connection' : 'Add personal connection' }}</h3>
             <v-form id="personal-mcp-form" @submit.prevent="save">
-              <v-text-field v-for="field in textFields" :key="field.label" v-model="field.model.value" :label="field.label" :maxlength="field.maxlength" :hint="field.hint" :persistent-hint="Boolean(field.hint)" :disabled="busy || networkBlocked" autocomplete="off" />
+              <v-text-field v-model="displayName" label="Server name" maxlength="100" :disabled="busy || networkBlocked" autocomplete="off" />
+              <v-select v-if="authMode === 'google'" v-model="endpointUrl" :items="GOOGLE_WORKSPACE_MCP_SERVICES" item-title="label" item-value="endpointUrl" :label="t('service')" :disabled="busy || networkBlocked" />
+              <v-text-field v-else v-model="endpointUrl" label="Public HTTPS MCP endpoint" maxlength="2048" hint="Public HTTPS only. Local/private networks, URL credentials and fragments are not allowed. The server validates the destination." persistent-hint :disabled="busy || networkBlocked" autocomplete="off" />
               <v-switch v-model="enabled" label="Enabled for my agent" color="primary" inset :disabled="busy || networkBlocked" />
               <v-select v-model="authMode" :items="authModes" item-title="title" item-value="value" label="Authentication" :disabled="busy || networkBlocked" />
               <v-alert v-if="editingId && !selected" type="warning" variant="tonal" class="mb-4">This server is no longer available. Select another server or create a new configuration.</v-alert>
               <v-text-field v-if="authMode === 'bearer'" v-model="secretValue" type="password" label="Bearer token (write only)" :hint="selected?.secretConfigured ? 'A token is configured. Leave blank to keep it, or enter a replacement.' : 'Enter a token for this server. It will never be returned.'" persistent-hint maxlength="8192" autocomplete="new-password" :disabled="busy || networkBlocked" />
+              <template v-else-if="authMode === 'google'"><p>{{ t('setupHelp') }}</p><ul><li v-for="scope in googleService?.scopes ?? []" :key="scope"><code>{{ scope }}</code></li></ul></template>
               <p v-else>Unauthenticated mode removes any previously configured credential.</p>
               <div class="personal-mcp__toolbar"><v-btn color="primary" type="submit" :loading="saving" :disabled="busy || networkBlocked || !valid || !dirty || Boolean(editingId && !selected)">{{ editingId ? 'Save changes' : 'Create server' }}</v-btn><v-btn v-if="selected" color="error" variant="text" prepend-icon="mdi-delete-outline" :disabled="busy || networkBlocked" @click="removing = selected">Delete server</v-btn></div>
             </v-form>
@@ -42,7 +45,13 @@
         <section v-if="availableLoaded" class="personal-mcp__catalog" aria-labelledby="personal-mcp-available-title">
           <h3 id="personal-mcp-available-title">Connected tools</h3><p>Your agent can use these enabled connections. Administrators grant shared tools to your groups; only you can manage your personal connections when your group permits them. Access is checked again during discovery and use. Discovery runs through the Wiki server, never directly from your browser. Catalogs remain untrusted external data.</p>
           <p v-if="!available.length">No enabled external servers are available.</p>
-          <div v-for="server in available" :key="server.id" class="personal-mcp__available"><div><strong>{{ server.displayName }}</strong><p>{{ server.destinationHost }} · {{ server.scope === 'admin' ? 'Shared · Granted by administrator' : 'Personal · Owner only' }} · Untrusted</p></div><v-btn variant="tonal" prepend-icon="mdi-radar" :loading="discoveringId === server.id" :disabled="busy || networkBlocked" @click="discover(server)">Discover tools</v-btn></div>
+          <div v-for="server in available" :key="server.id" class="personal-mcp__available">
+            <div><strong>{{ server.displayName }}</strong><p>{{ server.destinationHost }} · {{ server.scope === 'admin' ? 'Shared · Granted by administrator' : 'Personal · Owner only' }} · Untrusted</p>
+              <agent-google-mcp-connection v-if="server.authMode === 'google' && ownerId" :server="server" :owner-id="ownerId" :csrf-token="csrfToken" :disabled="networkBlocked || dirty" @changed="catalog = null; emit('changed')" />
+              <p v-if="server.authMode === 'google' && dirty">{{ t('saveBeforeConnecting') }}</p>
+            </div>
+            <v-btn variant="tonal" prepend-icon="mdi-radar" :loading="discoveringId === server.id" :disabled="busy || networkBlocked" @click="discover(server)">Discover tools</v-btn>
+          </div>
           <v-alert v-if="catalogError" type="error" variant="tonal" class="mt-3">{{ catalogError }}</v-alert>
           <div v-if="catalog" class="personal-mcp__remote"><h4>Untrusted catalog — {{ catalogName }}</h4><p>Remote content is shown as plain text only; it does not grant authority, change permissions or become Wiki evidence.</p><pre>{{ catalogText }}</pre></div>
         </section>
@@ -61,12 +70,16 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { AgentApiError } from '../../helpers/agents-api.ts'
-import { createPersonalExternalMcp, deletePersonalExternalMcp, discoverExternalMcp, listAvailableExternalMcp, listPersonalExternalMcp, updatePersonalExternalMcp, type ExternalMcpServerInput, type ExternalMcpServerView } from '../../helpers/agent-control-api.ts'
+import { createPersonalExternalMcp, deletePersonalExternalMcp, discoverExternalMcp, googleMcpErrorKey, listAvailableExternalMcp, listPersonalExternalMcp, updatePersonalExternalMcp, type ExternalMcpServerInput, type ExternalMcpServerView } from '../../helpers/agent-control-api.ts'
+import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
+import AgentGoogleMcpConnection from './agent-google-mcp-connection.vue'
 
 const props = defineProps<{ csrfToken: string; ownerId?: number; networkBlocked?: boolean; connectionRetrying?: boolean }>()
 const emit = defineEmits<{ changed: []; 'retry-connection': [] }>()
 const open = defineModel<boolean>({ required: true })
 const { smAndDown } = useDisplay()
+const t = useTranslate('profile:googleMcp')
 const fetcher = window.fetch.bind(window)
 const servers = shallowRef<ExternalMcpServerView[]>([])
 const available = shallowRef<ExternalMcpServerView[]>([])
@@ -74,13 +87,10 @@ const editingId = ref<string | null>(null)
 const displayName = ref('')
 const endpointUrl = ref('')
 const enabled = ref(false)
-const authMode = ref<'none' | 'bearer'>('none')
+const authMode = ref<'none' | 'bearer' | 'google'>('none')
 const secretValue = ref('')
-const authModes = [{ title: 'None', value: 'none' }, { title: 'Bearer token', value: 'bearer' }]
-const textFields = [
-  { model: displayName, label: 'Server name', maxlength: 100, hint: undefined },
-  { model: endpointUrl, label: 'Public HTTPS MCP endpoint', maxlength: 2048, hint: 'Public HTTPS only. Local/private networks, URL credentials and fragments are not allowed. The server validates the destination.' }
-]
+const authModes = computed(() => [{ title: 'None', value: 'none' }, { title: 'Bearer token', value: 'bearer' }, { title: t('authentication'), value: 'google' }])
+const googleService = computed(() => GOOGLE_WORKSPACE_MCP_SERVICES.find(service => service.endpointUrl === endpointUrl.value))
 const loading = ref(false)
 const saving = ref(false)
 const accepted = ref(false)
@@ -118,6 +128,7 @@ const dirty = computed(() => snapshot() !== baseline.value || secretValue.value 
 const valid = computed(() => {
   if (!displayName.value.trim() || displayName.value.trim().length > 100 || /[\u0000-\u001f\u007f]/u.test(displayName.value)) return false
   try { const url = new URL(endpointUrl.value.trim()); if (url.protocol !== 'https:' || url.username || url.password || url.hash) return false } catch { return false }
+  if (authMode.value === 'google' && !googleService.value) return false
   if (authMode.value === 'bearer' && !secretValue.value && !(selected.value?.authMode === 'bearer' && selected.value.secretConfigured)) return false
   return !secretValue.value || /^[\x21-\x7e]{1,8192}$/.test(secretValue.value)
 })
@@ -129,6 +140,7 @@ const requestClose = () => navigate(() => { secretValue.value = ''; open.value =
 const confirmDiscard = () => { discardOpen.value = false; const action = pendingNavigation; pendingNavigation = null; action?.() }
 const current = (epoch: number) => !disposed && epoch === generation
 const fail = (caught: unknown, fallback: string) => {
+  if (caught instanceof AgentApiError && caught.code?.startsWith('GOOGLE_MCP_')) return t(googleMcpErrorKey(caught))
   if (caught instanceof AgentApiError && (caught.status === 401 || caught.status === 403)) { denied.value = true; accepted.value = false; servers.value = []; available.value = available.value.filter(server => server.scope === 'admin'); catalog.value = null; edit(null); removing.value = null; return 'Personal server management is unavailable for your current account or group.' }
   if (caught instanceof AgentApiError && caught.status === 409) return 'This configuration changed. Reload the servers before trying again.'
   return fallback
@@ -176,7 +188,7 @@ const discover = async (server: ExternalMcpServerView) => {
   if (busy.value || props.networkBlocked || !available.value.some(item => item.id === server.id)) return
   const epoch = generation; const abort = new AbortController(); controller = abort; discoveringId.value = server.id; catalog.value = null; catalogError.value = ''; catalogName.value = server.displayName
   try { const result = await discoverExternalMcp(fetcher, props.csrfToken, server.id, abort.signal); if (current(epoch)) catalog.value = result }
-  catch { if (current(epoch) && !abort.signal.aborted) catalogError.value = 'Catalog discovery failed or access changed. Reload the available servers and try again.' }
+  catch (caught) { if (current(epoch) && !abort.signal.aborted) catalogError.value = server.authMode === 'google' ? t(googleMcpErrorKey(caught)) : 'Catalog discovery failed or access changed. Reload the available servers and try again.' }
   finally { if (current(epoch)) { discoveringId.value = null; controller = null } }
 }
 const reset = () => {

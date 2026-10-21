@@ -18,10 +18,10 @@ export const up = async (db: Knex): Promise<void> => {
     table.index(['scope', 'ownerId', 'status'])
     table.check('("scope" = \'admin\' AND "ownerId" IS NULL) OR ("scope" = \'personal\' AND "ownerId" IS NOT NULL)')
     table.check("\"status\" IN ('enabled', 'disabled')")
-    table.check("\"authMode\" IN ('none', 'bearer')")
+    table.check("\"authMode\" IN ('none', 'bearer', 'google')")
     table.check('"revision" > 0')
     table.check(
-      '("authMode" = \'none\' AND "secretReference" IS NULL) OR ("authMode" = \'bearer\' AND "secretReference" IS NOT NULL AND "secretReference" LIKE \'managed:%\')'
+      '("authMode" IN (\'none\', \'google\') AND "secretReference" IS NULL) OR ("authMode" = \'bearer\' AND "secretReference" IS NOT NULL AND "secretReference" LIKE \'managed:%\')'
     )
   })
   await db.schema.createTable('agentExternalMcpGrants', table => {

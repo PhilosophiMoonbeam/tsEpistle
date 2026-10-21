@@ -31,6 +31,12 @@ import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import { AgentRepositoryError } from './repository.ts'
 import type { AgentSecretRegistry } from './providers/secrets.ts'
 import { currentAgentSourceAuthorization } from './source-authorization.ts'
+import {
+  GoogleWorkspaceOAuthService,
+  googleWorkspaceService,
+  type GoogleWorkspaceOAuthConfiguration,
+  type GoogleWorkspaceOAuthContext
+} from './google-workspace-oauth.ts'
 
 export const EXTERNAL_MCP_LIMITS = Object.freeze({
   timeoutMs: 30_000,
@@ -63,6 +69,7 @@ export interface ExternalMcpServiceDependencies {
   readonly enabled: () => boolean
   readonly resolve?: ExternalMcpResolver
   readonly fetch?: ExternalMcpFetchImplementation
+  readonly googleOAuth?: GoogleWorkspaceOAuthConfiguration
 }
 type Database = Knex | Knex.Transaction
 interface ServerRow {
@@ -73,7 +80,7 @@ interface ServerRow {
   ownerId: number | null
   status: 'enabled' | 'disabled'
   revision: number
-  authMode: 'none' | 'bearer'
+  authMode: 'none' | 'bearer' | 'google'
   secretReference: string | null
   createdAt: Date | string
   updatedAt: Date | string
@@ -251,9 +258,9 @@ const cancelBody = async (cancel: () => PromiseLike<unknown>): Promise<void> => 
 }
 
 /** Scan decoded JSON strings too: a remote operator may reflect an escaped token. */
-const assertNoCredentialReflection = (text: string, credential: string): void => {
+const assertNoCredentialReflection = (text: string, credentials: ReadonlySet<string>): void => {
   const reflected = (): never => fail('EXTERNAL_MCP_CREDENTIAL_REFLECTED', 'External MCP response reflected a protected credential', 502)
-  if (text.includes(credential)) return reflected()
+  for (const credential of credentials) if (text.includes(credential)) return reflected()
   for (const match of text.matchAll(/"(?:[^"\\]|\\.)*"/gu)) {
     let decoded: unknown
     try {
@@ -261,7 +268,7 @@ const assertNoCredentialReflection = (text: string, credential: string): void =>
     } catch {
       continue
     }
-    if (typeof decoded === 'string' && decoded.includes(credential)) return reflected()
+    for (const credential of credentials) if (typeof decoded === 'string' && decoded.includes(credential)) return reflected()
   }
 }
 
@@ -273,12 +280,15 @@ export const createExternalMcpEndpointGuard = (options: {
   signal?: AbortSignal
   resolve?: ExternalMcpResolver
   fetch?: ExternalMcpFetchImplementation
+  onUnauthorized?: () => Promise<void>
 }): ExternalMcpEndpointGuard => {
   const endpoint = normalizeExternalMcpEndpoint(options.endpointUrl)
   const resolve: ExternalMcpResolver = options.resolve ?? lookup
   const lifetime = new AbortController()
   const requests = new AbortController()
   const cancellations = new Set<Promise<void>>()
+  // OAuth rotates access tokens: never release a previously used token in a later response.
+  const protectedCredentials = new Set<string>()
   let closePromise: Promise<void> | undefined
   const dispatcher = new Agent({
     connections: 2,
@@ -364,6 +374,7 @@ export const createExternalMcpEndpointGuard = (options: {
       const credential = await abortable(options.credential, signal)
       if (credential !== null) {
         if (!/^[\x21-\x7e]{1,8192}$/u.test(credential)) fail('EXTERNAL_MCP_CREDENTIAL_UNAVAILABLE', 'External MCP credential is unavailable', 503)
+        protectedCredentials.add(credential)
         headers.set('authorization', `Bearer ${credential}`)
       }
       // Recheck after asynchronous DNS/secret work and immediately before dispatch.
@@ -383,12 +394,16 @@ export const createExternalMcpEndpointGuard = (options: {
           }),
         signal
       )
+      if (response.status === 401 && options.onUnauthorized) {
+        if (response.body) await cancelBody(() => response.body!.cancel())
+        await options.onUnauthorized()
+      }
       if (credential !== null) {
         try {
-          assertNoCredentialReflection(response.statusText, credential)
+          assertNoCredentialReflection(response.statusText, protectedCredentials)
           for (const [name, value] of response.headers) {
-            assertNoCredentialReflection(name, credential)
-            assertNoCredentialReflection(value, credential)
+            assertNoCredentialReflection(name, protectedCredentials)
+            assertNoCredentialReflection(value, protectedCredentials)
           }
         } catch (error) {
           if (response.body) await cancelBody(() => response.body!.cancel())
@@ -451,7 +466,7 @@ export const createExternalMcpEndpointGuard = (options: {
           if (scanAt === lineStart) {
             const frame = pendingFrame.slice(0, end)
             if (++frames > 8_192) fail('EXTERNAL_MCP_RESPONSE_TOO_LARGE', 'External MCP response exceeds its frame limit', 502)
-            assertNoCredentialReflection(frame, credential!)
+            assertNoCredentialReflection(frame, protectedCredentials)
             controller.enqueue(encoder!.encode(frame))
             pendingFrame = pendingFrame.slice(end)
             scanAt = 0
@@ -464,7 +479,7 @@ export const createExternalMcpEndpointGuard = (options: {
         }
         if (final && pendingFrame) {
           if (++frames > 8_192) fail('EXTERNAL_MCP_RESPONSE_TOO_LARGE', 'External MCP response exceeds its frame limit', 502)
-          assertNoCredentialReflection(pendingFrame, credential!)
+          assertNoCredentialReflection(pendingFrame, protectedCredentials)
           controller.enqueue(encoder!.encode(pendingFrame))
           pendingFrame = ''
           emitted = true
@@ -520,7 +535,7 @@ export const createExternalMcpEndpointGuard = (options: {
       // JSON responses are checked in full; SSE messages are checked incrementally
       // above. Neither path releases an uninspected fragment to native Ax.
       const bytes = await abortable(() => guardedResponse.arrayBuffer(), signal)
-      assertNoCredentialReflection(new TextDecoder().decode(bytes), credential)
+      assertNoCredentialReflection(new TextDecoder().decode(bytes), protectedCredentials)
       return new Response(bytes, { status: response.status, statusText: response.statusText, headers: [...response.headers] })
     } catch (error) {
       if (error instanceof AgentRepositoryError || signal.aborted) throw signal.aborted ? signal.reason : error
@@ -540,6 +555,7 @@ export const createExternalMcpEndpointGuard = (options: {
       closePromise = (async () => {
         await dispatcher.destroy()
         await Promise.all(cancellations)
+        protectedCredentials.clear()
       })()
       return closePromise
     }
@@ -730,8 +746,10 @@ class OwnerScopedMcpClient extends AxMCPClient {
 
 export class ExternalMcpService {
   readonly #dependencies: ExternalMcpServiceDependencies
+  readonly #googleOAuth: GoogleWorkspaceOAuthService
   constructor(dependencies: ExternalMcpServiceDependencies) {
     this.#dependencies = dependencies
+    this.#googleOAuth = new GoogleWorkspaceOAuthService(dependencies)
   }
   #enabled(): void {
     if (!this.#dependencies.enabled()) fail('EXTERNAL_MCP_DISABLED', 'Outbound external MCP is disabled')
@@ -815,8 +833,9 @@ export class ExternalMcpService {
     return normalized
   }
   async #secret(tx: Knex.Transaction, actorId: number, input: ExternalMcpServerInput, existing: string | null): Promise<string | null> {
-    if (input.authMode === 'none') {
-      if (input.secretValue != null) fail('INVALID_EXTERNAL_MCP_CREDENTIAL', 'Unauthenticated endpoints cannot configure a credential', 400)
+    if (input.authMode === 'none' || input.authMode === 'google') {
+      if (input.authMode === 'google') googleWorkspaceService(normalizeExternalMcpEndpoint(input.endpointUrl))
+      if (input.secretValue != null) fail('INVALID_EXTERNAL_MCP_CREDENTIAL', 'This authentication mode cannot configure a bearer credential', 400)
       return null
     }
     if (input.secretValue === null) return fail('INVALID_EXTERNAL_MCP_CREDENTIAL', 'Bearer authentication requires a credential', 400)
@@ -893,6 +912,7 @@ export class ExternalMcpService {
     return this.#dependencies.knex.transaction(async tx => {
       const { actor, row } = await this.#owned(tx, requester, id, scope)
       revision(expectedRevision, row.revision)
+      if (row.authMode === 'google') await this.#googleOAuth.invalidateEndpoint(tx, row.id)
       // A credential may never cross destinations implicitly during an endpoint edit.
       if (endpointUrl !== row.endpointUrl && input.authMode === 'bearer' && input.secretValue === undefined)
         fail('EXTERNAL_MCP_CREDENTIAL_REQUIRED', 'Configure a new credential when changing the endpoint', 400)
@@ -931,6 +951,7 @@ export class ExternalMcpService {
     await this.#dependencies.knex.transaction(async tx => {
       const { row } = await this.#owned(tx, requester, id, scope)
       revision(expectedRevision, row.revision)
+      if (row.authMode === 'google') await this.#googleOAuth.invalidateEndpoint(tx, row.id)
       await tx('agentExternalMcpGrants').where('serverId', row.id).delete()
       await tx('agentExternalMcpServers').where('id', row.id).delete()
       if (row.secretReference) await this.#dependencies.secrets.delete(row.secretReference, tx)
@@ -953,6 +974,7 @@ export class ExternalMcpService {
     return this.#dependencies.knex.transaction(async tx => {
       const { actor, row } = await this.#owned(tx, requester, id, 'admin')
       revision(expectedRevision, row.revision)
+      if (row.authMode === 'google') await this.#googleOAuth.invalidateEndpoint(tx, row.id)
       const ids = await this.#groups(tx, parsed.data.groupIds)
       await tx('agentExternalMcpGrants').where('serverId', row.id).delete()
       if (ids.length) await tx('agentExternalMcpGrants').insert(ids.map(groupId => ({ serverId: row.id, groupId })))
@@ -1009,6 +1031,11 @@ export class ExternalMcpService {
         updatedAt: new Date()
       }
       await tx('agentExternalMcpGroupPolicies').insert(value).onConflict('groupId').merge()
+      const personalGoogle = await tx<ServerRow>('agentExternalMcpServers')
+        .where({ scope: 'personal', authMode: 'google' })
+        .whereIn('ownerId', tx('userGroups').where('groupId', groupId).select('userId'))
+        .orderBy('id').forUpdate().select('id')
+      for (const endpoint of personalGoogle) await this.#googleOAuth.invalidateEndpoint(tx, endpoint.id)
       return { groupId, allowPersonalEndpoints: value.allowPersonalEndpoints, revision: value.revision }
     })
   }
@@ -1033,6 +1060,34 @@ export class ExternalMcpService {
     const db = this.#dependencies.knex,
       actor = await this.#actor(db, requester)
     return Promise.all((await this.#available(db, actor)).map(({ row }) => this.#view(db, row)))
+  }
+  async #oauthContext(tx: Knex.Transaction, requester: ExternalMcpRequester, serverId: string, management = false): Promise<GoogleWorkspaceOAuthContext> {
+    const actor = await this.#actor(tx, requester, true)
+    const row = await tx<ServerRow>('agentExternalMcpServers').where('id', idValue(serverId)).forUpdate().first()
+    if (!row || row.authMode !== 'google') return denied()
+    let stamp: string
+    try { stamp = (await this.#allowed(tx, actor, row)).stamp }
+    catch (error) {
+      if (!management || row.scope !== 'admin' || !actor.permissions.includes('manage:system') ||
+        !(error instanceof AgentRepositoryError) || error.code !== 'EXTERNAL_MCP_ACCESS_DENIED') throw error
+      this.#enabled()
+      if (row.status !== 'enabled') return denied()
+      stamp = 'admin-discovery'
+    }
+    googleWorkspaceService(row.endpointUrl)
+    return { userId: actor.id, serverId: row.id, serverRevision: row.revision, authVersion: actor.authVersion, authorizationStamp: stamp, endpointUrl: row.endpointUrl }
+  }
+  oauthStatus(requester: ExternalMcpRequester, serverId: string) {
+    return this.#googleOAuth.status(tx => this.#oauthContext(tx, requester, serverId, true))
+  }
+  connectGoogle(requester: ExternalMcpRequester, serverId: string, sessionId: string) {
+    return this.#googleOAuth.connect(tx => this.#oauthContext(tx, requester, serverId, true), sessionId)
+  }
+  disconnectGoogle(requester: ExternalMcpRequester, serverId: string): Promise<void> {
+    return this.#googleOAuth.disconnect(tx => this.#oauthContext(tx, requester, serverId, true))
+  }
+  googleCallback(requester: ExternalMcpRequester, input: { state: string; code?: string; error?: string; iss?: string; sessionId: string }) {
+    return this.#googleOAuth.callback(input, (tx, serverId) => this.#oauthContext(tx, requester, serverId, true))
   }
   async openForUser(ownerId: number, options: { serverIds?: readonly string[]; signal?: AbortSignal; authVersion?: number } = {}): Promise<ExternalMcpLease> {
     return this.#open(ownerId, options)
@@ -1061,6 +1116,20 @@ export class ExternalMcpService {
       if (new Set(options.serverIds).size !== options.serverIds.length) fail('INVALID_EXTERNAL_MCP_SELECTION', 'Choose unique external MCP endpoints', 400)
       selected = options.serverIds.map(id => available.find(entry => entry.row.id === idValue(id)) ?? denied())
     }
+    const googleBindings = new Map<string, string>()
+    const eligible: AllowedServer[] = []
+    for (const selection of selected) {
+      if (selection.row.authMode === 'google') {
+        const binding = await this.#googleOAuth.binding(tx => this.#oauthContext(tx, { id: ownerId, authVersion: actor.authVersion }, selection.row.id, adminDiscovery))
+        if (!binding) {
+          if (options.serverIds) fail('GOOGLE_MCP_RECONNECT_REQUIRED', 'Connect this Google Workspace endpoint again', 409)
+          continue
+        }
+        googleBindings.set(selection.row.id, binding)
+      }
+      eligible.push(selection)
+    }
+    selected = eligible
     if (selected.length > EXTERNAL_MCP_LIMITS.maxClients) fail('EXTERNAL_MCP_CLIENT_LIMIT', 'Choose at most sixteen external MCP endpoints for one run', 400)
     const clients: OwnerScopedMcpClient[] = []
     const views: ExternalMcpServerView[] = []
@@ -1084,17 +1153,29 @@ export class ExternalMcpService {
           if (adminDiscovery) {
             if (!currentActor.permissions.includes('manage:system') || current.status !== 'enabled') return denied()
           } else if ((await this.#allowed(db, currentActor, current)).stamp !== stamp) return denied()
+          if (row.authMode === 'google') await this.#googleOAuth.assertBinding(
+            tx => this.#oauthContext(tx, { id: ownerId, authVersion: actor.authVersion }, row.id, adminDiscovery),
+            googleBindings.get(row.id)!
+          )
         }
         const guard = createExternalMcpEndpointGuard({
           endpointUrl: row.endpointUrl,
           authorize,
           credential: async () => {
             if (row.authMode === 'none') return null
+            if (row.authMode === 'google') return this.#googleOAuth.accessToken(
+              tx => this.#oauthContext(tx, { id: ownerId, authVersion: actor.authVersion }, row.id, adminDiscovery),
+              googleBindings.get(row.id)!
+            )
             if (!row.secretReference?.startsWith('managed:')) return fail('EXTERNAL_MCP_CREDENTIAL_UNAVAILABLE', 'External MCP credential is unavailable', 503)
             const value = await this.#dependencies.secrets.get(row.secretReference)
             if (value === null) return fail('EXTERNAL_MCP_CREDENTIAL_UNAVAILABLE', 'External MCP credential is unavailable', 503)
             return value
           },
+          ...(row.authMode === 'google' ? { onUnauthorized: () => this.#googleOAuth.rejectBinding(
+            tx => this.#oauthContext(tx, { id: ownerId, authVersion: actor.authVersion }, row.id, adminDiscovery),
+            googleBindings.get(row.id)!
+          ) } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
           ...(this.#dependencies.resolve ? { resolve: this.#dependencies.resolve } : {}),
           ...(this.#dependencies.fetch ? { fetch: this.#dependencies.fetch } : {})

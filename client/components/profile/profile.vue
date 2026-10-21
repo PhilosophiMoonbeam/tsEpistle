@@ -349,6 +349,7 @@
                   ) {{ $t('profile:auth.changePassword') }}
 
           profile-mcp-keys(:key='user.id', :owner-id='user.id', :csrf-token='mcpCsrfToken')
+          profile-google-mcp(:key='`google-${user.id}`', :owner-id='user.id', :csrf-token='mcpCsrfToken')
 
           section.profile-section(aria-labelledby='profile-groups-title')
             header.profile-section__header
@@ -412,6 +413,7 @@ import AsyncState from '@/components/common/async-state.vue'
 import PasswordStrength from '../common/password-strength.vue'
 import PasswordVisibilityToggle from '../common/password-visibility-toggle.vue'
 import ProfileMcpKeys from './profile-mcp-keys.vue'
+import ProfileGoogleMcp from './profile-google-mcp.vue'
 import { requestConfirmation } from '../common/confirm-dialog.ts'
 import { wikiStore } from '@/store/index.ts'
 import {
@@ -461,6 +463,7 @@ export default {
   components: {
     AsyncState,
     ProfileMcpKeys,
+    ProfileGoogleMcp,
     PasswordStrength,
     PasswordVisibilityToggle
   },

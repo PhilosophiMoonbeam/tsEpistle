@@ -15,8 +15,9 @@
     <p v-if="loaded && !servers.length">{{ t('noEndpoints') }}</p>
     <article v-for="s in servers" :key="s.id" class="entry">
       <h3>{{ s.displayName }} <v-chip size="small">{{ t(`admin:agentAdmin.${s.status}`) }}</v-chip></h3>
-      <p>{{ t('endpointMetadata', { url: s.endpointUrl, namespace: s.namespace, revision: s.revision }) }}</p>
-      <p>{{ t(s.authMode === 'none' ? 'credentialNotRequired' : s.secretConfigured ? 'credentialConfigured' : 'credentialMissing') }}</p>
+      <p>{{ t('endpointMetadata', { url: s.endpointUrl, namespace: s.namespace, revision: s.revision, interpolation: { escapeValue: false } }) }}</p>
+      <p>{{ t(s.authMode === 'google' ? 'googleCredentialPerUser' : s.authMode === 'none' ? 'credentialNotRequired' : s.secretConfigured ? 'credentialConfigured' : 'credentialMissing') }}</p>
+      <agent-google-mcp-connection v-if="s.authMode === 'google' && s.status === 'enabled'" :server="s" :owner-id="wikiStore.user.id" :csrf-token="csrfToken" :disabled="busy || loading || denied" />
       <p>{{ t('grantedGroups', { groups: groupNames(s.groupIds) }) }}</p>
       <div v-if="s.status !== 'enabled' || (s.authMode === 'bearer' && !s.secretConfigured) || !s.groupIds.length">
         <p>{{ t('incompleteSetup') }}</p>
@@ -47,9 +48,13 @@
           <v-alert v-if="formError" type="error" variant="tonal" role="alert">{{ formError }}</v-alert>
           <v-alert v-if="editingStale" type="warning" variant="tonal">{{ t('editingStale') }}</v-alert>
           <v-form id="mcp-endpoint-form" @submit.prevent="save">
-            <v-text-field v-for="field in textFields" :key="field.key" v-model="draft[field.key]" :label="t(field.key)" :autofocus="field.autofocus" :disabled="busy || denied" :error-messages="fieldError(field.key)" />
+            <v-text-field v-model="draft.displayName" :label="t('displayName')" autofocus :disabled="busy || denied" :error-messages="fieldError('displayName')" />
+            <v-select v-if="draft.authMode === 'google'" v-model="draft.endpointUrl" :items="GOOGLE_WORKSPACE_MCP_SERVICES" item-title="label" item-value="endpointUrl" :label="t('googleService')" :disabled="busy || denied" :error-messages="fieldError('endpointUrl')" />
+            <v-text-field v-else v-model="draft.endpointUrl" :label="t('endpointUrl')" :disabled="busy || denied" :error-messages="fieldError('endpointUrl')" />
             <v-select v-model="draft.status" :label="t('status')" :items="statusOptions" :disabled="busy || denied" :error-messages="fieldError('status')" />
             <v-select v-model="draft.authMode" :label="t('authentication')" :items="authOptions" :disabled="busy || denied" :error-messages="fieldError('authMode')" />
+            <p v-if="draft.authMode === 'google'">{{ t('googleSetupHelp') }}</p>
+            <ul v-if="draft.authMode === 'google'"><li v-for="scope in googleService?.scopes ?? []" :key="scope"><code>{{ scope }}</code></li></ul>
             <v-text-field v-if="draft.authMode === 'bearer'" v-model="draft.secret" type="password" autocomplete="new-password" :label="t('newCredential')" :disabled="busy || denied || draft.clearSecret" :error-messages="fieldError('secretValue')" />
             <v-checkbox v-if="draft.authMode === 'bearer'" v-model="draft.clearSecret" :label="t('clearCredential')" :disabled="busy || denied" />
             <template v-if="!editing">
@@ -124,15 +129,17 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ZodError } from 'zod'
 import { AgentApiError } from '../../helpers/agents-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
-import { ExternalMcpServerInputSchema } from '../../../shared/agents/external-mcp.ts'
-import { listAdminExternalMcp,createAdminExternalMcp,updateAdminExternalMcp,deleteAdminExternalMcp,setExternalMcpGrants,listExternalMcpGroupPolicies,setExternalMcpGroupPolicy,discoverExternalMcp,type ExternalMcpServerView,type ExternalMcpGroupPolicyView,type ExternalMcpDiscovery } from '../../helpers/agent-control-api.ts'
+import { ExternalMcpServerInputSchema, GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
+import { listAdminExternalMcp,createAdminExternalMcp,updateAdminExternalMcp,deleteAdminExternalMcp,setExternalMcpGrants,listExternalMcpGroupPolicies,setExternalMcpGroupPolicy,discoverExternalMcp,googleMcpErrorKey,type ExternalMcpServerView,type ExternalMcpGroupPolicyView,type ExternalMcpDiscovery } from '../../helpers/agent-control-api.ts'
+import { wikiStore } from '../../store/index.ts'
+import AgentGoogleMcpConnection from './agent-google-mcp-connection.vue'
 
 const { csrfToken, groups, refreshKey = 0, groupsLoading = false, groupsError = '' } = defineProps<{ csrfToken: string; groups: readonly { id: number; name: string }[]; refreshKey?: number; groupsLoading?: boolean; groupsError?: string }>()
 const emit = defineEmits<{ 'refresh-groups': []; state: [value: { servers: ExternalMcpServerView[]; policies: ExternalMcpGroupPolicyView[] } | null] }>()
 const t = useTranslate('admin:agentMcpAdmin')
 const fetcher: typeof fetch = (...args) => window.fetch(...args)
 const servers=ref<ExternalMcpServerView[]>([]),policies=ref<ExternalMcpGroupPolicyView[]>([]),loading=ref(false),loaded=ref(false),busy=ref(false),denied=ref(false),error=ref(''),formError=ref(''),dialog=ref(false),discard=ref(false),baseline=ref(''),editing=ref<ExternalMcpServerView|null>(null),remove=ref<ExternalMcpServerView|null>(null),grants=ref<ExternalMcpServerView|null>(null),grantIds=ref<number[]>([]),policyConfirm=ref<ExternalMcpGroupPolicyView|null>(null),discovery=ref<ExternalMcpDiscovery|null>(null)
-const draft = reactive({ displayName: '', endpointUrl: '', status: 'disabled' as 'enabled' | 'disabled', authMode: 'none' as 'none' | 'bearer', secret: '', clearSecret: false, groupIds: [] as number[] })
+const draft = reactive({ displayName: '', endpointUrl: '', status: 'disabled' as 'enabled' | 'disabled', authMode: 'none' as 'none' | 'bearer' | 'google', secret: '', clearSecret: false, groupIds: [] as number[] })
 const submitted = ref(false)
 const grantDiscard = ref(false)
 const catalogRevisions = reactive<Record<string, number>>({})
@@ -162,14 +169,15 @@ const validationKey = (path: PropertyKey | undefined) => {
 const fieldError = (path: string): string[] => submitted.value && !parsed.value.success && parsed.value.error.issues.some(issue => issue.path[0] === path) ? [t(validationKey(path))] : []
 const message = (value: unknown, fallback: string) => {
   if (value instanceof ZodError) return [...new Set(value.issues.map(issue => t(validationKey(issue.path[0]))))].join(' ')
+  if (value instanceof AgentApiError && value.code?.startsWith('GOOGLE_MCP_')) return t(`profile:googleMcp.${googleMcpErrorKey(value)}`)
   if (value instanceof AgentApiError && value.status === 403) return t('permissionRequired')
   return value instanceof Error ? value.message : t(fallback)
 }
 const groupName = (id: number) => groups.find(group => group.id === id)?.name ?? t('admin:agentAdmin.group', { id })
 const groupNames = (ids: readonly number[]) => ids.length ? ids.map(groupName).join(', ') : t('admin:agentAdmin.none')
-const textFields = [{ key: 'displayName', autofocus: true }, { key: 'endpointUrl', autofocus: false }] as const
+const googleService = computed(() => GOOGLE_WORKSPACE_MCP_SERVICES.find(service => service.endpointUrl === draft.endpointUrl))
 const statusOptions = computed(() => (['disabled', 'enabled'] as const).map(value => ({ value, title: t(`admin:agentAdmin.${value}`) })))
-const authOptions = computed(() => [{ value: 'none', title: t('unauthenticated') }, { value: 'bearer', title: t('bearerAuthentication') }])
+const authOptions = computed(() => [{ value: 'none', title: t('unauthenticated') }, { value: 'bearer', title: t('bearerAuthentication') }, { value: 'google', title: t('googleAuthentication') }])
 const serverActions = [
   { key: 'editEndpoint', variant: 'text', color: undefined, requiresEnabled: false, run: open },
   { key: 'groupGrants', variant: 'text', color: undefined, requiresEnabled: false, run: openGrants },
@@ -295,6 +303,7 @@ async function discover(s: ExternalMcpServerView) {
 }
 watch(() => refreshKey, () => { void load() })
 watch(() => groups.map(g => g.id).join(','), () => { void load() })
+watch(() => draft.authMode, () => { draft.secret = ''; draft.clearSecret = false })
 onBeforeUnmount(() => { controller?.abort(); draft.secret = '' })
 onMounted(load)
 </script>

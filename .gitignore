@@ -27,6 +27,8 @@ npm-debug.log*
 # Config Files
 # Local environment and browser automation state
 /.env
+/.env.*
+!/.env.example
 /.playwright-cli/
 
 /config.yml

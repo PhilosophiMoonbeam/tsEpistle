@@ -63,13 +63,53 @@ Observed latency and validated token counters describe the request that ran. `es
 
 ### Administration and personal ownership
 
-Admin endpoints have a display name, public HTTPS `endpointUrl`, `status` (`enabled`/`disabled`), `authMode` (`none`/`bearer`), optional write-only `secretValue`, and group grants (`groupIds`). Admin creation includes grants; grants can also be changed separately. An enabled admin endpoint is usable only through the user's **current** group membership and its current grants.
+Admin endpoints have a display name, public HTTPS `endpointUrl`, `status` (`enabled`/`disabled`), `authMode` (`none`/`bearer`/`google`), optional write-only bearer `secretValue`, and group grants (`groupIds`). Admin creation includes grants; grants can also be changed separately. An enabled admin endpoint is usable only through the user's **current** group membership and its current grants. Google mode stores no endpoint-wide credential: each Wiki user connects their own Google account.
 
 Group policy `allowPersonalEndpoints` is denied by default (an absent policy has revision zero). At least one currently joined group must allow it for personal endpoint access/creation. In **My tools**, users can add, edit, disable, delete, and discover their own endpoints, and inspect enabled admin endpoints currently available to them. Personal records and credentials are owner-isolated; another user's endpoint is not a shared alternative. Revoking group permission also blocks use of previously created personal endpoints. Permission-denied UI does not offer a usable create path.
 
 Bearer secrets are managed server-side, never reflected in list/discovery responses. Responses reflecting the active bearer value in headers, status text, body, or decoded JSON strings fail closed rather than publishing the token; they are not rewritten or automatically retried. Omission retains an existing endpoint credential; `authMode: none` removes it. Do not submit secret references. For bearer mode, provide a usable credential rather than assuming `null` makes authentication work. Personal bearer values are bounded to 8,192 printable non-space ASCII characters.
 
 **Review the destination before granting access.** Model-generated tool arguments and relevant conversation data may leave the Wiki. A remote tool can mutate external systems; an endpoint grant authorizes external operations, not just reading. Remote claims that a tool is safe/read-only are not host authority. Wiki mutation proposals and their human approvals remain separate and are not bypassed by external results. Disabling an endpoint or revoking access prevents subsequent calls, but cannot undo a completed remote mutation.
+
+### Google Workspace OAuth
+
+The **tsEpistle Wiki Agent** is a server-side MCP client of Google's remote Workspace servers, not a desktop agent. Google account connections are separate from Google wiki sign-in and inbound Wiki MCP access keys.
+
+1. Follow Google's [Workspace MCP configuration guide](https://developers.google.com/workspace/guides/configure-mcp-servers) to obtain the required preview access, enable the intended Workspace APIs/MCP services, and configure the consent screen and allowed users. Google Chat additionally requires the documented Chat app configuration.
+2. Register a **Web application** OAuth client named **tsEpistle Wiki Agent**. For the public deployment, register this exact authorized redirect URI:
+   ```
+   https://wiki.example.org/agents/oauth/google/callback
+   ```
+   The application derives the callback from the persisted canonical Wiki `host` setting, never the incoming request's Host header or the smoke-tool `SITE_URL`. Each deployment origin needs its own exact registered HTTPS callback; a tailnet deployment cannot use a different public site's browser session.
+3. Set `GOOGLE_WORKSPACE_MCP_CLIENT_ID` and `GOOGLE_WORKSPACE_MCP_CLIENT_SECRET` in the application service, or use `GOOGLE_WORKSPACE_MCP_CLIENT_ID_FILE` and `GOOGLE_WORKSPACE_MCP_CLIENT_SECRET_FILE` pointing to protected mounted UTF-8 files. A nonempty inline value takes precedence over its file; files are trimmed and limited to 64 KiB. Configure both credentials together. Both absent leaves Google connections unconfigured; partial configuration rejects provider-runtime startup. Retain the existing `AGENT_PROVIDER_SECRET_KEYS` keyring (or its `_FILE` setting); no replacement encryption root is needed.
+4. In **Administration → Agents → External MCP**, choose **Google Workspace OAuth**, select the Google service, enable the endpoint, and grant the intended groups. Review the displayed service scopes before granting access. Personal endpoint creation uses the same Google service selector and still requires the existing group policy.
+5. Each user connects their own account in **Profile → Google Workspace connections** (`/p/profile#google-workspace-connections`) or **My tools**. Administrators can also connect their own account directly on an enabled admin endpoint for configuration discovery, even without an ordinary group grant. That discovery exception never grants Agent execution access.
+6. Complete Google consent, return to Wiki, refresh the live connection status, and discover the catalog. Verify a permitted read-only tool through the Wiki Agent before relying on the integration. A callback message alone is not proof of a working connection. Missing client setup, denied consent, expired/replayed state, revoked access, and changed Wiki permissions require the indicated recovery rather than an automatic tool retry.
+
+Google mode accepts only these exact service URLs and requests only that selected service's documented MCP scopes:
+
+| Service | Endpoint |
+| --- | --- |
+| Gmail | `https://gmailmcp.googleapis.com/mcp/v1` |
+| Drive | `https://drivemcp.googleapis.com/mcp/v1` |
+| Docs | `https://docsmcp.googleapis.com/mcp/v1` |
+| Sheets | `https://sheetsmcp.googleapis.com/mcp/v1` |
+| Slides | `https://slidesmcp.googleapis.com/mcp/v1` |
+| Calendar | `https://calendarmcp.googleapis.com/mcp/v1` |
+| Chat | `https://chatmcp.googleapis.com/mcp/v1` |
+| People | `https://people.googleapis.com/mcp/v1` |
+| Classroom | `https://classroommcp.googleapis.com/mcp/v1` |
+
+Scopes are shown before consent and in connection details. They include service-specific write access where Google's documented MCP workflow requires it; these are not all read-only connections. Calendar currently requests the documented read/free-busy scopes. Google permissions and Workspace policy remain independent of Wiki endpoint grants.
+
+Authorization uses PKCE S256 and ten-minute, single-use state bound to the initiating browser session, current Wiki account/session version, endpoint revision, and current access policy. PKCE verifiers and per-user/per-endpoint token records are encrypted server-side through the existing secret registry. Tokens never enter browser persistent storage or Agent prompts/state. A fresh application instance can reuse stored grants; database locks serialize refresh and disconnect. Stale bindings, changed grants/configuration, `invalid_grant`, and MCP HTTP 401 require reconnect without replaying tool operations.
+
+**Disconnect is endpoint-local:** it removes this Wiki user's stored grant and pending consent for that endpoint and prevents subsequent use by old bindings. It does not automatically call Google's revocation endpoint, because revocation can invalidate sibling Workspace services under the same OAuth project. To revoke Google-side app access, use [Google Account connections](https://myaccount.google.com/connections); reconnect affected services afterward. Deleting an account or endpoint cleans up its OAuth secrets while preserving unrelated provider-secret deletion restrictions.
+
+Migration `tsepistle-000063-google-workspace-mcp-oauth` adds grant/pending storage, cleanup triggers, and Google authentication constraints. It preserves existing none/bearer configuration and uses the existing keyring. Deploy the new application with the migration; older application code does not understand new Google endpoint rows. Do not discard credentials or run destructive down migrations for rollback.
+
+The root `.env.example` documents the configuration names without secrets. Local `.env` files are private; editing them does not update a container's configured environment or mounts. Provision the issued Google values through deployment secret handling, not chat, Git, `VITE_*`, URL parameters, or screenshots.
+
 
 ### Network, discovery, and execution boundaries
 
@@ -152,6 +192,7 @@ All routes below are under `/_api/agents`. They require authenticated current-ac
 | Personal-create group policies | `GET /admin/external-mcp/group-policies`; `PUT .../group-policies/:groupId` |
 | Personal records | `GET/POST /personal-mcp`; `PUT/DELETE /personal-mcp/:id` |
 | Currently available MCP / discovery | `GET /external-mcp`; `POST /external-mcp/:id/discover` |
+| Per-user Google account | `GET /external-mcp/:id/oauth`; `POST .../oauth/connect`; `DELETE .../oauth` |
 | Routing | `GET/PUT /admin/routing`; `PUT/DELETE /admin/routing/models/:profileId` |
 
 Record updates/deletes and state actions send the latest `expectedRevision`; decision create uses `displayName`, `config`, and optional `secretValue`. Enable sends `enabled`; default/check send the revision. MCP grant updates send `groupIds`; group-policy writes send `allowPersonalEndpoints`. Routing writes send the complete policy, and declarations send the current version, `acceptableTasks`, and nullable latency. First creation of a model declaration or absent group policy uses revision zero. A stale revision returns a conflict: refresh, review the current record, and intentionally resubmit instead of overwriting newer changes. Check responses and catalog displays are safe diagnostics, not raw credential-bearing responses.

@@ -20,7 +20,7 @@ export interface AgentProviderSecretKeys {
 
 export interface AgentSecretRegistry {
   has(reference: string, transaction?: Knex | Knex.Transaction): boolean | Promise<boolean>
-  get(reference: string): string | null | Promise<string | null>
+  get(reference: string, transaction?: Knex | Knex.Transaction): string | null | Promise<string | null>
   store(value: string, actorId: number, transaction: Knex | Knex.Transaction): string | Promise<string>
   delete(reference: string, transaction: Knex | Knex.Transaction): boolean | Promise<boolean>
 }
@@ -79,12 +79,12 @@ export class DatabaseAgentSecretRegistry implements AgentSecretRegistry {
     return row?.algorithm === 'aes-256-gcm' && this.#keys.keys[row.keyId] !== undefined && Buffer.from(row.nonce).byteLength === NONCE_BYTES && Buffer.from(row.authTag).byteLength === AUTH_TAG_BYTES
   }
 
-  async get(reference: string): Promise<string | null> {
+  async get(reference: string, transaction?: Knex | Knex.Transaction): Promise<string | null> {
     const environmentName = ENVIRONMENT_REFERENCE_PATTERN.exec(reference)?.[1]
     if (environmentName) return environmentSecretValue(environmentName)
     const id = managedId(reference)
     if (!id) return null
-    const row = await this.#knex<SecretRow>('agentProviderSecrets').where({ id }).first()
+    const row = await (transaction ?? this.#knex)<SecretRow>('agentProviderSecrets').where({ id }).first()
     if (!row || row.algorithm !== 'aes-256-gcm') return null
     const key = this.#keys.keys[row.keyId]
     if (!key) throw new AgentRepositoryError('PROVIDER_SECRET_KEY_UNAVAILABLE', 'Provider credential encryption key is unavailable', 503)

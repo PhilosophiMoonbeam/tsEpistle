@@ -70,7 +70,7 @@ const Server: z.ZodType<ExternalMcpServerView> = z.object({
   ownerId: z.number().nullable(),
   status: z.enum(['enabled', 'disabled']),
   revision: z.number().int().positive(),
-  authMode: z.enum(['none', 'bearer']),
+  authMode: z.enum(['none', 'bearer', 'google']),
   secretConfigured: z.boolean(),
   groupIds: z.array(z.number().int().positive()),
   trust: z.literal('untrusted'),
@@ -153,6 +153,39 @@ const listServers = async (f: typeof fetch, c: string, path: string, signal?: Ab
 export const listAdminExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/admin/external-mcp', signal)
 export const listPersonalExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/personal-mcp', signal)
 export const listAvailableExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/external-mcp', signal)
+const GoogleMcpOAuth = z.object({
+  configured: z.boolean(),
+  connected: z.boolean(),
+  scopes: z.array(z.string()),
+  reconnectRequired: z.boolean()
+})
+export type GoogleMcpOAuthStatus = z.infer<typeof GoogleMcpOAuth>
+const GoogleAuthorizationUrl = z.string().max(16_384).refine(value => {
+  try {
+    const url = new URL(value)
+    return url.origin === 'https://accounts.google.com' && url.pathname === '/o/oauth2/v2/auth' && !url.username && !url.password && !url.hash
+  } catch { return false }
+})
+export const getExternalMcpOAuth = async (f: typeof fetch, c: string, id: string, signal?: AbortSignal) =>
+  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ oauth: GoogleMcpOAuth }), { signal })).oauth
+export const connectExternalMcpOAuth = async (f: typeof fetch, c: string, id: string) =>
+  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth/connect`, z.object({ authorizationUrl: GoogleAuthorizationUrl }), body('POST', {}))).authorizationUrl
+export const disconnectExternalMcpOAuth = async (f: typeof fetch, c: string, id: string): Promise<void> => {
+  await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ disconnected: z.literal(true) }), body('DELETE', {}))
+}
+export const googleMcpErrorKey = (error: unknown): string => {
+  if (error instanceof AgentApiError) {
+    if (error.status === 401) return 'signInRequired'
+    if (error.status === 403 || error.status === 404) return 'accessChanged'
+    switch (error.code) {
+      case 'GOOGLE_MCP_NOT_CONFIGURED': return 'notConfigured'
+      case 'GOOGLE_MCP_RECONNECT_REQUIRED': return 'reconnectRequired'
+      case 'GOOGLE_MCP_INVALID_ENDPOINT': return 'invalidEndpoint'
+      case 'GOOGLE_MCP_OAUTH_INVALID': return 'authorizationFailed'
+    }
+  }
+  return 'operationFailed'
+}
 export const createAdminExternalMcp = async (f: typeof fetch, c: string, input: CreateAdminExternalMcpServerInput) =>
   (await requestJson(f, c, `${root}/admin/external-mcp`, z.object({ server: Server }), body('POST', CreateAdminExternalMcpServerSchema.parse(input)))).server
 export const createPersonalExternalMcp = async (f: typeof fetch, c: string, input: ExternalMcpServerInput) =>

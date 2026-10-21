@@ -6,6 +6,9 @@ import { ExternalMcpService, EXTERNAL_MCP_LIMITS, type ExternalMcpFetchImplement
 import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import { up } from '../../db/migrations/tsepistle-000050-agent-external-mcp.ts'
 
+import { up as addGoogleOAuth } from '../../db/migrations/tsepistle-000063-google-workspace-mcp-oauth.ts'
+import { GOOGLE_WORKSPACE_MCP_SERVICES } from '../../../shared/agents/external-mcp.ts'
+import { up as addSecrets } from '../../db/migrations/2.5.141.ts'
 const connection = getPostgresTestConnection('_agents_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const schema = `external_mcp_${randomUUID().replaceAll('-', '')}`
@@ -23,7 +26,23 @@ const input = () => ({
 suite('PostgreSQL external MCP configuration and live authorization', () => {
   let db: Knex, service: ExternalMcpService, vault: DatabaseAgentSecretRegistry
   let networkCalls = 0
-  const protocol: ExternalMcpFetchImplementation = async (_url, init) => {
+  let refreshCalls = 0
+  let authorizationExchanges = 0
+  let refreshStarted: PromiseWithResolvers<void> | undefined
+  let refreshReleased: PromiseWithResolvers<void> | undefined
+  const protocol: ExternalMcpFetchImplementation = async (url, init) => {
+    if (url.hostname === 'oauth2.googleapis.com') {
+      const body = new URLSearchParams(String(init.body))
+      expect(url.pathname).toBe('/token')
+      if (body.get('grant_type') === 'authorization_code') authorizationExchanges++
+      if (body.get('grant_type') === 'refresh_token') {
+        refreshCalls++
+        refreshStarted?.resolve()
+        await refreshReleased?.promise
+      }
+      return Response.json({ access_token: `controlled-access-${refreshCalls}`, refresh_token: 'controlled-refresh', token_type: 'Bearer', expires_in: 3_600,
+        scope: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.scopes.join(' ') })
+    }
     networkCalls++
     const message = JSON.parse(String(init.body)) as { method: string; id: string }
     let result: unknown
@@ -40,7 +59,8 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
     secrets: new DatabaseAgentSecretRegistry(database, keyring),
     enabled: () => true,
     resolve: async () => [{ address: '93.184.216.34', family: 4 }],
-    fetch: protocol
+    fetch: protocol,
+    googleOAuth: { clientId: 'test.apps.googleusercontent.com', clientSecret: 'fixture-secret', siteOrigin: 'https://wiki.example.test' }
   })
 
   beforeAll(async () => {
@@ -65,17 +85,9 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
       table.integer('groupId').notNullable().references('id').inTable('groups').onDelete('CASCADE')
       table.primary(['userId', 'groupId'])
     })
-    await db.schema.createTable('agentProviderSecrets', table => {
-      table.uuid('id').primary()
-      table.string('keyId').notNullable()
-      table.string('algorithm').notNullable()
-      table.binary('nonce').notNullable()
-      table.binary('ciphertext').notNullable()
-      table.binary('authTag').notNullable()
-      table.integer('createdBy').notNullable()
-      table.timestamp('createdAt', { useTz: true }).notNullable()
-    })
+    await addSecrets(db)
     await up(db)
+    await addGoogleOAuth(db)
   })
   beforeEach(async () => {
     await db('agentExternalMcpGrants').delete()
@@ -99,6 +111,10 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
     vault = new DatabaseAgentSecretRegistry(db, keyring)
     service = new ExternalMcpService(dependencies(db))
     networkCalls = 0
+    refreshCalls = 0
+    authorizationExchanges = 0
+    refreshStarted = undefined
+    refreshReleased = undefined
   })
   afterAll(async () => {
     if (db) await db.destroy()
@@ -108,6 +124,75 @@ suite('PostgreSQL external MCP configuration and live authorization', () => {
     } finally {
       await adminDb.destroy()
     }
+  })
+  it('serializes refresh across service instances and prevents disconnect racing refresh from resurrecting stale leases', async () => {
+    const second = knexModule({ client: 'pg', connection: connection ?? undefined, searchPath: [schema], pool: { min: 0, max: 4 } })
+    const otherProcess = new ExternalMcpService(dependencies(second))
+    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', groupIds: [20] })
+    const authorization = new URL((await service.connectGoogle(owner, endpoint.id, 'browser')).authorizationUrl)
+    const callback = { state: authorization.searchParams.get('state')!, code: 'controlled-code', sessionId: 'browser' }
+    expect((await Promise.all([service.googleCallback(owner, callback), otherProcess.googleCallback(owner, callback)])).sort()).toEqual(['connected', 'error'])
+    expect(authorizationExchanges).toBe(1)
+    const expire = async () => db.transaction(async tx => {
+      const grant = await tx('agentExternalMcpOAuthGrants').where({ userId: owner.id, serverId: endpoint.id }).first('id', 'secretReference')
+      const token = JSON.parse((await vault.get(grant.secretReference, tx))!)
+      const secretReference = await vault.store(JSON.stringify({ ...token, expiresAt: 0 }), owner.id, tx)
+      await tx('agentExternalMcpOAuthGrants').where('id', grant.id).update({ secretReference })
+      await vault.delete(grant.secretReference, tx)
+    })
+    try {
+      await expire()
+      refreshStarted = Promise.withResolvers<void>()
+      refreshReleased = Promise.withResolvers<void>()
+      const first = service.discoverForUser(owner, endpoint.id)
+      await refreshStarted.promise
+      const concurrent = otherProcess.discoverForUser(owner, endpoint.id)
+      refreshReleased.resolve()
+      await Promise.all([first, concurrent])
+      expect(refreshCalls).toBe(1)
+      const staleLease = await service.openForUser(owner.id, { serverIds: [endpoint.id] })
+      try {
+        await staleLease.inspectCatalog(endpoint.id)
+        await expire()
+        refreshStarted = Promise.withResolvers<void>()
+        refreshReleased = Promise.withResolvers<void>()
+        const inFlight = staleLease.clients[0]!.callTool('research', {})
+        await refreshStarted.promise
+        const disconnect = otherProcess.disconnectGoogle(owner, endpoint.id)
+        refreshReleased.resolve()
+        await Promise.allSettled([inFlight, disconnect])
+        await disconnect
+        expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
+        expect(await db('agentProviderSecrets')).toEqual([])
+        const before = networkCalls
+        await expect(staleLease.clients[0]!.callTool('research', {})).rejects.toMatchObject({ code: 'GOOGLE_MCP_RECONNECT_REQUIRED' })
+        expect(networkCalls).toBe(before)
+      } finally { await staleLease.close() }
+    } finally { refreshReleased?.resolve(); await second.destroy() }
+  })
+
+  it('cascades pending PKCE and token secrets on account deletion', async () => {
+    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', groupIds: [20, 30] })
+    const authorization = new URL((await service.connectGoogle(owner, endpoint.id, 'browser')).authorizationUrl)
+    expect(await service.googleCallback(owner, { state: authorization.searchParams.get('state')!, code: 'code', sessionId: 'browser' })).toBe('connected')
+    await service.connectGoogle(other, endpoint.id, 'other-browser')
+    expect(await db('agentProviderSecrets')).toHaveLength(2)
+    await db('users').where('id', owner.id).delete()
+    expect(await db('agentProviderSecrets')).toHaveLength(1)
+    await db('users').where('id', other.id).delete()
+    expect(await db('agentExternalMcpOAuthPending')).toEqual([])
+    expect(await db('agentExternalMcpOAuthGrants')).toEqual([])
+    expect(await db('agentProviderSecrets')).toEqual([])
+  })
+  it('preserves the production RESTRICT boundary for unrelated provider secrets when deleting a user', async () => {
+    const endpoint = await service.createAdmin(admin, { ...input(), endpointUrl: GOOGLE_WORKSPACE_MCP_SERVICES[0]!.endpointUrl, authMode: 'google', groupIds: [20] })
+    await service.connectGoogle(owner, endpoint.id, 'browser')
+    const unrelated = await db.transaction(tx => vault.store('unrelated-provider-credential', owner.id, tx))
+    await expect(Promise.resolve(db('users').where('id', owner.id).delete())).rejects.toMatchObject({ code: expect.stringMatching(/^(23503|23001)$/) })
+    expect(await db('users').where('id', owner.id).first('id')).toEqual({ id: owner.id })
+    expect(await vault.has(unrelated)).toBe(true)
+    expect(await db('agentExternalMcpOAuthPending')).toHaveLength(1)
+    expect(await db('agentProviderSecrets')).toHaveLength(2)
   })
 
   it('persists admin group grants and denies claimed admin authority and ungranted discovery without network', async () => {
