@@ -1,6 +1,6 @@
 # AxAgent RLM Runtime, Context Policy, and Semantic Queries
 
-Source API snapshot: `@ax-llm/ax` 25.4.3. Use for RLM code execution, `AxJSRuntime`, `contextFields`, `contextPolicy`, `liveRuntimeState`, `promptLevel`, stage prompts, `executorModelPolicy`, `maxRuntimeChars`, `agent.test(...)`, `llmQuery(...)`, `recursionOptions`, and long-running runtime behavior. Not ordinary setup: see [agent setup](references/agent.md) for child agents, tool namespaces, clarification, and `bubbleErrors`; [observability](references/agent-observability.md) for callbacks/logs; [memory and skills](references/agent-memory-skills.md) for persistent orientation, retrieval, and skill loading.
+Source API snapshot: `@ax-llm/ax` 25.4.5. Use for RLM code execution, `AxJSRuntime`, `contextFields`, `contextPolicy`, `liveRuntimeState`, `promptLevel`, stage prompts, `executorModelPolicy`, `maxRuntimeChars`, `agent.test(...)`, `llmQuery(...)`, `recursionOptions`, and long-running runtime behavior. Not ordinary setup: see [agent setup](references/agent.md) for child agents, tool namespaces, clarification, and `bubbleErrors`; [observability](references/agent-observability.md) for callbacks/logs; [memory and skills](references/agent-memory-skills.md) for persistent orientation, retrieval, and skill loading.
 
 ## Use These Defaults
 

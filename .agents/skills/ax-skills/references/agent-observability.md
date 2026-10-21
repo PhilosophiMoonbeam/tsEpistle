@@ -1,6 +1,6 @@
 # AxAgent Observability
 
-Use for AxAgent runtime visibility, progress, callbacks, telemetry, centralized or multi-tenant usage accounting, chat logs, and traces in `@ax-llm/ax`. Source API snapshot: 25.4.3. For setup see [agent authoring](references/agent.md); for runtime policy see [RLM](references/agent-rlm.md); for memories and dynamic skills see [memory and skills](references/agent-memory-skills.md). This is not general application logging.
+Use for AxAgent runtime visibility, progress, callbacks, telemetry, centralized or multi-tenant usage accounting, chat logs, and traces in `@ax-llm/ax`. Source API snapshot: 25.4.5. For setup see [agent authoring](references/agent.md); for runtime policy see [RLM](references/agent-rlm.md); for memories and dynamic skills see [memory and skills](references/agent-memory-skills.md). This is not general application logging.
 
 ## Choose the smallest hook
 

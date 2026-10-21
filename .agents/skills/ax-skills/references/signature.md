@@ -1,6 +1,6 @@
 # Ax signatures and field contracts
 
-Use for `s()`, `f()`, signature strings, field types, validation, and type-safe inputs/outputs. Source snapshot: Ax 25.4.3. Generator execution belongs in [generator reference](references/gen.md); native decision criteria belong in [Typesafe reference](references/typesafe.md).
+Use for `s()`, `f()`, signature strings, field types, validation, and type-safe inputs/outputs. Source snapshot: Ax 25.4.5. Generator execution belongs in [generator reference](references/gen.md); native decision criteria belong in [Typesafe reference](references/typesafe.md).
 
 ## String syntax and field types
 
@@ -121,7 +121,7 @@ Boolean/class evidence opt-in is `.withEvidence()` or `(evidence)`. `score "Low,
 
 Jev 1.14 supports native PNG/JPEG localization with the required experimental header supplied by Ax. Box always returns a region, not a presence judgment: pair it with a boolean if the target may be absent and consume the box only when present. Generative vision providers use validated structured output with `elicited` provenance and no invented native confidence. OpenAI Decisions supports images but rejects Box outputs before transport; use a generative vision model instead. See [Typesafe image/Box transport and preparation](references/typesafe.md#image-inputs-and-box-outputs).
 
-**Source scope disagreement (25.4.3):** the signature source says generated-language Box support remains in the AxIR backlog, while the Typesafe source says Image/Box signatures are available in TypeScript, Python, Java, C++, Go, and Rust, with per-language examples. These statements disagree; this reference documents the TypeScript contract and does not establish universal generated-language Box availability.
+**Source scope disagreement (25.4.5):** the signature source says generated-language Box support remains in the AxIR backlog, while the Typesafe source says Image/Box signatures are available in TypeScript, Python, Java, C++, Go, and Rust, with per-language examples. These statements disagree; this reference documents the TypeScript contract and does not establish universal generated-language Box availability.
 
 
 ## Four construction forms

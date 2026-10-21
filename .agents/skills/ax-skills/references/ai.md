@@ -1,6 +1,6 @@
 # AI providers, models, and runtime configuration
 
-Use for `ai()`, deployment profiles, model catalogs/presets, routing and balancing, embeddings, thinking, service tiers, caching, cancellation, and provider-specific request contracts. Prefer short copyable code, not tutorial prose unless requested. Source API snapshot: 25.4.3. Audio task-specific detail belongs in [audio](references/audio.md); signature design in [signatures](references/signature.md); agent/runtime design is outside this reference.
+Use for `ai()`, deployment profiles, model catalogs/presets, routing and balancing, embeddings, thinking, service tiers, caching, cancellation, and provider-specific request contracts. Prefer short copyable code, not tutorial prose unless requested. Source API snapshot: 25.4.5. Audio task-specific detail belongs in [audio](references/audio.md); signature design in [signatures](references/signature.md); agent/runtime design is outside this reference.
 
 ## Factory and deployment profiles
 
@@ -194,6 +194,10 @@ Choose the primitive by responsibility:
 - `AxBalancer` with `strategy.type: 'adaptive'` selects among services exposing the same logical model aliases using learned provider reliability, successful latency, and estimated cost.
 
 In TypeScript, `capabilities.requiresAudioOutput` or `modelConfig.audio.output.enabled` requires a service with `media.audio.output.supported`. Audio input and output are separate requirements. Balancer output formats come only from children that support output; compatibility reports count requested input and output independently.
+
+Generated provider routers expose `get_compatibility_report` (Python, C++, Rust), `GetCompatibilityReport` (Go), and `getCompatibilityReport` (Java). Reports count requested audio input and output independently and include ranked provider names, scores, missing/supported capabilities, and a summary for request-compatible providers. These are capability-compatibility scores, not semantic-quality evaluations.
+
+For 25.4.5, [PR #862](https://github.com/ax-llm/ax/pull/862) records generated-provider coverage for independent audio input/output routing, output-format unions restricted to output-capable children, and separate counts in native compatibility reports. This is bounded provider-side parity evidence, not a guarantee for unrelated capabilities or the Jev image/Box source disagreement above.
 
 Adaptive balancing is operational routing, not semantic prompt-to-model routing. Every provider model behind an alias must be an acceptable substitute for that application. Keep quality evaluation and content-aware model selection outside the balancer.
 
@@ -638,6 +642,12 @@ Provider behavior:
   builder and the same model enum, so a `gpt-5.6-*` deployment sends nothing,
   and `openai-responses` sends breakpoints for GPT-6 only (it does report
   `cacheCreationTokens`, which is provider-wide)
+
+### Gemini system instructions and cache migration
+
+Gemini cache creation retains every system message in order, including messages after the content breakpoint; their contents are joined with a space, matching ordinary requests. [Release 25.4.4](https://github.com/ax-llm/ax/releases/tag/25.4.4) and [PR #851](https://github.com/ax-llm/ax/pull/851) fixed the TypeScript path, which previously overwrote earlier system instructions with the last one. Existing pre-fix caches must expire or be recreated to receive the complete instructions; upgrading the SDK alone does not repair cached content.
+
+For 25.4.5, [PR #862](https://github.com/ax-llm/ax/pull/862) reports regression verification that the existing generated Gemini mapper also retains all ordered system messages, including those after the content breakpoint. That coverage required no further mapper runtime change. This is upstream verification evidence, not a claim that this guide executed the generated packages.
 
 ### OpenAI prompt cache keys
 

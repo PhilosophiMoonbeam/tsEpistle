@@ -2,7 +2,7 @@
 
 Use this guide to choose an architecture, justify rejected alternatives and produce an implementation reading plan before writing code. For a narrow API change, use the owning reference directly.
 
-This is **authored synthesis** grounded in the collection's official `@ax-llm/ax` **25.4.3** snapshots, not an additional upstream API contract. “Recommend” identifies application design guidance; statements about Ax behavior have specialist destinations below. Check the installed version and declarations before implementation. These TypeScript contracts do not establish universal generated-language parity.
+This is **authored synthesis** grounded in the collection's official `@ax-llm/ax` **25.4.5** snapshots, not an additional upstream API contract. “Recommend” identifies application design guidance; statements about Ax behavior have specialist destinations below. Check the installed version and declarations before implementation. These TypeScript contracts do not establish universal generated-language parity.
 
 ## 1. Define the Design Deliverable
 
@@ -53,11 +53,13 @@ AxAgent runs distiller → executor → responder, but `directResponse: 'auto'` 
 | --- | --- | --- |
 | Provider/model/catalog | Check operation availability, structured output, tools, media input **and output**, thinking, runtime and deployment restrictions. Bundled catalogs/pricing are snapshots, not live guarantees. | [AI providers: Model Catalog](references/ai.md#model-catalog) and provider-specific sections |
 | Caller-selected logical model | `AxMultiServiceRouter` dispatches the selected key; it does not decide which model a task needs. | [AI providers: Routing And Balancing](references/ai.md#routing-and-balancing) |
-| Request-capability selection | `AxProviderRouter` selects by capability; configured processors may degrade unsupported media. Decide whether degraded input still satisfies the task. | [AI providers: Routing And Balancing](references/ai.md#routing-and-balancing) |
+| Request-capability selection | `AxProviderRouter` selects by capability; configured processors may degrade unsupported media. Compatibility reports rank providers and report supported/missing capabilities, including independent audio input/output counts; they do not measure semantic quality. Decide whether degraded input still satisfies the task. | [AI providers: Routing And Balancing](references/ai.md#routing-and-balancing) |
 | Equivalent operational substitutes | `AxBalancer` provides ordered failover or adaptive reliability/latency/estimated-cost selection. Every model behind an alias must be acceptable for this workload. Quality evaluation/content-aware selection is application-owned, not semantic balancing. | [AI providers: Routing And Balancing](references/ai.md#routing-and-balancing) |
 | Streaming fallback | Failover can occur before the first emitted chunk; partial output cannot be transparently replayed after emission. Define UI failure/reset behavior. | [AI providers: Routing And Balancing](references/ai.md#routing-and-balancing); [Generators: Streaming output and replacement versions](references/gen.md#streaming-output-and-replacement-versions) |
 
 **Streaming is a presentation protocol, not a commit signal.** Merge deltas per `index`, append strings/arrays, replace other values and reset accumulated output on a new `version`. Validation/refusal retries or processor feedback may replace prior output. Partial JSON repair preserves string contents; do not “fix” partial strings into new literals. A valid-looking partial result can still end in failure. Recommend publishing business effects only through an authorized application action, never from a UI delta. See [Generators: Streaming output and replacement versions](references/gen.md#streaming-output-and-replacement-versions).
+
+**Cache creation is an instruction-policy boundary.** Gemini caches retain the system instructions captured at creation; define immutable creation policy and recreate caches when that policy changes. The 25.4.4 prefix/breakpoint fix preserves every ordered system message on either side of the content breakpoint. Upgrading does not repair existing cached instructions: expire or recreate affected caches before relying on the corrected policy. Read [AI providers: Gemini system instructions and cache migration](references/ai.md#gemini-system-instructions-and-cache-migration).
 
 ## 5. Separate Context Mechanisms and State Lifetimes
 
@@ -121,6 +123,8 @@ Recommend budgets that include distiller/executor/responder turns, semantic quer
 | Reusable task knowledge from failures/feedback | `playbook().evolve(...)` offline, `update(...)` online | Persist/load knowledge explicitly. Verified agent evolution gates bullets against held-in improvement and held-out regression; online update is trusted feedback, not equivalent verification. | [Playbooks: Agent-owned playbooks](references/playbook.md#agent-owned-playbooks) and Program-bound lifecycle |
 | Better complete candidate for this call | `bestOfN()` for independent scoring; `refine()` for feedback-informed attempts | Reward is not a hard invariant or durable learning. Serial attempts isolate sessions, not external side effects. Do not use refinement for streaming. | [Refine: Validation and Assertions](references/refine.md#validation-and-assertions), Strategies and Streaming Safety |
 
+For novelty-sensitive text evaluation, [Generators: Novel F1 evaluation](references/gen.md#novel-f1-evaluation) documents `AxEvalUtil.novelF1ScoreOptimized` and native counterparts. This metric measures normalized novel-word multiset overlap after excluding history and stopwords; it is not factual correctness, calibrated decision confidence or a substitute for hard invariants. Select decision metrics against the task's labels/actions separately; see [Agent optimization: Metric versus judge](references/agent-optimize.md#metric-versus-judge).
+
 Recommend isolated eval-safe tools or recording/replay for repeated runs, never production messaging/writes by default. Authorize billed/live work explicitly, cap evaluation calls/trials/attempts and opt in explicitly to expensive teachers where required. See [Agent optimization: Make tasks and agents optimizable](references/agent-optimize.md#make-tasks-and-agents-optimizable), [GEPA: Options and teacher permissions](references/gepa.md#options-and-teacher-permissions) and [MCP: Apps, replay, evaluation, and testing](references/mcp.md#apps-replay-evaluation-and-testing).
 
 ## 10. Preserve Audio, Multimodal and Portability Boundaries
@@ -135,10 +139,12 @@ Recommend isolated eval-safe tools or recording/replay for repeated runs, never 
 
 Do not combine conversational audio output with native structured response formats unless that provider explicitly supports it. Generative Box evidence is elicited, with no fabricated native confidence; OpenAI Decisions supports image decisions but rejects Box outputs.
 
-**Preserve two official-source discrepancies in 25.4.3:**
+**Preserve two official-source discrepancies in 25.4.5:**
 
 - The provider summary still excludes Jev media broadly; the dedicated Typesafe contract specifically supports experimental PNG/JPEG/Box while excluding audio/files/tools. Use that narrow TypeScript image exception, not universal media support or a blanket image ban.
 - The Typesafe source claims Image/Box across TypeScript, Python, Java, C++, Go and Rust with examples; the signature source says generated-language Box remains in the AxIR backlog. This collection establishes the TypeScript contract, not either universal port availability or universal absence. Before a port, inspect the exact generated package/version, declarations and runnable examples. The disagreement remains explicit in [Typesafe](references/typesafe.md#image-inputs-and-box-outputs) and [Signatures](references/signature.md#bounding-boxes).
+
+The [25.4.5 parity change (PR 862)](https://github.com/ax-llm/ax/pull/862) closes five named areas only: native novelty-F1 helpers with shared normalization/overlap semantics; partial-JSON string/escaped-quote repair; independent audio input/output compatibility and native reports; Rust/C++ reconnect-close wakeup and synchronous generated ping without JavaScript timers/listeners; and regression coverage of the generated Gemini ordered-system cache mapper. It does not resolve unrelated Box claims or establish blanket generated-language parity.
 
 ## 11. Compose Small Patterns and Stage Verification
 

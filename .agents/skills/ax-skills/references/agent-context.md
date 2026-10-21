@@ -1,6 +1,6 @@
 # AxAgent Context Tool Selection
 
-Use this decision guide when choosing a context feature, distinguishing `contextMap` from `contextPolicy` or memory, or designing long-context agents. Select the tool, then use the exact implementation reference below; this is not a core-agent or runtime-code guide. Prefer a direct recommendation over tutorial prose. Source API snapshot: `@ax-llm/ax` 25.4.3.
+Use this decision guide when choosing a context feature, distinguishing `contextMap` from `contextPolicy` or memory, or designing long-context agents. Select the tool, then use the exact implementation reference below; this is not a core-agent or runtime-code guide. Prefer a direct recommendation over tutorial prose. Source API snapshot: `@ax-llm/ax` 25.4.5.
 
 ## Select by Need and Scope
 

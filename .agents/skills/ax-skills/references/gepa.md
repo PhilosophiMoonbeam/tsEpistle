@@ -1,6 +1,6 @@
 # GEPA and Pareto optimization
 
-Source API snapshot: `@ax-llm/ax` 25.4.3. Use for `AxGEPA`, global `optimize(...)`, reflective prompt evolution, multi-objective/Pareto tuning, `validationExamples`, `maxMetricCalls`, and generator/flow/agent-tree optimization. Prefer global `optimize(...)`; use direct `AxGEPA` or `AxBootstrapFewShot` only for low-level control. Agent wrapper tuning belongs in [agent optimization](references/agent-optimize.md); inference-time `bestOfN`/`refine` belongs in [refinement](references/refine.md); evolving context knowledge belongs in [playbooks](references/playbook.md).
+Source API snapshot: `@ax-llm/ax` 25.4.5. Use for `AxGEPA`, global `optimize(...)`, reflective prompt evolution, multi-objective/Pareto tuning, `validationExamples`, `maxMetricCalls`, and generator/flow/agent-tree optimization. Prefer global `optimize(...)`; use direct `AxGEPA` or `AxBootstrapFewShot` only for low-level control. Agent wrapper tuning belongs in [agent optimization](references/agent-optimize.md); inference-time `bestOfN`/`refine` belongs in [refinement](references/refine.md); evolving context knowledge belongs in [playbooks](references/playbook.md).
 
 ## Execution and selection contract
 

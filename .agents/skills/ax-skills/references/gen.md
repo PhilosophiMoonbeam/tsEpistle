@@ -1,6 +1,6 @@
 # AxGen execution, streaming, and validation
 
-Use for `ax()`, `AxGen`, `forward()`, `streamingForward()`, structured outputs, assertions, processors, hooks, and self-tuning. Source snapshot: Ax 25.4.3. Prefer short, modern, copyable code; add tutorial prose only when requested. Use [signature reference](references/signature.md) for field contracts, [AI reference](references/ai.md) for providers, [refine reference](references/refine.md) for reward-scored selection, [MCP reference](references/mcp.md) for MCP construction/transports/prompts/resources/tools/tasks/subscriptions/authentication/events, and [event runtime reference](references/event-runtime.md) for wake/resume routing.
+Use for `ax()`, `AxGen`, `forward()`, `streamingForward()`, structured outputs, assertions, processors, hooks, and self-tuning. Source snapshot: Ax 25.4.5. Prefer short, modern, copyable code; add tutorial prose only when requested. Use [signature reference](references/signature.md) for field contracts, [AI reference](references/ai.md) for providers, [refine reference](references/refine.md) for reward-scored selection, [MCP reference](references/mcp.md) for MCP construction/transports/prompts/resources/tools/tasks/subscriptions/authentication/events, and [event runtime reference](references/event-runtime.md) for wake/resume routing.
 
 ## Construction and execution defaults
 
@@ -144,7 +144,7 @@ for await (const chunk of stream) {
 
 - Chunks are `{ version, index, delta }`. Merge per `index`: append strings/arrays; replace other values. Reset accumulated output when `version` changes.
 - Versions never decrease. Validation/refusal retries and later steps replacing already-emitted output (such as processor feedback) start a new version; thought accumulated so far is re-emitted.
-- In TypeScript, partial JSON repair preserves string text such as `, t`, `, n`, trailing punctuation, and commas before brackets inside strings. Structural repair applies outside strings so these fragments do not change into literals or repeat in merged deltas.
+- In TypeScript, partial JSON repair preserves string text such as `, t`, `, n`, trailing punctuation, and commas before brackets inside strings. Structural repair applies outside strings so these fragments do not change into literals or repeat in merged deltas. [PR #862](https://github.com/ax-llm/ax/pull/862) aligns partial-JSON string and escaped-quote repair across generated Python, C++, Rust, Go, and Java ports; this is a scoped repair-parity claim, not blanket streaming parity.
 - Streamed `code` drops fences regardless of chunk split. Incomplete possible fences and partial labels are held back so merged deltas equal non-streaming values.
 - Deltas never end in half a surrogate pair: a trailing high surrogate waits for its low half.
 - Error/token-limit terminal results are rejected even if the final chunk is empty and earlier chunks already form valid output.
@@ -449,6 +449,16 @@ Generated-language status: C++ session tools using raw JSON schemas validate req
 ## Decision model outputs
 
 Boolean/class `.withEvidence()` and `f.score(levels).withEvidence()` retain probabilities/native confidence through `forward()`. String forms: `boolean(evidence)`, `score "Low, Medium, High"(evidence)`. These are normal outputs: processors, assertions, result selection, traces, caches receive decoded evidence. See [decision evidence](references/typesafe.md#evidence-provenance-and-reranking) for shapes, provenance, refusal policy, reranking.
+
+## Novel F1 evaluation
+
+`AxEvalUtil.novelF1ScoreOptimized(history, prediction, groundTruth, returnRecall)` normalizes text, excludes stopwords and history tokens, and measures multiset word overlap between the remaining prediction and ground truth. Each repeated word contributes the minimum of its prediction and ground-truth occurrence counts; repeating a prediction word cannot add matches beyond the ground-truth count.
+
+The default returns F1; passing `true` as `returnRecall` returns recall. Two empty filtered inputs score `1`; exactly one empty filtered input scores `0`. These are filtered-input semantics, including inputs emptied by stopword or history exclusion.
+
+Generated Python, C++, and Rust expose `novel_f1_score`; Go exposes `NovelF1Score`; Java exposes `Ax.novelF1Score`. They share the same Core metric, including Unicode normalization, stopword/history exclusion, multiset overlap, F1/recall selection, and finite empty-input scores. [PR #862](https://github.com/ax-llm/ax/pull/862) preserves TypeScript punctuation and literal-backslash behavior in this cross-port metric work; do not infer a new TypeScript normalization contract.
+
+The official optimization examples score a rationale returned by a real provider. That is a source observation, not evidence of local provider execution. Novel F1 measures lexical novelty overlap, not factual correctness or confidence calibration. It does not replace holistic judging or explicit action invariants; see [metric versus judge](references/agent-optimize.md#metric-versus-judge) for agent optimization.
 
 ## Working examples
 

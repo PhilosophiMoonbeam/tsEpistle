@@ -1,6 +1,6 @@
 # AxAgent Context Maps, Memory Retrieval, and Dynamic Skills
 
-Source API snapshot: `@ax-llm/ax` 25.4.3. Use for `contextMap` / `AxAgentContextMap`, memory catalogs/search/recall, `inputs.memories`, memory carryover and preloading, skill catalogs/search/discovery/preloading, loaded/used IDs and observers, and `relevanceRanking`. For ordinary setup see [agent setup](references/agent.md); for execution and replay policy see [RLM runtime](references/agent-rlm.md); for callbacks/telemetry see [observability](references/agent-observability.md).
+Source API snapshot: `@ax-llm/ax` 25.4.5. Use for `contextMap` / `AxAgentContextMap`, memory catalogs/search/recall, `inputs.memories`, memory carryover and preloading, skill catalogs/search/discovery/preloading, loaded/used IDs and observers, and `relevanceRanking`. For ordinary setup see [agent setup](references/agent.md); for execution and replay policy see [RLM runtime](references/agent-rlm.md); for callbacks/telemetry see [observability](references/agent-observability.md).
 
 `contextMap` persists prompt-resident corpus orientation across successful runs; `contextPolicy` compresses within-run actor replay without deleting runtime state; memories are retrieved task context whose loaded collection resets each run. Loaded skills are system-prompt guides retained on the agent across runs. None is a substitute for the others.
 

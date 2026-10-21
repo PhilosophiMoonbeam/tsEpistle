@@ -1,6 +1,6 @@
 # AxFlow workflows, DAGs, and execution contracts
 
-Use `flow()` and `AxFlow` for workflows, DAG orchestration, multi-node AI pipelines, conditional routing, parallel execution, and array/map-reduce processing. This reference preserves the source API snapshot **25.4.3**. Prefer short, copyable patterns; provide tutorial prose only when requested. Provider setup belongs in [AI services](references/ai.md); generic generation in [Generators](references/gen.md); event ingestion, persistence, and safe routing in [Event runtime](references/event-runtime.md).
+Use `flow()` and `AxFlow` for workflows, DAG orchestration, multi-node AI pipelines, conditional routing, parallel execution, and array/map-reduce processing. This reference preserves the source API snapshot **25.4.5**. Prefer short, copyable patterns; provide tutorial prose only when requested. Provider setup belongs in [AI services](references/ai.md); generic generation in [Generators](references/gen.md); event ingestion, persistence, and safe routing in [Event runtime](references/event-runtime.md).
 
 ## Builder rules and boundaries
 

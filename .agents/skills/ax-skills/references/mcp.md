@@ -1,6 +1,6 @@
 # Native MCP integration with Ax
 
-Use for `AxMCPClient`, transports, catalogs, tools/prompts/resources, tasks, subscriptions, host requests, authentication/OAuth, MCP Apps, replay, and native integration with Gen, Agent, Flow, chat, optimization, and event runtimes. Source API snapshot: 25.4.3. MCP is a live protocol client, not a function-conversion utility: preserve client/session ownership, catalogs, raw content, tasks, notifications, identity policy, and cancellation context.
+Use for `AxMCPClient`, transports, catalogs, tools/prompts/resources, tasks, subscriptions, host requests, authentication/OAuth, MCP Apps, replay, and native integration with Gen, Agent, Flow, chat, optimization, and event runtimes. Source API snapshot: 25.4.5. MCP is a live protocol client, not a function-conversion utility: preserve client/session ownership, catalogs, raw content, tasks, notifications, identity policy, and cancellation context.
 
 ## Integration and safety rules
 
@@ -208,6 +208,8 @@ After `notifications/resources/list_changed`, managed sources refresh/diff selec
 Legacy listening maintains `resources/subscribe` and optionally resumes GET/SSE with `Last-Event-ID`. Modern `subscriptions/listen` contains catalog interests, concrete resource URIs, and known task IDs; changes restart POST with a fresh request ID and no resume header. `startListening()` is nonblocking in both eras and returns `ready`, `done`, and `close()`.
 
 Generated transports supervise legacy long-lived GET/SSE and resume where supported. Generated runtimes are host-driven: use `nextDueAt()` and `runDue()` for delayed work. Rust hosts also call `AxMCPEventSource.poll()` to drain callbacks on the host thread. Close source/runtime before caller-owned client so unsubscribe/cancellation can still be sent. For inbox, continuations, stores, and sinks see [event runtime](references/event-runtime.md). Lifecycle/troubleshooting: Ax repository `docs/MCP_SUBSCRIPTIONS.md` and checked-in six-language MCP examples.
+
+In generated Rust and C++ packages, 25.4.5 closes reconnect-delay waits when the client closes, rather than waiting for the retry delay to expire. Generated synchronous ping calls do not create JavaScript deadline timers or abort listeners; do not apply the TypeScript cleanup mechanism literally to those runtimes. This bounded parity scope follows [PR #862](https://github.com/ax-llm/ax/pull/862), not a guarantee of unrelated session or transport parity.
 
 ## Authentication and OAuth
 

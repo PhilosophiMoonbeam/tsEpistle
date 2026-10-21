@@ -3,11 +3,11 @@
   "source_root": ".agents/skills/ax-llm",
   "upstream": {
     "package": "@ax-llm/ax",
-    "version": "25.4.3",
-    "git_commit": "818d15b02d57de8f215f6d2cb23bd3d3921a6e5e",
+    "version": "25.4.5",
+    "git_commit": "288505e1b3b6dc686cb781fcc64fb7f5fd3da22e",
     "index_url": "https://ax-llm.github.io/ax/typescript/.well-known/agent-skills/index.json",
     "archive_url": "https://ax-llm.github.io/ax/typescript/.well-known/agent-skills/ax-llm/skill.tar.gz",
-    "archive_sha256": "cf85a81e8b7a73fe6b9b52a6b743f1b6188565779a2cab788bb544277f5aec67"
+    "archive_sha256": "c231b34d518eb17892d8a5e0415c1070059bbd77862ba94bb4c3f4e53ee30fa7"
   },
   "sources": [
     {
@@ -16,7 +16,7 @@
         "SKILL.md",
         "references/llm.md"
       ],
-      "sha256": "2a0da2c248ce22a020c59e332da6b5e6dfd596330d3fcf9739104156fa14c57d",
+      "sha256": "2fa79edd88d32a1a48c974803f31735fd26b1cff146a11ad03a759e85acaaf12",
       "original_bytes": 3359,
       "original_lines": 54
     },
@@ -79,9 +79,9 @@
       "destinations": [
         "references/ai.md"
       ],
-      "sha256": "0a25ba3961d59affbaeec0c275da0db30a42252c377747d57f9229ced6d7dc91",
-      "original_bytes": 64115,
-      "original_lines": 1245
+      "sha256": "e10929509ce9e63324c58b77b5ae82a0f39f9eb6579b8139e08b9d503a4fc0f0",
+      "original_bytes": 64428,
+      "original_lines": 1250
     },
     {
       "source": ".agents/skills/ax-llm/references/ax-audio.md",
@@ -115,9 +115,9 @@
       "destinations": [
         "references/gen.md"
       ],
-      "sha256": "930d93fbb88f87e21dc8b550321aa9e779bd368c96dfba399fba13ab07db3e4e",
-      "original_bytes": 29284,
-      "original_lines": 626
+      "sha256": "abf16f94ef7ffad41a4821b37d000142de33b94a001d1687191a0c69707824f1",
+      "original_bytes": 29990,
+      "original_lines": 639
     },
     {
       "source": ".agents/skills/ax-llm/references/ax-gepa.md",

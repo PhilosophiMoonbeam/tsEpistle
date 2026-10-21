@@ -122,9 +122,10 @@
     },
     "ax-skills": {
       "source": "PhilosophiMoonbeam/ax-skills",
+      "ref": "main",
       "sourceType": "github",
       "skillPath": "skills/ax-skills/SKILL.md",
-      "computedHash": "0ec8349a7eb244165aabd051e1924ecd6bc1088f7d39a9930cd2581d51b5edb5"
+      "computedHash": "e3012deef88f73d4a4db47430378afe16d0a62053bfcd6a894a902b07afd4cbd"
     },
     "ax-typesafe": {
       "source": "ax-llm.github.io",

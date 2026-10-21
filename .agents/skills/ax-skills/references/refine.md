@@ -1,6 +1,6 @@
 # Reward-Based Selection and Refinement
 
-Use `bestOfN(...)` to score complete outputs independently; use `refine(...)` when failed rounds should generate feedback that changes the next attempt. Covers reward functions, thresholds, native samples, serial attempts, advice, and diagnostics, not streaming selection. Source API snapshot: 25.4.3.
+Use `bestOfN(...)` to score complete outputs independently; use `refine(...)` when failed rounds should generate feedback that changes the next attempt. Covers reward functions, thresholds, native samples, serial attempts, advice, and diagnostics, not streaming selection. Source API snapshot: 25.4.5.
 
 ## Validation and Assertions
 

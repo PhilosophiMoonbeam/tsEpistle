@@ -1,6 +1,6 @@
 # Audio inputs, speech artifacts, and realtime turns
 
-Use for batch speech-to-text (`ai.transcribe()`), batch text-to-speech (`ai.speak()`), synthesized `speech:audio` signature outputs, agent audio handling, and conversational/realtime `.chat()` audio. Choose the smallest matching surface; use forward-time `speech` for structured artifacts and `modelConfig.audio` for chat turns. General provider setup/routing belongs in [AI configuration](references/ai.md), not here. Source API snapshot: 25.4.3.
+Use for batch speech-to-text (`ai.transcribe()`), batch text-to-speech (`ai.speak()`), synthesized `speech:audio` signature outputs, agent audio handling, and conversational/realtime `.chat()` audio. Choose the smallest matching surface; use forward-time `speech` for structured artifacts and `modelConfig.audio` for chat turns. General provider setup/routing belongs in [AI configuration](references/ai.md), not here. Source API snapshot: 25.4.5.
 
 ## Audio values and execution boundaries
 
