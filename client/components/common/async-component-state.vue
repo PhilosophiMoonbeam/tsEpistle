@@ -8,21 +8,10 @@
     :aria-labelledby="titleId"
     :aria-describedby="messageId"
   >
-    <v-icon v-if="error" class="async-component-state__icon" color="error" size="32" aria-hidden="true">
-      mdi-cloud-alert-outline
-    </v-icon>
+    <span v-if="error" class="async-component-state__icon async-component-state__error-icon mdi mdi-cloud-alert-outline" aria-hidden="true" />
     <template v-else>
-      <v-progress-circular
-        class="async-component-state__icon async-component-state__spinner"
-        color="primary"
-        indeterminate
-        :size="32"
-        :width="3"
-        aria-hidden="true"
-      />
-      <v-icon class="async-component-state__icon async-component-state__still-icon" color="primary" size="32" aria-hidden="true">
-        mdi-cloud-download-outline
-      </v-icon>
+      <span class="async-component-state__icon async-component-state__spinner" aria-hidden="true" />
+      <span class="async-component-state__icon async-component-state__still-icon mdi mdi-cloud-download-outline" aria-hidden="true" />
     </template>
 
     <div class="async-component-state__copy">
@@ -35,12 +24,12 @@
     </div>
 
     <div v-if="error" class="async-component-state__actions">
-      <v-btn color="primary" size="small" variant="flat" @click="$emit('retry')">
+      <button type="button" class="async-component-state__retry" @click="$emit('retry')">
         {{ $t('common:asyncComponentState.tryAgain') }}
-      </v-btn>
-      <v-btn size="small" variant="text" @click="reloadPage">
+      </button>
+      <button type="button" @click="reloadPage">
         {{ $t('common:asyncComponentState.reloadPage') }}
-      </v-btn>
+      </button>
     </div>
   </section>
 </template>
@@ -100,6 +89,31 @@ export default AsyncComponentState
   flex: 0 0 auto;
 }
 
+.async-component-state__icon {
+  width: 2rem;
+  height: 2rem;
+  font-size: 2rem;
+  line-height: 1;
+  color: rgb(var(--v-theme-primary));
+}
+
+.async-component-state__error-icon {
+  color: rgb(var(--v-theme-error));
+}
+
+.async-component-state__spinner {
+  box-sizing: border-box;
+  border: 3px solid transparent;
+  border-block-start-color: currentColor;
+  border-inline-end-color: currentColor;
+  border-radius: 50%;
+  animation: async-component-spin 800ms linear infinite;
+}
+
+@keyframes async-component-spin {
+  to { transform: rotate(360deg); }
+}
+
 .async-component-state__still-icon {
   display: none;
 }
@@ -113,6 +127,31 @@ export default AsyncComponentState
   display: flex;
   align-items: center;
   gap: .25rem;
+}
+
+.async-component-state__actions button {
+  min-height: var(--wiki-control-height, 2.75rem);
+  padding: .5rem .875rem;
+  border: 1px solid transparent;
+  border-radius: var(--wiki-control-radius, .875rem);
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.async-component-state__actions button:hover {
+  border-color: currentColor;
+}
+
+.async-component-state__actions button:focus-visible {
+  outline: 2px solid var(--wiki-focus-color, currentColor);
+  outline-offset: 2px;
+}
+
+.async-component-state__actions .async-component-state__retry {
+  color: rgb(var(--v-theme-on-primary));
+  background: rgb(var(--v-theme-primary));
 }
 
 @media (max-width: 599.98px) {
@@ -130,6 +169,7 @@ export default AsyncComponentState
 @media (prefers-reduced-motion: reduce) {
   .async-component-state__spinner {
     display: none;
+    animation: none;
   }
 
   .async-component-state__still-icon {

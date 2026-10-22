@@ -26,8 +26,8 @@ describe('client setup boot global compatibility', () => {
       }
     })
 
-    // Control the SFC leaves only; boot, Vue mounting and the Vuetify plugin remain real.
-    vi.mockModule('./components/common/async-component-state.vue', import.meta.url, () => ({
+    // Control lazy SFC loading only; boot, Vue mounting and the Vuetify plugin remain real.
+    vi.mockModule('./components/common/async-component.ts', import.meta.url, () => ({
       createAsyncComponent: loader => defineAsyncComponent(loader)
     }))
     vi.mockModule('./components/setup.vue', import.meta.url, () => ({
