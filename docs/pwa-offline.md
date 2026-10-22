@@ -22,9 +22,9 @@ Push notifications, Background Sync, Periodic Background Sync, inbound share tar
 
 ## 2. Repository facts and constraints
 
-- `vite.config.mts` emits two hashed entrypoints under `/_assets/`; there is no generic Vite-generated SPA document.
+- `vite.config.mts` emits application, setup, and neutral-offline entrypoints under `/_assets/`; there is no generic Vite-generated SPA document.
 - `server/views/master.pug` renders personalized HTML and boot configuration. Ordinary wiki routes remain server-owned.
-- `client/client-app.ts` currently refreshes authentication before mounting.
+- `client/client-app.ts` starts a fail-closed authentication refresh after the PWA release gate; that request does not block mounting the neutral application shell.
 - `server/helpers/page-access.ts` proves that `visibility === 'public'` does not mean anonymous-readable. Page rules, tags, publication state, and protection still apply.
 - `server/models/pages.ts` already enforces `sourceRevision` and update-time conflicts transactionally.
 - `client/components/editor/collaboration.ts` has an in-memory collaboration reconnect queue, not a durable local draft store.
@@ -67,6 +67,16 @@ When the worker supplies that cached document for another navigation, it creates
 Precache publication validates the original HTTP status, redirect and response type before constructing byte-backed cached responses. The complete downloaded bytes are reused for integrity verification, neutral-shell checks, and publication; content and headers are preserved without retaining the native network-response object. This avoids the observed WebKit HTTPS offline-module replay failure. Transport retry bounds and the closed, integrity-checked dependency closure remain unchanged.
 
 The server serves `/sw.js`, `/_offline`, and the manifest with correct MIME types, explicit revalidation headers, and stable URLs. The offline document may use safe site-neutral product branding only. `/_offline` MUST send a strict generated CSP whose `default-src` is `'none'`, whose `script-src` and `style-src` list only the exact hashed offline application script/style URLs for that build (no wildcard, `unsafe-inline`, or generic same-origin source), whose `connect-src` is only `'self'`, and whose `img-src`, `font-src`, `media-src`, `object-src`, `base-uri`, `frame-src`, `form-action`, and `child-src` are respectively `'none'`, `'none'`, `'none'`, `'none'`, `'none'`, `'none'`, `'none'`, and `'none'`; `worker-src` and `manifest-src` are only `'self'`. The generated header is also applied to the cached offline document. Ordinary reader, editor, `/a`, `/p`, setup, login, and private routes remain unchanged and server-owned.
+
+### 3.4 Loading and cache-install performance
+
+Locale initialization overlaps the PWA startup release check because its inputs come from document site configuration, not account authority. Application mounting still waits for both decisions; a release-triggered reload starts no authentication or offline-storage work. The existing release-coherence gate and its deadline are unchanged.
+
+Search keeps its listeners and offline-search state available immediately, but loads the Agent workspace and source preview only when their surfaces are requested. Async component handoffs wait for the resolved child, retain the clicked prompt context, and cancel stale sends on dismissal. Loading, retry, error, keyboard, and focus behavior use the shared async-component convention.
+
+Precache installation uses at most six concurrent whole-entry pipelines, each retaining transport, response, optional integrity, shell-release, and closure validation before writing. A failure stops new scheduling and drains every active body read and cache write before deleting the failed candidate. The completion marker is published only after the complete closure is present. Current-cache readiness reads the exact release-bound marker rather than enumerating every cached asset; it is not indefinitely memoized, so marker removal still invalidates readiness. Older-cache cleanup retains its general marker inspection.
+
+Measure cold and warm navigation separately, with route, viewport, CPU/network emulation, transfer bytes, long tasks, paint, and layout shift recorded. Page CDP network throttling does not prove that the service worker's own fetches were throttled: report observed installation time separately, not a modeled RTT estimate as a measurement. Keep the full offline dependency closure and supported font formats; reducing first-use work must not remove offline reading, search, encryption, or recovery capabilities.
 
 ## 4. Capability model
 
