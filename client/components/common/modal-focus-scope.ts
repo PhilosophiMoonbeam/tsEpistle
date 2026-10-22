@@ -95,7 +95,9 @@ const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement
     })
     element.inert = true
     element.setAttribute('aria-hidden', 'true')
-    if (suppressBackdrop) element.setAttribute('data-modal-backdrop-suppressed', '')
+    // Nested focus scopes can isolate siblings inside this modal. They are not
+    // behind this modal's own glass, even though they need inert/aria-hidden.
+    if (suppressBackdrop && !isWithinModal(root, additionalRoots, element)) element.setAttribute('data-modal-backdrop-suppressed', '')
   }
 
   for (const protectedRoot of [root, ...additionalRoots]) {
@@ -210,8 +212,12 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, ba
   reconcileBackgrounds(document, true)
   const MutationObserverConstructor = document.defaultView?.MutationObserver
   const observedBackdropElements = new Set<HTMLElement>()
-  const observeBackdropOwners = (): void => {
-    for (const owner of state.backdropRoots()) {
+  let observedBackdropRoots: readonly HTMLElement[] = []
+  const observeBackdropOwners = (): boolean => {
+    const owners = state.backdropRoots()
+    const changed = !sameElements(observedBackdropRoots, owners)
+    observedBackdropRoots = owners
+    for (const owner of owners) {
       let element: HTMLElement | null = owner
       while (element) {
         if (!observedBackdropElements.has(element)) {
@@ -224,10 +230,15 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, ba
         element = element.parentElement
       }
     }
+    return changed
   }
-  const backgroundObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => {
-    observeBackdropOwners()
-    reconcileBackgrounds(document, true)
+  const backgroundObserver = MutationObserverConstructor ? new MutationObserverConstructor(records => {
+    const ownersChanged = observeBackdropOwners()
+    // Content streaming within an existing modal cannot add background roots.
+    // New outside portals still require isolation, even without ownership changes.
+    const isolationChanged = records.some(record => record.type === 'attributes' ||
+      !stack.some(scope => isWithinModal(scope.root, scope.observedAdditionalRoots, record.target)))
+    reconcileBackgrounds(document, ownersChanged || isolationChanged)
   }) : null
   if (document.body) backgroundObserver?.observe(document.body, { childList: true, subtree: true })
   observeBackdropOwners()

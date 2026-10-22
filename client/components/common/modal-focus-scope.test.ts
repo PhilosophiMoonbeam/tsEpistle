@@ -111,11 +111,12 @@ describe('modal focus scope', () => {
   test('only blurred opt-in scopes suppress background glass and restore it across nested previews and plain dialogs', async () => {
     const dom = new JSDOM(
       `<!doctype html><html><head><style>
-        #workspace { backdrop-filter: blur(10px); }
+        #conversation { backdrop-filter: blur(10px); }
+        #toolbar { backdrop-filter: blur(36px); }
         #preview { backdrop-filter: blur(3px); }
       </style></head><body>
         <main data-modal-backdrop-suppressed="original"></main>
-        <section id="workspace" tabindex="-1"></section>
+        <section id="workspace" tabindex="-1"><header id="toolbar"></header><div id="conversation"></div></section>
       </body></html>`,
       { pretendToBeVisual: true }
     )
@@ -123,10 +124,12 @@ describe('modal focus scope', () => {
     const document = dom.window.document
     const background = document.querySelector<HTMLElement>('main')!
     const workspace = document.querySelector<HTMLElement>('#workspace')!
+    const conversation = document.querySelector<HTMLElement>('#conversation')!
+    const toolbar = document.querySelector<HTMLElement>('#toolbar')!
     const workspaceScope = createModalFocusScope({
       root: workspace,
       restoreTarget: null,
-      backdropRoots: () => [workspace],
+      backdropRoots: () => [toolbar, conversation],
       onEscape: () => {}
     })
     expect(background.getAttribute('data-modal-backdrop-suppressed')).toBe('')
@@ -139,6 +142,19 @@ describe('modal focus scope', () => {
     expect(workspace.inert).toBe(true)
     expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
     dialogScope.deactivate({ restoreFocus: false })
+    dialog.remove()
+
+    // Nested drawers/dialogs isolate sibling conversation content for a11y,
+    // but the older workspace scope must not suppress its own visible glass.
+    workspace.append(dialog)
+    const nestedDialogScope = createModalFocusScope({ root: dialog, restoreTarget: null, onEscape: () => {} })
+    expect(conversation.inert).toBe(true)
+    expect(conversation.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    expect(toolbar.inert).toBe(true)
+    expect(toolbar.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    expect(background.getAttribute('data-modal-backdrop-suppressed')).toBe('')
+    nestedDialogScope.deactivate({ restoreFocus: false })
     dialog.remove()
 
     const preview = document.createElement('section')
@@ -201,7 +217,7 @@ describe('modal focus scope', () => {
     expect(background.inert).toBe(false)
   })
 
-  test('tracks late-mounted backdrop owners and class-only contextual changes without streaming mutations', async () => {
+  test('tracks late owners and contextual class changes without rewriting isolation for streaming content', async () => {
     const dom = new JSDOM(
       '<!doctype html><html><head><style>.included .glass { backdrop-filter: blur(10px); }</style></head><body><main></main><section id="workspace" tabindex="-1"><div id="context"></div></section></body></html>',
       { pretendToBeVisual: true }
@@ -230,6 +246,17 @@ describe('modal focus scope', () => {
     dom.window.queueMicrotask(included.resolve)
     await included.promise
     expect(background.hasAttribute('data-modal-backdrop-suppressed')).toBe(true)
+
+    const backgroundWrites: MutationRecord[] = []
+    const isolationObserver = new dom.window.MutationObserver(records => backgroundWrites.push(...records))
+    isolationObserver.observe(background, { attributes: true })
+    owner.append(document.createElement('p'))
+    const streamed = Promise.withResolvers<void>()
+    dom.window.queueMicrotask(streamed.resolve)
+    await streamed.promise
+    expect(backgroundWrites).toHaveLength(0)
+    isolationObserver.disconnect()
+
     context.classList.remove('included')
     const excluded = Promise.withResolvers<void>()
     dom.window.queueMicrotask(excluded.resolve)
