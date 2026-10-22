@@ -2279,7 +2279,8 @@ export default defineComponent({
   @media (max-width: 599.98px) {
     &-search { border-radius: var(--wiki-panel-radius); }
     &-scope { border-radius: var(--wiki-panel-radius) var(--wiki-panel-radius) 0 0; }
-    &-scope-actions .v-btn { max-width: 100%; padding-inline: var(--wiki-space-3); }
+    &-scope-actions { flex-basis: 100%; }
+    &-scope-actions .v-btn { max-width: 100%; padding-inline: var(--wiki-space-2); }
     &-summary { align-items: flex-start; flex-wrap: wrap; }
     &-ask .v-btn__content { font-size: .78rem; }
     &-item { padding-inline: var(--wiki-space-1); }

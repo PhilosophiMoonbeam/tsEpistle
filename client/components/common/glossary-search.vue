@@ -38,7 +38,7 @@
             </div>
           </template>
           <article v-if="mode === 'detail' && detail && access.canRead" class="glossary-search__detail" aria-labelledby="glossary-term-title">
-            <h4 id="glossary-term-title">{{ detail.term }}</h4>
+            <h4 id="glossary-term-title" ref="detailHeading" tabindex="-1">{{ detail.term }}</h4>
             <p v-if="detail.expansion">{{ detail.expansion }}</p>
             <p v-if="detail.category">Category: {{ detail.category }}</p>
             <p v-if="detail.aliases.length">Also known as: {{ detail.aliases.join(', ') }}</p>
@@ -122,6 +122,10 @@ import PageSelector from './page-selector.vue'
 const props = defineProps<{ locale: string; term: string; access: GlossaryAccess; query: string; hostError?: string }>()
 const emit = defineEmits<{ select: [name: string]; locale: [locale: string]; changed: [] }>()
 const mode = ref<'directory' | 'detail' | 'edit'>('directory'), detail = ref<GlossaryTerm | null>(null), latest = ref<GlossaryTerm | null>(null)
+const detailHeading = ref<HTMLElement | null>(null)
+watch([mode, detail], () => {
+  if (mode.value === 'detail' && detail.value && document.activeElement === document.body) detailHeading.value?.focus()
+}, { flush: 'post' })
 const localeInput = ref(props.locale), letter = ref('All'), category = ref<string | null>(null), page = ref(0), pageSize = 30
 const catalog = ref<GlossaryTermSummary[]>([]), loading = ref(false), catalogLoading = ref(false), saving = ref(false), error = ref(''), dirty = ref(false), conflict = ref(false), preview = ref(false), picker = ref(false)
 const draft = ref(glossaryDraft(props.locale)), documentationDirty = reactive({ page: false, label: false }), selectedDocumentation = ref('')
@@ -289,8 +293,8 @@ onBeforeUnmount(() => { alive = false; clearTimeout(catalogTimer); detailControl
 .glossary-search__term-name { color: var(--wiki-primary-ink); font-weight: 650; }
 .glossary-search__term-meta { color: var(--wiki-text-muted); font-size: .875rem; }
 .glossary-search__pagination { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-3); margin-top: var(--wiki-space-4); }
-.glossary-search__detail h4 { margin: 0 0 var(--wiki-space-2); font-family: var(--wiki-font-heading); font-size: clamp(1.5rem, 4vw, 2.25rem); line-height: 1.2; overflow-wrap: anywhere; }
-.glossary-search__detail h5 { font-size: 1rem; }
+.glossary-search__detail > h4 { margin: 0 0 var(--wiki-space-2); font-family: var(--wiki-font-heading); font-size: clamp(1.5rem, 4vw, 2.25rem); line-height: 1.2; overflow-wrap: anywhere; }
+.glossary-search__detail > h5 { font-size: 1rem; }
 .glossary-search__detail p, .glossary-search__detail li { overflow-wrap: anywhere; }
 .glossary-search__content pre { max-width: 100%; overflow: auto; }
 .glossary-search__edit-hint { margin-bottom: var(--wiki-space-4); }

@@ -1,6 +1,6 @@
-import { expect, test as base, authenticateAsAdmin, openSearch, sameOriginHeaders } from './helpers'
-import type { Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import type { GlossaryTerm, GlossaryTermInput } from '../../shared/glossary.ts'
+import { authenticateAsAdmin, responsiveTest as base, openSearch, sameOriginHeaders } from './helpers'
 
 interface GlossaryFixture {
   first: GlossaryTerm
@@ -10,10 +10,18 @@ interface GlossaryFixture {
 }
 
 const inputFor = (term: GlossaryTerm): GlossaryTermInput => ({
-  locale: term.locale, term: term.term, expansion: term.expansion, definition: term.definition,
-  aliases: term.aliases, relatedIds: term.relatedIds, documentationPageId: term.documentationPageId,
-  documentationLabel: term.documentationLabel, references: term.references,
-  caseSensitive: term.caseSensitive, autoLink: term.autoLink, category: term.category
+  locale: term.locale,
+  term: term.term,
+  expansion: term.expansion,
+  definition: term.definition,
+  aliases: term.aliases,
+  relatedIds: term.relatedIds,
+  documentationPageId: term.documentationPageId,
+  documentationLabel: term.documentationLabel,
+  references: term.references,
+  caseSensitive: term.caseSensitive,
+  autoLink: term.autoLink,
+  category: term.category
 })
 
 const test = base.extend<{ glossaryTerms: GlossaryFixture }>({
@@ -26,14 +34,22 @@ const test = base.extend<{ glossaryTerms: GlossaryFixture }>({
         const response = await page.request.post('/_api/glossary/terms', {
           headers: sameOriginHeaders(),
           data: {
-            locale: 'en', term, expansion: `${term} expansion`, definition: `A **verified** definition for ${term}.`,
-            aliases, relatedIds, documentationPageId: null, documentationLabel: '',
+            locale: 'en',
+            term,
+            expansion: `${term} expansion`,
+            definition: `A **verified** definition for ${term}.`,
+            aliases,
+            relatedIds,
+            documentationPageId: null,
+            documentationLabel: '',
             references: [{ label: 'Reference guide', url: 'https://example.com/glossary' }],
-            caseSensitive: false, autoLink: false, category
+            caseSensitive: false,
+            autoLink: false,
+            category
           } satisfies GlossaryTermInput
         })
         expect(response.ok(), `Glossary fixture creation: HTTP ${response.status()}`).toBe(true)
-        const created = await response.json() as GlossaryTerm
+        const created = (await response.json()) as GlossaryTerm
         ids.push(created.id)
         return created
       }
@@ -48,9 +64,10 @@ const test = base.extend<{ glossaryTerms: GlossaryFixture }>({
         const current = await page.request.get(`/_api/glossary/terms/${id}`)
         if (current.status() === 404) continue
         expect(current.ok()).toBe(true)
-        const term = await current.json() as GlossaryTerm
+        const term = (await current.json()) as GlossaryTerm
         const removed = await page.request.delete(`/_api/glossary/terms/${id}`, {
-          headers: sameOriginHeaders(), data: { expectedRevision: term.revision }
+          headers: sameOriginHeaders(),
+          data: { expectedRevision: term.revision }
         })
         expect(removed.ok(), `Glossary fixture cleanup: HTTP ${removed.status()}`).toBe(true)
       }
@@ -83,17 +100,17 @@ test('uses the third search type for real term filtering, definitions and histor
   await expect(pane.getByRole('link', { name: new RegExp(terms.first.term) })).toBeVisible()
   await expect(pane.getByRole('link', { name: new RegExp(terms.second.term) })).toBeVisible()
 
-  await pane.getByRole('combobox', { name: 'Category', exact: true }).click()
+  await pane.getByRole('combobox', { name: 'Category', exact: true }).press('ArrowDown')
   await page.getByRole('option', { name: 'Networks', exact: true }).click()
   await expect(pane.locator('.glossary-search__term')).toHaveCount(1)
   await expect(pane.locator('.glossary-search__term')).toContainText(terms.first.term)
-  await pane.getByRole('combobox', { name: 'Category', exact: true }).click()
+  await pane.getByRole('combobox', { name: 'Category', exact: true }).press('ArrowDown')
   await page.getByRole('option', { name: 'All categories', exact: true }).click()
-  await pane.getByRole('combobox', { name: 'A–Z / initial', exact: true }).click()
+  await pane.getByRole('combobox', { name: 'A–Z / initial', exact: true }).press('ArrowDown')
   await page.getByRole('option', { name: 'C', exact: true }).click()
   await expect(pane.locator('.glossary-search__term')).toHaveCount(1)
   await expect(pane.locator('.glossary-search__term')).toContainText(terms.second.term)
-  await pane.getByRole('combobox', { name: 'A–Z / initial', exact: true }).click()
+  await pane.getByRole('combobox', { name: 'A–Z / initial', exact: true }).press('ArrowDown')
   await page.getByRole('option', { name: 'All', exact: true }).click()
 
   await input.fill(terms.alias)
@@ -107,6 +124,7 @@ test('uses the third search type for real term filtering, definitions and histor
   await term.focus()
   await term.press('Enter')
   await expect(pane.getByRole('heading', { name: terms.first.term, exact: true })).toBeVisible()
+  await expect(pane.getByRole('heading', { name: terms.first.term, exact: true })).toBeFocused()
   await expect(pane.locator('.contents')).toContainText(`A verified definition for ${terms.first.term}.`)
   await expect(pane.getByRole('link', { name: 'Reference guide', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
   await pane.getByRole('link', { name: terms.second.term, exact: true }).click()
@@ -143,7 +161,7 @@ test('preserves unsaved manager edits across type and close attempts, picker dis
   const pane = search.locator('.glossary-search')
   const input = page.locator('.nav-header-search-control input:visible').first()
   await input.fill(terms.alias)
-  await pane.locator('.glossary-search__term').click()
+  await pane.getByRole('link', { name: new RegExp(terms.first.term) }).click()
   await pane.getByRole('button', { name: 'Edit', exact: true }).click()
   const expansion = pane.getByRole('textbox', { name: 'Expansion', exact: true })
   await expansion.fill('Retained manager draft')
@@ -153,6 +171,15 @@ test('preserves unsaved manager edits across type and close attempts, picker dis
     await expect(expansion).toHaveValue('Retained manager draft')
     await expect(search.getByRole('button', { name: 'Glossary', exact: true })).toHaveAttribute('aria-pressed', 'true')
   }
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.goBack()
+  await expect(expansion).toHaveValue('Retained manager draft')
+  await expect.poll(() => new URL(page.url()).searchParams.get('glossary')).toBe(terms.first.term)
+  if ((page.viewportSize()?.width ?? 1280) < 600) await page.locator('.nav-header-mobile-actions').click()
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.getByRole('button', { name: 'Open Wiki Agent', exact: true }).click()
+  await expect(expansion).toHaveValue('Retained manager draft')
+  await expect(page.getByRole('region', { name: 'Wiki Agent', exact: true })).toHaveCount(0)
   await input.fill(`${terms.query} changed while editing`)
   await expect(expansion).toHaveValue('Retained manager draft')
   await pane.getByRole('button', { name: 'Choose readable page', exact: true }).click()
@@ -169,9 +196,10 @@ test('preserves unsaved manager edits across type and close attempts, picker dis
   await pane.getByRole('button', { name: 'Edit', exact: true }).click()
   await expansion.fill('My conflict-resolved draft')
   const currentResponse = await page.request.get(`/_api/glossary/terms/${terms.first.id}`)
-  const current = await currentResponse.json() as GlossaryTerm
+  const current = (await currentResponse.json()) as GlossaryTerm
   const peer = await page.request.put(`/_api/glossary/terms/${current.id}`, {
-    headers: sameOriginHeaders(), data: { ...inputFor(current), expansion: 'Concurrent server version', expectedRevision: current.revision }
+    headers: sameOriginHeaders(),
+    data: { ...inputFor(current), expansion: 'Concurrent server version', expectedRevision: current.revision }
   })
   expect(peer.ok()).toBe(true)
   await pane.getByRole('button', { name: 'Save term', exact: true }).click()
@@ -184,7 +212,7 @@ test('preserves unsaved manager edits across type and close attempts, picker dis
   await expect(pane.getByRole('heading', { name: terms.first.term, exact: true })).toBeVisible()
   await expect(pane).toContainText('My conflict-resolved draft')
   const saved = await page.request.get(`/_api/glossary/terms/${current.id}`)
-  expect((await saved.json() as GlossaryTerm).expansion).toBe('My conflict-resolved draft')
+  expect(((await saved.json()) as GlossaryTerm).expansion).toBe('My conflict-resolved draft')
 })
 
 test('keeps Glossary distinct from Saved offline, retries catalog failures and enforces real guest access', async ({ page, glossaryTerms: terms }) => {
@@ -192,7 +220,7 @@ test('keeps Glossary distinct from Saved offline, retries catalog failures and e
   const pane = search.locator('.glossary-search')
   const input = page.locator('.nav-header-search-control input:visible').first()
   await input.fill(terms.alias)
-  await expect(pane.locator('.glossary-search__term')).toContainText(terms.first.term)
+  await expect(pane.locator('.glossary-search__term').filter({ hasText: terms.first.term })).toBeVisible()
   await page.context().setOffline(true)
   await expect(pane.getByRole('alert')).toContainText('unavailable offline')
   await expect(search.getByRole('button', { name: 'Glossary', exact: true })).toHaveAttribute('aria-pressed', 'true')
@@ -201,7 +229,7 @@ test('keeps Glossary distinct from Saved offline, retries catalog failures and e
   await expect(search.getByRole('button', { name: 'Saved offline', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await page.context().setOffline(false)
   await search.getByRole('button', { name: 'Glossary', exact: true }).click()
-  await expect(pane.locator('.glossary-search__term')).toContainText(terms.first.term)
+  await expect(pane.locator('.glossary-search__term').filter({ hasText: terms.first.term })).toBeVisible()
 
   const catalog = (url: URL) => url.pathname === '/_api/glossary/'
   await page.route(catalog, route => route.fulfill({ status: 503, json: { error: 'Controlled catalog outage.' } }))
@@ -217,7 +245,7 @@ test('keeps Glossary distinct from Saved offline, retries catalog failures and e
   await openSearch(page)
   await search.getByRole('button', { name: 'Glossary', exact: true }).click()
   const access = await page.request.get('/_api/glossary/access?locale=en')
-  const guest = await access.json() as { enabled: boolean; canRead: boolean; canManage: boolean }
+  const guest = (await access.json()) as { enabled: boolean; canRead: boolean; canManage: boolean }
   expect(guest.canManage).toBe(false)
   await expect(pane.getByRole('button', { name: 'New term', exact: true })).toHaveCount(0)
   if (!guest.canRead) {
