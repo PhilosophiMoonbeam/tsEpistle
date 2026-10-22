@@ -2,8 +2,8 @@
   //- Search keeps focus in the header field, outside this dialog, so it relies on the
   //- modal focus scope (inert, aria-hidden page) instead of aria-modal; Agent mode is modal.
   .search-results(
-    v-if='isAgentOpen || searchIsFocused || normalizedSearch.length > 1'
-    :class='{ "search-results--ask": isAgentOpen }'
+    v-if='isAgentOpen || searchIsFocused || normalizedSearch.length > 1 || glossaryOpened'
+    :class='{ "search-results--ask": isAgentOpen, "search-results--glossary": !isAgentOpen && searchScope === `glossary` }'
     role='dialog'
     :aria-modal='isAgentOpen ? `true` : undefined'
     :aria-label='isAgentOpen ? $t(`common:searchPanel.agentWorkspace`) : undefined'
@@ -40,7 +40,7 @@
       )
       .search-results-search(v-if='!isAgentOpen' @click.stop)
         h2#wiki-search-title.sr-only {{ $t('common:searchPanel.title') }}
-        .search-results-instructions.sr-only#wiki-search-instructions {{ $t('common:searchPanel.instructions') }}
+        .search-results-instructions.sr-only#wiki-search-instructions {{ $t(searchScope === 'glossary' ? 'common:glossary.searchInstructions' : 'common:searchPanel.instructions') }}
         .search-results-scope
           .search-results-scope-actions(role='group' :aria-label='$t(`common:searchPanel.scopeLabel`)')
             v-btn(
@@ -48,9 +48,9 @@
               :key='scope.id'
               size='small'
               :prepend-icon='scope.icon'
-              :variant='offlineSearchActive === scope.downloaded ? `tonal` : `text`'
-              :color='offlineSearchActive === scope.downloaded ? `primary` : undefined'
-              :aria-pressed='offlineSearchActive === scope.downloaded'
+              :variant='activeSearchScope === scope.id ? `tonal` : `text`'
+              :color='activeSearchScope === scope.id ? `primary` : undefined'
+              :aria-pressed='activeSearchScope === scope.id'
               @click='selectSearchScope(scope.id)'
             ) {{ $t(`common:searchPanel.${scope.label}`) }}
           v-btn.search-results-close(
@@ -60,7 +60,20 @@
             @click='closeSearch'
             data-modal-focus-key='search-close'
           ) {{ $t('common:searchPanel.closeSearch') }}
-        .search-results-filters(v-if='searchScopeFilters.length')
+        GlossarySearch(
+          v-if='searchScope === `glossary` && glossary'
+          :key='glossary.key'
+          :ref='glossary.bindPanel'
+          :locale='glossary.locale'
+          :term='glossary.term'
+          :access='glossary.access'
+          :host-error='glossary.error'
+          :query='search'
+          @select='glossary.navigate'
+          @locale='glossary.changeLocale'
+          @changed='glossary.refresh'
+        )
+        .search-results-filters(v-if='searchScope !== `glossary` && searchScopeFilters.length')
           .search-results-filter-context
             span {{ $t('common:searchPanel.filterContext') }}
             span.search-results-filter-path {{ currentPageLocale.toLocaleUpperCase() }}{{ currentPagePath ? ` / ${currentPagePath}` : '' }}
@@ -80,7 +93,7 @@
             ) {{ filter.label }}
             v-btn(v-if='hasActiveSearchFilters' size='small' variant='text' prepend-icon='mdi-filter-remove-outline' @click='clearSearchScope') {{ $t('common:searchPanel.clearFilters') }}
           p.search-results-reason#wiki-search-filter-reason(v-if='offlineSearchActive') {{ $t('common:searchPanel.scopeNeedsServer') }}
-        .search-results-content
+        .search-results-content(v-if='searchScope !== `glossary`')
           .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
             .search-results-capability-note-title {{ serverUnavailable ? $t('common:searchPanel.serverUnavailableTitle') : $t('common:searchPanel.scopeDownloaded') }}
             p {{ serverUnavailable ? offlineSearchUnavailableDescription : offlineSearchScopeDescription }}
@@ -270,7 +283,7 @@
                     v-list-item-title {{ term }}
                   v-divider(v-if='idx < suggestions.length - 1' aria-hidden='true')
         .search-results-keyboard-hint(
-          v-if='!isAgentOpen && normalizedSearch.length >= 2'
+          v-if='!isAgentOpen && searchScope !== `glossary` && normalizedSearch.length >= 2'
           aria-hidden='true'
         )
           span
@@ -289,12 +302,13 @@
 </template>
 <script lang='ts'>
 import { offlinePageHref, requestOfflineSavedPageOpen } from '../../helpers/offline-routes.ts'
-import { defineComponent, type ComponentPublicInstance } from 'vue'
+import { defineComponent, type ComponentPublicInstance, type PropType } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { createAsyncComponent } from './async-component.ts'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import type { AgentSearchScope } from '../../helpers/agent-draft.ts'
 import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source.ts'
+import type { GlossarySearchContext } from '../../helpers/glossary-search.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 import { emitSearchFocus, onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
@@ -327,7 +341,7 @@ import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } 
 import { isWikiNavigationClick, navigateToWikiPage } from '../../helpers/wiki-navigation'
 import { createSearchHighlighter, type SearchTextSegment } from '../../helpers/search-highlight.ts'
 
-type SearchScope = 'wiki' | 'downloaded'
+type SearchScope = 'wiki' | 'downloaded' | 'glossary'
 type OnlineSearchRow = PageSearchRow & {
   readonly offline?: false
 }
@@ -346,8 +360,9 @@ type SearchResponse = Omit<PageSearchResult, 'results'> & {
 const OFFLINE_DOCUMENT_PATH = '/?saved=1'
 const OFFLINE_LOCALE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{1,34}$/u
 const SEARCH_SCOPES = [
-  { id: 'wiki', downloaded: false, icon: 'mdi-earth', label: 'scopeWiki' },
-  { id: 'downloaded', downloaded: true, icon: 'mdi-cloud-check-outline', label: 'scopeDownloaded' }
+  { id: 'wiki', icon: 'mdi-earth', label: 'scopeWiki' },
+  { id: 'downloaded', icon: 'mdi-cloud-check-outline', label: 'scopeDownloaded' },
+  { id: 'glossary', icon: 'mdi-book-alphabet', label: 'scopeGlossary' }
 ] as const
 
 const offlineRecordKey = (siteId: string, pageId: number, locale: string): string =>
@@ -415,7 +430,11 @@ export default defineComponent({
   components: {
     AsyncState,
     InlineAgentChat: createAsyncComponent(() => import('../agents/inline-agent-chat.vue')),
-    WikiSourcePreview: createAsyncComponent(() => import('./wiki-source-preview.vue'))
+    WikiSourcePreview: createAsyncComponent(() => import('./wiki-source-preview.vue')),
+    GlossarySearch: createAsyncComponent(() => import('./glossary-search.vue'))
+  },
+  props: {
+    glossary: Object as PropType<GlossarySearchContext>
   },
   data() {
     return {
@@ -465,7 +484,11 @@ export default defineComponent({
     }
   },
   computed: {
-    searchScopes() { return SEARCH_SCOPES },
+    searchScopes() { return this.glossary ? SEARCH_SCOPES : SEARCH_SCOPES.filter(scope => scope.id !== 'glossary') },
+    glossaryOpened(): boolean { return this.glossary?.opened === true },
+    activeSearchScope(): SearchScope {
+      return this.searchScope === 'glossary' ? 'glossary' : this.offlineSearchActive ? 'downloaded' : 'wiki'
+    },
     // Cache filter labels and state while sharing the disabled-with-reason control.
     searchScopeFilters(): { key: string, icon: string, label: string, ariaLabel?: string, pressed: boolean, toggle: () => void }[] {
       const locale = this.currentPageLocale.toLocaleUpperCase()
@@ -537,7 +560,7 @@ export default defineComponent({
         wikiStore.offlineIdentityReady === true
     },
     offlineSearchActive(): boolean {
-      return this.searchScope === 'downloaded' || this.serverUnavailable
+      return this.searchScope !== 'glossary' && (this.searchScope === 'downloaded' || this.serverUnavailable)
     },
     offlineSearchScopeDescription(): string {
       return this.offlinePrivateSearchEnabled
@@ -649,11 +672,11 @@ export default defineComponent({
         this.normalizedSearch,
         this.searchRestrictLocale ? wikiStore.page.locale : '',
         this.searchRestrictPath ? wikiStore.page.path : '',
-        this.offlineSearchActive ? 'downloaded' : 'wiki'
+        this.searchScope === 'glossary' ? 'glossary' : this.offlineSearchActive ? 'downloaded' : 'wiki'
       ])
     },
     hasFreshResponse(): boolean {
-      return this.responseKey === this.searchRequestKey && this.normalizedSearch.length >= 2
+      return this.searchScope !== 'glossary' && this.responseKey === this.searchRequestKey && this.normalizedSearch.length >= 2
     },
     resultsUpdating(): boolean {
       return this.normalizedSearch.length >= 2 &&
@@ -667,6 +690,7 @@ export default defineComponent({
       return `wiki-search-suggestion-${this.cursor - this.results.length}`
     },
     searchListIds(): string {
+      if (this.searchScope === 'glossary') return ''
       return [
         this.results.length > 0 ? 'wiki-search-results' : '',
         this.suggestions.length > 0 ? 'wiki-search-suggestions' : ''
@@ -674,6 +698,23 @@ export default defineComponent({
     }
   },
   watch: {
+    glossaryOpened: {
+      immediate: true,
+      handler(open: boolean) {
+        if (open) {
+          if (!this.searchIsFocused) this.searchRestoreTarget = this.activeModalOpener()
+          this.searchScope = 'glossary'
+          this.searchMode = 'search'
+          this.searchIsFocused = true
+        } else if (this.searchScope === 'glossary') {
+          this.searchScope = 'wiki'
+          this.closeSearch()
+        }
+      }
+    },
+    searchScope() {
+      void this.$nextTick(this.syncSearchInputA11y)
+    },
     search(newValue: string | null) {
       const query = newValue ?? ''
       if (this.searchMode === 'search' && query.trim().length >= 2) this.searchIsFocused = true
@@ -688,6 +729,10 @@ export default defineComponent({
       if (!available) this.previewSelector = null
     },
     searchMode(mode: 'search' | 'ask') {
+      if (mode === 'ask' && this.glossaryOpened) {
+        if (!this.glossary!.navigate(null)) { this.searchMode = 'search'; return }
+        this.searchScope = 'wiki'
+      }
       if (mode === 'search') {
         if (!this.hasFreshResponse) this.queueSearch(this.search)
         return
@@ -714,6 +759,10 @@ export default defineComponent({
       else this.deactivateAgentModal(false)
     },
     searchIsFocused(open: boolean) {
+      if (!open && this.glossaryOpened) {
+        if (!this.glossary!.navigate(null)) { this.searchIsFocused = true; return }
+        this.searchScope = 'wiki'
+      }
       if (open) {
         void this.activateAgentModal()
         return
@@ -993,9 +1042,14 @@ export default defineComponent({
       const searchVisible = !this.isAgentOpen && (this.searchIsFocused || this.normalizedSearch.length >= 2)
       const active = searchVisible ? this.activeDescendant : undefined
       for (const input of controls) {
-        input.setAttribute('role', 'combobox')
-        input.setAttribute('aria-expanded', String(searchVisible && this.normalizedSearch.length >= 2))
-        input.setAttribute('aria-autocomplete', 'list')
+        input.setAttribute('role', this.searchScope === 'glossary' ? 'searchbox' : 'combobox')
+        if (this.searchScope === 'glossary') {
+          input.removeAttribute('aria-expanded')
+          input.removeAttribute('aria-autocomplete')
+        } else {
+          input.setAttribute('aria-expanded', String(searchVisible && this.normalizedSearch.length >= 2))
+          input.setAttribute('aria-autocomplete', 'list')
+        }
         input.setAttribute('aria-busy', String(searchVisible && this.searchIsLoading))
         if (searchVisible) input.setAttribute('aria-describedby', 'wiki-search-instructions')
         else input.removeAttribute('aria-describedby')
@@ -1023,7 +1077,8 @@ export default defineComponent({
       return [
         ...Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control, [data-search-modal-action]'))
           .filter(element => !element.matches(':disabled') && !element.closest('.v-input--disabled')),
-        ...activeOwnedOverlayRoots('.agent-owned-overlay')
+        ...activeOwnedOverlayRoots('.agent-owned-overlay'),
+        ...activeOwnedOverlayRoots('.glossary-owned-overlay')
       ]
     },
     setSearchMode(mode: 'search' | 'ask'): void {
@@ -1110,6 +1165,9 @@ export default defineComponent({
     },
     selectSearchScope(scope: SearchScope): void {
       if (scope === this.searchScope) return
+      if (scope === 'glossary') {
+        if (!this.glossary?.navigate('')) return
+      } else if (this.glossaryOpened && !this.glossary!.navigate(null)) return
       this.searchScope = scope
       if (scope === 'downloaded') {
         this.searchRestrictLocale = false
@@ -1132,7 +1190,7 @@ export default defineComponent({
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
       this.searchIsLoading = false
-      if (this.searchMode !== 'search') return
+      if (this.searchMode !== 'search' || this.searchScope === 'glossary') return
       if (normalizedQuery.length < 2) {
         this.searchError = ''
         this.responseKey = ''
@@ -1151,6 +1209,7 @@ export default defineComponent({
       }, 300)
     },
     handleSearchMove(dir: string): void {
+      if (this.searchScope === 'glossary') return
       if (this.searchMode === 'ask' || this.searchIsLoading || !this.hasFreshResponse) return
       const lastIndex = this.results.length + this.suggestions.length - 1
       if (lastIndex < 0) {
@@ -1183,6 +1242,7 @@ export default defineComponent({
       if (result && !isDownloadedSearchRow(result)) this.openPreview(result)
     },
     async handleSearchEnter(): Promise<void> {
+      if (this.searchScope === 'glossary' && this.searchMode !== 'ask') return
       if (this.canAsk && this.searchMode === 'ask') {
         await this.submitAskPrompt()
         return
@@ -1246,6 +1306,8 @@ export default defineComponent({
       }
     },
     closeSearch(): void {
+      if (this.glossaryOpened && !this.glossary!.navigate(null)) return
+      if (this.searchScope === 'glossary') this.searchScope = 'wiki'
       const shouldCloseAgentWorkspace = this.isAgentOpen || Boolean(this.agentResumeSessionId)
       // Dismissing a directly focused desktop field must allow the next Tab to
       // continue along the header, not restore its previous sibling and reopen.

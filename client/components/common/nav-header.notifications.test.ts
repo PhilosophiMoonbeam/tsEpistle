@@ -356,9 +356,6 @@ const bundle = await Bun.build({
           if (args.path === '../../store/site-notifications.ts') {
             return { contents: 'export const useSiteNotificationsStore = () => globalThis.__headerSiteNotifications', loader: 'js' }
           }
-          if (args.path.endsWith('/helpers/glossary-events')) {
-            return { contents: 'export const openGlossary = () => {}', loader: 'js' }
-          }
           if (args.path.endsWith('/helpers/offline-session.ts')) {
             return { contents: `export const OFFLINE_SESSION_INVALIDATED_EVENT = ${JSON.stringify(OFFLINE_SESSION_INVALIDATED_EVENT)}`, loader: 'js' }
           }

@@ -8,13 +8,15 @@ import { UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH } from '../../../helpers
 import { buildOutlineTree, filterOutlineTree, getInitialExpandedAnchors } from '../../../helpers/page-outline.ts'
 import { revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
 import { browserWindow, document as browserDocument, resetBody } from '../../../test/browser-dom.mts'
-import { keyTranslator, renderTemplate } from '../../../test/render-template.mts'
+import { keyTranslator, renderTemplate as renderWithSlots } from '../../../test/render-template.mts'
 
 // Reader chrome: rail utilities, outline heading, state indicators and the
 // one-edit-control rule. Template checks render page.vue's Pug with stubs;
 // rule checks run the real computed/methods against a plain view model.
 
 const PAGE = 'client/themes/default/components/page.vue'
+const renderTemplate = (relativePath: string, state: Record<string, unknown>) =>
+  renderWithSlots(relativePath, state, { 'glossary-reader': { glossary: { canLeave: () => true } } })
 
 const baseState = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   $t: keyTranslator,

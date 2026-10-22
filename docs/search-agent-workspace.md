@@ -4,7 +4,11 @@ Search locates knowledge; Wiki Agent works with it. Desktop and tablet headers k
 
 On desktop, **Browse by Tags** sits immediately before Search with the same 8px gap as the other grouped header buttons. The command group is bounded to Search's maximum width so wider headers do not separate the two controls; Search remains centered.
 
-Glossary remains available in **Page actions** on phones and in compact desktop reader headers that already have that menu. This leaves room for the full workspace title and centered Search without clipping Account or reducing touch targets below 44px.
+Reader Search offers **Wiki**, **Saved offline**, and **Glossary**, in that order. Wiki is the default; Glossary no longer consumes a header button or a Page actions entry. The same header field filters terms, aliases, expansions and categories. Glossary adds its own catalog locale, A–Z/initial and category controls, a paged directory, and in-place definitions with related terms, documentation and references. It uses the existing Search surface rather than nesting another modal or glass layer.
+
+Page term links and `?glossary=` URLs open that same Glossary search type. Selecting terms, browser Back/Forward, locale changes and closing continue through the reader's navigation controller. Modified term-link clicks retain native new-tab behavior. The header field is a searchbox in Glossary, not a page-result combobox; Tab reaches filters and term links, and Enter activates a focused term. Page-tree filters and page-result keyboard actions are absent from this type.
+
+Management controls remain permission-gated. Unsaved Glossary edits and active saves guard switching search type, closing Search, opening Agent, page navigation and document unload. Typing in the shared header does not discard an edit; its query applies when the user returns to Directory. A server outage or offline state is shown inside Glossary without presenting its results as Saved offline, and terms are not persisted as an offline catalog.
 
 Opening Agent from an already-open Search dialog retires the previous Search focus scope before capturing the rendered menu activator. Vuetify's activator slot retains its own ref; restoration targets the actual overflow button.
 

@@ -97,15 +97,6 @@
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
-          v-btn(
-            v-if='glossaryAvailable && transportVerified && !glossaryInPageMenu'
-            icon
-            rounded='lg'
-            :aria-label='$t(`common:glossary.title`, { defaultValue: `Glossary` })'
-            @click='openGlossaryDirectory'
-          )
-            v-icon(icon='mdi-book-alphabet')
-            v-tooltip(activator='parent', location='bottom', :text='$t(`common:glossary.title`, { defaultValue: `Glossary` })')
           v-btn.nav-header-agent(
             v-if='canEnterAgent && ($vuetify.display.mdAndUp || ($vuetify.display.smAndDown && !$vuetify.display.xs))'
             icon
@@ -206,14 +197,6 @@
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4 {{$t('common:header.currentPage')}}
                 p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
-                v-list-item(
-                  v-if='glossaryInPageMenu && glossaryAvailable && transportVerified'
-                  role='button'
-                  link
-                  prepend-icon='mdi-book-alphabet'
-                  @click='openGlossaryDirectory'
-                )
-                  v-list-item-title {{ $t('common:glossary.title', { defaultValue: 'Glossary' }) }}
                 v-list-item.pl-4(
                   v-for='action of desktopPageMenuActions'
                   :key='action.handler'
@@ -254,7 +237,7 @@
             v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)', :aria-disabled='!onlineActionReady ? `true` : undefined')
               v-icon(start) mdi-exit-to-app
               v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:actions.exit`) : onlineActionUnavailableReason')
-          v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && (!hideSearch || (glossaryAvailable && transportVerified)))) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
+          v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(
                 icon
@@ -275,14 +258,6 @@
                 @click='openAgent'
               )
                 v-list-item-title {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
-              v-list-item(
-                v-if='glossaryInPageMenu && glossaryAvailable && transportVerified'
-                role='button'
-                link
-                prepend-icon='mdi-book-alphabet'
-                @click='openGlossaryDirectory'
-              )
-                v-list-item-title {{ $t('common:glossary.title', { defaultValue: 'Glossary' }) }}
               p.nav-header-menu__note(v-if='$vuetify.display.xs && !hideSearch && !transportVerified') {{ navigationUnavailableReason }}
               v-list-item(
                 v-if='$vuetify.display.xs && !hideSearch'
@@ -513,7 +488,7 @@
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, markRaw } from 'vue'
+import { defineAsyncComponent, defineComponent, markRaw, type PropType } from 'vue'
 import {
   invalidateOfflineIdentity,
   markOfflineLogoutPending,
@@ -524,7 +499,6 @@ import AccountNotifications from './account-notifications.vue'
 import AccountOfflineSummary from './account-offline-summary.vue'
 import ControlBorderBeam from './control-border-beam.vue'
 import { fetchPageLocaleRelations, movePage, type MovePageReceipt } from '../../helpers/pages-api'
-import { openGlossary } from '../../helpers/glossary-events'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
@@ -598,10 +572,7 @@ export default defineComponent({
     return { siteNotifications }
   },
   props: {
-    glossaryAvailable: {
-      type: Boolean,
-      default: false
-    },
+    beforeSearchExit: Function as PropType<() => boolean>,
     dense: {
       type: Boolean,
       default: false
@@ -663,12 +634,6 @@ export default defineComponent({
     },
     mobilePageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
       return this.path ? this.pageMenuActions : []
-    },
-    glossaryInPageMenu(): boolean {
-      return this.$vuetify.display.xs || (
-        this.$vuetify.display.mdAndUp && !this.$vuetify.display.lgAndUp &&
-        this.hasAnyPagePermissions && Boolean(this.path) && this.mode !== 'edit'
-      )
     },
     search: {
       get(): string { return wikiStore.site.search ?? '' },
@@ -883,7 +848,7 @@ export default defineComponent({
       if (connected && previous === false && !wikiStore.authRefreshPending) void wikiStore.refreshAuth()
     },
     searchIsFocused(open: boolean): void {
-      if (!open && this.$vuetify.display.smAndDown) this.searchIsShown = false
+      if (this.$vuetify.display.smAndDown && !this.hideSearch) this.searchIsShown = open
     },
     '$vuetify.display.smAndDown': {
       // Capture focus before responsive rendering or modal-root repair moves it.
@@ -992,9 +957,6 @@ export default defineComponent({
     invalidateNotificationSession(): void {
       this.siteNotifications.reset()
       this.siteNotifications.identityStale = true
-    },
-    openGlossaryDirectory(): void {
-      if (this.glossaryAvailable && this.transportVerified) openGlossary({ locale: this.locale })
     },
     runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler']): void {
       this[handler]()
@@ -1242,6 +1204,7 @@ export default defineComponent({
       this.searchIsFocused = true
     },
     searchClose () {
+      if (this.beforeSearchExit?.() === false) return
       this.searchFocusGeneration += 1
       this.searchIsComposing = false
       this.searchIsFocused = false
@@ -1277,12 +1240,12 @@ export default defineComponent({
       }
     },
     searchToggle () {
-      this.searchIsShown = !this.searchIsShown
-      if (this.searchIsShown) void this.focusSearchField()
-      else this.searchClose()
+      if (this.searchIsShown) this.searchClose()
+      else void this.focusSearchField()
     },
     async openAgent(): Promise<void> {
       if (!this.canEnterAgent || !this.onlineActionReady) return
+      if (this.beforeSearchExit?.() === false) return
       if (this.$vuetify.display.xs) {
         // Retire an existing Search scope so Agent owns the stable menu opener,
         // rather than inheriting Search's original restore target.

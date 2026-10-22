@@ -236,7 +236,10 @@
       "unreadWatchAriaLabel": "{{action}}: {{title}}, {{unread}}"
     },
     "glossary": {
-      "title": "Glossary"
+      "title": "Glossary",
+      "searchHint": "Search terms, aliases, expansions and categories using the header search field.",
+      "searchInstructions": "Type in the header to filter glossary terms. Use Tab to reach the locale, initial and category filters, then the term links. Enter opens a focused term; Escape closes search.",
+      "editingSearchHint": "Your draft stays open while you type in Search. The new query applies when you return to Directory."
     },
     "user": {
       "search": "Search User",
@@ -466,6 +469,7 @@
       "scopeWiki": "Wiki",
       "scopeAllWiki": "All Wiki",
       "scopeDownloaded": "Saved offline",
+      "scopeGlossary": "Glossary",
       "scopeLocale": "Only {{locale}} pages",
       "scopeTree": "This page tree",
       "scopeNeedsServer": "Scope filters need a live server.",

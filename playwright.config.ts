@@ -75,7 +75,7 @@ export default defineConfig({
     {
       name: 'responsive-chromium-desktop',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 }
@@ -84,7 +84,7 @@ export default defineConfig({
     {
       name: 'responsive-firefox-desktop',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
       use: {
         ...devices['Desktop Firefox'],
         viewport: { width: 1440, height: 900 }
@@ -93,7 +93,7 @@ export default defineConfig({
     {
       name: 'responsive-webkit-desktop',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
       use: {
         ...devices['Desktop Safari'],
         viewport: { width: 1440, height: 900 }
@@ -102,7 +102,7 @@ export default defineConfig({
     {
       name: 'responsive-chromium-wide',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts'],
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 2560, height: 1440 }
@@ -111,7 +111,7 @@ export default defineConfig({
     {
       name: 'responsive-chromium-tablet',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts'],
       use: {
         ...devices['iPad Mini landscape'],
         browserName: 'chromium',
@@ -121,19 +121,19 @@ export default defineConfig({
     {
       name: 'responsive-chromium-mobile',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
       use: { ...devices['Pixel 7'] }
     },
     {
       name: 'responsive-webkit-mobile',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
       use: { ...devices['iPhone 13'] }
     },
     {
       name: 'responsive-webkit-mobile-landscape',
       dependencies: ['chromium'],
-      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
+      testMatch: ['**/responsive.e2e.ts', '**/login-logo.e2e.ts', '**/editor-panels.e2e.ts', '**/tags.e2e.ts', '**/glossary.e2e.ts', '**/offline.e2e.ts', '**/agent-media.e2e.ts'],
       use: { ...devices['iPhone 13 landscape'] }
     },
     {

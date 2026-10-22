@@ -1,8 +1,9 @@
 <template lang="pug">
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive }]')
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
-    nav-header(v-if='!printView', reserve-actions, :glossary-available='glossaryAvailable')
-    glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', @access='setGlossaryAccess')
+    glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', v-slot='{ glossary }')
+      nav-header(reserve-actions, :before-search-exit='glossary.canLeave')
+      search-results(:glossary='glossary')
     //- Navigation is indeterminate; the header spinner and aria-busy own status.
     .page-navigation-progress(v-if='!printView && showPageProgress && navigationPending', aria-hidden='true')
     //- Decorative: a live progressbar would announce every scroll step.
@@ -587,7 +588,6 @@
 
     nav-footer
     notify
-    search-results
     v-dialog(
       v-model='protectionDialog'
       :fullscreen='$vuetify.display.smAndDown'
@@ -839,7 +839,6 @@ import SiteBanner from '@/components/common/site-banner.vue'
 import GlossaryReader from '@/components/common/glossary-reader.vue'
 import DiscussionAnnotations from '@/components/common/discussion-annotations.vue'
 import { composeDiscussionAnnotation, onJumpDiscussionAnnotation } from '@/helpers/discussion-annotation-events'
-import type { GlossaryAccess } from '../../../../shared/glossary.ts'
 import type { DiscussionAnnotationAnchor } from '../../../../shared/discussion-annotations.ts'
 import {
   buildOutlineTree,
@@ -1614,7 +1613,6 @@ export default defineComponent({
     const initialWidth = typeof window === 'undefined' ? 0 : window.innerWidth
     return {
       locales: siteLangs,
-      glossaryAvailable: false,
       discussionMounted: false,
       annotationJumpUnsubscribe: null as (() => void) | null,
       navShown: initialWidth >= 1280,
@@ -2147,7 +2145,6 @@ export default defineComponent({
     },
     pageAuthorityKey (value: string, previous: string) {
       if (value === previous) return
-      this.glossaryAvailable = false
       this.pageWatchRequestId += 1
       this.protectionRequestId += 1
       this.approvalRequestId += 1
@@ -2225,7 +2222,6 @@ export default defineComponent({
         this.syncPageStore()
         this.resetPageRouteState()
         this.discussionMounted = this.selectedPageView === 'talk'
-        this.glossaryAvailable = false
         await this.$nextTick()
         this.setupDesktopRailObserver()
         this.refreshPageContent()
@@ -4221,9 +4217,6 @@ export default defineComponent({
     },
     selectPageView(value: unknown): void {
       if (value === 'article' || value === 'talk' || (value === 'links' && this.linksVisible)) this.$emit('update:activeView', value)
-    },
-    setGlossaryAccess(access: GlossaryAccess): void {
-      this.glossaryAvailable = access.enabled && (access.canRead || access.canManage)
     },
     async composePassage(anchor: DiscussionAnnotationAnchor): Promise<void> {
       if (!this.commentsEnabled || this.commentsExternal || !this.commentsPerms.write || !this.pageOnlineActionReady) return

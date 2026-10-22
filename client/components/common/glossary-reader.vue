@@ -1,29 +1,39 @@
 <template>
-  <glossary-dialog v-if="opened" :key="`${identity}:${pageKey}:${selectedLocale}:${navigationEpoch}`" ref="dialog" :locale="selectedLocale" :term="selectedTerm" :access="access" :host-error="error" @close="navigate(null)" @select="navigate($event)" @locale="changeLocale" @changed="refresh" />
+  <slot :glossary="context" />
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { GlossaryAccess, GlossaryAutolinkTerm } from '../../../shared/glossary.ts'
 import { fetchGlossaryAccess, fetchGlossaryAutolinks, GlossaryApiError } from '../../helpers/glossary-api.ts'
-import { onOpenGlossary } from '../../helpers/glossary-events.ts'
+import type { GlossarySearchContext, GlossarySearchPanel } from '../../helpers/glossary-search.ts'
 import { glossaryHref, glossaryQueryLink, linkGlossaryContent } from '../../helpers/glossary-runtime.ts'
 import { glossaryIdentity } from '../../helpers/glossary-session.ts'
 import { useWikiStore } from '../../store/index.ts'
 
-const GlossaryDialog = defineAsyncComponent(() => import('./glossary-dialog.vue'))
 const props = defineProps<{ locale: string; pageKey: string; contentRoot: HTMLElement | null }>()
-const emit = defineEmits<{ access: [value: GlossaryAccess] }>()
 const store = useWikiStore()
 const opened = ref(false), selectedTerm = ref(''), selectedLocale = ref(props.locale), error = ref('')
-const navigationEpoch = ref(0)
 const denied = (): GlossaryAccess => ({ enabled: false, locale: selectedLocale.value, canRead: false, canManage: false })
 const access = ref<GlossaryAccess>(denied())
-const dialog = ref<{ canLeave: () => boolean } | null>(null)
+const panel = ref<GlossarySearchPanel | null>(null)
 const identity = computed(() => glossaryIdentity(store))
+const context = computed<GlossarySearchContext>(() => ({
+  key: `${identity.value}:${props.pageKey}:${selectedLocale.value}`,
+  opened: opened.value,
+  locale: selectedLocale.value,
+  term: selectedTerm.value,
+  access: access.value,
+  error: error.value,
+  canLeave,
+  navigate,
+  changeLocale,
+  refresh,
+  bindPanel
+}))
 let controller: AbortController | null = null, generation = 0, terms: GlossaryAutolinkTerm[] = []
 let cleanup: (() => void) | null = null, observer: MutationObserver | null = null, timer: ReturnType<typeof setTimeout> | undefined
-let stopEvents: (() => void) | undefined, disposed = false, currentUrl = '', historyIndex = 0, restoring = false
+let disposed = false, currentUrl = '', historyIndex = 0, restoring = false
 const historyKey = '__glossaryIndex'
 function historyState (index: number): Record<string, unknown> { return { ...(history.state ?? {}), [historyKey]: index } }
 function clearLinks (): void { observer?.disconnect(); cleanup?.(); cleanup = null }
@@ -42,14 +52,14 @@ async function refresh (): Promise<void> {
   terms = []; clearLinks(); error.value = ''
   let authorized = false
   if (navigator.onLine === false || store.authRefreshPending || store.authRefreshOutcome === 'unavailable') {
-    access.value = denied(); emit('access', access.value)
+    access.value = denied()
     error.value = 'The glossary is unavailable offline or while your session is being refreshed.'
     return
   }
   try {
     const result = await fetchGlossaryAccess(locale, signal)
     if (disposed || request !== generation || owner !== identity.value || signal.aborted) return
-    access.value = result; emit('access', result)
+    access.value = result
     authorized = true
     if (!result.enabled || !result.canRead) return
     // Explicit links need no automatic catalog, so install them immediately.
@@ -60,21 +70,24 @@ async function refresh (): Promise<void> {
   } catch (failure) {
     if (signal.aborted || request !== generation || disposed) return
     terms = []; clearLinks()
-    if (!authorized || failure instanceof GlossaryApiError && ([401, 403].includes(failure.status) || failure.code === 'GLOSSARY_DISABLED')) { access.value = denied(); emit('access', access.value) }
+    if (!authorized || failure instanceof GlossaryApiError && ([401, 403].includes(failure.status) || failure.code === 'GLOSSARY_DISABLED')) access.value = denied()
     else decorate()
     error.value = failure instanceof Error ? failure.message : 'Unable to load the glossary.'
   }
 }
-function canLeave (): boolean { return dialog.value?.canLeave() !== false }
+function bindPanel (instance: unknown): void {
+  const candidate = instance as Partial<GlossarySearchPanel> | null
+  panel.value = typeof candidate?.canLeave === 'function' ? candidate as GlossarySearchPanel : null
+}
+function canLeave (): boolean { return panel.value?.canLeave() !== false }
 function synchronize (): void {
   const url = new URL(window.location.href)
   opened.value = url.searchParams.has('glossary')
   selectedTerm.value = url.searchParams.get('glossary') ?? ''
   currentUrl = url.href
 }
-function navigate (term: string | null): void {
-  if (!canLeave()) return
-  navigationEpoch.value++
+function navigate (term: string | null): boolean {
+  if (!canLeave()) return false
   const next = glossaryHref(window.location.href, term)
   if (new URL(next, window.location.origin).href !== window.location.href) {
     historyIndex++
@@ -82,6 +95,7 @@ function navigate (term: string | null): void {
   }
   synchronize()
   window.dispatchEvent(new CustomEvent('wiki:navigation', { detail: { url: window.location.href } }))
+  return true
 }
 function changeLocale (locale: string): void {
   if (!canLeave()) return
@@ -115,7 +129,7 @@ function click (event: MouseEvent): void {
   event.preventDefault(); event.stopImmediatePropagation(); navigate(name ?? '')
 }
 watch(() => [props.pageKey, props.locale, identity.value], () => {
-  opened.value = false; selectedLocale.value = props.locale; selectedTerm.value = ''; terms = []; access.value = denied(); emit('access', access.value)
+  opened.value = false; selectedLocale.value = props.locale; selectedTerm.value = ''; terms = []; access.value = denied()
   void refresh()
   synchronize()
 }, { flush: 'sync' })
@@ -126,7 +140,6 @@ onMounted(() => {
   historyIndex = typeof initial === 'number' ? initial : 0
   history.replaceState(historyState(historyIndex), '', window.location.href)
   observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(decorate, 0) })
-  stopEvents = onOpenGlossary(input => { if (!canLeave()) return; if (input.locale && input.locale !== selectedLocale.value) { selectedLocale.value = input.locale; void refresh() }; navigate(input.term ?? '') })
   window.addEventListener('popstate', popstate, true)
   window.addEventListener('wiki:navigation', navigation)
   window.addEventListener('online', refresh)
@@ -135,7 +148,7 @@ onMounted(() => {
   synchronize(); void refresh()
 })
 onBeforeUnmount(() => {
-  disposed = true; generation++; controller?.abort(); stopEvents?.(); clearTimeout(timer); clearLinks(); terms = []
+  disposed = true; generation++; controller?.abort(); clearTimeout(timer); clearLinks(); terms = []
   window.removeEventListener('popstate', popstate, true); window.removeEventListener('wiki:navigation', navigation)
   window.removeEventListener('online', refresh); window.removeEventListener('offline', refresh)
   document.removeEventListener('click', click, true)

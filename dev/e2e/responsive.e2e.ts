@@ -1845,7 +1845,6 @@ test.describe('responsive UI quality matrix', () => {
           expect(bounds.height, 'Phone action target height').toBeGreaterThanOrEqual(44)
         }
         await overflow.click()
-        await expect(page.locator('.v-menu.v-overlay--active').getByRole('button', { name: 'Glossary', exact: true })).toBeVisible()
         const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
         await expect(entrance).toBeVisible()
         await expect(page.getByRole('link', { name: 'Browse by Tags', exact: true })).toHaveAttribute('href', '/t')

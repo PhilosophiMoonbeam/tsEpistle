@@ -46,7 +46,7 @@ const compile = (relativePath: string) => {
 
 const slotArgs = { props: {}, item: {}, isActive: false }
 
-const stub = (name: string) =>
+const stub = (name: string, args: Record<string, unknown> = slotArgs) =>
   Vue.defineComponent({
     name: `Stub_${name}`,
     inheritAttrs: false,
@@ -55,7 +55,7 @@ const stub = (name: string) =>
         // Dialogs only render while open; everything else renders all slots.
         if (name === 'v-dialog' && attrs.modelValue !== true) return null
         const children = Object.entries(slots).flatMap(([slotName, slot]) => {
-          const content = slot?.(slotArgs) ?? []
+          const content = slot?.(args) ?? []
           return slotName === 'default' ? content : [Vue.h('template-slot', { 'data-slot': slotName }, content)]
         })
         const forwarded = Object.fromEntries(Object.entries(attrs).filter(([key, value]) => !key.startsWith('on') && typeof value !== 'function' && typeof value !== 'object'))
@@ -64,7 +64,7 @@ const stub = (name: string) =>
     }
   })
 
-export const renderTemplate = async (relativePath: string, state: Record<string, unknown>): Promise<TemplateRender> => {
+export const renderTemplate = async (relativePath: string, state: Record<string, unknown>, componentSlotProps: Record<string, Record<string, unknown>> = {}): Promise<TemplateRender> => {
   const { render, components, directives } = compile(relativePath)
   const ctx = new Proxy(state, {
     get(target, key) {
@@ -73,7 +73,7 @@ export const renderTemplate = async (relativePath: string, state: Record<string,
     }
   })
   const root = Vue.defineComponent({
-    components: Object.fromEntries(components.map(name => [name, stub(name)])),
+    components: Object.fromEntries(components.map(name => [name, stub(name, componentSlotProps[name])])),
     directives: Object.fromEntries(directives.map(name => [name, {}])),
     render: () => render(ctx, [])
   })
