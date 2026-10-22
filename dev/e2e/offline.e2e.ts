@@ -915,7 +915,15 @@ test('offline Browse immediately lists saved copies and recovers without an onli
     window.addEventListener('online', event => event.stopImmediatePropagation(), true)
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })
   })
+  const readerDocument = await page.evaluate(() => performance.timeOrigin)
   await page.context().setOffline(false)
+  await expect(page.locator('.offline-connection')).toContainText('Connected.', { timeout: 40_000 })
+  await expect(page.locator('#offline-reader-title')).toHaveText(first.snapshot.title)
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(readerDocument)
+  if ((page.viewportSize()?.width ?? 1280) < 960 && await navigation.isVisible()) {
+    await page.getByRole('button', { name: /open navigation/i }).click()
+  }
+  await page.getByRole('button', { name: 'Open live page', exact: true }).click()
   await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 40_000 })
   await expect(page.locator('.offline-application')).toHaveCount(0)
   await expect(page).toHaveURL(first.snapshot.canonicalPath)
@@ -967,41 +975,53 @@ for (const cachedBrowse of [false, true]) test(`missed disconnect switches ${cac
   await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true)
   await expectResponsiveLayout(page, 'first offline navigation with preserved branding')
   await page.screenshot({ path: test.info().outputPath('offline-branding.png') })
+  const readerDocument = await page.evaluate(() => performance.timeOrigin)
   await page.context().setOffline(false)
+  await expect(page.locator('.offline-connection')).toContainText('Connected.', { timeout: 40_000 })
+  await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(readerDocument)
+  await expect(logo).toHaveAttribute('src', logoPath!)
+  await page.getByRole('button', { name: 'Open live page', exact: true }).click()
   await expect(page.locator('.page-header-section')).toBeVisible({ timeout: 40_000 })
   await expect(logo).toHaveAttribute('src', logoPath!)
 })
 
-test('resumed online tabs recheck availability immediately without replacing either document', async ({ page, context }) => {
-  let healthy = false
-  await context.route('**/healthz', route => route.fulfill({
-    status: healthy ? 200 : 503,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: healthy })
-  }))
-  const second = await context.newPage()
-  try {
-    for (const tab of [page, second]) {
-      await tab.goto('/', { waitUntil: 'networkidle' })
-      await expect(tab.locator('.nav-header')).toBeVisible()
-      await expect(tab.locator('[data-connectivity-indicator]').first()).toHaveAttribute('data-connection', /unavailable/i)
+test.describe('resumed live readers', () => {
+  // Request routing cannot control health fetches intercepted by WebKit's worker.
+  // Native worker/offline recovery is exercised by the cases above.
+  test.use({ serviceWorkers: 'block' })
+
+  test('resumed online tabs recheck availability immediately without replacing either document', async ({ page, context }) => {
+    let healthy = false
+    await context.route('**/healthz', route => route.fulfill({
+      status: healthy ? 200 : 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: healthy })
+    }))
+    const second = await context.newPage()
+    try {
+      for (const tab of [page, second]) {
+        await tab.goto('/', { waitUntil: 'networkidle' })
+        await expect(tab.locator('.nav-header')).toBeVisible()
+        await expect(tab.locator('[data-connectivity-indicator]').first()).toHaveAttribute('data-connection', /unavailable/i)
+      }
+      const originals = await Promise.all([page, second].map(tab => tab.evaluate(() => performance.timeOrigin)))
+      healthy = true
+      for (const [index, tab] of [page, second].entries()) {
+        await tab.evaluate(() => {
+          Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+          window.dispatchEvent(new Event('focus'))
+          window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+          document.dispatchEvent(new Event('visibilitychange', { bubbles: true }))
+        })
+        await expect(tab.locator('[data-connectivity-indicator]').first()).toHaveAttribute('data-connection', 'connected')
+        expect(await tab.evaluate(() => performance.timeOrigin)).toBe(originals[index])
+        await expect(tab.locator('.offline-application')).toHaveCount(0)
+        await expect(tab.locator('.page-header-section')).toBeVisible()
+      }
+    } finally {
+      await second.close()
+      await context.unroute('**/healthz')
     }
-    const originals = await Promise.all([page, second].map(tab => tab.evaluate(() => performance.timeOrigin)))
-    healthy = true
-    for (const [index, tab] of [page, second].entries()) {
-      await tab.evaluate(() => {
-        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
-        window.dispatchEvent(new Event('focus'))
-        window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
-        document.dispatchEvent(new Event('visibilitychange', { bubbles: true }))
-      })
-      await expect(tab.locator('[data-connectivity-indicator]').first()).toHaveAttribute('data-connection', 'connected')
-      expect(await tab.evaluate(() => performance.timeOrigin)).toBe(originals[index])
-      await expect(tab.locator('.offline-application')).toHaveCount(0)
-      await expect(tab.locator('.page-header-section')).toBeVisible()
-    }
-  } finally {
-    await second.close()
-    await context.unroute('**/healthz')
-  }
+  })
 })

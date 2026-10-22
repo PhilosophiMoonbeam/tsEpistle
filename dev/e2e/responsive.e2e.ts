@@ -117,7 +117,7 @@ async function installAgentContinuityPages(page: Page): Promise<void> {
   })
 }
 
-async function openContinuityAgent(page: Page, path?: string): Promise<Locator> {
+async function openContinuityAgent(page: Page, path?: string, expectedComposition = 'context'): Promise<Locator> {
   if (path) {
     await page.goto(path, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.nav-header')).toBeVisible({ timeout: 15_000 })
@@ -129,7 +129,7 @@ async function openContinuityAgent(page: Page, path?: string): Promise<Locator> 
   await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
   // The search hand-off prefills the composer with the search query asynchronously;
   // wait for that hand-off to settle before the caller types over it.
-  await expect(agent.locator('.agent-composer textarea')).toHaveValue('context')
+  await expect(agent.locator('.agent-composer textarea')).toHaveValue(expectedComposition)
   return agent
 }
 
@@ -2634,7 +2634,7 @@ test.describe('responsive UI quality matrix', () => {
       }
       await page.route('**/_api/agents/**', expireSession)
       try {
-        let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+        const agent = await openContinuityAgent(page, '/agent-context-fixture-a')
         const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent', exact: true })
         await expect(composer).toBeEnabled()
         await composer.fill('Preserve this unsent composition across expiry.')
@@ -2645,8 +2645,8 @@ test.describe('responsive UI quality matrix', () => {
         expect(expiredReads).toBeGreaterThan(0)
         expect(fixture.requests.filter(request => request.includes('/messages'))).toEqual([])
         expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentIdentity)
-        agent = await openContinuityAgent(page)
-        await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent', exact: true })).toHaveValue('Preserve this unsent composition across expiry.')
+        // Explicit search reopening appends its new query to the recovered draft.
+        await openContinuityAgent(page, undefined, 'Preserve this unsent composition across expiry.\n\ncontext')
         expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(2)
         expect(fixture.requests.filter(request => request.includes('/messages'))).toEqual([])
         fixture.assertNoUnexpectedRequests()
