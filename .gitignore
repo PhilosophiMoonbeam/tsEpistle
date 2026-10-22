@@ -76,3 +76,5 @@ test-results/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
