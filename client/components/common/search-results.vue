@@ -291,7 +291,7 @@
 import { offlinePageHref, requestOfflineSavedPageOpen } from '../../helpers/offline-routes.ts'
 import { defineComponent, type ComponentPublicInstance } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
-import { createAsyncComponent } from './async-component-state.vue'
+import { createAsyncComponent } from './async-component.ts'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import type { AgentSearchScope } from '../../helpers/agent-draft.ts'
 import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source.ts'

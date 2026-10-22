@@ -12,7 +12,7 @@ import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
 import { preparePwaStartup, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
 import { installThemeSwitchGuard, resolveThemeName } from './helpers/theme.ts'
-import { createAsyncComponent } from './components/common/async-component-state.vue'
+import { createAsyncComponent } from './components/common/async-component.ts'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
 import { currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from './helpers/offline-session.ts'
 import {

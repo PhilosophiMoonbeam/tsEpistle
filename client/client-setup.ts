@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
 import boot from './modules/boot.ts'
 import { localizationPlugin } from './modules/localization.ts'
-import { createAsyncComponent } from './components/common/async-component-state.vue'
+import { createAsyncComponent } from './components/common/async-component.ts'
 
 const Setup = createAsyncComponent(() => import('./components/setup.vue'))
 const vuetify = createVuetify({

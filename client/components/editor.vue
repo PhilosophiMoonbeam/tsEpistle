@@ -339,7 +339,7 @@
 import { defineComponent, markRaw, shallowRef, type PropType } from 'vue'
 import moment from 'moment-timezone'
 import { useHotkey } from 'vuetify'
-import { createAsyncComponent } from './common/async-component-state.vue'
+import { createAsyncComponent } from './common/async-component.ts'
 import * as _ from 'lodash-es'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, isPageRenderPending, updatePage, waitForPageRender, type PageDetails, type PageRenderTarget, type PageWriteInput } from '../helpers/pages-api'
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'

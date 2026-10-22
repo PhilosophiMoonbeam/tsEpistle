@@ -473,7 +473,7 @@ import {
 } from '../../../shared/page-branding.ts'
 import type { PageFeatures } from '../../../shared/page-features.ts'
 import PageBrandingMark from '../common/page-branding-mark.vue'
-import { createAsyncComponent } from '../common/async-component-state.vue'
+import { createAsyncComponent } from '../common/async-component.ts'
 
 import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'

@@ -46,17 +46,8 @@
 </template>
 
 <script lang="ts">
-import {
-  defineAsyncComponent,
-  defineComponent,
-  h,
-  shallowRef,
-  useId
-} from 'vue'
-import type { AsyncComponentLoader, PropType } from 'vue'
-
-const ASYNC_COMPONENT_DELAY_MS = 250
-const ASYNC_COMPONENT_TIMEOUT_MS = 20_000
+import { defineComponent, useId } from 'vue'
+import type { PropType } from 'vue'
 
 const AsyncComponentState = defineComponent({
   name: 'AsyncComponentState',
@@ -79,62 +70,6 @@ const AsyncComponentState = defineComponent({
     }
   }
 })
-
-export function createAsyncComponent(loader: AsyncComponentLoader) {
-  const loadError = shallowRef<Error>()
-  let retryLoad: (() => void) | undefined
-
-  const LoadingAndErrorState = defineComponent({
-    name: 'AsyncComponentLoadState',
-    setup() {
-      const retry = () => {
-        const pendingRetry = retryLoad
-        if (!pendingRetry) return
-        retryLoad = undefined
-        loadError.value = undefined
-        pendingRetry()
-      }
-
-      return () => h(AsyncComponentState, {
-        error: loadError.value,
-        onRetry: retry
-      })
-    }
-  })
-
-  const boundedLoader: AsyncComponentLoader = () => new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      reject(new Error(`Async component timed out after ${ASYNC_COMPONENT_TIMEOUT_MS}ms.`))
-    }, ASYNC_COMPONENT_TIMEOUT_MS)
-
-    try {
-      loader().then(
-        component => {
-          window.clearTimeout(timeout)
-          resolve(component)
-        },
-        error => {
-          window.clearTimeout(timeout)
-          reject(error)
-        }
-      )
-    } catch (error) {
-      window.clearTimeout(timeout)
-      reject(error)
-    }
-  })
-
-  return defineAsyncComponent({
-    loader: boundedLoader,
-    loadingComponent: LoadingAndErrorState,
-    delay: ASYNC_COMPONENT_DELAY_MS,
-    suspensible: false,
-    onError(error, retry) {
-      loadError.value = error
-      retryLoad = retry
-    }
-  })
-}
 
 export default AsyncComponentState
 </script>
