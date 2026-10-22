@@ -5,7 +5,7 @@ import { cleanEnvironment } from './local-ci-resources.ts'
 // Reuse the complete ordinary contract, but never operational or browser matrices.
 const child = spawn(process.execPath, ['--no-env-file', 'run', 'ci'], {
   cwd: path.resolve(import.meta.dir, '../..'),
-  env: { ...cleanEnvironment(), BUN_OPTIONS: '--no-env-file' },
+  env: { ...cleanEnvironment(), BUN_OPTIONS: '--no-env-file', BUN_TEST_JOBS: process.env.BUN_TEST_JOBS ?? '2' },
   stdio: 'inherit'
 })
 const terminate = (signal: NodeJS.Signals) => child.kill(signal)

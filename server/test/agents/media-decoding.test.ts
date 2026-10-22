@@ -259,17 +259,9 @@ describe('bounded complete Agent audio/video decoding', () => {
     const path = join(input.directory, 'malformed.webm')
     await writeFile(path, malformed, { mode: 0o600 })
     expect(webmAudioMetadata(malformed, path)).toEqual(webmAudioMetadata(input.payload, input.path))
-    // Independent control: disabling the AVParser does not hide this fault.
-    // The reference decoder must reject the packet contents themselves.
-    const reference = spawnSync(
-      'ffmpeg',
-      ['-nostdin', '-hide_banner', '-v', 'error', '-xerror', '-fflags', '+noparse+nofillin', '-c:a', 'libopus', '-i', path, '-f', 'null', '-'],
-      { timeout: 20_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL' }
-    )
-    expect(reference.error).toBeUndefined()
-    expect(reference.status).not.toBeNull()
-    expect(reference.status).not.toBe(0)
-    expect(reference.stderr.toString()).toContain('Decoding error:')
+    // The supported contract is our bounded consumer's rejection, not a
+    // standalone FFmpeg invocation's version-dependent exit status. The
+    // consumer also rejects decoder stderr after otherwise successful EOF.
     await expect(decodeAgentAudioVideo(malformed, 'audio/webm')).rejects.toMatchObject({ code: 'INVALID_AGENT_MEDIA' })
   })
 

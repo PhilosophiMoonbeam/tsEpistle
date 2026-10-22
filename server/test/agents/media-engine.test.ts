@@ -314,11 +314,16 @@ describe('Ax media protocol and engine accounting boundary', () => {
   for (const scenario of ['audio/webm', 'video/webm', 'openai-chat-webm'] as const)
     it(`enforces native format admission for decoded ${scenario}`, async () => {
       const mimeType = scenario === 'video/webm' ? 'video/webm' : 'audio/webm'
+      // Use multiple video frames: FFmpeg 6.1 reports the final frame's PTS
+      // without its duration, so a single frame at PTS 0 has no elapsed time.
       const args =
         mimeType === 'audio/webm'
           ? ['-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '0.1', '-c:a', 'libopus']
-          : ['-f', 'lavfi', '-i', 'color=c=black:s=16x16:r=10', '-t', '0.1', '-c:v', 'libvpx-vp9', '-an']
-      const { stdout } = await promisify(execFile)('ffmpeg', ['-v', 'error', ...args, '-f', 'webm', 'pipe:1'], { encoding: 'buffer', maxBuffer: 1024 * 1024 })
+          : ['-f', 'lavfi', '-i', 'color=c=black:s=16x16:r=10', '-t', '0.2', '-c:v', 'libvpx-vp9', '-an']
+      const { stdout } = await promisify(execFile)('ffmpeg', ['-v', 'error', ...args, '-threads', '1', '-f', 'webm', 'pipe:1'], {
+        encoding: 'buffer',
+        maxBuffer: 1024 * 1024
+      })
       const wire: unknown[] = []
       const service = ai({
         name: 'google-gemini',

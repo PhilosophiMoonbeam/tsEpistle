@@ -6,6 +6,8 @@ import { createLiveNotesStore, type LiveNotesOperations } from '../../operations
 import { createApiPrincipal } from '../../helpers/api-principal.ts'
 import { decodeCollaborationUpdate, encodeCollaborationUpdate } from '../../../shared/collaboration.ts'
 import {
+  LIVE_NOTE_MAX_STATE_BYTES,
+  LIVE_NOTE_MAX_TEXT_BYTES,
   LIVE_NOTE_MAX_UPDATE_BYTES,
   parseLiveNoteList,
   parseLiveNoteView,
@@ -264,23 +266,46 @@ describe('standalone live note operation behavior', () => {
   })
 
   it('enforces the canonical UTF-8 source limit without truncation or partial persistence', async () => {
-    let current = await notes.create(owner, {})
-    // Each update is below 64KiB, while the accumulated UTF-8 source exceeds 1MiB.
-    for (let index = 0; index < 17; index++)
-      current = await notes.applyUpdate(owner, current.key, {
-        requestId: `chunk-${index}`,
-        update: edit(current.state, value => value.insert(value.length, 'é'.repeat(30_000)))
-      })
-    expect(Buffer.byteLength(text(current.state), 'utf8')).toBe(1_020_000)
+    const created = await notes.create(owner, {}),
+      source = 'é'.repeat((LIVE_NOTE_MAX_TEXT_BYTES - 2) / 2),
+      doc = new Y.Doc()
+    let state: string
+    try {
+      Y.applyUpdate(doc, decodeCollaborationUpdate(created.state))
+      doc.getText('content').insert(0, source)
+      state = encodeCollaborationUpdate(Y.encodeStateAsUpdate(doc), LIVE_NOTE_MAX_STATE_BYTES)
+    } finally {
+      doc.destroy()
+    }
+    // Seed genuine near-limit Yjs state once instead of repeatedly committing
+    // growing documents merely to arrange the source-size boundary.
+    await db.transaction(async tx => {
+      const baseline = { state, title: source.slice(0, 200) }
+      await tx('liveNotes').where('id', created.id).update(baseline)
+      await tx('liveNoteRevisions').where({ noteId: created.id, revision: 0 }).update(baseline)
+    })
+    const current = await notes.applyUpdate(owner, created.key, {
+      requestId: 'at-limit',
+      update: edit(state, value => value.insert(value.length, 'é'))
+    })
+    expect(current.revision).toBe(1)
+    expect(text(current.state)).toBe(`${source}é`)
+    expect(Buffer.byteLength(text(current.state), 'utf8')).toBe(LIVE_NOTE_MAX_TEXT_BYTES)
+    const before = await db('liveNotes').where('id', created.id).first(),
+      revisions = await db('liveNoteRevisions').where('noteId', created.id),
+      requests = await db('liveNoteRequests').where('noteId', created.id)
     await expect(
       notes.applyUpdate(owner, current.key, {
         requestId: 'overflow',
-        update: edit(current.state, value => value.insert(value.length, 'é'.repeat(30_000)))
+        update: edit(current.state, value => value.insert(value.length, 'a'))
       })
-    ).rejects.toMatchObject({ status: 413 })
+    ).rejects.toMatchObject({ status: 413, name: 'NOTE_TOO_LARGE' })
+    expect(await db('liveNotes').where('id', created.id).first()).toEqual(before)
+    expect(await db('liveNoteRevisions').where('noteId', created.id)).toEqual(revisions)
+    expect(await db('liveNoteRequests').where('noteId', created.id)).toEqual(requests)
     const durable = await notes.read(owner, current.key)
-    expect(durable.revision).toBe(17)
-    expect(Buffer.byteLength(text(durable.state), 'utf8')).toBe(1_020_000)
+    expect(durable.revision).toBe(1)
+    expect(durable.state).toBe(current.state)
   })
 
   it('rejects rich, embedded, nested, map, and unknown-root updates without durable side effects', async () => {
