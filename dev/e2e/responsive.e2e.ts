@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import type { App } from 'vue'
 import { waitForPageRender } from '../../client/helpers/pages-api.ts'
 import { decodeWikiPagePayload, type WikiPagePayload } from '../../client/helpers/wiki-navigation.ts'
@@ -52,7 +52,7 @@ const decodeWikiPagePayloadForTest = (encoded: string): WikiPagePayload => {
 
 type ContinuitySubmission = { currentPage?: { id: number }; knowledgeContext: { sources: Array<{ id: number }> } }
 
-async function installAgentContinuityPages(page: Page): Promise<void> {
+async function installAgentContinuityPages(page: Page | BrowserContext): Promise<void> {
   await page.route('**/_api/users/whoami', route =>
     route.fulfill({
       json: {
@@ -2716,6 +2716,41 @@ test.describe('responsive UI quality matrix', () => {
         expect(creates()).toBe(2)
         fixture.assertNoUnexpectedRequests()
       } finally {
+        await fixture.dispose()
+      }
+    })
+
+    test('Agent continuity keeps duplicated tabs independent when their current-page choices differ', async ({ page, context }, testInfo) => {
+      test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
+      await installAgentContinuityPages(context)
+      const fixture = await installEnabledAgentFixture(context, { distinctSessionIds: true })
+      let second: Page | undefined
+      try {
+        let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+        await sendContinuityPrompt(page, agent, 'One conversation, independent tab context.')
+        await closeContinuityAgent(page)
+        const opened = page.waitForEvent('popup')
+        await page.evaluate(() => { window.open('/agent-context-fixture-b', '_blank') })
+        second = await opened
+        await expect(second.locator('.page-header-section')).toBeVisible()
+        let otherAgent = await openContinuityAgent(second)
+        await expect(otherAgent.locator('.agent-message--user')).toContainText('One conversation, independent tab context.')
+        await otherAgent.locator('.agent-context__page-chip').click()
+        await expect(otherAgent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
+        await closeContinuityAgent(second)
+
+        await page.reload({ waitUntil: 'domcontentloaded' })
+        agent = await openContinuityAgent(page)
+        await expect(agent.locator('.agent-message--user')).toContainText('One conversation, independent tab context.')
+        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'true')
+        await second.reload({ waitUntil: 'domcontentloaded' })
+        otherAgent = await openContinuityAgent(second)
+        await expect(otherAgent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
+        expect(fixture.requests.filter(value => value === 'POST /_api/agents/sessions')).toHaveLength(1)
+        expect(fixture.requests.filter(value => value.includes('/messages'))).toHaveLength(1)
+        fixture.assertNoUnexpectedRequests()
+      } finally {
+        await second?.close()
         await fixture.dispose()
       }
     })

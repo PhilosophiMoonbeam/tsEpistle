@@ -1,4 +1,4 @@
-import type { Page, Response, Route } from '@playwright/test'
+import type { BrowserContext, Page, Response, Route } from '@playwright/test'
 import type { AgentMediaCapabilities, AgentMediaView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
 export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
 
@@ -465,7 +465,7 @@ const requestDescription = (route: Route): string => {
   return `${request.method()} ${url.pathname}${url.search}`
 }
 
-export async function installEnabledAgentFixture(page: Page, options: AgentFixtureOptions = {}): Promise<EnabledAgentFixture> {
+export async function installEnabledAgentFixture(page: Page | BrowserContext, options: AgentFixtureOptions = {}): Promise<EnabledAgentFixture> {
   const mode = options.mode ?? 'success'
   const unexpectedRequests: string[] = []
   const requests: string[] = []
@@ -821,7 +821,7 @@ export async function installEnabledAgentFixture(page: Page, options: AgentFixtu
       releaseResponse?.()
       releaseResponse = null
       responseGate = null
-      if (!page.isClosed()) await page.unroute(/\/_api\/agents(?:\/|$)/)
+      if (!('isClosed' in page) || !page.isClosed()) await page.unroute(/\/_api\/agents(?:\/|$)/)
     }
   }
 }
