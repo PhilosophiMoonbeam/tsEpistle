@@ -274,6 +274,12 @@ const registrations = [
 
 const initializeClientApp = async (): Promise<void> => {
   setReloadSafetyProvider(() => ({ safe: true, revision: 'client-app-ready', actorEpoch: 'client' }))
+  // Locale resources depend only on the document's siteConfig, not the worker
+  // release or account. Load them while the release gate runs, but keep all
+  // application/auth/storage startup behind the gate's decision.
+  const localizationReady = localization.init()
+  // Observe an early failure even if the gate reloads before we await it.
+  void localizationReady.catch(() => undefined)
   if (
     (await preparePwaStartup('__TSEPISTLE_PWA_RELEASE__', {
       onNeedReload: () => window.location.reload()
@@ -301,7 +307,7 @@ const initializeClientApp = async (): Promise<void> => {
 
   const vuetify = createAppVuetify(siteConfig.initialAppearance ?? wikiStore.user.appearance)
 
-  const i18n = await localization.init()
+  const i18n = await localizationReady
   const app = createApp({})
 
   for (const [name, component] of registrations) app.component(name, component)

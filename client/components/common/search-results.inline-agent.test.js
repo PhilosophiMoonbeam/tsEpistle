@@ -631,39 +631,141 @@ describe('inline Ask mode contract', () => {
     expect(state.canAsk).toBe(false)
   })
 
-  test('Ask about a query prepares scoped editable context without submitting', async () => {
+  test('Ask about a query waits for the workspace and prepares the clicked scope without submitting', async () => {
     const prepared = []
-    const methods = compileSearchMethods(search, ['askCurrentQuery', 'agentSearchScope'], {})
+    const methods = compileSearchMethods(search, ['askCurrentQuery', 'agentSearchScope', 'waitForInlineAgent', 'setInlineAgent', 'resolveInlineAgentWaiters'], {})
     const state = {
+      ...methods,
       canAsk: true,
       normalizedSearch: 'pizza',
+      directPromptHandoffId: 0,
       directPromptHandoffPending: false,
+      inlineAgent: null,
+      inlineAgentWaiters: [],
       currentPageLocale: 'en',
       currentPagePath: 'recipes',
       searchRestrictLocale: true,
       searchRestrictPath: true,
       searchMode: 'search',
+      get isAgentOpen() { return this.searchMode === 'ask' },
       latchAgentOpeningPage() {},
       activeModalOpener: () => null,
-      $nextTick: () => Promise.resolve(),
-      $refs: {
-        inlineAgent: {
-          preparePrompt: async (...args) => {
-            prepared.push(args)
-          },
-          sendPrompt: () => {
-            throw new Error('A search handoff must not submit.')
-          }
-        }
-      },
-      agentSearchScope() {
-        return methods.agentSearchScope.call(this)
-      }
+      focusInlineAgent: async () => {},
+      $nextTick: () => Promise.resolve()
     }
-    await methods.askCurrentQuery.call(state)
+    const handoff = state.askCurrentQuery()
+    await Promise.resolve()
+    await Promise.resolve()
     expect(state.searchMode).toBe('ask')
+    expect(prepared).toEqual([])
+    state.currentPagePath = 'another-page'
+    state.setInlineAgent({
+      preparePrompt: async (...args) => prepared.push(args),
+      sendPrompt: () => { throw new Error('A search handoff must not submit.') }
+    })
+    await handoff
     expect(state.normalizedSearch).toBe('pizza')
     expect(prepared).toEqual([['pizza', undefined, { kind: 'section', locale: 'en', path: 'recipes' }]])
+    expect(state.inlineAgentWaiters).toEqual([])
+  })
+
+  test('closing a loading workspace cancels a source draft instead of replaying it on reopen', async () => {
+    const prepared = []
+    const methods = compileSearchMethods(search, ['askSource', 'agentSearchScope', 'waitForInlineAgent', 'setInlineAgent', 'resolveInlineAgentWaiters'], {})
+    const state = {
+      ...methods,
+      canAsk: true,
+      normalizedSearch: 'original query',
+      directPromptHandoffId: 0,
+      inlineAgent: null,
+      inlineAgentWaiters: [],
+      searchMode: 'search',
+      get isAgentOpen() { return this.searchMode === 'ask' },
+      captureAgentExcursion() {},
+      latchAgentOpeningPage() {},
+      focusInlineAgent: async () => {},
+      $nextTick: () => Promise.resolve()
+    }
+    const abandoned = state.askSource({ title: 'Abandoned source' })
+    await Promise.resolve()
+    await Promise.resolve()
+    state.searchMode = 'search'
+    state.directPromptHandoffId += 1
+    state.setInlineAgent(null)
+    await abandoned
+    expect(prepared).toEqual([])
+    expect(state.inlineAgentWaiters).toEqual([])
+
+    const source = { title: 'Reopened source' }
+    state.normalizedSearch = 'new query'
+    const reopened = state.askSource(source)
+    await Promise.resolve()
+    await Promise.resolve()
+    state.setInlineAgent({ preparePrompt: async (...args) => prepared.push(args) })
+    await reopened
+    expect(prepared).toEqual([['new query', source, { kind: 'all' }]])
+  })
+
+  test('direct send waits for the workspace, blocks duplicate Enter, and clears only a successfully handed-off query', async () => {
+    const sent = []
+    let focused = 0
+    const methods = compileSearchMethods(search, ['sendAskPrompt', 'waitForInlineAgent', 'setInlineAgent', 'resolveInlineAgentWaiters'], {})
+    const state = {
+      ...methods,
+      search: 'send after load',
+      get normalizedSearch() { return this.search },
+      isAgentOpen: true,
+      directPromptHandoffId: 0,
+      directPromptHandoffPending: false,
+      inlineAgent: null,
+      inlineAgentWaiters: [],
+      focusInlineAgent: async () => {},
+      $nextTick: () => Promise.resolve()
+    }
+    const handoff = state.sendAskPrompt(state.search)
+    await Promise.resolve()
+    await Promise.resolve()
+    await state.sendAskPrompt(state.search)
+    expect(sent).toEqual([])
+    expect(state.search).toBe('send after load')
+    state.setInlineAgent({
+      sendPrompt: async prompt => { sent.push(prompt); return true },
+      focusConversation: async () => { focused += 1 }
+    })
+    await handoff
+    expect(sent).toEqual(['send after load'])
+    expect(state.search).toBe('')
+    expect(focused).toBe(1)
+    expect(state.directPromptHandoffPending).toBe(false)
+  })
+
+  test('a closed loading workspace does not send or clear the query when its code finishes loading', async () => {
+    const methods = compileSearchMethods(search, ['sendAskPrompt', 'waitForInlineAgent', 'setInlineAgent', 'resolveInlineAgentWaiters'], {})
+    const state = {
+      ...methods,
+      search: 'keep this query',
+      get normalizedSearch() { return this.search },
+      isAgentOpen: true,
+      directPromptHandoffId: 0,
+      directPromptHandoffPending: false,
+      inlineAgent: null,
+      inlineAgentWaiters: [],
+      focusInlineAgent: async () => {},
+      $nextTick: () => Promise.resolve()
+    }
+    const handoff = state.sendAskPrompt(state.search)
+    await Promise.resolve()
+    await Promise.resolve()
+    state.isAgentOpen = false
+    state.directPromptHandoffId += 1
+    state.setInlineAgent(null)
+    await handoff
+    state.setInlineAgent({
+      sendPrompt: () => { throw new Error('A dismissed handoff must not send.') }
+    })
+    expect(state.search).toBe('keep this query')
+    expect(state.directPromptHandoffPending).toBe(false)
+    expect(state.inlineAgentWaiters).toEqual([])
   })
   test('cancels a pending debounce before a retry starts its own query generation', async () => {
     const scheduler = useSearchScheduler()

@@ -14,7 +14,7 @@
     .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
       InlineAgentChat(
         v-if='isAgentOpen'
-        ref='inlineAgent'
+        :ref='setInlineAgent'
         :owner-id='agentOwnerId'
         :resume-session-id='agentResumeSessionId || undefined'
         :csrf-token='agentCsrfToken'
@@ -289,10 +289,9 @@
 </template>
 <script lang='ts'>
 import { offlinePageHref, requestOfflineSavedPageOpen } from '../../helpers/offline-routes.ts'
-import { defineComponent } from 'vue'
+import { defineComponent, type ComponentPublicInstance } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
-import InlineAgentChat from '../agents/inline-agent-chat.vue'
-import WikiSourcePreview from './wiki-source-preview.vue'
+import { createAsyncComponent } from './async-component-state.vue'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import type { AgentSearchScope } from '../../helpers/agent-draft.ts'
 import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source.ts'
@@ -415,8 +414,8 @@ const emptySearchResponse = (): SearchResponse => ({
 export default defineComponent({
   components: {
     AsyncState,
-    InlineAgentChat,
-    WikiSourcePreview
+    InlineAgentChat: createAsyncComponent(() => import('../agents/inline-agent-chat.vue')),
+    WikiSourcePreview: createAsyncComponent(() => import('./wiki-source-preview.vue'))
   },
   data() {
     return {
@@ -456,6 +455,8 @@ export default defineComponent({
       searchExitRestoreFocus: true,
       directPromptHandoffId: 0,
       directPromptHandoffPending: false,
+      inlineAgent: null as InlineAgentChatRef | null,
+      inlineAgentWaiters: [] as ((agent: InlineAgentChatRef | null) => void)[],
       agentResumeSessionId: null as string | null,
       agentOpeningPage: null as AgentCurrentPageHint | null,
       agentOpeningPageCaptured: false,
@@ -707,6 +708,7 @@ export default defineComponent({
         void this.activateAgentModal()
         return
       }
+      this.resolveInlineAgentWaiters(null)
       if (this.directPromptHandoffPending) this.directPromptHandoffId += 1
       if (this.searchIsFocused) void this.reactivateSearchModal()
       else this.deactivateAgentModal(false)
@@ -788,6 +790,7 @@ export default defineComponent({
     this.searchRequestId += 1
     this.searchRetryId += 1
     this.directPromptHandoffId += 1
+    this.resolveInlineAgentWaiters(null)
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
     this.searchAbortController?.abort()
     this.searchAbortController = null
@@ -853,12 +856,35 @@ export default defineComponent({
       })
       this.pendingAskRestoreTarget = null
       this.modalFocusScope = focusScope
-      const inlineAgent = this.$refs.inlineAgent as InlineAgentChatRef | undefined
-      // Mobile: auto-focusing the composer opens the soft keyboard and shifts the
-      // whole agent UI; keep the panel still until the user taps the input.
-      if (!window.matchMedia('(max-width: 639.98px)').matches) await inlineAgent?.focusComposer()
+      if (this.inlineAgent) await this.focusInlineAgent()
+      else if (!focusScope.containsFocus()) focusScope.focusFirst()
+    },
+    setInlineAgent(instance: Element | ComponentPublicInstance | null): void {
+      const agent = instance as InlineAgentChatRef | null
+      if (agent && this.inlineAgent === agent) return
+      this.inlineAgent = agent
+      this.resolveInlineAgentWaiters(this.isAgentOpen ? this.inlineAgent : null)
+      if (this.inlineAgent && this.isAgentOpen) void this.focusInlineAgent()
+    },
+    resolveInlineAgentWaiters(agent: InlineAgentChatRef | null): void {
+      for (const resolve of this.inlineAgentWaiters.splice(0)) resolve(agent)
+    },
+    async waitForInlineAgent(): Promise<InlineAgentChatRef | null> {
+      await this.$nextTick()
+      if (!this.isAgentOpen) return null
+      if (this.inlineAgent) return this.inlineAgent
+      // A Vue tick mounts the async wrapper, not necessarily its loaded child.
+      return new Promise(resolve => this.inlineAgentWaiters.push(resolve))
+    },
+    async focusInlineAgent(): Promise<void> {
+      const inlineAgent = this.inlineAgent
+      const focusScope = this.modalFocusScope
+      if (!inlineAgent || !focusScope || !this.isAgentOpen) return
+      // Mobile: keep the keyboard closed until the user taps the composer.
+      if (!window.matchMedia('(max-width: 639.98px)').matches) await inlineAgent.focusComposer()
+      if (this.inlineAgent !== inlineAgent || this.modalFocusScope !== focusScope || !this.isAgentOpen) return
       this.retireResumeAfterSelection()
-      if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
+      if (!focusScope.containsFocus()) focusScope.focusFirst()
     },
     activateSearchModal(restoreTarget: HTMLElement | null): void {
       if (this.searchModalFocusScope) return
@@ -1167,11 +1193,14 @@ export default defineComponent({
     async askCurrentQuery(): Promise<void> {
       if (!this.canAsk || this.normalizedSearch.length < 2 || this.directPromptHandoffPending) return
       const prompt = this.normalizedSearch
+      const handoffId = ++this.directPromptHandoffId
+      const scope = this.agentSearchScope()
       this.latchAgentOpeningPage()
       this.pendingAskRestoreTarget = this.activeModalOpener()
       this.searchMode = 'ask'
-      await this.$nextTick()
-      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.preparePrompt(prompt, undefined, this.agentSearchScope())
+      const inlineAgent = await this.waitForInlineAgent()
+      if (!inlineAgent || handoffId !== this.directPromptHandoffId) return
+      await inlineAgent.preparePrompt(prompt, undefined, scope)
     },
     agentSearchScope(): AgentSearchScope {
       if (this.searchRestrictPath && this.currentPageLocale && this.currentPagePath) return { kind: 'section', locale: this.currentPageLocale, path: this.currentPagePath }
@@ -1179,21 +1208,25 @@ export default defineComponent({
       return { kind: 'all' }
     },
     async askSource(source: WikiSource): Promise<void> {
+      if (!this.canAsk) return
+      const handoffId = ++this.directPromptHandoffId
+      const prompt = this.normalizedSearch || this.$t('common:searchResults.helpMeUnderstand', { title: source.title, interpolation: { escapeValue: false } })
+      const scope = this.agentSearchScope()
       this.captureAgentExcursion()
       this.latchAgentOpeningPage()
       this.previewSelector = null
       this.searchMode = 'ask'
-      await this.$nextTick()
-      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.preparePrompt(this.normalizedSearch || this.$t('common:searchResults.helpMeUnderstand', { title: source.title, interpolation: { escapeValue: false } }), source, this.agentSearchScope())
+      const inlineAgent = await this.waitForInlineAgent()
+      if (!inlineAgent || handoffId !== this.directPromptHandoffId) return
+      await inlineAgent.preparePrompt(prompt, source, scope)
     },
     async sendAskPrompt(prompt: string): Promise<void> {
       if (!prompt || this.directPromptHandoffPending) return
       this.directPromptHandoffPending = true
       const handoffId = ++this.directPromptHandoffId
       try {
-        await this.$nextTick()
-        const inlineAgent = this.$refs.inlineAgent as InlineAgentChatRef | undefined
-        if (!inlineAgent) return
+        const inlineAgent = await this.waitForInlineAgent()
+        if (!inlineAgent || handoffId !== this.directPromptHandoffId) return
         const success = await inlineAgent.sendPrompt(prompt)
         if (!success || handoffId !== this.directPromptHandoffId) return
         if (this.normalizedSearch === prompt) this.search = ''
@@ -1221,6 +1254,7 @@ export default defineComponent({
       this.searchIsLoading = false
       this.previewSelector = null
       this.directPromptHandoffId += 1
+      this.resolveInlineAgentWaiters(null)
       this.pendingAskRestoreTarget = null
       this.searchExitRestoreFocus = !keepSearchControlFocus
       this.finishSearchFocus(!keepSearchControlFocus)

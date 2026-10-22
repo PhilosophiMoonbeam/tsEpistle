@@ -519,6 +519,131 @@ describe('service worker lifecycle', () => {
     } finally { harness.restore() }
   })
 
+  it('bounds complete precache transfers to six slots and replays every entry after installation', async () => {
+    const entries = [...manifest, ...Array.from({ length: 12 }, (_, index) => ({
+      url: `/_assets/js/chunk-${index}.js`, revision: `chunk-${index}`
+    }))]
+    let online = true
+    let active = 0
+    let peak = 0
+    const fetched: string[] = []
+    const { promise: writes, resolve: releaseWrites } = Promise.withResolvers<void>()
+    let blockedWrites = 0
+    const harness = await createHarness({ manifest: entries, fetch: async url => {
+      if (!online) throw new Error('Network is offline')
+      fetched.push(url)
+      peak = Math.max(peak, ++active)
+      return new Response(url === SHELL_URL ? shell() : `asset:${url}`)
+    } })
+    const put = MemoryCache.prototype.put
+    const spy = vi.spyOn(MemoryCache.prototype, 'put').mockImplementation(async function (this: MemoryCache, request, response) {
+      const url = typeof request === 'string' ? request : request.url
+      if (!url.includes('__tsepistle_pwa_complete')) {
+        blockedWrites += 1
+        await writes
+        await put.call(this, request, response)
+        active -= 1
+      } else await put.call(this, request, response)
+    })
+    try {
+      const install = harness.dispatchInstall()
+      await vi.waitFor(() => expect(blockedWrites).toBe(6))
+      expect(fetched).toHaveLength(6)
+      releaseWrites()
+      await install
+      expect(peak).toBe(6)
+      expect(active).toBe(0)
+      expect(new Set(fetched).size).toBe(entries.length)
+      online = false
+      for (const entry of entries) {
+        const url = new URL(entry.url, ORIGIN).href
+        const response = await harness.dispatchFetch(requestLike(url, url === SHELL_URL ? 'navigate' : 'cors'))
+        expect(await response.text()).toBe(url === SHELL_URL ? shell() : `asset:${url}`)
+      }
+      // Readiness must not retain a positive verdict after the marker disappears.
+      const cache = harness.caches.stores.get(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)!
+      for (const url of cache.entries.keys()) {
+        if (url.includes('__tsepistle_pwa_complete')) await cache.delete(url)
+      }
+      await expect(harness.dispatchFetch(requestLike(JS_URL, 'cors'))).rejects.toThrow('Network is offline')
+    } finally {
+      releaseWrites()
+      spy.mockRestore()
+      harness.restore()
+    }
+  })
+
+  it('drains in-flight bodies and writes before deleting a failed pool and retains the previous release', async () => {
+    const entries = [...manifest, ...Array.from({ length: 10 }, (_, index) => ({
+      url: `/_assets/js/failure-chunk-${index}.js`, revision: `failure-${index}`
+    }))]
+    const { promise: failure, resolve: releaseFailure } = Promise.withResolvers<void>()
+    const { promise: body, resolve: releaseBody } = Promise.withResolvers<void>()
+    const { promise: writes, resolve: releaseWrites } = Promise.withResolvers<void>()
+    const fetched: string[] = []
+    let blockedWrites = 0
+    let completedWrites = 0
+    const harness = await createHarness({ manifest: entries, fetch: async url => {
+      fetched.push(url)
+      if (url === JS_URL) {
+        await failure
+        return new Response('unavailable', { status: 503 })
+      }
+      if (url === CSS_URL) return new Response(new ReadableStream({
+        async start(controller) {
+          await body
+          controller.enqueue(new TextEncoder().encode('delayed stylesheet'))
+          controller.close()
+        }
+      }))
+      return new Response(url === SHELL_URL ? shell() : 'asset')
+    } })
+    await seedCompleteCache(harness.caches, ownedPriorCacheName, 'previous-release')
+    const put = MemoryCache.prototype.put
+    const spy = vi.spyOn(MemoryCache.prototype, 'put').mockImplementation(async function (this: MemoryCache, request, response) {
+      if (this.name === harness.worker.PWA_SERVICE_WORKER_CACHE_NAME) {
+        blockedWrites += 1
+        await writes
+        await put.call(this, request, response)
+        completedWrites += 1
+      } else await put.call(this, request, response)
+    })
+    let settled = false
+    try {
+      const install = harness.dispatchInstall().then(
+        () => { settled = true; return undefined },
+        error => { settled = true; return error }
+      )
+      await vi.waitFor(() => expect(blockedWrites).toBe(4))
+      expect(fetched).toHaveLength(6)
+      vi.useFakeTimers()
+      releaseFailure()
+      // Let the authoritative failure propagate while the other slots remain blocked.
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+      expect(settled).toBe(false)
+      expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(true)
+      releaseWrites()
+      await vi.waitFor(() => expect(completedWrites).toBe(4))
+      expect(settled).toBe(false)
+      releaseBody()
+      expect(await install).toBeInstanceOf(Error)
+      expect(completedWrites).toBe(5)
+      expect(fetched).toHaveLength(6)
+      expect(harness.caches.stores.has(harness.worker.PWA_SERVICE_WORKER_CACHE_NAME)).toBe(false)
+      expect(harness.caches.stores.has(ownedPriorCacheName)).toBe(true)
+      await harness.dispatchActivate()
+      expect(harness.caches.stores.has(ownedPriorCacheName)).toBe(true)
+    } finally {
+      releaseFailure()
+      releaseBody()
+      releaseWrites()
+      spy.mockRestore()
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['headers', 'body'] as const)('retries only a transient asset %s transport failure before publishing a complete cache', async failure => {
     const calls = new Map<string, number>()
     const cssBody = 'body { color: rebeccapurple; }'

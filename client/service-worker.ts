@@ -258,7 +258,14 @@ async function completionMetadata(cache: Cache): Promise<CompletionMetadata | nu
 }
 
 async function completeCache(cache: Cache): Promise<boolean> {
-  const value = await completionMetadata(cache)
+  const marker = await cache.match(COMPLETE_MARKER_URL)
+  if (!marker?.ok) return false
+  let value: Partial<CompletionMetadata>
+  try {
+    value = (await marker.json()) as Partial<CompletionMetadata>
+  } catch {
+    return false
+  }
   return Boolean(
     value &&
       value.release === PWA_RELEASE_ID &&
@@ -335,25 +342,40 @@ async function installPrecache(): Promise<void> {
   let installed = false
   try {
     for (const request of await cache.keys()) await cache.delete(request)
-    for (const { entry, url } of entries) {
-      const { response, body } = await fetchPrecacheAsset(url)
-      if (body === null) throw new Error(`The offline shell dependency could not be precached: ${url}`)
-      if (!(await integrityMatches(body, entry.integrity))) {
-        throw new Error(`The offline shell dependency could not be precached: ${url}`)
-      }
-      // Preserve content and headers, not the original network response:
-      // WebKit can otherwise fail to replay HTTPS modules while disconnected.
-      const cachedResponse = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
-      if (url === offlineURL) {
-        const shell = new TextDecoder().decode(body)
-        if (metaContent(shell, 'tsepistle-pwa-mode') !== 'feature') throw new Error('The neutral offline shell is not in feature mode.')
-        if (metaContent(shell, 'tsepistle-pwa-release') !== PWA_RELEASE_ID) {
-          throw new Error('The neutral offline shell belongs to a different release.')
+    let nextEntry = 0
+    let failed = false
+    let failure: unknown
+    const precacheNext = async (): Promise<void> => {
+      while (!failed && nextEntry < entries.length) {
+        const { entry, url } = entries[nextEntry++]!
+        try {
+          const { response, body } = await fetchPrecacheAsset(url)
+          if (body === null) throw new Error(`The offline shell dependency could not be precached: ${url}`)
+          if (!(await integrityMatches(body, entry.integrity))) {
+            throw new Error(`The offline shell dependency could not be precached: ${url}`)
+          }
+          // Preserve content and headers, not the original network response:
+          // WebKit can otherwise fail to replay HTTPS modules while disconnected.
+          const cachedResponse = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
+          if (url === offlineURL) {
+            const shell = new TextDecoder().decode(body)
+            if (metaContent(shell, 'tsepistle-pwa-mode') !== 'feature') throw new Error('The neutral offline shell is not in feature mode.')
+            if (metaContent(shell, 'tsepistle-pwa-release') !== PWA_RELEASE_ID) {
+              throw new Error('The neutral offline shell belongs to a different release.')
+            }
+            shellDependencies(shell, url, closure)
+          }
+          await cache.put(url, cachedResponse)
+        } catch (error) {
+          if (!failed) failure = error
+          failed = true
         }
-        shellDependencies(shell, url, closure)
       }
-      await cache.put(url, cachedResponse)
     }
+    // Each slot owns the entire transport, validation and write. Drain all
+    // slots before failure cleanup so no write can outlive the failed install.
+    await Promise.all(Array.from({ length: Math.min(6, entries.length) }, () => precacheNext()))
+    if (failed) throw failure
     for (const url of closure) {
       if (!(await cache.match(url))) throw new Error(`The offline shell closure is incomplete: ${url}`)
     }

@@ -201,6 +201,63 @@ describe('Ask modal accessibility contract', () => {
       dom.window.close()
     }
   })
+  test('focuses a late workspace on desktop, keeps the mobile keyboard closed, and ignores dismissed focus work', async () => {
+    let mobile = false
+    let composerFocus = 0
+    let fallbackFocus = 0
+    let retiredResume = 0
+    let finishFocus
+    const methods = compileSearchMethods(search, ['setInlineAgent', 'resolveInlineAgentWaiters', 'focusInlineAgent'], {
+      window: { matchMedia: () => ({ matches: mobile }) }
+    })
+    const scope = {
+      containsFocus: () => false,
+      focusFirst: () => { fallbackFocus += 1 }
+    }
+    const state = {
+      ...methods,
+      inlineAgent: null,
+      inlineAgentWaiters: [],
+      isAgentOpen: true,
+      modalFocusScope: scope,
+      retireResumeAfterSelection: () => { retiredResume += 1 }
+    }
+    state.setInlineAgent(null)
+    expect(composerFocus).toBe(0)
+    const agent = {
+      focusComposer: async () => { composerFocus += 1 }
+    }
+    state.setInlineAgent(agent)
+    await Promise.resolve()
+    expect(composerFocus).toBe(1)
+    expect(fallbackFocus).toBe(1)
+    expect(retiredResume).toBe(1)
+    state.setInlineAgent(agent)
+    await Promise.resolve()
+    expect(composerFocus).toBe(1)
+    expect(fallbackFocus).toBe(1)
+
+    mobile = true
+    state.setInlineAgent(null)
+    state.setInlineAgent(agent)
+    await Promise.resolve()
+    expect(composerFocus).toBe(1)
+    expect(fallbackFocus).toBe(2)
+    expect(retiredResume).toBe(2)
+
+    mobile = false
+    state.setInlineAgent({
+      focusComposer: () => new Promise(resolve => { finishFocus = resolve })
+    })
+    state.isAgentOpen = false
+    state.modalFocusScope = null
+    state.setInlineAgent(null)
+    finishFocus()
+    await Promise.resolve()
+    expect(fallbackFocus).toBe(2)
+    expect(retiredResume).toBe(2)
+  })
+
   test('Escape closes Agent and restores openers without trapping desktop header traversal', async () => {
     const agentStore = {
       closeWorkspaceCalls: 0,
@@ -210,7 +267,7 @@ describe('Ask modal accessibility contract', () => {
     }
     const methods = compileSearchMethods(
       search,
-      ['activateAgentModal', 'activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'handleSearchKeydown', 'captureSearchRestoreTarget'],
+      ['activateAgentModal', 'activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'handleSearchKeydown', 'captureSearchRestoreTarget', 'resolveInlineAgentWaiters'],
       {
         activeOwnedOverlayRoots,
         createModalFocusScope,
@@ -275,6 +332,8 @@ describe('Ask modal accessibility contract', () => {
         pendingAskRestoreTarget: null,
         searchRestoreTarget: pageOpener,
         directPromptHandoffId: 0,
+        inlineAgent: null,
+        inlineAgentWaiters: [],
         modalFocusScope: null,
         searchModalFocusScope: null,
         get isAgentOpen() {
@@ -288,7 +347,7 @@ describe('Ask modal accessibility contract', () => {
         retireResumeAfterSelection: () => undefined,
         findSearchTrigger: () => pageOpener
       }
-      for (const name of ['activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal']) {
+      for (const name of ['activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'resolveInlineAgentWaiters']) {
         state[name] = (...args) => methods[name].call(state, ...args)
       }
       fixtureDocument.addEventListener('keydown', methods.handleSearchKeydown.bind(state), true)
@@ -305,6 +364,8 @@ describe('Ask modal accessibility contract', () => {
       expect(state.isAgentOpen).toBe(true)
       expect(state.searchIsFocused).toBe(true)
       expect(agentStore.closeWorkspaceCalls).toBe(0)
+      let cancelledWaiter = false
+      state.inlineAgentWaiters.push(agent => { cancelledWaiter = agent === null })
 
       nestedOverlay.classList.remove('v-overlay--active')
       const agentEscape = new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
@@ -319,6 +380,8 @@ describe('Ask modal accessibility contract', () => {
       expect(state.searchModalFocusScope).toBeNull()
       expect(fixtureDocument.activeElement).toBe(pageOpener)
       expect(agentStore.closeWorkspaceCalls).toBe(1)
+      expect(cancelledWaiter).toBe(true)
+      expect(state.inlineAgentWaiters).toEqual([])
       expect(fixtureWindow.location.pathname).toBe('/current/page')
       expect(fixtureWindow.location.search).toBe('?keep=1')
       state.searchIsFocused = true
