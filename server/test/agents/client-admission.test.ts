@@ -409,7 +409,7 @@ describe('Wiki Agent fresh admission through the public store', () => {
     expect(server.attempts).toEqual([])
     if (status === 401) {
       expect(store.thread).toBeNull()
-      expect(store.pinOwnerId).toBeNull()
+      expect(store.workspaceOwnerId).toBeNull()
       expect(store.drafts).toEqual({})
     } else {
       expect(store.drafts[SESSION]!.text).toBe('Not sent')
@@ -481,7 +481,7 @@ describe('Wiki Agent fresh admission through the public store', () => {
     held.release(oldThread)
     expect(await sending).toBe(false)
     expect(server.attempts).toEqual([])
-    expect(store.pinOwnerId).toBe(2)
+    expect(store.workspaceOwnerId).toBe(2)
     expect(store.thread!.session.id).toBe(OTHER_SESSION)
     expect(store.drafts[SESSION]).toBeUndefined()
     expect(store.drafts[OTHER_SESSION]!.text).toBe('Owner two private question')

@@ -198,7 +198,7 @@ const loadPanel = (
     ...agents
   }
   Object.defineProperties(store, {
-    pinOwnerId: { get: () => ownerContext.value.ownerId },
+    workspaceOwnerId: { get: () => ownerContext.value.ownerId },
     ownerGeneration: { get: () => ownerContext.value.ownerGeneration },
     workspaceVersion: { get: () => ownerContext.value.workspaceVersion }
   })

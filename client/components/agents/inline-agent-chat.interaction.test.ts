@@ -152,7 +152,6 @@ interface LockState {
   advanceTime: (milliseconds: number) => void
   panelMode: ValueRef<'wide' | 'docked' | 'modal'>
   activeRun: ValueRef<{ canCancel: boolean; status: string } | null>
-  canPinCurrentChat: ValueRef<boolean>
   canSubmit: ValueRef<boolean>
   composerFocused: ValueRef<boolean>
   invocationLimit: ValueRef<number>
@@ -188,7 +187,6 @@ interface LockState {
     reloadSessions: (...args: unknown[]) => unknown
     sessions: Array<{ id: string; deletedAt: string | null }>
     send: (...args: unknown[]) => unknown
-    setCurrentChatPinned: (...args: unknown[]) => unknown
   }
   clearUnfiledCommitted: ValueRef<boolean>
   clearUnfiledError: ValueRef<string>
@@ -321,7 +319,6 @@ const loadGoalLockState = (
   status: 'active' | 'paused' | null,
   mutationBusy = false,
   runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null,
-  canPinCurrentChat = true,
   workspaceClosed = false,
   page: TestPageHint | null = null,
   realStore?: StoreGeneric
@@ -349,14 +346,11 @@ const loadGoalLockState = (
   })
   const storeRefs = {
     connection: ref('connected'),
-    canPinCurrentChat: ref(canPinCurrentChat),
     decidingApprovalId: ref(null),
     error: ref(''),
     goalBusy: ref(false),
     initializationAdmissionFailure: ref<'access' | 'authentication' | null>(null),
     loading: ref(false),
-    pinnedSessionId: ref<string | null>(null),
-    pinStorageAvailable: ref(true),
     sending: ref(false),
     networkPaused: ref(workspaceClosed),
     workspaceDisposed: ref(workspaceClosed),
@@ -390,7 +384,6 @@ const loadGoalLockState = (
     reloadSessions: vi.fn(() => Promise.resolve({ accepted: true, current: true })),
     sessions: [] as Array<{ id: string; deletedAt: string | null }>,
     send: vi.fn(() => Promise.resolve(true)),
-    setCurrentChatPinned: vi.fn(),
     drafts: Vue.reactive<Record<string, AgentDraft>>({}),
     setDraft: vi.fn(),
     updateDraft: vi.fn(),
@@ -790,16 +783,15 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
   })
   store.$patch({
     csrfToken: 'csrf',
-    pinOwnerId: 2,
+    workspaceOwnerId: 2,
     routeSync: false,
     connection: 'connected',
     initializedWorkspaceVersion: store.workspaceVersion,
     thread: serverThread,
     contextPage: page,
-    continuitySessionId: serverThread.session.id,
-    conversationPage: page ? { id: page.id, locale: page.locale } : null
+    continuitySessionId: serverThread.session.id
   })
-  const state = () => loadGoalLockState(null, false, null, true, false, page, store)
+  const state = () => loadGoalLockState(null, false, null, false, page, store)
   stateCleanups.push(() => {
     store.closeWorkspace()
     store.$dispose()
@@ -1006,7 +998,6 @@ const openPanelMenu = async (mounted: MountedInlineAgent, options: { readonly is
   expect(list?.getAttribute('role')).not.toBe('menu')
   const items = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__panel-menu-item'))
   menuAction(items, 'Memory')
-  menuAction(items, 'Pin chat')
   menuAction(items, options.isTemporary ? 'Keep conversation' : 'Temporary chat')
   expect(items.every(item => item.getAttribute('role') === 'listitem')).toBe(true)
   expect(items.every(item => item.getAttribute('role') !== 'menu')).toBe(true)
@@ -1051,7 +1042,7 @@ describe('Inline Agent historical Review scope', () => {
     expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
     expect(mounted.root.querySelector('.agent-composer__media-attachments')).toBeNull()
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
-    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).toBeNull()
 
     send(mounted.root).click()
     await settle()
@@ -1087,12 +1078,10 @@ describe('Inline Agent historical Review scope', () => {
     expect(mounted.root.querySelectorAll('.agent-context__source-label')).toHaveLength(8)
     expect(workspace.messageInputs).toHaveLength(0)
 
-    workspace.store.setCurrentChatPinned(true)
     workspace.store.setCurrentPage({ ...routePage, id: 1, path: 'handbook/source-1' })
-    await workspace.store.reconcilePinnedContext()
     await settle()
     expect(chip()?.textContent).toContain('en/handbook/original')
-    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).toBeNull()
     send(mounted.root).click()
     await settle()
     expect(workspace.messageInputs).toHaveLength(1)
@@ -1115,7 +1104,7 @@ describe('Inline Agent historical Review scope', () => {
     await settle()
     const chip = mounted.root.querySelector<HTMLButtonElement>('.agent-context__page-chip')
     expect(chip?.getAttribute('aria-pressed')).toBe('false')
-    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).not.toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).not.toBeNull()
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
     chip?.click()
     await settle()
@@ -1139,7 +1128,7 @@ describe('Inline Agent historical Review scope', () => {
     await settle()
     expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
     expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
-    expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).not.toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).not.toBeNull()
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
   })
 
@@ -1210,7 +1199,7 @@ describe('Inline Agent historical Review scope', () => {
       expect(mounted.root.querySelectorAll('.agent-context__source-label')).toHaveLength(0)
       expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
       expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
-      expect(mounted.root.querySelector('.inline-agent__pin-storage-warning[role="status"][aria-live="polite"]')).not.toBeNull()
+      expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).not.toBeNull()
       expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
     })
   }
@@ -1259,7 +1248,7 @@ describe('Inline Agent mobile panel controls', () => {
   })
 
   it('keeps History closed when the workspace is unavailable', async () => {
-    const mounted = mountInlineAgent(loadGoalLockState(null, false, null, true, true))
+    const mounted = mountInlineAgent(loadGoalLockState(null, false, null, true))
     const historyToggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
     if (!historyToggle) throw new Error('History toggle did not render')
 
@@ -1930,8 +1919,6 @@ describe('Inline Agent workspace actions', () => {
     }
     expect(first.currentPage.value).toEqual(firstPage)
     expectIncluded(mounted.root, firstPage)
-    const next = threadFixture('00000000-0000-4000-8000-000000000004')
-    workspace.creations.push({ retention: 'saved', thread: next })
     first.componentProps.pageId = secondPage.id
     first.componentProps.pageLocale = secondPage.locale
     first.componentProps.pagePath = secondPage.path
@@ -1939,22 +1926,22 @@ describe('Inline Agent workspace actions', () => {
     await settle()
     expect(first.currentPage.value).toEqual(secondPage)
     expectIncluded(mounted.root, secondPage)
-    expect(workspace.store.thread?.session.id).toBe(next.session.id)
+    expect(workspace.store.thread?.session.id).toBe(sessionId)
     const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
     const submit = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
     if (!textarea || !submit) throw new Error('Composer send controls missing')
     textarea.value = 'Explain this page'
     textarea.dispatchEvent(new Event('input', { bubbles: true }))
     await settle()
-    expect(workspace.store.drafts[next.session.id]?.text).toBe('Explain this page')
+    expect(workspace.store.drafts[sessionId]?.text).toBe('Explain this page')
     submit.click()
     await settle()
-    expect(workspace.store.thread?.session.currentRun).toMatchObject({ sessionId: next.session.id, status: 'succeeded' })
-    expect(workspace.store.drafts[next.session.id]?.text).toBe('')
+    expect(workspace.store.thread?.session.currentRun).toMatchObject({ sessionId, status: 'succeeded' })
+    expect(workspace.store.drafts[sessionId]?.text).toBe('')
     expect(textarea.value).toBe('')
     expectIncluded(mounted.root, secondPage)
     mounted.unmount()
-    const reopenedState = loadGoalLockState(null, false, null, true, false, secondPage, workspace.store)
+    const reopenedState = loadGoalLockState(null, false, null, false, secondPage, workspace.store)
     const reopened = mountInlineAgent(reopenedState)
     await settle()
     expect(reopenedState.currentPage.value).toEqual(secondPage)
@@ -2005,14 +1992,13 @@ describe('Inline Agent workspace actions', () => {
   })
 
   for (const viewportWidth of [1440, 390]) {
-    it(`keeps a historical pinned conversation model-free at ${viewportWidth}px`, async () => {
+    it(`keeps a historical conversation model-free at ${viewportWidth}px`, async () => {
       const historical = threadFixture()
       const historicalProfile = '00000000-0000-4000-8000-000000000099'
       const workspace = realWorkspace('saved', null, {
         ...historical,
         session: { ...historical.session, providerProfileId: historicalProfile }
       })
-      workspace.store.pinnedSessionId = sessionId
       workspace.store.initializedWorkspaceVersion = null
       const state = workspace.state()
       state.componentProps.resumeSessionId = sessionId
@@ -2645,88 +2631,6 @@ describe('Agent workspace action semantics', () => {
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
   })
 
-  it('disables Pin while selection is unsettled but allows it during active runs and goals', async () => {
-    const workspace = realWorkspace()
-    const disabled = (item: HTMLElement): boolean =>
-      item.hasAttribute('disabled') || item.getAttribute('aria-disabled') === 'true' || item.classList.contains('v-list-item--disabled')
-    workspace.authorization.pending = new Promise<Response>(() => {})
-    workspace.store.initializedWorkspaceVersion = null
-    const unsettled = mountInlineAgent(workspace.state())
-    expect(disabled(menuAction(await openPanelMenu(unsettled), 'Pin chat'))).toBe(true)
-    unsettled.unmount()
-
-    workspace.authorization.pending = null
-    workspace.store.$patch({
-      workspaceDisposed: false,
-      networkPaused: false,
-      loading: false,
-      connection: 'connected',
-      initializedWorkspaceVersion: workspace.store.workspaceVersion,
-      thread: {
-        ...threadFixture(),
-        session: {
-          ...threadFixture().session,
-          currentRun: {
-            id: '00000000-0000-4000-8000-000000000020',
-            sessionId,
-            status: 'running',
-            attempt: 1,
-            eventSequence: 1,
-            canCancel: true,
-            createdAt: timestamp,
-            startedAt: timestamp,
-            completedAt: null,
-            errorCode: null,
-            errorMessage: null
-          }
-        }
-      }
-    })
-    const running = mountInlineAgent(workspace.state())
-    expect(disabled(menuAction(await openPanelMenu(running), 'Pin chat'))).toBe(false)
-    running.unmount()
-    workspace.store.$patch({
-      workspaceDisposed: false,
-      networkPaused: false,
-      loading: false,
-      connection: 'connected',
-      initializedWorkspaceVersion: workspace.store.workspaceVersion
-    })
-    const activeThread = workspace.store.thread
-    if (!activeThread) throw new Error('Active conversation missing')
-    workspace.store.thread = {
-      ...activeThread,
-      goal: {
-        id: '00000000-0000-4000-8000-000000000030',
-        sessionId,
-        objective: 'Plan the release',
-        status: 'active',
-        version: 1,
-        currentRunId: '00000000-0000-4000-8000-000000000020',
-        continuationCount: 0,
-        maxContinuations: 4,
-        consumedTokens: 0,
-        maxTokens: 4096,
-        consumedToolCalls: 0,
-        maxToolCalls: 16,
-        budgetPolicyVersion: null,
-        budgetSelection: 'legacy',
-        tokenTier: null,
-        tokenAllowance: null,
-        budgetCycle: 0,
-        budgetLimitReason: null,
-        canRenewTokenBudget: false,
-        startedAt: timestamp,
-        deadlineAt: '2026-09-16T10:00:00.000Z',
-        completedAt: null,
-        errorCode: null,
-        errorMessage: null,
-        completion: null
-      }
-    }
-    const goal = mountInlineAgent(workspace.state())
-    expect(disabled(menuAction(await openPanelMenu(goal), 'Pin chat'))).toBe(false)
-  })
 
   it('announces Review needed with Stop instead of Send while awaiting approval', () => {
     const mounted = mountInlineAgent(loadGoalLockState('active', false, 'awaiting_approval'))
@@ -2903,7 +2807,7 @@ describe('Inline Agent initialization admission', () => {
     expect(mounted.root.querySelector('.inline-agent__connection-alert')).toBeNull()
     expect(workspace.store.thread).toBeNull()
     expect(workspace.store.drafts).toEqual({})
-    expect(workspace.store.pinOwnerId).toBeNull()
+    expect(workspace.store.workspaceOwnerId).toBeNull()
     expect(workspace.store.initializationAdmissionFailure).toBe('authentication')
     expect(workspace.store.isWorkspaceReady()).toBe(false)
     expect(workspace.store.isWorkspaceMutationReady()).toBe(false)
@@ -2933,16 +2837,16 @@ describe('Inline Agent initialization admission', () => {
       if (status === 401) {
         expect(workspace.store.thread).toBeNull()
         expect(workspace.store.drafts).toEqual({})
-        expect(workspace.store.pinOwnerId).toBeNull()
+        expect(workspace.store.workspaceOwnerId).toBeNull()
       } else {
         expect(workspace.store.drafts[sessionId]?.text).toBe('Unsent private question')
-        expect(workspace.store.pinOwnerId).toBe(2)
+        expect(workspace.store.workspaceOwnerId).toBe(2)
       }
       mounted.unmount()
     })
   }
 
-  it('reopens after session expiry with a fresh authority read and starts a fresh chat only on explicit entry', async () => {
+  it('starts a fresh chat only on explicit entry after session expiry and recovers the unsent draft', async () => {
     const workspace = realWorkspace()
     const state = workspace.state()
     const mounted = mountInlineAgent(state)
@@ -2962,7 +2866,6 @@ describe('Inline Agent initialization admission', () => {
     const reopened = mountInlineAgent(reopenedState)
     await expect(reopenedState.ensureInitialized()).resolves.toBe(true)
     await settle()
-    expect(workspace.requests.slice(afterExpiry).some(request => request.path === `/_api/agents/sessions/${sessionId}` && request.method === 'GET')).toBe(true)
     expect(workspace.requests.slice(afterExpiry).filter(request => request.method === 'POST')).toEqual([{ method: 'POST', path: '/_api/agents/sessions' }])
     expect(workspace.store.thread?.session.id).toBe(fresh.session.id)
     expect(workspace.store.isWorkspaceReady()).toBe(true)

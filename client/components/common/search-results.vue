@@ -299,7 +299,7 @@ import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 import { emitSearchFocus, onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
 import { useAgentsStore } from '../../store/agents.ts'
-import { isAgentSessionId } from '../../helpers/agent-chat-pin.ts'
+import { isAgentSessionId } from '../../helpers/agent-chat-continuity.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 import { openOfflineStorage, subscribeOfflineStorageChanges } from '../../helpers/offline-storage.ts'
 import { readPrivateCorpus } from '../../helpers/offline-crypto.ts'
@@ -731,12 +731,11 @@ export default defineComponent({
       }
     },
     authAuthorityReady(ready: boolean) {
-      if (ready) useAgentsStore().notePageNavigation(this.currentPageHint(), this.agentOwnerId)
+      if (ready) useAgentsStore().setCurrentPage(this.currentPageHint())
     },
     currentPageContextKey() {
-      this.agentResumeSessionId = null
       const page = this.currentPageHint()
-      useAgentsStore().notePageNavigation(page, this.authAuthorityReady ? this.agentOwnerId : undefined)
+      useAgentsStore().setCurrentPage(page)
       if (this.agentOpeningPageCaptured) this.agentOpeningPage = page
     },
     results(newResults: SearchResultRow[], oldResults: SearchResultRow[]) {
@@ -759,7 +758,7 @@ export default defineComponent({
     }
   },
   mounted() {
-    if (this.authAuthorityReady) useAgentsStore().notePageNavigation(this.currentPageHint(), this.agentOwnerId)
+    if (this.authAuthorityReady) useAgentsStore().setCurrentPage(this.currentPageHint())
     if (!this.canAsk && this.searchMode === 'ask') this.searchMode = 'search'
     const approvalId = new URL(window.location.href).searchParams.get('agentApproval')
     if (approvalId && /^[0-9a-f-]{36}$/i.test(approvalId) && this.canAsk) {

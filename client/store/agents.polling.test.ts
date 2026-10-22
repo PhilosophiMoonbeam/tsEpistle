@@ -2,8 +2,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
 import type { AgentConversationFolderView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { AGENT_CHAT_PIN_STORAGE_KEY, clearAgentChatPin, writeAgentChatPin } from '../helpers/agent-chat-pin.ts'
+import { AGENT_CHAT_RECENT_STORAGE_KEY, clearAgentChatRecent, readAgentChatRecent, writeAgentChatRecent } from '../helpers/agent-chat-continuity.ts'
 import { isAgentSessionId, useAgentsStore } from './agents.ts'
+
+afterEach(() => {
+  clearAgentChatRecent()
+})
 
 // Fixture-only envelope: server signature verification is not exercised by these store tests.
 const admissionToken = (sessionId: string, ownerId: number, overrides: Record<string, unknown> = {}): string => {
@@ -489,7 +493,6 @@ describe('Agent chat refresh fallback', () => {
 
 describe('Agent store initialization', () => {
   afterEach(() => {
-    clearAgentChatPin()
     vi.restoreAllMocks()
   })
 
@@ -584,17 +587,17 @@ describe('Agent store initialization', () => {
     expect(store.sessionMutationBusy).toBe(false)
     store.closeWorkspace()
   })
-  it('falls an absent explicit resume through a live pin before creating anything new', async () => {
+  it('falls an absent explicit resume through the latest tab selection before creating anything new', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.connectCurrentRun = vi.fn()
     const resumeId = '00000000-0000-4000-8000-000000000120'
-    const pinnedId = '00000000-0000-4000-8000-000000000121'
-    const pinned = {
-      ...threadForSession(pinnedId, '00000000-0000-4000-8000-000000000122'),
-      session: { ...activeThread().session, id: pinnedId, currentRun: null }
+    const recentId = '00000000-0000-4000-8000-000000000121'
+    const recent = {
+      ...threadForSession(recentId, '00000000-0000-4000-8000-000000000122'),
+      session: { ...activeThread().session, id: recentId, currentRun: null }
     }
-    writeAgentChatPin(1, pinnedId)
+    writeAgentChatRecent(1, recentId, Date.now())
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
@@ -602,21 +605,20 @@ describe('Agent store initialization', () => {
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
       if (path === `/_api/agents/sessions/${resumeId}` && method === 'GET') return Promise.resolve(Response.json({ message: 'Gone' }, { status: 410 }))
-      if (path === `/_api/agents/sessions/${pinnedId}` && method === 'GET') return Promise.resolve(Response.json(pinned))
+      if (path === `/_api/agents/sessions/${recentId}` && method === 'GET') return Promise.resolve(Response.json(recent))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
 
     await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: resumeId })).resolves.toBe(true)
 
-    expect(store.thread?.session.id).toBe(pinnedId)
+    expect(store.thread?.session.id).toBe(recentId)
     expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${resumeId}`)).toHaveLength(1)
-    expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${pinnedId}`)).toHaveLength(1)
+    expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${recentId}`)).toHaveLength(1)
     expect(fetcher.mock.calls.some(call => call[1]?.method === 'POST')).toBe(false)
-    clearAgentChatPin()
     store.closeWorkspace()
   })
 
-  it('uses one thread read for an absent resume that is the same as the pin, then clears the pin before a fresh session', async () => {
+  it('reads a missing explicit and recent selection only once before replacing the deleted selector', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.connectCurrentRun = vi.fn()
@@ -625,7 +627,7 @@ describe('Agent store initialization', () => {
       ...threadForSession('00000000-0000-4000-8000-000000000124', '00000000-0000-4000-8000-000000000125'),
       session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000124', currentRun: null }
     }
-    writeAgentChatPin(1, missingId)
+    writeAgentChatRecent(1, missingId, Date.now())
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
@@ -641,8 +643,7 @@ describe('Agent store initialization', () => {
 
     expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${missingId}`)).toHaveLength(1)
     expect(fetcher.mock.calls.filter(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')).toHaveLength(1)
-    expect(window.sessionStorage.getItem('agents.chat-pin.v1')).toBeNull()
-    clearAgentChatPin()
+    expect(readAgentChatRecent(1)?.sessionId).toBe(created.session.id)
     store.closeWorkspace()
   })
 
@@ -652,8 +653,8 @@ describe('Agent store initialization', () => {
       const store = useAgentsStore()
       store.connectCurrentRun = vi.fn()
       const resumeId = status === 503 ? '00000000-0000-4000-8000-000000000126' : '00000000-0000-4000-8000-000000000127'
-      const pinnedId = status === 503 ? '00000000-0000-4000-8000-000000000128' : '00000000-0000-4000-8000-000000000129'
-      writeAgentChatPin(1, pinnedId)
+      const recentId = status === 503 ? '00000000-0000-4000-8000-000000000128' : '00000000-0000-4000-8000-000000000129'
+      writeAgentChatRecent(1, recentId, Date.now())
       const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
         const path = String(input)
         const method = init?.method ?? 'GET'
@@ -666,15 +667,14 @@ describe('Agent store initialization', () => {
 
       await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: resumeId })).resolves.toBe(false)
 
-      expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${pinnedId}`)).toHaveLength(0)
+      expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${recentId}`)).toHaveLength(0)
       expect(fetcher.mock.calls.some(call => call[1]?.method === 'POST')).toBe(false)
-      clearAgentChatPin()
       store.closeWorkspace()
       vi.restoreAllMocks()
     }
   })
 
-  it('rejects malformed IDs before issuing a thread GET and uses the same UUID parser for routes and pins', async () => {
+  it('rejects malformed IDs before a thread GET and shares UUID validation between routes and continuity', async () => {
     expect(isAgentSessionId('00000000-0000-4000-8000-000000000130')).toBe(true)
     expect(isAgentSessionId('00000000-0000-0000-0000-000000000130')).toBe(false)
     expect(isAgentSessionId('not-a-session')).toBe(false)
@@ -682,12 +682,12 @@ describe('Agent store initialization', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.connectCurrentRun = vi.fn()
-    const pinnedId = '00000000-0000-4000-8000-000000000131'
-    const pinned = {
-      ...threadForSession(pinnedId, '00000000-0000-4000-8000-000000000132'),
-      session: { ...activeThread().session, id: pinnedId, currentRun: null }
+    const recentId = '00000000-0000-4000-8000-000000000131'
+    const recent = {
+      ...threadForSession(recentId, '00000000-0000-4000-8000-000000000132'),
+      session: { ...activeThread().session, id: recentId, currentRun: null }
     }
-    writeAgentChatPin(1, pinnedId)
+    writeAgentChatRecent(1, recentId, Date.now())
     const malformedResume = '00000000-0000-0000-0000-000000000133'
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
@@ -695,19 +695,18 @@ describe('Agent store initialization', () => {
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
       if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
-      if (path === `/_api/agents/sessions/${pinnedId}` && method === 'GET') return Promise.resolve(Response.json(pinned))
+      if (path === `/_api/agents/sessions/${recentId}` && method === 'GET') return Promise.resolve(Response.json(recent))
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
 
     await expect(store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: malformedResume })).resolves.toBe(true)
 
     expect(fetcher.mock.calls.some(call => call[0] === `/_api/agents/sessions/${malformedResume}`)).toBe(false)
-    expect(store.thread?.session.id).toBe(pinnedId)
-    clearAgentChatPin()
+    expect(store.thread?.session.id).toBe(recentId)
     store.closeWorkspace()
   })
 
-  it('discards a malformed persisted pin without issuing a thread GET', async () => {
+  it('discards a malformed persisted selector without issuing a thread GET', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.connectCurrentRun = vi.fn()
@@ -715,7 +714,7 @@ describe('Agent store initialization', () => {
       ...threadForSession('00000000-0000-4000-8000-000000000134', '00000000-0000-4000-8000-000000000135'),
       session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000134', currentRun: null }
     }
-    window.sessionStorage.setItem(AGENT_CHAT_PIN_STORAGE_KEY, JSON.stringify({ version: 1, ownerId: 1, sessionId: 'not-a-session' }))
+    window.sessionStorage.setItem(AGENT_CHAT_RECENT_STORAGE_KEY, JSON.stringify({ version: 1, ownerId: 1, sessionId: 'not-a-session', closedAt: Date.now() }))
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
@@ -732,8 +731,7 @@ describe('Agent store initialization', () => {
       fetcher.mock.calls.filter(call => typeof call[0] === 'string' && call[0].includes('/_api/agents/sessions/') && call[1]?.method === 'GET')
     ).toHaveLength(0)
     expect(fetcher.mock.calls.filter(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')).toHaveLength(1)
-    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBeNull()
-    clearAgentChatPin()
+    expect(readAgentChatRecent(1)?.sessionId).toBe(created.session.id)
     store.closeWorkspace()
   })
   it('uses the greatest current-or-summary version and keeps a late move projection monotonic', async () => {
@@ -1101,7 +1099,7 @@ describe('Agent session mutations', () => {
       setActivePinia(createPinia())
       const store = useAgentsStore()
       store.csrfToken = 'csrf-token'
-      store.pinOwnerId = 1
+      store.workspaceOwnerId = 1
       const base = activeThread()
       const current: AgentThreadState = {
         ...base,
@@ -1195,7 +1193,7 @@ describe('Agent session mutations', () => {
     store.thread = accountA
     store.sessions = [summaryForThread(accountA)]
     store.csrfToken = 'csrf-a'
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     markWorkspaceReady(store)
     const pendingSend = deferred<Response>()
     const postStarted = deferred<void>()
@@ -1754,289 +1752,6 @@ describe('Agent session selection', () => {
   })
 })
 
-describe('Agent chat pin availability', () => {
-  afterEach(() => {
-    clearAgentChatPin()
-    vi.restoreAllMocks()
-  })
-
-  it('keeps pinned drafts synchronous without storage churn and persists only changed context selectors', () => {
-    setActivePinia(createPinia())
-    const store = useAgentsStore()
-    const thread = activeThread()
-    const sessionId = thread.session.id
-    const otherSessionId = '00000000-0000-4000-8000-000000000151'
-    const source = {
-      id: 9,
-      locale: 'en',
-      path: 'docs/start',
-      title: 'Start',
-      description: '',
-      sourceRevision: '8',
-      updatedAt: '2026-09-01T00:00:00Z',
-      visibility: 'public' as const,
-      excerpt: 'Private source excerpt',
-      excerptTruncated: false
-    }
-    store.thread = thread
-    store.pinOwnerId = 1
-    markWorkspaceReady(store)
-    store.updateDraft(sessionId, { sources: [source] })
-    store.setCurrentChatPinned(true)
-    const initialBookmark = window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)
-    expect(JSON.parse(initialBookmark!)).toEqual({
-      version: 1,
-      ownerId: 1,
-      sessionId,
-      context: { page: null, includeCurrentPage: true, sources: [{ id: 9, locale: 'en' }] }
-    })
-    const storageWrites = vi.spyOn(Storage.prototype, 'setItem')
-    const pinWrites = () => storageWrites.mock.calls.filter(([key]) => key === AGENT_CHAT_PIN_STORAGE_KEY)
-
-    for (let edit = 1; edit <= 20; edit += 1) {
-      const text = `Private draft ${'x'.repeat(edit)}`
-      store.setDraft(sessionId, text)
-      expect(store.drafts[sessionId]?.text).toBe(text)
-    }
-    store.updateDraft(sessionId, { mode: 'goal' })
-    store.updateDraft(sessionId, { skillVersionIds: ['00000000-0000-4000-8000-000000000152'] })
-    store.updateDraft(sessionId, { scope: { kind: 'selected' } })
-    store.updateDraft(sessionId, {
-      includeCurrentPage: true,
-      sources: [{ ...source, title: 'Refreshed title', excerpt: 'Refreshed private excerpt' }]
-    })
-    const draft = store.drafts[sessionId]
-    expect(draft.text).toBe(`Private draft ${'x'.repeat(20)}`)
-    expect(draft.mode).toBe('goal')
-    expect(draft.skillVersionIds).toEqual(['00000000-0000-4000-8000-000000000152'])
-    expect(draft.scope).toEqual({ kind: 'selected' })
-    expect(draft.sources).toEqual([{ ...source, title: 'Refreshed title', excerpt: 'Refreshed private excerpt' }])
-    expect(pinWrites()).toHaveLength(0)
-    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBe(initialBookmark)
-
-    const expectBookmark = (writes: number, includeCurrentPage: boolean, id: number, locale: string) => {
-      expect(pinWrites()).toHaveLength(writes)
-      const raw = window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!
-      expect(JSON.parse(raw)).toEqual({
-        version: 1,
-        ownerId: 1,
-        sessionId,
-        context: { page: null, includeCurrentPage, sources: [{ id, locale }] }
-      })
-      expect(raw).not.toContain('Private draft')
-      expect(raw).not.toContain('excerpt')
-    }
-    store.updateDraft(sessionId, { includeCurrentPage: false })
-    expectBookmark(1, false, 9, 'en')
-    store.updateDraft(sessionId, { sources: [{ ...source, id: 10 }] })
-    expectBookmark(2, false, 10, 'en')
-    store.updateDraft(sessionId, { sources: [{ ...source, id: 10, locale: 'fr' }] })
-    expectBookmark(3, false, 10, 'fr')
-
-    const currentBookmark = window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)
-    store.updateDraft(otherSessionId, { includeCurrentPage: false, sources: [source] })
-    store.thread = activeThread(1, otherSessionId)
-    store.updateDraft(sessionId, { includeCurrentPage: true })
-    expect(pinWrites()).toHaveLength(3)
-    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBe(currentBookmark)
-
-    store.thread = thread
-    store.pinOwnerId = null
-    store.updateDraft(sessionId, { sources: [source] })
-    expect(pinWrites()).toHaveLength(3)
-    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBe(currentBookmark)
-    expect(store.drafts[sessionId]?.sources[0]?.id).toBe(9)
-  })
-
-  it('keeps a retained chat unchanged while a replacement workspace is loading, then pins the committed chat', async () => {
-    setActivePinia(createPinia())
-    const store = useAgentsStore()
-    store.routeSync = false
-    store.pinOwnerId = 1
-    store.workspaceVersion = 7
-    store.initializedWorkspaceVersion = 7
-    const retained = {
-      ...threadForSession('00000000-0000-4000-8000-000000000140', '00000000-0000-4000-8000-000000000141'),
-      session: {
-        ...activeThread().session,
-        id: '00000000-0000-4000-8000-000000000140',
-        currentRun: null
-      }
-    }
-    const selected = {
-      ...threadForSession('00000000-0000-4000-8000-000000000142', '00000000-0000-4000-8000-000000000143'),
-      session: {
-        ...activeThread().session,
-        id: '00000000-0000-4000-8000-000000000142',
-        currentRun: null
-      }
-    }
-    store.thread = retained
-    writeAgentChatPin(1, retained.session.id)
-    store.pinnedSessionId = retained.session.id
-    store.connectCurrentRun = vi.fn()
-    const pendingSelection = deferred<Response>()
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
-      const path = String(input)
-      const method = init?.method ?? 'GET'
-      if (path === `/_api/agents/sessions/${selected.session.id}` && method === 'GET') return pendingSelection.promise
-      if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
-      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
-      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
-    })
-
-    const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false, resumeSessionId: selected.session.id })
-    expect(store.canPinCurrentChat).toBe(false)
-    store.setCurrentChatPinned(true)
-    store.setCurrentChatPinned(false)
-    expect(store.pinnedSessionId).toBe(retained.session.id)
-    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(retained.session.id)
-
-    pendingSelection.resolve(Response.json(selected))
-    await expect(initializing).resolves.toBe(true)
-    expect(store.thread?.session.id).toBe(selected.session.id)
-    expect(store.canPinCurrentChat).toBe(true)
-    store.setCurrentChatPinned(true)
-    expect(store.pinnedSessionId).toBe(selected.session.id)
-    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(selected.session.id)
-    store.closeWorkspace()
-  })
-
-  it('blocks pin mutations during a history read while retaining the displayed chat', async () => {
-    setActivePinia(createPinia())
-    const store = useAgentsStore()
-    store.routeSync = false
-    store.pinOwnerId = 1
-    store.workspaceVersion = 8
-    store.initializedWorkspaceVersion = 8
-    const retained = threadForSession('00000000-0000-4000-8000-000000000144', '00000000-0000-4000-8000-000000000145')
-    const selected = threadForSession('00000000-0000-4000-8000-000000000146', '00000000-0000-4000-8000-000000000147')
-    store.thread = retained
-    writeAgentChatPin(1, retained.session.id)
-    store.pinnedSessionId = retained.session.id
-    store.connectCurrentRun = vi.fn()
-    const pendingSelection = deferred<Response>()
-    vi.spyOn(window, 'fetch').mockReturnValue(pendingSelection.promise)
-
-    const opening = store.openSession(selected.session.id)
-    expect(store.canPinCurrentChat).toBe(false)
-    store.setCurrentChatPinned(true)
-    store.setCurrentChatPinned(false)
-    expect(store.pinnedSessionId).toBe(retained.session.id)
-    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(retained.session.id)
-
-    pendingSelection.resolve(Response.json(selected))
-    await expect(opening).resolves.toBe(true)
-    expect(store.thread?.session.id).toBe(selected.session.id)
-    expect(store.canPinCurrentChat).toBe(true)
-    store.setCurrentChatPinned(true)
-    expect(store.pinnedSessionId).toBe(selected.session.id)
-    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(selected.session.id)
-  })
-
-  it('keeps a retained chat unpinnable after initialization fails', async () => {
-    setActivePinia(createPinia())
-    const store = useAgentsStore()
-    store.routeSync = false
-    store.pinOwnerId = 1
-    store.workspaceVersion = 9
-    store.initializedWorkspaceVersion = 9
-    const retained = {
-      ...threadForSession('00000000-0000-4000-8000-000000000148', '00000000-0000-4000-8000-000000000149'),
-      session: {
-        ...activeThread().session,
-        id: '00000000-0000-4000-8000-000000000148',
-        currentRun: null
-      }
-    }
-    store.thread = retained
-    writeAgentChatPin(1, retained.session.id)
-    store.pinnedSessionId = retained.session.id
-    store.connectCurrentRun = vi.fn()
-    const pendingHistory = deferred<Response>()
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
-      const path = String(input)
-      const method = init?.method ?? 'GET'
-      if (path === '/_api/agents/sessions' && method === 'GET') return pendingHistory.promise
-      if (path === '/_api/agents/conversation-folders' && method === 'GET') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === '/_api/agents/skills' && method === 'GET') return Promise.resolve(Response.json({ skills: [] }))
-      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
-    })
-
-    const initializing = store.initialize('csrf-token', { ownerId: 1, routeSync: false })
-    expect(store.canPinCurrentChat).toBe(false)
-    store.setCurrentChatPinned(true)
-    store.setCurrentChatPinned(false)
-    expect(store.pinnedSessionId).toBe(retained.session.id)
-
-    pendingHistory.reject(new Error('Initialization unavailable'))
-    await expect(initializing).resolves.toBe(false)
-    expect(store.canPinCurrentChat).toBe(false)
-    store.setCurrentChatPinned(true)
-    store.setCurrentChatPinned(false)
-    expect(store.pinnedSessionId).toBe(retained.session.id)
-    expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(retained.session.id)
-    store.closeWorkspace()
-  })
-
-  it('keeps settled active runs and goals pinnable', () => {
-    setActivePinia(createPinia())
-    const store = useAgentsStore()
-    const thread = activeThread()
-    const run = thread.session.currentRun!
-    const settled: AgentThreadState = {
-      ...thread,
-      session: {
-        ...thread.session,
-        currentRun: {
-          ...run,
-          status: 'succeeded',
-          canCancel: false,
-          completedAt: '2026-08-23T00:01:00.000Z'
-        }
-      },
-      goal: {
-        id: '00000000-0000-4000-8000-000000000150',
-        sessionId: thread.session.id,
-        objective: 'Finish the durable task.',
-        status: 'active',
-        version: 1,
-        currentRunId: run.id,
-        continuationCount: 0,
-        maxContinuations: 3,
-        consumedTokens: 10,
-        maxTokens: 48_000,
-        consumedToolCalls: 1,
-        maxToolCalls: 96,
-        budgetPolicyVersion: 1,
-        budgetSelection: 'utility',
-        tokenTier: 'extended',
-        tokenAllowance: 48_000,
-        budgetCycle: 1,
-        budgetLimitReason: null,
-        canRenewTokenBudget: false,
-        startedAt: thread.session.createdAt,
-        deadlineAt: '2026-08-23T01:00:00.000Z',
-        completedAt: null,
-        errorCode: null,
-        errorMessage: null,
-        completion: null
-      }
-    }
-    store.thread = settled
-    store.pinOwnerId = 1
-    store.workspaceVersion = 10
-    store.initializedWorkspaceVersion = 10
-
-    expect(store.canPinCurrentChat).toBe(true)
-    store.setCurrentChatPinned(true)
-    expect(store.pinnedSessionId).toBe(thread.session.id)
-    store.setCurrentChatPinned(false)
-    expect(store.pinnedSessionId).toBeNull()
-    expect(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)).toBeNull()
-  })
-})
 
 describe('Automatic agent send admission', () => {
   afterEach(() => {
@@ -2057,7 +1772,7 @@ describe('Automatic agent send admission', () => {
     const fresh: AgentThreadState = { ...origin, session: { ...origin.session, profileResolutionToken: freshToken } }
     const accepted: AgentThreadState = { ...fresh, session: { ...fresh.session, currentRun: active.session.currentRun } }
     store.csrfToken = 'csrf-token'
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     store.routeSync = false
     store.thread = origin
     markWorkspaceReady(store)
@@ -2111,7 +1826,7 @@ describe('Automatic agent send admission', () => {
     const active = activeThread()
     const origin = { ...active, session: { ...active.session, currentRun: null } }
     store.thread = origin
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     store.csrfToken = 'csrf'
     markWorkspaceReady(store)
     store.setDraft(origin.session.id, 'Do not send automatically after sleep')
@@ -2170,7 +1885,7 @@ describe('Automatic agent send admission', () => {
     }
     const fresh: AgentThreadState = { ...origin, session: { ...origin.session, version: freshVersion, profileResolutionToken: freshToken } }
     store.csrfToken = 'csrf-token'
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     store.routeSync = false
     store.thread = origin
     markWorkspaceReady(store)
@@ -2283,7 +1998,7 @@ describe('Agent session mutation transitions', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     const active = activeThread()
     const submittedRun = active.session.currentRun!
     const origin = { ...active, session: { ...active.session, currentRun: null } }
@@ -2327,7 +2042,7 @@ describe('Agent session mutation transitions', () => {
     store.csrfToken = 'csrf-token'
     const active = activeThread()
     const empty = { ...active, session: { ...active.session, currentRun: null } }
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     store.thread = empty
     store.setDraft(active.session.id, 'Pending question')
     markWorkspaceReady(store)
@@ -2374,7 +2089,7 @@ describe('Agent session mutation transitions', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     const active = activeThread()
     const origin = { ...active, session: { ...active.session, currentRun: null } }
     store.thread = origin
@@ -2424,7 +2139,7 @@ describe('Agent session mutation transitions', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     const active = activeThread()
     const submittedRun = active.session.currentRun!
     const origin = { ...active, session: { ...active.session, currentRun: null } }
@@ -2455,7 +2170,7 @@ describe('Agent session mutation transitions', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
-    store.pinOwnerId = 1
+    store.workspaceOwnerId = 1
     const active = activeThread()
     const origin = { ...active, session: { ...active.session, currentRun: null } }
     store.thread = origin

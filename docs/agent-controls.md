@@ -208,7 +208,7 @@ After a response, validated **full totals**, including independent reported resi
 
 ### Workspace behavior and existing goals
 
-Users do not select a provider, choose a “default model,” or pin/unpin a model. Conversation pinning in History remains a separate organizational action. Session creation accepts retention settings, not a model selection; ordinary profile-catalog and session-profile mutation endpoints are not part of the user workspace.
+Users do not select a provider, choose a “default model,” or pin/unpin a model. Conversation continuity follows the latest selected chat within the same owner and browser tab; History selection and retention remain explicit, independent controls. Session creation accepts retention settings, not a model selection; ordinary profile-catalog and session-profile mutation endpoints are not part of the user workspace.
 
 Automatic optimization chooses **stay** or **swap** between durable turns/runs, before paid root/task inference, tools, or approval activity. Stay retains an authorized root binding and its compatible native continuation. Swap changes the root model at that boundary, replays canonical history with candidate-specific frames/tools/schema, and drops incompatible binding-specific hidden state/compaction. It cannot inherit the previous model's provider cache as free context. Approval replay keeps the admitted binding and routing/accounting receipt rather than reclassifying midway through an approval.
 

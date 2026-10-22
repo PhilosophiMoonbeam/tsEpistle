@@ -92,14 +92,6 @@
               <div class="inline-agent__session-line">
                 <span class="inline-agent__session-title">
                   {{ sessionTitle }}
-                  <v-icon
-                    v-if="isCurrentChatPinned"
-                    class="inline-agent__pin-indicator"
-                    icon="mdi-pin"
-                    size="14"
-                    role="img"
-                    :aria-label="$t('common:agentWorkspace.pinned')"
-                  />
                 </span>
               </div>
             </div>
@@ -153,14 +145,6 @@
                 prepend-icon="mdi-connection"
                 title="My tools"
                 @click="personalMcpOpen = true"
-              />
-              <v-list-item
-                class="inline-agent__panel-menu-item"
-                link
-                :prepend-icon="isCurrentChatPinned ? 'mdi-pin' : 'mdi-pin-outline'"
-                :title="isCurrentChatPinned ? $t('common:agentWorkspace.unpin') : $t('common:agentWorkspace.pin')"
-                :disabled="!canPinCurrentChat"
-                @click="setCurrentChatPinned(!isCurrentChatPinned)"
               />
               <!-- Temporary retention lives in the menu so the chat name can stand
                    alone in the header; the click switches temporary mode directly
@@ -451,11 +435,7 @@
                       <v-icon icon="mdi-lock-outline" size="16" aria-hidden="true" />
                       <span>{{ openGoal ? goalSubmitUnavailableReason : submitUnavailableReason }}</span>
                     </p>
-                    <p v-if="pinStorageAvailable === false" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
-                      <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
-                      <span>{{ $t('common:inlineAgentChat.pinningAvailableTabBut') }}</span>
-                    </p>
-                    <p v-if="agents.contextTransferNotice" class="inline-agent__pin-storage-warning" role="status" aria-live="polite">
+                    <p v-if="agents.contextTransferNotice" class="inline-agent__context-notice" role="status" aria-live="polite">
                       <v-icon icon="mdi-information-outline" size="16" aria-hidden="true" />
                       <span>{{ agents.contextTransferNotice }}</span>
                     </p>
@@ -717,7 +697,7 @@ const emit = defineEmits<{
 }>()
 const agents = useAgentsStore()
 const userPicture = computed(() => resolveUserPicture(wikiStore.user))
-const { canPinCurrentChat, connection, decidingApprovalId, error, goalBusy, initializationAdmissionFailure, loading, networkPaused, pinStorageAvailable, pinnedSessionId, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
+const { connection, decidingApprovalId, error, goalBusy, initializationAdmissionFailure, loading, networkPaused, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread, workspaceDisposed } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
@@ -949,7 +929,6 @@ const starterUnavailableReason = computed(() => promptSubmissionPending.value
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const isTemporary = computed(() => thread.value?.session.retention === 'temporary' && !thread.value.session.folderId)
-const isCurrentChatPinned = computed(() => Boolean(thread.value && pinnedSessionId.value === thread.value.session.id))
 const temporaryExpiry = computed(() => {
   const value = thread.value?.session.expiresAt
   if (!value) return ''
@@ -997,9 +976,6 @@ const starters = computed(() => [
 ])
 
 const patchDraft = (patch: Partial<AgentDraft>): void => { if (thread.value) agents.updateDraft(thread.value.session.id, patch) }
-const setCurrentChatPinned = (pinned: boolean): void => {
-  agents.setCurrentChatPinned(pinned)
-}
 const handleDraftChange = (sessionId: string, text: string): void => {
   if (!thread.value && sessionId === offlineSessionId) {
     offlineComposerDraft.value = text
@@ -1091,7 +1067,7 @@ const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean
     waitingForConnection.value = true
     return Promise.resolve(false)
   }
-  const storeOwnerId = (agents as unknown as { pinOwnerId?: number | null }).pinOwnerId
+  const storeOwnerId = (agents as unknown as { workspaceOwnerId?: number | null }).workspaceOwnerId
   if (
     !request.forceFresh &&
     workspaceReady.value &&
@@ -1719,7 +1695,7 @@ watch(currentPage, (page, previous) => {
   void ensureInitialized({ forceFresh: true })
 }, { flush: 'post' })
 const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
-  const storeOwnerId = (agents as unknown as { pinOwnerId?: number | null }).pinOwnerId
+  const storeOwnerId = (agents as unknown as { workspaceOwnerId?: number | null }).workspaceOwnerId
   if (disposed || (storeOwnerId != null && storeOwnerId !== props.ownerId)) return
   if (!(activeDraft.value.text || offlineComposerDraft.value || composer.value?.hasUnsentMedia() || composer.value?.hasPendingSubmission() || composer.value?.isMediaBusy())) return
   event.preventDefault()
@@ -2205,10 +2181,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   gap: var(--wiki-space-2);
 }
 
-.inline-agent__pin-indicator {
-  flex: 0 0 auto;
-  color: var(--wiki-primary-ink);
-}
 
 .inline-agent__more-menu {
   order: 3;
@@ -2791,7 +2763,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   font-weight: 500;
   line-height: 1.4;
 }
-.inline-agent__pin-storage-warning {
+.inline-agent__context-notice {
   display: flex;
   align-items: flex-start;
   gap: var(--wiki-space-2);

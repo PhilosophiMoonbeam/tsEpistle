@@ -2,18 +2,13 @@ import type { AgentMediaSubmission } from '../helpers/agent-media.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { emptyAgentDraft, type AgentDraft } from '../helpers/agent-draft.ts'
 import {
-  clearAgentChatPin,
   clearAgentChatRecent,
   isAgentSessionId,
-  readAgentChatPin,
-  writeAgentChatPin,
   readAgentChatRecent,
   writeAgentChatRecent,
   sameAgentChatPage,
-  agentChatPageSelector,
-  type AgentChatPageSelector,
   type AgentChatContextSelector
-} from '../helpers/agent-chat-pin.ts'
+} from '../helpers/agent-chat-continuity.ts'
 import { fetchWikiSource } from '../helpers/wiki-source.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import { defineStore } from 'pinia'
@@ -240,10 +235,7 @@ export const useAgentsStore = defineStore('agents', {
     workspaceDisposed: false,
     initializedWorkspaceVersion: null as number | null,
     workspaceCloseReason: null as 'authentication' | 'access' | 'session-unavailable' | null,
-    pinnedSessionId: null as string | null,
-    pinStorageAvailable: true,
-    pinOwnerId: null as number | null,
-    conversationPage: null as AgentChatPageSelector | null,
+    workspaceOwnerId: null as number | null,
     continuitySessionId: null as string | null,
     workspaceClosedAt: null as number | null,
     contextTransferNotice: '',
@@ -251,25 +243,11 @@ export const useAgentsStore = defineStore('agents', {
     contextTransferGeneration: 0
   }),
   getters: {
-    sessionMutationBusy: state => state.sessionMutationToken !== null,
-    canPinCurrentChat: state =>
-      !state.workspaceDisposed &&
-      state.initializedWorkspaceVersion !== null &&
-      state.initializedWorkspaceVersion === state.workspaceVersion &&
-      !state.loading &&
-      !state.networkPaused &&
-      state.initializationAdmissionFailure === null &&
-      state.sessionTransitionController === null &&
-      state.sessionMutationToken === null &&
-      state.thread !== null &&
-      isAgentSessionId(state.thread.session.id) &&
-      state.pinOwnerId !== null &&
-      Number.isSafeInteger(state.pinOwnerId) &&
-      state.pinOwnerId > 0
+    sessionMutationBusy: state => state.sessionMutationToken !== null
   },
   actions: {
     async initialize(csrfToken: string, options: AgentStoreInitializeOptions): Promise<boolean> {
-      const ownerChanged = this.pinOwnerId !== null && this.pinOwnerId !== options.ownerId
+      const ownerChanged = this.workspaceOwnerId !== null && this.workspaceOwnerId !== options.ownerId
       if (ownerChanged) {
         this.ownerGeneration += 1
         this.invalidateSessionMutation()
@@ -287,25 +265,22 @@ export const useAgentsStore = defineStore('agents', {
         this.goalBusy = false
         this.stoppingRunId = null
         this.decidingApprovalId = null
-        this.pinnedSessionId = null
-        this.conversationPage = null
         this.continuitySessionId = null
         this.workspaceClosedAt = null
         this.contextTransferNotice = ''
-        clearAgentChatPin()
+        clearAgentChatRecent()
       }
 
       const previousThread = this.thread
       const previousContext = this.currentChatContext()
-      const requestedPage = agentChatPageSelector(options.currentPage)
+      // A known-gone conversation may retain a same-owner composition in
+      // memory, but its retired selector must never be restored or replayed.
+      const unavailableComposition = !ownerChanged && previousThread && this.continuitySessionId === null ? this.drafts[previousThread.session.id] : undefined
       const requestedResumeId = isAgentSessionId(options.resumeSessionId) ? options.resumeSessionId : null
       const retainOpenWorkspace =
         !ownerChanged &&
         !this.workspaceDisposed &&
         this.initializedWorkspaceVersion === this.workspaceVersion &&
-        (sameAgentChatPage(this.conversationPage, requestedPage) ||
-          (this.conversationPage === null && requestedPage === null) ||
-          this.pinnedSessionId === previousThread?.session.id) &&
         previousThread !== null &&
         (requestedResumeId === null || requestedResumeId === previousThread.session.id)
       this.cancelContextTransfer()
@@ -315,8 +290,9 @@ export const useAgentsStore = defineStore('agents', {
       const initializationController = markRaw(new AbortController())
       this.initializationController = initializationController
 
-      this.pinOwnerId = options.ownerId
+      this.workspaceOwnerId = options.ownerId
       this.cancelSessionTransition()
+      let selectionVersion = this.sessionTransitionVersion
       this.workspaceCloseReason = null
       this.networkPaused = true
       this.initializationAdmissionFailure = null
@@ -350,20 +326,16 @@ export const useAgentsStore = defineStore('agents', {
       this.csrfToken = csrfToken
       this.routeSync = options.routeSync ?? true
       this.contextPage = options.currentPage ?? null
-      const previousPinnedSessionId = this.pinnedSessionId
-      const pin = readAgentChatPin(options.ownerId)
-      this.pinStorageAvailable = pin.available
-      const pinnedSessionId = pin.sessionId ?? (!pin.available ? previousPinnedSessionId : null)
-      this.pinnedSessionId = pinnedSessionId
-      const recent = readAgentChatRecent(options.ownerId, requestedPage)
+      const recent = readAgentChatRecent(options.ownerId)
       this.listenForVisibility()
       void this.reloadSkills()
       const allowCreate = options.allowCreate ?? true
       let initialized = false
-      const isCurrent = (): boolean =>
+      const isInitializationCurrent = (): boolean =>
         this.isOwnerContextCurrent(workspaceVersion, options.ownerId, ownerGeneration) &&
         this.initializationGeneration === initializationGeneration &&
         this.initializationController === initializationController
+      const isCurrent = (): boolean => isInitializationCurrent() && this.sessionTransitionVersion === selectionVersion
       try {
         const pathMatch = this.routeSync ? /^\/sessions\/([^/]+)$/.exec(window.location.pathname) : null
         const [sessionPage, folders] = await Promise.all([
@@ -384,26 +356,29 @@ export const useAgentsStore = defineStore('agents', {
             [
               explicitSessionId,
               retainOpenWorkspace && this.thread === previousThread ? previousThread.session.id : null,
-              pinnedSessionId,
               recent?.sessionId ?? null
             ].filter((id): id is string => id !== null)
           )
         ]
-        let unavailableDraft: AgentDraft | undefined
+        let unavailableDraft = explicitSessionId === null || explicitSessionId === previousThread?.session.id ? unavailableComposition : undefined
         for (const candidate of candidates) {
           if (!isCurrent()) return false
           try {
-            initialized = await this.openSession(candidate, { preservePin: candidate !== explicitSessionId || candidate === pinnedSessionId })
-            if (initialized) break
+            const opening = this.openSession(candidate)
+            selectionVersion = this.sessionTransitionVersion
+            initialized = await opening
+            if (!initialized) return false
+            break
           } catch (error) {
             if (!(error instanceof AgentApiError) || (error.status !== 404 && error.status !== 410)) throw error
             unavailableDraft ??= this.drafts[candidate]
-            if (candidate === pinnedSessionId) this.clearPinnedState()
-            if (candidate === recent?.sessionId) clearAgentChatRecent()
+            this.clearConversationSelection(candidate)
           }
         }
         if (!initialized && allowCreate && isCurrent()) {
-          initialized = await this.newSession('saved', undefined, true)
+          const creating = this.newSession('saved', undefined, true)
+          selectionVersion = this.sessionTransitionVersion
+          initialized = await creating
           if (initialized && isCurrent() && unavailableDraft && this.thread) {
             // Only explicit entry may create a replacement for a gone chat.
             // Recover its unsent composition for review, never an old POST.
@@ -411,24 +386,21 @@ export const useAgentsStore = defineStore('agents', {
           }
         }
         if (initialized && isCurrent()) {
-          if (this.thread?.session.id === this.pinnedSessionId) {
-            const context = previousThread?.session.id === this.thread.session.id && previousContext ? previousContext : pin.context
-            initialized = await this.reconcilePinnedContext(context)
-          } else {
-            this.conversationPage = requestedPage
-            this.contextTransferNotice = ''
-          }
+          const context = previousThread?.session.id === this.thread?.session.id
+            ? previousContext
+            : recent !== null && recent.sessionId === this.thread?.session.id ? recent.context : undefined
+          initialized = await this.reconcileConversationContext(context)
           if (initialized && isCurrent()) {
             this.workspaceClosedAt = null
             this.continuitySessionId = this.thread?.session.id ?? null
-            clearAgentChatRecent()
+            this.persistConversationContext()
           }
         }
         if (initialized && isCurrent()) {
           this.initializedWorkspaceVersion = workspaceVersion
           this.initializationAdmissionFailure = null
         }
-        return initialized
+        return initialized && isCurrent()
       } catch (error) {
         if (isCurrent()) {
           initialized = false
@@ -446,136 +418,97 @@ export const useAgentsStore = defineStore('agents', {
         }
         return false
       } finally {
-        const stillCurrent = isCurrent()
+        const stillCurrent = isInitializationCurrent()
+        const stillSelected = isCurrent()
         if (this.initializationController === initializationController) this.initializationController = null
         if (stillCurrent) {
           this.loading = false
-          if (initialized) this.initializedWorkspaceVersion = workspaceVersion
+          if (initialized && stillSelected) this.initializedWorkspaceVersion = workspaceVersion
         }
       }
     },
-    clearPinnedState() {
-      this.pinnedSessionId = null
-      this.pinStorageAvailable = clearAgentChatPin()
+    clearConversationSelection(sessionId?: string): void {
+      if (sessionId === undefined || (this.workspaceOwnerId !== null && readAgentChatRecent(this.workspaceOwnerId)?.sessionId === sessionId)) clearAgentChatRecent()
+      if (sessionId === undefined || this.continuitySessionId === sessionId) {
+        this.continuitySessionId = null
+        this.workspaceClosedAt = null
+      }
     },
     currentChatContext(): AgentChatContextSelector | undefined {
       const sessionId = this.thread?.session.id
-      if (!sessionId) return undefined
-      const draft = this.drafts[sessionId] ?? emptyAgentDraft()
+      const draft = sessionId ? this.drafts[sessionId] : undefined
+      if (!draft) return undefined
       return {
-        page: this.continuitySessionId === sessionId ? this.conversationPage : agentChatPageSelector(this.contextPage),
         includeCurrentPage: draft.includeCurrentPage,
         sources: draft.sources.map(({ id, locale }) => ({ id, locale }))
       }
     },
-    persistPinnedContext(): void {
-      if (this.pinOwnerId === null || !this.pinnedSessionId || this.thread?.session.id !== this.pinnedSessionId) return
-      this.pinStorageAvailable = writeAgentChatPin(this.pinOwnerId, this.pinnedSessionId, this.currentChatContext())
-    },
-    setCurrentChatPinned(value: boolean): void {
-      if (!this.canPinCurrentChat) return
+    persistConversationContext(): void {
       const sessionId = this.thread?.session.id
-      const ownerId = this.pinOwnerId
-      if (!value) {
-        this.clearPinnedState()
-        return
-      }
-      if (!sessionId || ownerId === null) return
-      this.pinnedSessionId = sessionId
-      clearAgentChatRecent()
-      this.persistPinnedContext()
-    },
-    notePageNavigation(page: AgentCurrentPageHint | null, ownerId?: number): void {
-      this.contextPage = page
-      const owner = ownerId ?? this.pinOwnerId
-      if (owner === null || !Number.isSafeInteger(owner) || owner <= 0) return
-      // Navigation can precede the first Agent mount, so consult its tab selector
-      // without assigning an owner or overwriting the last reconciled page.
-      const pinned = owner === this.pinOwnerId ? this.pinnedSessionId : readAgentChatPin(owner).sessionId
-      if (!pinned) readAgentChatRecent(owner, agentChatPageSelector(page))
+      if (this.workspaceOwnerId === null || !sessionId || sessionId !== this.continuitySessionId) return
+      const current = this.currentChatContext()
+      const recent = current === undefined ? readAgentChatRecent(this.workspaceOwnerId) : null
+      const context = current ?? (recent?.sessionId === sessionId ? recent.context : undefined)
+      writeAgentChatRecent(this.workspaceOwnerId, sessionId, this.workspaceClosedAt ?? Date.now(), context)
     },
     setCurrentPage(page: AgentCurrentPageHint | null) {
-      this.notePageNavigation(page)
+      this.contextPage = page
     },
     cancelContextTransfer(): void {
       this.contextTransferGeneration += 1
       this.contextTransferController?.abort()
       this.contextTransferController = null
     },
-    async reconcilePinnedContext(previous?: AgentChatContextSelector): Promise<boolean> {
+    async reconcileConversationContext(previous?: AgentChatContextSelector): Promise<boolean> {
       const sessionId = this.thread?.session.id
-      const ownerId = this.pinOwnerId
-      if (!sessionId || ownerId === null || sessionId !== this.pinnedSessionId) return true
+      const ownerId = this.workspaceOwnerId
+      if (!sessionId || ownerId === null) return true
       this.cancelContextTransfer()
+      const draft = this.drafts[sessionId]
+      // Mounted compositions, including reviewed original hints, belong to
+      // their conversation. Browsing only changes the separate current-page hint.
+      if (draft) return true
+      if (!previous) {
+        this.drafts[sessionId] = emptyAgentDraft()
+        this.contextTransferNotice = ''
+        return true
+      }
       const generation = this.contextTransferGeneration
       const controller = markRaw(new AbortController())
       this.contextTransferController = controller
       const workspaceVersion = this.workspaceVersion
       const ownerGeneration = this.ownerGeneration
-      const current = agentChatPageSelector(this.contextPage)
       const isCurrent = (): boolean =>
         !controller.signal.aborted &&
         this.contextTransferGeneration === generation &&
         this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-        this.thread?.session.id === sessionId
-      const existingDraft = this.drafts[sessionId]
-      const draft = existingDraft ?? emptyAgentDraft()
-      // A reviewed request owns its original hint, not the route's next page.
-      if (draft.currentPageOverride !== undefined) {
-        this.conversationPage = current
-        this.contextTransferController = null
-        this.persistPinnedContext()
-        return true
-      }
-      const prior = previous ?? {
-        page: current,
-        includeCurrentPage: draft.includeCurrentPage,
-        sources: draft.sources.map(({ id, locale }) => ({ id, locale }))
-      }
-      const pageChanged = !(sameAgentChatPage(prior.page, current) || (prior.page === null && current === null))
+        this.thread?.session.id === sessionId &&
+        this.drafts[sessionId] === undefined
       let unavailable = false
-      let atCapacity = false
-      const hydrate = async (selector: AgentChatPageSelector): Promise<WikiSource | null> => {
-        try {
-          const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
-          if (source.id !== selector.id || source.locale !== selector.locale) throw new Error('Source identity changed.')
-          return source
-        } catch {
-          if (!controller.signal.aborted) unavailable = true
-          return null
-        }
+      try {
+        const sources = (await Promise.all(previous.sources.map(async selector => {
+          try {
+            const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
+            if (!sameAgentChatPage(source, selector)) throw new Error('Source identity changed.')
+            return source
+          } catch {
+            if (!controller.signal.aborted) unavailable = true
+            return null
+          }
+        }))).filter((source): source is WikiSource => source !== null)
+        if (!isCurrent()) return false
+        this.drafts[sessionId] = { ...emptyAgentDraft(), sources, includeCurrentPage: previous.includeCurrentPage }
+        this.contextTransferNotice = unavailable ? 'A previous source could not be restored. Check access and add it again if needed.' : ''
+        return true
+      } finally {
+        if (this.contextTransferController === controller) this.contextTransferController = null
       }
-      let sources = existingDraft
-        ? [...draft.sources]
-        : (await Promise.all(prior.sources.map(hydrate))).filter((source): source is WikiSource => source !== null)
-      if (!isCurrent()) return false
-      if (pageChanged && current) sources = sources.filter(source => !sameAgentChatPage(source, current))
-      if (pageChanged && prior.page && prior.includeCurrentPage && !sources.some(source => sameAgentChatPage(source, prior.page))) {
-        if (sources.length >= 8) atCapacity = true
-        else {
-          const source = await hydrate(prior.page)
-          if (!isCurrent()) return false
-          if (source) sources.push(source)
-        }
-      }
-      if (!isCurrent()) return false
-      this.drafts[sessionId] = { ...(this.drafts[sessionId] ?? draft), sources, includeCurrentPage: pageChanged ? true : prior.includeCurrentPage }
-      this.conversationPage = current
-      this.contextTransferNotice = [
-        unavailable ? 'A previous source could not be restored. Check access and add it again if needed.' : '',
-        atCapacity ? 'The previous page was not added because this chat already has eight sources. Remove a source and add the page to include it.' : ''
-      ]
-        .filter(Boolean)
-        .join(' ')
-      this.contextTransferController = null
-      this.persistPinnedContext()
-      return true
     },
     isWorkspaceCurrent(version: number) {
       return !this.workspaceDisposed && this.workspaceVersion === version
     },
     isOwnerContextCurrent(workspaceVersion: number, ownerId: number | null, ownerGeneration: number): boolean {
-      return this.isWorkspaceCurrent(workspaceVersion) && this.pinOwnerId === ownerId && this.ownerGeneration === ownerGeneration
+      return this.isWorkspaceCurrent(workspaceVersion) && this.workspaceOwnerId === ownerId && this.ownerGeneration === ownerGeneration
     },
     isWorkspaceMutationReady(): boolean {
       return (
@@ -596,7 +529,7 @@ export const useAgentsStore = defineStore('agents', {
       if (this.isWorkspaceCurrent(workspaceVersion)) return this.isSessionMutationOwned(mutationToken)
       return (
         ownerId !== null &&
-        this.pinOwnerId === ownerId &&
+        this.workspaceOwnerId === ownerId &&
         this.ownerGeneration === ownerGeneration &&
         this.thread?.session.id === sessionId &&
         this.initializedWorkspaceVersion === this.workspaceVersion &&
@@ -661,10 +594,9 @@ export const useAgentsStore = defineStore('agents', {
       this.sessionTransitionKind = null
     },
     closeWorkspace() {
-      if (!this.workspaceDisposed && this.workspaceClosedAt === null && this.pinOwnerId !== null && this.thread?.session.id === this.continuitySessionId) {
+      if (!this.workspaceDisposed && this.workspaceClosedAt === null && this.workspaceOwnerId !== null && this.thread?.session.id === this.continuitySessionId) {
         this.workspaceClosedAt = Date.now()
-        if (this.pinnedSessionId === this.thread.session.id) this.persistPinnedContext()
-        else writeAgentChatRecent(this.pinOwnerId, this.thread.session.id, this.conversationPage, this.workspaceClosedAt)
+        this.persistConversationContext()
       }
       this.cancelContextTransfer()
       this.invalidateSessionMutation()
@@ -712,7 +644,7 @@ export const useAgentsStore = defineStore('agents', {
     destroyWorkspace() {
       this.closeWorkspace()
       this.ownerGeneration += 1
-      this.pinOwnerId = null
+      this.workspaceOwnerId = null
       this.thread = null
       this.drafts = {}
       this.sessions = []
@@ -721,12 +653,10 @@ export const useAgentsStore = defineStore('agents', {
       this.launchPage = null
       this.contextPage = null
       this.error = ''
-      this.pinnedSessionId = null
-      this.conversationPage = null
       this.continuitySessionId = null
       this.workspaceClosedAt = null
       this.contextTransferNotice = ''
-      clearAgentChatPin()
+      clearAgentChatRecent()
     },
     setDraft(sessionId: string, text: string) {
       if (!sessionId) return
@@ -746,7 +676,7 @@ export const useAgentsStore = defineStore('agents', {
       const next = { ...previous, ...patch }
       if (clearPageOverride) delete next.currentPageOverride
       this.drafts[sessionId] = next
-      if (contextChanged && sessionId === this.pinnedSessionId) this.persistPinnedContext()
+      if (contextChanged && sessionId === this.continuitySessionId) this.persistConversationContext()
     },
     async restoreRequest(messageId: string): Promise<string | null> {
       if (!this.isWorkspaceReady() || this.sending || this.sessionMutationBusy) return null
@@ -758,7 +688,7 @@ export const useAgentsStore = defineStore('agents', {
       const controller = markRaw(new AbortController())
       this.contextTransferController = controller
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const sessionId = thread.session.id
       // Fail closed even when historical metadata or a source is unavailable.
@@ -806,7 +736,7 @@ export const useAgentsStore = defineStore('agents', {
       if (mutationToken === null) return false
       try {
         const workspaceVersion = this.workspaceVersion
-        const ownerId = this.pinOwnerId
+        const ownerId = this.workspaceOwnerId
         const ownerGeneration = this.ownerGeneration
         const version = this.beginSessionTransition()
         const previous = this.thread
@@ -822,7 +752,6 @@ export const useAgentsStore = defineStore('agents', {
         this.closeStream()
         this.invalidateRefresh()
         this.applyCreatedThread(created)
-        this.clearPinnedState()
         if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
         if (disposableSessionId) {
           try {
@@ -849,7 +778,6 @@ export const useAgentsStore = defineStore('agents', {
       this.thread = markRaw(created)
       this.continuitySessionId = created.session.id
       this.workspaceClosedAt = null
-      this.conversationPage = agentChatPageSelector(this.contextPage)
       this.contextTransferNotice = ''
       const launch = created.launchPage
       this.launchPage =
@@ -860,13 +788,14 @@ export const useAgentsStore = defineStore('agents', {
       this.initializedWorkspaceVersion = this.workspaceVersion
       this.initializationAdmissionFailure = null
       this.networkPaused = false
+      this.persistConversationContext()
       this.connectCurrentRun()
     },
-    async openSession(sessionId: string, options: { readonly preservePin?: boolean } = {}): Promise<boolean> {
+    async openSession(sessionId: string): Promise<boolean> {
       if (this.workspaceDisposed || this.initializationAdmissionFailure !== null || !isAgentSessionId(sessionId) || this.sessionMutationToken !== null)
         return false
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const { version, controller } = this.beginSessionReadTransition()
       const isCurrent = (): boolean => this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && this.isSessionTransitionCurrent(version)
@@ -877,11 +806,13 @@ export const useAgentsStore = defineStore('agents', {
         this.sessionTransitionKind = null
         this.closeStream()
         this.invalidateRefresh()
+        const changedSession = this.thread?.session.id !== candidate.session.id
         this.thread = markRaw(candidate)
         this.continuitySessionId = candidate.session.id
         this.workspaceClosedAt = null
         this.launchPage = null
-        if (!options.preservePin && this.pinnedSessionId && this.pinnedSessionId !== sessionId) this.clearPinnedState()
+        if (changedSession) this.contextTransferNotice = ''
+        this.persistConversationContext()
         if (this.routeSync) window.history.replaceState(null, '', `/sessions/${sessionId}`)
         // The candidate was just authorized by a fresh thread read.
         this.initializedWorkspaceVersion = workspaceVersion
@@ -906,7 +837,7 @@ export const useAgentsStore = defineStore('agents', {
     async refreshThread(): Promise<AgentRefreshResult> {
       const workspaceVersion = this.workspaceVersion
       const sessionId = this.thread?.session.id
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       if (!sessionId || this.initializationAdmissionFailure !== null || !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration))
         return refreshResult(false, false)
@@ -947,6 +878,7 @@ export const useAgentsStore = defineStore('agents', {
           if (error instanceof AgentApiError && (error.status === 403 || error.status === 404 || error.status === 410)) {
             // Retain same-owner drafts and selectors, not stale admission. Reopening
             // must read current authority and may discover that this chat is gone.
+            if (error.status !== 403) this.clearConversationSelection(sessionId)
             this.closeWorkspace()
             this.error = error.status === 403 ? translate('common:agentWorkspace.admissionRequiredMessage') : error.message
             this.workspaceCloseReason = error.status === 403 ? 'access' : 'session-unavailable'
@@ -964,7 +896,7 @@ export const useAgentsStore = defineStore('agents', {
     async reloadSessions(): Promise<AgentRefreshResult> {
       if (this.workspaceDisposed) return refreshResult(false, false)
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const version = this.sessionListVersion + 1
       this.sessionListVersion = version
@@ -1008,7 +940,7 @@ export const useAgentsStore = defineStore('agents', {
       const cursor = this.sessionsNextCursor
       if (!cursor || this.loading || this.sessionsLoadingMore || this.sessionsReloading) return false
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const version = this.sessionListVersion
       const controller = markRaw(new AbortController())
@@ -1057,7 +989,7 @@ export const useAgentsStore = defineStore('agents', {
     async reloadFolders(): Promise<AgentRefreshResult> {
       if (this.workspaceDisposed) return refreshResult(false, false)
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const generation = this.folderReloadGeneration + 1
       this.folderReloadGeneration = generation
@@ -1086,7 +1018,7 @@ export const useAgentsStore = defineStore('agents', {
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) throw new Error('Another conversation update is already in progress. Please retry.')
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       try {
         this.invalidateFolderReload()
@@ -1105,7 +1037,7 @@ export const useAgentsStore = defineStore('agents', {
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) throw new Error('Another conversation update is already in progress. Please retry.')
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       try {
         this.invalidateFolderReload()
@@ -1125,7 +1057,7 @@ export const useAgentsStore = defineStore('agents', {
       if (mutationToken === null) return false
       try {
         const workspaceVersion = this.workspaceVersion
-        const ownerId = this.pinOwnerId
+        const ownerId = this.workspaceOwnerId
         const ownerGeneration = this.ownerGeneration
         this.invalidateFolderReload()
         const sessionId = this.thread?.session.id
@@ -1150,7 +1082,7 @@ export const useAgentsStore = defineStore('agents', {
     async moveSessionToFolder(sessionId: string, folderId: string | null) {
       if (this.workspaceDisposed || !this.isWorkspaceReady()) return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const current = this.thread?.session.id === sessionId ? this.thread.session : null
       const summary = this.sessions.find(session => session.id === sessionId)
@@ -1209,7 +1141,7 @@ export const useAgentsStore = defineStore('agents', {
       if (this.workspaceDisposed || !this.isWorkspaceReady()) throw new Error('The conversation workspace is not ready. Please retry.')
       const trimmed = title.trim().slice(0, 255)
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const current = this.thread?.session.id === sessionId ? this.thread.session : null
       const summary = this.sessions.find(session => session.id === sessionId)
@@ -1234,7 +1166,7 @@ export const useAgentsStore = defineStore('agents', {
     async setSessionRetention(sessionId: string, retention: 'temporary' | 'saved') {
       if (this.workspaceDisposed || !this.isWorkspaceReady()) return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const current = this.thread?.session.id === sessionId ? this.thread.session : null
       const summary = this.sessions.find(session => session.id === sessionId)
@@ -1294,7 +1226,7 @@ export const useAgentsStore = defineStore('agents', {
         return false
       const workspaceVersion = this.workspaceVersion
       const sessionId = thread.session.id
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const capturedPins = readAdmissionPins(thread.session.profileResolutionToken)
       const capturedSessionVersion = thread.session.version
@@ -1411,7 +1343,7 @@ export const useAgentsStore = defineStore('agents', {
       const run = this.thread?.session.currentRun
       if (!run?.canCancel || this.stoppingRunId === run.id) return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const sessionId = this.thread!.session.id
       const mutationToken = this.beginSessionMutation()
@@ -1445,7 +1377,7 @@ export const useAgentsStore = defineStore('agents', {
       const goal = thread?.goal
       if (!thread || !goal || this.goalBusy || (goal.status !== 'active' && goal.status !== 'blocked')) return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const sessionId = thread.session.id
       const mutationToken = this.beginSessionMutation()
@@ -1479,7 +1411,7 @@ export const useAgentsStore = defineStore('agents', {
       const goal = thread?.goal
       if (!thread || !goal || this.goalBusy || (goal.status !== 'paused' && goal.status !== 'blocked')) return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const sessionId = thread.session.id
       const mutationToken = this.beginSessionMutation()
@@ -1526,7 +1458,7 @@ export const useAgentsStore = defineStore('agents', {
       )
         return false
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const sessionId = thread.session.id
       const mutationToken = this.beginSessionMutation()
@@ -1589,7 +1521,7 @@ export const useAgentsStore = defineStore('agents', {
       const goal = thread?.goal
       if (!thread || !goal || this.goalBusy || !['active', 'paused', 'blocked'].includes(goal.status)) return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const sessionId = thread.session.id
       const mutationToken = this.beginSessionMutation()
@@ -1632,7 +1564,7 @@ export const useAgentsStore = defineStore('agents', {
       )
         return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) return
@@ -1667,7 +1599,7 @@ export const useAgentsStore = defineStore('agents', {
       const sessionId = this.thread?.session.id
       if (!sessionId) return
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) return
@@ -1701,7 +1633,7 @@ export const useAgentsStore = defineStore('agents', {
     async reloadSkills(): Promise<boolean> {
       if (this.workspaceDisposed) return false
       const workspaceVersion = this.workspaceVersion
-      const ownerId = this.pinOwnerId
+      const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const generation = this.skillsLoadGeneration + 1
       this.skillsLoadGeneration = generation
@@ -1745,14 +1677,15 @@ export const useAgentsStore = defineStore('agents', {
       if (mutationToken === null) return false
       try {
         const workspaceVersion = this.workspaceVersion
-        const ownerId = this.pinOwnerId
+        const ownerId = this.workspaceOwnerId
         const ownerGeneration = this.ownerGeneration
         const version = this.beginSessionTransition()
         try {
           await deleteAgentSession(fetchFromWindow, this.csrfToken, sessionId)
           delete this.drafts[sessionId]
         } catch (error) {
-          if (this.pinnedSessionId === sessionId && error instanceof AgentApiError && (error.status === 404 || error.status === 410)) this.clearPinnedState()
+          if (this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && error instanceof AgentApiError && (error.status === 404 || error.status === 410))
+            this.clearConversationSelection(sessionId)
           if (this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)) {
             const refreshed = await this.reloadSessions()
             if (!refreshed.accepted && refreshed.current)
@@ -1762,7 +1695,7 @@ export const useAgentsStore = defineStore('agents', {
           throw error
         }
         if (!this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)) return true
-        if (this.pinnedSessionId === sessionId) this.clearPinnedState()
+        this.clearConversationSelection(sessionId)
         const removedDisplayedSession = this.thread?.session.id === sessionId
         if (this.isSessionTransitionCurrent(version) && removedDisplayedSession) {
           this.closeStream()
@@ -1797,7 +1730,7 @@ export const useAgentsStore = defineStore('agents', {
       try {
         const workspaceVersion = this.workspaceVersion
         const currentSessionId = this.thread?.session.id
-        const ownerId = this.pinOwnerId
+        const ownerId = this.workspaceOwnerId
         const ownerGeneration = this.ownerGeneration
         const clearsCurrentSession = this.thread?.session.folderId === null
         if (clearsCurrentSession) {
@@ -1832,12 +1765,9 @@ export const useAgentsStore = defineStore('agents', {
         this.sessions = markRaw(preservedFiledSessions)
         this.sessionsNextCursor = null
         this.error = ''
-        if (
-          this.pinnedSessionId &&
-          ((clearsCurrentSession && currentSessionId === this.pinnedSessionId) ||
-            this.sessions.some(session => session.id === this.pinnedSessionId && session.folderId === null))
-        )
-          this.clearPinnedState()
+        const recent = ownerId === null ? null : readAgentChatRecent(ownerId)
+        if (recent && !retainedDraftIds.has(recent.sessionId)) this.clearConversationSelection(recent.sessionId)
+        if (this.continuitySessionId && !retainedDraftIds.has(this.continuitySessionId)) this.clearConversationSelection(this.continuitySessionId)
 
         const replacingCurrentSession = this.thread?.session.folderId === null
         let refreshResult: AgentRefreshResult | null = null

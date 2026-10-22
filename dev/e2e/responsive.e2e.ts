@@ -94,7 +94,7 @@ async function installAgentContinuityPages(page: Page): Promise<void> {
     expect(response.ok()).toBe(true)
     const html = await response.text()
     let replaced = false
-    const body = html.replace(/(<wiki-page\b[^>]*\bpayload=)(["'])([^"']+)\2/u, (_match, prefix: string, quote: string, encoded: string) => {
+    let body = html.replace(/(<wiki-page\b[^>]*\bpayload=)(["'])([^"']+)\2/u, (_match, prefix: string, quote: string, encoded: string) => {
       const payload = decodeWikiPagePayloadForTest(encoded)
       const patched = {
         ...payload,
@@ -113,6 +113,9 @@ async function installAgentContinuityPages(page: Page): Promise<void> {
       return `${prefix}${quote}${Buffer.from(JSON.stringify(patched)).toString('base64')}${quote}`
     })
     expect(replaced, 'The deployed wiki document exposes its normal navigation payload').toBe(true)
+    body = body.replace(/<template\b[^>]*\bdata-wiki-page-contents\b[^>]*>/u, opener =>
+      `${opener}<nav aria-label="Fixture pages">${sources.filter(item => item.id >= 901).map(item => `<a href="/${item.path}">${item.title}</a>`).join(' ')}</nav>`
+    )
     await route.fulfill({ response, body })
   })
 }
@@ -2029,18 +2032,11 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent).toBeVisible()
     const newChatButton = agent.getByRole('button', { name: 'New chat', exact: true })
     const settingsButton = agent.getByRole('button', { name: 'More chat actions', exact: true })
-    const pinnedIndicator = agent.locator('.inline-agent__pin-indicator')
     const settingsMenu = agent.locator('.v-menu.v-overlay--active')
     await expect(newChatButton).toBeVisible()
-    await expect(pinnedIndicator).toHaveCount(0)
     await settingsButton.click()
     const temporaryChatAction = settingsMenu.getByText('Temporary chat', { exact: true })
-    const pinChatAction = settingsMenu.getByText('Pin chat', { exact: true })
     await expect(temporaryChatAction).toBeVisible()
-    await expect(pinChatAction).toBeVisible()
-    // Pin and unpin with a live chat are covered by the enabled fixture continuity
-    // test; this surface keeps its starter state without a conversation to pin.
-    await expect(pinnedIndicator).toHaveCount(0)
     // Dismiss the actions menu with a pointer press on the agent chrome.
     const dismissBounds = await agent.boundingBox()
     if (!dismissBounds) throw new Error('Wiki Agent surface has no geometry')
@@ -2576,7 +2572,7 @@ test.describe('responsive UI quality matrix', () => {
   test.describe('Agent browser context fixture', () => {
     test.use({ serviceWorkers: 'block' })
 
-    test('Agent continuity resumes within a working day and starts fresh after expiry or navigation', async ({ page }, testInfo) => {
+    test('Agent continuity resumes within a working day and starts fresh only after expiry', async ({ page }, testInfo) => {
       test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
       await installAgentContinuityPages(page)
       const fixture = await installEnabledAgentFixture(page, { distinctSessionIds: true })
@@ -2588,6 +2584,7 @@ test.describe('responsive UI quality matrix', () => {
         await closeContinuityAgent(page)
         await page.reload({ waitUntil: 'domcontentloaded' })
         await expect(page.locator('.nav-header')).toBeVisible({ timeout: 15_000 })
+        const originalDateNow = await page.evaluateHandle(() => Date.now)
         await page.evaluate(() => {
           const original = Date.now
           Date.now = () => original() + 30 * 60_000
@@ -2604,10 +2601,13 @@ test.describe('responsive UI quality matrix', () => {
         await expect(agent.locator('.agent-message--user')).toHaveCount(0)
         expect(creates()).toBe(2)
         await sendContinuityPrompt(page, agent, 'A new conversation after the resume window.')
+        // Return to real wall time before another document reads the bookmark.
+        await originalDateNow.evaluate(original => { Date.now = original })
+        await originalDateNow.dispose()
         await closeContinuityAgent(page)
         agent = await openContinuityAgent(page, '/agent-context-fixture-b')
-        await expect(agent.locator('.agent-message--user')).toHaveCount(0)
-        expect(creates()).toBe(3)
+        await expect(agent.locator('.agent-message--user')).toContainText('A new conversation after the resume window.')
+        expect(creates()).toBe(2)
         // The context picker shows one compact page chip for the current page.
         await expect(agent.locator('.agent-context__page-chip')).toContainText('Context page B')
         fixture.assertNoUnexpectedRequests()
@@ -2656,60 +2656,64 @@ test.describe('responsive UI quality matrix', () => {
       }
     })
 
-    test('Agent continuity keeps pinned context across pages, revisits, and exclusions', async ({ page }, testInfo) => {
+    test('Agent continuity follows the tab across pages without collecting visited sources', async ({ page }, testInfo) => {
       test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
       await installAgentContinuityPages(page)
       const fixture = await installEnabledAgentFixture(page, { distinctSessionIds: true })
+      const creates = () => fixture.requests.filter(value => value === 'POST /_api/agents/sessions').length
       try {
         let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
-        const settingsButton = agent.getByRole('button', { name: 'More chat actions', exact: true })
-        const settingsMenu = agent.locator('.v-menu.v-overlay--active')
-        const pinnedIndicator = agent.locator('.inline-agent__pin-indicator')
-        const setPinned = async (pinned: boolean): Promise<void> => {
-          await settingsButton.click()
-          // "Pin chat" appears on an unpinned conversation and vice versa.
-          const action = settingsMenu.getByText(pinned ? 'Pin chat' : 'Unpin chat', { exact: true })
-          await expect(action).toBeVisible()
-          // A freshly opened conversation may still be loading; wait until the action is usable.
-          const actionItem = settingsMenu.locator('.v-list-item').filter({ hasText: pinned ? 'Pin chat' : 'Unpin chat' })
-          await expect
-            .poll(() => actionItem.evaluate(element => !element.className.includes('v-list-item--disabled') && element.getAttribute('aria-disabled') !== 'true'))
-            .toBe(true)
-          await action.click()
-          await expect(pinnedIndicator).toHaveCount(pinned ? 1 : 0)
-        }
-        await setPinned(true)
         const initial = await sendContinuityPrompt(page, agent, 'Start with page A.')
         expect(initial.currentPage?.id).toBe(901)
+        expect(initial.knowledgeContext.sources).toEqual([])
+        await agent.getByRole('button', { name: 'More chat actions', exact: true }).click()
+        const actions = agent.locator('.v-menu.v-overlay--active')
+        await expect(actions).toBeVisible()
+        await expect(actions.getByText('Temporary chat', { exact: true })).toBeVisible()
+        await actions.evaluate(async element => { await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))) })
+        await page.screenshot({ path: testInfo.outputPath('automatic-chat-actions.png') })
+        const chrome = await agent.boundingBox()
+        if (!chrome) throw new Error('Wiki Agent surface has no geometry')
+        await page.mouse.click(chrome.x + 16, chrome.y + 16)
+        await expect(actions).toBeHidden()
         await closeContinuityAgent(page)
-        agent = await openContinuityAgent(page, '/agent-context-fixture-b')
-        await expect(pinnedIndicator).toBeVisible()
-        await expect(agent.locator('.agent-context__sources')).toContainText('Context page A')
-        const second = await sendContinuityPrompt(page, agent, 'Now include page B.')
+        const originalDocument = await page.evaluate(() => performance.timeOrigin)
+        await page.getByRole('link', { name: 'Context page B', exact: true }).click()
+        await expect(page).toHaveURL('/agent-context-fixture-b')
+        expect(await page.evaluate(() => performance.timeOrigin)).toBe(originalDocument)
+        agent = await openContinuityAgent(page)
+        await expect(agent.locator('.agent-message--user')).toHaveCount(1)
+        const second = await sendContinuityPrompt(page, agent, 'Continue on page B.')
         expect(second.currentPage?.id).toBe(902)
-        expect(second.knowledgeContext.sources.map(source => source.id)).toEqual([901])
-        await closeContinuityAgent(page)
-        agent = await openContinuityAgent(page, '/agent-context-fixture-c')
-        const third = await sendContinuityPrompt(page, agent, 'Now include page C.')
-        expect(third.currentPage?.id).toBe(903)
-        expect(third.knowledgeContext.sources.map(source => source.id)).toEqual([901, 902])
-        // One page chip: its aria-pressed state tells whether the page is included.
-        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'true')
+        expect(second.knowledgeContext.sources).toEqual([])
         await agent.locator('.agent-context__page-chip').click()
         await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
         await closeContinuityAgent(page)
-        agent = await openContinuityAgent(page, '/agent-context-fixture-a')
-        const revisited = await sendContinuityPrompt(page, agent, 'Return to page A without excluded C.')
-        expect(revisited.currentPage?.id).toBe(901)
-        expect(revisited.knowledgeContext.sources.map(source => source.id)).toEqual([902])
-        await expect(agent.locator('.agent-context__sources')).not.toContainText('Context page C')
-        await expect(agent.locator('.agent-message--user')).toHaveCount(4)
-        expect(fixture.requests.filter(value => value === 'POST /_api/agents/sessions')).toHaveLength(1)
-        await setPinned(false)
+        agent = await openContinuityAgent(page, '/agent-context-fixture-c')
+        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
+        const third = await sendContinuityPrompt(page, agent, 'Continue without including the current page.')
+        expect(third.currentPage).toBeUndefined()
+        expect(third.knowledgeContext.sources).toEqual([])
         await closeContinuityAgent(page)
-        agent = await openContinuityAgent(page)
+        agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+        const revisited = await sendContinuityPrompt(page, agent, 'Return without adding visited pages.')
+        expect(revisited.currentPage).toBeUndefined()
+        expect(revisited.knowledgeContext.sources).toEqual([])
         await expect(agent.locator('.agent-message--user')).toHaveCount(4)
-        await expect(pinnedIndicator).toHaveCount(0)
+        expect(creates()).toBe(1)
+
+        await agent.getByRole('button', { name: 'New chat', exact: true }).click()
+        await expect(agent.locator('.agent-message--user')).toHaveCount(0)
+        await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
+        const fresh = await sendContinuityPrompt(page, agent, 'Start a deliberately new conversation.')
+        expect(fresh.currentPage?.id).toBe(901)
+        expect(fresh.knowledgeContext.sources).toEqual([])
+        expect(creates()).toBe(2)
+        await closeContinuityAgent(page)
+        agent = await openContinuityAgent(page, '/agent-context-fixture-b')
+        await expect(agent.locator('.agent-message--user')).toHaveCount(1)
+        await expect(agent.locator('.agent-message--user')).toContainText('Start a deliberately new conversation.')
+        expect(creates()).toBe(2)
         fixture.assertNoUnexpectedRequests()
       } finally {
         await fixture.dispose()

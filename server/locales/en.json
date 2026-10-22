@@ -553,9 +553,6 @@
       "moreActions": "More chat actions",
       "newChat": "New chat",
       "close": "Close Wiki Agent",
-      "pinned": "Pinned conversation",
-      "pin": "Pin chat",
-      "unpin": "Unpin chat",
       "keepConversation": "Keep conversation",
       "temporaryChat": "Temporary chat",
       "waitForMemory": "Wait for the memory change to finish.",
@@ -1701,7 +1698,6 @@
       "personalMemoryStillApplies": ". Personal memory still applies.",
       "recoveringLatestWorkingContext": "Recovering your latest working context",
       "approvalRequired": "Approval required",
-      "pinningAvailableTabBut": "Pinning is available for this tab, but browser storage is unavailable; it will not survive a reload.",
       "closeAgentSidePanel": "Close Agent side panel",
       "conversationTranscript": "Conversation transcript",
       "conversationNavigation": "Conversation navigation"

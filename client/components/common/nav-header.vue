@@ -480,7 +480,7 @@
                   v-list-item-subtitle {{ accountVerificationDetail }}
               //- Auth verification can retire the user while local cleanup is
               //- pending. Keep the native POST form connected until submission.
-              form.account-menu__session(v-if='isAuthenticated || logoutPending', action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='clearAgentChatPinOnLogout')
+              form.account-menu__session(v-if='isAuthenticated || logoutPending', action='/logout', method='post', :aria-busy='logoutPending ? `true` : undefined', @submit='destroyAgentWorkspaceOnLogout')
                 v-list-item(
                   tag='button'
                   type='submit'
@@ -1097,7 +1097,7 @@ export default defineComponent({
         root.getElementById(`account-menu-tab-${tab.id}`)?.focus()
       })
     },
-    clearAgentChatPinOnLogout (event: SubmitEvent): void {
+    destroyAgentWorkspaceOnLogout (event: SubmitEvent): void {
       event.preventDefault()
       if (this.logoutPending || !this.onlineActionReady) return
       this.logoutPending = true

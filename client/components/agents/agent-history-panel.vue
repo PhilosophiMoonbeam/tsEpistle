@@ -483,7 +483,7 @@ const componentGeneration = ref(0)
 const workflowGeneration = ref(0)
 const folderWorkflowIdentity = shallowRef<HistoryOperationIdentity | null>(null)
 let disposed = false
-const currentOwnerId = (): number | null => agents.pinOwnerId ?? null
+const currentOwnerId = (): number | null => agents.workspaceOwnerId ?? null
 const currentOwnerGeneration = (): number => agents.ownerGeneration ?? 0
 const currentWorkspaceVersion = (): number => agents.workspaceVersion ?? 0
 const captureOperationIdentity = (workflow = false): HistoryOperationIdentity => ({
