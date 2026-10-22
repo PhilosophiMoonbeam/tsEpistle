@@ -63,6 +63,12 @@ jobs:
     - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
       with:
         bun-version: ${{ env.BUN_VERSION }}
+    - name: Install Media Test Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends ffmpeg
+        ffmpeg -version
+        ffprobe -version
     - name: Install Dependencies
       run: bun install --frozen-lockfile
     - name: Detect Helm Chart Changes
@@ -242,6 +248,12 @@ jobs:
     - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
       with:
         bun-version: ${{ env.BUN_VERSION }}
+    - name: Install Media Test Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends ffmpeg
+        ffmpeg -version
+        ffprobe -version
     - run: bun install --frozen-lockfile
     - name: Install Pinned qpdf
       shell: bash
