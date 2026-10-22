@@ -645,6 +645,7 @@ export default defineComponent({
       logoutPending: false,
       navHeaderTitleFitScale: 1 as number,
       navHeaderTitleResizeObserver: null as ResizeObserver | null,
+      navHeaderTitleFitKey: '',
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -948,6 +949,10 @@ export default defineComponent({
         this.navHeaderTitleResizeObserver.observe(titleBox)
       }
     }
+    if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined') {
+      document.fonts.addEventListener('loading', this.invalidateNavHeaderTitleFit)
+      document.fonts.addEventListener('loadingdone', this.applyNavHeaderTitleFit)
+    }
     if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined' && document.fonts.ready) {
       void document.fonts.ready.then(() => this.applyNavHeaderTitleFit()).catch(() => {})
     }
@@ -980,6 +985,10 @@ export default defineComponent({
     }
     this.navHeaderTitleResizeObserver?.disconnect()
     this.navHeaderTitleResizeObserver = null
+    if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined') {
+      document.fonts.removeEventListener('loading', this.invalidateNavHeaderTitleFit)
+      document.fonts.removeEventListener('loadingdone', this.applyNavHeaderTitleFit)
+    }
   },
   methods: {
     invalidateNotificationSession(): void {
@@ -992,13 +1001,28 @@ export default defineComponent({
     runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler']): void {
       this[handler]()
     },
+    invalidateNavHeaderTitleFit(): void {
+      this.navHeaderTitleFitKey = ''
+    },
+    getNavHeaderTitleFitKey(box: HTMLElement): string {
+      const rect = box.getBoundingClientRect()
+      const style = window.getComputedStyle(box)
+      return JSON.stringify([
+        this.title, rect.width, rect.height,
+        style.fontFamily, style.fontSize, style.fontWeight, style.fontStyle,
+        style.fontStretch, style.fontVariationSettings, style.fontFeatureSettings,
+        style.letterSpacing, style.lineHeight, style.maxHeight,
+        style.paddingTop, style.paddingBottom,
+        document.fonts?.status
+      ])
+    },
     // Keeps the workspace title whole on narrow screens. The stacked variant
     // starts from a balanced two-word-group split and lets each group wrap
     // (balanced) onto more lines. If a word or the line count still does not
-    // fit the header, the text steps down in size. Each run starts again at
-    // full size, so the result depends only on the available space and cannot
-    // oscillate. At the smallest step an over-long word breaks instead of
-    // being cut off.
+    // fit the header, the text steps down in size. Changed constraints always
+    // start again at full size, so the result cannot oscillate. At the smallest
+    // step an over-long word breaks instead of being cut off. Cache the final
+    // geometry and typography: fitting itself can resize this observed box.
     applyNavHeaderTitleFit (): void {
       if (typeof window === 'undefined' || typeof document === 'undefined') return
       const box = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
@@ -1006,8 +1030,10 @@ export default defineComponent({
       if (box.clientWidth <= 0 || box.getBoundingClientRect().width <= 0) {
         // Hidden on this breakpoint (the single desktop line owns wide screens).
         this.navHeaderTitleFitScale = 1
+        this.navHeaderTitleFitKey = ''
         return
       }
+      if (this.getNavHeaderTitleFitKey(box) === this.navHeaderTitleFitKey) return
       const lines = Array.from(box.querySelectorAll<HTMLElement>('.nav-header-title-line'))
       // Flex-shrunk, overflow-hidden lines can clip even when the box fits.
       const fits = (): boolean =>
@@ -1027,6 +1053,9 @@ export default defineComponent({
       box.classList.remove('is-measuring')
       box.style.setProperty('--nav-header-title-fit', next.toFixed(3))
       this.navHeaderTitleFitScale = next
+      // Read after restoring word breaking, not with the measuring class still
+      // applied. Otherwise its height change can trigger another identical walk.
+      this.navHeaderTitleFitKey = this.getNavHeaderTitleFitKey(box)
     },
     handleLogoError (event: Event): void {
       const image = event.currentTarget

@@ -506,6 +506,126 @@ describe('page reader chrome rules', () => {
   })
 })
 
+describe('desktop reader rail measurement', () => {
+  const originalWidth = Object.getOwnPropertyDescriptor(browserWindow, 'innerWidth')!
+  const originalHeight = Object.getOwnPropertyDescriptor(browserWindow, 'innerHeight')!
+  const originalScroll = Object.getOwnPropertyDescriptor(browserWindow, 'scrollY')!
+  const frames = new Map<number, FrameRequestCallback>()
+  let nextFrame = 0
+
+  beforeEach(() => {
+    resetBody()
+    frames.clear()
+    nextFrame = 0
+    Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 1440 })
+    Object.defineProperty(browserWindow, 'innerHeight', { configurable: true, value: 900 })
+    Object.defineProperty(browserWindow, 'scrollY', { configurable: true, value: 0 })
+    vi.spyOn(browserWindow, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.spyOn(browserWindow, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id) })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    Object.defineProperty(browserWindow, 'innerWidth', originalWidth)
+    Object.defineProperty(browserWindow, 'innerHeight', originalHeight)
+    Object.defineProperty(browserWindow, 'scrollY', originalScroll)
+    resetBody()
+  })
+
+  const fixture = () => {
+    browserDocument.body.innerHTML = '<header class="page-hero"></header><aside class="page-col-sd" style="top:80px;--wiki-space-2:8px"><div class="page-tools-card"></div><nav class="page-toc-card"></nav></aside><footer class="nav-footer"></footer>'
+    const rail = browserDocument.querySelector<HTMLElement>('aside')!
+    const hero = browserDocument.querySelector<HTMLElement>('header')!
+    const tools = browserDocument.querySelector<HTMLElement>('.page-tools-card')!
+    const footer = browserDocument.querySelector<HTMLElement>('footer')!
+    const operations: Array<{ target: string; alignment: string; maxHeight: string }> = []
+    const rect = (top: number, height: number): DOMRect => ({
+      top, bottom: top + height, left: 0, right: 300, width: 300, height, x: 0, y: top, toJSON: () => ({})
+    })
+    const top = () => 180 + (parseFloat(rail.style.getPropertyValue('--page-desktop-rail-align-offset')) || 0)
+    // Observe the DOM value at every geometry read, not setProperty calls on
+    // jsdom's proxied CSSStyleProperties object. A read after alignment changes
+    // would capture the new value and fail the read-before-write contract.
+    const recordRead = (target: string) => {
+      operations.push({
+        target,
+        alignment: rail.style.getPropertyValue('--page-desktop-rail-align-offset'),
+        maxHeight: rail.style.getPropertyValue('--page-desktop-rail-max-height')
+      })
+    }
+    rail.getBoundingClientRect = () => { recordRead('rail'); return rect(top(), 700) }
+    hero.getBoundingClientRect = () => { recordRead('hero'); return rect(0, 300) }
+    tools.getBoundingClientRect = () => { recordRead('tools'); return rect(top(), 100) }
+    footer.getBoundingClientRect = () => { recordRead('footer'); return rect(2000, 64) }
+    const vm: Record<string, unknown> = {
+      tocPosition: 'left', cachedRailEl: rail, navFooterEl: footer,
+      railRafId: 0, railMeasurementPending: false, railSettleRafId: 0, railSettleHandler: null,
+      railSettleFrameCount: 0, railSettleStableFrames: 0, lastSampledRailTop: -1,
+      lastRailMaxHeight: -1, lastRailAlignmentOffset: null, railAlignmentDirty: true,
+      railStickyTop: 80, railSpacingGap: 8,
+      getDesktopRailElement: () => rail, getPageHeaderElement: () => hero
+    }
+    for (const name of [
+      'markDesktopRailAlignmentDirty', 'resetDesktopRailMeasurementState',
+      'cancelDesktopRailSettling', 'startDesktopRailSettling', 'stepDesktopRailSettling',
+      'updateDesktopRailMeasurements', 'onDesktopRailScroll'
+    ]) vm[name] = (...args: unknown[]) => page.methods[name]!.call(vm, ...args)
+    const flush = () => {
+      const callbacks = [...frames.values()]
+      frames.clear()
+      for (const callback of callbacks) callback(0)
+    }
+    return { vm, rail, operations, flush }
+  }
+
+  it('coalesces invalidations, samples the rail once, and measures aligned height on the next frame without read/write/read layout', () => {
+    const { vm, rail, operations, flush } = fixture()
+    for (let i = 0; i < 3; i++) page.methods.startDesktopRailSettling!.call(vm)
+    expect(frames.size).toBe(1)
+    expect(operations).toEqual([])
+    flush()
+    expect(operations).toEqual([
+      { target: 'rail', alignment: '', maxHeight: '' },
+      { target: 'hero', alignment: '', maxHeight: '' },
+      { target: 'tools', alignment: '', maxHeight: '' }
+    ])
+    expect(rail.style.getPropertyValue('--page-desktop-rail-align-offset')).toBe('12px')
+    expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('')
+    page.methods.onDesktopRailScroll!.call(vm)
+    expect(frames.size).toBe(1)
+    operations.length = 0
+    flush()
+    expect(operations).toEqual([
+      { target: 'rail', alignment: '12px', maxHeight: '' },
+      { target: 'hero', alignment: '12px', maxHeight: '' },
+      { target: 'tools', alignment: '12px', maxHeight: '' },
+      { target: 'footer', alignment: '12px', maxHeight: '' }
+    ])
+    expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('700px')
+    expect(rail.style.getPropertyValue('--page-desktop-rail-align-offset')).toBe('12px')
+  })
+
+  it('clears desktop constraints and cancels settling when resizing to mobile or turning the outline off', () => {
+    for (const reason of ['mobile', 'off']) {
+      const { vm, rail, flush } = fixture()
+      page.methods.startDesktopRailSettling!.call(vm)
+      flush()
+      flush()
+      expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('700px')
+      if (reason === 'mobile') Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 900 })
+      else vm.tocPosition = 'off'
+      page.methods.startDesktopRailSettling!.call(vm)
+      expect(vm.railSettleRafId).toBe(0)
+      expect(rail.style.getPropertyValue('--page-desktop-rail-align-offset')).toBe('')
+      expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('')
+      Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 1440 })
+      frames.clear()
+    }
+  })
+})
+
 describe('page route motion policy', () => {
   beforeEach(() => resetBody())
   afterEach(() => {

@@ -197,7 +197,7 @@ export function trackPageOutline(
   onActive: (anchor: string) => void,
   onProgress?: (progress: number) => void
 ): PageOutlineTracker {
-  let headings: { anchor: string; element: HTMLElement }[] = []
+  let headings: string[] = []
   let activationPositions: number[] = []
   let frame: number | null = null
   let dirty = true
@@ -211,7 +211,7 @@ export function trackPageOutline(
   let documentScrollHeight = 0
   let navigationAnchor: string | null = null
   let navigationSettled = false
-  let navigationScrollY = window.scrollY
+  let navigationScrollY = 0
   let navigationSettleTimer: number | null = null
   let scrollbarPointerDown = false
 
@@ -258,8 +258,11 @@ export function trackPageOutline(
     frame = null
     if (disposed) return
     if (container.style.display === 'none') return
+    const scrollTop = window.scrollY
     if (dirty) {
-      headings = entries.flatMap(entry => {
+      headings = []
+      const positions: number[] = []
+      for (const entry of entries) {
         let id = entry.anchor.replace(/^#/, '')
         try {
           id = decodeURIComponent(id)
@@ -267,16 +270,21 @@ export function trackPageOutline(
           /* Keep malformed literal IDs usable. */
         }
         const element = document.getElementById(id)
-        // Do not use checkVisibility here: content-visibility can report
-        // offscreen headings as hidden, permanently dropping them from the
-        // cached outline on long documents. A rendered client rect keeps
-        // genuinely collapsed headings out while retaining the full outline.
-        return element && container.contains(element) && element.getClientRects().length > 0 ? [{ anchor: entry.anchor, element }] : []
-      })
-      const positions = headings.map(({ element }) => element.getBoundingClientRect().top + window.scrollY)
+        if (!element || !container.contains(element)) continue
+        // Keep offscreen headings, but exclude collapsed ones. Reuse these
+        // rectangles for positioning instead of measuring every heading twice.
+        const rects = element.getClientRects()
+        if (rects.length === 0) continue
+        let top = Infinity
+        for (const rect of rects) {
+          if (rect.width > 0 || rect.height > 0) top = Math.min(top, rect.top)
+        }
+        headings.push(entry.anchor)
+        positions.push((Number.isFinite(top) ? top : rects[0]!.top) + scrollTop)
+      }
       const article = container.getBoundingClientRect()
-      articleTop = article.top + window.scrollY
-      articleBottom = article.bottom + window.scrollY
+      articleTop = article.top + scrollTop
+      articleBottom = article.bottom + scrollTop
       viewportHeight = window.innerHeight
       headerBottom = document.querySelector('.nav-header')?.getBoundingClientRect().bottom ?? 64
       documentScrollHeight = document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight
@@ -298,7 +306,7 @@ export function trackPageOutline(
     }
 
     const distance = articleBottom - articleTop - viewportHeight + headerBottom
-    const progress = distance > 0 ? Math.round(Math.max(0, Math.min(1, (window.scrollY + headerBottom - articleTop) / distance)) * 100) : 100
+    const progress = distance > 0 ? Math.round(Math.max(0, Math.min(1, (scrollTop + headerBottom - articleTop) / distance)) * 100) : 100
     if (progress !== lastProgress) {
       lastProgress = progress
       onProgress?.(progress)
@@ -306,13 +314,13 @@ export function trackPageOutline(
 
     let anchor = navigationAnchor ?? ''
     if (anchor === '') {
-      let index = activeOutlineIndex(activationPositions, window.scrollY)
+      let index = activeOutlineIndex(activationPositions, scrollTop)
       // Before the first heading reaches its activation threshold the outline
       // has no active entry yet. As soon as the article is on screen the first
       // section is the honest highlight, so scrolling up never drops the
       // active row before it snaps back in.
-      if (index === -1 && headings.length > 0 && window.scrollY + viewportHeight > articleTop) index = 0
-      anchor = headings[index]?.anchor ?? ''
+      if (index === -1 && headings.length > 0 && scrollTop + viewportHeight > articleTop) index = 0
+      anchor = headings[index] ?? ''
     }
     if (anchor !== lastAnchor) {
       lastAnchor = anchor

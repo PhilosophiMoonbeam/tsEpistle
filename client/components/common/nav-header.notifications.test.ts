@@ -455,6 +455,8 @@ interface HeaderVm {
   accountMenuVisibilityChanged: (open: boolean) => void
   setAccountTooltip: (open: boolean) => void
   accountTooltipOpen: boolean
+  applyNavHeaderTitleFit: () => void
+  navHeaderTitleFitScale: number
 }
 
 const mountedApps: Array<() => void> = []
@@ -574,6 +576,116 @@ describe('search header affordances', () => {
 })
 
 describe('workspace title responsiveness', () => {
+  // JSDOM has no text layout. Model only the browser's measured widths, leaving
+  // the component to choose the scale and restore its word-breaking behavior.
+  const titleGeometry = (host: HTMLElement) => {
+    const box = host.querySelector<HTMLElement>('.nav-header-title-stacked')!
+    const geometry = { width: 100, naturalWidth: 120, overflowReads: 0 }
+    box.style.fontSize = '13px'
+    Object.defineProperties(box, {
+      clientWidth: { get: () => geometry.width },
+      clientHeight: { get: () => 48 },
+      scrollHeight: { get: () => 48 }
+    })
+    box.getBoundingClientRect = () => new browserWindow.DOMRect(
+      0, 0, geometry.width,
+      (Number(box.style.getPropertyValue('--nav-header-title-fit')) || 1) * 32
+    )
+    for (const line of box.querySelectorAll<HTMLElement>('.nav-header-title-line')) {
+      Object.defineProperties(line, {
+        clientWidth: { get: () => geometry.width },
+        scrollWidth: {
+          get: () => {
+            geometry.overflowReads += 1
+            return geometry.naturalWidth * (Number(box.style.getPropertyValue('--nav-header-title-fit')) || 1)
+          }
+        },
+        clientHeight: { get: () => 24 },
+        scrollHeight: { get: () => 24 }
+      })
+    }
+    return { box, geometry }
+  }
+
+  it.each([1, 0.92, 0.84, 0.76, 0.7])('keeps the largest fitting title scale (%s) without repeating unchanged layout walks', async expectedScale => {
+    const mounted = await mountHeader({ smAndDown: true })
+    const { box, geometry } = titleGeometry(mounted.host)
+    geometry.naturalWidth = 100 / expectedScale
+
+    mounted.vm.applyNavHeaderTitleFit()
+
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(expectedScale)
+    expect(box.style.getPropertyValue('--nav-header-title-fit')).toBe(expectedScale.toFixed(3))
+    expect(box.classList.contains('is-measuring')).toBe(false)
+    const reads = geometry.overflowReads
+    mounted.vm.applyNavHeaderTitleFit()
+    mounted.vm.applyNavHeaderTitleFit()
+    expect(geometry.overflowReads).toBe(reads)
+  })
+
+  it('refits changed width, title and typography while keeping minimum-scale word breaking', async () => {
+    const mounted = await mountHeader({ smAndDown: true })
+    const { box, geometry } = titleGeometry(mounted.host)
+    geometry.naturalWidth = 300
+    mounted.vm.applyNavHeaderTitleFit()
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
+    expect(box.classList.contains('is-measuring')).toBe(false)
+
+    geometry.width = 320
+    mounted.vm.applyNavHeaderTitleFit()
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(1)
+
+    geometry.naturalWidth = 400
+    wikiStore.site.title = 'Longer workspace'
+    await settle()
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.76)
+
+    geometry.naturalWidth = 500
+    box.style.fontFamily = 'Updated Heading'
+    mounted.vm.applyNavHeaderTitleFit()
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
+
+    geometry.width = 0
+    mounted.vm.applyNavHeaderTitleFit()
+    await settle()
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(1)
+    geometry.width = 320
+    mounted.vm.applyNavHeaderTitleFit()
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
+  })
+
+  it('shares an unchanged font-ready fit but refits after a subsequent font load', async () => {
+    const previousFonts = Object.getOwnPropertyDescriptor(browserWindow.document, 'fonts')
+    const { promise: ready, resolve: resolveReady } = Promise.withResolvers<void>()
+    const fonts = Object.assign(new browserWindow.EventTarget(), {
+      status: 'loaded',
+      ready
+    })
+    Object.defineProperty(browserWindow.document, 'fonts', { configurable: true, value: fonts })
+    browserGlobalRestorations.push(() => {
+      if (previousFonts) Object.defineProperty(browserWindow.document, 'fonts', previousFonts)
+      else Reflect.deleteProperty(browserWindow.document, 'fonts')
+    })
+    const mounted = await mountHeader({ smAndDown: true })
+    const { geometry } = titleGeometry(mounted.host)
+    mounted.vm.applyNavHeaderTitleFit()
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.84)
+    const reads = geometry.overflowReads
+
+    resolveReady()
+    await settle()
+    fonts.dispatchEvent(new browserWindow.Event('loadingdone'))
+    expect(geometry.overflowReads).toBe(reads)
+
+    fonts.status = 'loading'
+    fonts.dispatchEvent(new browserWindow.Event('loading'))
+    geometry.naturalWidth = 140
+    fonts.status = 'loaded'
+    fonts.dispatchEvent(new browserWindow.Event('loadingdone'))
+    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
+    expect(geometry.overflowReads).toBeGreaterThan(reads)
+  })
+
   it('splits multi-word workspace titles onto two balanced lines for the stacked small-screen variant', async () => {
     wikiStore.site.title = `Tim O'Pedia`
     const mounted = await mountHeader({ hideSearch: true, smAndDown: true })

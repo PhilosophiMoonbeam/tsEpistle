@@ -1715,6 +1715,7 @@ export default defineComponent({
       scrollAnimationFrame: null as number | null,
       railScrollHandler: null as (() => void) | null,
       railRafId: 0,
+      railMeasurementPending: false,
       scrollAnimationToken: 0,
       railSettleRafId: 0,
       railSettleFrameCount: 0,
@@ -2213,7 +2214,6 @@ export default defineComponent({
       this.$nextTick(() => {
         this.setupDesktopRailObserver()
         this.setupTocResizeObserver()
-        this.updateDesktopRailMeasurements(true)
         this.startDesktopRailSettling()
         this.ensureActiveTocVisible()
       })
@@ -2229,7 +2229,6 @@ export default defineComponent({
         await this.$nextTick()
         this.setupDesktopRailObserver()
         this.refreshPageContent()
-        this.updateDesktopRailMeasurements(true)
         const offlinePageId = this.pageId
         const offlineLocale = this.locale
         void this.recordOfflineReaderVisit().then(() => {
@@ -2293,7 +2292,6 @@ export default defineComponent({
     this.resizeHandler = () => {
       this.markDesktopRailAlignmentDirty()
       this.handleSideNavVisibility()
-      this.updateDesktopRailMeasurements(true)
       this.startDesktopRailSettling()
       this.ensureActiveTocVisible()
     }
@@ -2322,14 +2320,12 @@ export default defineComponent({
     this.$nextTick(() => {
       this.setupDesktopRailObserver()
       this.setupTocResizeObserver()
-      this.updateDesktopRailMeasurements(true)
       this.startDesktopRailSettling()
       this.ensureActiveTocVisible()
     })
 
     if (typeof document !== 'undefined' && 'fonts' in document && document.fonts?.ready) {
       document.fonts.ready.then(() => {
-        this.updateDesktopRailMeasurements(true)
         this.startDesktopRailSettling()
       }).catch(() => {})
     }
@@ -4208,6 +4204,11 @@ export default defineComponent({
     },
     resetDesktopRailMeasurementState(): void {
       this.cancelDesktopRailSettling()
+      if (this.railRafId) {
+        window.cancelAnimationFrame(this.railRafId)
+        this.railRafId = 0
+      }
+      this.railMeasurementPending = false
       if (this.cachedRailEl) {
         this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
         this.cachedRailEl.style.removeProperty('--page-desktop-rail-align-offset')
@@ -4270,7 +4271,6 @@ export default defineComponent({
       if (!this.railResizeObserver) {
         this.railResizeObserver = new ResizeObserver(() => {
           this.markDesktopRailAlignmentDirty()
-          this.updateDesktopRailMeasurements(true)
           this.startDesktopRailSettling()
         })
       }
@@ -4317,9 +4317,13 @@ export default defineComponent({
       return null
     },
     onDesktopRailScroll(): void {
-      if (this.railRafId) return
+      this.railMeasurementPending = true
+      // Settling already has a frame queued. Let it consume the scroll or
+      // alignment invalidation so two callbacks cannot force layout in turn.
+      if (this.railRafId || this.railSettleRafId) return
       this.railRafId = window.requestAnimationFrame(() => {
         this.railRafId = 0
+        this.railMeasurementPending = false
         this.updateDesktopRailMeasurements(false)
       })
     },
@@ -4333,11 +4337,16 @@ export default defineComponent({
       if (typeof window === 'undefined') return
       this.markDesktopRailAlignmentDirty()
       if (window.innerWidth < 1280 || this.tocPosition === 'off') {
-        this.cancelDesktopRailSettling()
+        this.resetDesktopRailMeasurementState()
         return
       }
 
       this.cancelDesktopRailSettling()
+      if (this.railRafId) {
+        window.cancelAnimationFrame(this.railRafId)
+        this.railRafId = 0
+      }
+      this.railMeasurementPending = true
       this.railSettleFrameCount = 0
       this.railSettleStableFrames = 0
       this.lastSampledRailTop = -1
@@ -4364,14 +4373,14 @@ export default defineComponent({
         return
       }
 
-      const currentTop = railEl.getBoundingClientRect().top
+      const railRect = railEl.getBoundingClientRect()
+      const currentTop = railRect.top
       this.railSettleFrameCount++
 
       const topChanged = this.lastSampledRailTop === -1 || Math.abs(currentTop - this.lastSampledRailTop) >= 0.5
       if (topChanged) {
         this.lastSampledRailTop = currentTop
         this.railSettleStableFrames = 0
-        this.updateDesktopRailMeasurements(true)
       } else {
         this.railSettleStableFrames++
       }
@@ -4385,11 +4394,14 @@ export default defineComponent({
 
       if (!isStable && !reachedMax) {
         this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
-      } else {
-        this.updateDesktopRailMeasurements(true)
+      }
+      if (topChanged || this.railMeasurementPending || isStable || reachedMax) {
+        const needsAlignment = topChanged || this.railAlignmentDirty || isStable || reachedMax
+        this.railMeasurementPending = false
+        this.updateDesktopRailMeasurements(needsAlignment, railRect)
       }
     },
-    updateDesktopRailMeasurements(isResize = false): void {
+    updateDesktopRailMeasurements(isResize = false, sampledRailRect?: DOMRect): void {
       if (typeof window === 'undefined') return
       if (isResize) this.markDesktopRailAlignmentDirty()
 
@@ -4437,14 +4449,14 @@ export default defineComponent({
           (tocCard.compareDocumentPosition(toolsCard) & Node.DOCUMENT_POSITION_FOLLOWING)) {
         tocCard.parentElement?.insertBefore(toolsCard, tocCard)
         this.markDesktopRailAlignmentDirty()
+        sampledRailRect = undefined
       }
 
-      let railRect = railEl.getBoundingClientRect()
+      const railRect = sampledRailRect ?? railEl.getBoundingClientRect()
       if (window.scrollY <= 1 && (isResize || this.railAlignmentDirty)) {
         const heroEl = this.getPageHeaderElement()
-        const toolsEl = railEl.querySelector('.page-tools-card')
         const heroRect = heroEl?.getBoundingClientRect()
-        const toolsRect = toolsEl?.getBoundingClientRect()
+        const toolsRect = toolsCard?.getBoundingClientRect()
         if (heroRect && toolsRect && toolsRect.height > 0 && railRect.height > 0) {
           const inlineOffset = parseFloat(railEl.style.getPropertyValue('--page-desktop-rail-align-offset'))
           const currentOffset = this.lastRailAlignmentOffset ?? (Number.isFinite(inlineOffset) ? inlineOffset : 0)
@@ -4458,7 +4470,12 @@ export default defineComponent({
             if (this.lastRailAlignmentOffset === null || Math.abs(nextOffset - currentOffset) >= 0.25) {
               this.lastRailAlignmentOffset = nextOffset
               railEl.style.setProperty('--page-desktop-rail-align-offset', `${nextOffset}px`)
-              railRect = railEl.getBoundingClientRect()
+              this.railAlignmentDirty = false
+              // Alignment changes margin-block-start. Let the browser lay it
+              // out before measuring the new top, rather than forcing another
+              // layout synchronously in this measurement.
+              this.onDesktopRailScroll()
+              return
             }
             this.railAlignmentDirty = false
           }

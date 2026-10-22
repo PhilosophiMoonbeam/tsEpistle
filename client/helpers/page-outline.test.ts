@@ -229,6 +229,103 @@ describe('document outline', () => {
     })
   }
 
+  test('measures each heading once per layout change, keeps offscreen and zero-size anchors, and defers setup reads', async () => {
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 0
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    let resize = () => {}
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe(): void {}
+      disconnect(): void {}
+    })
+    let scrollTop = 0
+    let scrollReads = 0
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => { scrollReads++; return scrollTop } })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: 11_000 })
+    const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts')
+    const { promise: fontReadiness, resolve: fontsReady } = Promise.withResolvers<void>()
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: { ready: fontReadiness }
+    })
+    const article = document.createElement('main')
+    const rect = (top: number, height = 40): DOMRect => ({
+      top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({})
+    })
+    article.getBoundingClientRect = () => rect(-scrollTop, 10_000)
+    let collapsed = true
+    let fontShift = 0
+    const reads = Array.from({ length: 47 }, () => 0)
+    const entries = reads.map((_, index) => {
+      const heading = document.createElement('h2')
+      heading.id = `section-${index}`
+      heading.getClientRects = () => {
+        reads[index]!++
+        if (index === 1 && collapsed) return [] as unknown as DOMRectList
+        const top = index * 200 + fontShift - scrollTop
+        // A zero-size rendered anchor is valid. Fragmented anchors use the
+        // top of nonempty boxes, just like getBoundingClientRect.
+        return (index === 2 ? [rect(1, 0), rect(top + 40), rect(top)] : [rect(top, index === 0 ? 0 : 40)]) as unknown as DOMRectList
+      }
+      heading.getBoundingClientRect = () => { throw new Error('A heading must not be measured a second time') }
+      article.append(heading)
+      return { anchor: `#${heading.id}`, title: heading.id, depth: 0 }
+    })
+    document.body.append(article)
+    const active: string[] = []
+    const tracker = trackPageOutline(article, entries, anchor => active.push(anchor))
+    const flush = () => {
+      const callbacks = [...frames.values()]
+      frames.clear()
+      for (const callback of callbacks) callback(0)
+    }
+    try {
+      expect(scrollReads).toBe(0)
+      expect(reads.every(count => count === 0)).toBe(true)
+      resize()
+      resize()
+      expect(frames.size).toBe(1)
+      flush()
+      expect(active.at(-1)).toBe('#section-0')
+      expect(reads.every(count => count === 1)).toBe(true)
+      expect(scrollReads).toBe(1)
+      for (const [top, anchor] of [[320, '#section-2'], [6_000, '#section-30']] as const) {
+        scrollTop = top
+        window.dispatchEvent(new Event('scroll'))
+        flush()
+        expect(active.at(-1)).toBe(anchor)
+        expect(reads.every(count => count === 1)).toBe(true)
+      }
+      collapsed = false
+      scrollTop = 100
+      resize()
+      window.dispatchEvent(new Event('resize'))
+      flush()
+      expect(active.at(-1)).toBe('#section-1')
+      expect(reads.every(count => count === 2)).toBe(true)
+      fontShift = 600
+      fontsReady()
+      await Promise.resolve()
+      flush()
+      expect(active.at(-1)).toBe('#section-0')
+      expect(reads.every(count => count === 3)).toBe(true)
+      tracker.refresh()
+      tracker.dispose()
+      flush()
+      expect(reads.every(count => count === 3)).toBe(true)
+    } finally {
+      tracker.dispose()
+      if (originalFonts) Object.defineProperty(document, 'fonts', originalFonts)
+      else Reflect.deleteProperty(document, 'fonts')
+    }
+  })
+
   test('generates deterministic collision-free DOM IDs from anchors for sublists', () => {
     const dot = outlineSublistId('#a.b')
     const colon = outlineSublistId('#a:b')

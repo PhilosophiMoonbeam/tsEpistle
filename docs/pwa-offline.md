@@ -78,6 +78,8 @@ Precache installation uses at most six concurrent whole-entry pipelines, each re
 
 Measure cold and warm navigation separately, with route, viewport, CPU/network emulation, transfer bytes, long tasks, paint, and layout shift recorded. Page CDP network throttling does not prove that the service worker's own fetches were throttled: report observed installation time separately, not a modeled RTT estimate as a measurement. Keep the full offline dependency closure and supported font formats; reducing first-use work must not remove offline reading, search, encryption, or recovery capabilities.
 
+Reader outline geometry is refreshed on layout invalidation, with one heading rectangle collection reused for visibility and position; scrolling keeps the cached binary-search path. Reader-rail invalidations coalesce into the existing settling loop, and alignment writes defer dependent height reads to the next frame. Header-title fitting reuses an unchanged geometry/typography result but invalidates on title, size, presentation, and font-loading changes. Preserve anchor selection, late fonts, responsive resizing, sticky-rail seams, and print layout when changing these paths.
+
 ## 4. Capability model
 
 | Capability | Offline | Reconnected behavior |
