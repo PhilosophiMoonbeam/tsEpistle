@@ -179,7 +179,7 @@ test('preserves unsaved manager edits across type and close attempts, picker dis
   page.once('dialog', dialog => dialog.dismiss())
   await page.getByRole('button', { name: 'Open Wiki Agent', exact: true }).click()
   await expect(expansion).toHaveValue('Retained manager draft')
-  await expect(page.getByRole('region', { name: 'Wiki Agent', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('dialog', { name: 'Wiki Agent workspace', exact: true })).toHaveCount(0)
   await input.fill(`${terms.query} changed while editing`)
   await expect(expansion).toHaveValue('Retained manager draft')
   await pane.getByRole('button', { name: 'Choose readable page', exact: true }).click()
