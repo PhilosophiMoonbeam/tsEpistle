@@ -3088,9 +3088,8 @@ export default defineComponent({
   margin-inline-start: var(--wiki-space-2);
 }
 
-// Formatting tools in the Markdown and visual editors share one neutral look.
-// The accent marks only state (pressed/active), hover and focus, so colour
-// carries meaning instead of decorating every tool.
+// Editors share neutral button surfaces and interaction states. Markdown adds
+// semantic tints to the glyphs only; the accent still marks pressed state.
 .editor-tool-group {
   align-items: center;
   display: flex;

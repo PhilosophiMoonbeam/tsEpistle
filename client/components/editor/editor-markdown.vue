@@ -4,7 +4,7 @@
       template(v-if='isModalShown')
         v-spacer
         v-btn.editor-tool(variant="text", @click='closeAllModal')
-          v-icon(start) mdi-arrow-left-circle
+          v-icon.editor-markdown-tool-icon(data-tool='back', start) mdi-arrow-left-circle
           span {{$t('editor:backToEditor')}}
       .editor-markdown-toolbar-inner(
         v-else
@@ -25,12 +25,12 @@
                     :class='{ "is-active": formatState.headingLevel > 0 }'
                     :aria-label='headingToolLabel'
                   )
-                    v-icon {{ formatState.headingLevel > 0 ? `mdi-format-header-${formatState.headingLevel}` : tools.heading.icon }}
+                    v-icon.editor-markdown-tool-icon(data-tool='heading') {{ formatState.headingLevel > 0 ? `mdi-format-header-${formatState.headingLevel}` : tools.heading.icon }}
                     v-tooltip(activator='parent', location='bottom') {{ headingToolLabel }}
                 v-list.py-0(density='compact')
                   v-list-item(v-for='n in 6', :key='n', :active='formatState.headingLevel === n', @click='setHeaderLine(n)')
                     template(v-slot:prepend)
-                      v-icon {{ $t(`editor:editorMarkdown.mdiFormatHeader`, { n, interpolation: { escapeValue: false } }) }}
+                      v-icon.editor-markdown-tool-icon(data-tool='heading') {{ $t(`editor:editorMarkdown.mdiFormatHeader`, { n, interpolation: { escapeValue: false } }) }}
                     v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-menu(v-else-if='toolId === `blockquote`', :open-on-hover='$vuetify.display.mdAndUp')
                 template(v-slot:activator='{ props: menuProps }')
@@ -42,7 +42,7 @@
                     :class='{ "is-active": formatState.blockquote }'
                     :aria-label='$t(`editor:markup.blockquoteType`)'
                   )
-                    v-icon {{ tools.blockquote.icon }}
+                    v-icon.editor-markdown-tool-icon(data-tool='blockquote') {{ tools.blockquote.icon }}
                     v-tooltip(activator='parent', location='bottom') {{ $t('editor:markup.blockquoteType') }}
                 v-list.py-0(density='compact')
                   v-list-item.wiki-purpose-control(
@@ -64,12 +64,12 @@
                 :aria-disabled='toolUnavailable(toolId) ? `true` : undefined'
                 @click='runMarkdownTool(toolId)'
               )
-                v-icon {{ tools[toolId].icon }}
+                v-icon.editor-markdown-tool-icon(:data-tool='toolId') {{ tools[toolId].icon }}
                 v-tooltip(activator='parent', location='bottom') {{ toolTooltipText(toolId) }}
         v-spacer
         .editor-tool-group(role='group', :aria-label='$t(`editor:markup.viewGroup`)')
           v-btn.editor-tool(data-editor-contents-toggle, icon, rounded='md', variant='text', :aria-label='$t(`editor:contents.toggle`, { defaultValue: `Toggle contents pane` })', :aria-expanded='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', aria-controls='editor-markdown-contents', @click='toggleContents')
-            v-icon mdi-format-list-bulleted-square
+            v-icon.editor-markdown-tool-icon(data-tool='contents') mdi-format-list-bulleted-square
           v-btn.editor-tool(
             v-if='previewShown'
             icon
@@ -79,7 +79,7 @@
             :aria-pressed='previewAlignmentEnabled'
             @click='togglePreviewAlignment'
           )
-            v-icon mdi-crosshairs-gps
+            v-icon.editor-markdown-tool-icon(data-tool='alignPreview') mdi-crosshairs-gps
             v-tooltip(activator='parent', location='bottom') {{ previewAlignmentEnabled ? $t('editor:markup.previewFollows') : $t('editor:markup.previewAlignmentOff') }}
           v-btn.editor-tool(
             v-if='previewShown && $vuetify.display.mdAndUp'
@@ -90,7 +90,7 @@
             :aria-pressed='spellModeActive'
             @click='spellModeActive = !spellModeActive'
           )
-            v-icon mdi-spellcheck
+            v-icon.editor-markdown-tool-icon(data-tool='spellcheck') mdi-spellcheck
             v-tooltip(activator='parent', location='bottom') {{$t('editor:markup.toggleSpellcheck')}}
           v-btn.editor-tool(
             v-if='$vuetify.display.mdAndUp'
@@ -101,7 +101,7 @@
             :aria-pressed='previewShown'
             @click='togglePreview'
           )
-            v-icon mdi-book-open-outline
+            v-icon.editor-markdown-tool-icon(data-tool='preview') mdi-book-open-outline
             v-tooltip(activator='parent', location='bottom') {{$t('editor:markup.togglePreviewPane')}}
           v-btn.editor-tool(
             v-else
@@ -111,23 +111,23 @@
             :aria-label='previewShown ? $t(`editor:markup.showEditor`) : $t(`editor:markup.showPreview`)'
             @click='togglePreview'
           )
-            v-icon {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
+            v-icon.editor-markdown-tool-icon(data-tool='preview') {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
             v-tooltip(activator='parent', location='bottom') {{ previewShown ? $t('editor:markup.showEditor') : $t('editor:markup.showPreview') }}
           v-menu(v-if='!$vuetify.display.mdAndUp', location="left", min-width='260')
             template(v-slot:activator='{ props: menuProps }')
               v-btn.editor-tool(v-bind='menuProps', icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.moreTools`)')
-                v-icon mdi-dots-horizontal
+                v-icon.editor-markdown-tool-icon(data-tool='more') mdi-dots-horizontal
             v-list(nav, density='compact')
               template(v-for='toolId of mobileMenuTools', :key='toolId')
                 v-divider(v-if='toolId === `divider`')
                 v-list-item(v-else, @click='runMarkdownTool(toolId)')
                   template(v-slot:prepend)
-                    v-icon.mr-3 {{ tools[toolId].icon }}
+                    v-icon.editor-markdown-tool-icon.mr-3(:data-tool='toolId') {{ tools[toolId].icon }}
                   v-list-item-title {{ toolLabel(toolId) }}
               v-divider
               v-list-item(@click='toggleHelp')
                 template(v-slot:prepend)
-                  v-icon.mr-3 mdi-help-circle-outline
+                  v-icon.editor-markdown-tool-icon.mr-3(data-tool='help') mdi-help-circle-outline
                 v-list-item-title {{$t('editor:markup.markdownFormattingHelp')}}
     .editor-markdown-main
       .editor-markdown-sidebar(
@@ -146,16 +146,16 @@
           :aria-pressed='toolPressed(toolId)'
           @click='runMarkdownTool(toolId)'
         )
-          v-icon {{ tools[toolId].icon }}
+          v-icon.editor-markdown-tool-icon(:data-tool='toolId') {{ tools[toolId].icon }}
           v-tooltip(activator='parent', location='right') {{ toolLabel(toolId) }}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           .editor-markdown-sidebar-actions
             v-btn.editor-tool(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen')
-              v-icon mdi-arrow-expand-all
+              v-icon.editor-markdown-tool-icon(data-tool='fullscreen') mdi-arrow-expand-all
               v-tooltip(activator='parent', location='right') {{$t('editor:markup.distractionFreeMode')}} (F11)
             v-btn.editor-tool(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp')
-              v-icon mdi-help-circle-outline
+              v-icon.editor-markdown-tool-icon(data-tool='help') mdi-help-circle-outline
               v-tooltip(activator='parent', location='right') {{$t('editor:markup.markdownFormattingHelp')}}
       editor-contents-pane(v-if='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', id='editor-markdown-contents', :headings='headings', :current-line='currentSectionLine', :line-count='cm?.lineCount ?? 1', :busy='outlineLoading', @jump='jumpToSource', @close='toggleContents')
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
@@ -1309,6 +1309,45 @@ export default defineComponent({
 
 <style lang='scss'>
 
+
+// Glyph-only tints also style teleported heading/mobile menus. Keep the button's
+// neutral surface, pressed border and focus ring independent of the icon hue.
+.editor-markdown-tool-icon.v-icon {
+  --wiki-markdown-icon-ink: var(--wiki-secondary-ink);
+  --wiki-markdown-icon-solid: color-mix(in srgb, var(--wiki-markdown-icon-ink) 76%, rgb(var(--v-theme-on-surface)));
+  color: color-mix(in srgb, var(--wiki-markdown-icon-solid) 90%, transparent);
+  // Vuetify dims list prepend icons separately; apply transparency only once.
+  opacity: 1;
+
+  @each $ink, $tools in (
+    primary: (highlight, blockquote, assets, definitionList, abbreviation),
+    info: (link, unorderedList, orderedList, outdent, indent, alignLeft, alignCenter, alignRight, horizontalBar, table, contents, alignPreview, preview, fullscreen, help),
+    success: (inlineCode, codeBlock, keyboardKey, taskList, contentExtension, spellcheck)
+  ) {
+    @each $tool in $tools {
+      &[data-tool='#{$tool}'] { --wiki-markdown-icon-ink: var(--wiki-#{$ink}-ink); }
+    }
+  }
+
+  &[data-tool='undo'],
+  &[data-tool='redo'],
+  &[data-tool='more'],
+  &[data-tool='back'] {
+    --wiki-markdown-icon-ink: color-mix(in srgb, var(--wiki-info-ink) 55%, rgb(var(--v-theme-on-surface)));
+  }
+}
+
+.editor-tool.v-btn:is([aria-disabled='true'], :disabled) .editor-markdown-tool-icon {
+  color: inherit;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .editor-markdown-tool-icon.v-icon { color: var(--wiki-markdown-icon-solid); }
+}
+
+@media (forced-colors: active) {
+  .editor-markdown-tool-icon.v-icon { color: inherit; }
+}
 
 .editor-markdown {
   background: rgb(var(--v-theme-background));
