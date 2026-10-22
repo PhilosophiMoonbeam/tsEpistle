@@ -861,7 +861,15 @@ export default defineComponent({
     },
     setInlineAgent(instance: Element | ComponentPublicInstance | null): void {
       const agent = instance as InlineAgentChatRef | null
-      if (agent && this.inlineAgent === agent) return
+      // Async-component loading/error refs do not expose the Agent API. A
+      // transient null while that wrapper resolves is not a closed workspace.
+      if (!agent || typeof agent.focusComposer !== 'function' || typeof agent.preparePrompt !== 'function' ||
+        typeof agent.sendPrompt !== 'function' || typeof agent.focusConversation !== 'function') {
+        this.inlineAgent = null
+        if (!this.isAgentOpen) this.resolveInlineAgentWaiters(null)
+        return
+      }
+      if (this.inlineAgent === agent) return
       this.inlineAgent = agent
       this.resolveInlineAgentWaiters(this.isAgentOpen ? this.inlineAgent : null)
       if (this.inlineAgent && this.isAgentOpen) void this.focusInlineAgent()

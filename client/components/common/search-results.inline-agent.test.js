@@ -631,7 +631,7 @@ describe('inline Ask mode contract', () => {
     expect(state.canAsk).toBe(false)
   })
 
-  test('Ask about a query waits for the workspace and prepares the clicked scope without submitting', async () => {
+  test('Ask waits through loading refs and their transient removal before preparing the clicked scope', async () => {
     const prepared = []
     const methods = compileSearchMethods(search, ['askCurrentQuery', 'agentSearchScope', 'waitForInlineAgent', 'setInlineAgent', 'resolveInlineAgentWaiters'], {})
     const state = {
@@ -658,8 +658,17 @@ describe('inline Ask mode contract', () => {
     await Promise.resolve()
     expect(state.searchMode).toBe('ask')
     expect(prepared).toEqual([])
+    state.setInlineAgent({ $el: {} })
+    state.setInlineAgent(null)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(state.inlineAgent).toBe(null)
+    expect(state.inlineAgentWaiters).toHaveLength(1)
+    expect(prepared).toEqual([])
     state.currentPagePath = 'another-page'
     state.setInlineAgent({
+      focusComposer: async () => {},
+      focusConversation: async () => {},
       preparePrompt: async (...args) => prepared.push(args),
       sendPrompt: () => { throw new Error('A search handoff must not submit.') }
     })
@@ -701,7 +710,12 @@ describe('inline Ask mode contract', () => {
     const reopened = state.askSource(source)
     await Promise.resolve()
     await Promise.resolve()
-    state.setInlineAgent({ preparePrompt: async (...args) => prepared.push(args) })
+    state.setInlineAgent({
+      focusComposer: async () => {},
+      focusConversation: async () => {},
+      sendPrompt: () => { throw new Error('A source handoff must not submit.') },
+      preparePrompt: async (...args) => prepared.push(args)
+    })
     await reopened
     expect(prepared).toEqual([['new query', source, { kind: 'all' }]])
   })
@@ -729,6 +743,8 @@ describe('inline Ask mode contract', () => {
     expect(sent).toEqual([])
     expect(state.search).toBe('send after load')
     state.setInlineAgent({
+      focusComposer: async () => {},
+      preparePrompt: async () => {},
       sendPrompt: async prompt => { sent.push(prompt); return true },
       focusConversation: async () => { focused += 1 }
     })
@@ -761,6 +777,9 @@ describe('inline Ask mode contract', () => {
     state.setInlineAgent(null)
     await handoff
     state.setInlineAgent({
+      focusComposer: async () => {},
+      focusConversation: async () => {},
+      preparePrompt: async () => {},
       sendPrompt: () => { throw new Error('A dismissed handoff must not send.') }
     })
     expect(state.search).toBe('keep this query')

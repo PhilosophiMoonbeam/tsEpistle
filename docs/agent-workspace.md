@@ -31,6 +31,8 @@ Search results show available match fields (for example, title, tags, or page te
 
 The empty workspace identifies **Your Wiki Agent** with the welcome **Knowledge, put to work** and a concise reminder to choose source context and check cited answers. Welcome starters use compact two-line cards: an icon and bold title on the first line, with the description on the second. In a page context they are **Understand This Page**, **Connect the Dots**, and **Catch Up**; without page context the first card is **Explore the Wiki**. Selecting **Catch Up** asks for the ten most recently updated accessible pages, with one brief sourced summary per page. Selecting any starter submits it immediately through the same one-send path, while a user-authored custom message still uses the ordinary editable composer and **Send** action. Source and Search handoffs remain editable drafts until the user submits them. The empty workspace starts at the top on every visit.
 
+Source and Search handoffs wait for the loaded Agent's exposed API, not its loading or error placeholder. Loading-state replacement cannot discard a pending draft; closing the workspace cancels it rather than replaying it on a later open.
+
 On narrow screens, available starters can drift and be dragged through the repeating strip. When inference is unavailable, disabled starters remain in a stationary, keyboard-scrollable row instead of animating controls that cannot be used.
 
 History changes its icon and background to a restrained purple near `#673AB7` on pointer hover; New and Close retain their distinct feedback. Only the three welcome-starter icons use separate pastel hues, including the repeating mobile strip; starter text and prompts are unchanged.

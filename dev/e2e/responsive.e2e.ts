@@ -2572,6 +2572,43 @@ test.describe('responsive UI quality matrix', () => {
   test.describe('Agent browser context fixture', () => {
     test.use({ serviceWorkers: 'block' })
 
+    test('preserves a source draft while the Agent code is still loading', async ({ page }, testInfo) => {
+      test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
+      const fixture = await installEnabledAgentFixture(page)
+      const { promise: codeReady, resolve: releaseCode } = Promise.withResolvers<void>()
+      const pageErrors: string[] = []
+      page.on('pageerror', error => pageErrors.push(error.message))
+      await page.route('**/js/inline-agent-chat-*.js', async route => {
+        await codeReady
+        await route.continue()
+      })
+      try {
+        await authenticateAsAdmin(page)
+        await page.goto('/en/home', { waitUntil: 'networkidle' })
+        await openSearch(page)
+        const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
+        await page.locator('.nav-header-search-control:visible input').first().fill('visual')
+        const result = searchDialog.locator('.search-results-row').filter({ hasText: 'visual-markdown-browser' }).first()
+        await expect(result).toBeVisible()
+        await result.locator('.search-results-preview').click()
+        const preview = page.locator('.wiki-source-preview__panel')
+        await preview.getByRole('button', { name: 'Ask about this page', exact: true }).click()
+        await expect(page.locator('.search-results--ask .async-component-state[role="status"]')).toBeVisible()
+        releaseCode()
+        const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
+        const composer = agent.getByRole('textbox', { name: /^(?:Message|Follow up with) Wiki Agent$/ })
+        await expect(composer).toHaveValue('visual')
+        await expect(agent.locator('.agent-context__source-label').filter({ hasText: /Visual Markdown/ })).toBeVisible()
+        if (testInfo.project.name === 'responsive-chromium-desktop') await expect(composer).toBeFocused()
+        expect(fixture.requests.filter(request => request.includes('/messages'))).toEqual([])
+        expect(pageErrors).toEqual([])
+        fixture.assertNoUnexpectedRequests()
+      } finally {
+        releaseCode()
+        await fixture.dispose()
+      }
+    })
+
     test('Agent continuity resumes within a working day and starts fresh only after expiry', async ({ page }, testInfo) => {
       test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
       await installAgentContinuityPages(page)

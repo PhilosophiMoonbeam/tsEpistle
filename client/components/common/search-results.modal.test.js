@@ -225,6 +225,9 @@ describe('Ask modal accessibility contract', () => {
     state.setInlineAgent(null)
     expect(composerFocus).toBe(0)
     const agent = {
+      preparePrompt: async () => {},
+      sendPrompt: async () => false,
+      focusConversation: async () => {},
       focusComposer: async () => { composerFocus += 1 }
     }
     state.setInlineAgent(agent)
@@ -247,6 +250,7 @@ describe('Ask modal accessibility contract', () => {
 
     mobile = false
     state.setInlineAgent({
+      ...agent,
       focusComposer: () => new Promise(resolve => { finishFocus = resolve })
     })
     state.isAgentOpen = false
