@@ -803,6 +803,8 @@ test.describe('release accessibility profiles', () => {
     const fixture = await installEnabledAgentFixture(page, { mode: 'success' })
     try {
       await openAuthenticatedPage(page, '/', '.page-header-section')
+      const header = page.locator('.nav-header')
+      const headerBackground = await header.evaluate(element => getComputedStyle(element).backgroundColor)
       const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
       const search = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
       const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent', exact: true })
@@ -810,6 +812,8 @@ test.describe('release accessibility profiles', () => {
         await page.emulateMedia({ reducedMotion })
         const opener = await openAgentFromHeader(page)
         await expect(agent).toBeVisible()
+        await expect(header, 'The background header does not reblur beneath Agent glass').toHaveCSS('backdrop-filter', 'none')
+        await expect(header).toHaveCSS('background-color', headerBackground)
         if (testInfo.project.name === 'accessibility-mobile') {
           await expect.poll(() => agent.evaluate(element => element.contains(document.activeElement))).toBe(true)
           await expect(composer, 'Opening on a phone does not summon the soft keyboard').not.toBeFocused()
@@ -820,6 +824,7 @@ test.describe('release accessibility profiles', () => {
         await expect(agent).toBeHidden()
         await expect(search).toBeHidden()
         await expect(opener).toBeFocused()
+        await expect(header, 'Closing the overlay restores reader chrome glass').toHaveCSS('backdrop-filter', /blur\(/u)
 
         await page.keyboard.press('Control+Shift+A')
         await expect(agent).toBeVisible()
@@ -835,6 +840,15 @@ test.describe('release accessibility profiles', () => {
         await expect(search).toBeVisible()
         const restoredSearchInput = page.locator('.nav-header-search-control input:visible').first()
         await expect(restoredSearchInput, 'The explicit Search action restores the native header input').toBeFocused()
+        await expect(header).toHaveCSS('backdrop-filter', /blur\(/u)
+        const searchControl = page.locator('.nav-header-search-control:visible').first()
+        await expect(searchControl).toHaveCSS('backdrop-filter', 'none')
+        await expect(searchControl.locator('.v-field')).toHaveCSS('backdrop-filter', 'none')
+        await expect.poll(async () => cssColorAlpha(await searchControl.locator('.v-field').evaluate(element => getComputedStyle(element).backgroundColor))).toBeCloseTo(.54, 4)
+        if (testInfo.project.name === 'accessibility-mobile') {
+          await expect(header.locator('.v-toolbar__extension')).toHaveCSS('backdrop-filter', 'none')
+          await expect(header.locator('.nav-header-mobile-search')).toHaveCSS('backdrop-filter', 'none')
+        }
         await page.keyboard.press('Escape')
         await expect(search).toBeHidden()
       }
@@ -912,8 +926,7 @@ test.describe('release accessibility profiles', () => {
           if (reduced) {
             await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `Reduced transparency makes the Agent ${name} opaque` }).toBe(1)
           } else {
-            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} remains translucent` }).toBeLessThan(1)
-            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} retains its background` }).toBeGreaterThan(0)
+            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} retains its established transparency` }).toBeCloseTo(name === 'toolbar' ? .64 : .36, 4)
           }
         }
         const [toolbarStyles, bodyStyles] = await Promise.all([readSurfaceStyle(toolbar), readSurfaceStyle(body)])
@@ -961,8 +974,10 @@ test.describe('release accessibility profiles', () => {
           const sample = () => {
             const fade = body.getAnimations().find(animation => animation instanceof CSSTransition && animation.transitionProperty === 'background-color')
             if (fade) {
-              fade.pause()
-              fade.currentTime = Number(fade.effect?.getComputedTiming().duration) / 2
+              for (const animation of body.getAnimations()) {
+                animation.pause()
+                animation.currentTime = Number(animation.effect?.getComputedTiming().duration) / 2
+              }
               clearTimeout(timeout)
               resolve(getComputedStyle(body).backgroundColor)
               return
@@ -975,6 +990,7 @@ test.describe('release accessibility profiles', () => {
       const fadingAlpha = cssColorAlpha(fadingColor)
       expect(fadingAlpha, 'Excluding the page fades the glass towards opaque').toBeGreaterThan(bodyStyles.backgroundAlpha)
       expect(fadingAlpha, 'Excluding the page does not snap to opaque').toBeLessThan(1)
+      expect((await readSurfaceStyle(body)).backdropFilter, 'The translucent midpoint keeps blur coverage').toMatch(/blur\(/u)
       await body.evaluate(element =>
         element.getAnimations().forEach(animation => {
           animation.play()
@@ -982,6 +998,8 @@ test.describe('release accessibility profiles', () => {
       )
       await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(1)
       await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(1)
+      await expect(body, 'The settled opaque body does not keep a backdrop pass').toHaveCSS('backdrop-filter', 'none')
+      await expect(toolbar, 'The settled opaque toolbar does not keep a backdrop pass').toHaveCSS('backdrop-filter', 'none')
       await included.click()
       await expect.poll(async () => (await readSurfaceStyle(body)).backgroundAlpha).toBe(bodyStyles.backgroundAlpha)
       await expect.poll(async () => (await readSurfaceStyle(card)).backgroundAlpha).toBe(0)

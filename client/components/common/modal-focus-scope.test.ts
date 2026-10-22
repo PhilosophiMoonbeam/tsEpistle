@@ -108,6 +108,141 @@ describe('modal focus scope', () => {
     expect(document.activeElement).toBe(trigger)
   })
 
+  test('only blurred opt-in scopes suppress background glass and restore it across nested previews and plain dialogs', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><html><head><style>
+        #workspace { backdrop-filter: blur(10px); }
+        #preview { backdrop-filter: blur(3px); }
+      </style></head><body>
+        <main data-modal-backdrop-suppressed="original"></main>
+        <section id="workspace" tabindex="-1"></section>
+      </body></html>`,
+      { pretendToBeVisual: true }
+    )
+    doms.push(dom)
+    const document = dom.window.document
+    const background = document.querySelector<HTMLElement>('main')!
+    const workspace = document.querySelector<HTMLElement>('#workspace')!
+    const workspaceScope = createModalFocusScope({
+      root: workspace,
+      restoreTarget: null,
+      backdropRoots: () => [workspace],
+      onEscape: () => {}
+    })
+    expect(background.getAttribute('data-modal-backdrop-suppressed')).toBe('')
+    expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+
+    const dialog = document.createElement('section')
+    dialog.tabIndex = -1
+    document.body.append(dialog)
+    const dialogScope = createModalFocusScope({ root: dialog, restoreTarget: null, onEscape: () => {} })
+    expect(workspace.inert).toBe(true)
+    expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    dialogScope.deactivate({ restoreFocus: false })
+    dialog.remove()
+
+    const preview = document.createElement('section')
+    preview.id = 'preview'
+    preview.tabIndex = -1
+    document.body.append(preview)
+    const previewScope = createModalFocusScope({
+      root: preview,
+      restoreTarget: workspace,
+      backdropRoots: () => [preview],
+      onEscape: () => {}
+    })
+    expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(true)
+    expect(preview.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+
+    // Portals inserted while the preview is open join the existing isolation lifecycle.
+    const portal = document.createElement('aside')
+    document.body.append(portal)
+    const portalUpdate = Promise.withResolvers<void>()
+    dom.window.queueMicrotask(portalUpdate.resolve)
+    await portalUpdate.promise
+    expect(portal.hasAttribute('data-modal-backdrop-suppressed')).toBe(true)
+    previewScope.deactivate()
+    preview.remove()
+    expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    expect(background.getAttribute('data-modal-backdrop-suppressed')).toBe('')
+    workspaceScope.deactivate({ restoreFocus: false })
+    expect(background.getAttribute('data-modal-backdrop-suppressed')).toBe('original')
+    expect(portal.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+  })
+
+  test('unfiltered opt-in surfaces keep background glass and out-of-order close leaves no suppression behind', () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><head><style>#preview { backdrop-filter: blur(3px); }</style></head><body><main></main><section id="workspace" tabindex="-1"></section><section id="preview" tabindex="-1"></section></body></html>',
+      { pretendToBeVisual: true }
+    )
+    doms.push(dom)
+    const document = dom.window.document
+    const background = document.querySelector<HTMLElement>('main')!
+    const workspace = document.querySelector<HTMLElement>('#workspace')!
+    const preview = document.querySelector<HTMLElement>('#preview')!
+    const workspaceScope = createModalFocusScope({
+      root: workspace,
+      restoreTarget: null,
+      backdropRoots: () => [workspace],
+      onEscape: () => {}
+    })
+    expect(background.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    const previewScope = createModalFocusScope({
+      root: preview,
+      restoreTarget: null,
+      backdropRoots: () => [preview],
+      onEscape: () => {}
+    })
+    expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(true)
+    workspaceScope.deactivate({ restoreFocus: false })
+    previewScope.deactivate({ restoreFocus: false })
+    expect(background.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    expect(workspace.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    expect(background.inert).toBe(false)
+  })
+
+  test('tracks late-mounted backdrop owners and class-only contextual changes without streaming mutations', async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><head><style>.included .glass { backdrop-filter: blur(10px); }</style></head><body><main></main><section id="workspace" tabindex="-1"><div id="context"></div></section></body></html>',
+      { pretendToBeVisual: true }
+    )
+    doms.push(dom)
+    const document = dom.window.document
+    const background = document.querySelector<HTMLElement>('main')!
+    const workspace = document.querySelector<HTMLElement>('#workspace')!
+    const context = document.querySelector<HTMLElement>('#context')!
+    const scope = createModalFocusScope({
+      root: workspace,
+      restoreTarget: null,
+      backdropRoots: () => Array.from(workspace.querySelectorAll<HTMLElement>('.glass')),
+      onEscape: () => {}
+    })
+    const owner = document.createElement('div')
+    owner.className = 'glass'
+    context.append(owner)
+    const mounted = Promise.withResolvers<void>()
+    dom.window.queueMicrotask(mounted.resolve)
+    await mounted.promise
+    expect(background.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+
+    context.classList.add('included')
+    const included = Promise.withResolvers<void>()
+    dom.window.queueMicrotask(included.resolve)
+    await included.promise
+    expect(background.hasAttribute('data-modal-backdrop-suppressed')).toBe(true)
+    context.classList.remove('included')
+    const excluded = Promise.withResolvers<void>()
+    dom.window.queueMicrotask(excluded.resolve)
+    await excluded.promise
+    expect(background.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+    scope.deactivate({ restoreFocus: false })
+    context.classList.add('included')
+    const closed = Promise.withResolvers<void>()
+    dom.window.queueMicrotask(closed.resolve)
+    await closed.promise
+    expect(background.hasAttribute('data-modal-backdrop-suppressed')).toBe(false)
+  })
+
   test('does not let a deferred iframe handoff override newer focus or a closed scope', async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><section role="dialog" tabindex="-1"><button id="back">Back</button><button id="other">Other</button><iframe title="Editor"></iframe></section></body></html>',

@@ -14,6 +14,7 @@ interface BackgroundState {
   inert: boolean
   inertAttribute: string | null
   ariaHidden: string | null
+  backdropSuppressed: string | null
 }
 
 type RestoreTarget = HTMLElement | null | (() => HTMLElement | null)
@@ -28,6 +29,8 @@ interface ModalFocusScopeOptions {
   root: HTMLElement
   restoreTarget: RestoreTarget
   additionalRoots?: () => readonly HTMLElement[]
+  // Only full-cover blurred surfaces opt in; plain dialogs must retain background glass.
+  backdropRoots?: () => readonly HTMLElement[]
   onEscape: () => void
 }
 
@@ -37,6 +40,7 @@ interface ModalFocusScopeState {
   additionalRoots: () => readonly HTMLElement[]
   observedAdditionalRoots: readonly HTMLElement[]
   background: readonly BackgroundState[]
+  backdropRoots: () => readonly HTMLElement[]
   restoreFocus: boolean
   restoreTarget: RestoreTarget
 }
@@ -75,7 +79,7 @@ const isWithinModal = (root: HTMLElement, additionalRoots: readonly HTMLElement[
 const getModalFocusableElements = (root: HTMLElement, additionalRoots: readonly HTMLElement[]): HTMLElement[] =>
   Array.from(new Set([...additionalRoots.flatMap(getFocusableElements), ...getFocusableElements(root)]))
 
-const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement[]): BackgroundState[] => {
+const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement[], suppressBackdrop: boolean): BackgroundState[] => {
   const states: BackgroundState[] = []
   const HTMLElementConstructor = root.ownerDocument.defaultView?.HTMLElement
   const protectedElements = new Set<HTMLElement>()
@@ -86,10 +90,12 @@ const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement
       element,
       inert: element.inert === true,
       inertAttribute: element.getAttribute('inert'),
-      ariaHidden: element.getAttribute('aria-hidden')
+      ariaHidden: element.getAttribute('aria-hidden'),
+      backdropSuppressed: element.getAttribute('data-modal-backdrop-suppressed')
     })
     element.inert = true
     element.setAttribute('aria-hidden', 'true')
+    if (suppressBackdrop) element.setAttribute('data-modal-backdrop-suppressed', '')
   }
 
   for (const protectedRoot of [root, ...additionalRoots]) {
@@ -129,17 +135,25 @@ const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement
 }
 
 const restoreBackground = (states: readonly BackgroundState[]): void => {
-  for (const { element, inert, inertAttribute, ariaHidden } of states) {
+  for (const { element, inert, inertAttribute, ariaHidden, backdropSuppressed } of states) {
     element.inert = inert
     if (inertAttribute === null) element.removeAttribute('inert')
     else element.setAttribute('inert', inertAttribute)
     if (ariaHidden === null) element.removeAttribute('aria-hidden')
     else element.setAttribute('aria-hidden', ariaHidden)
+    if (backdropSuppressed === null) element.removeAttribute('data-modal-backdrop-suppressed')
+    else element.setAttribute('data-modal-backdrop-suppressed', backdropSuppressed)
   }
 }
 
 const sameElements = (left: readonly HTMLElement[], right: readonly HTMLElement[]): boolean =>
   left.length === right.length && left.every((element, index) => element === right[index])
+
+const hasBackdrop = (element: HTMLElement): boolean => {
+  if (!element.isConnected) return false
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element)
+  return Boolean(style && [style.getPropertyValue('backdrop-filter'), style.getPropertyValue('-webkit-backdrop-filter')].some(value => value && value !== 'none'))
+}
 
 const reconcileBackgrounds = (document: Document, force = false): void => {
   const stack = scopeStacks.get(document)
@@ -151,7 +165,11 @@ const reconcileBackgrounds = (document: Document, force = false): void => {
   for (const [index, state] of stack.entries()) {
     state.observedAdditionalRoots = nextAdditionalRoots[index]!
     const nestedRoots = stack.slice(index + 1).flatMap((nestedState, nestedIndex) => [nestedState.root, ...nextAdditionalRoots[index + nestedIndex + 1]!])
-    state.background = hideBackground(state.root, [...state.observedAdditionalRoots, ...nestedRoots])
+    state.background = hideBackground(
+      state.root,
+      [...state.observedAdditionalRoots, ...nestedRoots],
+      state.active && state.backdropRoots().some(hasBackdrop)
+    )
   }
 }
 const restoreTargetElement = (target: RestoreTarget): HTMLElement | null => (typeof target === 'function' ? target() : target)
@@ -172,7 +190,7 @@ const finishInactiveScopes = (document: Document): void => {
   else reconcileBackgrounds(document, true)
 }
 
-export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, onEscape }: ModalFocusScopeOptions): ModalFocusScope => {
+export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, backdropRoots, onEscape }: ModalFocusScopeOptions): ModalFocusScope => {
   const document = root.ownerDocument
   const currentAdditionalRoots = (): readonly HTMLElement[] => additionalRoots?.().filter(element => element.isConnected) ?? []
   const stack = scopeStacks.get(document) ?? []
@@ -184,14 +202,48 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
     additionalRoots: currentAdditionalRoots,
     observedAdditionalRoots,
     background: [],
+    backdropRoots: backdropRoots ?? (() => []),
     restoreFocus: true,
     restoreTarget
   }
   stack.push(state)
   reconcileBackgrounds(document, true)
   const MutationObserverConstructor = document.defaultView?.MutationObserver
-  const backgroundObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => reconcileBackgrounds(document, true)) : null
+  const observedBackdropElements = new Set<HTMLElement>()
+  const observeBackdropOwners = (): void => {
+    for (const owner of state.backdropRoots()) {
+      let element: HTMLElement | null = owner
+      while (element) {
+        if (!observedBackdropElements.has(element)) {
+          observedBackdropElements.add(element)
+          backgroundObserver?.observe(element, { attributes: true, attributeFilter: ['class', 'style'] })
+        }
+        // A teleported scrim can be outside the focus root; observe only that
+        // explicit owner, not unrelated ancestors of the portal.
+        if (element === root || !root.contains(owner)) break
+        element = element.parentElement
+      }
+    }
+  }
+  const backgroundObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => {
+    observeBackdropOwners()
+    reconcileBackgrounds(document, true)
+  }) : null
   if (document.body) backgroundObserver?.observe(document.body, { childList: true, subtree: true })
+  observeBackdropOwners()
+
+  // Attribute observation is limited to explicit owners and their modal ancestors.
+  // Animation completion retires opaque glass; media changes preserve fallbacks.
+  const handleBackdropTransition = (event: Event): void => {
+    if (state.backdropRoots().some(element => element === event.target)) reconcileBackgrounds(document, true)
+  }
+  const backdropEvents = ['transitionrun', 'transitionend', 'transitioncancel', 'animationstart', 'animationend', 'animationcancel']
+  if (backdropRoots) for (const event of backdropEvents) root.addEventListener(event, handleBackdropTransition)
+  const backdropMedia = backdropRoots && document.defaultView?.matchMedia
+    ? ['(prefers-reduced-transparency: reduce)', '(forced-colors: active)'].map(query => document.defaultView!.matchMedia(query))
+    : []
+  const reconcileBackdrop = (): void => reconcileBackgrounds(document, true)
+  for (const media of backdropMedia) media.addEventListener('change', reconcileBackdrop)
 
   const modalAdditionalRoots = (): readonly HTMLElement[] => {
     reconcileBackgrounds(document)
@@ -277,6 +329,8 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
       state.active = false
       state.restoreFocus = restoreFocus
       backgroundObserver?.disconnect()
+      if (backdropRoots) for (const event of backdropEvents) root.removeEventListener(event, handleBackdropTransition)
+      for (const media of backdropMedia) media.removeEventListener('change', reconcileBackdrop)
       document.removeEventListener('focusin', handleFocus)
       document.removeEventListener('keydown', handleKeydown)
       finishInactiveScopes(document)

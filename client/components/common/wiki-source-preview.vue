@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div class="wiki-source-preview" :class="themeClasses" @mousedown.self="emit('close')">
+    <div ref="backdrop" class="wiki-source-preview" :class="themeClasses" @mousedown.self="emit('close')">
       <section ref="panel" class="wiki-source-preview__panel" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1" :aria-busy="loading">
         <header class="wiki-source-preview__header">
           <div><p class="wiki-source-preview__eyebrow">{{ $t('common:wikiSourcePreview.sourceNotebook') }}</p><h2 :id="titleId">{{ source?.title || $t('common:wikiSourcePreview.readLittleCloser') }}</h2></div>
@@ -48,6 +48,7 @@ const emit = defineEmits<{ close: []; ask: [source: WikiSource] }>()
 const { themeClasses } = useTheme()
 const titleId = useId()
 const panel = useTemplateRef<HTMLElement>('panel')
+const backdrop = useTemplateRef<HTMLElement>('backdrop')
 const source = ref<WikiSource | null>(null)
 const loading = ref(true)
 const error = ref('')
@@ -84,7 +85,15 @@ watch(loading, () => {
   if (!focusScope?.containsFocus()) focusScope?.focusFirst()
 }, { flush: 'post' })
 onMounted(() => {
-  if (panel.value) { focusScope = createModalFocusScope({ root: panel.value, restoreTarget, onEscape: () => emit('close') }); focusScope.focusFirst() }
+  if (panel.value) {
+    focusScope = createModalFocusScope({
+      root: panel.value,
+      restoreTarget,
+      backdropRoots: () => backdrop.value ? [backdrop.value] : [],
+      onEscape: () => emit('close')
+    })
+    focusScope.focusFirst()
+  }
   void loadSource()
 })
 onBeforeUnmount(() => {

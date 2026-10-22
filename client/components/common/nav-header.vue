@@ -1,9 +1,8 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :extension-height='52', :style='{ "--v-toolbar-height": dense ? "48px" : "52px", "backdrop-filter": "var(--wiki-chrome-blur)" }')
+  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :extension-height='52', :style='{ "--v-toolbar-height": dense ? "48px" : "52px" }')
     template(v-slot:extension)
       .nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search')
         v-text-field.nav-header-search-control(
-          style='backdrop-filter: blur(12px) saturate(150%);'
           ref='searchFieldMobile'
           v-model='search'
           clearable
@@ -67,7 +66,6 @@
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field.nav-header-search-control(
-                style='backdrop-filter: blur(12px) saturate(150%);'
                 ref='searchField',
                 v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',
@@ -1515,6 +1513,7 @@ export default defineComponent({
   background-image: var(--nav-header-tint) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
+  // One app-bar backdrop; nested search paints retain their existing alpha/tints.
   -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
   backdrop-filter: var(--wiki-chrome-blur) !important;
 
@@ -1532,8 +1531,6 @@ export default defineComponent({
     padding-inline: var(--wiki-space-4);
     background-color: var(--nav-header-surface) !important;
     background-image: var(--nav-header-tint) !important;
-    -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
-    backdrop-filter: var(--wiki-chrome-blur) !important;
 
     .v-toolbar__content {
       height: auto !important;
@@ -1706,8 +1703,6 @@ export default defineComponent({
       background-color: rgba(var(--v-theme-surface), .42) !important;
       background-image: none !important;
       color: rgb(var(--v-theme-on-surface)) !important;
-      -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
-      backdrop-filter: blur(12px) saturate(150%) !important;
       box-shadow: var(--wiki-shadow-inset);
       transition:
         border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
@@ -1778,8 +1773,6 @@ export default defineComponent({
     height: 100%;
     background-color: var(--nav-header-surface) !important;
     background-image: var(--nav-header-tint) !important;
-    -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
-    backdrop-filter: var(--wiki-chrome-blur) !important;
 
     .nav-header-search-control {
       max-width: none;

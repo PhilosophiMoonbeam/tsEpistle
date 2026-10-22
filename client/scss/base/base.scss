@@ -117,6 +117,18 @@
   --v-font-heading: var(--wiki-font-heading);
 }
 
+// Owned full-screen glass replaces only the filtering of its background roots.
+// Inert alone is not enough: opaque dialogs and small menus still need that glass.
+[data-modal-backdrop-suppressed],
+[data-modal-backdrop-suppressed] *,
+[data-modal-backdrop-suppressed]::before,
+[data-modal-backdrop-suppressed]::after,
+[data-modal-backdrop-suppressed] *::before,
+[data-modal-backdrop-suppressed] *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 // Vuetify's text-<color> utilities color text, outlined and tonal buttons,
 // icons and selection controls with the raw palette color. Use the readable
 // ink instead. :where() keeps the utility at zero specificity, so component

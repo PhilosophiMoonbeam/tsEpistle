@@ -851,6 +851,7 @@ export default defineComponent({
         root,
         restoreTarget: this.restoreTargetFor(agentOpener),
         additionalRoots: () => activeOwnedOverlayRoots('.agent-owned-overlay'),
+        backdropRoots: () => Array.from(root.querySelectorAll<HTMLElement>('.inline-agent__toolbar, .inline-agent__body')),
         onEscape: this.closeSearch
       })
       this.pendingAskRestoreTarget = null
@@ -893,6 +894,7 @@ export default defineComponent({
         root,
         restoreTarget: this.restoreTargetFor(restoreTarget),
         additionalRoots: this.searchModalAdditionalRoots,
+        backdropRoots: () => [root],
         onEscape: this.closeSearch
       })
     },

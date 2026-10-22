@@ -298,7 +298,7 @@ describe('Ask modal accessibility contract', () => {
     fixtureDocument.body.append(pageOpener, headerSearch, nextHeaderAction, root)
     Object.defineProperty(fixtureWindow, 'matchMedia', {
       configurable: true,
-      value: () => ({ matches: true })
+      value: query => Object.assign(new fixtureWindow.EventTarget(), { matches: true, media: query })
     })
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
@@ -422,7 +422,7 @@ describe('Ask modal accessibility contract', () => {
       expect(state.searchIsFocused).toBe(false)
       expect(fixtureDocument.activeElement).toBe(pageOpener)
 
-      Object.defineProperty(fixtureWindow, 'matchMedia', { value: () => ({ matches: false }) })
+      Object.defineProperty(fixtureWindow, 'matchMedia', { value: query => Object.assign(new fixtureWindow.EventTarget(), { matches: false, media: query }) })
       state.searchIsFocused = true
       pageOpener.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
       headerSearch.focus()
