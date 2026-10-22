@@ -1313,7 +1313,8 @@ export default defineComponent({
 // Glyph-only tints also style teleported heading/mobile menus. Keep the button's
 // neutral surface, pressed border and focus ring independent of the icon hue.
 .editor-markdown-tool-icon.v-icon {
-  --wiki-markdown-icon-ink: var(--wiki-secondary-ink);
+  // Blue and rose make a muted violet even when the secondary palette is gray.
+  --wiki-markdown-icon-ink: color-mix(in oklch, var(--wiki-info-ink) 70%, var(--wiki-error-ink));
   --wiki-markdown-icon-solid: color-mix(in srgb, var(--wiki-markdown-icon-ink) 76%, rgb(var(--v-theme-on-surface)));
   color: color-mix(in srgb, var(--wiki-markdown-icon-solid) 90%, transparent);
   // Vuetify dims list prepend icons separately; apply transparency only once.
