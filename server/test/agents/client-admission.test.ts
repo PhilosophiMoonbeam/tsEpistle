@@ -259,6 +259,7 @@ beforeEach(() => {
   server = new AdmissionServer()
   const storage = new Map<string, string>()
   const documentEvents = new EventTarget()
+  const windowEvents = new EventTarget()
   visibility = 'visible'
   installGlobal('document', {
     get visibilityState() {
@@ -268,6 +269,8 @@ beforeEach(() => {
     removeEventListener: documentEvents.removeEventListener.bind(documentEvents)
   })
   installGlobal('window', {
+    addEventListener: windowEvents.addEventListener.bind(windowEvents),
+    removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
     fetch: server.fetch,
     atob: globalThis.atob,
     location: { pathname: '/', origin: 'https://wiki.example.test' },
