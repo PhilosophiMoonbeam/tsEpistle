@@ -15,6 +15,7 @@ export interface PageIndexCandidate {
   ownerId: number | null
   updatedAt: Date | string
   tags: Array<{ tag: string }>
+  extra: unknown
 }
 
 type PageIndexRow = Omit<PageIndexCandidate, 'tags'>
@@ -39,7 +40,7 @@ export const listPageIndexCandidates = async (
   }
 
   const query = knex<PageIndexRow>('pages')
-    .select('id', 'sourceRevision', 'path', 'localeCode', 'title', 'description', 'visibility', 'ownerId', 'updatedAt', 'isSearchable')
+    .select('id', 'sourceRevision', 'path', 'localeCode', 'title', 'description', 'visibility', 'ownerId', 'updatedAt', 'isSearchable', 'extra')
     .where('localeCode', input.locale)
     .where('pages.isSearchable', true)
     .where(visibility => {

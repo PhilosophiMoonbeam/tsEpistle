@@ -193,6 +193,36 @@ describe('page creation editor availability', () => {
     expect(result).toMatchObject({ id: rows[0].id, path: 'allowed', editorKey: 'markdown', visibility: 'public' })
   })
 
+  it('admits the optional reason and its exact source revision in the native creation transaction', async () => {
+    const { operations } = await arrange(['markdown'])
+    await db('storage').insert({ key: 'git', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
+    const requester = { id: 7, name: 'Author', email: 'author@example.test' }
+    const result = await operations.create({ requester, input: { ...pageInput('markdown', 'reasoned'), changeReason: '  Explain the example  ' } })
+    const row = await db('pages').where({ id: result.id }).first()
+    const work = await db('durableJobs')
+    expect(work).toHaveLength(1)
+    expect(JSON.parse(work[0].payload)).toMatchObject({ entityType: 'page', entityId: result.id, sourceRevision: String(row.sourceRevision), changeReason: 'Explain the example' })
+    expect(row.content).toBe('Page content')
+    expect(JSON.stringify(row)).not.toContain('Explain the example')
+  })
+
+  it('rejects invalid reasons at both operation and direct model admission without creating durable work', async () => {
+    const { operations, createPage, Page } = await arrange(['markdown'])
+    const requester = { id: 7, name: 'Author', email: 'author@example.test' }
+    for (const changeReason of [null, 42, {}, [], 'x'.repeat(201), ' '.repeat(201), 'line\nbreak', 'line\rbreak', '\u0000control', '\u007fcontrol', '\u0085control', '\u2028line', '\u2029paragraph', '\u061cbidi', '\u200fbidi', '\u202ebidi', '\u2069bidi']) {
+      const input = { ...pageInput('markdown', 'invalid-reason'), changeReason }
+      await expect(Promise.resolve().then(() => operations.create({ requester, input }))).rejects.toMatchObject({ name: 'INVALID_INPUT', status: 400 })
+      await expect(operations.update({ requester, input: { ...input, id: 7 } })).rejects.toMatchObject({ name: 'INVALID_INPUT', status: 400 })
+    }
+    expect(createPage).not.toHaveBeenCalled()
+    for (const changeReason of ['line\nbreak', '\u202ebidi', 42, 'x'.repeat(201)]) {
+      await expect(Page.createPage({ ...pageInput('markdown', 'invalid-model'), user: requester, visibility: 'public', changeReason })).rejects.toMatchObject({ name: 'INVALID_INPUT', status: 400 })
+      await expect(Page.updatePage({ id: 7, user: requester, content: 'Source', changeReason })).rejects.toMatchObject({ name: 'INVALID_INPUT', status: 400 })
+    }
+    expect(await db('pages')).toEqual([])
+    expect(await db('durableJobs')).toEqual([])
+  })
+
   it('returns the inserted page when its path moves and is rebound before hydration', async () => {
     const { operations, Page } = await arrange(['markdown'])
     const hydrate = Page.getPageFromDb.bind(Page)

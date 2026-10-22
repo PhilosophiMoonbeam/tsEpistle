@@ -15,6 +15,7 @@ import { knowledgeSearchText, projectPageKnowledge } from '../../knowledge/proje
 import { createApiPrincipal } from '../../helpers/api-principal.ts'
 import errors from '../../helpers/error.ts'
 import { OKF_PRODUCER_CONTEXT } from '../../okf/mutation-context.ts'
+import type { GlossaryOperations } from '../../operations/glossary.ts'
 
 const key = Buffer.alloc(32, 7)
 const writeToolNames = [
@@ -188,6 +189,10 @@ describe('Wiki MCP transport', () => {
   let activeApiKey: ActiveApiKey | null
   let personalMcpAccess: 'read-only' | 'read-write' | undefined
   let requesterPermissions: string[] | undefined
+  let glossaryEnabled: boolean
+  let glossaryReads: Pick<GlossaryOperations, 'list' | 'get'>
+  let ownerUserId: number
+  let resolvedOwnerUserId: number | null
   let skillsEnabled: boolean
   let approver: Express.User | null
   let authenticate: RequestHandler
@@ -293,6 +298,37 @@ describe('Wiki MCP transport', () => {
     activeApiKey = { apiKeyId: 9, groupId: 3, bearerToken: 'test-api-token' }
     personalMcpAccess = 'read-write'
     requesterPermissions = undefined
+    glossaryEnabled = true
+    ownerUserId = 7
+    resolvedOwnerUserId = null
+    glossaryReads = {
+      list: vi.fn(async () => ({
+        items: [{ id: 1, revision: 2, locale: 'en', term: 'MCP', expansion: 'Model Context Protocol', category: 'Protocol' }],
+        nextCursor: null,
+        complete: true
+      })),
+      get: vi.fn(async () => ({
+        id: 1,
+        revision: 2,
+        locale: 'en',
+        term: 'MCP',
+        expansion: 'Model Context Protocol',
+        category: 'Protocol',
+        definition: 'A **protocol**.',
+        definitionHtml: '<p>A <strong>protocol</strong>.</p>',
+        aliases: [],
+        relatedIds: [],
+        relatedTerms: [],
+        references: [],
+        documentation: null,
+        documentationPageId: null,
+        documentationLabel: '',
+        autoLink: true,
+        caseSensitive: false,
+        createdAt: '2026-08-25T00:00:00.000Z',
+        updatedAt: '2026-08-25T00:00:00.000Z'
+      }))
+    }
     skillsEnabled = true
     approver = humanPrincipal()
     authorizeMutation = vi.fn(async () => {})
@@ -354,9 +390,7 @@ describe('Wiki MCP transport', () => {
     const app = express()
     const principalFor = (apiKeyId: number, groupId: number): Express.User => {
       const principal = { ...apiPrincipal(apiKeyId, groupId), ...(requesterPermissions === undefined ? {} : { permissions: requesterPermissions }) }
-      return personalMcpAccess === undefined
-        ? principal
-        : { ...principal, personalMcpAccess, ownershipUserId: 7 }
+      return personalMcpAccess === undefined ? principal : { ...principal, personalMcpAccess, ownershipUserId: ownerUserId }
     }
     authenticate = vi.fn((req, _res, next) => {
       if (activeApiKey === null) {
@@ -384,6 +418,7 @@ describe('Wiki MCP transport', () => {
     })
     const mcpController = createWikiMcpController({
       knex: db,
+      glossary: { operations: glossaryReads, enabled: () => glossaryEnabled },
       operations: {
         search: vi.fn(),
         searchTags: vi.fn(),
@@ -418,7 +453,10 @@ describe('Wiki MCP transport', () => {
         remove: removePage,
         authorizeMutation
       },
-      resolvePrincipal: async (apiKeyId, groupId) => principalFor(apiKeyId, groupId),
+      resolvePrincipal: async (apiKeyId, groupId) => ({
+        ...principalFor(apiKeyId, groupId),
+        ...(resolvedOwnerUserId === null ? {} : { ownershipUserId: resolvedOwnerUserId })
+      }),
       resolveUser: async () => approver as Express.User,
       config: {
         enabled: true,
@@ -451,6 +489,88 @@ describe('Wiki MCP transport', () => {
     await db.destroy()
   })
 
+  it('limits real protocol requests across keys of the resolved owner and recovers after Retry-After', async () => {
+    let now = 0
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const port = (server.address() as AddressInfo).port
+    const request = () =>
+      fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${activeApiKey!.bearerToken}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'rate-limit', version: '1' } }
+        })
+      })
+    const status = async () => {
+      const response = await request()
+      await response.text()
+      return response.status
+    }
+    try {
+      // Unauthenticated requests cannot spend a later authenticated owner's quota.
+      activeApiKey = null
+      expect(await postInitialize(port, { host: '127.0.0.1' })).toBe(401)
+      activeApiKey = { apiKeyId: 9, groupId: 3, bearerToken: 'first-key' }
+      for (let index = 0; index < 30; index++) expect(await status()).toBe(200)
+      activeApiKey = { apiKeyId: 10, groupId: 3, bearerToken: 'second-key' }
+      for (let index = 0; index < 30; index++) expect(await status()).toBe(200)
+      const limited = await request()
+      expect(limited.status).toBe(429)
+      expect(limited.headers.get('retry-after')).toBe('60')
+      await limited.text()
+      // A stale middleware owner cannot select an independent bucket.
+      ownerUserId = 8
+      resolvedOwnerUserId = 7
+      expect(await status()).toBe(429)
+      resolvedOwnerUserId = 8
+      expect(await status()).toBe(200)
+      ownerUserId = 7
+      resolvedOwnerUserId = null
+      now = 59_001
+      const remaining = await request()
+      expect(remaining.status).toBe(429)
+      expect(remaining.headers.get('retry-after')).toBe('1')
+      await remaining.text()
+      now = 60_000
+      expect(await status()).toBe(200)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('offers read-only glossary discovery and rejects oversized, revoked and disabled calls', async () => {
+    personalMcpAccess = 'read-only'
+    requesterPermissions = ['use:mcp', 'read:glossary']
+    const port = (server.address() as AddressInfo).port
+    client = new Client({ name: 'glossary-reader', version: '1' }, { capabilities: {}, versionNegotiation: { mode: 'auto' } })
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { authProvider: { token: async () => 'test-api-token' } }))
+    const tools = (await client.listTools()).tools
+    expect(tools.find(tool => tool.name === 'wiki_get_glossary_term')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false })
+    expect(
+      tools
+        .filter(tool => tool.name.includes('glossary'))
+        .map(tool => tool.name)
+        .sort()
+    ).toEqual(['wiki_get_glossary_term', 'wiki_list_glossary'])
+    for (const name of writeToolNames) expect(tools.some(tool => tool.name === name)).toBe(false)
+    const oversized = await client.callTool({ name: 'wiki_list_glossary', arguments: { locale: 'en', limit: 101 } }).catch((error: unknown) => error)
+    expect(oversized instanceof Error || (typeof oversized === 'object' && oversized !== null && 'isError' in oversized && oversized.isError === true)).toBe(true)
+    // Permission revocation removes discovery and also fences a known tool name.
+    requesterPermissions = ['use:mcp']
+    expect((await client.listTools()).tools.some(tool => tool.name.includes('glossary'))).toBe(false)
+    const denied = await client.callTool({ name: 'wiki_get_glossary_term', arguments: { id: 1, locale: 'en' } }).catch((error: unknown) => error)
+    expect(denied instanceof Error || (typeof denied === 'object' && denied !== null && 'isError' in denied && denied.isError === true)).toBe(true)
+    expect(JSON.stringify(denied)).not.toContain('A **protocol**.')
+    requesterPermissions = ['use:mcp', 'read:glossary']
+    glossaryEnabled = false
+    expect((await client.listTools()).tools.some(tool => tool.name.includes('glossary'))).toBe(false)
+    const disabled = await client.callTool({ name: 'wiki_get_glossary_term', arguments: { id: 1, locale: 'en' } }).catch((error: unknown) => error)
+    expect(disabled instanceof Error || (typeof disabled === 'object' && disabled !== null && 'isError' in disabled && disabled.isError === true)).toBe(true)
+  })
+
   it.each([1, 3])('rejects service group %s credentials before initialization or discovery', async groupId => {
     personalMcpAccess = undefined
     activeApiKey = { apiKeyId: 9, groupId, bearerToken: 'test-api-token' }
@@ -459,41 +579,49 @@ describe('Wiki MCP transport', () => {
     const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: 'POST',
       headers: { authorization: 'Bearer test-api-token', 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'service', version: '1' } } })
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'service', version: '1' } }
+      })
     })
     expect(response.status).toBe(403)
     expect(getPage).not.toHaveBeenCalled()
   })
 
-  it.each(['explicit-form', 'implicit-form', 'both-modes', 'personal-read-write'] as const)('advertises all admitted writes for a modern %s continuation client', async mode => {
-    if (mode === 'personal-read-write') personalMcpAccess = 'read-write'
-    const port = (server.address() as AddressInfo).port
-    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
-      authProvider: { token: async () => 'test-api-token' }
-    })
-    client = new Client(
-      { name: 'wiki-mcp-test', version: '1.0.0' },
-      {
-        capabilities: { elicitation: mode === 'implicit-form' ? {} : mode === 'both-modes' ? { form: {}, url: {} } : { form: {} } },
-        versionNegotiation: { mode: 'auto' }
-      }
-    )
-    await client.connect(transport)
-    expect(authenticate).toHaveBeenCalledTimes(1)
-    const listed = await client.listTools()
-    const names = listed.tools.map(tool => tool.name)
-    expect(names).toContain('wiki_search_pages')
-    expect(names).toContain('wiki_search_tags')
-    expect(names).toContain('wiki_list_tags')
-    expect(names).toContain('wiki_discover_pages')
-    expect(names).toContain('wiki_get_related_pages')
-    expect(names).toContain('wiki_get_page_okf')
-    expect(names).not.toContain('wiki_prepare_okf_import')
-    expect(names).toContain('wiki_read_skill')
-    for (const name of writeToolNames) expect(names).toContain(name)
-    expect(names).not.toContain('wiki_browser_navigate')
-    expect(new Set(names).size).toBe(names.length)
-  })
+  it.each(['explicit-form', 'implicit-form', 'both-modes', 'personal-read-write'] as const)(
+    'advertises all admitted writes for a modern %s continuation client',
+    async mode => {
+      if (mode === 'personal-read-write') personalMcpAccess = 'read-write'
+      const port = (server.address() as AddressInfo).port
+      const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+        authProvider: { token: async () => 'test-api-token' }
+      })
+      client = new Client(
+        { name: 'wiki-mcp-test', version: '1.0.0' },
+        {
+          capabilities: { elicitation: mode === 'implicit-form' ? {} : mode === 'both-modes' ? { form: {}, url: {} } : { form: {} } },
+          versionNegotiation: { mode: 'auto' }
+        }
+      )
+      await client.connect(transport)
+      expect(authenticate).toHaveBeenCalledTimes(1)
+      const listed = await client.listTools()
+      const names = listed.tools.map(tool => tool.name)
+      expect(names).toContain('wiki_search_pages')
+      expect(names).toContain('wiki_search_tags')
+      expect(names).toContain('wiki_list_tags')
+      expect(names).toContain('wiki_discover_pages')
+      expect(names).toContain('wiki_get_related_pages')
+      expect(names).toContain('wiki_get_page_okf')
+      expect(names).not.toContain('wiki_prepare_okf_import')
+      expect(names).toContain('wiki_read_skill')
+      for (const name of writeToolNames) expect(names).toContain(name)
+      expect(names).not.toContain('wiki_browser_navigate')
+      expect(new Set(names).size).toBe(names.length)
+    }
+  )
 
   it.each(['read-only', 'read-write'] as const)('admits an admin-only personal %s owner without escalating its key scope', async access => {
     personalMcpAccess = access
@@ -504,9 +632,7 @@ describe('Wiki MCP transport', () => {
       { name: 'wiki-mcp-personal-admin-test', version: '1.0.0' },
       { capabilities: { elicitation: { form: {} } }, versionNegotiation: { mode: 'auto' } }
     )
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { authProvider: { token: async () => 'test-api-token' } })
-    )
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { authProvider: { token: async () => 'test-api-token' } }))
     const names = (await client.listTools()).tools.map(tool => tool.name)
     expect(names).toContain('wiki_get_page')
     expect(names).toContain('wiki_get_page_okf')
@@ -533,9 +659,7 @@ describe('Wiki MCP transport', () => {
       const prepared = await client.callTool(prepare)
       expect(prepared.isError).not.toBe(true)
       expect(prepared.structuredContent).toMatchObject({ status: 'pending' })
-      expect(await db('agentProposals')).toEqual([
-        expect.objectContaining({ requesterApiKeyId: 9, requesterUserId: null, status: 'pending' })
-      ])
+      expect(await db('agentProposals')).toEqual([expect.objectContaining({ requesterApiKeyId: 9, requesterUserId: null, status: 'pending' })])
     } else {
       const denied = await client.callTool(prepare).catch((error: unknown) => error)
       expect(denied).toBeInstanceOf(Error)
@@ -546,35 +670,28 @@ describe('Wiki MCP transport', () => {
     expect(movePage).not.toHaveBeenCalled()
   })
 
-  it.each(['modern-use-only', 'legacy-use-only'] as const)(
-    'serves an empty readable MCP catalog without escalating %s personal credentials',
-    async mode => {
-      requesterPermissions = ['use:agents', 'use:mcp']
-      skillsEnabled = false
-      const port = (server.address() as AddressInfo).port
-      client = new Client(
-        { name: 'wiki-mcp-empty-catalog-test', version: '1.0.0' },
-        { capabilities: { elicitation: { form: {} } }, versionNegotiation: { mode: mode.startsWith('legacy') ? 'legacy' : 'auto' } }
-      )
-      await client.connect(
-        new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { authProvider: { token: async () => 'test-api-token' } })
-      )
-      expect(await client.listTools()).toMatchObject({ tools: [] })
-      expect(await client.listResources()).toMatchObject({ resources: [] })
-      expect(await client.listResourceTemplates()).toMatchObject({ resourceTemplates: [] })
-      const deniedTool = await client.callTool({ name: 'wiki_get_page', arguments: { id: 42 } }).catch((error: unknown) => error)
-      expect(deniedTool).toBeInstanceOf(Error)
-      expect((deniedTool as Error).message).toContain('not found')
-      const deniedResource = await client
-        .readResource({ uri: 'wiki://pages/42/versions/current/revisions/8/okf' })
-        .catch((error: unknown) => error)
-      expect(deniedResource).toBeInstanceOf(Error)
-      expect((deniedResource as Error).message).toContain('not found')
-      expect(getPage).not.toHaveBeenCalled()
-      expect(await db('agentProposals')).toEqual([])
-      expect(await db('agentActionExecutions')).toEqual([])
-    }
-  )
+  it.each(['modern-use-only', 'legacy-use-only'] as const)('serves an empty readable MCP catalog without escalating %s personal credentials', async mode => {
+    requesterPermissions = ['use:agents', 'use:mcp']
+    skillsEnabled = false
+    const port = (server.address() as AddressInfo).port
+    client = new Client(
+      { name: 'wiki-mcp-empty-catalog-test', version: '1.0.0' },
+      { capabilities: { elicitation: { form: {} } }, versionNegotiation: { mode: mode.startsWith('legacy') ? 'legacy' : 'auto' } }
+    )
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { authProvider: { token: async () => 'test-api-token' } }))
+    expect(await client.listTools()).toMatchObject({ tools: [] })
+    expect(await client.listResources()).toMatchObject({ resources: [] })
+    expect(await client.listResourceTemplates()).toMatchObject({ resourceTemplates: [] })
+    const deniedTool = await client.callTool({ name: 'wiki_get_page', arguments: { id: 42 } }).catch((error: unknown) => error)
+    expect(deniedTool).toBeInstanceOf(Error)
+    expect((deniedTool as Error).message).toContain('not found')
+    const deniedResource = await client.readResource({ uri: 'wiki://pages/42/versions/current/revisions/8/okf' }).catch((error: unknown) => error)
+    expect(deniedResource).toBeInstanceOf(Error)
+    expect((deniedResource as Error).message).toContain('not found')
+    expect(getPage).not.toHaveBeenCalled()
+    expect(await db('agentProposals')).toEqual([])
+    expect(await db('agentActionExecutions')).toEqual([])
+  })
 
   it.each(['modern-none', 'modern-url-only', 'modern-forged-hint', 'legacy-none', 'legacy-form', 'personal-read-only'] as const)(
     'keeps reads and resources but neither advertises nor executes writes for %s',
@@ -1145,9 +1262,7 @@ describe('Wiki MCP transport', () => {
       }
       return { action: 'accept', content: { acknowledge: decision !== 'client-decline' } }
     })
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { authProvider: { token: async () => 'test-api-token' } })
-    )
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { authProvider: { token: async () => 'test-api-token' } }))
     const prepared = await client.callTool({
       name: 'wiki_prepare_page_move',
       arguments: {

@@ -68,6 +68,8 @@
                 v-tooltip(activator='parent', location='bottom') {{ toolTooltipText(toolId) }}
         v-spacer
         .editor-tool-group(role='group', :aria-label='$t(`editor:markup.viewGroup`)')
+          v-btn.editor-tool(data-editor-contents-toggle, icon, rounded='md', variant='text', :aria-label='$t(`editor:contents.toggle`, { defaultValue: `Toggle contents pane` })', :aria-expanded='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', aria-controls='editor-markdown-contents', @click='toggleContents')
+            v-icon mdi-format-list-bulleted-square
           v-btn.editor-tool(
             v-if='previewShown'
             icon
@@ -155,11 +157,12 @@
             v-btn.editor-tool(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp')
               v-icon mdi-help-circle-outline
               v-tooltip(activator='parent', location='right') {{$t('editor:markup.markdownFormattingHelp')}}
+      editor-contents-pane(v-if='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', id='editor-markdown-contents', :headings='headings', :current-line='currentSectionLine', :line-count='cm?.lineCount ?? 1', :busy='outlineLoading', @jump='jumpToSource', @close='toggleContents')
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
       transition(name='editor-markdown-preview', :css='$vuetify.display.mdAndUp')
         .editor-markdown-preview(v-if='previewShown')
-          .editor-markdown-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer')
+          .editor-markdown-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', tabindex='0', role='region', :aria-label='$t(`editor:contents.preview`, { defaultValue: `Page preview` })')
             v-alert.mb-3(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
               v-btn.ml-2(type='button', size='small', variant='text', @click='retryPreview') {{$t('editor:retryPreview')}}
@@ -204,7 +207,9 @@ import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, 
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 import { completeSourcePageLink, createSourceAuthoring, type SourceAuthoring } from '../../helpers/editor-source-authoring'
 import markdownHelp from './markdown/help.vue'
-import Velocity from 'velocity-animate'
+import EditorContentsPane from './editor-contents-pane.vue'
+import { SourcePreviewSync } from './common/source-preview-sync'
+import { markdownHeadings, readContentsPreference, writeContentsPreference, type SourceHeading } from './common/source-outline'
 import { decodeBase64Text } from '../../helpers/base64'
 
 /* global siteConfig, siteLangs */
@@ -245,7 +250,7 @@ import {
   enhanceWikiMarkdownPreview,
   sanitizeWikiMarkdownHtml
 } from './markdown/preview.ts'
-import { PreviewAlignmentScheduler, calculatePreviewAlignment, resolveVisiblePreviewTarget, stampDetailsSourceLine } from './markdown/preview-alignment'
+import { stampDetailsSourceLine } from './markdown/preview-alignment'
 import { WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../shared/wikilinks.ts'
 
 type MarkdownMarkerKind = 'diagram'
@@ -310,7 +315,7 @@ type AddMarkerOptions = {
 }
 
 type MarkdownItRenderRule = NonNullable<ReturnType<typeof createWikiMarkdownRenderer>['renderer']['rules'][string]>
-type MarkdownRenderEnvironment = { sourceLines: number[] }
+type MarkdownRenderEnvironment = Record<string, unknown>
 
 function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
   if (!editor) throw new Error('Markdown editor has not been initialized.')
@@ -332,15 +337,13 @@ const markdownEditorInputTheme = EditorView.theme({
 // HELPER FUNCTIONS
 // ========================================
 
-// Stamp source lines into preview roots so following the cursor uses stable block anchors.
-const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, env, renderer) => {
+// These anchors belong only to the editor preview, never persisted Markdown.
+const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, _env, renderer) => {
   const token = tokens[idx]
-  if (token.map && token.level === 0) {
+  if (token.map && token.nesting !== -1) {
     const line = token.map[0]
     token.attrJoin('class', 'line')
     token.attrSet('data-source-line', String(line))
-    const sourceLines = env?.sourceLines
-    if (Array.isArray(sourceLines)) sourceLines.push(line)
   }
   return renderer.renderToken(tokens, idx, options)
 }
@@ -350,57 +353,38 @@ function createEditorMarkdownRenderer (wikiLinks: WikiLinkOptions) {
   markdown.renderer.rules.paragraph_open = injectSourceLine
   markdown.renderer.rules.heading_open = injectSourceLine
   markdown.renderer.rules.blockquote_open = injectSourceLine
-  markdown.renderer.rules.html_block = (tokens, idx, _options, env) => {
+  markdown.renderer.rules.bullet_list_open = injectSourceLine
+  markdown.renderer.rules.ordered_list_open = injectSourceLine
+  markdown.renderer.rules.list_item_open = injectSourceLine
+  markdown.renderer.rules.tr_open = injectSourceLine
+  markdown.renderer.rules.table_open = injectSourceLine
+  markdown.renderer.rules.hr = injectSourceLine
+  markdown.renderer.rules.html_block = (tokens, idx) => {
     const token = tokens[idx]
     const line = token?.map?.[0]
     if (!token || line === undefined) return token?.content ?? ''
     const stampedHtml = stampDetailsSourceLine(token.content, line)
     if (stampedHtml === null) return token.content
-    const sourceLines = env?.sourceLines
-    if (Array.isArray(sourceLines)) sourceLines.push(line)
     return stampedHtml
   }
-  const renderFence = markdown.renderer.rules.fence
-  if (!renderFence) throw new TypeError('Markdown fence renderer is unavailable.')
-  markdown.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
-    const line = tokens[idx]?.map?.[0]
-    const html = renderFence(tokens, idx, options, env, renderer)
-    if (line === undefined) return html
-    const sourceLines = env?.sourceLines
-    if (Array.isArray(sourceLines)) sourceLines.push(line)
-    return html.replace(/^<([a-z]+)/, `<$1 data-source-line="${line}"`)
+  for (const name of ['fence', 'code_block'] as const) {
+    const renderBlock = markdown.renderer.rules[name]
+    if (!renderBlock) throw new TypeError(`Markdown ${name} renderer is unavailable.`)
+    markdown.renderer.rules[name] = (tokens, idx, options, env, renderer) => {
+      const line = tokens[idx]?.map?.[0]
+      const html = renderBlock(tokens, idx, options, env, renderer)
+      if (line === undefined) return html
+      return html.replace(/^<([a-z]+)/, `<$1 data-source-line="${line}"`)
+    }
   }
   return markdown
 }
 
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
-const sourceLinesByEditor = new WeakMap<object, number[]>()
-type PreviewAlignmentAnimation = {
-  destination: HTMLElement
-  container: HTMLElement
-}
-const previewAlignmentAnimations = new WeakMap<object, PreviewAlignmentAnimation>()
-const previewAlignmentSchedulers = new WeakMap<object, PreviewAlignmentScheduler>()
-
-type VelocityTweenProgress = (elements: Element[], complete: number, remaining: number, start: number, tweenValue: number | null) => void
-type VelocityTweenOptions = {
-  duration?: number
-  complete?: () => void
-  progress?: VelocityTweenProgress
-}
-
-// Animate an absolute scrollTop value instead of Velocity's offset-parent based scroll action.
-const velocityTween = Velocity as unknown as (
-  target: Element,
-  properties: { tween: [number, number] },
-  options: VelocityTweenOptions
-) => void
+const previewSyncs = new WeakMap<object, SourcePreviewSync>()
 
 function stopPreviewAlignment (editor: object) {
-  previewAlignmentSchedulers.get(editor)?.cancel()
-  const animation = previewAlignmentAnimations.get(editor)
-  if (animation) Velocity(animation.container, 'stop', true)
-  previewAlignmentAnimations.delete(editor)
+  previewSyncs.get(editor)?.cancel()
 }
 
 
@@ -412,7 +396,8 @@ type MarkdownEditorHost = HTMLElement & { __wikiSourceEditor?: TextEditorHandle 
 
 export default defineComponent({
   components: {
-    markdownHelp
+    markdownHelp,
+    EditorContentsPane
   },
   directives: {
     rovingToolbar: vRovingToolbar
@@ -439,6 +424,10 @@ export default defineComponent({
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: Boolean(this.mdAndUp),
       previewAlignmentEnabled: true,
+      contentsShown: readContentsPreference(),
+      headings: [] as SourceHeading[],
+      currentSectionLine: 0,
+      outlineLoading: false,
       previewHTML: '',
       previewDirty: true,
       previewRevision: 0,
@@ -560,12 +549,13 @@ export default defineComponent({
           const preview = this.$refs.editorPreview as HTMLElement | undefined
           if (preview) {
             enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
-            this.requestPreviewAlignment(true)
+            this.refreshPreviewSync()
           }
         })
       } else if (!newValue && oldValue) {
-        stopPreviewAlignment(this)
+        previewSyncs.get(this)?.detach()
       }
+      this.$nextTick(() => this.cm?.requestMeasure())
     },
     spellModeActive (newValue: boolean) {
       this.cm?.setSpellcheck(newValue)
@@ -766,6 +756,7 @@ export default defineComponent({
       this.helpShown = false
     },
     onCmInput (newContent: string) {
+      this.outlineLoading = true
       this.previewDirty = true
       this.previewRevision++
       stopPreviewAlignment(this)
@@ -777,31 +768,32 @@ export default defineComponent({
     processContent (newContent: string) {
       const cm = requireEditor(this.cm)
       this.processMarkers(0, cm.lineCount)
-      if (!this.previewShown) {
-        this.previewDirty = true
-        return
-      }
-      const renderEnvironment: MarkdownRenderEnvironment = { sourceLines: [] }
+      const renderEnvironment: MarkdownRenderEnvironment = {}
       const revision = ++this.previewRevision
       this.previewDirty = true
       this.previewError = ''
       try {
-        const previewHTML = sanitizeWikiMarkdownHtml(this.markdownRenderer.render(newContent, renderEnvironment))
+        const tokens = this.markdownRenderer.parse(newContent, renderEnvironment)
+        this.headings = markdownHeadings(tokens)
+        this.outlineLoading = false
+        if (!this.previewShown) return
+        const previewHTML = sanitizeWikiMarkdownHtml(this.markdownRenderer.renderer.render(tokens, this.markdownRenderer.options, renderEnvironment))
         if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
         this.previewHTML = previewHTML
       } catch {
+        this.headings = []
+        this.outlineLoading = false
         if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
         this.previewError = this.$t('editor:previewRenderFailed')
         return
       }
-      sourceLinesByEditor.set(this, renderEnvironment.sourceLines)
       this.$nextTick(() => {
         if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
         const preview = this.$refs.editorPreview as HTMLElement | undefined
         if (!preview) return
         enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
         this.previewDirty = false
-        this.requestPreviewAlignment(true)
+        this.refreshPreviewSync()
       })
     },
     retryPreview () {
@@ -988,101 +980,45 @@ export default defineComponent({
         { line: termLine, ch: termStart + term.length }
       )
     },
+    toggleContents () {
+      this.contentsShown = !this.contentsShown || (this.previewShown && this.$vuetify.display.smAndDown)
+      if (this.contentsShown && this.$vuetify.display.smAndDown) this.previewShown = false
+      writeContentsPreference(this.contentsShown)
+      this.refresh()
+      if (!this.contentsShown) this.$nextTick(() => {
+        const root = this.$refs.root
+        if (root instanceof HTMLElement) root.querySelector<HTMLElement>('[data-editor-contents-toggle]')?.focus()
+      })
+    },
+    jumpToSource (line: number) {
+      const editor = this.cm
+      if (!editor) return
+      this.previewShown = this.$vuetify.display.smAndDown ? false : this.previewShown
+      if (this.$vuetify.display.smAndDown) {
+        this.contentsShown = false
+        writeContentsPreference(false)
+      }
+      previewSyncs.get(this)?.interact('source')
+      editor.setSelection({ line, ch: 0 })
+      this.currentSectionLine = line
+      this.$nextTick(() => {
+        editor.requestMeasure()
+        editor.scrollToLine(line)
+        editor.focus()
+        this.refreshPreviewSync()
+      })
+    },
     togglePreviewAlignment () {
       this.previewAlignmentEnabled = !this.previewAlignmentEnabled
-      if (!this.previewAlignmentEnabled) {
-        stopPreviewAlignment(this)
-        return
-      }
-      this.$nextTick(() => this.requestPreviewAlignment(true))
-    },
-    requestPreviewAlignment (force = false) {
-      let scheduler = previewAlignmentSchedulers.get(this)
-      if (!scheduler) {
-        scheduler = new PreviewAlignmentScheduler(
-          () => !this.editorDisposed && this.previewAlignmentEnabled && this.previewShown && !this.previewDirty,
-          force => this.alignPreviewToCursor(force)
-        )
-        previewAlignmentSchedulers.set(this, scheduler)
-      }
-      scheduler.request(force)
-    },
-    /** Follow the selection head without moving or focusing the source editor. */
-    alignPreviewToCursor (_force = false) {
-      if (this.editorDisposed || !this.previewAlignmentEnabled || !this.previewShown || this.previewDirty || !this.cm || this.previewHTML.trim().length === 0) return
-      const preview = this.$refs.editorPreview as HTMLElement | undefined
-      const previewContainer = this.$refs.editorPreviewContainer as HTMLElement | undefined
-      const firstPreviewElement = preview?.firstElementChild
-      if (!preview || !previewContainer || !(firstPreviewElement instanceof HTMLElement)) return
-
-      const currentLine = this.cm.cursor('head').line
-      const sourceLines = sourceLinesByEditor.get(this) ?? []
-      let markedDestination: HTMLElement | null = null
-      for (let index = sourceLines.length - 1; index >= 0; index--) {
-        const sourceLine = sourceLines[index]
-        if (sourceLine === undefined || sourceLine > currentLine) continue
-        markedDestination = preview.querySelector<HTMLElement>(`[data-source-line='${sourceLine}']`)
-        if (markedDestination) break
-      }
-      const mappedDestination = markedDestination ?? firstPreviewElement
-      const destination = resolveVisiblePreviewTarget(mappedDestination)
-      const previewRect = previewContainer.getBoundingClientRect()
-      const destinationRect = destination.getBoundingClientRect()
-      const maxScrollTop = Math.max(0, previewContainer.scrollHeight - previewContainer.clientHeight)
-      const currentScrollTop = Math.min(Math.max(previewContainer.scrollTop, 0), maxScrollTop)
-      const destinationViewportTop = destinationRect.top - previewRect.top
-      const fallbackOffset = markedDestination ? 100 : 50
-      let targetScrollTop = Math.min(
-        Math.max(currentScrollTop + destinationViewportTop - fallbackOffset, 0),
-        maxScrollTop
-      )
-
-      if (markedDestination) {
-        const sourceContainer = this.$refs.cm as HTMLElement | undefined
-        const sourceViewport = sourceContainer?.querySelector<HTMLElement>('.cm-scroller') ?? sourceContainer
-        const cursorElement = sourceContainer?.querySelector<HTMLElement>('.cm-cursor-primary')
-          ?? sourceContainer?.querySelector<HTMLElement>('.cm-cursor')
-        if (sourceViewport && cursorElement) {
-          const sourceRect = sourceViewport.getBoundingClientRect()
-          const cursorRect = cursorElement.getBoundingClientRect()
-          if (sourceRect.height > 0 && previewRect.height > 0 && cursorRect.height > 0) {
-            targetScrollTop = calculatePreviewAlignment({
-              sourceViewportTop: sourceRect.top,
-              sourceViewportHeight: sourceRect.height,
-              cursorTop: cursorRect.top,
-              cursorBottom: cursorRect.bottom,
-              previewViewportTop: previewRect.top,
-              previewViewportHeight: previewRect.height,
-              destinationTop: destinationRect.top,
-              destinationBottom: destinationRect.bottom,
-              currentScrollTop,
-              maxScrollTop
-            }).scrollTop
-          }
-        }
-      }
-      const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
-
       stopPreviewAlignment(this)
-      if (duration === 0) {
-        previewContainer.scrollTop = targetScrollTop
-        return
-      }
-
-      const animation: PreviewAlignmentAnimation = { destination, container: previewContainer }
-      previewAlignmentAnimations.set(this, animation)
-      velocityTween(previewContainer, { tween: [targetScrollTop, currentScrollTop] }, {
-        duration,
-        progress: (_elements, _complete, _remaining, _start, tweenValue) => {
-          if (previewAlignmentAnimations.get(this) !== animation || typeof tweenValue !== 'number') return
-          previewContainer.scrollTop = tweenValue
-        },
-        complete: () => {
-          if (previewAlignmentAnimations.get(this) !== animation) return
-          previewContainer.scrollTop = targetScrollTop
-          previewAlignmentAnimations.delete(this)
-        }
-      })
+      if (this.previewAlignmentEnabled) previewSyncs.get(this)?.resumeFromLeader()
+    },
+    refreshPreviewSync () {
+      const preview = this.$refs.editorPreview
+      const container = this.$refs.editorPreviewContainer
+      const sync = previewSyncs.get(this)
+      if (preview instanceof HTMLElement && container instanceof HTMLElement) sync?.attach(preview, container)
+      sync?.request()
     },
     toggleHelp () {
       this.helpShown = !this.helpShown
@@ -1291,13 +1227,18 @@ export default defineComponent({
       onCursor: position => {
         this.positionSync(position)
         this.syncFormatState()
-        this.requestPreviewAlignment()
+        this.currentSectionLine = position.line
       },
-      onClick: () => {
-        this.requestPreviewAlignment()
-      }
+      onInteraction: () => previewSyncs.get(this)?.interact('source'),
+      onScroll: () => previewSyncs.get(this)?.sourceScrolled(),
+      onMeasure: () => previewSyncs.get(this)?.request()
     })
     this.cm = markRaw(cm)
+    previewSyncs.set(this, new SourcePreviewSync(
+      () => this.cm,
+      () => !this.editorDisposed && this.previewAlignmentEnabled && this.previewShown && !this.previewDirty,
+      line => { this.currentSectionLine = line }
+    ))
     this.syncFormatState()
     const adapter = new EditorAdapterController({
       readText: () => cm.getValue(),
@@ -1352,7 +1293,8 @@ export default defineComponent({
     }
     this.debouncedProcessContent?.cancel()
     stopPreviewAlignment(this)
-    previewAlignmentSchedulers.delete(this)
+    previewSyncs.get(this)?.detach()
+    previewSyncs.delete(this)
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
@@ -1361,7 +1303,6 @@ export default defineComponent({
     this.destroyMarkdownCollaboration()
     this.cm?.destroy()
     this.cm = null
-    sourceLinesByEditor.delete(this)
   }
 })
 </script>
@@ -1465,6 +1406,7 @@ export default defineComponent({
       min-width: 0;
       min-height: 0;
       overflow-y: auto;
+      scroll-behavior: auto;
       padding: 0;
       width: 100%;
 
@@ -1518,6 +1460,8 @@ export default defineComponent({
   &-preview-leave-active {
     max-width: 50%;
     transition: max-width .5s ease;
+
+    @media (prefers-reduced-motion: reduce) { transition: none; }
 
     .editor-markdown-preview-content {
       overflow: hidden;

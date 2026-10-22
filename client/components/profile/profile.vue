@@ -205,7 +205,7 @@
           section.profile-section(aria-labelledby='profile-avatar-title')
             header.profile-section__header
               h2#profile-avatar-title.profile-section__title {{ $t('profile:avatar.title', { defaultValue: 'Profile avatar' }) }}
-              p.profile-section__hint {{ $t('profile:avatar.saveHint', { defaultValue: 'Avatar changes save at once.' }) }}
+              p.profile-section__hint {{ $t('profile:avatar.saveHint', { defaultValue: 'Avatar changes save when applied.' }) }}
             .profile-section__body
               .profile-avatar-editor
                 .profile-avatar-preview
@@ -250,7 +250,7 @@
                     )
                       v-icon(start) mdi-delete-outline
                       span {{$t('profile:avatar.remove', { defaultValue: 'Remove avatar' })}}
-                  p.profile-muted.text-body-small {{ $t('profile:avatar.help', { defaultValue: 'PNG, JPEG, or WebP up to 1 MB. Provider avatars return after the next sign-in when removed.' }) }}
+                  p.profile-muted.text-body-small {{ $t('profile:avatar.help', { defaultValue: 'PNG, JPEG, or WebP up to 1 MB and 4096 × 4096 pixels. Crop and apply to save. Provider avatars return after the next sign-in when removed.' }) }}
                   v-alert(
                     v-if='avatarError'
                     type='error'
@@ -265,6 +265,15 @@
                     density='compact'
                     role='status'
                   ) {{ avatarSuccess }}
+              avatar-crop-dialog(
+                v-if='pendingAvatar'
+                :key='avatarCropKey'
+                :file='pendingAvatar.file'
+                :selection-id='avatarCropKey'
+                :reduce-motion='user.reduceMotion'
+                @cancel='cancelAvatarCrop'
+                @apply='applyAvatarCrop'
+              )
 
           section.profile-section(aria-labelledby='profile-auth-title')
             header.profile-section__header
@@ -414,6 +423,7 @@ import PasswordStrength from '../common/password-strength.vue'
 import PasswordVisibilityToggle from '../common/password-visibility-toggle.vue'
 import ProfileMcpKeys from './profile-mcp-keys.vue'
 import ProfileExternalMcp from './profile-external-mcp.vue'
+import AvatarCropDialog from './avatar-crop-dialog.vue'
 import { requestConfirmation } from '../common/confirm-dialog.ts'
 import { wikiStore } from '@/store/index.ts'
 import {
@@ -449,8 +459,9 @@ type MenuField = 'timezone' | 'dateFormat' | 'timeFormat' | 'appearance' | 'cont
 
 function focusComponent (ref: unknown): void {
   if (!ref || typeof ref !== 'object') return
-  const candidate = ref as { focus?: unknown }
+  const candidate = ref as { focus?: () => void; $el?: HTMLElement }
   if (typeof candidate.focus === 'function') candidate.focus()
+  else candidate.$el?.focus()
 }
 
 /* global siteConfig */
@@ -464,6 +475,7 @@ export default {
     AsyncState,
     ProfileMcpKeys,
     ProfileExternalMcp,
+    AvatarCropDialog,
     PasswordStrength,
     PasswordVisibilityToggle
   },
@@ -486,6 +498,8 @@ export default {
       avatarError: '',
       avatarSuccess: '',
       avatarRevision: 0,
+      pendingAvatar: null as { file: File; profile: Profile; generation: number } | null,
+      avatarCropKey: 0,
       currentPass: '',
       newPass: '',
       verifyPass: '',
@@ -639,6 +653,7 @@ export default {
         this.verifyPass = ''
         this.avatarError = ''
         this.avatarSuccess = ''
+        this.cancelAvatarCrop()
         if (this.accountId !== null && !this.disposed) void this.loadProfile()
       }
     },
@@ -667,6 +682,7 @@ export default {
   beforeUnmount() {
     this.disposed = true
     this.profileGeneration += 1
+    this.pendingAvatar = null
     window.removeEventListener('beforeunload', this.beforeUnload)
     // Leaving with an unsaved preview must not keep the previewed theme or date format.
     if (this.dirty && this.savedDraft && this.user?.id === this.accountId) this.applySavedPresentation(this.savedDraft)
@@ -677,6 +693,7 @@ export default {
     },
     async loadProfile (): Promise<boolean> {
       const generation = ++this.profileGeneration
+      this.pendingAvatar = null
       const accountId = this.accountId
       this.profileLoading = true
       this.profileError = ''
@@ -764,17 +781,40 @@ export default {
       const input = this.$refs.avatarInput as HTMLInputElement | undefined
       input?.click()
     },
-    async handleAvatarSelected (event: Event) {
+    handleAvatarSelected (event: Event) {
       const input = event.target as HTMLInputElement
       const file = input.files?.[0]
       input.value = ''
-      if (!file || this.avatarLoading) return
-      await this.uploadAvatar(file)
-    },
-    async uploadAvatar (file: File) {
       const profile = this.user
       const generation = this.profileGeneration
-      if (!profile || this.avatarLoading || !this.isProfileCurrent(profile, generation)) return
+      if (!file || !profile || this.avatarLoading || !this.isProfileCurrent(profile, generation)) return
+      this.avatarError = ''
+      this.avatarSuccess = ''
+      this.avatarCropKey += 1
+      this.pendingAvatar = { file, profile, generation }
+    },
+    restoreAvatarFocus () {
+      this.$nextTick(() => {
+        if (!this.disposed && !this.pendingAvatar && !this.avatarLoading) focusComponent(this.$refs.avatarUploadButton)
+      })
+    },
+    cancelAvatarCrop (selectionId?: number) {
+      if (selectionId !== undefined && selectionId !== this.avatarCropKey) return
+      this.pendingAvatar = null
+      this.restoreAvatarFocus()
+    },
+    async applyAvatarCrop (file: File, selectionId: number) {
+      if (selectionId !== this.avatarCropKey) return
+      const pending = this.pendingAvatar
+      this.pendingAvatar = null
+      if (!pending || !this.isProfileCurrent(pending.profile, pending.generation)) {
+        this.restoreAvatarFocus()
+        return
+      }
+      await this.uploadAvatar(file, pending.profile, pending.generation)
+    },
+    async uploadAvatar (file: File, profile: Profile, generation: number) {
+      if (this.avatarLoading || !this.isProfileCurrent(profile, generation)) return
       this.avatarAction = 'upload'
       this.avatarError = ''
       this.avatarSuccess = ''
@@ -797,6 +837,7 @@ export default {
       } finally {
         wikiStore.stopLoading('profile-avatar')
         this.avatarAction = ''
+        this.restoreAvatarFocus()
       }
     },
     async removeAvatar () {

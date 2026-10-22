@@ -1,8 +1,8 @@
 diff --git a/build/browser/index.js b/build/browser/index.js
-index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4a6e67c94 100644
+index ccfcfb1edd6fd55f7f852948726ca0e0bedfc96e..8de6294b756d701771bee49461b27352cc09de0c 100644
 --- a/build/browser/index.js
 +++ b/build/browser/index.js
-@@ -964,7 +964,7 @@ let USER_HOME = '';
+@@ -968,7 +968,7 @@ let USER_HOME = '';
  try {
    LIB_DIR = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
    ROOT_DIR = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
@@ -11,16 +11,16 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
    // Prefer $HOME; fall back to $USERPROFILE (Windows) then process.cwd()
    if (typeof process !== 'undefined') {
      USER_HOME =
-@@ -1524,7 +1524,7 @@ let _loggerStorePromise = null;
-  */
- async function _ensureLoggerStore() {
-   if (_loggerStorePromise === null) {
--    _loggerStorePromise = import('node:async_hooks')
-+    _loggerStorePromise = import(/* @vite-ignore */ 'node:async_hooks')
-       .then(({ AsyncLocalStorage }) => {
-         const store = new AsyncLocalStorage();
-         _loggerStore = store;
-@@ -2413,7 +2413,7 @@ async function asyncReplace(str, regex, replacer) {
+@@ -1544,7 +1544,7 @@ async function _ensureLoggerStore() {
+     // import entirely in non-Node environments avoids that console noise.
+     _loggerStorePromise =
+       typeof process !== 'undefined'
+-        ? import('node:async_hooks')
++        ? import(/* @vite-ignore */ 'node:async_hooks')
+             .then(({ AsyncLocalStorage }) => {
+               const store = new AsyncLocalStorage();
+               _loggerStore = store;
+@@ -2434,7 +2434,7 @@ async function asyncReplace(str, regex, replacer) {
   * @returns {Promise<void>} Throws if the path cannot be created
   */
  async function mkdirP(dir) {
@@ -29,29 +29,18 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
    await mkdir(dir, { recursive: true });
  }
  
-@@ -2714,8 +2714,8 @@ let _fsConstants$1; // node:fs constants (R_OK etc.) — not on node:fs/promises
- async function _requireFsp$1() {
-   if (_fsp$1 !== undefined) return
-   try {
--    _fsp$1 = await import('node:fs/promises');
--    _fsConstants$1 = (await import('node:fs')).constants;
-+    _fsp$1 = await import(/* @vite-ignore */ 'node:fs/promises');
-+    _fsConstants$1 = (await import(/* @vite-ignore */ 'node:fs')).constants;
-   } catch {
-     _fsp$1 = null;
-   }
-@@ -6601,8 +6601,8 @@ let _fsConstants; // node:fs constants (F_OK etc.) — not on node:fs/promises
- async function _requireFsp() {
-   if (_fsp !== undefined) return
-   try {
--    _fsp = await import('node:fs/promises');
--    _fsConstants = (await import('node:fs')).constants;
-+    _fsp = await import(/* @vite-ignore */ 'node:fs/promises');
-+    _fsConstants = (await import(/* @vite-ignore */ 'node:fs')).constants;
-   } catch {
-     _fsp = null;
-   }
-@@ -17449,7 +17449,7 @@ class Document extends AbstractBlock {
+@@ -2732,8 +2732,8 @@ async function requireFs() {
+   if (_fsp !== undefined) return _fsp
+   _fspInit ??= (async () => {
+     try {
+-      const fsp = await import('node:fs/promises');
+-      _fsConstants = (await import('node:fs')).constants;
++      const fsp = await import(/* @vite-ignore */ 'node:fs/promises');
++      _fsConstants = (await import(/* @vite-ignore */ 'node:fs')).constants;
+       _fsp = fsp;
+     } catch {
+       _fsp = null;
+@@ -17708,7 +17708,7 @@ class Document extends AbstractBlock {
          }
        } else {
          try {
@@ -60,7 +49,7 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
            await writeFile(target, output ?? '', 'utf8');
          } catch {}
        }
-@@ -21086,7 +21086,7 @@ async function _readStream(readable) {
+@@ -21536,7 +21536,7 @@ async function _readStream(readable) {
   * @internal
   */
  async function _requirePath$1() {
@@ -69,18 +58,18 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
  }
  
  // Auto-generated from data/asciidoctor-default.css — run 'npm run build:data' to update
-@@ -21119,8 +21119,8 @@ class StylesheetsClass {
- 
-   async writePrimaryStylesheet(stylesoutdir) {
+@@ -21609,8 +21609,8 @@ class StylesheetsClass {
+    */
+   async _writeStylesheet(stylesoutdir, name, data) {
      try {
 -      const { writeFile } = await import('node:fs/promises');
 -      const { join } = await import('node:path');
 +      const { writeFile } = await import(/* @vite-ignore */ 'node:fs/promises');
 +      const { join } = await import(/* @vite-ignore */ 'node:path');
-       await writeFile(
-         join(stylesoutdir, StylesheetsClass.DEFAULT_STYLESHEET_NAME),
-         defaultStylesheetData,
-@@ -21410,7 +21410,7 @@ async function convert(input, options = {}) {
+       await writeFile(join(stylesoutdir, name), data, 'utf8');
+       return true
+     } catch {
+@@ -21896,7 +21896,7 @@ async function convert(input, options = {}) {
                label: 'stylesheet',
              });
              if (stylesheetData) {
@@ -89,7 +78,7 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
                const nodePath = await _requirePath();
                const stylesheetOutdir = nodePath.dirname(stylesheetDest);
                if (
-@@ -21446,7 +21446,7 @@ async function convert(input, options = {}) {
+@@ -21932,7 +21932,7 @@ async function convert(input, options = {}) {
   * Lazily import node:path to avoid issues in browser / Opal environments.
   */
  async function _requirePath() {
@@ -98,7 +87,7 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
  }
  
  /**
-@@ -21456,7 +21456,7 @@ async function _requirePath() {
+@@ -21942,7 +21942,7 @@ async function _requirePath() {
   */
  async function _isDirectory(dir) {
    try {
@@ -107,7 +96,7 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
      return (await stat(dir)).isDirectory()
    } catch {
      return false
-@@ -21470,7 +21470,7 @@ async function _isDirectory(dir) {
+@@ -21956,7 +21956,7 @@ async function _isDirectory(dir) {
   */
  async function _isFile(path) {
    try {
@@ -116,7 +105,7 @@ index 2fb18babed8fb4b96f0ed3030855fe88e27767b6..90cb4d89c2ac1d1dbf3c5ef8c88ba0f4
      return (await stat(path)).isFile()
    } catch {
      return false
-@@ -25421,8 +25421,8 @@ ${this.manify(await node.content(), { whitespace: 'preserve' })}
+@@ -27722,8 +27722,8 @@ ${this.manify(await node.content(), { whitespace: 'preserve' })}
      if (!mannames || mannames.length <= 1) return
      mannames = mannames.slice(1);
      const manvolext = `.${manvolnum}`;

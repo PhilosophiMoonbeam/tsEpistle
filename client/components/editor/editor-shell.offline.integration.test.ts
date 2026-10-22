@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from '../../../server/test/bun-test
 import { type DraftKeyContext, OFFLINE_DRAFT_KEY_MAGIC, OFFLINE_KEY_VERSION, type OfflineDraftEnvelopeV1 } from '../../../shared/offline.ts'
 import { type PageBrandingAssignment, PageBrandingAssignmentSchema } from '../../../shared/page-branding.ts'
 import { normalizePageFeatures, type PageFeatures } from '../../../shared/page-features.ts'
+import { PageChangeReasonSchema } from '../../../shared/page-change-reason.ts'
 import { decryptOfflineDraft, type OfflineDraftKeyHandle, requestDraftKey } from '../../helpers/offline-crypto.ts'
 import {
   OfflineEditorDraftCoordinator,
@@ -229,6 +230,7 @@ const evaluateShellBehavior = (
     'markRaw',
     'OfflineEditorDraftCoordinator',
     'pwaState',
+    'PageChangeReasonSchema',
     `${executableShellBehavior}\nreturn shellBehavior`
   ) as (...args: unknown[]) => ShellBehavior
   return evaluate(
@@ -256,7 +258,8 @@ const evaluateShellBehavior = (
     (css: string) => css,
     markRaw,
     coordinatorClass,
-    { connectionState: 'online' }
+    { connectionState: 'online' },
+    PageChangeReasonSchema
   )
 }
 
@@ -567,6 +570,7 @@ const createShellContext = (
     lifecycleGeneration: 0,
     editorInstanceKey: 0,
     isSaving: false,
+    changeReason: '',
     discardPending: false,
     collaborationActive: false,
     collaborationGeneration: null,
@@ -607,12 +611,16 @@ const createShellContext = (
   Object.defineProperty(host, 'mode', { get: () => behavior.computed.mode.call(host) })
   Object.defineProperty(host, 'isDirty', { get: () => behavior.computed.isDirty.call(host) })
   Object.defineProperty(host, 'offlineDraftMutationBlocked', { get: () => behavior.computed.offlineDraftMutationBlocked.call(host) })
-  adapter.onState(safety => { host.editorAdapterSafety = safety })
+  adapter.onState(safety => {
+    host.editorAdapterSafety = safety
+  })
   if (options.reactiveHost) {
-    lifecycleWatchers.push(watch(
-      () => behavior.computed.offlineDraftSource.call(host),
-      () => behavior.watch.offlineDraftSource.call(host)
-    ))
+    lifecycleWatchers.push(
+      watch(
+        () => behavior.computed.offlineDraftSource.call(host),
+        () => behavior.watch.offlineDraftSource.call(host)
+      )
+    )
   }
   return host
 }
@@ -631,12 +639,18 @@ const createReactiveShellContext = (
       lifecycleCoordinators.push(this)
     }
   }
-  return createShellContext(store, testWindow, null, async () => ({
-    okf: _.cloneDeep(store.page.okf),
-    sourceRevision: store.page.sourceRevision,
-    pageFeatures: _.cloneDeep(fixtureOptions.hydratedPageFeatures ?? store.page.pageFeatures),
-    isSearchable: true
-  }), { reactiveHost: true, coordinatorClass: StoredCoordinator })
+  return createShellContext(
+    store,
+    testWindow,
+    null,
+    async () => ({
+      okf: _.cloneDeep(store.page.okf),
+      sourceRevision: store.page.sourceRevision,
+      pageFeatures: _.cloneDeep(fixtureOptions.hydratedPageFeatures ?? store.page.pageFeatures),
+      isSearchable: true
+    }),
+    { reactiveHost: true, coordinatorClass: StoredCoordinator }
+  )
 }
 
 const lifecycleCoordinators: OfflineEditorDraftCoordinator[] = []
@@ -661,293 +675,337 @@ afterEach(() => {
 
 describe('composed editor offline submission boundary', () => {
   for (const outcome of ['success', 'unknown'] as const) {
-    test(outcome === 'success'
-      ? 'Vue-reactive Save and Close retires covered recovery so reopening permits new saves but still blocks unresolved drafts'
-      : 'Vue-reactive editor exposes durable receipt transitions for an unknown save outcome', async () => {
-      const storage = new ComposedDraftStorage()
-      let updateCalls = 0
-      let submittedContent: unknown
-      let submittedPageFeatures: unknown
-      const capturedPageFeatures: PageFeatures = {
-        schemaVersion: 1,
-        linksVisible: true,
-        ratingsAllowed: false,
-        lastEditorVisible: true
-      }
-      const hydratedPageFeatures: PageFeatures = {
-        schemaVersion: 1,
-        linksVisible: false,
-        ratingsAllowed: true,
-        lastEditorVisible: false
-      }
-      const store = reactive(createStore())
-      store.page.pageFeatures = capturedPageFeatures
-      if (outcome === 'success') {
-        store.page.path = 'docs/example'
-        store.editor.editor = 'editorVisualMarkdown'
-        store.editor.editorKey = 'visual-markdown'
-      }
-      const events: string[] = []
-      const previewRequests: Array<{ url: string; method: string; credentials: RequestCredentials | undefined }> = []
-      let releasePreview!: () => void
-      let notifyPreviewStarted!: () => void
-      const previewStarted = new Promise<void>(resolve => { notifyPreviewStarted = resolve })
-      const previewRelease = new Promise<void>(resolve => { releasePreview = resolve })
-      let releaseNetwork!: () => void
-      let notifyNetworkStarted!: () => void
-      const networkStarted = new Promise<void>(resolve => { notifyNetworkStarted = resolve })
-      const networkRelease = new Promise<void>(resolve => { releaseNetwork = resolve })
-      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url = new URL(String(input), ORIGIN)
-        const method = init?.method ?? 'GET'
-        if (url.href === `${ORIGIN}/_api/offline/draft-key` && method === 'POST') return keyFetch()
-        if (url.href === `${ORIGIN}/_api/pages/12` && method === 'PUT') {
-          updateCalls += 1
-          const submittedPage = JSON.parse(String(init.body))
-          submittedContent = submittedPage.content
-          submittedPageFeatures = submittedPage.pageFeatures
-          events.push('source-write')
-          notifyNetworkStarted()
-          await networkRelease
-          if (outcome === 'unknown') throw new TypeError('Failed to fetch')
-          return new Response(JSON.stringify({ page: { updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2' } }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' }
+    test(
+      outcome === 'success'
+        ? 'Vue-reactive Save and Close retires covered recovery so reopening permits new saves but still blocks unresolved drafts'
+        : 'Vue-reactive editor exposes durable receipt transitions for an unknown save outcome',
+      async () => {
+        const storage = new ComposedDraftStorage()
+        let updateCalls = 0
+        let submittedContent: unknown
+        let submittedPageFeatures: unknown
+        const capturedPageFeatures: PageFeatures = {
+          schemaVersion: 1,
+          linksVisible: true,
+          ratingsAllowed: false,
+          lastEditorVisible: true
+        }
+        const hydratedPageFeatures: PageFeatures = {
+          schemaVersion: 1,
+          linksVisible: false,
+          ratingsAllowed: true,
+          lastEditorVisible: false
+        }
+        const store = reactive(createStore())
+        store.page.pageFeatures = capturedPageFeatures
+        if (outcome === 'success') {
+          store.page.path = 'docs/example'
+          store.editor.editor = 'editorVisualMarkdown'
+          store.editor.editorKey = 'visual-markdown'
+        }
+        const events: string[] = []
+        const previewRequests: Array<{ url: string; method: string; credentials: RequestCredentials | undefined }> = []
+        let releasePreview!: () => void
+        let notifyPreviewStarted!: () => void
+        const previewStarted = new Promise<void>(resolve => {
+          notifyPreviewStarted = resolve
+        })
+        const previewRelease = new Promise<void>(resolve => {
+          releasePreview = resolve
+        })
+        let releaseNetwork!: () => void
+        let notifyNetworkStarted!: () => void
+        const networkStarted = new Promise<void>(resolve => {
+          notifyNetworkStarted = resolve
+        })
+        const networkRelease = new Promise<void>(resolve => {
+          releaseNetwork = resolve
+        })
+        const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          const url = new URL(String(input), ORIGIN)
+          const method = init?.method ?? 'GET'
+          if (url.href === `${ORIGIN}/_api/offline/draft-key` && method === 'POST') return keyFetch()
+          if (url.href === `${ORIGIN}/_api/pages/12` && method === 'PUT') {
+            updateCalls += 1
+            const submittedPage = JSON.parse(String(init.body))
+            submittedContent = submittedPage.content
+            submittedPageFeatures = submittedPage.pageFeatures
+            events.push('source-write')
+            notifyNetworkStarted()
+            await networkRelease
+            if (outcome === 'unknown') throw new TypeError('Failed to fetch')
+            return new Response(JSON.stringify({ page: { updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2' } }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' }
+            })
+          }
+          if (url.href === `${ORIGIN}/_api/pages/preview?id=12` && method === 'GET') {
+            previewRequests.push({ url: url.href, method, credentials: init?.credentials })
+            events.push('preview-request')
+            notifyPreviewStarted()
+            await previewRelease
+            events.push('preview-ready:2')
+            return new Response(
+              JSON.stringify({
+                id: 12,
+                sourceRevision: '2',
+                locale: 'en',
+                path: 'docs/example',
+                visibility: 'public'
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+          }
+          throw new Error(`Unexpected request: ${url}`)
+        }
+        const testWindow = createTestWindow(fetchImpl as typeof fetch)
+        const assign = testWindow.location.assign.bind(testWindow.location)
+        testWindow.location.assign = url => {
+          events.push('reader-navigation')
+          assign(url)
+        }
+        installWindow(testWindow)
+        // Authoritative feature hydration changes the draft-source signature while
+        // revision/checkout bookkeeping is dirty. Leave the real watcher's debounce
+        // pending; Save and Close must settle it rather than require a second click.
+        const shell = createReactiveShellContext(store, testWindow, storage, {
+          debounceMs: 60_000,
+          hydratedPageFeatures
+        })
+        shell.setupOfflineDraftCoordinator()
+        await shell.initializeOfflineDrafts()
+        const coordinator = shell.offlineDraftCoordinator!
+        let navigationAdmission: Record<string, unknown> | undefined
+        let notifyNavigationStarted!: () => void
+        const navigationStarted = new Promise<void>(resolve => {
+          notifyNavigationStarted = resolve
+        })
+        const navigateToSavedPage = shell.navigateToSavedPage
+        shell.navigateToSavedPage = (capture, requireReloadSafety) => {
+          navigationAdmission = {
+            pendingCapture: coordinator.hasInFlightWork,
+            activeTransition: coordinator.view.inFlight,
+            unresolvedSubmission: coordinator.hasUnresolvedSubmission,
+            receiptCount: [...storage.records.values()].filter(record => record.submissionId !== null).length,
+            dirty: shell.isDirty,
+            exactCapture: shell.editorAdapter.capture().text === capture.content && shell.editorAdapter.capture().editVersion === capture.editVersion,
+            adapterSafety: shell.editorAdapter.snapshot(),
+            sourceRevision: store.page.sourceRevision,
+            savedRenderTarget: toRaw(shell.savedRenderTarget),
+            checkoutDate: shell.checkoutDateActive,
+            authorizedActor:
+              shell.isAuthenticated && shell.accountId === ACCOUNT_ID && store.authRefreshSettled && !store.authRefreshPending && store.offlineIdentityReady,
+            blocked: [
+              shell.dialogUnsaved,
+              shell.dialogProps,
+              shell.dialogEditorSelector,
+              shell.activeModal !== '',
+              shell.discardPending,
+              shell.collaborationDiscarded,
+              shell.isConflict,
+              shell.offlineDraftBusy,
+              shell.offlineDraftMutationBlocked,
+              shell.serverSaveDisabled
+            ].some(Boolean),
+            connectionState: shell.offlineConnectionState,
+            requireReloadSafety
+          }
+          notifyNavigationStarted()
+          return navigateToSavedPage(capture, requireReloadSafety)
+        }
+
+        expect(await coordinator.captureThrough(0)).toBe(true)
+        expect(shell.editorAdapter.snapshot().nonPersisted).toBe(false)
+        const save = outcome === 'success' ? shell.saveAndClose() : shell.save()
+        await Promise.race([
+          networkStarted,
+          save.then(() => {
+            throw new Error('Save ended before dispatching the prepared receipt')
           })
-        }
-        if (url.href === `${ORIGIN}/_api/pages/preview?id=12` && method === 'GET') {
-          previewRequests.push({ url: url.href, method, credentials: init?.credentials })
-          events.push('preview-request')
-          notifyPreviewStarted()
-          await previewRelease
-          events.push('preview-ready:2')
-          return new Response(JSON.stringify({
-            id: 12,
-            sourceRevision: '2',
-            locale: 'en',
-            path: 'docs/example',
-            visibility: 'public'
-          }), { status: 200, headers: { 'content-type': 'application/json' } })
-        }
-        throw new Error(`Unexpected request: ${url}`)
-      }
-      const testWindow = createTestWindow(fetchImpl as typeof fetch)
-      const assign = testWindow.location.assign.bind(testWindow.location)
-      testWindow.location.assign = url => {
-        events.push('reader-navigation')
-        assign(url)
-      }
-      installWindow(testWindow)
-      // Authoritative feature hydration changes the draft-source signature while
-      // revision/checkout bookkeeping is dirty. Leave the real watcher's debounce
-      // pending; Save and Close must settle it rather than require a second click.
-      const shell = createReactiveShellContext(store, testWindow, storage, {
-        debounceMs: 60_000,
-        hydratedPageFeatures
-      })
-      shell.setupOfflineDraftCoordinator()
-      await shell.initializeOfflineDrafts()
-      const coordinator = shell.offlineDraftCoordinator!
-      let navigationAdmission: Record<string, unknown> | undefined
-      let notifyNavigationStarted!: () => void
-      const navigationStarted = new Promise<void>(resolve => { notifyNavigationStarted = resolve })
-      const navigateToSavedPage = shell.navigateToSavedPage
-      shell.navigateToSavedPage = (capture, requireReloadSafety) => {
-        navigationAdmission = {
-          pendingCapture: coordinator.hasInFlightWork,
-          activeTransition: coordinator.view.inFlight,
-          unresolvedSubmission: coordinator.hasUnresolvedSubmission,
-          receiptCount: [...storage.records.values()].filter(record => record.submissionId !== null).length,
-          dirty: shell.isDirty,
-          exactCapture: shell.editorAdapter.capture().text === capture.content &&
-            shell.editorAdapter.capture().editVersion === capture.editVersion,
-          adapterSafety: shell.editorAdapter.snapshot(),
-          sourceRevision: store.page.sourceRevision,
-          savedRenderTarget: toRaw(shell.savedRenderTarget),
-          checkoutDate: shell.checkoutDateActive,
-          authorizedActor: shell.isAuthenticated && shell.accountId === ACCOUNT_ID &&
-            store.authRefreshSettled && !store.authRefreshPending && store.offlineIdentityReady,
-          blocked: [
-            shell.dialogUnsaved, shell.dialogProps, shell.dialogEditorSelector,
-            shell.activeModal !== '', shell.discardPending, shell.collaborationDiscarded,
-            shell.isConflict, shell.offlineDraftBusy, shell.offlineDraftMutationBlocked,
-            shell.serverSaveDisabled
-          ].some(Boolean),
-          connectionState: shell.offlineConnectionState,
-          requireReloadSafety
-        }
-        notifyNavigationStarted()
-        return navigateToSavedPage(capture, requireReloadSafety)
-      }
-
-      expect(await coordinator.captureThrough(0)).toBe(true)
-      expect(shell.editorAdapter.snapshot().nonPersisted).toBe(false)
-      const save = outcome === 'success' ? shell.saveAndClose() : shell.save()
-      await Promise.race([networkStarted, save.then(() => { throw new Error('Save ended before dispatching the prepared receipt') })])
-      expect(submittedContent).toBe('A')
-      expect(submittedPageFeatures).toEqual(capturedPageFeatures)
-      expect(shell.offlineDraftStatus).toBe('publishing')
-      const receipt = [...storage.records.values()].find(record => record.submissionId !== null)!
-      expect(receipt).toBeDefined()
-      const handle = await requestDraftKey(keyFetchImpl, {
-        expectedAccountId: ACCOUNT_ID,
-        expectedSessionGeneration: SESSION_GENERATION
-      })
-      expect((await decryptOfflineDraft(handle, receipt)).content).toBe('A')
-      // An autosave may fire while this same snapshot is in flight; it must not
-      // manufacture a newer recovery fork for text the receipt already covers.
-      expect(await coordinator.captureThrough(0)).toBe(true)
-      expect(storage.records.size).toBe(2)
-      expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
-      releaseNetwork()
-      if (outcome === 'success') {
-        try {
-          await Promise.race([navigationStarted, save.then(() => { throw new Error('Save and Close ended before navigation admission') })])
-          expect(navigationAdmission).toEqual({
-            pendingCapture: true,
-            activeTransition: false,
-            unresolvedSubmission: false,
-            receiptCount: 0,
-            dirty: false,
-            exactCapture: true,
-            adapterSafety: {
-              ready: true,
-              editVersion: 0,
-              nonPersisted: false,
-              mergeDirty: false,
-              collaborationBacklog: 0,
-              revision: 'adapter:0:0'
-            },
-            sourceRevision: '2',
-            savedRenderTarget: { id: 12, sourceRevision: '2' },
-            checkoutDate: '2026-09-03T12:00:00.000Z',
-            authorizedActor: true,
-            blocked: false,
-            connectionState: 'online',
-            requireReloadSafety: false
-          })
-          await Promise.race([previewStarted, save.then(() => { throw new Error('First Save and Close ended without requesting the saved revision preview') })])
-          expect(coordinator.hasInFlightWork).toBe(false)
-          expect(testWindow.location.assigned).toHaveLength(0)
-          expect(events).toEqual(['source-write', 'preview-request'])
-        } finally {
-          releasePreview()
-        }
-      }
-
-      expect(await save).toBe(outcome === 'success')
-      expect(updateCalls).toBe(1)
-      if (outcome === 'success') {
-        expect(shell.saveFeedback).toBe('saved')
-        expect(shell.isDirty).toBe(false)
-        expect(shell.offlineDraftError).toBe('')
-        expect(shell.savedState.content).toBe('A')
-        expect(store.editor.content).toBe('A')
-        expect(store.page.pageFeatures).toEqual(hydratedPageFeatures)
-        expect(shell.savedState.pageFeatures).toEqual(hydratedPageFeatures)
-        expect(shell.offlineSubmissionCandidates).toHaveLength(0)
-        expect(coordinator.hasUnresolvedSubmission).toBe(false)
-        expect(coordinator.hasInFlightWork).toBe(false)
-        expect(storage.records.has(receipt.recordId)).toBe(false)
-        expect(storage.records.size).toBe(0)
-        expect(previewRequests).toEqual([{
-          url: `${ORIGIN}/_api/pages/preview?id=12`,
-          method: 'GET',
-          credentials: 'same-origin'
-        }])
-        expect(events).toEqual(['source-write', 'preview-request', 'preview-ready:2', 'reader-navigation'])
-        expect(testWindow.location.assigned).toEqual(['/en/docs/example'])
-
-        coordinator.destroy()
-        invalidateOfflineSession()
-        const reopenedStore = reactive(createStore())
-        reopenedStore.editor.editor = 'editorVisualMarkdown'
-        reopenedStore.editor.editorKey = 'visual-markdown'
-        reopenedStore.editor.content = 'A'
-        reopenedStore.editor.checkoutDateActive = '2026-09-03T12:00:00.000Z'
-        reopenedStore.page.path = 'docs/example'
-        reopenedStore.page.sourceRevision = '2'
-        reopenedStore.page.pageFeatures = hydratedPageFeatures
-        const reopened = createReactiveShellContext(reopenedStore, testWindow, storage)
-        reopened.savedState.content = 'A'
-        reopened.setupOfflineDraftCoordinator()
-        await reopened.initializeOfflineDrafts()
-        expect(reopened.offlineDraftStatus).toBeNull()
-        expect(reopened.offlineDraftCandidate).toBeNull()
-        expect(reopened.offlineDraftCandidates).toHaveLength(0)
-        expect(reopened.isDirty).toBe(false)
-
-        reopenedStore.editor.content = 'A\n\nSaved with the keyboard.'
-        reopened.editorAdapter.noteTextChange()
-        expect(await reopened.save()).toBe(true)
-        expect(updateCalls).toBe(2)
-        expect(submittedContent).toBe('A\n\nSaved with the keyboard.')
-        expect(reopened.saveFeedback).toBe('saved')
-        expect(reopened.isDirty).toBe(false)
-        // Drain any already-scheduled callback after the successful save too.
-        expect(await reopened.offlineDraftCoordinator!.captureNow({ editVersion: 1 })).toBe(true)
-        expect(storage.records.size).toBe(0)
-
-        reopenedStore.editor.content = 'A genuine unsaved recovery draft'
-        reopened.editorAdapter.noteTextChange()
-        expect(await reopened.offlineDraftCoordinator!.captureThrough(2)).toBe(true)
-        const unresolved = cloneEnvelope([...storage.records.values()][0]!)
-        reopened.offlineDraftCoordinator!.destroy()
-        invalidateOfflineSession()
-        const recoveringStore = reactive(createStore())
-        recoveringStore.editor.editor = 'editorVisualMarkdown'
-        recoveringStore.editor.editorKey = 'visual-markdown'
-        recoveringStore.editor.content = 'A\n\nSaved with the keyboard.'
-        recoveringStore.editor.checkoutDateActive = '2026-09-03T12:00:00.000Z'
-        recoveringStore.page.path = 'docs/example'
-        recoveringStore.page.sourceRevision = '2'
-        recoveringStore.page.pageFeatures = hydratedPageFeatures
-        const recovering = createReactiveShellContext(recoveringStore, testWindow, storage)
-        recovering.savedState.content = recoveringStore.editor.content
-        recovering.setupOfflineDraftCoordinator()
-        await recovering.initializeOfflineDrafts()
-        expect(recovering.offlineDraftStatus).toBe('needs-review')
-        expect(toRaw(recovering.offlineDraftCandidates)).toMatchObject([{
-          recordId: unresolved.recordId,
-          payload: { content: 'A genuine unsaved recovery draft' }
-        }])
-        recoveringStore.editor.content += '\nNot a recovery decision.'
-        recovering.editorAdapter.noteTextChange()
-        expect(await recovering.save()).toBe(false)
-        expect(updateCalls).toBe(2)
-        expect(sameEnvelope(storage.records.get(unresolved.recordId)!, unresolved)).toBe(true)
-      } else {
-        expect(previewRequests).toHaveLength(0)
-        expect(testWindow.location.assigned).toHaveLength(0)
-        expect(shell.saveFeedback).toBe('failed')
-        expect(shell.offlineDraftStatus).toBe('outcome-unknown')
-        expect(shell.offlineDraftError).toBe('Failed to fetch')
-        expect(toRaw(shell.offlineSubmissionCandidates)).toMatchObject([{
-          submission: { recordId: receipt.recordId, submissionId: receipt.submissionId },
-          payload: { content: 'A', state: 'outcome-unknown' }
-        }])
-        expect(coordinator.hasUnresolvedSubmission).toBe(true)
+        ])
+        expect(submittedContent).toBe('A')
+        expect(submittedPageFeatures).toEqual(capturedPageFeatures)
+        expect(shell.offlineDraftStatus).toBe('publishing')
+        const receipt = [...storage.records.values()].find(record => record.submissionId !== null)!
+        expect(receipt).toBeDefined()
+        const handle = await requestDraftKey(keyFetchImpl, {
+          expectedAccountId: ACCOUNT_ID,
+          expectedSessionGeneration: SESSION_GENERATION
+        })
+        expect((await decryptOfflineDraft(handle, receipt)).content).toBe('A')
+        // An autosave may fire while this same snapshot is in flight; it must not
+        // manufacture a newer recovery fork for text the receipt already covers.
+        expect(await coordinator.captureThrough(0)).toBe(true)
+        expect(storage.records.size).toBe(2)
         expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
-        expect(await shell.save()).toBe(false)
+        releaseNetwork()
+        if (outcome === 'success') {
+          try {
+            await Promise.race([
+              navigationStarted,
+              save.then(() => {
+                throw new Error('Save and Close ended before navigation admission')
+              })
+            ])
+            expect(navigationAdmission).toEqual({
+              pendingCapture: true,
+              activeTransition: false,
+              unresolvedSubmission: false,
+              receiptCount: 0,
+              dirty: false,
+              exactCapture: true,
+              adapterSafety: {
+                ready: true,
+                editVersion: 0,
+                nonPersisted: false,
+                mergeDirty: false,
+                collaborationBacklog: 0,
+                revision: 'adapter:0:0'
+              },
+              sourceRevision: '2',
+              savedRenderTarget: { id: 12, sourceRevision: '2' },
+              checkoutDate: '2026-09-03T12:00:00.000Z',
+              authorizedActor: true,
+              blocked: false,
+              connectionState: 'online',
+              requireReloadSafety: false
+            })
+            await Promise.race([
+              previewStarted,
+              save.then(() => {
+                throw new Error('First Save and Close ended without requesting the saved revision preview')
+              })
+            ])
+            expect(coordinator.hasInFlightWork).toBe(false)
+            expect(testWindow.location.assigned).toHaveLength(0)
+            expect(events).toEqual(['source-write', 'preview-request'])
+          } finally {
+            releasePreview()
+          }
+        }
+
+        expect(await save).toBe(outcome === 'success')
         expect(updateCalls).toBe(1)
-        expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+        if (outcome === 'success') {
+          expect(shell.saveFeedback).toBe('saved')
+          expect(shell.isDirty).toBe(false)
+          expect(shell.offlineDraftError).toBe('')
+          expect(shell.savedState.content).toBe('A')
+          expect(store.editor.content).toBe('A')
+          expect(store.page.pageFeatures).toEqual(hydratedPageFeatures)
+          expect(shell.savedState.pageFeatures).toEqual(hydratedPageFeatures)
+          expect(shell.offlineSubmissionCandidates).toHaveLength(0)
+          expect(coordinator.hasUnresolvedSubmission).toBe(false)
+          expect(coordinator.hasInFlightWork).toBe(false)
+          expect(storage.records.has(receipt.recordId)).toBe(false)
+          expect(storage.records.size).toBe(0)
+          expect(previewRequests).toEqual([
+            {
+              url: `${ORIGIN}/_api/pages/preview?id=12`,
+              method: 'GET',
+              credentials: 'same-origin'
+            }
+          ])
+          expect(events).toEqual(['source-write', 'preview-request', 'preview-ready:2', 'reader-navigation'])
+          expect(testWindow.location.assigned).toEqual(['/en/docs/example'])
 
-        coordinator.destroy()
-        invalidateOfflineSession()
-        const freshStore = createStore()
-        freshStore.editor.content = 'server baseline'
-        const fresh = createReactiveShellContext(freshStore, testWindow, storage)
-        fresh.setupOfflineDraftCoordinator()
-        await fresh.initializeOfflineDrafts()
-        expect(fresh.offlineDraftStatus).toBe('outcome-unknown')
-        expect(toRaw(fresh.offlineSubmissionCandidates)).toMatchObject([{
-          submission: { recordId: receipt.recordId, submissionId: receipt.submissionId },
-          payload: { content: 'A', state: 'outcome-unknown' }
-        }])
-        expect(toRaw(fresh.offlineDraftCandidates)).toMatchObject([{ payload: { content: 'A' } }])
-        expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+          coordinator.destroy()
+          invalidateOfflineSession()
+          const reopenedStore = reactive(createStore())
+          reopenedStore.editor.editor = 'editorVisualMarkdown'
+          reopenedStore.editor.editorKey = 'visual-markdown'
+          reopenedStore.editor.content = 'A'
+          reopenedStore.editor.checkoutDateActive = '2026-09-03T12:00:00.000Z'
+          reopenedStore.page.path = 'docs/example'
+          reopenedStore.page.sourceRevision = '2'
+          reopenedStore.page.pageFeatures = hydratedPageFeatures
+          const reopened = createReactiveShellContext(reopenedStore, testWindow, storage)
+          reopened.savedState.content = 'A'
+          reopened.setupOfflineDraftCoordinator()
+          await reopened.initializeOfflineDrafts()
+          expect(reopened.offlineDraftStatus).toBeNull()
+          expect(reopened.offlineDraftCandidate).toBeNull()
+          expect(reopened.offlineDraftCandidates).toHaveLength(0)
+          expect(reopened.isDirty).toBe(false)
+
+          reopenedStore.editor.content = 'A\n\nSaved with the keyboard.'
+          reopened.editorAdapter.noteTextChange()
+          expect(await reopened.save()).toBe(true)
+          expect(updateCalls).toBe(2)
+          expect(submittedContent).toBe('A\n\nSaved with the keyboard.')
+          expect(reopened.saveFeedback).toBe('saved')
+          expect(reopened.isDirty).toBe(false)
+          // Drain any already-scheduled callback after the successful save too.
+          expect(await reopened.offlineDraftCoordinator!.captureNow({ editVersion: 1 })).toBe(true)
+          expect(storage.records.size).toBe(0)
+
+          reopenedStore.editor.content = 'A genuine unsaved recovery draft'
+          reopened.editorAdapter.noteTextChange()
+          expect(await reopened.offlineDraftCoordinator!.captureThrough(2)).toBe(true)
+          const unresolved = cloneEnvelope([...storage.records.values()][0]!)
+          reopened.offlineDraftCoordinator!.destroy()
+          invalidateOfflineSession()
+          const recoveringStore = reactive(createStore())
+          recoveringStore.editor.editor = 'editorVisualMarkdown'
+          recoveringStore.editor.editorKey = 'visual-markdown'
+          recoveringStore.editor.content = 'A\n\nSaved with the keyboard.'
+          recoveringStore.editor.checkoutDateActive = '2026-09-03T12:00:00.000Z'
+          recoveringStore.page.path = 'docs/example'
+          recoveringStore.page.sourceRevision = '2'
+          recoveringStore.page.pageFeatures = hydratedPageFeatures
+          const recovering = createReactiveShellContext(recoveringStore, testWindow, storage)
+          recovering.savedState.content = recoveringStore.editor.content
+          recovering.setupOfflineDraftCoordinator()
+          await recovering.initializeOfflineDrafts()
+          expect(recovering.offlineDraftStatus).toBe('needs-review')
+          expect(toRaw(recovering.offlineDraftCandidates)).toMatchObject([
+            {
+              recordId: unresolved.recordId,
+              payload: { content: 'A genuine unsaved recovery draft' }
+            }
+          ])
+          recoveringStore.editor.content += '\nNot a recovery decision.'
+          recovering.editorAdapter.noteTextChange()
+          expect(await recovering.save()).toBe(false)
+          expect(updateCalls).toBe(2)
+          expect(sameEnvelope(storage.records.get(unresolved.recordId)!, unresolved)).toBe(true)
+        } else {
+          expect(previewRequests).toHaveLength(0)
+          expect(testWindow.location.assigned).toHaveLength(0)
+          expect(shell.saveFeedback).toBe('failed')
+          expect(shell.offlineDraftStatus).toBe('outcome-unknown')
+          expect(shell.offlineDraftError).toBe('Failed to fetch')
+          expect(toRaw(shell.offlineSubmissionCandidates)).toMatchObject([
+            {
+              submission: { recordId: receipt.recordId, submissionId: receipt.submissionId },
+              payload: { content: 'A', state: 'outcome-unknown' }
+            }
+          ])
+          expect(coordinator.hasUnresolvedSubmission).toBe(true)
+          expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+          expect(await shell.save()).toBe(false)
+          expect(updateCalls).toBe(1)
+          expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+
+          coordinator.destroy()
+          invalidateOfflineSession()
+          const freshStore = createStore()
+          freshStore.editor.content = 'server baseline'
+          const fresh = createReactiveShellContext(freshStore, testWindow, storage)
+          fresh.setupOfflineDraftCoordinator()
+          await fresh.initializeOfflineDrafts()
+          expect(fresh.offlineDraftStatus).toBe('outcome-unknown')
+          expect(toRaw(fresh.offlineSubmissionCandidates)).toMatchObject([
+            {
+              submission: { recordId: receipt.recordId, submissionId: receipt.submissionId },
+              payload: { content: 'A', state: 'outcome-unknown' }
+            }
+          ])
+          expect(toRaw(fresh.offlineDraftCandidates)).toMatchObject([{ payload: { content: 'A' } }])
+          expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
+        }
       }
-    })
+    )
   }
 
   test('late receipt callbacks from a replaced coordinator cannot overwrite the Vue-reactive editor', async () => {
@@ -978,10 +1036,12 @@ describe('composed editor offline submission boundary', () => {
 
     await shell.initializeOfflineDrafts()
     expect(shell.offlineDraftStatus).toBe('outcome-unknown')
-    expect(toRaw(shell.offlineSubmissionCandidates)).toMatchObject([{
-      submission: { recordId: receipt.recordId },
-      payload: { content: 'A', state: 'outcome-unknown' }
-    }])
+    expect(toRaw(shell.offlineSubmissionCandidates)).toMatchObject([
+      {
+        submission: { recordId: receipt.recordId },
+        payload: { content: 'A', state: 'outcome-unknown' }
+      }
+    ])
   })
 
   for (const action of ['keep-server', 'discard-draft', 'delete-receipt'] as const) {
@@ -1068,8 +1128,12 @@ describe('composed editor offline submission boundary', () => {
     shell.offlineReconcilePrompt = { recordId: prepared!.recordId, kind: 'update', revision: '2' }
     let release!: () => void
     let started!: () => void
-    const deleting = new Promise<void>(resolve => { started = resolve })
-    const resume = new Promise<void>(resolve => { release = resolve })
+    const deleting = new Promise<void>(resolve => {
+      started = resolve
+    })
+    const resume = new Promise<void>(resolve => {
+      release = resolve
+    })
     const deleteDraft = storage.deleteDraft.bind(storage)
     storage.deleteDraft = async (...args: Parameters<typeof storage.deleteDraft>) => {
       started()

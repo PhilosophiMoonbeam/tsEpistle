@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
+import { GLOSSARY_LIMITS } from '../../../shared/glossary.ts'
 import type { AgentActionDescriptor, AgentActionName, AgentFeatureFlagKey } from '../../../shared/agents/contracts.ts'
 import { WikiLinePatchV1Schema, WikiLineSnapshotV1Schema } from '../patch/wiki-line-patch.ts'
 import { KnowledgeProjectionViewSchema } from '../../knowledge/projection.ts'
@@ -227,6 +228,33 @@ const OkfPageResult = strict({
   knowledge: KnowledgeProjectionViewSchema.nullable(),
   citation: OkfCitation
 })
+const GlossaryLocale = z
+  .string()
+  .max(35)
+  .regex(/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/)
+const GlossarySummary = strict({
+  id: PositiveId,
+  revision: PositiveId,
+  locale: GlossaryLocale,
+  term: z.string().max(GLOSSARY_LIMITS.name),
+  expansion: z.string().max(GLOSSARY_LIMITS.name),
+  category: z.string().max(GLOSSARY_LIMITS.name)
+})
+const GlossaryTermResult = GlossarySummary.extend({
+  definition: z.string().max(GLOSSARY_LIMITS.definition),
+  aliases: z.array(z.string().max(GLOSSARY_LIMITS.name)).max(GLOSSARY_LIMITS.aliases),
+  relatedTerms: z.array(GlossarySummary).max(GLOSSARY_LIMITS.relatedIds),
+  references: z.array(strict({ label: z.string().max(GLOSSARY_LIMITS.name), url: z.string().max(2_048) })).max(GLOSSARY_LIMITS.references),
+  documentation: strict({
+    id: PositiveId,
+    title: BoundedTitle,
+    label: z.string().max(GLOSSARY_LIMITS.name),
+    href: BoundedPathLike,
+    locale: Locale,
+    path: BoundedPathLike
+  }).nullable(),
+  updatedAt: z.string().max(32)
+})
 const AppliedProposalResult = strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: AppliedPageSummary.nullable() })
 const ProposalResult = strict({
   proposalId: Uuid,
@@ -267,6 +295,7 @@ const browserAnnotations = { idempotent: false, openWorld: true, sideEffects: fa
 const applyAnnotations = { idempotent: false, openWorld: false, sideEffects: true } as const
 const both = { agent: true, mcp: true } as const
 const agentOnly = { agent: true, mcp: false } as const
+const mcpOnly = { agent: false, mcp: true } as const
 const baseFlags = ['agents.enabled'] as const
 const skillFlags = ['agents.enabled', 'agents.skills.enabled'] as const
 const browserFlags = ['agents.enabled', 'agents.browser.enabled'] as const
@@ -579,6 +608,59 @@ export const ACTION_CATALOG = {
     output: strict({ pages: z.array(RelatedPageSummary).max(100), nextCursor: z.string().min(1).max(4_096).nullable() }),
     requiredFlags: baseFlags,
     capability: defineActionCapability('enumerate', 'candidate-lead', 'wiki.page-candidates', 'candidate-metadata', 'never', 'none', 'none')
+  },
+  'glossary.list': {
+    descriptor: descriptor(
+      'glossary.list',
+      'List glossary terms',
+      'List a bounded page of glossary term summaries in one locale. Continue using nextCursor with the same locale and query. Summaries are navigation metadata; read the selected term for its definition.',
+      'read',
+      ['read:glossary'],
+      mcpOnly,
+      readAnnotations
+    ),
+    group: 'explore',
+    input: strict({
+      locale: GlossaryLocale,
+      query: z.string().max(GLOSSARY_LIMITS.name).default(''),
+      limit: z.number().int().min(1).max(GLOSSARY_LIMITS.directory).default(50),
+      cursor: z.string().max(2_048).nullable().default(null)
+    }),
+    output: strict({ items: z.array(GlossarySummary).max(GLOSSARY_LIMITS.directory), nextCursor: z.string().max(2_048).nullable(), complete: z.boolean() }),
+    requiredFlags: baseFlags,
+    capability: defineActionCapability(
+      'enumerate',
+      'candidate-lead',
+      'structured-observation',
+      'request-scoped-structured-observation',
+      'never',
+      'none',
+      'none'
+    )
+  },
+  'glossary.get': {
+    descriptor: descriptor(
+      'glossary.get',
+      'Read glossary term',
+      'Read one authorized glossary definition by exact numeric term ID and locale. Documentation links are returned only when currently readable; a link does not establish page-content evidence.',
+      'read',
+      ['read:glossary'],
+      mcpOnly,
+      readAnnotations
+    ),
+    group: 'explore',
+    input: strict({ id: PositiveId, locale: GlossaryLocale }),
+    output: GlossaryTermResult,
+    requiredFlags: baseFlags,
+    capability: defineActionCapability(
+      'read',
+      'transient-observation',
+      'structured-observation',
+      'request-scoped-structured-observation',
+      'never',
+      'none',
+      'none'
+    )
   },
   'skills.list': {
     descriptor: descriptor('skills.list', 'List approved skills', 'List approved skills visible to the current principal.', 'read', [], both, readAnnotations),

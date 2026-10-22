@@ -3,6 +3,8 @@
     v-bind='currentPage.props'
     :navigation-key='navigationKey'
     :navigation-pending='navigationPending'
+    :page-transitions='pageTransitions'
+    :show-page-progress='showPageProgress'
     :active-view='activePageView'
     :links-visible='linksVisible'
     :ratings-visible='ratingsVisible'
@@ -97,6 +99,12 @@ export default defineComponent({
     }
   },
   computed: {
+    pageTransitions(): boolean {
+      return wikiStore.site.pageTransitions
+    },
+    showPageProgress(): boolean {
+      return wikiStore.site.showPageProgress
+    },
     linksVisible(): boolean {
       return this.currentPage.pageFeatures.linksVisible
     },

@@ -41,6 +41,7 @@ export interface ServerWiki extends GraphRuntime {
   IS_DEBUG: boolean
   app: Express
   collaboration: { install(server: NodeServer): void; dispose(server?: NodeServer | null): Promise<void> }
+  liveNoteCollaboration?: { install(server: NodeServer): void; dispose(server?: NodeServer | null): Promise<void> }
   config: ServerConfig
   auth: SubscriptionAuthService
   logger: GraphRuntime['logger'] & Record<'debug' | 'error' | 'info' | 'warn', (...values: unknown[]) => void>
@@ -199,6 +200,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
       this.servers.http = server
       this.installGraphQLSubscriptions(server)
       wiki.collaboration.install(server)
+      wiki.liveNoteCollaboration?.install(server)
       server.on('connection', connection => {
         const key = `http:${connection.remoteAddress}:${connection.remotePort}`
         this.connections.set(key, connection)
@@ -234,6 +236,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
       try {
         this.installGraphQLSubscriptions(server)
         wiki.collaboration.install(server)
+        wiki.liveNoteCollaboration?.install(server)
         server.on('connection', connection => {
           const key = `https:${connection.remoteAddress}:${connection.remotePort}`
           this.connections.set(key, connection)
@@ -272,6 +275,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
       }
       await attempt(() => this.disposeGraphQLSubscriptions(server))
       await attempt(() => wiki.collaboration.dispose(server))
+      await attempt(() => wiki.liveNoteCollaboration?.dispose(server))
       await attempt(() => this.closeConnections('https'))
       await attempt(() => server.closeAllConnections())
       await attempt(() => closeServer(server))
@@ -537,6 +541,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
 
         await teardown(() => this.disposeGraphQLSubscriptions())
         await teardown(() => wiki.collaboration.dispose())
+        await teardown(async () => wiki.liveNoteCollaboration?.dispose())
         this.closeConnections()
         if (this.servers.http) {
           const server = this.servers.http
@@ -565,6 +570,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
           if (this.servers.http) {
             await this.disposeGraphQLSubscriptions(this.servers.http)
             await wiki.collaboration.dispose(this.servers.http)
+            await wiki.liveNoteCollaboration?.dispose(this.servers.http)
             await closeServer(this.servers.http)
             this.servers.http = null
           }
@@ -574,6 +580,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
           if (this.servers.https) {
             await this.disposeGraphQLSubscriptions(this.servers.https)
             await wiki.collaboration.dispose(this.servers.https)
+            await wiki.liveNoteCollaboration?.dispose(this.servers.https)
             await closeServer(this.servers.https)
             this.servers.https = null
           }

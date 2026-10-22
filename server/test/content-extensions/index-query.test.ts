@@ -1,5 +1,9 @@
+import * as assetBranding from '../../helpers/asset-branding.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 const listPageIndexCandidates = vi.hoisted(() => vi.fn())
+const resolveAssetBrandingView = vi.hoisted(() => vi.fn())
+// Page operations also load the page model, which needs the real branding authorization exports.
+vi.mockModule('../../helpers/asset-branding.ts', import.meta.url, () => ({ ...assetBranding, resolveAssetBrandingView }))
 vi.mockModule('../../repositories/page-index.ts', import.meta.url, () => ({
   PAGE_INDEX_CANDIDATE_LIMIT: 5_001,
   listPageIndexCandidates
@@ -10,7 +14,6 @@ afterEach(() => {
   if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
   else Reflect.set(globalThis, 'WIKI', originalWiki)
 })
-
 
 const rows = [
   {
@@ -76,20 +79,20 @@ const pageAuth = <T extends (...args: never[]) => unknown>(checkAccess: T) => ({
   loadPageRuleAuthority: async requester => ({ requester, permissions: [], groups: [], tagAliases: {} })
 })
 
-
 describe('page index operation', () => {
   beforeEach(() => {
     listPageIndexCandidates.mockReset()
+    resolveAssetBrandingView.mockReset()
   })
 
   it('filters ownership, page rules, path, and depth before applying the result limit', async () => {
     listPageIndexCandidates.mockResolvedValue([rows[2], rows[0], rows[1], rows[3], rows[4]])
     Reflect.set(globalThis, 'WIKI', {
-      auth: pageAuth(vi.fn((user: { permissions?: string[] } | undefined, permissions: string[], context?: { path?: string }) =>
-        permissions.includes('manage:system')
-          ? Boolean(user?.permissions?.includes('manage:system'))
-          : context?.path !== 'guide/secret'
-      )),
+      auth: pageAuth(
+        vi.fn((user: { permissions?: string[] } | undefined, permissions: string[], context?: { path?: string }) =>
+          permissions.includes('manage:system') ? Boolean(user?.permissions?.includes('manage:system')) : context?.path !== 'guide/secret'
+        )
+      ),
       models: { knex }
     })
     const operations = (await import('../../operations/pages.ts')).default
@@ -131,6 +134,48 @@ describe('page index operation', () => {
     expect(result.some(item => item.path === 'elsewhere/page')).toBe(false)
   })
 
+  it.each([
+    ['#AABBCC', '#AABBCC'],
+    ['red; background-image:url(https://evil.test)', null]
+  ])('projects readable metadata after access checks and rejects unsafe accent %s', async (accent, expectedAccent) => {
+    listPageIndexCandidates.mockResolvedValue(
+      rows.slice(0, 3).map(page => ({
+        ...page,
+        extra: { branding: { assetId: page.id } },
+        // Access checks correctly reject malformed stored tags before presentation.
+        tags: [{ tag: page.id === 1 ? '<img src=x onerror=alert(1)>' : 'private-secret' }]
+      }))
+    )
+    resolveAssetBrandingView.mockResolvedValue({ accent })
+    Reflect.set(globalThis, 'WIKI', {
+      auth: pageAuth(
+        vi.fn((_user, permissions: string[], context?: { path?: string }) => !permissions.includes('manage:system') && context?.path !== 'guide/secret')
+      ),
+      models: { knex }
+    })
+    // Load after installing WIKI because the operation module captures the global runtime.
+    const operations = (await import('../../operations/pages.ts')).default
+    const result = await operations.listIndex({
+      requester: { id: 9, permissions: ['read:pages'] },
+      path: 'guide',
+      locale: 'en',
+      depth: 0,
+      order: 'path',
+      limit: 20
+    })
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 1,
+        tags: ['<img src=x onerror=alert(1)>'],
+        pageAccent: expectedAccent
+      })
+    ])
+    expect(resolveAssetBrandingView).toHaveBeenCalledTimes(1)
+    expect(resolveAssetBrandingView).toHaveBeenCalledWith(expect.objectContaining({ assetId: 1, requester: expect.objectContaining({ id: 9 }) }))
+    expect(JSON.stringify(result)).not.toContain('private-secret')
+    expect(result[0]).not.toHaveProperty('extra')
+  })
+
   it('rejects a query that reaches the 5,001-candidate repository ceiling', async () => {
     const candidates = Array.from({ length: 5_001 }, (_, index) => ({
       ...rows[0],
@@ -144,14 +189,18 @@ describe('page index operation', () => {
     })
     const operations = (await import('../../operations/pages.ts')).default
 
-    await expect(Promise.resolve(operations.listIndex({
-      requester: { id: 7, permissions: ['read:pages'] },
-      path: 'guide',
-      locale: 'en',
-      depth: 0,
-      order: 'path',
-      limit: 200
-    }))).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
+    await expect(
+      Promise.resolve(
+        operations.listIndex({
+          requester: { id: 7, permissions: ['read:pages'] },
+          path: 'guide',
+          locale: 'en',
+          depth: 0,
+          order: 'path',
+          limit: 200
+        })
+      )
+    ).rejects.toMatchObject({ name: 'PAGE_INDEX_TOO_BROAD', status: 422 })
   })
 
   it.each([

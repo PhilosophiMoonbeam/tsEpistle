@@ -48,6 +48,7 @@ import type { PageBrandingAssignment, PageBrandingView } from '../../shared/page
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
 import { normalizePageFeatures } from '../../shared/page-features.ts'
 import type { PageFeatures } from '../../shared/page-features.ts'
+import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import { DeletedPageRecoverySecurityContextSchema } from '../models/pages.ts'
 import type { DeletedPageRecoverySecurityContext } from '../models/pages.ts'
 const MOVE_REVIEW_PAGE_SIZE = 20
@@ -1113,6 +1114,12 @@ const optionalBoolean = (value: unknown, label: string): boolean | undefined => 
   if (typeof value !== 'boolean') throw new ApplicationError(`${label} must be a boolean`, { code: 'INVALID_INPUT' })
   return value
 }
+const saveChangeReason = (value: unknown): string | undefined => {
+  const parsed = PageChangeReasonSchema.safeParse(value)
+  if (!parsed.success)
+    throw new ApplicationError('changeReason must be a single line of at most 200 characters without controls or bidi formatting.', { code: 'INVALID_INPUT' })
+  return parsed.data
+}
 const expectedSourceRevision = (value: unknown): string | undefined => {
   if (value === undefined) return undefined
   const revision = stringValue(value, 'expectedSourceRevision')
@@ -1151,8 +1158,8 @@ const mutationPayload = (input: OperationInput, omitted: readonly string[] = [])
 const withRequester = (payload: Record<string, unknown>, requester: Express.User | undefined): Record<string, unknown> & { user?: Express.User } =>
   requester === undefined ? payload : { ...payload, user: requester }
 
-const resolveReaderBranding = async (input: OperationInput, page: PageRecord): Promise<PageBrandingView | null> => {
-  const assignment = PageBrandingAssignmentSchema.safeParse(_.isPlainObject(page.extra) ? page.extra.branding : undefined)
+const resolveReaderBranding = async (input: OperationInput, page: { readonly extra: unknown }): Promise<PageBrandingView | null> => {
+  const assignment = PageBrandingAssignmentSchema.safeParse(isRecord(page.extra) ? page.extra.branding : undefined)
   if (!assignment.success) return null
   try {
     return await resolveAssetBrandingView({
@@ -1299,6 +1306,8 @@ export interface PageIndexItem {
   path: string
   href: string
   updatedAt: string
+  tags: string[]
+  pageAccent: string | null
 }
 
 const listIndex = async (input: OperationInput): Promise<PageIndexItem[]> => {
@@ -1342,14 +1351,24 @@ const listIndex = async (input: OperationInput): Promise<PageIndexItem[]> => {
       return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path) || left.id - right.id
     return left.path.localeCompare(right.path) || left.id - right.id
   })
-  return accessible.slice(0, limit).map(page => ({
-    id: page.id,
-    title: page.title,
-    description: page.description ?? null,
-    path: page.path,
-    href: pageRoute(page),
-    updatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : String(page.updatedAt)
-  }))
+  return Promise.all(
+    accessible.slice(0, limit).map(async page => {
+      const branding = await resolveReaderBranding(input, page)
+      return {
+        id: page.id,
+        title: page.title,
+        description: page.description ?? null,
+        path: page.path,
+        href: pageRoute(page),
+        updatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : String(page.updatedAt),
+        tags: page.tags
+          .map(tag => tag.tag)
+          .filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0 && tag.length <= 255)
+          .slice(0, 100),
+        pageAccent: typeof branding?.accent === 'string' && /^#[0-9a-f]{6}$/iu.test(branding.accent) ? branding.accent : null
+      }
+    })
+  )
 }
 
 const discover = async (input: OperationInput) => {
@@ -3075,6 +3094,7 @@ const getConflictLatest = async (input: OperationInput) => {
 const create = (input: OperationInput): unknown => {
   const payload = mutationPayload(input, ['ownerId', 'isPrivate', 'privateNS'])
   if (payload.isSearchable !== undefined) payload.isSearchable = optionalBoolean(payload.isSearchable, 'isSearchable')
+  if (Object.hasOwn(payload, 'changeReason')) payload.changeReason = saveChangeReason(payload.changeReason)
   if (isPageEditorKey(payload.editor) && !normalizeAvailableEditors(wiki.config.editors?.available).includes(payload.editor)) {
     throw new ApplicationError('The selected editor is not available for new pages.', { code: 'EDITOR_NOT_AVAILABLE' })
   }
@@ -3107,6 +3127,7 @@ const update = async (input: OperationInput): Promise<unknown> => {
   const collaborationGeneration = expectedCollaborationGeneration(operationInput.expectedCollaborationGeneration)
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', ...(replaceOkfMetadata ? [] : ['okfMetadata'])])
   if (payload.isSearchable !== undefined) payload.isSearchable = optionalBoolean(payload.isSearchable, 'isSearchable')
+  if (Object.hasOwn(payload, 'changeReason')) payload.changeReason = saveChangeReason(payload.changeReason)
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   const brandingContext = Object.hasOwn(payload, 'branding')
     ? {

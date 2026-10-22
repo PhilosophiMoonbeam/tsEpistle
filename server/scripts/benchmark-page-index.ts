@@ -40,6 +40,7 @@ const prepareDataset = async (): Promise<void> => {
     table.string('path', 512).notNullable()
     table.string('title', 255).notNullable()
     table.text('description').nullable()
+    table.jsonb('extra').nullable()
     table.bigInteger('sourceRevision').notNullable().defaultTo(1)
     table.string('visibility', 16).notNullable()
     table.boolean('isPublished').notNullable().defaultTo(true)

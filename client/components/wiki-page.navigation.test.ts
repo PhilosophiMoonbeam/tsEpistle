@@ -29,6 +29,8 @@ type NavigationVm = {
 
 type WikiPageComponentOptions = {
   computed: {
+    pageTransitions: (this: NavigationVm) => boolean
+    showPageProgress: (this: NavigationVm) => boolean
     linksVisible: (this: NavigationVm) => boolean
     ratingsVisible: (this: NavigationVm) => boolean
     lastEditorVisible: (this: NavigationVm) => boolean
@@ -96,7 +98,7 @@ const pageDocument = (): string => `<!doctype html>
   </body>
 </html>`
 
-const loadComponent = (fetchResponse: Response) => {
+const loadComponent = (fetchResponse: Response, site = { pageTransitions: true, showPageProgress: false }) => {
   const fetch = vi.fn(async () => fetchResponse)
   const evaluate = new Function(
     'defineComponent',
@@ -133,7 +135,7 @@ const loadComponent = (fetchResponse: Response) => {
     () => () => undefined,
     () => false,
     parseWikiNavigationDocument,
-    {},
+    { site },
     fetch,
     focusDiscussionThread,
     (callback: FrameRequestCallback) => {
@@ -189,6 +191,18 @@ const navigate = async (fetchResponse: Response): Promise<NavigationVm> => {
 }
 
 describe('wiki page feature visibility', () => {
+  test('passes independent runtime theme settings to the page reader', () => {
+    const site = { pageTransitions: true, showPageProgress: false }
+    const { component } = loadComponent(new Response(), site)
+    const vm = navigationVm()
+    for (const pageTransitions of [false, true]) {
+      for (const showPageProgress of [false, true]) {
+        Object.assign(site, { pageTransitions, showPageProgress })
+        expect(component.computed.pageTransitions.call(vm)).toBe(pageTransitions)
+        expect(component.computed.showPageProgress.call(vm)).toBe(showPageProgress)
+      }
+    }
+  })
   test('visibility flags respect page policy and the rating site gate as pages change', () => {
     const { component } = loadComponent(new Response())
     const vm = navigationVm()
@@ -218,6 +232,61 @@ describe('wiki page feature visibility', () => {
 })
 
 describe('wiki page navigation response boundary', () => {
+  test('keeps navigation pending until the page body is ready and clears it on completion', async () => {
+    const destination = new URL('/en/pending-page', window.location.origin)
+    const { value, readBody } = response({ url: destination.href })
+    const body = Promise.withResolvers<string>()
+    readBody.mockImplementationOnce(() => body.promise)
+    const { component } = loadComponent(value)
+    const vm = navigationVm(component)
+    const navigation = component.methods.navigate.call(vm, destination, { popState: true })
+    expect(vm.navigationPending).toBe(true)
+    await Promise.resolve()
+    expect(readBody).toHaveBeenCalledOnce()
+    expect(vm.navigationPending).toBe(true)
+    expect(vm.navigationKey).toBe(0)
+    body.resolve(pageDocument())
+    await navigation
+    expect(vm.navigationPending).toBe(false)
+    expect(vm.navigationAbortController).toBeNull()
+    expect(vm.navigationKey).toBe(1)
+  })
+
+  test('does not let an obsolete navigation hide the cue for its replacement', async () => {
+    const destination = new URL('/en/replacement-page', window.location.origin)
+    const { value } = response({ url: destination.href })
+    const { component, fetch } = loadComponent(value)
+    const firstResponse = Promise.withResolvers<Response>()
+    const secondResponse = Promise.withResolvers<Response>()
+    fetch.mockImplementationOnce(() => firstResponse.promise)
+    fetch.mockImplementationOnce(() => secondResponse.promise)
+    const vm = navigationVm(component)
+    const first = component.methods.navigate.call(vm, new URL('/en/obsolete-page', window.location.origin), { popState: true })
+    const previous = vm.navigationAbortController!
+    const second = component.methods.navigate.call(vm, destination, { popState: true })
+    expect(previous.signal.aborted).toBe(true)
+    firstResponse.resolve(value)
+    await first
+    expect(vm.navigationPending).toBe(true)
+    expect(vm.navigationKey).toBe(0)
+    secondResponse.resolve(value)
+    await second
+    expect(vm.navigationPending).toBe(false)
+    expect(vm.navigationKey).toBe(1)
+  })
+
+  test('clears pending navigation after a failed request without replacing readable content', async () => {
+    const { component, fetch } = loadComponent(new Response())
+    fetch.mockRejectedValueOnce(new Error('Connection interrupted'))
+    const vm = navigationVm(component)
+    const navigation = component.methods.navigate.call(vm, new URL('/en/failed-page', window.location.origin), { popState: true })
+    expect(vm.navigationPending).toBe(true)
+    await navigation
+    expect(vm.navigationPending).toBe(false)
+    expect(vm.navigationKey).toBe(0)
+    expect(vm.hardNavigate).toHaveBeenCalledOnce()
+  })
+
   test('keeps a marked same-origin HTML page in SPA navigation', async () => {
     const finalUrl = new URL('/en/redirected-page', window.location.origin).href
     const { value, readBody } = response({

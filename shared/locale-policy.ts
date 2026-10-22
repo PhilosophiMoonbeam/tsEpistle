@@ -72,6 +72,27 @@ export const LocaleFileReviewSchema = z
   .strict()
 export type LocaleFileReview = z.output<typeof LocaleFileReviewSchema>
 
+export const LocaleUninstallBlockerSchema = z
+  .object({
+    source: z.string().min(1).max(400),
+    count: z.number().int().positive()
+  })
+  .strict()
+export type LocaleUninstallBlocker = z.output<typeof LocaleUninstallBlockerSchema>
+export const LocaleUninstallReviewSchema = z
+  .object({
+    code: LocaleCodeSchema,
+    name: z.string().min(1).max(160),
+    nativeName: z.string().min(1).max(160),
+    reason: z.string().min(3).max(1000),
+    expiresAt: z.string().datetime(),
+    token: z.string().min(1).max(8192),
+    catalogRetained: z.boolean(),
+    blockers: z.array(LocaleUninstallBlockerSchema)
+  })
+  .strict()
+export type LocaleUninstallReview = z.output<typeof LocaleUninstallReviewSchema>
+
 export const LocaleCatalogSchema = z
   .array(LocaleCatalogEntrySchema)
   .max(300)
@@ -96,7 +117,7 @@ export interface LocaleEvent {
   reason: string
   fields: string[]
   createdAt: string
-  kind: 'settings' | 'install' | 'local' | 'catalog'
+  kind: 'settings' | 'install' | 'local' | 'catalog' | 'uninstall'
   jobId?: string
   code?: string
   appliedAt?: string

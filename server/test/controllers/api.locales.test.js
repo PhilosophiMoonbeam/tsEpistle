@@ -159,5 +159,42 @@ describe('Locale API boundaries', () => {
       expect((await request('PUT', '', { ...body, fingerprint: current.fingerprint })).status).toBe(403)
       expect(await db('settings').orderBy('key')).toEqual(beforeRejected)
     }, 30_000)
+
+    it('removes an unused package through reviewed HTTP endpoints and evicts its actual runtime resources while retaining catalog availability', async () => {
+      await db('users').where('id', 1).update({ authVersion: 0 })
+      const now = new Date().toISOString()
+      const french = { code: 'fr', name: 'French', nativeName: 'Français', isRTL: false, availability: 95 }
+      await db('locales').insert({ ...french, strings: '{"common":{"removalProbe":"French before removal"}}', createdAt: now, updatedAt: now })
+      await db('settings').insert({
+        key: 'localeCatalog', value: JSON.stringify({ locales: [french], observedAt: now }), updatedAt: now
+      }).onConflict('key').merge()
+      await wiki.lang.refreshNamespaces()
+      expect(wiki.lang.localeCodes).toContain('fr')
+      expect(await wiki.lang.getByNamespace('fr', 'common')).toContainEqual({ key: 'removalProbe', value: 'French before removal' })
+      const workspace = await (await request('GET')).json()
+      const response = await request('POST', '/uninstall/review', {
+        code: 'fr', fingerprint: workspace.fingerprint, reason: 'Remove unused French interface'
+      })
+      expect(response.status).toBe(200)
+      const reviewed = await response.json()
+      expect(reviewed).toMatchObject({ code: 'fr', catalogRetained: true, blockers: [] })
+      const before = { users: await db('users').orderBy('id'), navigation: await db('navigation').orderBy('key') }
+      const denied = await request('POST', '/uninstall/commit', { token: reviewed.token }, 3)
+      expect(denied.status).toBe(403)
+      expect(await db('locales').where('code', 'fr').first()).toBeTruthy()
+      const removed = await request('POST', '/uninstall/commit', { token: reviewed.token })
+      expect(removed.status).toBe(200)
+      expect(await removed.json()).toEqual({ activation: 'applied' })
+      expect(wiki.lang.localeCodes).not.toContain('fr')
+      await expect(wiki.lang.getByNamespace('fr', 'common')).rejects.toThrow('Invalid locale or namespace')
+      const current = await (await request('GET')).json()
+      expect(current.locales.find(locale => locale.code === 'fr')).toMatchObject({ isInstalled: false, availableRemotely: true })
+      expect(current.history[0]).toMatchObject({ kind: 'uninstall', actorId: 1, code: 'fr', reason: 'Remove unused French interface' })
+      expect(wiki.lang.appliedRevision).toBe(current.history[0].id)
+      expect(current.runtime.state).toBe('applied')
+      expect(await db('users').orderBy('id')).toEqual(before.users)
+      expect(await db('navigation').orderBy('key')).toEqual(before.navigation)
+      expect((await request('POST', '/uninstall/commit', { token: reviewed.token })).status).toBe(409)
+    }, 30_000)
   })
 }

@@ -394,6 +394,17 @@
       "runtimePostconditions": [
         "external-mcp-retired-oauth-configuration-schema"
       ]
+    },
+    "tsepistle-000067-live-notes.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-live-notes-schema"],
+      "runtimePostconditions": ["native-live-notes-schema"]
     }
   }
 }

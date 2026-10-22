@@ -458,7 +458,7 @@ export default class Storage extends Model {
             const current = await wiki.models.storage.query(transaction).findById(target.key).forUpdate()
             if (!current) return false
             const pendingQuery = transaction('durableJobs')
-              .where(identity => identity.where({ type: 'storage-mutation', version: 1 }).orWhere({ type: 'asset-relocation', version: 1 }))
+              .where(identity => identity.where('type', 'storage-mutation').whereIn('version', [1, 2]).orWhere({ type: 'asset-relocation', version: 1 }))
               .whereNot('state', 'succeeded')
             const client = transaction.client.config.client
             if (client === 'pg' || client === 'postgres' || client === 'postgresql') {

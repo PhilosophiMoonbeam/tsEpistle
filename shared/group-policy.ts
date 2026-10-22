@@ -62,6 +62,20 @@ export const groupPermissions: GroupPermission[] = [
     'Manage glossary',
     'Create, edit and delete entries in the selected locale’s glossary using page rules for the fixed path glossary.'
   ),
+  global(
+    'read:notes',
+    'Read shared live notes',
+    'Read live notes shared with Wiki readers. Does not grant access to private notes or referenced assets.',
+    'Knowledge',
+    'content'
+  ),
+  global(
+    'write:notes',
+    'Create and edit live notes',
+    'Create private live notes and edit notes shared for collaboration. Includes reading shared notes; guests cannot write.',
+    'Knowledge',
+    'content'
+  ),
   global('use:agents', 'Use the Wiki Agent', 'Start private agent sessions. Tools retain their own permission checks.', 'Intelligence', 'content'),
   global('use:agent-browser', 'Use agent browsing', 'Use enabled browser actions. Also requires Use the Wiki Agent.', 'Intelligence', 'content'),
   global('use:mcp', 'Connect through MCP', 'Use /mcp through eligible API keys for this group.', 'Intelligence', 'content'),

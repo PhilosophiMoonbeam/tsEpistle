@@ -16,7 +16,7 @@ import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { publicSiteBanner } from '../shared/site-banner.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
-import { normalizeCodeTheme, normalizeReaderLayout } from '../shared/theme-policy.ts'
+import { normalizeCodeTheme, normalizePageTransitions, normalizeReaderLayout, normalizeShowPageProgress } from '../shared/theme-policy.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { parseAgentOperationalLimits } from './agents/config.ts'
 import type { AgentOperationalLimits } from './agents/config.ts'
@@ -39,6 +39,7 @@ import { AgentRoutingPolicyRegistry, AgentTurnRouter } from './agents/routing.ts
 import { configureTransportRuntime } from './controllers/_types.ts'
 import createAgentsHostController from './controllers/agents-host.ts'
 import apiController, { type ApiRuntime } from './controllers/api/index.ts'
+import { liveNotePrivacyHeaders } from './controllers/api/live-notes.ts'
 import { OFFLINE_DRAFT_KEY_PATH, OFFLINE_READING_KEY_PATH, offlineDraftKeyPrivacyHeaders } from './controllers/api/offline.ts'
 import { siteLogoPreBodyRouter } from './controllers/api/site-logo.ts'
 import { userAvatarPreBodyRouter } from './controllers/api/user-avatar.ts'
@@ -50,6 +51,7 @@ import createSiteLogoController from './controllers/site-logo.ts'
 import createSslController, { type SslWiki } from './controllers/ssl.ts'
 import createUploadController, { type UploadWiki } from './controllers/upload.ts'
 import authCore from './core/auth.ts'
+import liveNoteCollaboration, { type LiveNoteCollaborationService } from './core/live-note-collaboration.ts'
 import localization from './core/localization.ts'
 import mail from './core/mail.ts'
 import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
@@ -64,6 +66,7 @@ import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
 import createOriginMiddleware from './middlewares/origin.ts'
 import securityMiddleware from './middlewares/security.ts'
 import seoMiddleware from './middlewares/seo.ts'
+import { glossaryOperations } from './operations/glossary.ts'
 import pageOperations from './operations/pages.ts'
 
 const { collectEntry } = viteAssets
@@ -92,6 +95,7 @@ interface MasterConfig extends Record<string, unknown> {
   }
   bodyParserLimit?: string
   editors?: { available?: unknown }
+  features: { featureGlossary?: boolean; featurePageRatings?: boolean }
   company: string
   contentLicense: string
   description: string
@@ -108,6 +112,8 @@ interface MasterConfig extends Record<string, unknown> {
     colors?: unknown
     reading?: unknown
     codeTheme?: unknown
+    pageTransitions?: unknown
+    showPageProgress?: unknown
     darkMode: boolean
     theme: string
     tocPosition?: string
@@ -153,6 +159,7 @@ interface MasterWiki extends Record<string, unknown> {
   auth: WikiAuth
   config: MasterConfig
   lang: { attachMiddleware(app: Express): void }
+  liveNoteCollaboration?: LiveNoteCollaborationService
   mail: unknown
   data: {
     searchEngine?: {
@@ -232,6 +239,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   const pwaMode = currentPwaMode()
   app.use(OFFLINE_DRAFT_KEY_PATH, offlineDraftKeyPrivacyHeaders)
   app.use(OFFLINE_READING_KEY_PATH, offlineDraftKeyPrivacyHeaders)
+  app.use('/_api/live-notes', liveNotePrivacyHeaders)
   const agentLimits = parseAgentOperationalLimits(wiki.config.agents)
   app.set('views', path.join(wiki.SERVERPATH, 'views'))
   app.set('view engine', 'pug')
@@ -315,6 +323,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     ? createWikiMcpController({
         knex: wiki.models.knex,
         operations: pageOperations,
+        glossary: { operations: glossaryOperations(), enabled: () => wiki.config.features?.featureGlossary !== false },
         authenticate: wiki.auth.authenticate.bind(wiki.auth),
         resolvePrincipal: loadMcpApiPrincipal,
         resolveUser: loadWikiAgentUser,
@@ -366,7 +375,10 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       knex: wiki.models.knex,
       secrets,
       enabled: () => wiki.config.agents.enabled && wiki.config.agents.provider.enabled,
-      oauth: { siteOrigin: wiki.config.host, ...(googleClientId && googleClientSecret ? { googleWorkspace: { clientId: googleClientId, clientSecret: googleClientSecret } } : {}) }
+      oauth: {
+        siteOrigin: wiki.config.host,
+        ...(googleClientId && googleClientSecret ? { googleWorkspace: { clientId: googleClientId, clientSecret: googleClientSecret } } : {})
+      }
     })
     routingPolicies = new AgentRoutingPolicyRegistry(wiki.models.knex)
     const router = new AgentTurnRouter(routingPolicies, decisionProviders)
@@ -627,6 +639,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       tocPosition: wiki.config.theming.tocPosition || 'left',
       readerLayout: normalizeReaderLayout(wiki.config.theming.reading),
       codeTheme: normalizeCodeTheme(wiki.config.theming.codeTheme),
+      pageTransitions: normalizePageTransitions(wiki.config.theming.pageTransitions),
+      showPageProgress: normalizeShowPageProgress(wiki.config.theming.showPageProgress),
       lang: wiki.config.lang.code,
       localeRevision: wiki.config.lang.revision || wiki.product.revision,
       rtl: wiki.config.lang.rtl,
@@ -647,7 +661,10 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       agentProviderEnabled: wiki.config.agents.provider.enabled,
       agentSkillsEnabled: wiki.config.agents.skills.enabled,
       agentGoalsEnabled: wiki.config.agents.goals.enabled,
-      agentCsrfToken: wiki.config.agents.enabled || _req.authContext?.kind === 'user' ? agentCsrfToken(_req) : ''
+      agentCsrfToken:
+        wiki.config.agents.enabled || _req.authContext?.kind === 'user' || (_req.authContext?.kind === 'guest' && /^\/p\/notes\/[^/]+\/?$/u.test(_req.path))
+          ? agentCsrfToken(_req)
+          : ''
     }
     res.locals.langs = await wiki.models.locales.getNavLocales({ cache: true })
     res.locals.analyticsCode = { head: '', bodyStart: '', bodyEnd: '' }
@@ -695,6 +712,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   }
   app.use(handleError)
 
+  wiki.liveNoteCollaboration = liveNoteCollaboration
   await wiki.servers.startHTTP()
   if (wiki.config.ssl.enabled === true || wiki.config.ssl.enabled === 'true' || wiki.config.ssl.enabled === 1 || wiki.config.ssl.enabled === '1') {
     await wiki.servers.startHTTPS()

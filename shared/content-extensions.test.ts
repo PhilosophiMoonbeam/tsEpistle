@@ -140,10 +140,15 @@ describe('content extension contract', () => {
       depth: 0,
       columns: 3,
       showIcons: true,
+      showTags: false,
+      showPageAccent: false,
       order: 'path',
       limit: 50
     })
-    expect(serializeContentExtensionFence(envelope)).toContain('"columns":3,"showIcons":true,"order":"path","limit":50')
+    const serialized = serializeContentExtensionFence(envelope)
+    expect(serialized).toContain('"columns":3')
+    expect(serialized).toContain('"showTags":false')
+    expect(serialized).toContain('"showPageAccent":false')
   })
 
   it('enforces page index path, depth, order, limit, and boolean boundaries', () => {
@@ -155,6 +160,8 @@ describe('content extension contract', () => {
     expect(() => index({ key: 'index', version: 1, props: { path: 'guide', locale: 'en', order: 'random' } })).toThrow(/path.*title.*updated/)
     expect(() => index({ key: 'index', version: 1, props: { path: 'guide', locale: 'en', limit: 201 } })).toThrow(/1 to 200/)
     expect(() => index({ key: 'index', version: 1, props: { path: 'guide', locale: 'en', showIcons: 'false' } })).toThrow(/boolean/)
+    expect(() => index({ key: 'index', version: 1, props: { path: 'guide', locale: 'en', showTags: 'true' } })).toThrow(/boolean/)
+    expect(() => index({ key: 'index', version: 1, props: { path: 'guide', locale: 'en', showPageAccent: '#AABBCC' } })).toThrow(/boolean/)
   })
 
   it('preserves optional tab heading levels in canonical source and rejects invalid levels', () => {

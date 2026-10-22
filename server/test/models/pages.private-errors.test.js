@@ -95,7 +95,7 @@ const createMutationSchema = async db => {
   })
   await db.schema.createTable('tags', table => {
     table.increments('id').primary()
-    table.string('tag').notNullable()
+    table.string('tag').notNullable().unique()
     table.string('title').notNullable()
     table.integer('redirectToId').nullable()
     table.boolean('isArchived').notNullable().defaultTo(false)
@@ -631,6 +631,50 @@ describe('private page mutation existence isolation', () => {
       const latest = await db('pages').where({ id: 17 }).first()
       expect(String(latest.sourceRevision)).not.toBe(committedRevision)
       expect(latest).toMatchObject({ path: 'later', content: '# Later writer' })
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('binds a save reason to the committed revision before a later hydration reads another writer', async () => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const user = { id: 7, name: 'Author', email: 'author@example.test', permissions: [] }
+    try {
+      await createMutationSchema(db)
+      await db('users').insert({ id: user.id, name: user.name, email: user.email })
+      await db('storage').insert({ key: 'git', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
+      await db('pages').insert({
+        id: 17, path: 'reasoned', localeCode: 'en', visibility: 'public', ownerId: null,
+        authorId: user.id, creatorId: user.id, editorKey: 'markdown', contentType: 'markdown',
+        content: '# Before', description: '', extra: '{}', hash: 'public:en:reasoned', isPublished: true,
+        publishEndDate: '', publishStartDate: '', sourceRevision: 2, title: 'Reasoned',
+        createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'
+      })
+      await bindMutationModels(db)
+      global.WIKI.auth.checkPageAccess.mockReturnValue(true)
+      vi.spyOn(Page, 'getPageFromDb').mockImplementationOnce(async id => {
+        const committed = await db('pages').where({ id }).first()
+        expect(committed.content).toBe('# The reasoned save')
+        expect(String(committed.sourceRevision)).toBe('3')
+        await db('pages').where({ id }).update({ content: '# A later writer', sourceRevision: db.raw('"sourceRevision" + 1') })
+        return Page.query().findById(id)
+      })
+
+      // The SQLite fixture has no production revision trigger. A real tag change
+      // advances the canonical revision inside the guarded save transaction.
+      const hydrated = await Page.updatePage({
+        id: 17, user, content: '# The reasoned save', tags: ['reasoned'], expectedSourceRevision: '2', changeReason: '  Explain only revision three  '
+      })
+
+      const jobs = await db('durableJobs')
+      expect(jobs).toHaveLength(1)
+      expect(JSON.parse(jobs[0].payload)).toMatchObject({ entityId: 17, sourceRevision: '3', changeReason: 'Explain only revision three' })
+      expect(String((await db('pages').where({ id: 17 }).first()).sourceRevision)).toBe('4')
+      expect(hydrated.content).toBe('# A later writer')
+      expect(String(hydrated.sourceRevision)).toBe('4')
+      expect(jobs[0].payload).not.toContain('# The reasoned save')
+      expect(JSON.stringify(await db('pages'))).not.toContain('Explain only revision three')
+      expect(JSON.stringify(await db('pageHistory'))).not.toContain('Explain only revision three')
     } finally {
       await db.destroy()
     }

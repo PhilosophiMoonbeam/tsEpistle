@@ -54,6 +54,51 @@ describe('content extension browser runtime', () => {
     cleanup()
   })
 
+  it.each([
+    [true, '#AABBCC'],
+    [true, 'red; background-image:url(https://evil.test)'],
+    [false, '#AABBCC']
+  ])('renders tags as text and applies only opted-in safe accents (%s, %s)', async (enabled, pageAccent) => {
+    const root = indexElement()
+    const host = root.querySelector<HTMLElement>('.content-extension--index')!
+    host.dataset.indexShowTags = String(enabled)
+    host.dataset.indexShowPageAccent = String(enabled)
+    const tag = '<img src=x onerror=alert(1)>'
+    const cleanup = hydrateContentExtensions(
+      root,
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              id: 1,
+              title: 'Page',
+              description: null,
+              path: 'guide/page',
+              href: '/en/guide/page',
+              updatedAt: '2026-08-15T00:00:00.000Z',
+              tags: [tag, 'docs'],
+              pageAccent
+            }
+          ]
+        })
+      })
+    )
+    try {
+      await vi.waitFor(() => expect(root.querySelector('a')).not.toBeNull())
+      const link = root.querySelector<HTMLElement>('a')!
+      expect(root.querySelector('.content-extension-index__tag')?.textContent ?? null).toBe(enabled ? tag : null)
+      expect(root.querySelector('img')).toBeNull()
+      expect(root.querySelector('[onerror]')).toBeNull()
+      expect(root.querySelector('[data-tag-color="warning"]') !== null).toBe(enabled)
+      expect(link.style.getPropertyValue('--index-page-accent')).toBe(enabled && pageAccent === '#AABBCC' ? '#AABBCC' : '')
+      expect(link.style.backgroundImage).toBe('')
+      expect(link.classList.contains('content-extension-index__link--page-accent')).toBe(enabled)
+    } finally {
+      cleanup()
+    }
+  })
+
   it('renders the authored empty state without inventing links', async () => {
     const root = indexElement()
     const cleanup = hydrateContentExtensions(root, vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [] }) }))
@@ -183,7 +228,9 @@ describe('content extension browser runtime', () => {
       })
       await vi.waitFor(() => {
         root.querySelector<HTMLButtonElement>('.content-extension--map button')!.click()
-        expect(root.querySelector<HTMLIFrameElement>('.content-extension--map iframe')?.src).toMatch(/^https:\/\/www\.openstreetmap\.org\/export\/embed\.html\?/)
+        expect(root.querySelector<HTMLIFrameElement>('.content-extension--map iframe')?.src).toMatch(
+          /^https:\/\/www\.openstreetmap\.org\/export\/embed\.html\?/
+        )
       })
     } finally {
       cleanup()

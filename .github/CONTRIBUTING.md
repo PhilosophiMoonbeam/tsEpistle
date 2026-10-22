@@ -41,6 +41,8 @@ The Bun 1.4.3 toolchain and lock keep the direct Undici 8.x transport and Cheeri
 
 For security patch upgrades, preserve unrelated lock resolutions and verify every affected nested copy. A valid lockfile or clean audit alone does not prove the installed consumer's resolution: Bun can leave an obsolete nested package in an existing installation. An overridden optional peer can also retain its old locked version after `bun install`; use targeted `bun update <name>` and verify that unrelated resolutions stay unchanged. Verify the actual consumer resolver and exercised application bundle, regenerate the license inventory, and retain exact direct pins and required transitive overrides.
 
+Regenerate a patched dependency's patch against its exact published version; renaming an older patch is not a rebase. Bun 1.4.3 can apply stale line-offset hunks without rejecting them, corrupting a different conditional export while Node tests still pass. Verify a fresh frozen installation and the actual application browser build, preserve the patch's intended semantics, and omit package-manager marker files from generated patches.
+
 GraphQL Tools utility security upgrades must retain compatible execution-variable shapes in every consumer. Keep the executor aligned with the patched utilities and exercise variable-valued `@include`/`@skip`, resolver arguments, and GraphQL 16's flat resolver `info.variableValues`; a clean audit does not establish executor compatibility. Preserve Git's unsafe-command guards when preparing native interrupted-operation fixtures.
 
 Keep dedicated agent release dependency contracts aligned with an intentional SDK upgrade after exercising the engine consumers; preserve exact versions and runtime/test-only placement checks.

@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio'
 import renderer from '../../modules/rendering/markdown-core/renderer.ts'
+import securityRenderer from '../../modules/rendering/html-security/renderer.ts'
 
 const baseConfig = {
   allowHTML: false,
@@ -23,6 +24,37 @@ const renderMarkdown = (input, { config = {}, children = [], page = { localeCode
 }
 
 describe('markdown core renderer plugin behavior', () => {
+  it('renders same-line and marker-only quote attribution identically', async () => {
+    const sameLine = await renderMarkdown('> [name=Ada] Quoted **body**.')
+    for (const source of ['> [name=Ada]\n> Quoted **body**.', '> [name=Ada]\n>\n> Quoted **body**.']) {
+      expect(await renderMarkdown(source)).toBe(sameLine)
+    }
+    const $ = cheerio.load(sameLine)
+    expect($('blockquote > p').not('.quote-attribution').html()).toBe('Quoted <strong>body</strong>.')
+    expect($('blockquote > p.quote-attribution > span').text()).toBe('Ada')
+    expect($('blockquote').attr('data-quote-author')).toBe('Ada')
+  })
+
+  it('keeps malicious authors inert with and without HTML security, without admitting unsafe body links', async () => {
+    const author = '<img src=x onerror=alert(1)> **bold** https://evil.test "quoted" & [link](javascript:alert(1))'
+    const source = '> [name=<img src=x onerror=alert(1)> **bold** https://evil.test "quoted" & [link\\](javascript:alert(1))] [Body](https://example.test) [Bad](javascript:alert(1))'
+    for (const allowHTML of [false, true]) {
+      const rendered = await renderMarkdown(source, { config: { allowHTML, linkify: true, typographer: true } })
+      for (const safeHTML of [false, true]) {
+        const html = await securityRenderer.init(rendered, { safeHTML, allowIFrames: false, allowDrawIoUnsafe: false })
+        const $ = cheerio.load(html)
+        const byline = $('blockquote > p.quote-attribution')
+        expect(byline.text()).toBe(author)
+        expect(byline.children('span')).toHaveLength(1)
+        expect(byline.find('a, img, strong, script, [onerror]')).toHaveLength(0)
+        expect($('blockquote').attr('data-quote-author')).toBe(author)
+        expect($('blockquote > p > a[href="https://example.test"]')).toHaveLength(1)
+        expect($('a[href^="javascript:"], img, [onerror]')).toHaveLength(0)
+        expect($('blockquote > p').first().text()).toBe('Body [Bad](javascript:alert(1))')
+      }
+    }
+  })
+
   it('leaves wiki-link source literal and escaped when the optional prop is unset', async () => {
     const html = await renderMarkdown('[[next-page|<img src=x onerror=alert(1)>]]')
     expect(html).toContain('[[next-page|&lt;img src=x onerror=alert(1)&gt;]]')

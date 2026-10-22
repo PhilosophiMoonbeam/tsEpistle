@@ -59,6 +59,8 @@ const ALLOWED_ATTRIBUTES = new Set([
   'data-index-order',
   'data-index-path',
   'data-index-show-icons',
+  'data-index-show-tags',
+  'data-index-show-page-accent',
   'data-kroki-format',
   'data-kroki-type',
   'data-map-height',

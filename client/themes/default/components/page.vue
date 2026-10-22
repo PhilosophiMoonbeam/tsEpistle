@@ -3,6 +3,8 @@
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
     nav-header(v-if='!printView', reserve-actions, :glossary-available='glossaryAvailable')
     glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', @access='setGlossaryAccess')
+    //- Navigation is indeterminate; the header spinner and aria-busy own status.
+    .page-navigation-progress(v-if='!printView && showPageProgress && navigationPending', aria-hidden='true')
     //- Decorative: a live progressbar would announce every scroll step.
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
@@ -1588,6 +1590,14 @@ export default defineComponent({
       default: 0
     },
     navigationPending: {
+      type: Boolean,
+      default: false
+    },
+    pageTransitions: {
+      type: Boolean,
+      default: true
+    },
+    showPageProgress: {
       type: Boolean,
       default: false
     },
@@ -3352,17 +3362,17 @@ export default defineComponent({
     animatePageRoute(): void {
       this.routeAnimationAbortController?.abort()
       this.routeAnimationAbortController = null
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-      const contentRef = this.$refs.content as HTMLElement | { $el?: unknown }
+      const contentRef = this.$refs.content as HTMLElement | { $el?: unknown } | undefined
       const element = contentRef instanceof HTMLElement
         ? contentRef
-        : contentRef.$el instanceof HTMLElement
+        : contentRef?.$el instanceof HTMLElement
           ? contentRef.$el
           : null
       if (!element) return
+      element.classList.remove('page-main--route-enter')
+      if (!this.pageTransitions || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
       const controller = markRaw(new AbortController())
       this.routeAnimationAbortController = controller
-      element.classList.remove('page-main--route-enter')
       void element.offsetWidth
       element.classList.add('page-main--route-enter')
       element.addEventListener('animationend', () => {
@@ -6523,6 +6533,36 @@ export default defineComponent({
     transform: none;
   }
 }
+.page-navigation-progress {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  height: 3px;
+  z-index: 1010;
+  overflow: hidden;
+  pointer-events: none;
+
+  &::after {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: rgb(var(--v-theme-primary));
+    opacity: .7;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .page-navigation-progress::after {
+    animation: page-navigation-pending 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes page-navigation-pending {
+  0% { transform: translateX(-100%) scaleX(.35); }
+  100% { transform: translateX(100%) scaleX(.35); }
+}
+
 .page-position {
   position: fixed;
   transition: inset-inline-start var(--wiki-motion-fast, .15s) var(--wiki-motion-ease, ease);

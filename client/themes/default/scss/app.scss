@@ -312,6 +312,25 @@
       font-weight: 720;
     }
 
+    > .quote-attribution {
+      margin-block-start: var(--wiki-space-3, .75rem);
+      padding: 0;
+      color: var(--wiki-text-muted);
+      font-family: var(--wiki-font-reader);
+      font-size: .875em;
+      font-style: normal;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+
+      &::before {
+        content: '\2014\00a0';
+      }
+    }
+
+    > .quote-attribution__content > :last-child {
+      margin-block-end: 0;
+    }
+
     > :last-child {
       margin-block-end: 0;
     }
@@ -1455,6 +1474,11 @@
     }
   }
 
+  .content-extension-index__link--page-accent {
+    border-inline-start: 3px solid color-mix(in srgb, var(--index-page-accent, var(--wiki-ambient-accent)) 58%, var(--wiki-surface-border));
+    background: color-mix(in srgb, var(--index-page-accent, var(--wiki-ambient-accent)) 6%, rgb(var(--v-theme-surface)));
+  }
+
   .content-extension-index__icon {
     display: grid;
     place-items: center;
@@ -1487,6 +1511,21 @@
     margin-top: .2rem;
     color: var(--wiki-text-muted);
     font-size: .9rem;
+  }
+
+  .content-extension-index__tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem;
+    margin-top: .5rem;
+  }
+
+  .content-extension-index__tag {
+    max-width: 100%;
+    padding: .1rem .4rem;
+    border-radius: var(--wiki-radius-xs, 4px);
+    font-size: .75rem;
+    overflow-wrap: anywhere;
   }
 
   .content-extension--tabs {

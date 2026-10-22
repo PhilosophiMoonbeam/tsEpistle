@@ -7,17 +7,24 @@ import { MAX_LOCALE_FILE_BYTES } from '../../../shared/locale-policy.ts'
 
 const router = express.Router()
 
+const requireSystemAccess = (req: Request, res: Response): boolean => {
+  res.set('Cache-Control', 'no-store')
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
+    res.status(403).json({ error: 'manage:system is required' })
+    return false
+  }
 
-const requireSystemAccess = (req: Request, res: Response): boolean => { res.set('Cache-Control', 'no-store'); if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
-  res.status(403).json({ error: 'manage:system is required' })
-  return false
+  return true
 }
 
-return true }
-
 const localeError = (res: Response, error: unknown) => {
-  const status = errorStatus(error), expected = status && [400, 403, 409].includes(status)
-  return res.status(expected ? status : 500).json({ error: expected && error instanceof Error ? error.message : 'Locale administration is temporarily unavailable. Reload to confirm the saved state.' })
+  const status = errorStatus(error),
+    expected = status && [400, 403, 409].includes(status)
+  return res
+    .status(expected ? status : 500)
+    .json({
+      error: expected && error instanceof Error ? error.message : 'Locale administration is temporarily unavailable. Reload to confirm the saved state.'
+    })
 }
 const LOCAL_LOCALE_FILE_LIMIT = MAX_LOCALE_FILE_BYTES
 const parseLocalLocaleFile = multer({
@@ -103,19 +110,73 @@ router.post('/workspace/local-files/:reviewId/commit', async (req, res) => {
 
 router.get('/workspace', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
-  try { res.json(await getLocaleAdministrationStore().inspect(req.user)) } catch (error) { localeError(res, error) }
+  try {
+    res.json(await getLocaleAdministrationStore().inspect(req.user))
+  } catch (error) {
+    localeError(res, error)
+  }
 })
 router.put('/workspace', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
-  try { res.json(await getLocaleAdministrationStore().save(req.user, { policy: objectValue(req.body, 'policy'), fingerprint: objectValue(req.body, 'fingerprint'), reason: objectValue(req.body, 'reason') })) } catch (error) { localeError(res, error) }
+  try {
+    res.json(
+      await getLocaleAdministrationStore().save(req.user, {
+        policy: objectValue(req.body, 'policy'),
+        fingerprint: objectValue(req.body, 'fingerprint'),
+        reason: objectValue(req.body, 'reason')
+      })
+    )
+  } catch (error) {
+    localeError(res, error)
+  }
 })
 router.post('/workspace/activate', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
-  try { res.json(await getLocaleAdministrationStore().initialize(req.user, objectValue(req.body, 'fingerprint'))) } catch (error) { localeError(res, error) }
+  try {
+    res.json(await getLocaleAdministrationStore().initialize(req.user, objectValue(req.body, 'fingerprint')))
+  } catch (error) {
+    localeError(res, error)
+  }
 })
 router.post('/workspace/operations', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
-  try { res.status(202).json(await getLocaleAdministrationStore().enqueue(req.user, { kind: objectValue(req.body, 'kind'), code: objectValue(req.body, 'code'), fingerprint: objectValue(req.body, 'fingerprint'), reason: objectValue(req.body, 'reason') })) } catch (error) { localeError(res, error) }
+  try {
+    res
+      .status(202)
+      .json(
+        await getLocaleAdministrationStore().enqueue(req.user, {
+          kind: objectValue(req.body, 'kind'),
+          code: objectValue(req.body, 'code'),
+          fingerprint: objectValue(req.body, 'fingerprint'),
+          reason: objectValue(req.body, 'reason')
+        })
+      )
+  } catch (error) {
+    localeError(res, error)
+  }
+})
+
+router.post('/workspace/uninstall/review', async (req, res) => {
+  if (!requireSystemAccess(req, res)) return
+  try {
+    res.json(
+      await getLocaleAdministrationStore().reviewUninstall(req.user, {
+        code: objectValue(req.body, 'code'),
+        fingerprint: objectValue(req.body, 'fingerprint'),
+        reason: objectValue(req.body, 'reason')
+      })
+    )
+  } catch (error) {
+    localeError(res, error)
+  }
+})
+router.post('/workspace/uninstall/commit', async (req, res) => {
+  if (!requireSystemAccess(req, res)) return
+  try {
+    res.json(await getLocaleAdministrationStore().uninstall(req.user, { token: objectValue(req.body, 'token') }))
+  } catch (error) {
+    localeError(res, error)
+  }
 })
 
 router.get('/', async (req, res, next) => {
@@ -131,7 +192,11 @@ router.get('/config', async (req, res) => {
     return
   }
 
-  try { return res.json((await getLocaleAdministrationStore().inspect(req.user)).policy) } catch (error) { return localeError(res, error) }
+  try {
+    return res.json((await getLocaleAdministrationStore().inspect(req.user)).policy)
+  } catch (error) {
+    return localeError(res, error)
+  }
 })
 
 router.post('/config', async (req, res) => {
@@ -167,10 +232,12 @@ router.get('/:code/strings', async (req, res) => {
   }
 
   try {
-    return res.json(await localizationOperations.getTranslations({
-      locale: req.params.code,
-      namespace
-    }))
+    return res.json(
+      await localizationOperations.getTranslations({
+        locale: req.params.code,
+        namespace
+      })
+    )
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     return res.status(404).json({ error: message })

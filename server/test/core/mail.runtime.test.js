@@ -157,6 +157,73 @@ describe('Mail runtime configuration and lifecycle', () => {
     expect(arabic.html).toMatch(/<html\b(?=[^>]*lang="ar")(?=[^>]*dir="rtl")[^>]*>/)
     mail.close()
   })
+  it('rejects legacy invalid public origins before dispatching account or watch mail', async () => {
+    const smtp = transport(), mail = runtime({ createTransport: () => smtp, resolveLogo: async () => '/logo.png' }).init()
+    const link = 'https://wiki.example.test/reset/fixture-secret-token'
+    for (const host of ['https://*', 'https://*.example.com', 'https://%2A.example.com', '', 'ftp://wiki.example.test', 'https://wiki.example.test/path', 'https://user:password@wiki.example.test']) {
+      wiki.config.host = host
+      for (const template of ['account-verify', 'account-reset-pwd', 'account-welcome', 'page-watch']) {
+        await expect(mail.send({
+          ...message(), template,
+          data: { buttonLink: link, url: link, action: 'updated', actorName: 'Writer', pageTitle: 'Page' }
+        })).rejects.toBeInstanceOf(wiki.Error.MailTemplateFailed)
+      }
+    }
+    expect(smtp.sendMail).not.toHaveBeenCalled()
+    expect(wiki.logger.warn).not.toHaveBeenCalled()
+    mail.close()
+  })
+
+  it('delivers action links and branding from fixed configured origins including local and tailnet deployments', async () => {
+    const smtp = transport(), mail = runtime({ createTransport: () => smtp, resolveLogo: async () => '/logo.png' }).init()
+    for (const origin of ['https://wiki.example.test', 'http://127.0.0.1:3014', 'http://localhost:3014', 'https://wiki.tailnet-name.ts.net:8443', 'http://[::1]:3014']) {
+      wiki.config.host = origin
+      const link = `${origin}/login-reset/fixture-secret-token`
+      await mail.send({ ...message(), template: 'account-reset-pwd', data: { buttonLink: link } })
+      const delivered = smtp.sendMail.mock.calls.at(-1)[0]
+      const document = new DOMParser().parseFromString(delivered.html, 'text/html')
+      expect(Array.from(document.querySelectorAll('a'), anchor => anchor.getAttribute('href'))).toContain(link)
+      expect(document.querySelector('img').getAttribute('src')).toBe(`${origin}/logo.png`)
+      expect(delivered.text).toContain(link)
+    }
+    expect(smtp.sendMail).toHaveBeenCalledTimes(5)
+    mail.close()
+  })
+
+  it('does not dispatch action links derived from a foreign host, scheme, port or URL credentials', async () => {
+    const smtp = transport(), mail = runtime({ createTransport: () => smtp, resolveLogo: async () => '/logo.png' }).init()
+    for (const link of [
+      'https://attacker.example/reset/fixture-secret-token',
+      'http://wiki.example.test/reset/fixture-secret-token',
+      'blob:https://wiki.example.test/fixture-secret-token',
+      'https://wiki.example.test:8443/reset/fixture-secret-token',
+      'https://attacker:secret@wiki.example.test/reset/fixture-secret-token'
+    ]) {
+      for (const template of ['account-verify', 'account-reset-pwd', 'account-welcome', 'page-watch']) {
+        await expect(mail.send({
+          ...message(), template,
+          data: { buttonLink: link, url: link, action: 'updated', actorName: 'Writer', pageTitle: 'Page' }
+        })).rejects.toBeInstanceOf(wiki.Error.MailTemplateFailed)
+      }
+    }
+    expect(smtp.sendMail).not.toHaveBeenCalled()
+    expect(wiki.logger.warn).not.toHaveBeenCalled()
+    mail.close()
+  })
+
+  it('keeps linkless SMTP diagnostics usable without inventing a public origin', async () => {
+    const smtp = transport(), mail = runtime({ createTransport: () => smtp, resolveLogo: async () => '/logo.png' }).init()
+    for (const host of ['https://*', '']) {
+      wiki.config.host = host
+      await mail.send(message())
+      const delivered = smtp.sendMail.mock.calls.at(-1)[0]
+      const document = new DOMParser().parseFromString(delivered.html, 'text/html')
+      expect(delivered.text).toContain('Receiving this message confirms that this test reached your mailbox.')
+      expect(document.querySelector('img, a')).toBeNull()
+    }
+    expect(smtp.sendMail).toHaveBeenCalledTimes(2)
+    mail.close()
+  })
 
   it('renders all bundled templates, including account invitations, with escaped dynamic content and no upstream image dependencies', async () => {
     const mail = runtime({ resolveLogo: async () => '/logo.png?one=1&two=2' })

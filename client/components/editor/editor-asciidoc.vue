@@ -39,6 +39,10 @@
                 v-list-item-title {{$t(action.label)}}
         v-divider.editor-asciidoc-tool-separator(v-if='$vuetify.display.mdAndUp', vertical, aria-hidden='true')
         v-spacer
+        v-btn.mx-0(data-editor-contents-toggle, icon, rounded='md', variant='text', :aria-label='$t(`editor:contents.toggle`, { defaultValue: `Toggle contents pane` })', :aria-expanded='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', aria-controls='editor-asciidoc-contents', @click='toggleContents')
+          v-icon mdi-format-list-bulleted-square
+        v-btn.mx-0(v-if='previewShown', icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.alignPreview`)', :aria-pressed='previewAlignmentEnabled', @click='togglePreviewAlignment')
+          v-icon mdi-crosshairs-gps
         v-btn.mx-0(
           icon
           rounded='md'
@@ -81,11 +85,12 @@
           v-btn.mt-3(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
             v-icon mdi-arrow-expand-all
             v-tooltip(activator='parent', location='right', :text='$t(`editor:markup.distractionFreeMode`)')
+      editor-contents-pane(v-if='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', id='editor-asciidoc-contents', :headings='headings', :current-line='currentSectionLine', :line-count='cm?.lineCount ?? 1', :busy='outlineLoading', @jump='jumpToSource', @close='toggleContents')
       .editor-asciidoc-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
       transition(name='editor-asciidoc-preview')
         .editor-asciidoc-preview(v-if='previewShown')
-          .editor-asciidoc-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', :aria-busy='previewLoading', :lang='locale', :dir='contentDirection')
+          .editor-asciidoc-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', tabindex='0', role='region', :aria-label='$t(`editor:contents.preview`, { defaultValue: `Page preview` })', :aria-busy='previewLoading', :lang='locale', :dir='contentDirection')
             v-alert(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
               v-btn.ml-2(size='small', variant='text', @click='retryPreview') {{ $t(`editor:editorAsciidoc.retry`) }}
@@ -115,11 +120,13 @@ import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../..
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 import { createSourceAuthoring, type SourceAuthoring } from '../../helpers/editor-source-authoring'
-import type { Element } from 'domhandler'
 import type { ContentInsertOptions, LineInsertOptions, MarkupOptions, MultiLineInsertOptions, PageLinkTarget } from './common/editor-types'
 import DOMPurify from 'dompurify'
 import { decodeBase64Text } from '../../helpers/base64'
-import { convert } from '@asciidoctor/core'
+import { load } from '@asciidoctor/core'
+import EditorContentsPane from './editor-contents-pane.vue'
+import { SourcePreviewSync } from './common/source-preview-sync'
+import { mapAsciiDocDocument, readContentsPreference, writeContentsPreference, type SourceHeading } from './common/source-outline'
 
 // ========================================
 // IMPORTS
@@ -133,7 +140,6 @@ import { vRovingToolbar } from './common/roving-toolbar'
 // ========================================
 // INIT
 // ========================================
-const cheerio = require('cheerio')
 
 
 
@@ -181,12 +187,14 @@ const formattingActions: Readonly<Record<'emphasis' | 'script' | 'blocks' | 'ins
   ]
 }
 const mobileFormattingGroups = [formattingActions.insert, formattingActions.script, formattingActions.blocks] as const
+const previewSyncs = new WeakMap<object, SourcePreviewSync>()
 
 // ========================================
 // Vue Component
 // ========================================
 
 export default defineComponent({
+  components: { EditorContentsPane },
   directives: {
     rovingToolbar: vRovingToolbar
   },
@@ -204,6 +212,12 @@ export default defineComponent({
       debouncedProcessContent: null as ReturnType<typeof _.debounce> | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: Boolean(this.mdAndUp),
+      contentsShown: readContentsPreference(),
+      headings: [] as SourceHeading[],
+      currentSectionLine: 0,
+      previewAlignmentEnabled: true,
+      outlineLoading: false,
+      editorDisposed: false,
       insertLinkDialog: false,
       previewHTML: '',
       previewDirty: true,
@@ -241,20 +255,55 @@ export default defineComponent({
     '$vuetify.theme.current.dark' (newValue: boolean) {
       this.cm?.setDark(newValue)
     },
-    previewShown (newValue: boolean, oldValue: boolean) {
-      if (newValue && !oldValue) {
+    previewShown (newValue: boolean) {
+      previewSyncs.get(this)?.detach()
+      if (newValue) {
         this.debouncedProcessContent?.cancel()
-        if (this.previewDirty) {
-          void this.processContent(this.editor().getValue())
-        }
-      } else if (!newValue && oldValue) {
-        if (this.previewLoading) this.previewDirty = true
-        this.previewRequestId += 1
-        this.previewLoading = false
+        if (this.previewDirty) void this.processContent(this.editor().getValue())
+        else this.$nextTick(() => this.refreshPreviewSync())
       }
+      this.$nextTick(() => this.cm?.requestMeasure())
     }
   },
   methods: {
+    toggleContents () {
+      this.contentsShown = !this.contentsShown || (this.previewShown && this.$vuetify.display.smAndDown)
+      if (this.contentsShown && this.$vuetify.display.smAndDown) this.previewShown = false
+      writeContentsPreference(this.contentsShown)
+      this.$nextTick(() => this.cm?.requestMeasure())
+      if (!this.contentsShown) this.$nextTick(() => {
+        const root = this.$refs.root
+        if (root instanceof HTMLElement) root.querySelector<HTMLElement>('[data-editor-contents-toggle]')?.focus()
+      })
+    },
+    togglePreviewAlignment () {
+      this.previewAlignmentEnabled = !this.previewAlignmentEnabled
+      previewSyncs.get(this)?.cancel()
+      if (this.previewAlignmentEnabled) previewSyncs.get(this)?.resumeFromLeader()
+    },
+    jumpToSource (line: number) {
+      const editor = this.cm
+      if (!editor) return
+      if (this.$vuetify.display.smAndDown) {
+        this.previewShown = false
+        this.contentsShown = false
+        writeContentsPreference(false)
+      }
+      previewSyncs.get(this)?.interact('source')
+      editor.setSelection({ line, ch: 0 })
+      this.currentSectionLine = line
+      this.$nextTick(() => {
+        editor.requestMeasure()
+        editor.scrollToLine(line)
+        editor.focus()
+        this.refreshPreviewSync()
+      })
+    },
+    refreshPreviewSync () {
+      const preview = this.$refs.editorPreview
+      const container = this.$refs.editorPreviewContainer
+      if (preview instanceof HTMLElement && container instanceof HTMLElement) previewSyncs.get(this)?.attach(preview, container)
+    },
     runFormattingAction(action: FormattingAction) {
       switch (action.kind) {
         case 'markup':
@@ -302,6 +351,9 @@ export default defineComponent({
       this.previewDirty = true
       this.previewError = ''
       this.previewRequestId += 1
+      this.headings = []
+      this.outlineLoading = false
+      this.debouncedProcessContent?.cancel()
     },
     toggleModal(key: string) {
       if (key === 'editorModalMedia' && !this.activeModal && this.imageAuthoring?.open()) return
@@ -341,36 +393,61 @@ export default defineComponent({
     async processContent(newContent: string) {
       const cm = this.editor()
       this.processMarkers(0, cm.lineCount)
-      if (!this.previewShown) {
-        this.previewDirty = true
-        return
-      }
       const requestId = ++this.previewRequestId
-      this.previewLoading = true
+      this.previewLoading = this.previewShown
+      this.outlineLoading = true
       this.previewError = ''
       try {
-        const html = await convert(newContent, {
+        const document = await load(newContent, {
           standalone: false,
+          sourcemap: true,
           safe: 'secure',
           attributes: { showtitle: true, icons: 'font' }
         })
-        if (requestId !== this.previewRequestId || !this.previewShown) return
-        const $ = cheerio.load(html, { decodeEntities: true })
-        $(this.$t('editor:editorAsciidoc.preHighlightCodeLanguage')).each((_index: number, element: Element) => {
-          const diagramContent = decodeBase64Text($(element).html() ?? '')
-          $(element).parent().replaceWith(this.$t('editor:editorAsciidoc.preClassDiagramPre', { diagramContent, interpolation: { escapeValue: false } }))
-        })
-        this.previewHTML = DOMPurify.sanitize($.html(), {
+        if (this.editorDisposed || requestId !== this.previewRequestId) return
+        this.headings = mapAsciiDocDocument(document)
+        this.outlineLoading = false
+        if (!this.previewShown) {
+          this.previewDirty = true
+          return
+        }
+        const html = await document.convert()
+        if (this.editorDisposed || requestId !== this.previewRequestId || !this.previewShown) return
+        // Template contents remain inert until the existing sanitizer has approved them.
+        const fragment = window.document.createElement('template')
+        fragment.innerHTML = html
+        for (const element of fragment.content.querySelectorAll('[class]')) {
+          for (const role of (element.getAttribute('class') ?? '').split(/\s+/)) {
+            const match = /^editor-source-line-(\d+)$/.exec(role)
+            if (!match) continue
+            element.setAttribute('data-source-line', match[1])
+            element.classList.remove(role)
+          }
+        }
+        for (const element of fragment.content.querySelectorAll(this.$t('editor:editorAsciidoc.preHighlightCodeLanguage'))) {
+          const diagramContent = decodeBase64Text(element.innerHTML)
+          const replacement = window.document.createElement('template')
+          replacement.innerHTML = this.$t('editor:editorAsciidoc.preClassDiagramPre', { diagramContent, interpolation: { escapeValue: false } })
+          element.parentElement?.replaceWith(replacement.content)
+        }
+        this.previewHTML = DOMPurify.sanitize(fragment.innerHTML, {
           ADD_TAGS: ['foreignObject'],
           HTML_INTEGRATION_POINTS: { foreignobject: true }
         })
         this.previewDirty = false
+        this.$nextTick(() => {
+          if (!this.editorDisposed && requestId === this.previewRequestId) this.refreshPreviewSync()
+        })
       } catch (err) {
-        if (requestId === this.previewRequestId && this.previewShown) {
+        if (!this.editorDisposed && requestId === this.previewRequestId) {
+          this.headings = []
           this.previewError = err instanceof Error ? err.message : this.$t('editor:editorAsciidoc.previewCouldNotRendered')
         }
       } finally {
-        if (requestId === this.previewRequestId) this.previewLoading = false
+        if (requestId === this.previewRequestId) {
+          this.previewLoading = false
+          this.outlineLoading = false
+        }
       }
     },
     retryPreview() {
@@ -400,6 +477,7 @@ export default defineComponent({
     },
     positionSync(position: TextPosition) {
       this.cursorPos = position
+      this.currentSectionLine = position.line
     },
     toggleMarkup({ start, end = start }: MarkupOptions) {
       const editor = this.editor()
@@ -519,11 +597,22 @@ export default defineComponent({
         wikiStore.editor.content = value
         this.editorAdapter?.noteTextChange()
         this.previewDirty = true
+        this.previewRequestId += 1
+        this.outlineLoading = true
+        previewSyncs.get(this)?.cancel()
         this.debouncedProcessContent?.(value)
       },
-      onCursor: position => this.positionSync(position)
+      onCursor: position => this.positionSync(position),
+      onInteraction: () => previewSyncs.get(this)?.interact('source'),
+      onScroll: () => previewSyncs.get(this)?.sourceScrolled(),
+      onMeasure: () => previewSyncs.get(this)?.request()
     })
     this.cm = markRaw(cm)
+    previewSyncs.set(this, new SourcePreviewSync(
+      () => this.cm,
+      () => !this.editorDisposed && this.previewAlignmentEnabled && this.previewShown && !this.previewDirty,
+      line => { this.currentSectionLine = line }
+    ))
     const adapter = new EditorAdapterController({
       readText: () => cm.getValue(),
       writeText: text => {
@@ -549,6 +638,9 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount() {
+    this.editorDisposed = true
+    previewSyncs.get(this)?.detach()
+    previewSyncs.delete(this)
     this.imageAuthoring?.destroy()
     this.imageAuthoring = null
     this.sourceAuthoring?.destroy()
@@ -624,6 +716,8 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
 
     &-enter-active, &-leave-active {
       transition: max-width .5s ease;
+
+      @media (prefers-reduced-motion: reduce) { transition: none; }
       max-width: 50vw;
 
       .editor-asciidoc-preview-content {
@@ -638,6 +732,7 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
     &-content {
       height: $editor-ascii-height;
       overflow-y: scroll;
+      scroll-behavior: auto;
       padding: 0;
       width: calc(100% + 17px);
       // -ms-overflow-style: none;

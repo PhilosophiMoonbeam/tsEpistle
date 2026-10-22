@@ -102,6 +102,31 @@ export const externalSourceUrl = (template: string, filename: string): string =>
   }
 }
 
+/** A configured public origin must identify one fixed HTTP(S) authority, never a wildcard. */
+export const parsePublicOrigin = (input: unknown): string | null => {
+  if (typeof input !== 'string') return null
+  const value = input.trim()
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Reject URL parser normalization of C0 and DEL controls.
+  if (!value || /[\\\s\u0000-\u001f\u007f]/.test(value)) return null
+  try {
+    const url = new URL(value)
+    if (
+      (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      !url.hostname ||
+      url.hostname.includes('*') ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== '/'
+    )
+      return null
+    return url.origin
+  } catch {
+    return null
+  }
+}
+
 export const validateGeneralPolicy = (input: unknown): { ok: true; value: GeneralPolicy } | { ok: false; issues: string[] } => {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, issues: ['Workspace settings must be an object.'] }
   const value = input as Record<string, unknown>,
@@ -125,22 +150,9 @@ export const validateGeneralPolicy = (input: unknown): { ok: true; value: Genera
     }
     Reflect.set(out, key, text.trim())
   }
-  try {
-    const url = new URL(out.host)
-    if (
-      !['https:', 'http:'].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      url.pathname !== '/' ||
-      /[\\\s]/.test(out.host)
-    )
-      throw new Error('Invalid origin')
-    out.host = url.origin
-  } catch {
-    issues.push('Public address must be an HTTP(S) origin without a path, query or credentials.')
-  }
+  const origin = parsePublicOrigin(out.host)
+  if (origin) out.host = origin
+  else issues.push('Public address must be a fixed HTTP(S) origin without wildcards, a path, query or credentials.')
   if (!out.title || /[<>"\r\n]/.test(out.title)) issues.push('Workspace name is required and cannot contain line breaks or < > ".')
   if (typeof value.contentLicense !== 'string' || !licenses.includes(value.contentLicense)) issues.push('Choose a supported content license.')
   else out.contentLicense = value.contentLicense

@@ -1,10 +1,34 @@
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
-import { bracketMatching, defaultHighlightStyle, foldEffect, foldGutter, foldKeymap, HighlightStyle, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language'
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldEffect,
+  foldGutter,
+  foldKeymap,
+  HighlightStyle,
+  indentOnInput,
+  syntaxHighlighting,
+  syntaxTree
+} from '@codemirror/language'
 import { lintKeymap } from '@codemirror/lint'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import { Compartment, EditorSelection, EditorState, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
-import { crosshairCursor, Decoration, type DecorationSet, drawSelection, dropCursor, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, rectangularSelection, WidgetType } from '@codemirror/view'
+import {
+  crosshairCursor,
+  Decoration,
+  type DecorationSet,
+  drawSelection,
+  dropCursor,
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+  WidgetType
+} from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 
 export type TextPosition = {
@@ -43,6 +67,9 @@ export interface TextEditorHandle {
   destroy: () => void
   focus: () => void
   requestMeasure: () => void
+  /** Fractional, zero-based source line at the top of the scroll viewport. */
+  viewportLine: () => number
+  scrollToLine: (line: number) => void
   setSpellcheck: (enabled: boolean) => void
   setDark: (enabled: boolean) => void
   getValue: () => string
@@ -118,7 +145,7 @@ const textEditorTheme = EditorView.theme({
     fontFamily: 'Roboto Mono, monospace',
     fontSize: '.9rem'
   },
-  '.cm-scroller': { overflow: 'auto' },
+  '.cm-scroller': { overflow: 'auto', scrollBehavior: 'auto' },
   '.cm-content': { caretColor: 'rgb(var(--v-theme-on-surface))' },
   '.cm-cursor': { borderLeftColor: 'rgb(var(--v-theme-on-surface))' },
   '.cm-gutters': {
@@ -163,6 +190,9 @@ type TextEditorOptions = {
   onChange?: (value: string) => void
   onCursor?: (position: TextPosition) => void
   onClick?: (position: TextPosition) => void
+  onInteraction?: () => void
+  onScroll?: () => void
+  onMeasure?: () => void
   extensions?: Extension[]
   history?: TextEditorHistory
 }
@@ -174,8 +204,25 @@ export class TextEditor implements TextEditorHandle {
   private readonly darkTheme = new Compartment()
   private readonly historyCompartment = new Compartment()
   private historyProvider: TextEditorHistory | null
+  private readonly measureKey = {}
 
-  constructor({ parent, value, ariaLabel, dark, language, direction = 'ltr', spellcheck, onChange, onCursor, onClick, extensions = [], history: historyProvider }: TextEditorOptions) {
+  constructor({
+    parent,
+    value,
+    ariaLabel,
+    dark,
+    language,
+    direction = 'ltr',
+    spellcheck,
+    onChange,
+    onCursor,
+    onClick,
+    onInteraction,
+    onScroll,
+    onMeasure,
+    extensions = [],
+    history: historyProvider
+  }: TextEditorOptions) {
     this.historyProvider = historyProvider ?? null
     this.extensions = [
       this.historyCompartment.of(this.historyExtensions()),
@@ -205,6 +252,16 @@ export class TextEditor implements TextEditorHandle {
       EditorView.updateListener.of(update => {
         if (update.docChanged) onChange?.(update.state.doc.toString())
         if (update.selectionSet) onCursor?.(this.cursor())
+        if (update.geometryChanged || update.viewportChanged) {
+          update.view.requestMeasure({ key: this.measureKey, read: () => null, write: () => onMeasure?.() })
+        }
+      }),
+      EditorView.domEventObservers({
+        wheel: () => onInteraction?.(),
+        touchstart: () => onInteraction?.(),
+        pointerdown: () => onInteraction?.(),
+        keydown: () => onInteraction?.(),
+        scroll: () => onScroll?.()
       }),
       ...(onClick
         ? [
@@ -233,10 +290,7 @@ export class TextEditor implements TextEditorHandle {
     const beforeHistory = [...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap]
     const afterHistory = [...foldKeymap, ...completionKeymap, ...lintKeymap]
     return this.historyProvider
-      ? [
-          this.historyProvider.extension,
-          keymap.of([...beforeHistory, ...afterHistory])
-        ]
+      ? [this.historyProvider.extension, keymap.of([...beforeHistory, ...afterHistory])]
       : [history(), keymap.of([...beforeHistory, ...historyKeymap, ...afterHistory])]
   }
 
@@ -259,6 +313,23 @@ export class TextEditor implements TextEditorHandle {
 
   requestMeasure(): void {
     this.view.requestMeasure()
+  }
+
+  viewportLine(): number {
+    const view = this.view
+    const top = view.scrollDOM.getBoundingClientRect().top - view.documentTop
+    const block = view.lineBlockAtHeight(Math.max(0, top))
+    const line = view.state.doc.lineAt(block.from).number - 1
+    return Math.min(view.state.doc.lines - 1, line + Math.min(1, Math.max(0, (top - block.top) / Math.max(1, block.height))))
+  }
+
+  /** Scroll without changing the selection, stealing focus, or adding motion. */
+  scrollToLine(line: number): void {
+    const view = this.view
+    const bounded = Math.min(Math.max(0, line), view.state.doc.lines - 1)
+    const block = view.lineBlockAt(this.offsetAt({ line: Math.floor(bounded), ch: 0 }))
+    const documentOffset = view.documentTop - view.scrollDOM.getBoundingClientRect().top + view.scrollDOM.scrollTop
+    view.scrollDOM.scrollTop = documentOffset + block.top + (bounded % 1) * block.height
   }
 
   setSpellcheck(enabled: boolean): void {
@@ -405,7 +476,11 @@ export class TextEditor implements TextEditorHandle {
   syntaxPath(): string[] {
     const head = this.view.state.selection.main.head
     const names: string[] = []
-    for (let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(this.view.state).resolveInner(head, -1); node; node = node.parent) {
+    for (
+      let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(this.view.state).resolveInner(head, -1);
+      node;
+      node = node.parent
+    ) {
       names.push(node.name)
     }
     return names

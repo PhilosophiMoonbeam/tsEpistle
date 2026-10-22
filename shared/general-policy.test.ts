@@ -11,11 +11,24 @@ describe('general policy', () => {
     })
     expect(result).toMatchObject({ ok: true, value: { host: 'https://wiki.example.com', pageExtensions: ['html', 'md'], robots: ['follow', 'index'] } })
   })
+  it('preserves fixed local, tailnet, IPv6 and explicitly ported public origins', () => {
+    for (const host of [
+      'http://127.0.0.1:3014',
+      'https://wiki.example.com',
+      'http://localhost:3014',
+      'https://wiki.tailnet-name.ts.net:8443',
+      'http://[::1]:3014'
+    ])
+      expect(validateGeneralPolicy({ ...valid(), host })).toMatchObject({ ok: true, value: { host } })
+  })
   it('rejects unsupported, contradictory and unsafe values', () => {
     for (const patch of [
       { host: 'javascript:alert(1)' },
       { host: 'https://wiki.example.com/path' },
       { host: 'https://a:b@wiki.example.com' },
+      { host: 'https://*' },
+      { host: 'https://*.example.com' },
+      { host: 'https://%2A.example.com' },
       { robots: ['index', 'noindex'] },
       { robots: ['all'] },
       { pageExtensions: ['.md'] },

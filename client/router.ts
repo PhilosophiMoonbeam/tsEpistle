@@ -7,7 +7,8 @@ import { translate } from './modules/localization.ts'
 import { OFFLINE_PRIVATE_HISTORY_EVENT } from './helpers/offline-routes.ts'
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
-const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
+const isNote = /^\/p\/notes\/[^/]+\/?$/u.test(window.location.pathname)
+const isProfile = !isNote && (window.location.pathname === '/p' || window.location.pathname.startsWith('/p/'))
 
 const adminRoutes = (): RouteRecordRaw[] => [
   { path: '/', redirect: '/dashboard' },
@@ -50,6 +51,7 @@ const profileRoutes = (): RouteRecordRaw[] => [
   { path: '/', redirect: '/profile' },
   { path: '/profile', component: () => import('./components/profile/profile.vue') },
   { path: '/pages', component: () => import('./components/profile/pages.vue') },
+  { path: '/notes', component: () => import('./components/profile/notes.vue') },
   { path: '/discussions', component: () => import('./components/profile/discussions.vue') },
   { path: '/notifications', component: () => import('./components/profile/notifications.vue') },
   { path: '/offline', component: () => import('./components/pwa/offline-settings.vue') }
@@ -73,17 +75,27 @@ function stopProfileRouteLoading(to: RouteLocationNormalized): void {
 if (isProfile) {
   // Window-targeted listeners can run in registration order, even with capture.
   // Claim private reader history before the profile router sees its canonical URL.
-  window.addEventListener('popstate', event => {
-    if (typeof window.history.state?.offlineSelection !== 'string') return
-    const ownership = new window.Event(OFFLINE_PRIVATE_HISTORY_EVENT, { cancelable: true })
-    window.dispatchEvent(ownership)
-    if (ownership.defaultPrevented) event.stopImmediatePropagation()
-  }, true)
+  window.addEventListener(
+    'popstate',
+    event => {
+      if (typeof window.history.state?.offlineSelection !== 'string') return
+      const ownership = new window.Event(OFFLINE_PRIVATE_HISTORY_EVENT, { cancelable: true })
+      window.dispatchEvent(ownership)
+      if (ownership.defaultPrevented) event.stopImmediatePropagation()
+    },
+    true
+  )
 }
 
 export const router = createRouter({
   history: createWebHistory(isAdmin ? '/a' : isProfile ? '/p' : '/'),
-  routes: isAdmin ? adminRoutes() : isProfile ? profileRoutes() : []
+  routes: isAdmin
+    ? adminRoutes()
+    : isProfile
+      ? profileRoutes()
+      : isNote
+        ? [{ path: '/p/notes/:key', component: () => import('./components/notes/live-note.vue') }]
+        : []
 })
 
 if (isProfile) {

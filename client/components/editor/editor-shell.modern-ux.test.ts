@@ -11,6 +11,7 @@ import '../../test/browser-dom.mts'
 import { OfflineSnapshotSelectorSchema } from '../../../shared/offline.ts'
 import { normalizeAvailableEditors } from '../../../shared/page-editors.ts'
 import { normalizePageFeatures } from '../../../shared/page-features.ts'
+import { MAX_PAGE_CHANGE_REASON_LENGTH, PageChangeReasonSchema } from '../../../shared/page-change-reason.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { EditorState } from '@codemirror/state'
@@ -75,7 +76,7 @@ const ownerUnsavedTemplate = compileTemplate({
 if (ownerUnsavedTemplate.errors.length) throw ownerUnsavedTemplate.errors[0]
 const ownerUnsavedRender = new Function('Vue', ownerUnsavedTemplate.code)(Vue)
 const ownerSaveTemplate = compileTemplate({
-  source: `<div>${shellMarkup('.editor-save-status, .editor-save-action, .editor-save-close-action, .editor-close-action').toString()}</div>`,
+  source: `<div>${shellMarkup('.editor-save-status, .editor-save-action, .editor-save-close-action, .editor-close-action, .editor-change-reason').toString()}</div>`,
   filename: shellPath,
   id: 'editor-owner-save-test',
   compilerOptions: { mode: 'function' }
@@ -233,6 +234,7 @@ type PageInput = {
   scriptJs: string
   tags: string[]
   title: string
+  changeReason?: string
   okfMetadata?: Record<string, unknown>
   branding?: PageBrandingAssignment | null
 }
@@ -249,6 +251,7 @@ type ShellContext = {
   editorInstanceKey: number
   offlineConnectionState: string
   isSaving: boolean
+  changeReason: string
   renderWaitController: AbortController | null
   discardPending: boolean
   discardError: string
@@ -311,6 +314,7 @@ type ShellBehavior = {
     saveStatusIcon: (this: ShellContext) => string
     saveActionLabel: (this: ShellContext) => string
     renderWaitOwnerKey: (this: ShellContext) => string
+    changeReasonErrors: (this: ShellContext) => string[]
     sourceEditorReady: (this: { currentEditor: string; warmAuthenticatedActor: boolean }) => boolean
     warmAuthenticatedActor: (this: { isAuthenticated: boolean; accountId: number }) => boolean
   }
@@ -573,6 +577,7 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     'removeEditorPageCss',
     'clearOfflineCreateIdentity',
     'scopeEditorPageCss',
+    'PageChangeReasonSchema',
     `${executableShellBehavior}\nreturn shellBehavior`
   ) as (...args: unknown[]) => ShellBehavior
   return evaluate(
@@ -605,7 +610,8 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     (error: unknown) => (error instanceof Error ? error.message : String(error)),
     () => undefined,
     () => undefined,
-    (css: string) => css
+    (css: string) => css,
+    PageChangeReasonSchema
   )
 }
 
@@ -632,6 +638,8 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     lifecycleGeneration: 0,
     editorInstanceKey: 0,
     isSaving: false,
+    changeReason: '',
+    changeReasonLimit: MAX_PAGE_CHANGE_REASON_LENGTH,
     renderWaitController: null,
     discardError: '',
     discardPending: false,
@@ -826,7 +834,7 @@ const flushSaveUi = async (): Promise<void> => {
 const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}) => {
   const context = createShellHarness(store, testWindow, overrides)
   const behavior = loadShellBehavior(store, testWindow, overrides)
-  for (const name of ['saveStatusText', 'saveStatusIcon', 'saveActionLabel', 'renderWaitOwnerKey'] as const) {
+  for (const name of ['saveStatusText', 'saveStatusIcon', 'saveActionLabel', 'renderWaitOwnerKey', 'changeReasonErrors'] as const) {
     Object.defineProperty(context, name, { get: () => behavior.computed[name].call(context) })
   }
   let action: Promise<boolean> | undefined
@@ -975,6 +983,78 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
+  for (const outcome of ['success', 'rejected', 'unknown', 'post-write'] as const) {
+    test(`mounted save reason follows the captured save and ${outcome === 'success' ? 'clears only after confirmation' : `survives ${outcome} outcome without retry`}`, async () => {
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const inputs: PageInput[] = []
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async (_fetch, _id, input) => {
+          inputs.push(input)
+          started.resolve()
+          await release.promise
+          if (outcome === 'rejected') throw Object.assign(new Error('Rejected save'), { status: 409 })
+          if (outcome === 'unknown') throw new TypeError('Failed to fetch')
+          return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        },
+        fetchPage: async () => {
+          if (outcome === 'post-write') throw new Error('The post-save refresh is unavailable')
+          return { okf: _.cloneDeep(store.page.okf), sourceRevision: '2', isSearchable: store.page.isSearchable }
+        }
+      })
+      mounted.context.editorAdapter.replaceText('The captured source')
+      const field = mounted.host.querySelector<HTMLInputElement>('.editor-change-reason input')
+      if (!field) throw new Error('Save reason field is not mounted')
+      expect(field.maxLength).toBe(MAX_PAGE_CHANGE_REASON_LENGTH)
+      field.value = 'Explain this exact source'
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+      await Vue.nextTick()
+      const saving = mounted.click('save')
+      await started.promise
+      expect(inputs).toHaveLength(1)
+      expect(inputs[0]).toMatchObject({ content: 'The captured source', changeReason: 'Explain this exact source' })
+      expect(mounted.context.changeReason).toBe('Explain this exact source')
+      release.resolve()
+      expect(await saving).toBe(outcome === 'success')
+      expect(mounted.context.changeReason).toBe(outcome === 'success' ? '' : 'Explain this exact source')
+      expect(inputs).toHaveLength(1)
+    })
+  }
+
+  for (const change of ['new reason', 'new source', 'account', 'page', 'lifecycle'] as const) {
+    test(`a confirmed older save preserves its reason after ${change} changes while in flight`, async () => {
+      const store = Vue.reactive(createStore())
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const mounted = mountSaveActions(store, createTestWindow(), {
+        updatePage: async () => {
+          started.resolve()
+          await release.promise
+          return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        },
+        fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: '2', isSearchable: store.page.isSearchable })
+      })
+      mounted.context.editorAdapter.replaceText('Captured source')
+      mounted.context.changeReason = 'Explain captured source'
+      const saving = mounted.context.save()
+      await started.promise
+      if (change === 'new reason') mounted.context.changeReason = 'Explain the next source'
+      if (change === 'new source') mounted.context.editorAdapter.replaceText('Newer unsaved source')
+      if (change === 'account') {
+        mounted.context.accountId = 99
+        store.user.id = 99
+        store.offlineIdentityEpoch++
+      }
+      if (change === 'page') store.page.id = 99
+      if (change === 'lifecycle') mounted.context.lifecycleGeneration++
+      release.resolve()
+      await saving
+      expect(mounted.context.changeReason).toBe(change === 'new reason' ? 'Explain the next source' : 'Explain captured source')
+    })
+  }
+
   test('mounted first Save and close settles pending recovery before requesting the authorized saved preview', async () => {
     const store = Vue.reactive(createStore())
     store.page.visibility = 'private'

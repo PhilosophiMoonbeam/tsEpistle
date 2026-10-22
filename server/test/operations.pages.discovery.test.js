@@ -43,6 +43,7 @@ describe('structured page discovery', () => {
         "localeCode" text NOT NULL,
         title text NOT NULL,
         description text,
+        extra jsonb,
         content text NOT NULL,
         "sourceRevision" bigint NOT NULL,
         "contentType" text NOT NULL,

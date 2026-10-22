@@ -147,7 +147,8 @@ describe('Tiptap visual formats', () => {
   })
 
   it('captures exact HTML source through pristine startup, selection changes, and Undo', async () => {
-    const original = "<h2 id='saved-heading'> Saved heading</h2>\r\n<p>Original <a href='/home' class='saved-link'>link</a>.</p>\r\n<div class='table-container'><table><colgroup><col></col></colgroup><tbody><tr><td>Cell</td></tr></tbody></table></div><p>End</p>"
+    const original =
+      "<h2 id='saved-heading'> Saved heading</h2>\r\n<p>Original <a href='/home' class='saved-link'>link</a>.</p>\r\n<div class='table-container'><table><colgroup><col></col></colgroup><tbody><tr><td>Cell</td></tr></tbody></table></div><p>End</p>"
     const editor = createEditor('html', original)
     const created = new Promise<void>(resolve => editor.once('create', () => resolve()))
     const source = new VisualEditorSource(editor, 'html', original)
@@ -179,7 +180,7 @@ describe('Tiptap visual formats', () => {
   })
 
   it('pairs discarded or replaced HTML with its exact source without hiding later native edits', async () => {
-    const original = "<h2> Saved heading</h2>\r\n<p>Original draft baseline.</p>"
+    const original = '<h2> Saved heading</h2>\r\n<p>Original draft baseline.</p>'
     const replacement = "<p class='server-source'> Replacement bytes &amp; spacing.</p>\r\n"
     const editor = createEditor('html', original)
     const created = new Promise<void>(resolve => editor.once('create', () => resolve()))
@@ -256,6 +257,117 @@ Term
 
     const reopened = createEditor('markdown', output)
     expect(reopened.getMarkdown()).toBe(output)
+  })
+
+  it('renders attributed quotes identically in source preview and the published Markdown renderer', async () => {
+    const sources = [
+      '> [name=Ada] Quoted **body** with [link](/safe).',
+      '> [name=Ada]\n> Quoted **body** with [link](/safe).',
+      '> [name=Ada]\n>\n> Quoted **body** with [link](/safe).',
+      '> [name=Outer] First\n>\n> [name=Later] Literal\n>\n> > [name=Inner] Nested',
+      '> [name=<img src=x onerror=alert(1)> **bold** https://evil.test "quoted" & [link\\](javascript:alert(1))] [Body](https://example.test) [Bad](javascript:alert(1))'
+    ]
+    for (const source of sources) {
+      const preview = sanitizeWikiMarkdownHtml(createWikiMarkdownRenderer().render(source))
+      expect(preview).toBe(sanitizeWikiMarkdownHtml(await renderServerMarkdown(source)))
+      const document = new DOMParser().parseFromString(preview, 'text/html')
+      expect(
+        document.querySelectorAll('.quote-attribution a, .quote-attribution img, .quote-attribution strong, a[href^="javascript:"], [onerror]')
+      ).toHaveLength(0)
+    }
+  })
+
+  it('normalizes marker-only visual quotes and keeps author source syntax out of opaque nodes', () => {
+    for (const source of ['> [name=Ada] Body', '> [name=Ada]\n> Body', '> [name=Ada]\n>\n> Body']) {
+      const editor = createEditor('markdown', source)
+      expect(editor.state.doc.firstChild?.attrs.author).toBe('Ada')
+      expect(editor.state.doc.firstChild?.childCount).toBe(1)
+      expect(editor.state.doc.firstChild?.firstChild?.textContent).toBe('Body')
+      expect(editor.getMarkdown()).toBe('> [name=Ada]\n> Body')
+      expect(createEditor('markdown', editor.getMarkdown()).getJSON()).toEqual(editor.getJSON())
+    }
+    const author = '$E=mc^2$ {#identity} A^^|B'
+    const editor = createEditor('markdown', `> [name=${author}] Body`)
+    expect(editor.state.doc.firstChild?.attrs.author).toBe(author)
+    expect(editor.getHTML()).not.toContain('wiki-source')
+    expect(createEditor('markdown', editor.getMarkdown()).state.doc.firstChild?.attrs.author).toBe(author)
+
+    const ordinary = createEditor('markdown', '> First\n>\n> [name=Later] Literal\n>\n> `[name=Code]`\n>\n> > [name=Inner] Nested')
+    expect(ordinary.state.doc.firstChild?.attrs.author).toBeNull()
+    expect(ordinary.state.doc.firstChild?.child(1).textContent).toBe('[name=Later] Literal')
+    expect(ordinary.state.doc.firstChild?.child(2).firstChild?.marks.some(mark => mark.type.name === 'code')).toBe(true)
+    expect(ordinary.state.doc.firstChild?.lastChild?.attrs.author).toBe('Inner')
+    expect(createEditor('markdown', ordinary.getMarkdown()).getJSON()).toEqual(ordinary.getJSON())
+  })
+
+  it('keeps attribution native through visual body edits, canonical Markdown serialization and reopen', async () => {
+    const author = '<img src=x onerror=alert(1)> **bold** https://evil.test "quoted" & [link](javascript:alert(1))'
+    const source =
+      '> [name=<img src=x onerror=alert(1)> **bold** https://evil.test "quoted" & [link\\](javascript:alert(1))] Body [link](/safe)\n>\n> > [name=Inner] Nested'
+    const editor = createEditor('markdown', source)
+    const pairedSource = new VisualEditorSource(editor, 'markdown', source)
+    const quote = editor.state.doc.firstChild!
+    expect(quote.type.name).toBe('blockquote')
+    expect(quote.attrs.author).toBe(author)
+    expect(quote.firstChild?.textContent).toBe('Body link')
+    expect(quote.lastChild?.type.name).toBe('blockquote')
+    expect(quote.lastChild?.attrs.author).toBe('Inner')
+    expect(quote.lastChild?.firstChild?.textContent).toBe('Nested')
+    const outerQuote = editor.view.dom.querySelector(':scope > blockquote')
+    const byline = outerQuote?.querySelector<HTMLElement>(':scope > .quote-attribution')
+    expect(byline?.textContent).toBe(author)
+    // JSDOM does not reflect contentEditable into an HTML attribute.
+    expect(byline?.contentEditable).toBe('false')
+    expect(byline?.querySelectorAll('img, a, strong, [onerror]')).toHaveLength(0)
+    const innerQuote = outerQuote?.querySelector('blockquote')
+    expect(innerQuote?.querySelector(':scope > .quote-attribution')?.textContent).toBe('Inner')
+
+    editor.commands.setTextSelection(findTextblockEnd(editor, 'Body link', 'blockquote')! - 'Body link'.length)
+    editor.commands.insertContent('Edited ')
+    const output = pairedSource.readText()
+    expect(output).toContain(
+      '> [name=<img src=x onerror=alert(1)> **bold** https://evil.test "quoted" & [link\\](javascript:alert(1))]\n> Edited Body [link](/safe)'
+    )
+    const reopened = createEditor('markdown', output)
+    expect(reopened.state.doc.firstChild?.attrs.author).toBe(author)
+    expect(reopened.state.doc.firstChild?.firstChild?.textContent).toBe('Edited Body link')
+    expect(reopened.state.doc.firstChild?.lastChild?.attrs.author).toBe('Inner')
+    expect(reopened.state.doc.firstChild?.lastChild?.firstChild?.textContent).toBe('Nested')
+    const reopenedQuote = reopened.view.dom.querySelector(':scope > blockquote')
+    expect(reopenedQuote?.querySelector(':scope > .quote-attribution')?.textContent).toBe(author)
+    const reopenedInnerQuote = reopenedQuote?.querySelector('blockquote')
+    expect(reopenedInnerQuote?.querySelector(':scope > .quote-attribution')?.textContent).toBe('Inner')
+    expect(reopened.getMarkdown()).toBe(output)
+    expect(reopened.getJSON()).toEqual(editor.getJSON())
+
+    const rendered = new DOMParser().parseFromString(await renderServerMarkdown(output), 'text/html')
+    const renderedQuote = rendered.body.querySelector(':scope > blockquote')
+    expect(renderedQuote?.getAttribute('data-quote-author')).toBe(author)
+    expect(renderedQuote?.querySelector(':scope > .quote-attribution')?.textContent).toBe(author)
+    expect(renderedQuote?.querySelector(':scope > p > a')?.getAttribute('href')).toBe('/safe')
+    const renderedInnerQuote = renderedQuote?.querySelector('blockquote')
+    expect(renderedInnerQuote?.getAttribute('data-quote-author')).toBe('Inner')
+    expect(renderedInnerQuote?.querySelector(':scope > .quote-attribution')?.textContent).toBe('Inner')
+    expect(renderedInnerQuote?.querySelector(':scope > p:not(.quote-attribution)')?.textContent).toBe('Nested')
+    expect(rendered.querySelectorAll('img, [onerror], a[href^="javascript:"]')).toHaveLength(0)
+  })
+
+  it('preserves quote author attributes and a separate inert byline through HTML editing and reopen', () => {
+    const source =
+      '<blockquote data-quote-author="Ada &amp; &quot;Grace&quot;"><p>Body <a href="/safe">link</a></p><p class="quote-attribution"><span>Ada &amp; "Grace"</span></p></blockquote>'
+    const editor = createEditor('html', source)
+    expect(editor.state.doc.firstChild?.attrs.author).toBe('Ada & "Grace"')
+    expect(editor.state.doc.firstChild?.childCount).toBe(1)
+    editor.commands.setTextSelection(findTextblockEnd(editor, 'Body link', 'blockquote')!)
+    editor.commands.insertContent(' edited')
+    const output = serializeVisualEditorData('html', editor)
+    const reopened = createEditor('html', output)
+    expect(reopened.getJSON()).toEqual(editor.getJSON())
+    const rendered = new DOMParser().parseFromString(output, 'text/html')
+    expect(rendered.querySelectorAll('blockquote > .quote-attribution')).toHaveLength(1)
+    expect(rendered.querySelector('blockquote > .quote-attribution')?.textContent).toBe('Ada & "Grace"')
+    expect(rendered.querySelector('blockquote > p')?.textContent).toBe('Body link edited')
+    expect(rendered.querySelector('blockquote > div')).toBeNull()
   })
 
   it('preserves every extended dialect family through source-backed nodes', async () => {

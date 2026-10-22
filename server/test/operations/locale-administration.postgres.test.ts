@@ -10,12 +10,29 @@ import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
 import type { LocalePolicy } from '../../../shared/locale-policy.ts'
 const connection = getPostgresTestConnection('_locale_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
-  admin = { id: 1, authVersion: 0 } as never
+  admin = { id: 1, ownershipUserId: 1, authVersion: 0 } as never
 const en = { code: 'en', name: 'English', nativeName: 'English', isRTL: false, availability: 100 },
   fr = { code: 'fr', name: 'French', nativeName: 'Français', isRTL: false, availability: 95 }
 suite('PostgreSQL reviewed Locale administration', () => {
   let db: Knex, store: ReturnType<typeof createLocaleAdministrationStore>, activated: boolean
-  const tables = ['durableJobs', 'userGroups', 'users', 'groups', 'locales', 'navigation', 'pages', 'settings']
+  const tables = [
+    'durableJobs',
+    'userGroups',
+    'glossaryTermRelations',
+    'glossaryNames',
+    'glossaryTerms',
+    'customLocaleReferences',
+    'assets',
+    'pageTree',
+    'pageHistory',
+    'pageLinks',
+    'navigation',
+    'pages',
+    'users',
+    'groups',
+    'locales',
+    'settings'
+  ]
   const read = () => store.inspect(admin)
   const save = async (patch: Partial<LocalePolicy>) => {
     const current = await read()
@@ -36,6 +53,7 @@ suite('PostgreSQL reviewed Locale administration', () => {
       t.integer('id').primary()
       t.json('permissions')
       t.string('adminRevision').defaultTo('')
+      t.jsonb('pageRules').defaultTo('[]')
     })
     await db.schema.createTable('users', t => {
       t.integer('id').primary()
@@ -56,6 +74,27 @@ suite('PostgreSQL reviewed Locale administration', () => {
       t.json('strings')
       t.string('createdAt')
       t.string('updatedAt')
+    })
+    await db.schema.alterTable('users', t => {
+      t.string('localeCode', 35).references('code').inTable('locales')
+      t.string('communicationLocale', 35).references('code').inTable('locales').onDelete('SET NULL')
+    })
+    for (const table of ['pageTree', 'pageHistory', 'assets', 'pageLinks']) {
+      await db.schema.createTable(table, t => {
+        t.integer('id').primary()
+        t.string('localeCode', 35)
+        if (table !== 'pageLinks') t.foreign('localeCode').references('code').inTable('locales')
+      })
+    }
+    for (const table of ['glossaryTerms', 'glossaryNames', 'glossaryTermRelations']) {
+      await db.schema.createTable(table, t => {
+        t.integer('id').primary()
+        t.string('locale', 35)
+      })
+    }
+    await db.schema.createTable('customLocaleReferences', t => {
+      t.integer('id').primary()
+      t.string('language', 35).references('code').inTable('locales').onDelete('CASCADE')
     })
     await db.schema.createTable('navigation', t => {
       t.string('key').primary()
@@ -209,7 +248,9 @@ suite('PostgreSQL reviewed Locale administration', () => {
     const beforeReplay = { locale: await db('locales').where('code', 'fr').first(), settings: await db('settings').orderBy('key') }
     const replay = createLocalePackageHandler({
       store: () => store,
-      fetch: (async () => { throw new Error('Completed locale operation must not refetch') }) as typeof fetch
+      fetch: (async () => {
+        throw new Error('Completed locale operation must not refetch')
+      }) as typeof fetch
     })
     await replay(job!, { knex: db, signal: new AbortController().signal })
     expect(await db('locales').where('code', 'fr').first()).toEqual(beforeReplay.locale)
@@ -241,8 +282,13 @@ suite('PostgreSQL reviewed Locale administration', () => {
     await enqueue()
     const jobs = await new DurableJobStore(db).claim({ workerId: 'test-worker', supportedIdentities: ['locale-package@1'] }),
       job = jobs[0]!
-    const beforePublication = { locales: await db('locales').orderBy('code'), administration: await db('settings').where('key', 'localeAdministration').first() }
-    await expect(store.publishJob({ ...job, leaseToken: '00000000-0000-0000-0000-000000000000' }, [fr], { common: { greeting: 'Bonjour' } })).rejects.toMatchObject({ status: 409 })
+    const beforePublication = {
+      locales: await db('locales').orderBy('code'),
+      administration: await db('settings').where('key', 'localeAdministration').first()
+    }
+    await expect(
+      store.publishJob({ ...job, leaseToken: '00000000-0000-0000-0000-000000000000' }, [fr], { common: { greeting: 'Bonjour' } })
+    ).rejects.toMatchObject({ status: 409 })
     await db('settings').insert({ key: 'offline', value: '{"v":true}', updatedAt: new Date().toISOString() })
     await expect(store.publishJob(job, [fr], {})).rejects.toMatchObject({ status: 409 })
     await db('settings').where('key', 'offline').delete()
@@ -350,10 +396,15 @@ suite('PostgreSQL reviewed Locale administration', () => {
     const { jobId } = await store.enqueueLocalFile(admin, { reviewId: reviewed.id })
     const job = (await new DurableJobStore(db).claim({ workerId: 'local-worker', supportedIdentities: ['locale-package@1'] }))[0]!
     const later = Date.now() + 16 * 60 * 1000
-    await db('durableJobs').where({ id: jobId }).update({ leaseExpiresAt: new Date(later + 60_000) })
+    await db('durableJobs')
+      .where({ id: jobId })
+      .update({ leaseExpiresAt: new Date(later + 60_000) })
     const clock = vi.spyOn(Date, 'now').mockReturnValue(later)
     try {
       expect(await store.jobContext(job)).toEqual({ kind: 'local', alreadyApplied: false })
+      const mismatchedPrincipal = { ...job, payload: { ...job.payload, requester: { id: 1, authVersion: 0 } } }
+      await expect(store.publishJob(mismatchedPrincipal, [])).rejects.toMatchObject({ status: 403 })
+      expect(await db('locales').where({ code: 'fr' }).first()).toBeUndefined()
       await store.publishJob(job, [])
     } finally {
       clock.mockRestore()
@@ -392,5 +443,217 @@ suite('PostgreSQL reviewed Locale administration', () => {
     }
     expect((await read()).history).toHaveLength(50)
     expect((await read()).history.map(event => event.reason)).toEqual(Array.from({ length: 50 }, (_, index) => `Reviewed policy ${50 - index}`))
+  })
+
+  const installFrench = async () => {
+    const now = new Date().toISOString()
+    await db('locales').insert({ ...fr, strings: '{"common":{"greeting":"Bonjour"}}', createdAt: now, updatedAt: now })
+  }
+  const reviewRemoval = async (code = 'fr') =>
+    store.reviewUninstall(admin, {
+      code,
+      fingerprint: (await read()).fingerprint,
+      reason: 'Retire unused interface package'
+    })
+
+  it('removes only unused installed bytes, retains remote catalog availability, and records the reason before activation', async () => {
+    await installFrench()
+    const content = Object.fromEntries(
+        await Promise.all(['pages', 'navigation', 'users', 'assets', 'pageHistory'].map(async table => [table, await db(table).select()]))
+      ),
+      reviewed = await reviewRemoval()
+    expect(reviewed).toMatchObject({ blockers: [], catalogRetained: true, reason: 'Retire unused interface package' })
+    expect(JSON.stringify(reviewed)).not.toContain('Bonjour')
+    expect(await store.uninstall(admin, { token: reviewed.token })).toEqual({ activation: 'applied' })
+    expect(await db('locales').where({ code: 'fr' }).first()).toBeUndefined()
+    for (const [table, rows] of Object.entries(content)) expect(await db(table).select()).toEqual(rows)
+    const current = await read()
+    expect(current.locales.find(row => row.code === 'fr')).toMatchObject({ isInstalled: false, availableRemotely: true, packageSource: 'unknown' })
+    expect(current.history[0]).toMatchObject({
+      kind: 'uninstall',
+      actorId: 1,
+      code: 'fr',
+      reason: reviewed.reason,
+      fields: ['package:fr'],
+      appliedAt: expect.any(String)
+    })
+    expect((await db('settings').where({ key: 'lang' }).first()).value.revision).toBe(current.history[0].id)
+    await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 409 })
+  })
+
+  it('refuses English, absent packages, invalid reasons, and unauthorized review/confirmation without mutation', async () => {
+    await installFrench()
+    const reviewed = await reviewRemoval(),
+      before = await db('locales').orderBy('code')
+    await expect(reviewRemoval('en')).rejects.toMatchObject({ status: 409 })
+    await expect(reviewRemoval('de')).rejects.toMatchObject({ status: 409 })
+    await expect(store.reviewUninstall(admin, { code: 'fr', fingerprint: (await read()).fingerprint, reason: '  ' })).rejects.toMatchObject({ status: 400 })
+    await expect(
+      store.reviewUninstall({ id: 3, authVersion: 0 } as never, { code: 'fr', fingerprint: (await read()).fingerprint, reason: 'Remove package' })
+    ).rejects.toMatchObject({ status: 403 })
+    await expect(store.uninstall({ id: 3, authVersion: 0 } as never, { token: reviewed.token })).rejects.toMatchObject({ status: 403 })
+    await db('users').where({ id: 1 }).update({ authVersion: 1 })
+    await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 403 })
+    expect(await db('locales').orderBy('code')).toEqual(before)
+    expect(await db('settings').where({ key: 'localeAdministration' }).first()).toBeUndefined()
+  })
+
+  it.each([
+    ['public published pages', 'pages', { id: 10, localeCode: 'fr', visibility: 'public', isPublished: true }],
+    ['private unpublished pages', 'pages', { id: 10, localeCode: 'fr', visibility: 'private', isPublished: false }],
+    ['public unpublished pages', 'pages', { id: 10, localeCode: 'fr', visibility: 'public', isPublished: false }],
+    ['page tree nodes', 'pageTree', { id: 10, localeCode: 'fr' }],
+    ['page history', 'pageHistory', { id: 10, localeCode: 'fr' }],
+    ['locale assets', 'assets', { id: 10, localeCode: 'fr' }],
+    ['non-FK links', 'pageLinks', { id: 10, localeCode: 'fr' }],
+    ['glossary terms', 'glossaryTerms', { id: 10, locale: 'fr' }],
+    ['glossary names', 'glossaryNames', { id: 10, locale: 'fr' }],
+    ['glossary relations', 'glossaryTermRelations', { id: 10, locale: 'fr' }],
+    ['unanticipated cascading references', 'customLocaleReferences', { id: 10, language: 'fr' }]
+  ] as [string, string, Record<string, unknown>][])('rechecks %s after a clear review and never cascades content', async (_label, table, row) => {
+    await installFrench()
+    const reviewed = await reviewRemoval()
+    expect(reviewed.blockers).toEqual([])
+    await db(String(table)).insert(row)
+    const packageBefore = await db('locales').where({ code: 'fr' }).first(),
+      rowsBefore = await db(String(table)).select()
+    const blocked = await reviewRemoval()
+    expect(blocked.blockers).toContainEqual({
+      source: `${table}.${Object.hasOwn(row, 'locale') ? 'locale' : Object.hasOwn(row, 'language') ? 'language' : 'localeCode'}`,
+      count: 1
+    })
+    await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 409 })
+    expect(await db('locales').where({ code: 'fr' }).first()).toEqual(packageBefore)
+    expect(await db(String(table)).select()).toEqual(rowsBefore)
+  })
+
+  it.each(['localeCode', 'communicationLocale'])('preserves user %s references rather than clearing them', async column => {
+    await installFrench()
+    const reviewed = await reviewRemoval()
+    await db('users')
+      .where({ id: 3 })
+      .update({ [column]: 'fr' })
+    expect((await reviewRemoval()).blockers).toContainEqual({ source: `users.${column}`, count: 1 })
+    await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 409 })
+    expect((await db('users').where({ id: 3 }).first())[column]).toBe('fr')
+    expect(await db('locales').where({ code: 'fr' }).first()).toBeTruthy()
+  })
+
+  it('blocks the default, retained namespaces, empty navigation trees and group rules independently of public usage counts', async () => {
+    await installFrench()
+    await save({ locale: 'fr' })
+    expect((await reviewRemoval()).blockers).toContainEqual({ source: 'Default reading language', count: 1 })
+    await save({ locale: 'en', namespacing: false, namespaces: ['fr'] })
+    expect((await reviewRemoval()).blockers).toContainEqual({ source: 'Configured reading namespaces', count: 1 })
+    await save({ namespaces: [] })
+    await db('navigation')
+      .where({ key: 'site' })
+      .update({ config: JSON.stringify([{ locale: 'fr', items: [] }]) })
+    await db('groups')
+      .where({ id: 3 })
+      .update({ pageRules: JSON.stringify([{ locales: ['fr'], path: '*', roles: ['read:pages'] }]) })
+    const reviewed = await reviewRemoval()
+    expect(reviewed.blockers).toEqual(
+      expect.arrayContaining([
+        { source: 'Navigation language trees (including empty menus)', count: 1 },
+        { source: 'Group page rules', count: 1 }
+      ])
+    )
+    expect((await read()).locales.find(row => row.code === 'fr')!.pages).toBe(0)
+    await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 409 })
+  })
+
+  it.each(['pending', 'running'])('refuses %s package jobs created after removal review', async state => {
+    await installFrench()
+    const reviewed = await reviewRemoval(),
+      { jobId } = await enqueue()
+    await db('durableJobs').where({ id: jobId }).update({ state })
+    await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 409 })
+    expect((await reviewRemoval()).blockers).toContainEqual({ source: 'Queued or running language package operations', count: 1 })
+    expect(await db('locales').where({ code: 'fr' }).first()).toBeTruthy()
+  })
+
+  it('binds review to package bytes, workspace, administrator and deadline, rejecting tampering', async () => {
+    await installFrench()
+    const reviewed = await reviewRemoval()
+    const [body, signature] = reviewed.token.split('.')
+    const changed = JSON.parse(Buffer.from(body!, 'base64url').toString('utf8'))
+    changed.reason = 'Changed administrative intent'
+    await expect(store.uninstall(admin, { token: `${Buffer.from(JSON.stringify(changed)).toString('base64url')}.${signature}` })).rejects.toMatchObject({
+      status: 409
+    })
+    await db('groups').where({ id: 3 }).update({ permissions: '["manage:system"]' })
+    const otherReview = await reviewRemoval()
+    await expect(store.uninstall({ id: 3, authVersion: 0 } as never, { token: otherReview.token })).rejects.toMatchObject({ status: 403 })
+    await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 409 })
+    await db('locales').where({ code: 'fr' }).update({ strings: '{"common":{"greeting":"Replaced bytes"}}' })
+    await expect(store.uninstall(admin, { token: otherReview.token })).rejects.toMatchObject({ status: 409 })
+    const expiring = await reviewRemoval(),
+      clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(expiring.expiresAt) + 1)
+    try {
+      await expect(store.uninstall(admin, { token: expiring.token })).rejects.toMatchObject({ status: 409 })
+    } finally {
+      clock.mockRestore()
+    }
+    expect((await db('locales').where({ code: 'fr' }).first()).strings).toEqual({ common: { greeting: 'Replaced bytes' } })
+  })
+
+  it('serializes competing removals and refuses an uncommitted non-FK writer without deleting either record', async () => {
+    await installFrench()
+    const reviewed = await reviewRemoval(),
+      writer = await db.transaction()
+    try {
+      await writer('glossaryTerms').insert({ id: 10, locale: 'fr' })
+      await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toMatchObject({ status: 409 })
+      expect(await db('locales').where({ code: 'fr' }).first()).toBeTruthy()
+      await writer.commit()
+    } finally {
+      if (!writer.isCompleted()) await writer.rollback()
+    }
+    expect(await db('glossaryTerms').where({ id: 10 }).first()).toMatchObject({ locale: 'fr' })
+    await db('glossaryTerms').delete()
+    const results = await Promise.allSettled([store.uninstall(admin, { token: reviewed.token }), store.uninstall(admin, { token: reviewed.token })])
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { status: 409 } })
+    expect((await read()).history.filter(event => event.kind === 'uninstall')).toHaveLength(1)
+  })
+
+  it('does not reconstruct catalog provenance from an old publication and can remove an unreferenced local-only package offline', async () => {
+    await installFrench()
+    const old = '2020-01-01T00:00:00.000Z',
+      now = new Date().toISOString()
+    await db('settings').insert([
+      { key: 'localeCatalog', value: '{"locales":[]}', updatedAt: now },
+      { key: 'offline', value: '{"v":true}', updatedAt: now },
+      {
+        key: 'localeAdministration',
+        updatedAt: now,
+        value: JSON.stringify({
+          history: [{ id: 'old', kind: 'install', code: 'fr', appliedAt: old, createdAt: old, actorId: 1, reason: 'Old publication', fields: ['package:fr'] }]
+        })
+      }
+    ])
+    expect((await read()).locales.find(row => row.code === 'fr')).toMatchObject({ packageSource: 'unknown', availableRemotely: false })
+    const reviewed = await reviewRemoval()
+    expect(reviewed.catalogRetained).toBe(false)
+    activated = false
+    expect(await store.uninstall(admin, { token: reviewed.token })).toEqual({ activation: 'needs-attention' })
+    expect((await read()).locales.find(row => row.code === 'fr')).toBeUndefined()
+    expect((await db('settings').where({ key: 'localeCatalog' }).first()).value).toEqual({ locales: [] })
+    activated = true
+    expect(await store.initialize(admin, (await read()).fingerprint)).toEqual({ activation: 'applied' })
+  })
+
+  it('rolls back removed bytes when the administrative receipt cannot be persisted', async () => {
+    await installFrench()
+    const reviewed = await reviewRemoval(),
+      before = await db('locales').where({ code: 'fr' }).first()
+    await db.raw("ALTER TABLE settings ADD CONSTRAINT locale_removal_audit_rejected CHECK (key <> 'localeAdministration')")
+    try {
+      await expect(store.uninstall(admin, { token: reviewed.token })).rejects.toThrow()
+      expect(await db('locales').where({ code: 'fr' }).first()).toEqual(before)
+    } finally {
+      await db.raw('ALTER TABLE settings DROP CONSTRAINT locale_removal_audit_rejected')
+    }
   })
 })

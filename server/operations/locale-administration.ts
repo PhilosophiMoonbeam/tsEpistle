@@ -1,5 +1,6 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { Knex } from 'knex'
+import { z } from 'zod'
 import {
   LocalePolicySchema,
   LocaleCatalogSchema,
@@ -11,6 +12,8 @@ import {
   localeChangedFields,
   type LocaleCatalogEntry,
   type LocaleFileReview,
+  type LocaleUninstallBlocker,
+  type LocaleUninstallReview,
   type LocaleWorkspace,
   type LocaleEvent,
   type LocaleOperation,
@@ -75,6 +78,22 @@ interface Dependencies {
   cachedCatalog?(): Promise<unknown>
   runtime(): { locale: unknown; revision: unknown; configuration: unknown }
   onCommitted?(): Promise<boolean>
+}
+const UninstallTokenSchema = z
+  .object({
+    version: z.literal(1),
+    code: LocaleCodeSchema,
+    reason: z.string().min(3).max(1000),
+    expiresAt: z.string().datetime(),
+    actorFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    workspaceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    packageFingerprint: z.string().regex(/^[a-f0-9]{64}$/)
+  })
+  .strict()
+interface LocaleReference {
+  schema: string
+  table: string
+  column: string
 }
 export const createLocaleAdministrationStore = (deps: Dependencies) => {
   const fingerprint = (value: unknown) => createHmac('sha256', deps.reviewKey).update(stable(value)).digest('hex')
@@ -177,6 +196,82 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     return createHash('sha256')
       .update(stable([value.code, value.name, value.nativeName, value.isRTL, value.availability, strings]))
       .digest('hex')
+  }
+  const uninstallToken = (value: z.output<typeof UninstallTokenSchema>) => {
+    const body = Buffer.from(JSON.stringify(value)).toString('base64url')
+    return `${body}.${fingerprint(['locale-uninstall', body])}`
+  }
+  const readUninstallToken = (value: unknown) => {
+    if (typeof value !== 'string' || value.length > 8192) return fail('Review the language package again before removing it.', 409)
+    const [body, signature, extra] = value.split('.')
+    if (!body || !signature || extra || !/^[a-f0-9]{64}$/.test(signature)) return fail('The package removal review is invalid.', 409)
+    const expected = fingerprint(['locale-uninstall', body])
+    if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return fail('The package removal review changed.', 409)
+    try {
+      return UninstallTokenSchema.parse(JSON.parse(Buffer.from(body, 'base64url').toString('utf8')))
+    } catch {
+      return fail('The package removal review is invalid.', 409)
+    }
+  }
+  const localeReferences = async (tx: Knex.Transaction): Promise<LocaleReference[]> => {
+    // Inspect actual constraints, including SET NULL/CASCADE, rather than relying on delete errors.
+    // Also cover locale-bearing rows that intentionally have no locale FK (links/glossary).
+    const result = await tx.raw<{ rows: LocaleReference[] }>(`
+      SELECT DISTINCT n.nspname AS "schema", c.relname AS "table", a.attname AS "column"
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+      WHERE c.relkind IN ('r', 'p') AND (
+        (pg_table_is_visible(c.oid) AND (
+          a.attname IN ('localeCode', 'communicationLocale') OR
+          (c.relname IN ('glossaryTerms', 'glossaryNames', 'glossaryTermRelations') AND a.attname = 'locale')
+        )) OR EXISTS (
+          SELECT 1 FROM pg_constraint f
+          WHERE f.contype = 'f' AND f.confrelid = 'locales'::regclass
+            AND f.conrelid = c.oid AND a.attnum = ANY(f.conkey)
+        )
+      )
+      ORDER BY "schema", "table", "column"
+    `)
+    return result.rows
+  }
+  const uninstallBlockers = async (tx: Knex.Transaction, saved: State, code: string, references: LocaleReference[]): Promise<LocaleUninstallBlocker[]> => {
+    const blockers: LocaleUninstallBlocker[] = []
+    if (saved.policy.locale === code) blockers.push({ source: 'Default reading language', count: 1 })
+    // Retained namespace configuration is a reference even while routing is switched off.
+    if (saved.policy.namespaces.includes(code)) blockers.push({ source: 'Configured reading namespaces', count: 1 })
+    const active = await tx('durableJobs').where({ type: 'locale-package', version: 1 }).whereIn('state', ['pending', 'running']).count('* as count').first()
+    if (Number(active?.count)) blockers.push({ source: 'Queued or running language package operations', count: Number(active!.count) })
+    for (const reference of references) {
+      const row = await tx.withSchema(reference.schema).table(reference.table).where(reference.column, code).count('* as count').first()
+      if (Number(row?.count)) blockers.push({ source: `${reference.table}.${reference.column}`, count: Number(row!.count) })
+    }
+    const navigation = await tx<{ config: unknown }>('navigation').select('config')
+    const menus = navigation.reduce(
+      (count, row) => count + (Array.isArray(row.config) ? row.config.filter((tree: unknown) => record(tree).locale === code).length : 0),
+      0
+    )
+    if (menus) blockers.push({ source: 'Navigation language trees (including empty menus)', count: menus })
+    const groups = await tx<{ pageRules: unknown }>('groups').select('pageRules')
+    const rules = groups.reduce(
+      (count, group) =>
+        count +
+        (Array.isArray(group.pageRules)
+          ? group.pageRules.filter((rule: unknown) => {
+              const locales = record(rule).locales
+              return Array.isArray(locales) && locales.includes(code)
+            }).length
+          : 0),
+      0
+    )
+    if (rules) blockers.push({ source: 'Group page rules', count: rules })
+    return blockers
+  }
+  const requireRemovablePackage = (saved: State, code: string) => {
+    if (Intl.getCanonicalLocales(code)[0] === 'en') return fail('Bundled English translations cannot be removed.', 409)
+    const locale = saved.locales.find(row => row.code === code)
+    if (!locale) return fail('This language package is not installed. Reload the workspace.', 409)
+    return locale
   }
   const principalFingerprint = (actorId: number | null, requester: PagePrincipal) => {
     if (!requester) return fail('An administrator sign-in is required.', 403)
@@ -388,9 +483,11 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         locales: mergeLocaleCatalog(saved.catalog, saved.locales).map(locale => {
           const installed = saved.locales.find(row => row.code === locale.code),
             count = counts.find(row => row.localeCode === locale.code)
-          const latestPublication = events(saved).find(
-            event => event.code === locale.code && event.appliedAt && (event.kind === 'local' || event.kind === 'install')
-          )
+          const latestPublication =
+            installed &&
+            events(saved).find(
+              event => event.code === locale.code && event.appliedAt === installed.updatedAt && (event.kind === 'local' || event.kind === 'install')
+            )
           const packageSource =
             locale.code === 'en'
               ? ('bundled' as const)
@@ -464,6 +561,89 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
     async initialize(requester: PagePrincipal, review: unknown) {
       const saved = await inspect(requester)
       if (saved.fingerprint !== review) return fail('Locale settings changed. Reload before activation.', 409)
+      return activate()
+    },
+    async reviewUninstall(requester: PagePrincipal, input: { code: unknown; fingerprint: unknown; reason: unknown }): Promise<LocaleUninstallReview> {
+      const code = LocaleCodeSchema.safeParse(input.code)
+      if (!code.success) return fail('Choose a valid installed language code.')
+      const why = reason(input.reason)
+      return deps.db.transaction(
+        async tx => {
+          const saved = await state(tx, requester),
+            locale = requireRemovablePackage(saved, code.data)
+          assertReview(saved, input.fingerprint)
+          const row = await storedPackage(tx, code.data, false),
+            packageFingerprint = localPackageFingerprint(row)
+          if (!packageFingerprint) return fail('The installed package changed. Review it again.', 409)
+          const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            blockers = await uninstallBlockers(tx, saved, code.data, await localeReferences(tx))
+          return {
+            code: locale.code,
+            name: locale.name,
+            nativeName: locale.nativeName,
+            reason: why,
+            expiresAt,
+            token: uninstallToken({
+              version: 1,
+              code: code.data,
+              reason: why,
+              expiresAt,
+              actorFingerprint: principalFingerprint(saved.actorId, requester),
+              workspaceFingerprint: saved.fingerprint,
+              packageFingerprint
+            }),
+            catalogRetained: saved.catalog.some(entry => entry.code === code.data),
+            blockers
+          }
+        },
+        { isolationLevel: 'repeatable read', readOnly: true }
+      )
+    },
+    async uninstall(requester: PagePrincipal, input: { token: unknown }): Promise<LocaleWriteResult> {
+      const review = readUninstallToken(input.token)
+      try {
+        await deps.db.transaction(async tx => {
+          // Keep the existing authority -> account -> settings -> package lock order.
+          const saved = await state(tx, requester, true)
+          if (review.actorFingerprint !== principalFingerprint(saved.actorId, requester))
+            return fail('This package removal review belongs to another administrator.', 403)
+          assertReview(saved, review.workspaceFingerprint)
+          if (Date.parse(review.expiresAt) <= Date.now()) return fail('This package removal review expired. Review the package again.', 409)
+          requireRemovablePackage(saved, review.code)
+          const references = await localeReferences(tx),
+            tables = [...new Set([...references.map(row => `${row.schema}.${row.table}`), 'groups', 'navigation', 'durableJobs'])].sort()
+          // NOWAIT refuses concurrent writers instead of waiting with authority locks held.
+          // Table locks also protect non-FK references and prevent FK cascades/SET NULL.
+          for (const table of tables) await tx.raw('LOCK TABLE ?? IN SHARE MODE NOWAIT', [table])
+          const row = await storedPackage(tx, review.code, true)
+          if (localPackageFingerprint(row) !== review.packageFingerprint) return fail('The installed package changed after review. Review it again.', 409)
+          const blockers = await uninstallBlockers(tx, saved, review.code, references)
+          if (blockers.length)
+            return fail(
+              `The language package is still in use: ${blockers.map(blocker => `${blocker.source} (${blocker.count})`).join('; ')}. Resolve these references without deleting content, then review again.`,
+              409
+            )
+          const now = new Date().toISOString(),
+            event: LocaleEvent = {
+              id: randomUUID(),
+              actorId: saved.actorId,
+              reason: review.reason,
+              fields: [`package:${review.code}`],
+              code: review.code,
+              kind: 'uninstall',
+              createdAt: now,
+              appliedAt: now
+            }
+          // Catalog metadata is independent of installed bytes and is never removed here.
+          await tx('locales').where({ code: review.code }).delete()
+          await put(tx, 'lang', { ...record(saved.configuration.lang), revision: event.id }, now)
+          await addEvent(tx, saved, event)
+        })
+      } catch (error) {
+        if (error && typeof error === 'object' && ['55P03', '40P01', '23503'].includes(String(Reflect.get(error, 'code'))))
+          return fail('A concurrent writer or locale reference prevented removal. The package and content are unchanged. Reload and review again.', 409)
+        throw error
+      }
       return activate()
     },
     async enqueue(requester: PagePrincipal, input: { kind: unknown; code?: unknown; fingerprint: unknown; reason: unknown }) {
@@ -598,7 +778,9 @@ export const createLocaleAdministrationStore = (deps: Dependencies) => {
         const eventId = randomUUID(),
           now = new Date().toISOString(),
           principal =
-            saved.actorId === null ? { id: 1, ownershipUserId: null, groups: requester!.groups } : { id: saved.actorId, authVersion: requester!.authVersion },
+            saved.actorId === null
+              ? { id: 1, ownershipUserId: null, groups: requester!.groups }
+              : { id: requester!.id, ownershipUserId: requester!.ownershipUserId, authVersion: requester!.authVersion },
           job = await new DurableJobStore(tx).enqueue({
             type: 'locale-package',
             version: 1,

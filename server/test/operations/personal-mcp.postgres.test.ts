@@ -11,6 +11,8 @@ import { createApiPrincipal, isApiPrincipal, rejectApiPrincipalMutation } from '
 import auth, { loadPageRuleAuthority } from '../../core/auth.ts'
 import { requireSystemAuthority } from '../../helpers/system-authority.ts'
 import apiOperations from '../../operations/api.ts'
+import { createGlossaryOperations } from '../../operations/glossary.ts'
+import { up as createGlossaryTables } from '../../db/migrations/tsepistle-000056-glossary.ts'
 
 const connection = getPostgresTestConnection('_personal_mcp_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -45,13 +47,15 @@ suite('personal MCP credential authority on PostgreSQL', () => {
       table.string('createdAt').notNullable(); table.string('updatedAt').notNullable()
     })
     await db.schema.createTable('tags', table => { table.integer('id').primary(); table.string('tag'); table.integer('redirectToId'); table.boolean('isArchived') })
+    await db.schema.createTable('pages', table => { table.integer('id').primary() })
     const now = new Date().toISOString()
     await db('apiKeys').insert({ name: 'Existing service key', key: 'existing-secret', expiration: '2099-01-01T00:00:00.000Z', isRevoked: false, createdAt: now, updatedAt: now })
     await up(db)
+    await createGlossaryTables(db)
     expect(await db('apiKeys').first()).toMatchObject({ key: 'existing-secret', personalOwnerId: null, personalAccess: null, isRevoked: false })
   })
   beforeEach(async () => {
-    for (const table of ['apiKeys', 'userGroups', 'users', 'groups']) await db(table).delete()
+    for (const table of ['glossaryTermRelations', 'glossaryNames', 'glossaryTerms', 'apiKeys', 'userGroups', 'users', 'groups']) await db(table).delete()
     await db('users').insert([
       { id: 42, isActive: true, name: 'Owner', email: 'owner@example.test', timezone: 'UTC', localeCode: 'en' },
       { id: 43, isActive: true, name: 'Other', email: 'other@example.test', timezone: 'UTC', localeCode: 'en' }
@@ -77,7 +81,7 @@ suite('personal MCP credential authority on PostgreSQL', () => {
     Reflect.set(globalThis, 'WIKI', wiki)
   })
   afterAll(async () => {
-    if (db) { for (const table of ['apiKeys', 'userGroups', 'users', 'groups', 'tags']) await db.schema.dropTableIfExists(table); await db.destroy() }
+    if (db) { for (const table of ['glossaryTermRelations', 'glossaryNames', 'glossaryTerms', 'apiKeys', 'userGroups', 'users', 'groups', 'tags', 'pages']) await db.schema.dropTableIfExists(table); await db.destroy() }
     if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI'); else Reflect.set(globalThis, 'WIKI', originalWiki)
   })
 
@@ -137,6 +141,33 @@ suite('personal MCP credential authority on PostgreSQL', () => {
     expect(principal).not.toHaveProperty('id'); expect(isApiPrincipal(principal)).toBe(true)
     expect(() => rejectApiPrincipalMutation(principal)).toThrow('API-key principals cannot perform direct mutations.')
     expect(principal.permissions).toContain('read:history'); expect(principal.permissions).not.toContain('manage:system')
+  })
+
+  it('keeps personal-key glossary reads current without granting browser or mutation authority', async () => {
+    await db('users').where({ id: 42 }).update({ authVersion: 7 })
+    await db('groups').where({ id: 3 }).update({
+      permissions: JSON.stringify(['use:agents', 'use:mcp', 'read:glossary', 'manage:glossary']),
+      pageRules: JSON.stringify([{ match: 'EXACT', path: 'glossary', deny: false, roles: ['read:glossary', 'manage:glossary'], locales: ['en'] }])
+    })
+    const currentOwner = { ...owner, authVersion: 7 }
+    const glossary = createGlossaryOperations({ db, enabled: () => true, loadAuthority: loadPageRuleAuthority })
+    const termInput = {
+      locale: 'en', term: 'MCP generation', expansion: '', definition: 'Owner-bound read.', category: '',
+      aliases: [], relatedIds: [], documentationPageId: null, documentationLabel: '', references: [], caseSensitive: false, autoLink: false
+    }
+    const term = await glossary.create({ requester: currentOwner, sessionId: 'owner-glossary-session' }, termInput)
+    const issued = await issuePersonalMcpKey(currentOwner, '42', input)
+    const principal = await loadMcpApiPrincipal(issued.item.id, 1)
+    const delegated = { requester: principal, sessionId: '' }
+    expect(await glossary.list(delegated, { locale: 'en', limit: 1 })).toMatchObject({
+      items: [{ id: term.id, term: 'MCP generation' }], complete: true, nextCursor: null
+    })
+    expect(await glossary.get(delegated, term.id, 'en')).toMatchObject({ definition: 'Owner-bound read.' })
+    await expect(glossary.create(delegated, { ...termInput, term: 'Forbidden mutation' })).rejects.toMatchObject({ status: 403 })
+    await db('users').where({ id: 42 }).update({ authVersion: 8 })
+    await expect(glossary.get(delegated, term.id, 'en')).rejects.toMatchObject({ status: 401 })
+    const refreshed = await loadMcpApiPrincipal(issued.item.id, 1)
+    expect(await glossary.get({ requester: refreshed, sessionId: '' }, term.id, 'en')).toMatchObject({ definition: 'Owner-bound read.' })
   })
 
   it('isolates ownership and preserves list/revoke after issuance eligibility is lost', async () => {

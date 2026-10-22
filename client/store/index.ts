@@ -414,6 +414,8 @@ export const useWikiStore = defineStore('wiki', {
       banner: window.siteConfig.banner,
       dark: window.siteConfig.darkMode,
       tocPosition: window.siteConfig.tocPosition,
+      pageTransitions: window.siteConfig.pageTransitions !== false,
+      showPageProgress: window.siteConfig.showPageProgress === true,
       mascot: true,
       title: window.siteConfig.title,
       logoUrl: window.siteConfig.logoUrl,

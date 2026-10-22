@@ -59,6 +59,30 @@ Checks validate model availability and the structured Choice contract. Malformed
 
 Observed latency and validated token counters describe the request that ran. `estimatedCost`/`estimatedCostMicros` apply configured prices; they are **not measured billing**. `inputTokens`, `outputTokens`, and `totalTokens` remain independent safe nonnegative integers. `totalTokensSource` is `reported` when supplied by the protocol, or `derived` only when the protocol omits a total and the safe directional sum is used. A supplied total must be at least that sum; malformed totals cannot be silently repaired. Any excess is unclassified, not inferred reasoning or cache usage. Cost estimates price that residual at the higher directional rate, plus the configured per-request amount.
 
+## Connect an external client to Wiki MCP
+
+In **Profile → MCP access keys**, create a named, expiring personal key and use the **exact MCP endpoint shown by the server**. The endpoint is the installation's canonical `/mcp` resource; do not substitute the outbound external-MCP callback, a GraphQL/REST route, or an upstream `/_mcp` example. Personal keys authenticate only to Wiki MCP, not Wiki sign-in, REST, or GraphQL.
+
+**Read only** does not expose edit tools. **Read and propose edits** enables proposal-capable tools only within the owner's current Wiki permissions and compatible client approval support; every proposed change still requires human approval. Neither choice provides per-area or per-page key scopes. For ordinary owners, page reads follow live permissions, page rules, and private-page restrictions. **Owners with `manage:system` can read all pages regardless of page rules, including private pages: both key access levels inherit those unrestricted page reads. Read only prevents edits, not administrator-level reads.**
+
+The profile supplies selectable, copyable JSON setup snippets for these Bearer-capable remote HTTP clients:
+
+| Client | Configuration | Secret placement |
+| --- | --- | --- |
+| Claude Code | Merge `mcpServers.wiki` into project `.mcp.json`; the server entry has `type: "http"`, the exact displayed `url`, and `headers.Authorization: "Bearer ${WIKI_MCP_KEY}"`. | Supply `WIKI_MCP_KEY` securely in the environment that launches Claude Code. The JSON retains only the variable reference. |
+| Cursor | Merge `mcpServers.wiki` into personal `~/.cursor/mcp.json`; the entry uses the exact displayed `url` and `headers.Authorization: "Bearer ${env:WIKI_MCP_KEY}"`. | Supply `WIKI_MCP_KEY` securely in Cursor's launch environment. Remote servers do not support `envFile`. |
+| VS Code **Local harness** | Merge the `servers` and `inputs` entries into user-profile MCP configuration using **MCP: Open User Configuration**. The HTTP entry uses `headers.Authorization: "Bearer ${input:wiki-mcp-key}"`. | Enter the key into the masked `promptString` input when the server starts. Input-variable servers are **not forwarded to Copilot harness sessions**; this snippet is not for those sessions. |
+
+Snippets always contain placeholders, before and after issuance. **Copy key** is separate from **Copy setup snippet**. The secret is returned once, starts masked, can be explicitly revealed/copied, and is forgotten on **Done**, account/session change, or leaving the component. Store it in the indicated client secret input or protected launch environment, **never in chat**, a URL, shared configuration, source control, shell history, logs, or screenshots. Restrict any secret-bearing environment file to its owner; do not paste an issued value into the reusable JSON example. A client configuration alone is not connection proof: review trust prompts and perform a permitted low-impact read before attempting proposals. Revoke unused, lost, or uncertain keys from the inventory.
+
+These are Bearer-key instructions, not an inbound OAuth authorization flow. Wiki's OAuth connections below authenticate the Wiki Agent **to external MCP servers**; they do not make Wiki `/mcp` an OAuth authorization server or authorize OAuth-only clients.
+
+Client syntax follows the current official [Claude Code MCP reference](https://code.claude.com/docs/en/mcp), [Cursor MCP configuration](https://cursor.com/docs/mcp), and [VS Code MCP configuration and secret-input reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
+
+Authenticated Wiki MCP requests share a **60-request / 60-second, per-owner** admission window across that owner's personal keys. Exhaustion returns HTTP `429` with `Retry-After`; wait for that interval rather than rotating keys. The bounded limiter is process-local, so multiple application replicas do not provide a single distributed quota or usage meter.
+
+`wiki_list_glossary` and `wiki_get_glossary_term` expose bounded, read-only glossary access when the feature and the owner's current glossary permission allow it. Locale filtering and linked-document page/password restrictions still apply. These tools grant no glossary mutations. Existing signed patch-read line ranges remain available for bounded source inspection; excerpts do not replace complete-read citation evidence.
+
 ## External MCP endpoints
 
 ### Administration and personal ownership

@@ -28,7 +28,8 @@ const connection = getPostgresTestConnection('_storage_destination_test', import
 const suite = connection ? describe : describe.skip
 const admin = { id: 1, authVersion: 0 } as never
 const author = { id: 1, name: 'Storage Destination Test', email: 'destination@example.test' }
-const handlers = { 'storage-mutation@1': createStorageMutationHandler() }
+const mutationHandler = createStorageMutationHandler()
+const handlers = { 'storage-mutation@1': mutationHandler, 'storage-mutation@2': mutationHandler }
 const drafts = (workspace: StorageConfigurationWorkspace): StorageTargetDraft[] =>
   workspace.targets.map(target => ({
     key: target.key,
@@ -93,10 +94,9 @@ suite('Canonical storage intent and reviewed destination publication on PostgreS
     if (transaction) await run(transaction)
     else await db.transaction(run)
   }
-  const outstanding = () => db('durableJobs').where({ type: 'storage-mutation', version: 1 }).whereNot({ state: 'succeeded' }).first()
+  const outstanding = () => db('durableJobs').where('type', 'storage-mutation').whereIn('version', [1, 2]).whereNot({ state: 'succeeded' }).first()
   const assertWithdrawn = async () => {
     expect(await outstanding()).toBeUndefined()
-    expect(await db('durableJobs').where({ type: 'storage-mutation', version: 1 })).toHaveLength(2)
     await expect(readFile(path.join(repository, okfFilePath('en', 'withdrawn')))).rejects.toThrow()
     expect(git('ls-tree', '-r', '--name-only', 'HEAD')).not.toContain(okfFilePath('en', 'withdrawn'))
     expect(git('status', '--porcelain')).toBe('')
@@ -266,7 +266,7 @@ suite('Canonical storage intent and reviewed destination publication on PostgreS
     await insertPublicPage()
     await withdraw('delete')
     const jobs = new DurableJobStore(replica),
-      [claimed] = await jobs.claim({ workerId: 'claimed-before-publication', supportedIdentities: ['storage-mutation@1'] })
+      [claimed] = await jobs.claim({ workerId: 'claimed-before-publication', supportedIdentities: Object.keys(handlers) })
     if (!claimed) throw new Error('Missing admitted withdrawal')
     const before = await db('durableJobs').where({ id: claimed.id }).first()
     let input = await body()

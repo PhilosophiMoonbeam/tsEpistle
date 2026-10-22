@@ -13,6 +13,7 @@ export const durableJobIdentities = [
   'deliver-webhook@1',
   'notify-page-watcher@1',
   'asset-relocation@1',
-  'storage-mutation@1'
+  'storage-mutation@1',
+  'storage-mutation@2'
 ] as const
 export type DurableJobIdentity = (typeof durableJobIdentities)[number]

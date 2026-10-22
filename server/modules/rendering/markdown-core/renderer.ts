@@ -5,12 +5,10 @@ import * as mdAttrsModule from 'markdown-it-attrs'
 import { parseWikiLinkAt, resolveWikiLinkHref } from '../../../../shared/wikilinks.ts'
 import _ from 'lodash'
 import underline from './underline.ts'
-import {
-  installContentExtensionFenceRule,
-  prepareContentExtensionFences
-} from '../../../content-extensions/renderer.ts'
+import { installContentExtensionFenceRule, prepareContentExtensionFences } from '../../../content-extensions/renderer.ts'
 import { installAdmonitionRule } from './admonitions.ts'
 import { renderMarkdownCodeFence } from '../../../../shared/markdown-code-fence.ts'
+import markdownItQuoteAttribution from '../../../../shared/markdown-it-quote-attribution.ts'
 
 interface MarkdownRendererConfig extends UnknownRecord {
   allowHTML: boolean
@@ -51,34 +49,22 @@ type AttributesPlugin = (
 const isMarkdownItFactory = (value: unknown): value is MarkdownItFactory => typeof value === 'function'
 const isAttributesPlugin = (value: unknown): value is AttributesPlugin => typeof value === 'function'
 
-function resolveCallable<T> (
-  moduleValue: unknown,
-  isCallable: (value: unknown) => value is T,
-  packageName: string
-): T {
+function resolveCallable<T>(moduleValue: unknown, isCallable: (value: unknown) => value is T, packageName: string): T {
   if (isCallable(moduleValue)) {
     return moduleValue
   }
-  if (
-    typeof moduleValue === 'object' &&
-    moduleValue !== null &&
-    'default' in moduleValue &&
-    isCallable(moduleValue.default)
-  ) {
+  if (typeof moduleValue === 'object' && moduleValue !== null && 'default' in moduleValue && isCallable(moduleValue.default)) {
     return moduleValue.default
   }
   throw new TypeError(`${packageName} does not export a callable function`)
 }
 
-function isChildRendererModule (value: unknown): value is ChildRendererModule {
+function isChildRendererModule(value: unknown): value is ChildRendererModule {
   if (typeof value !== 'object' || value === null || !('default' in value)) {
     return false
   }
   const renderer = value.default
-  return typeof renderer === 'object' &&
-    renderer !== null &&
-    'init' in renderer &&
-    typeof renderer.init === 'function'
+  return typeof renderer === 'object' && renderer !== null && 'init' in renderer && typeof renderer.init === 'function'
 }
 
 const createMarkdownIt = resolveCallable(markdownItModule, isMarkdownItFactory, 'markdown-it')
@@ -102,7 +88,7 @@ const quoteStyles = {
 const isQuoteStyle = (value: string): value is keyof typeof quoteStyles => value in quoteStyles
 
 const plugin = {
-  async render (this: MarkdownRendererContext): Promise<string> {
+  async render(this: MarkdownRendererContext): Promise<string> {
     const mkdown = createMarkdownIt({
       html: this.config.allowHTML,
       breaks: this.config.linebreaks,
@@ -117,14 +103,9 @@ const plugin = {
 
     if (this.config.wikilinks && this.page) {
       const runtimeWiki: unknown = Reflect.get(globalThis, 'WIKI')
-      const runtimeConfig = typeof runtimeWiki === 'object' && runtimeWiki !== null && 'config' in runtimeWiki
-        ? runtimeWiki.config
-        : undefined
-      const runtimeLang = typeof runtimeConfig === 'object' && runtimeConfig !== null && 'lang' in runtimeConfig
-        ? runtimeConfig.lang
-        : undefined
-      const namespaced = typeof runtimeLang === 'object' && runtimeLang !== null &&
-        'namespacing' in runtimeLang && runtimeLang.namespacing === true
+      const runtimeConfig = typeof runtimeWiki === 'object' && runtimeWiki !== null && 'config' in runtimeWiki ? runtimeWiki.config : undefined
+      const runtimeLang = typeof runtimeConfig === 'object' && runtimeConfig !== null && 'lang' in runtimeConfig ? runtimeConfig.lang : undefined
+      const namespaced = typeof runtimeLang === 'object' && runtimeLang !== null && 'namespacing' in runtimeLang && runtimeLang.namespacing === true
       const wikiLinkContext = {
         locale: this.page.localeCode,
         pagePath: this.page.path,
@@ -156,6 +137,7 @@ const plugin = {
     mkdown.use(mdAttrs, {
       allowedAttributes: ['id', 'class', 'target']
     })
+    mkdown.use(markdownItQuoteAttribution)
 
     for (const child of this.children) {
       // Child renderers are selected from the configured rendering pipeline at runtime.

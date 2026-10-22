@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "75f5bf047521341b5aa370833d50256bb24493d1",
-    "recordedAt": "2026-10-15T02:23:01.000Z",
-    "lastFetchedAt": "2026-10-15T02:14:32+00:00",
+    "recordedTip": "6a29e15762656c6691bdebf1a5adfa1ee1fb4da4",
+    "recordedAt": "2026-10-22T02:58:39.481226+00:00",
+    "lastFetchedAt": "2026-10-22T02:38:26.449292+00:00",
     "auditBaseline": "b5b4b0880ae26f4b137242267b6674b51af8688c",
     "candidateBaseline": "249758e3f923a77e1b62d26a47e142c312642a5f",
     "historicalReview": {
@@ -15,7 +15,7 @@
       "contract": "Every upstream commit after the common ancestor through this tip was inspected by full patch; applicable behavior is either present, superseded by a stronger current contract, or explicitly conditional or rejected."
     }
   },
-  "forkCheckpoint": "6713df41c978b1c772159eae06f9c59c3e590d3f",
+  "forkCheckpoint": "e5cc9b9a3e188202ca532b538d7411ff0cd30b86",
   "candidates": [
     {
       "id": "typed-api-schemas",
@@ -1814,6 +1814,250 @@
       "workstream": "scarlett-sync/navigation-move-repair",
       "contract": "Implemented only explicit administrator-reviewed repair of selected supported custom-navigation targets after a real public page move. Native global navigation authority remains independent of page-move permission; signed current-principal/authVersion reviews fence history, old/new public identity/locale, page/protection/revision and navigation fingerprint under native locking. Actual move left navigation unchanged; real UI began unchecked and committed exactly one selection, preserving labels/icons/item IDs/order/audience and unselected targets. Forged/foreign/duplicate/stale, unauthenticated and newly protected requests were refused without policy mutation; fresh-policy restoration and 25 native PostgreSQL cases passed. Upstream automatic create/restore/delete/import/title/folder mutations, orphan-menu policy, UUID/ltree SQL, contextual owner menus and menu stacks remain explicitly not admitted. Authorized Browse is not claimed as parity for those rejected contextual-menu capabilities.",
       "lastReviewed": "2026-10-15"
+    },
+    {
+      "id": "retained-search-api-authority-2026-10-22",
+      "disposition": "supersede",
+      "state": "closed",
+      "commits": [
+        "cd7ce0301b01f7d618915472bb3bca386b377a26",
+        "81de1790b57e882c2fc26c8ba2b888a8efb4d8ac",
+        "206804fb56c77f82f829bcbd9bffb24e198a7f1d",
+        "9fb33cc7d5e9a35e31655b6d2842e1b7c3646180",
+        "f926702cdc6a9fd9ec3e3080c00d883b836f90bc"
+      ],
+      "category": "Retained authority and search",
+      "workstream": "retained-search-api-authority-2026-10-22",
+      "contract": "Keep permission-filtered typed-header page search and rich results; Bearer-only group service REST/GraphQL and resource-bound owner MCP credentials remain distinct. Reject general personal REST credentials and fictitious category scopes; system administration retains its explicit page-rule bypass. Review provenance for this 25-commit batch: judge triage returned 20 adapt, 1 mixed and 4 input-limit errors (not successful verdicts); 7 inputs were truncated, 0 commits excluded, and all 25 received manual substantive escalation. Generated migration snapshots/icon inventories and lockfile churn were assessed through executable schemas/manifests/published package metadata, not full-byte hand review. Active adaptations remain unverified and undeployed pending main-owned gates.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "retained-authored-navigation-2026-10-22",
+      "disposition": "supersede",
+      "state": "closed",
+      "commits": [
+        "bee444b59e9f7972597bf3c60dd716399c6c73c0",
+        "7a2fe677b1e67138fcfef7077e14d2f3cdc56484"
+      ],
+      "category": "Authored navigation",
+      "workstream": "retained-authored-navigation-2026-10-22",
+      "contract": "Custom navigation labels/icons/audience/order stay administrator-authored; never auto-insert absent move links or rewrite icons from a nonexistent page-icon field. Existing reviewed selected-target repair remains authoritative.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-index-branding-tags",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "4e4b5824cf63ca210065877f56ec45fbcaf4e4f7",
+        "81de1790b57e882c2fc26c8ba2b888a8efb4d8ac"
+      ],
+      "category": "Page index",
+      "workstream": "native-index-branding-tags",
+      "contract": "Optional index tags and verified image-derived Page Identity accents follow current page/asset authority and text-only DOM; no second icon palette, manual iconColor model, or image recoloring.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-revision-bound-git-reasons",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "bee444b59e9f7972597bf3c60dd716399c6c73c0"
+      ],
+      "category": "Storage",
+      "workstream": "native-revision-bound-git-reasons",
+      "contract": "Optional bounded save reasons travel in the existing durable job with their exact source revision; stale jobs never label newer canonical content with old reasons, and historical/absent reasons retain server-owned generic messages.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-browse-context-freshness",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "ee5d15680920876014b124fe62f5498e94016fba"
+      ],
+      "category": "Navigation",
+      "workstream": "native-browse-context-freshness",
+      "contract": "Returning from Custom to Browse refreshes a cache belonging to another page context through existing request ownership, preserving the visible list until replacement and reusing current-context caches.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "retained-print-utilities-2026-10-22",
+      "disposition": "supersede",
+      "state": "closed",
+      "commits": [
+        "ee5d15680920876014b124fe62f5498e94016fba",
+        "221c0ee14a653f1e9a73937b5c1b90f27a5c6945"
+      ],
+      "category": "Reader and administration",
+      "workstream": "retained-print-utilities-2026-10-22",
+      "contract": "Native print state/CSS already hides reader chrome; Utilities already uses a responsive navigation/workspace layout. Reject duplicate upstream print selectors, missing-page store logic and CSS-column transplant.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-theme-motion-navigation-loading",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "990d3ce566a3b1dad16a6788eadbae0d88c75cfa"
+      ],
+      "category": "Theme",
+      "workstream": "native-theme-motion-navigation-loading",
+      "contract": "Reviewed defaulted site settings gate page-entry motion and a decorative indeterminate navigation-load cue, preserving OS reduced motion, accessible loading and the independent reading-position bar.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-reviewed-locale-uninstall",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "990d3ce566a3b1dad16a6788eadbae0d88c75cfa"
+      ],
+      "category": "Locales",
+      "workstream": "native-reviewed-locale-uninstall",
+      "contract": "System-authorized reason/fingerprint-bound uninstall rechecks package jobs and all current references, protects bundled English and content/history, preserves catalog availability and refreshes runtime through the existing locale workspace. Queued local-file publication retains the original browser ownership and account generation so the bound review is checked against the same principal.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-collaborative-live-notes",
+      "disposition": "split",
+      "state": "completed",
+      "commits": [
+        "f7629aef38079dfe777f48f6870687bc62a7d052",
+        "1006b217b17bf2e3b1a86128223b9cd2c2f8167b",
+        "aca697f8e5e2524f283c3f6038911b49295fe362",
+        "bdcfcb041a10d73fb6e773e5c5a29d58a1202fc8",
+        "ee112a70350b1dc0b9128036c2932f58eaf95ab9"
+      ],
+      "category": "Live notes",
+      "workstream": "native-collaborative-live-notes",
+      "contract": "Standalone durable Markdown Yjs notes use /p/notes/:key documents, /p/notes inventory and /_api/live-notes/_socket transport within existing reserved namespaces, with no aliases or new Wiki path reservation; current pathless note permissions and private/read/edit policy apply, and keys are identities not credentials. Owner inventory, live Reader/Editor continuity, revisions/restore, ordinary page publication and conservative >24h never-edited-empty cleanup are required. Canonical Wiki assets retain their own ACLs; reject a parallel note-image store, anonymous writes and GET creation.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-source-scroll-contents",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "f7629aef38079dfe777f48f6870687bc62a7d052",
+        "41efedfe1abc88585e888c3daf936dd7723e20c4"
+      ],
+      "category": "Source editors",
+      "workstream": "native-source-scroll-contents",
+      "contract": "CodeMirror6 source/preview synchronization follows deliberate pane leadership with revision-matched maps and no feedback; parser-derived Markdown/AsciiDoc heading outlines remain useful with preview closed and preserve responsive native editing.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "retained-paste-asset-admission-2026-10-22",
+      "disposition": "supersede",
+      "state": "closed",
+      "commits": [
+        "2401366afce93e9370fb290db61307804c718b95"
+      ],
+      "category": "Assets",
+      "workstream": "retained-paste-asset-admission-2026-10-22",
+      "contract": "The fork has no active clipboard image staging/upload queue to collide; current insertion consumes native asset paths. A UUID-only patch would be inert, so do not claim paste-upload parity or add an unrequested upload lifecycle.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-avatar-crop",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "a98e5c7f59004943b257d54e06db6a004ffed965"
+      ],
+      "category": "Profile",
+      "workstream": "native-avatar-crop",
+      "contract": "A bounded accessible crop/position stage gates existing account-bound multipart upload; Cancel/stale identity never mutates, controls support keyboard/pointer/reduced motion and server raster canonicalization remains authoritative.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-blockquote-author-attribution",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "a53dea81734a29428729b7043f4aaabf57e41de1"
+      ],
+      "category": "Markdown",
+      "workstream": "native-blockquote-author-attribution",
+      "contract": "Shared server/preview quote-author syntax recognizes the first-paragraph marker, renders escaped plain-text attribution and survives native Tiptap edit/serialize/reopen without broadening HTML/link policy.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-mcp-client-onboarding",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "206804fb56c77f82f829bcbd9bffb24e198a7f1d",
+        "8e3a3b1fc06cf4daf8cd7864c46cbf77d16c5056",
+        "f926702cdc6a9fd9ec3e3080c00d883b836f90bc"
+      ],
+      "category": "MCP onboarding",
+      "workstream": "native-mcp-client-onboarding",
+      "contract": "Current server-provided endpoint generates supported client setup examples with token placeholders; one-time secret/account boundaries remain intact. System administrators are warned that read-only retains their unrestricted page-read authority; no fake per-area scope picker.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-mcp-owner-admission-glossary",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "9748459055f67420b5e1b6d87b4d36c5c999f731",
+        "8e3a3b1fc06cf4daf8cd7864c46cbf77d16c5056"
+      ],
+      "category": "MCP",
+      "workstream": "native-mcp-owner-admission-glossary",
+      "contract": "Bounded process-local per-owner inbound admission is shared across keys and reports Retry-After. Read-only bounded glossary tools reuse native locale/documentation access; no direct content mutation. Personal principals carry the freshly resolved owner's account generation without gaining a browser-user id. Existing signed patch-read requestedRanges cover source windows without weakening full-read citation evidence.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "retained-mcp-resource-human-approval-2026-10-22",
+      "disposition": "supersede",
+      "state": "closed",
+      "commits": [
+        "9748459055f67420b5e1b6d87b4d36c5c999f731",
+        "8e3a3b1fc06cf4daf8cd7864c46cbf77d16c5056"
+      ],
+      "category": "MCP authority",
+      "workstream": "retained-mcp-resource-human-approval-2026-10-22",
+      "contract": "Treat specification as design intent, not shipped proof. Retain SDK transport, MCP-only personal resource keys, live owner permissions and universal human approval for page proposals; do not import direct writes, dynamic OAuth authorization-server grants or external-client OAuth state into inbound authentication. Inbound OAuth is not claimed as present.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-fixed-mail-public-origin",
+      "disposition": "adapt",
+      "state": "completed",
+      "commits": [
+        "09000c27734eb8d0be67b32aad24129f2bc9af40"
+      ],
+      "category": "Mail safety",
+      "workstream": "native-fixed-mail-public-origin",
+      "contract": "Keep configured-origin-only account/watch links; reject wildcard/encoded-star public settings and legacy unsafe or foreign/same-origin non-HTTP(S) action links before transport, while preserving linkless SMTP diagnostics and fixed local/tailnet/IPv6 origins.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "native-dependency-refresh-2026-10-22",
+      "disposition": "adopt",
+      "state": "completed",
+      "commits": [
+        "36946b25d19a86c9a021fcefae83dbc7cb0a06ac"
+      ],
+      "category": "Dependencies",
+      "workstream": "native-dependency-refresh-2026-10-22",
+      "contract": "Update only fourteen compatible direct consumers, including exact Vue/compiler alignment; regenerate the maintained Asciidoctor patch against the exact new package rather than reuse old hunk offsets, retain Bun/Undici/other overrides and regenerate the complete cross-platform license inventory. No dependency additions for upstream frameworks. Retain the fork PostgreSQL support floor; upstream database-version assumptions do not raise it. Inert native template parsing replaces the sole browser Cheerio consumer without reducing rich preview or sanitizer capabilities, preserving the existing bundle budgets.",
+      "lastReviewed": "2026-10-22"
+    },
+    {
+      "id": "retained-emoji-rolldown-2026-10-22",
+      "disposition": "supersede",
+      "state": "closed",
+      "commits": [
+        "6a29e15762656c6691bdebf1a5adfa1ee1fb4da4"
+      ],
+      "category": "Build",
+      "workstream": "retained-emoji-rolldown-2026-10-22",
+      "contract": "Retain provenance-pinned local Twemoji14 assets and parser, existing rolldownOptions, exact product identity and meaningful warnings. Upstream Twemoji17 regression, client-only React directives and framework/runtime URL externals do not justify a parser migration or blanket warning suppression.",
+      "lastReviewed": "2026-10-22"
     }
   ],
   "coverage": [
@@ -4881,6 +5125,216 @@
       ],
       "classification": "accepted-rewrite",
       "reason": "Supplemental commit, parent ac0b3a371b8abd5266a148a5094029980ccc849a; subject feat: navigation menus automations + admin options; committedAt 2026-10-14T20:06:22-04:00. Main's local://scarlett-late-navigation-assessment.json applies the unchanged frozen rubric: feature_candidate 0.96, mixed 0.04, confidence 0.95, sensitive_behavior 0.97; classification input was truncated to 96000 of 170551 substantive characters. Full substantive manual review is recorded by agent://LateNavigationAssessment; generated Drizzle snapshots, generated icon inventory and static icon artwork were explicitly excluded, not treated as executable scope. Adapt only administrator-reviewed post-move custom-target repair under native authority and current policy, not contextual menu automation. Initial 48-commit assessment remains valid; this supplemental 1 makes 49 newly assessed commits and 492 total coverage entries, with 143 candidates: 16 active, 36 closed and 91 completed. All previous 142 candidates and their states remain unchanged; pending implementation/UI/deployment proof is not completion. Assessor observed upstream/scarlett fast-forward fetch reflog at 2026-10-15T02:14:32+00:00 resolving to this SHA; upstream.lastFetchedAt records that actual fetch observation, not script generatedAt. No other new commit was found at that observation; this is a frozen-frontier fact, not a claim about future upstream changes."
+    },
+    {
+      "commit": "cd7ce0301b01f7d618915472bb3bca386b377a26",
+      "candidateIds": [
+        "retained-search-api-authority-2026-10-22"
+      ],
+      "classification": "retained-native-contract",
+      "reason": "Keep permission-filtered typed-header page search and rich results; Bearer-only group service REST/GraphQL and resource-bound owner MCP credentials remain distinct. Reject general personal REST credentials and fictitious category scopes; system administration retains its explicit page-rule bypass. Judge triage failed with an input-limit error; no successful judge verdict exists. Decision follows manual substantive escalation. Judge input was truncated; generated snapshots/locks are not claimed as full-byte reviewed."
+    },
+    {
+      "commit": "bee444b59e9f7972597bf3c60dd716399c6c73c0",
+      "candidateIds": [
+        "retained-authored-navigation-2026-10-22",
+        "native-revision-bound-git-reasons"
+      ],
+      "classification": "accepted-native-split",
+      "reason": "Custom navigation labels/icons/audience/order stay administrator-authored; never auto-insert absent move links or rewrite icons from a nonexistent page-icon field. Existing reviewed selected-target repair remains authoritative. Optional bounded save reasons travel in the existing durable job with their exact source revision; stale jobs never label newer canonical content with old reasons, and historical/absent reasons retain server-owned generic messages. Judge triage failed with an input-limit error; no successful judge verdict exists. Decision follows manual substantive escalation. Judge input was truncated; generated snapshots/locks are not claimed as full-byte reviewed."
+    },
+    {
+      "commit": "7a2fe677b1e67138fcfef7077e14d2f3cdc56484",
+      "candidateIds": [
+        "retained-authored-navigation-2026-10-22"
+      ],
+      "classification": "retained-native-contract",
+      "reason": "Custom navigation labels/icons/audience/order stay administrator-authored; never auto-insert absent move links or rewrite icons from a nonexistent page-icon field. Existing reviewed selected-target repair remains authoritative. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "4e4b5824cf63ca210065877f56ec45fbcaf4e4f7",
+      "candidateIds": [
+        "native-index-branding-tags"
+      ],
+      "classification": "accepted-native-adaptation",
+      "reason": "Optional index tags and verified image-derived Page Identity accents follow current page/asset authority and text-only DOM; no second icon palette, manual iconColor model, or image recoloring. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "81de1790b57e882c2fc26c8ba2b888a8efb4d8ac",
+      "candidateIds": [
+        "retained-search-api-authority-2026-10-22",
+        "native-index-branding-tags"
+      ],
+      "classification": "accepted-native-split",
+      "reason": "Keep permission-filtered typed-header page search and rich results; Bearer-only group service REST/GraphQL and resource-bound owner MCP credentials remain distinct. Reject general personal REST credentials and fictitious category scopes; system administration retains its explicit page-rule bypass. Optional index tags and verified image-derived Page Identity accents follow current page/asset authority and text-only DOM; no second icon palette, manual iconColor model, or image recoloring. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "206804fb56c77f82f829bcbd9bffb24e198a7f1d",
+      "candidateIds": [
+        "retained-search-api-authority-2026-10-22",
+        "native-mcp-client-onboarding"
+      ],
+      "classification": "accepted-native-split",
+      "reason": "Keep permission-filtered typed-header page search and rich results; Bearer-only group service REST/GraphQL and resource-bound owner MCP credentials remain distinct. Reject general personal REST credentials and fictitious category scopes; system administration retains its explicit page-rule bypass. Current server-provided endpoint generates supported client setup examples with token placeholders; one-time secret/account boundaries remain intact. System administrators are warned that read-only retains their unrestricted page-read authority; no fake per-area scope picker. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance. Judge input was truncated; generated snapshots/locks are not claimed as full-byte reviewed."
+    },
+    {
+      "commit": "9fb33cc7d5e9a35e31655b6d2842e1b7c3646180",
+      "candidateIds": [
+        "retained-search-api-authority-2026-10-22"
+      ],
+      "classification": "retained-native-contract",
+      "reason": "Keep permission-filtered typed-header page search and rich results; Bearer-only group service REST/GraphQL and resource-bound owner MCP credentials remain distinct. Reject general personal REST credentials and fictitious category scopes; system administration retains its explicit page-rule bypass. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "ee5d15680920876014b124fe62f5498e94016fba",
+      "candidateIds": [
+        "native-browse-context-freshness",
+        "retained-print-utilities-2026-10-22"
+      ],
+      "classification": "accepted-native-split",
+      "reason": "Returning from Custom to Browse refreshes a cache belonging to another page context through existing request ownership, preserving the visible list until replacement and reusing current-context caches. Native print state/CSS already hides reader chrome; Utilities already uses a responsive navigation/workspace layout. Reject duplicate upstream print selectors, missing-page store logic and CSS-column transplant. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "990d3ce566a3b1dad16a6788eadbae0d88c75cfa",
+      "candidateIds": [
+        "native-theme-motion-navigation-loading",
+        "native-reviewed-locale-uninstall"
+      ],
+      "classification": "accepted-native-split",
+      "reason": "Reviewed defaulted site settings gate page-entry motion and a decorative indeterminate navigation-load cue, preserving OS reduced motion, accessible loading and the independent reading-position bar. System-authorized reason/fingerprint-bound uninstall rechecks package jobs and all current references, protects bundled English and content/history, preserves catalog availability and refreshes runtime through the existing locale workspace. Judge triage failed with an input-limit error; no successful judge verdict exists. Decision follows manual substantive escalation. Judge input was truncated; generated snapshots/locks are not claimed as full-byte reviewed."
+    },
+    {
+      "commit": "221c0ee14a653f1e9a73937b5c1b90f27a5c6945",
+      "candidateIds": [
+        "retained-print-utilities-2026-10-22"
+      ],
+      "classification": "retained-native-contract",
+      "reason": "Native print state/CSS already hides reader chrome; Utilities already uses a responsive navigation/workspace layout. Reject duplicate upstream print selectors, missing-page store logic and CSS-column transplant. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "f7629aef38079dfe777f48f6870687bc62a7d052",
+      "candidateIds": [
+        "native-collaborative-live-notes",
+        "native-source-scroll-contents"
+      ],
+      "classification": "accepted-security-split",
+      "reason": "Standalone durable Markdown Yjs notes use /p/notes/:key documents, /p/notes inventory and /_api/live-notes/_socket transport within existing reserved namespaces, with no aliases or new Wiki path reservation; current pathless note permissions and private/read/edit policy apply, and keys are identities not credentials. Owner inventory, live Reader/Editor continuity, revisions/restore, ordinary page publication and conservative >24h never-edited-empty cleanup are required. Canonical Wiki assets retain their own ACLs; reject a parallel note-image store, anonymous writes and GET creation. CodeMirror6 source/preview synchronization follows deliberate pane leadership with revision-matched maps and no feedback; parser-derived Markdown/AsciiDoc heading outlines remain useful with preview closed and preserve responsive native editing. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance. Judge input was truncated; generated snapshots/locks are not claimed as full-byte reviewed."
+    },
+    {
+      "commit": "1006b217b17bf2e3b1a86128223b9cd2c2f8167b",
+      "candidateIds": [
+        "native-collaborative-live-notes"
+      ],
+      "classification": "accepted-security-split",
+      "reason": "Standalone durable Markdown Yjs notes use /p/notes/:key documents, /p/notes inventory and /_api/live-notes/_socket transport within existing reserved namespaces, with no aliases or new Wiki path reservation; current pathless note permissions and private/read/edit policy apply, and keys are identities not credentials. Owner inventory, live Reader/Editor continuity, revisions/restore, ordinary page publication and conservative >24h never-edited-empty cleanup are required. Canonical Wiki assets retain their own ACLs; reject a parallel note-image store, anonymous writes and GET creation. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "aca697f8e5e2524f283c3f6038911b49295fe362",
+      "candidateIds": [
+        "native-collaborative-live-notes"
+      ],
+      "classification": "accepted-security-split",
+      "reason": "Standalone durable Markdown Yjs notes use /p/notes/:key documents, /p/notes inventory and /_api/live-notes/_socket transport within existing reserved namespaces, with no aliases or new Wiki path reservation; current pathless note permissions and private/read/edit policy apply, and keys are identities not credentials. Owner inventory, live Reader/Editor continuity, revisions/restore, ordinary page publication and conservative >24h never-edited-empty cleanup are required. Canonical Wiki assets retain their own ACLs; reject a parallel note-image store, anonymous writes and GET creation. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "2401366afce93e9370fb290db61307804c718b95",
+      "candidateIds": [
+        "retained-paste-asset-admission-2026-10-22"
+      ],
+      "classification": "retained-native-contract",
+      "reason": "The fork has no active clipboard image staging/upload queue to collide; current insertion consumes native asset paths. A UUID-only patch would be inert, so do not claim paste-upload parity or add an unrequested upload lifecycle. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "a98e5c7f59004943b257d54e06db6a004ffed965",
+      "candidateIds": [
+        "native-avatar-crop"
+      ],
+      "classification": "accepted-native-adaptation",
+      "reason": "A bounded accessible crop/position stage gates existing account-bound multipart upload; Cancel/stale identity never mutates, controls support keyboard/pointer/reduced motion and server raster canonicalization remains authoritative. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "41efedfe1abc88585e888c3daf936dd7723e20c4",
+      "candidateIds": [
+        "native-source-scroll-contents"
+      ],
+      "classification": "accepted-native-adaptation",
+      "reason": "CodeMirror6 source/preview synchronization follows deliberate pane leadership with revision-matched maps and no feedback; parser-derived Markdown/AsciiDoc heading outlines remain useful with preview closed and preserve responsive native editing. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "bdcfcb041a10d73fb6e773e5c5a29d58a1202fc8",
+      "candidateIds": [
+        "native-collaborative-live-notes"
+      ],
+      "classification": "accepted-security-split",
+      "reason": "Standalone durable Markdown Yjs notes use /p/notes/:key documents, /p/notes inventory and /_api/live-notes/_socket transport within existing reserved namespaces, with no aliases or new Wiki path reservation; current pathless note permissions and private/read/edit policy apply, and keys are identities not credentials. Owner inventory, live Reader/Editor continuity, revisions/restore, ordinary page publication and conservative >24h never-edited-empty cleanup are required. Canonical Wiki assets retain their own ACLs; reject a parallel note-image store, anonymous writes and GET creation. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "ee112a70350b1dc0b9128036c2932f58eaf95ab9",
+      "candidateIds": [
+        "native-collaborative-live-notes"
+      ],
+      "classification": "accepted-security-split",
+      "reason": "Standalone durable Markdown Yjs notes use /p/notes/:key documents, /p/notes inventory and /_api/live-notes/_socket transport within existing reserved namespaces, with no aliases or new Wiki path reservation; current pathless note permissions and private/read/edit policy apply, and keys are identities not credentials. Owner inventory, live Reader/Editor continuity, revisions/restore, ordinary page publication and conservative >24h never-edited-empty cleanup are required. Canonical Wiki assets retain their own ACLs; reject a parallel note-image store, anonymous writes and GET creation. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance. Judge input was truncated; generated snapshots/locks are not claimed as full-byte reviewed."
+    },
+    {
+      "commit": "a53dea81734a29428729b7043f4aaabf57e41de1",
+      "candidateIds": [
+        "native-blockquote-author-attribution"
+      ],
+      "classification": "accepted-native-adaptation",
+      "reason": "Shared server/preview quote-author syntax recognizes the first-paragraph marker, renders escaped plain-text attribution and survives native Tiptap edit/serialize/reopen without broadening HTML/link policy. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "9748459055f67420b5e1b6d87b4d36c5c999f731",
+      "candidateIds": [
+        "native-mcp-owner-admission-glossary",
+        "retained-mcp-resource-human-approval-2026-10-22"
+      ],
+      "classification": "accepted-security-split",
+      "reason": "Bounded per-owner inbound admission is shared across keys and reports Retry-After. Read-only bounded glossary tools reuse native locale/documentation access; no direct content mutation. Existing signed patch-read requestedRanges cover source windows without weakening full-read citation evidence. Treat specification as design intent, not shipped proof. Retain SDK transport, MCP-only personal resource keys, live owner permissions and universal human approval for page proposals; do not import direct writes, dynamic OAuth authorization-server grants or external-client OAuth state into inbound authentication. Inbound OAuth is not claimed as present. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "8e3a3b1fc06cf4daf8cd7864c46cbf77d16c5056",
+      "candidateIds": [
+        "native-mcp-client-onboarding",
+        "native-mcp-owner-admission-glossary",
+        "retained-mcp-resource-human-approval-2026-10-22"
+      ],
+      "classification": "accepted-security-split",
+      "reason": "Current server-provided endpoint generates supported client setup examples with token placeholders; one-time secret/account boundaries remain intact. System administrators are warned that read-only retains their unrestricted page-read authority; no fake per-area scope picker. Bounded per-owner inbound admission is shared across keys and reports Retry-After. Read-only bounded glossary tools reuse native locale/documentation access; no direct content mutation. Existing signed patch-read requestedRanges cover source windows without weakening full-read citation evidence. Treat specification as design intent, not shipped proof. Retain SDK transport, MCP-only personal resource keys, live owner permissions and universal human approval for page proposals; do not import direct writes, dynamic OAuth authorization-server grants or external-client OAuth state into inbound authentication. Inbound OAuth is not claimed as present. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance. Judge input was truncated; generated snapshots/locks are not claimed as full-byte reviewed."
+    },
+    {
+      "commit": "09000c27734eb8d0be67b32aad24129f2bc9af40",
+      "candidateIds": [
+        "native-fixed-mail-public-origin"
+      ],
+      "classification": "accepted-native-adaptation",
+      "reason": "Keep configured-origin-only account/watch links; reject wildcard/encoded-star public settings and legacy unsafe or foreign/same-origin non-HTTP(S) action links before transport, while preserving linkless SMTP diagnostics and fixed local/tailnet/IPv6 origins. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "f926702cdc6a9fd9ec3e3080c00d883b836f90bc",
+      "candidateIds": [
+        "retained-search-api-authority-2026-10-22",
+        "native-mcp-client-onboarding"
+      ],
+      "classification": "accepted-native-split",
+      "reason": "Keep permission-filtered typed-header page search and rich results; Bearer-only group service REST/GraphQL and resource-bound owner MCP credentials remain distinct. Reject general personal REST credentials and fictitious category scopes; system administration retains its explicit page-rule bypass. Current server-provided endpoint generates supported client setup examples with token placeholders; one-time secret/account boundaries remain intact. System administrators are warned that read-only retains their unrestricted page-read authority; no fake per-area scope picker. Judge triage: adapt; final decision follows manual substantive escalation, not automatic acceptance."
+    },
+    {
+      "commit": "36946b25d19a86c9a021fcefae83dbc7cb0a06ac",
+      "candidateIds": [
+        "native-dependency-refresh-2026-10-22"
+      ],
+      "classification": "accepted-native-adaptation",
+      "reason": "Update only fourteen compatible direct consumers, including exact Vue/compiler alignment; regenerate the maintained Asciidoctor patch against the exact 4.1.1 package, never reuse old hunk offsets, retain Bun/Undici/other overrides and regenerate the complete cross-platform license inventory. No dependency additions for upstream frameworks. Retain the fork PostgreSQL support floor; do not adopt an upstream floor increase. Frozen installation, unsuppressed production audit, license inventory, budgeted image build and actual rich AsciiDoc browser preview passed. Judge triage failed with an input-limit error; no successful judge verdict exists. Decision follows manual substantive escalation."
+    },
+    {
+      "commit": "6a29e15762656c6691bdebf1a5adfa1ee1fb4da4",
+      "candidateIds": [
+        "retained-emoji-rolldown-2026-10-22"
+      ],
+      "classification": "retained-native-contract",
+      "reason": "Retain provenance-pinned local Twemoji14 assets and parser, existing rolldownOptions, exact product identity and meaningful warnings. Upstream Twemoji17 regression, client-only React directives and framework/runtime URL externals do not justify a parser migration or blanket warning suppression. Judge triage: mixed; final decision follows manual substantive escalation, not automatic acceptance. This intake inspected all 25 commits and 256 changed paths after 75f5bf04 through this frozen tip: the frozen judge rubric produced 20 adapt, 1 mixed and 4 input-limit failures, with every commit manually escalated and no prefilter exclusions. Thirteen new native workstreams are completed and six retained/rejected workstreams are closed; the ledger contains 162 candidates and 517 coverage entries while preserving the previous 143 candidates and 492 coverage records. Verification includes 666 ordinary test files, 185 distinct risk-selected native PostgreSQL cases across nine files, complete static checks, unchanged image bundle budgets and focused deployed browser/API flows. Existing authority, provider/storage enablement, configuration, secrets, PostgreSQL and content were preserved; ordinary smoke audit/history records were retained."
     }
   ]
 }

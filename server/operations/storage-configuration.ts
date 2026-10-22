@@ -140,7 +140,8 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
           // state() owns ordered target UPDATE locks. Canonical admission holds SHARE
           // locks through commit, so no admitted old-destination work can pass this check.
           const outstanding = await tx('durableJobs')
-            .where({ type: 'storage-mutation', version: 1 })
+            .where('type', 'storage-mutation')
+            .whereIn('version', [1, 2])
             .whereNot('state', 'succeeded')
             .whereRaw("??::jsonb ->> 'targetKey' = ?", ['payload', original.key])
             .first('id')

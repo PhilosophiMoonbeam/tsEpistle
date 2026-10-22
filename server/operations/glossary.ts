@@ -41,7 +41,7 @@ export interface GlossaryOperations {
   access(context: GlossaryRequestContext, locale: unknown): Promise<GlossaryAccess>
   list(context: GlossaryRequestContext, input: GlossaryCatalogInput): Promise<GlossaryPage<GlossaryTermSummary>>
   autolink(context: GlossaryRequestContext, input: GlossaryCatalogInput): Promise<GlossaryPage<GlossaryAutolinkTerm>>
-  get(context: GlossaryRequestContext, id: unknown): Promise<GlossaryTerm>
+  get(context: GlossaryRequestContext, id: unknown, locale?: unknown): Promise<GlossaryTerm>
   lookup(context: GlossaryRequestContext, locale: unknown, name: unknown): Promise<GlossaryTerm>
   create(context: GlossaryRequestContext, input: unknown): Promise<GlossaryTerm>
   update(context: GlossaryRequestContext, id: unknown, input: unknown): Promise<GlossaryTerm>
@@ -271,11 +271,11 @@ export const createGlossaryOperations = (deps: Dependencies): GlossaryOperations
       updatedAt: new Date(row.updatedAt).toISOString()
     }
   }
-  const load = async (tx: Knex.Transaction, context: RequestContext, rawId: unknown) => {
+  const load = async (tx: Knex.Transaction, context: RequestContext, rawId: unknown, rawLocale?: unknown) => {
     if (!deps.enabled()) return fail('Glossary is disabled.', 404, 'GLOSSARY_DISABLED')
-    const row = await tx<TermRow>('glossaryTerms')
-      .where({ id: positiveInteger(rawId) })
-      .first()
+    const query = tx<TermRow>('glossaryTerms').where({ id: positiveInteger(rawId) })
+    if (rawLocale !== undefined) query.where({ locale: localeValue(rawLocale) })
+    const row = await query.first()
     if (!row) return notFound()
     const authority = await authorize(tx, context, row.locale)
     return { row, authority }
@@ -428,9 +428,9 @@ export const createGlossaryOperations = (deps: Dependencies): GlossaryOperations
     },
     list: (context: RequestContext, input: CatalogInput) => catalog(context, input),
     autolink: (context: RequestContext, input: CatalogInput) => catalog(context, input, true),
-    async get(context: RequestContext, id: unknown): Promise<GlossaryTerm> {
+    async get(context: RequestContext, id: unknown, locale?: unknown): Promise<GlossaryTerm> {
       return deps.db.transaction(async tx => {
-        const { row, authority } = await load(tx, context, id)
+        const { row, authority } = await load(tx, context, id, locale)
         return project(tx, context, authority, row)
       })
     },

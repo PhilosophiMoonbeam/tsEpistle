@@ -3,6 +3,7 @@ import { isRecord } from './type-guards'
 import { parseCollaborationSession, type CollaborationSession } from '../../shared/collaboration'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import { PageFeaturesSchema, normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
+import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import {
   offlineIneligibleReason,
   OfflinePageSnapshotV1Schema,
@@ -1094,6 +1095,7 @@ export type PageWriteInput = {
   scriptJs: string
   tags: string[]
   title: string
+  changeReason?: string
   okfMetadata?: Record<string, unknown>
   pageFeatures?: PageFeatures
   branding?: PageBrandingAssignment | null
@@ -1154,6 +1156,12 @@ function normalizePageFeaturesWrite(value: unknown, fallbackMessage: string): Pa
 function normalizePageWriteInput(input: PageWriteInput, fallbackMessage: string): PageWriteInput {
   if (!isRecord(input)) throw new Error(fallbackMessage)
   let normalizedInput = input
+  if (Object.hasOwn(input, 'changeReason')) {
+    const reason = PageChangeReasonSchema.safeParse(input.changeReason)
+    if (!reason.success) throw new Error(fallbackMessage)
+    const { changeReason: _reason, ...rest } = normalizedInput
+    normalizedInput = reason.data === undefined ? rest : { ...rest, changeReason: reason.data }
+  }
   if (input.pageFeatures !== undefined) {
     normalizedInput = { ...normalizedInput, pageFeatures: normalizePageFeaturesWrite(input.pageFeatures, fallbackMessage) }
   }
@@ -1824,10 +1832,13 @@ export async function restorePageVersion(
         !isPositiveSafeInteger(payload.id) ||
         typeof payload.sourceRevision !== 'string' ||
         !/^[1-9][0-9]*$/u.test(payload.sourceRevision) ||
-        typeof payload.locale !== 'string' || !payload.locale ||
-        typeof payload.path !== 'string' || !payload.path ||
+        typeof payload.locale !== 'string' ||
+        !payload.locale ||
+        typeof payload.path !== 'string' ||
+        !payload.path ||
         (payload.visibility !== 'public' && payload.visibility !== 'private')
-      ) throw new Error(fallbackMessage)
+      )
+        throw new Error(fallbackMessage)
       return {
         id: payload.id,
         sourceRevision: payload.sourceRevision,

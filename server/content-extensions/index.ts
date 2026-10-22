@@ -1,12 +1,8 @@
 import type { ContentExtensionEnvelope } from '../../shared/content-extensions.ts'
 import { sanitizeContentExtensionFragment } from './sanitize.ts'
 
-const escapeHtml = (value: string): string => value
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;')
-  .replaceAll("'", '&#39;')
+const escapeHtml = (value: string): string =>
+  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
 
 export const renderIndexContentExtension = async (envelope: ContentExtensionEnvelope): Promise<string> => {
   if (envelope.key !== 'index') throw new TypeError('Page index renderer received another content extension type.')
@@ -20,10 +16,12 @@ export const renderIndexContentExtension = async (envelope: ContentExtensionEnve
       `data-index-depth="${props.depth ?? 0}" ` +
       `data-index-columns="${props.columns ?? 2}" ` +
       `data-index-show-icons="${props.showIcons === true ? 'true' : 'false'}" ` +
+      `data-index-show-tags="${props.showTags === true ? 'true' : 'false'}" ` +
+      `data-index-show-page-accent="${props.showPageAccent === true ? 'true' : 'false'}" ` +
       `data-index-order="${props.order ?? 'path'}" ` +
       `data-index-limit="${props.limit ?? 50}" ` +
       `data-index-empty-label="${escapeHtml(emptyLabel)}">` +
       `<p class="content-extension-index__status">Loading page index…</p>` +
-    `</section>`
+      `</section>`
   )
 }

@@ -80,6 +80,55 @@ suite('PostgreSQL reviewed Theme settings', () => {
     expect((await read()).policy.palettes).toEqual([second])
     expect((await read()).policy.reading).toEqual({ textSize: 19, lineHeight: 1.8, copyWidth: 68 })
   })
+  it('persists independently reviewed navigation settings, fences stale reviews and observes runtime activation', async () => {
+    let observed = structuredClone(themePolicyDefaults)
+    store = createThemeAdministrationStore({
+      db,
+      reviewKey: 'fixture-key',
+      fallback: () => ({}),
+      runtime: () => observed,
+      onCommitted: async () => {
+        observed = themePolicyFromConfiguration({
+          theming: (await db('settings').where('key', 'theming').first()).value
+        })
+        return true
+      }
+    })
+    await db('groups').where('id', 2).update({ permissions: '["manage:theme"]' })
+    const delegated = { id: 3, authVersion: 0 } as never
+    const original = await store.inspect(delegated)
+    expect(original.policy.pageTransitions).toBe(true)
+    expect(original.policy.showPageProgress).toBe(false)
+    expect(
+      await store.save(delegated, {
+        policy: { ...original.policy, pageTransitions: false, showPageProgress: true },
+        fingerprint: original.fingerprint,
+        reason: 'Offer navigation feedback without route motion'
+      })
+    ).toEqual({ activation: 'applied' })
+    const published = await store.inspect(delegated)
+    expect(published.policy).toMatchObject({ pageTransitions: false, showPageProgress: true })
+    expect(published.runtime.state).toBe('applied')
+    expect(published.history[0]).toMatchObject({ actorId: 3, fields: ['pageTransitions', 'showPageProgress'] })
+    expect((await db('settings').where('key', 'theming').first()).value).toMatchObject({
+      pageTransitions: false,
+      showPageProgress: true,
+      retained: 'future-option'
+    })
+    await expect(
+      store.save(delegated, {
+        policy: { ...original.policy, showPageProgress: true },
+        fingerprint: original.fingerprint,
+        reason: 'Reject an obsolete navigation review'
+      })
+    ).rejects.toMatchObject({ status: 409 })
+    await store.save(delegated, {
+      policy: { ...published.policy, showPageProgress: false },
+      fingerprint: published.fingerprint,
+      reason: 'Hide only the decorative navigation cue'
+    })
+    expect((await store.inspect(delegated)).policy).toMatchObject({ pageTransitions: false, showPageProgress: false })
+  })
   it('persists reviewed code appearance and fences obsolete reviews without accepting stylesheet names', async () => {
     const original = await read()
     expect(original.policy.codeTheme).toBe('native')

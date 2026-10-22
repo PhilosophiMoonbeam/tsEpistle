@@ -2,6 +2,7 @@ import { setImmediate as yieldEventLoop } from 'node:timers/promises'
 
 import {
   buildOkfMetadataPayload,
+  createPage,
   deletePage,
   discardCollaborationDraft,
   fetchMoveLinkReview,
@@ -614,6 +615,50 @@ describe('pages api helper', () => {
     await expect(updatePage(fetchImpl, 7, {}, '0')).rejects.toThrow('Page update failed')
     await expect(updatePage(fetchImpl, 7, {}, '8', 0)).rejects.toThrow('Page update failed')
   })
+  test('transports normalized optional save reasons on create and update without changing the page source', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } }))
+    await createPage(fetchImpl, { content: 'Exact source', changeReason: '  Explain the example  ' })
+    await updatePage(fetchImpl, 7, { content: 'New exact source', changeReason: '--amend is only a message' }, '8')
+    await updatePage(fetchImpl, 7, { content: 'No annotation', changeReason: '   ' }, '9')
+    await updatePage(fetchImpl, 7, { content: 'Bounded reason', changeReason: 'x'.repeat(200) }, '9')
+    await createPage(fetchImpl, { content: 'Ordinary create source', changeReason: 'reason' })
+    await updatePage(fetchImpl, 7, { content: 'Ordinary update source', changeReason: 'reason' }, '9')
+    const bodies = fetchImpl.mock.calls.map(([, init]) => JSON.parse(init.body))
+    expect(bodies[0]).toMatchObject({ content: 'Exact source', changeReason: 'Explain the example' })
+    expect(bodies[1]).toMatchObject({ content: 'New exact source', changeReason: '--amend is only a message', expectedSourceRevision: '8' })
+    expect(bodies[2]).not.toHaveProperty('changeReason')
+    expect(bodies[3].changeReason).toBe('x'.repeat(200))
+    expect(bodies[4]).toMatchObject({ content: 'Ordinary create source', changeReason: 'reason' })
+    expect(bodies[5]).toMatchObject({ content: 'Ordinary update source', changeReason: 'reason', expectedSourceRevision: '9' })
+  })
+
+  test.each(
+    [
+      null,
+      1,
+      {},
+      ['reason'],
+      'x'.repeat(201),
+      ' '.repeat(201),
+      'line\nbreak',
+      'line\rbreak',
+      'tab\tcontrol',
+      '\u007fdelete',
+      '\u0085next line',
+      '\u2028separator',
+      '\u2029paragraph',
+      '\u061cbidi',
+      '\u200ebidi',
+      '\u202ebidi',
+      '\u2066bidi'
+    ].map(changeReason => [changeReason])
+  )('rejects an invalid save reason before dispatching either page writer: %p', async changeReason => {
+    const fetchImpl = vi.fn()
+    await expect(createPage(fetchImpl, { changeReason })).rejects.toThrow('Page creation failed')
+    await expect(updatePage(fetchImpl, 7, { changeReason }, '8')).rejects.toThrow('Page update failed')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   test('updates only page features under the source-revision concurrency contract', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } }))
 
@@ -1046,9 +1091,16 @@ describe('pages api helper', () => {
     { path: '' },
     { visibility: 'unknown' }
   ])('rejects an unbound restore receipt: %j', async invalid => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      id: 42, sourceRevision: '9', locale: 'en', path: 'docs/alpha', visibility: 'public', ...invalid
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        id: 42,
+        sourceRevision: '9',
+        locale: 'en',
+        path: 'docs/alpha',
+        visibility: 'public',
+        ...invalid
+      })
+    )
     await expect(restorePageVersion(fetchImpl, 42, 9, '8')).rejects.toThrow('Page restore failed')
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })

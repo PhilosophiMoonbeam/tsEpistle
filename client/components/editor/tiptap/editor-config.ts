@@ -34,6 +34,7 @@ import {
   WikiSuperscript
 } from './dialect.ts'
 import { parseWikiLinkAt, resolveWikiLinkHref, serializeWikiLink, WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
+import { extendAttributedBlockquote } from './blockquote.ts'
 
 export type VisualEditorFormat = 'html' | 'markdown'
 
@@ -57,6 +58,12 @@ const DEFINITION_BY_FORMAT: Record<VisualEditorFormat, VisualEditorDefinition> =
     label: 'Visual Markdown'
   }
 }
+
+const AttributedStarterKit = StarterKit.extend({
+  addExtensions() {
+    return this.parent!().map(extension => (extension.name === 'blockquote' && extension instanceof Node ? extendAttributedBlockquote(extension) : extension))
+  }
+})
 
 const GlobalHtmlAttributes = Extension.create({
   name: 'globalHtmlAttributes',
@@ -367,7 +374,7 @@ export function getVisualEditorDefinition(format: VisualEditorFormat): VisualEdi
 export function createTiptapExtensions(format: VisualEditorFormat, wikiLinks: WikiLinkOptions = WIKI_LINKS_DISABLED): Extensions {
   const isMarkdown = format === 'markdown'
   return [
-    StarterKit.configure({
+    AttributedStarterKit.configure({
       link: false,
       codeBlock: {
         HTMLAttributes: { class: 'wiki-code-block' }
@@ -452,10 +459,10 @@ export class VisualEditorSource {
   }
 
   replaceText(source: string): void {
-    this.editor.commands.setContent(
-      this.format === 'markdown' ? prepareTiptapMarkdown(source) : prepareTiptapHtml(source),
-      { contentType: this.format, emitUpdate: false }
-    )
+    this.editor.commands.setContent(this.format === 'markdown' ? prepareTiptapMarkdown(source) : prepareTiptapHtml(source), {
+      contentType: this.format,
+      emitUpdate: false
+    })
     // Reset only after the synchronous replacement, never in deferred onCreate:
     // a later native transaction must remain a real edit, even during startup.
     this.source = source

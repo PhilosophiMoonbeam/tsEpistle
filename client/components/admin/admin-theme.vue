@@ -270,6 +270,25 @@
               >Restore saved code appearance</v-btn>
             </div>
             <div class="theme-setting-group">
+              <h3>{{ $t('admin:theme.navigationFeedback', { defaultValue: 'Navigation feedback' }) }}</h3>
+              <v-switch
+                v-model="draft.pageTransitions"
+                :label="$t('admin:theme.pageTransitions', { defaultValue: 'Animate page transitions' })"
+                :hint="$t('admin:theme.pageTransitionsHint', { defaultValue: 'Use a brief entrance when navigating between pages. The reader’s reduced-motion preference always takes priority.' })"
+                :disabled="locked"
+                color="primary"
+                persistent-hint
+              />
+              <v-switch
+                v-model="draft.showPageProgress"
+                :label="$t('admin:theme.showPageProgress', { defaultValue: 'Show navigation loading cue' })"
+                :hint="$t('admin:theme.showPageProgressHint', { defaultValue: 'Show a decorative top-edge cue while the next page loads. Reading-position progress and the accessible loading indicator remain unchanged.' })"
+                :disabled="locked"
+                color="primary"
+                persistent-hint
+              />
+            </div>
+            <div class="theme-setting-group">
               <h3>{{ $t('admin:theme.personalPresentation') }}</h3>
               <p>
                 {{ $t('admin:theme.eachReaderChoosesSystem') }}

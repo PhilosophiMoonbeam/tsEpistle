@@ -18,6 +18,8 @@ import { Superscript } from '@tiptap/extension-superscript'
 import { Base64 } from 'js-base64'
 import { isSafeEditorImageSource, normalizeEditorImageDimension } from '../../../helpers/editor-image-properties.ts'
 import { findSourceImage } from '../../../helpers/editor-image-source.ts'
+import MarkdownIt from 'markdown-it'
+import markdownItQuoteAttribution, { parseQuoteAttribution } from '../../../../shared/markdown-it-quote-attribution.ts'
 
 const IMAGE_HTML_ATTRIBUTES: Record<string, true> = {
   src: true,
@@ -553,7 +555,7 @@ function inlinePlaceholder(kind: WikiSourceKind, source: string): string {
   return `[wikiSourceInline kind="${kind}" source="${encodeWikiSource(source)}"]`
 }
 
-function protectInlineSource(line: string): string {
+function protectInlineSource(line: string, attributedQuote = false): string {
   let result = ''
   let index = 0
 
@@ -569,6 +571,16 @@ function protectInlineSource(line: string): string {
     }
 
     const source = line.slice(index)
+    if (attributedQuote && source.startsWith('[name=')) {
+      const attribution = parseQuoteAttribution(source)
+      if (attribution) {
+        const markerLength = source.length - attribution.body.length
+        result += source.slice(0, markerLength)
+        index += markerLength
+        attributedQuote = false
+        continue
+      }
+    }
     const image = findSourceImage(source, 0, 0, 'markdown')?.source
     if (image) {
       // The native image is a block node. Extended inline syntax stays opaque rather
@@ -614,8 +626,19 @@ function isFence(line: string): RegExpMatchArray | null {
   return line.match(/^\s{0,3}(`{3,}|~{3,})/)
 }
 
+const quoteAttributionParser = new MarkdownIt({ html: true }).use(markdownItQuoteAttribution)
+
 export function prepareTiptapMarkdown(source: string): string {
   const lines = source.replace(/\r\n/g, '\n').split('\n')
+  // Only real first-paragraph quote markers bypass inline source preservation.
+  // Inert author text must reach the native node parser without HTML/math placeholders.
+  const attributionLines = new Set<number>()
+  if (source.includes('[name=')) {
+    for (const token of quoteAttributionParser.parse(source, {})) {
+      const line = token.meta?.quoteAttributionLine
+      if (typeof line === 'number') attributionLines.add(line)
+    }
+  }
   const output: string[] = []
   let index = 0
   let fence: { marker: string; length: number } | null = null
@@ -687,7 +710,7 @@ export function prepareTiptapMarkdown(source: string): string {
       continue
     }
 
-    if (line.includes('|')) {
+    if (line.includes('|') && !attributionLines.has(index)) {
       let end = index
       while (end < lines.length && (lines[end] ?? '').includes('|')) end += 1
       const tableLines = lines.slice(index, end)
@@ -698,7 +721,7 @@ export function prepareTiptapMarkdown(source: string): string {
       }
     }
 
-    output.push(protectInlineSource(line))
+    output.push(protectInlineSource(line, attributionLines.has(index)))
     index += 1
   }
 

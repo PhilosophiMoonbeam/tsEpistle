@@ -4,7 +4,7 @@ import { configureTransportRuntime } from '../../controllers/_types.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { MAX_LOCALE_FILE_BYTES } from '../../../shared/locale-policy.ts'
 
-const store = { reviewLocalFile: vi.fn(), enqueueLocalFile: vi.fn() }
+const store = { reviewLocalFile: vi.fn(), enqueueLocalFile: vi.fn(), reviewUninstall: vi.fn(), uninstall: vi.fn() }
 vi.mockModule('../../operations/locale-administration.ts', import.meta.url, () => ({ getLocaleAdministrationStore: () => store }))
 vi.mockModule('../../operations/localization.ts', import.meta.url, () => ({ default: {} }))
 
@@ -13,8 +13,14 @@ let authorized = true
 let server: Server
 let baseUrl: string
 const review = {
-  id: 'review-1', code: 'fr', name: 'French', nativeName: 'Français', digest: 'd'.repeat(64), reason: 'Reviewed update',
-  expiresAt: '2026-09-28T00:00:00.000Z', changes: { added: ['home.title'], changed: [], removed: [] }
+  id: 'review-1',
+  code: 'fr',
+  name: 'French',
+  nativeName: 'Français',
+  digest: 'd'.repeat(64),
+  reason: 'Reviewed update',
+  expiresAt: '2026-09-28T00:00:00.000Z',
+  changes: { added: ['home.title'], changed: [], removed: [] }
 }
 
 beforeEach(async () => {
@@ -23,6 +29,8 @@ beforeEach(async () => {
   auth.checkAccess.mockImplementation(() => authorized)
   store.reviewLocalFile.mockResolvedValue(review)
   store.enqueueLocalFile.mockResolvedValue({ jobId: 'locale-job-1' })
+  store.reviewUninstall.mockResolvedValue({ code: 'fr', token: 'signed-review', blockers: [] })
+  store.uninstall.mockResolvedValue({ activation: 'applied' })
   configureTransportRuntime({ auth })
 
   const { default: localesRouter } = await vi.importFresh<{ default: Router }>('../../controllers/api/locales.ts', import.meta.url)
@@ -90,7 +98,10 @@ describe('locale local-file transport', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(await response.json()).toEqual(review)
     expect(store.reviewLocalFile).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), {
-      code: 'fr', fingerprint: 'f'.repeat(64), reason: 'Reviewed update', bytes: Buffer.from(bytes)
+      code: 'fr',
+      fingerprint: 'f'.repeat(64),
+      reason: 'Reviewed update',
+      bytes: Buffer.from(bytes)
     })
   })
 
@@ -142,5 +153,46 @@ describe('locale local-file transport', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(await response.json()).toEqual({ jobId: 'locale-job-1' })
     expect(store.enqueueLocalFile).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), { reviewId: 'review-1' })
+  })
+})
+
+describe('locale package removal transport', () => {
+  const post = (suffix: string, body: unknown) =>
+    fetch(`${baseUrl}/_api/locales/workspace/uninstall/${suffix}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+  it('requires system authority before review and removal and disables caching', async () => {
+    authorized = false
+    for (const suffix of ['review', 'commit']) {
+      const response = await post(suffix, {})
+      expect(response.status).toBe(403)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    }
+    expect(store.reviewUninstall).not.toHaveBeenCalled()
+    expect(store.uninstall).not.toHaveBeenCalled()
+  })
+  it('passes reasoned fingerprint review and opaque confirmation identity separately', async () => {
+    const input = { code: 'fr', fingerprint: 'current-review', reason: 'Retire unused French interface' }
+    const reviewed = await post('review', input)
+    expect(reviewed.status).toBe(200)
+    expect(reviewed.headers.get('cache-control')).toBe('no-store')
+    expect(await reviewed.json()).toEqual({ code: 'fr', token: 'signed-review', blockers: [] })
+    expect(store.reviewUninstall).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), input)
+    const committed = await post('commit', { token: 'signed-review', code: 'en', reason: 'Cannot override signed intent' })
+    expect(committed.status).toBe(200)
+    expect(await committed.json()).toEqual({ activation: 'applied' })
+    expect(store.uninstall).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), { token: 'signed-review' })
+  })
+  it('returns actionable conflicts but does not expose unexpected database details', async () => {
+    store.uninstall.mockRejectedValueOnce(Object.assign(new Error('The language package is still in use: pages.localeCode (1).'), { status: 409 }))
+    const conflict = await post('commit', { token: 'signed-review' })
+    expect(conflict.status).toBe(409)
+    expect(await conflict.json()).toEqual({ error: 'The language package is still in use: pages.localeCode (1).' })
+    store.uninstall.mockRejectedValueOnce(new Error('private database constraint'))
+    const failed = await post('commit', { token: 'signed-review' })
+    expect(failed.status).toBe(500)
+    expect(JSON.stringify(await failed.json())).not.toContain('private database')
   })
 })

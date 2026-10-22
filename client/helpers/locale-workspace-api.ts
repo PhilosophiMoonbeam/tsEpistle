@@ -1,4 +1,11 @@
-import { LocalePolicySchema, type LocalePolicy, type LocaleWorkspace, type LocaleWriteResult } from '../../shared/locale-policy.ts'
+import {
+  LocalePolicySchema,
+  LocaleUninstallReviewSchema,
+  type LocaleUninstallReview,
+  type LocalePolicy,
+  type LocaleWorkspace,
+  type LocaleWriteResult
+} from '../../shared/locale-policy.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 export interface LocaleFileReview {
   id: string
@@ -19,7 +26,9 @@ const isLocaleFileReview = (value: unknown): value is LocaleFileReview => {
     changes !== null &&
     typeof changes === 'object' &&
     !Array.isArray(changes) &&
-    ['added', 'changed', 'removed'].every(key => Array.isArray(Reflect.get(changes, key)) && Reflect.get(changes, key).every((item: unknown) => typeof item === 'string'))
+    ['added', 'changed', 'removed'].every(
+      key => Array.isArray(Reflect.get(changes, key)) && Reflect.get(changes, key).every((item: unknown) => typeof item === 'string')
+    )
   )
 }
 
@@ -96,10 +105,17 @@ export const reviewLocaleFile = async (file: File, code: string, fingerprint: st
 
 export const commitLocaleFile = async (reviewId: string): Promise<{ jobId: string }> => {
   const payload = await request('POST', `/local-files/${encodeURIComponent(reviewId)}/commit`, {})
-  if (typeof Reflect.get(payload, 'jobId') !== 'string' || !Reflect.get(payload, 'jobId')) throw new Error('The locale installation outcome is unconfirmed. Reload before retrying this action.')
+  if (typeof Reflect.get(payload, 'jobId') !== 'string' || !Reflect.get(payload, 'jobId'))
+    throw new Error('The locale installation outcome is unconfirmed. Reload before retrying this action.')
   return payload as { jobId: string }
 }
 export const retryLocaleRuntime = (fingerprint: string) => write('POST', '/activate', { fingerprint })
+export const reviewLocaleUninstall = async (code: string, fingerprint: string, reason: string): Promise<LocaleUninstallReview> => {
+  const result = LocaleUninstallReviewSchema.safeParse(await request('POST', '/uninstall/review', { code, fingerprint, reason }))
+  if (!result.success) throw new Error('The package removal review could not be read. Reload before trying again.')
+  return result.data
+}
+export const commitLocaleUninstall = (token: string) => write('POST', '/uninstall/commit', { token })
 export const queueLocaleOperation = async (
   kind: 'install' | 'catalog',
   code: string | undefined,

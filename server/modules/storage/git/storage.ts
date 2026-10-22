@@ -25,6 +25,7 @@ import commonDisk, { assertStorageImportIdentities, collectStorageEntries, isImp
 import type { StorageImportAdmission } from '../disk/common.ts'
 import type { StorageImportResult } from '../types.ts'
 import { classifyStoragePageImport, encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
+import { PageChangeReasonSchema } from '../../../../shared/page-change-reason.ts'
 import {
   assertAssetLocationAssetSettled,
   assertAssetLocationReservations,
@@ -544,7 +545,7 @@ async function commitGitPaths(command: GitNativeCommand, message: string, paths:
 async function hasPendingCanonicalMutations(context: GitStorageContext): Promise<boolean> {
   const db = wiki.models.knex as unknown as Knex
   const row = await db('durableJobs')
-    .where(identity => identity.where({ type: 'storage-mutation', version: 1 }).orWhere({ type: 'asset-relocation', version: 1 }))
+    .where(identity => identity.where('type', 'storage-mutation').whereIn('version', [1, 2]).orWhere({ type: 'asset-relocation', version: 1 }))
     .whereNot('state', 'succeeded')
     .whereRaw("payload::jsonb ->> 'targetKey' = ?", [context.targetKey ?? 'git'])
     .first('id')
@@ -1019,6 +1020,7 @@ const plugin: GitStoragePlugin = {
    * @param {Object} page Page to update
    */
   async updated(page) {
+    const changeReason = PageChangeReasonSchema.parse(page.changeReason)
     const root = requireRoot(this)
     const command = mutationGit(this)
     const fileName = gitPagePath(page, this.config.alwaysNamespace)
@@ -1033,7 +1035,7 @@ const plugin: GitStoragePlugin = {
       await command.run(['add', '--', gitFilePath])
       await commitGitPaths(
         command,
-        `docs: update ${page.contentType === 'markdown' ? fileName : page.path}`,
+        changeReason ?? `docs: update ${page.contentType === 'markdown' ? fileName : page.path}`,
         [fileName],
         `${page.authorName} <${page.authorEmail}>`
       )

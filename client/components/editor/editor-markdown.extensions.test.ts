@@ -32,13 +32,15 @@ type InsertionComponent = {
 // Compile the production routing method, including its legacy cursor insertion
 // method, so bypassing guarded block insertion reproduces the browser defect.
 // Unused preview animation/help metadata is not mounted in this insertion scope.
-const component = new Function('defineComponent', 'EditorView', 'Velocity', 'markdownHelp', 'vRovingToolbar', `${executable}\nreturn component`)(
-  defineComponent,
-  EditorView,
-  null,
-  {},
-  vRovingToolbar
-) as InsertionComponent
+const component = new Function(
+  'defineComponent',
+  'EditorView',
+  'Velocity',
+  'markdownHelp',
+  'vRovingToolbar',
+  'EditorContentsPane',
+  `${executable}\nreturn component`
+)(defineComponent, EditorView, null, {}, vRovingToolbar, {}) as InsertionComponent
 
 const serialized = serializeContentExtensionFence({
   key: 'links-grid',

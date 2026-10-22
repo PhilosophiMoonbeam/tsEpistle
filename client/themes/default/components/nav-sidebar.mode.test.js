@@ -179,6 +179,11 @@ const currentDirectoryFixture = [
   treeRow(21, 10, 'Neighbour guide'),
   treeRow(30, 0, 'Root-only page')
 ]
+const otherDirectoryFixture = [
+  treeRow(40, 0, 'Recipes', { isFolder: true, pageId: null, path: 'recipes', locale: 'en', visibility: 'public' }),
+  treeRow(41, 40, 'Current public recipe', { pageId: 84, path: 'recipes/current', locale: 'en', visibility: 'public' }),
+  treeRow(42, 40, 'Neighbour recipe', { locale: 'en', visibility: 'public' })
+]
 const useCurrentPage = () => {
   const original = { id: wikiStore.page.id, path: wikiStore.page.path, locale: wikiStore.page.locale, visibility: wikiStore.page.visibility }
   Object.assign(wikiStore.page, { id: 42, path: 'guides/current', locale: 'fr', visibility: 'private' })
@@ -201,19 +206,20 @@ describe('Custom Navigation preserves its two views', () => {
         expect(localStorage.setItem).not.toHaveBeenCalled()
       })
     }
-    it(`switches in both directions and remembers the choice with a ${label} menu`, () => {
+    it(`switches in both directions and remembers the choice with a ${label} menu`, async () => {
       const localStorage = storage('custom')
-      const sidebar = mountSidebar({ items, localStorage })
+      const transport = vi.fn(async () => treeResponse([]))
+      const { sidebar } = mountSidebar({ items, localStorage, transport, realDirectory: true })
       sidebar.switchMode('browse')
+      await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
       expect(sidebar.currentMode).toBe('browse')
-      expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(1)
+      expect(transport).toHaveBeenCalledTimes(1)
       expect(mountSidebar({ items, localStorage }).currentMode).toBe('browse')
-      sidebar.loadedCache = [0]
       sidebar.switchMode('custom')
       expect(sidebar.currentMode).toBe('custom')
       expect(mountSidebar({ items, localStorage }).currentMode).toBe('custom')
       sidebar.switchMode('browse')
-      expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(1)
+      expect(transport).toHaveBeenCalledTimes(1)
     })
   }
 
@@ -294,18 +300,19 @@ describe('Custom Navigation preserves its two views', () => {
       for (const spy of registrationSpies.reverse()) spy.mockRestore()
     }
     await pwa.retryServerConnection()
-    const directory = vi.fn(async () => treeResponse([]))
+    const directory = vi.fn(async () => treeResponse([treeRow(20, 0, 'Previously loaded guide')]))
     const { sidebar, host } = renderMountedSidebar({
       items: [guide],
-      localStorage: storage('custom'),
+      localStorage: storage('browse'),
       connection: pwa.pwaState,
       transport: directory,
       checkConnection: pwa.retryServerConnection,
       observeConnection: pwa.observeBrowserConnection,
       reportConnectionFailure: pwa.reportServerConnectionFailure
     })
-    sidebar.loadedCache = [0]
-    sidebar.currentItems = [treeRow(20, 0, 'Previously loaded guide')]
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+    sidebar.switchMode('custom')
+    await Vue.nextTick()
     sidebar.switchMode('browse')
     await Vue.nextTick()
     expect(health).toHaveBeenCalledTimes(2)
@@ -315,13 +322,13 @@ describe('Custom Navigation preserves its two views', () => {
     expect(host.textContent).toContain('Previously loaded guide')
     sidebar.switchMode('browse')
     expect(health).toHaveBeenCalledTimes(2)
-    expect(directory).not.toHaveBeenCalled()
+    expect(directory).toHaveBeenCalledTimes(1)
     releaseHealth(new Response('{}', { status: 503 }))
     await vi.waitFor(() => expect(pwa.pwaState.connectionState).toBe('server-unavailable'))
     await Vue.nextTick()
     expect(host.querySelector('a[href="/en/saved-guide"]')).not.toBeNull()
     expect(host.querySelector('.nav-sidebar-modes')).toBeNull()
-    expect(directory).not.toHaveBeenCalled()
+    expect(directory).toHaveBeenCalledTimes(1)
   })
 
   it('loads the current page directory when expanding parents is enabled', async () => {
@@ -350,16 +357,199 @@ describe('Custom Navigation preserves its two views', () => {
     expect(request.searchParams.has('parent')).toBe(false)
   })
 
-  it('keeps both views usable when storage reads and writes fail', () => {
+  for (const expandParentByDefault of [true, false]) {
+    it(`refreshes Browse after Custom navigation without clearing the visible directory (expand parents: ${expandParentByDefault})`, async () => {
+      useCurrentPage()
+      let releaseCurrent
+      const transport = vi.fn(async url => {
+        const query = new URL(url, browserWindow.location.href).searchParams
+        if (query.get('locale') === 'en') {
+          return new Promise(resolve => {
+            releaseCurrent = resolve
+          })
+        }
+        return treeResponse(
+          expandParentByDefault ? currentDirectoryFixture : currentDirectoryFixture.filter(item => item.parent === Number(query.get('parent')))
+        )
+      })
+      const { sidebar, host } = renderMountedSidebar({
+        items: [guide],
+        localStorage: storage('browse'),
+        expandParentByDefault,
+        transport
+      })
+      await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+      await Vue.nextTick()
+      if (!expandParentByDefault) {
+        host.querySelector('.nav-sidebar-folder').click()
+        await vi.waitFor(() => expect(sidebar.currentParent.id).toBe(10))
+        await Vue.nextTick()
+      }
+      const custom = [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Main Menu')
+      const browse = [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Browse')
+      const committedItems = sidebar.currentItems
+      const committedParent = sidebar.currentParent
+      const committedParents = sidebar.parents
+      const initialRequests = transport.mock.calls.length
+      custom.click()
+      await Vue.nextTick()
+      browse.click()
+      await Vue.nextTick()
+      expect(transport).toHaveBeenCalledTimes(initialRequests)
+      expect(sidebar.currentItems).toBe(committedItems)
+      expect(sidebar.currentParent).toBe(committedParent)
+      custom.click()
+      await Vue.nextTick()
+      Object.assign(wikiStore.page, { id: 84, path: 'recipes/current', locale: 'en', visibility: 'public' })
+      await Vue.nextTick()
+      expect(transport).toHaveBeenCalledTimes(initialRequests)
+      browse.click()
+      await Vue.nextTick()
+      expect(transport).toHaveBeenCalledTimes(initialRequests + 1)
+      expect(sidebar.navLoading).toBe(true)
+      expect(sidebar.currentItems).toBe(committedItems)
+      expect(sidebar.currentParent).toBe(committedParent)
+      expect(sidebar.parents).toBe(committedParents)
+      expect(host.querySelector('.nav-sidebar-ancestor-trail').textContent).toContain('Guides')
+      expect(host.querySelector('.nav-sidebar-page').textContent).toContain('Current private guide')
+      expect(host.querySelector('.nav-sidebar-loading-row')).toBeNull()
+      expect(browse.getAttribute('aria-pressed')).toBe('true')
+      const request = new URL(transport.mock.calls[initialRequests][0], browserWindow.location.href)
+      expect(Object.fromEntries(request.searchParams)).toEqual(
+        expandParentByDefault
+          ? { path: 'recipes/current', locale: 'en', mode: 'ALL', includeAncestors: 'true', visibility: 'public' }
+          : { parent: '0', locale: 'en', mode: 'ALL' }
+      )
+      releaseCurrent(treeResponse(expandParentByDefault ? otherDirectoryFixture : [otherDirectoryFixture[0]]))
+      await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+      await Vue.nextTick()
+      expect(sidebar.currentParent.id).toBe(expandParentByDefault ? 40 : 0)
+      expect(sidebar.currentItems.map(item => item.id)).toEqual(expandParentByDefault ? [41, 42] : [40])
+      expect(host.querySelector(expandParentByDefault ? '.nav-sidebar-page' : '.nav-sidebar-folder').textContent).toContain(
+        expandParentByDefault ? 'Current public recipe' : 'Recipes'
+      )
+      custom.click()
+      await Vue.nextTick()
+      browse.click()
+      await Vue.nextTick()
+      expect(transport).toHaveBeenCalledTimes(initialRequests + 1)
+    })
+  }
+
+  it('keeps the new Browse context when an older page response arrives after Custom navigation', async () => {
+    useCurrentPage()
+    let releaseOlder
+    let releaseCurrent
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(treeResponse(currentDirectoryFixture))
+      // A transport may still finish after its request has been aborted.
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            releaseOlder = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            releaseCurrent = resolve
+          })
+      )
+    const { sidebar, host } = renderMountedSidebar({
+      items: [guide],
+      localStorage: storage('browse'),
+      expandParentByDefault: true,
+      transport
+    })
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+    const olderRequest = sidebar.loadFromCurrentPath()
+    const custom = [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Main Menu')
+    const browse = [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Browse')
+    custom.click()
+    await Vue.nextTick()
+    Object.assign(wikiStore.page, { id: 84, path: 'recipes/current', locale: 'en', visibility: 'public' })
+    await Vue.nextTick()
+    expect(transport).toHaveBeenCalledTimes(2)
+    browse.click()
+    await Vue.nextTick()
+    expect(transport).toHaveBeenCalledTimes(3)
+    releaseCurrent(treeResponse(otherDirectoryFixture))
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+    const committedItems = sidebar.currentItems
+    const committedParent = sidebar.currentParent
+    releaseOlder(treeResponse(currentDirectoryFixture))
+    await olderRequest
+    await Vue.nextTick()
+    expect(sidebar.currentItems).toBe(committedItems)
+    expect(sidebar.currentParent).toBe(committedParent)
+    expect(sidebar.currentParent.id).toBe(40)
+    expect(sidebar.currentItems.map(item => item.id)).toEqual([41, 42])
+    expect(host.querySelector('.nav-sidebar-page').getAttribute('href')).toBe('/en/recipes/current')
+    expect(host.querySelector('.nav-sidebar-ancestor-trail').textContent).toContain('Recipes')
+    expect(sidebar.navError).toBe('')
+    custom.click()
+    await Vue.nextTick()
+    browse.click()
+    await Vue.nextTick()
+    expect(transport).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries the current page context after a failed Browse refresh instead of reloading the old directory', async () => {
+    useCurrentPage()
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(treeResponse(currentDirectoryFixture))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json: async () => ({ error: 'Directory unavailable' })
+      })
+      .mockResolvedValueOnce(treeResponse(otherDirectoryFixture))
+    const { sidebar, host } = renderMountedSidebar({
+      items: [guide],
+      localStorage: storage('browse'),
+      expandParentByDefault: true,
+      transport
+    })
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+    sidebar.switchMode('custom')
+    await Vue.nextTick()
+    Object.assign(wikiStore.page, { id: 84, path: 'recipes/current', locale: 'en', visibility: 'public' })
+    await Vue.nextTick()
+    sidebar.switchMode('browse')
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+    await Vue.nextTick()
+    expect(host.querySelector('[data-async-state="error"]')).not.toBeNull()
+    expect(sidebar.currentParent.id).toBe(10)
+    expect(sidebar.currentItems.map(item => item.id)).toEqual([20, 21])
+    sidebar.retryBrowse()
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+    expect(transport).toHaveBeenCalledTimes(3)
+    const request = new URL(transport.mock.calls[2][0], browserWindow.location.href)
+    expect(request.searchParams.get('path')).toBe('recipes/current')
+    expect(request.searchParams.has('parent')).toBe(false)
+    expect(sidebar.currentParent.id).toBe(40)
+    expect(sidebar.currentItems.map(item => item.id)).toEqual([41, 42])
+    expect(sidebar.navError).toBe('')
+  })
+
+  it('keeps both views usable when storage reads and writes fail', async () => {
     const unavailable = () => {
       throw new Error('Storage unavailable')
     }
-    const sidebar = mountSidebar({ localStorage: { getItem: unavailable, setItem: unavailable } })
+    const transport = vi.fn(async () => treeResponse([]))
+    const { sidebar } = mountSidebar({
+      localStorage: { getItem: unavailable, setItem: unavailable },
+      transport,
+      realDirectory: true
+    })
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
     expect(sidebar.currentMode).toBe('browse')
-    sidebar.loadedCache = [0]
     sidebar.switchMode('browse')
     expect(sidebar.currentMode).toBe('browse')
-    expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(1)
+    expect(transport).toHaveBeenCalledTimes(1)
     sidebar.switchMode('custom')
     expect(sidebar.currentMode).toBe('custom')
   })
@@ -597,8 +787,10 @@ describe('offline navigation continuity', () => {
       releaseObsolete = resolve
     })
     const freshItems = [treeRow(21, 10, 'Reconnected directory guide')]
+    const previousItems = [treeRow(50, 10, 'Previously visible guide')]
     const transport = vi
       .fn()
+      .mockResolvedValueOnce(treeResponse(previousItems))
       .mockImplementationOnce(() => obsolete)
       .mockResolvedValue(treeResponse(freshItems))
     const { sidebar, component, connection } = mountSidebar({
@@ -607,9 +799,8 @@ describe('offline navigation continuity', () => {
       realDirectory: true
     })
     sidebar.currentMode = 'browse'
-    sidebar.currentParent = currentDirectoryFixture[0]
-    const visible = [treeRow(50, 10, 'Previously visible guide')]
-    sidebar.currentItems = visible
+    await sidebar.fetchBrowseItems(currentDirectoryFixture[0])
+    const visible = sidebar.currentItems
     const request = sidebar.fetchBrowseItems()
     const controller = sidebar.browseRequestController
     const abort = vi.spyOn(controller, 'abort')
@@ -620,7 +811,7 @@ describe('offline navigation continuity', () => {
     expect(controller.signal.aborted).toBe(true)
     expect(sidebar.navLoading).toBe(false)
     expect(sidebar.currentItems).toBe(visible)
-    expect(transport).toHaveBeenCalledTimes(1)
+    expect(transport).toHaveBeenCalledTimes(2)
     releaseObsolete(treeResponse([treeRow(99, 10, 'Obsolete directory result')]))
     await request
     expect(sidebar.currentItems).toBe(visible)
@@ -628,12 +819,12 @@ describe('offline navigation continuity', () => {
     expect(sidebar.navLoading).toBe(false)
     connection.connectionState = 'checking'
     component.watch.connectionState.call(sidebar, 'checking')
-    expect(transport).toHaveBeenCalledTimes(1)
+    expect(transport).toHaveBeenCalledTimes(2)
     connection.connectionState = 'online'
     component.watch.connectionState.call(sidebar, 'online')
     await vi.waitFor(() => expect(sidebar.currentItems).toEqual(freshItems))
-    expect(transport).toHaveBeenCalledTimes(2)
-    expect(new URL(transport.mock.calls[1][0], browserWindow.location.href).searchParams.get('parent')).toBe('10')
+    expect(transport).toHaveBeenCalledTimes(3)
+    expect(new URL(transport.mock.calls[2][0], browserWindow.location.href).searchParams.get('parent')).toBe('10')
     expect(sidebar.navLoading).toBe(false)
     expect(sidebar.navError).toBe('')
     abort.mockRestore()

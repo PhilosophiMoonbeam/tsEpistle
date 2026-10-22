@@ -97,6 +97,15 @@
                   </div>
                   <p v-if="locale.installedCoverage">Installed fork keys: {{ locale.installedCoverage.presentKeys }} / {{ locale.installedCoverage.totalKeys }} ({{ locale.installedCoverage.percent }}%); {{ locale.installedCoverage.missingKeys }} missing.</p>
                   <p v-else>Installed fork-key coverage unknown.</p>
+                <v-btn
+                  v-if="locale.code !== 'en'"
+                  variant="text"
+                  color="error"
+                  :disabled="!canRemovePackage"
+                  :aria-label="t('admin:locale.reviewPackageRemovalFor', { defaultValue: 'Review removal of {{name}}', name: locale.name })"
+                  :data-locale-remove="locale.code"
+                  @click="openUninstall(locale)"
+                >{{ t('admin:locale.reviewPackageRemoval', { defaultValue: 'Review removal' }) }}</v-btn>
                 </div>
                 <v-checkbox
                   :model-value="enabled(locale.code)"
@@ -333,6 +342,7 @@
                     <p v-else>Installed fork-key coverage unknown.</p>
                   </template>
                 </div>
+                <div class="locale-package-actions">
                 <v-btn
                   :variant="locale.isInstalled ? 'text' : 'tonal'"
                   :disabled="!canOperate || !locale.availableRemotely"
@@ -340,6 +350,16 @@
                   @click="openOperation('install', locale)"
                   >{{ locale.isInstalled ? $t('admin:locale.refreshPackage') : $t('admin:locale.install') }}</v-btn
                 >
+                <v-btn
+                  v-if="locale.isInstalled && locale.code !== 'en'"
+                  variant="text"
+                  color="error"
+                  :disabled="!canRemovePackage"
+                  :aria-label="t('admin:locale.reviewPackageRemovalFor', { defaultValue: 'Review removal of {{name}}', name: locale.name })"
+                  :data-locale-remove="locale.code"
+                  @click="openUninstall(locale)"
+                >{{ t('admin:locale.reviewPackageRemoval', { defaultValue: 'Review removal' }) }}</v-btn>
+                </div>
               </article>
             </div>
             <async-state
@@ -393,12 +413,11 @@
                 <div>
                   <h4>{{ event.reason }}</h4>
                   <p>{{ event.fields.map(fieldName).join(' · ') }}</p>
-                  <small
-                    >{{ date(event.createdAt) }} · {{ event.actorId ? $t('admin:locale.administrator', { actorId: event.actorId, interpolation: { escapeValue: false } }) : $t('admin:locale.systemApi')
-                    }}<span v-if="event.kind !== 'settings'">
-                      · {{ event.appliedAt ? $t('admin:locale.published', { appliedAt: date(event.appliedAt), interpolation: { escapeValue: false } }) : $t('admin:locale.requested') }}</span
-                    ></small
-                  >
+                  <small>
+                    {{ date(event.createdAt) }} · {{ event.actorId ? $t('admin:locale.administrator', { actorId: event.actorId, interpolation: { escapeValue: false } }) : $t('admin:locale.systemApi') }}
+                    <span v-if="event.kind === 'uninstall'"> · {{ t('admin:locale.packageRemovedAt', { defaultValue: 'Package removed' }) }} {{ date(event.appliedAt || event.createdAt) }}</span>
+                    <span v-else-if="event.kind !== 'settings'"> · {{ event.appliedAt ? $t('admin:locale.published', { appliedAt: date(event.appliedAt), interpolation: { escapeValue: false } }) : $t('admin:locale.requested') }}</span>
+                  </small>
                 </div>
               </article>
             </div>
@@ -549,6 +568,49 @@
         ></v-card
       >
     </v-dialog>
+    <v-dialog v-model="uninstallOpen" max-width="680" :persistent="busy" scrollable>
+      <v-card class="locale-dialog" data-testid="locale-uninstall-dialog">
+        <v-card-title><h2>{{ t('admin:locale.reviewPackageRemoval', { defaultValue: 'Review removal' }) }}</h2></v-card-title>
+        <v-card-text>
+          <div v-if="uninstallLocale" class="locale-operation-subject">
+            <span class="locale-code">{{ uninstallLocale.code }}</span>
+            <div><h3>{{ uninstallLocale.nativeName }}</h3><p>{{ uninstallLocale.name }}</p></div>
+          </div>
+          <p>{{ t('admin:locale.removalPreservesContent', { defaultValue: 'Only the installed interface package is removed. Pages, assets, navigation, history and user data are never deleted or reassigned.' }) }}</p>
+          <p>{{ t('admin:locale.removalChecksAllReferences', { defaultValue: 'Public page counts are not removal checks. The server checks all pages (including private and unpublished), reading settings, navigation, glossary, rules, users and other stored locale references again at confirmation.' }) }}</p>
+          <v-textarea
+            v-model="uninstallReason"
+            :label="t('admin:locale.reasonPackageRemoval', { defaultValue: 'Reason for removing this package' })"
+            variant="outlined" rows="2" maxlength="1000" counter :disabled="busy"
+            @update:model-value="uninstallReview = null"
+          />
+          <template v-if="uninstallReview">
+            <v-alert v-if="uninstallReview.blockers.length" type="warning" variant="tonal" class="my-4">
+              <strong>{{ t('admin:locale.packageRemovalBlocked', { defaultValue: 'This package cannot be removed while references remain.' }) }}</strong>
+              <ul><li v-for="blocker in uninstallReview.blockers" :key="blocker.source">{{ blocker.source }}: {{ blocker.count }}</li></ul>
+              <p>{{ t('admin:locale.removalBlockerRecovery', { defaultValue: 'Change reading settings or references only when appropriate; do not delete content just to remove a package. Wait for active jobs, then reload and review again.' }) }}</p>
+            </v-alert>
+            <v-alert v-else type="info" variant="tonal" class="my-4">{{ t('admin:locale.noRemovalReferences', { defaultValue: 'No blocking references were found at review. Confirmation checks again inside the removal transaction.' }) }}</v-alert>
+            <p>{{ uninstallReview.catalogRetained
+              ? t('admin:locale.removalCatalogRetained', { defaultValue: 'The current catalog entry stays available. You can reinstall from the package library when its source is available.' })
+              : t('admin:locale.removalNoCatalogRecovery', { defaultValue: 'This language is absent from the current catalog. Reinstallation will be unavailable until the language returns in a trusted catalog; keep any original package file before removal. Unknown history is not proof of an upstream source.' }) }}</p>
+            <p>{{ t('admin:locale.reviewExpires', { expiresAt: date(uninstallReview.expiresAt), interpolation: { escapeValue: false } }) }}</p>
+          </template>
+          <v-alert v-if="saveError" type="error" variant="tonal" class="mt-4">{{ saveError }}</v-alert>
+        </v-card-text>
+        <v-card-actions class="locale-uninstall-actions">
+          <v-btn v-if="stale" :disabled="busy" @click="reload">{{ $t('admin:locale.reloadSavedSettings') }}</v-btn>
+          <v-spacer />
+          <v-btn :disabled="busy" @click="uninstallOpen = false">{{ $t('common:actions.cancel') }}</v-btn>
+          <v-btn color="primary" variant="tonal"
+            :disabled="!canRemovePackage || uninstallReason.trim().length < 3" :loading="busy" @click="reviewUninstallPackage"
+          >{{ t('admin:locale.checkPackageRemoval', { defaultValue: 'Check removal blockers' }) }}</v-btn>
+          <v-btn v-if="uninstallReview && !uninstallReview.blockers.length" color="error" variant="flat" data-testid="locale-uninstall-confirm"
+            :disabled="!canRemovePackage || Date.parse(uninstallReview.expiresAt) <= Date.now()" :loading="busy" @click="removePackage"
+          >{{ t('admin:locale.confirmPackageRemoval', { defaultValue: 'Remove installed package' }) }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 <script setup lang="ts">
@@ -563,16 +625,19 @@ import {
   localeChangedFields,
   localeReadingPath,
   type LocaleFileReview,
+  type LocaleUninstallReview,
   type LocalePackage,
   type LocalePolicy,
   type LocaleWorkspace,
 } from '../../../shared/locale-policy.ts'
 import {
   commitLocaleFile,
+  commitLocaleUninstall,
   fetchLocaleWorkspace,
   queueLocaleOperation,
   retryLocaleRuntime,
   reviewLocaleFile,
+  reviewLocaleUninstall,
   saveLocaleWorkspace,
 } from '../../helpers/locale-workspace-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -604,6 +669,10 @@ const reviewing = ref(false),
   operationReason = ref(''),
   operationKind = ref<'catalog' | 'install'>('catalog'),
   operationLocale = ref<LocalePackage | null>(null)
+const uninstallOpen = ref(false),
+  uninstallLocale = ref<LocalePackage | null>(null),
+  uninstallReason = ref(''),
+  uninstallReview = ref<LocaleUninstallReview | null>(null)
 const localFile = ref<File | null>(null),
   localFileInput = ref<HTMLInputElement | null>(null),
   localCode = ref<string | null>(null),
@@ -648,6 +717,7 @@ const activeOperation = computed(() => saved.value?.operations.find((operation) 
 const canOperate = computed(() =>
   Boolean(saved.value && !locked.value && !dirty.value && !activeOperation.value && !saved.value.catalog.offline),
 )
+const canRemovePackage = computed(() => Boolean(saved.value && !locked.value && !dirty.value && !activeOperation.value))
 const uploadLocales = computed(() =>
   (saved.value?.locales || [])
     .filter((locale) => locale.code !== 'en')
@@ -725,7 +795,7 @@ async function load(background = false) {
     if (disposed || seq !== sequence) return
     const staged = result.localFileReview ? LocaleFileReviewSchema.safeParse(result.localFileReview) : null,
       stagedReview = staged?.success ? staged.data : null
-    if (background && (dirty.value || reviewing.value || operationOpen.value || hasLocalDraft.value) && saved.value) {
+    if (background && (dirty.value || reviewing.value || operationOpen.value || uninstallOpen.value || hasLocalDraft.value) && saved.value) {
       if (
         result.fingerprint !== saved.value.fingerprint ||
         (localReview.value !== null && stagedReview?.id !== localReview.value.id)
@@ -760,6 +830,8 @@ async function reload() {
   if (busy.value) return
   reviewing.value = false
   operationOpen.value = false
+  uninstallOpen.value = false
+  uninstallReview.value = null
   localFile.value = null
   localReview.value = null
   localCode.value = null
@@ -838,6 +910,50 @@ async function startOperation() {
     stale.value = true
     busy.value = false
     selectSection('activity')
+    await load()
+  } catch (error) {
+    if (!disposed) writeFailure(error)
+  } finally {
+    if (!disposed) busy.value = false
+  }
+}
+function openUninstall(locale: LocalePackage) {
+  if (!canRemovePackage.value || !locale.isInstalled || locale.code === 'en') return
+  uninstallLocale.value = locale
+  uninstallReason.value = ''
+  uninstallReview.value = null
+  saveError.value = ''
+  uninstallOpen.value = true
+}
+async function reviewUninstallPackage() {
+  if (!canRemovePackage.value || !saved.value || !uninstallLocale.value || uninstallReason.value.trim().length < 3) return
+  busy.value = true
+  saveError.value = ''
+  uninstallReview.value = null
+  try {
+    const result = await reviewLocaleUninstall(uninstallLocale.value.code, saved.value.fingerprint, uninstallReason.value.trim())
+    if (!disposed) uninstallReview.value = result
+  } catch (error) {
+    if (!disposed) writeFailure(error)
+  } finally {
+    if (!disposed) busy.value = false
+  }
+}
+async function removePackage() {
+  if (!canRemovePackage.value || !uninstallReview.value || uninstallReview.value.blockers.length) return
+  busy.value = true
+  saveError.value = ''
+  try {
+    const result = await commitLocaleUninstall(uninstallReview.value.token)
+    if (disposed) return
+    uninstallOpen.value = false
+    uninstallReview.value = null
+    attention.value = result.activation !== 'applied'
+    notice.value = attention.value
+      ? t('admin:locale.packageRemovedActivationAttention', { defaultValue: 'The installed package was removed, but runtime activation needs attention. Reload saved state and retry runtime activation; do not repeat removal.' })
+      : t('admin:locale.packageRemoved', { defaultValue: 'The installed package was removed and runtime language resources were refreshed. Content was preserved.' })
+    stale.value = true
+    busy.value = false
     await load()
   } catch (error) {
     if (!disposed) writeFailure(error)
@@ -987,6 +1103,18 @@ onBeforeUnmount(() => {
 </script>
 <style src="./locale-workspace.scss" lang="scss"></style>
 <style scoped lang="scss">
+.locale-package-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.locale-installed [data-locale-remove] {
+  margin-block-start: 12px;
+}
+.locale-uninstall-actions {
+  flex-wrap: wrap;
+}
 .locale-local-import {
   margin-block: 24px 30px;
   padding: 22px;

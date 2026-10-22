@@ -43,7 +43,7 @@ export const cleanupDurableJobs: DurableJobHandler = async (job, { knex, signal 
       })
     }
     query.andWhere(storage => {
-      storage.whereNot('durableJobs.type', 'storage-mutation').orWhereNot('durableJobs.version', 1).orWhere('durableJobs.state', 'succeeded')
+      storage.whereNot('durableJobs.type', 'storage-mutation').orWhereNotIn('durableJobs.version', [1, 2]).orWhere('durableJobs.state', 'succeeded')
     })
     const candidates = await query
       .clone()
@@ -253,6 +253,7 @@ export const createDurableJobHandlers = (
     'locale-package@1': createLocalePackageHandler(),
     'storage-action@1': createStorageActionHandler(),
     'storage-mutation@1': createStorageMutationHandler(),
+    'storage-mutation@2': createStorageMutationHandler(),
     'cleanup-durable-jobs@1': cleanupDurableJobs,
     'cleanup-site-logo@1': cleanupSiteLogoRevisions,
     'process-site-logo@1': createSiteLogoProcessHandler(1),

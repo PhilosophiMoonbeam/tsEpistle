@@ -990,6 +990,12 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     res.render('profile')
   })
 
+  router.get('/p/notes/:key', (_req, res) => {
+    res.set('Cache-Control', 'no-store')
+    _.set(res.locals, 'pageMeta.title', 'Live note')
+    res.render('live-notes')
+  })
+
   router.get(['/p', '/p/*profilePath'], (req, res) => {
     const userId = req.user?.id
     if (typeof userId !== 'number' || userId < 1 || userId === 2) {

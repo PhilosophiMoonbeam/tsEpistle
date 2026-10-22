@@ -86,7 +86,7 @@ export const loadMcpApiPrincipal = async (apiKeyId: number, groupId: number, dat
     return {
       ...createApiPrincipal(apiKeyId, groupId, permissions),
       name: owner.name, email: owner.email, pictureUrl: owner.pictureUrl, timezone: owner.timezone, localeCode: owner.localeCode,
-      ownershipUserId: owner.id, personalMcpAccess: row.personalAccess,
+      ownershipUserId: owner.id, authVersion: owner.authVersion, personalMcpAccess: row.personalAccess,
       groups, getGroups: () => groups
     }
   }

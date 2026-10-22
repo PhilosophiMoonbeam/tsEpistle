@@ -98,6 +98,20 @@
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
       .editor-main-surface
+        .editor-change-reason
+          v-text-field(
+            v-model='changeReason'
+            :label='$t(`editor:save.changeReason`, { defaultValue: `Change reason (optional)` })'
+            :hint='$t(`editor:save.changeReasonHint`, { defaultValue: `Used only as the Git commit message for this save.` })'
+            :maxlength='changeReasonLimit'
+            :counter='changeReasonLimit'
+            :error-messages='changeReasonErrors'
+            :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
+            density='compact'
+            variant='outlined'
+            hide-details='auto'
+            autocomplete='off'
+          )
         .editor-notices(v-if='bootstrapNotice || serverSaveDisabled || hasOfflineDraftNotice')
           v-alert.editor-bootstrap-notice.editor-notice(
             v-if='bootstrapNotice'
@@ -360,6 +374,7 @@ import {
   type PageBrandingView
 } from '../../shared/page-branding.ts'
 import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
+import { MAX_PAGE_CHANGE_REASON_LENGTH, PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import type { WikiLinkOptions } from '../../shared/wikilinks.ts'
 import { onEditorImageProperties, type EditorImagePropertiesRequest, type EditorImagePropertyPatch } from '../helpers/editor-image-properties'
 
@@ -455,6 +470,7 @@ function normalizeEditorPageFeatures (value: string): PageFeatures {
 
 type EditorSaveCapture = {
   readonly pageInput: PageWriteInput
+  readonly changeReason: string
   readonly editVersion: number
   readonly identity: OfflineEditorDraftIdentity
   readonly content: string
@@ -682,6 +698,8 @@ export default defineComponent({
       imagePropertiesAbortCleanup: null as (() => void) | null,
       imagePropertiesReturnFocus: null as { target: HTMLElement; owner: string; generation: number } | null,
       isSaving: false,
+      changeReason: '',
+      changeReasonLimit: MAX_PAGE_CHANGE_REASON_LENGTH,
       renderWaitController: null as AbortController | null,
       editorAdapter: null as EditorAdapter | null,
       editorAdapterUnsubscribe: null as (() => void) | null,
@@ -941,6 +959,11 @@ export default defineComponent({
         JSON.stringify(wikiStore.page.pageFeatures),
         wikiStore.editor.editorKey
       ]
+    },
+    changeReasonErrors(): string[] {
+      return PageChangeReasonSchema.safeParse(this.changeReason).success
+        ? []
+        : [this.$t('editor:save.changeReasonInvalid', { defaultValue: 'Use a single line of at most 200 characters without controls or bidi formatting.' })]
     },
     isDirty () {
       return !this.sameEditableState(this.savedState, this.currentEditableState(), true)
@@ -2274,6 +2297,7 @@ export default defineComponent({
 
         this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
         const currentSnapshot = this.isCurrentSaveSnapshot(capture)
+        if (currentSnapshot && postWriteError === null && authoritativePageId === wikiStore.page.id && this.offlineDraftCoordinator === coordinator && this.changeReason === capture.changeReason) this.changeReason = ''
         this.markSaveSnapshotPersisted(capture)
         this.setSavedStateFromCapture(capture, persistedVisibility, hydratedPage)
         if (authoritativePageId !== null) {
@@ -2614,11 +2638,15 @@ export default defineComponent({
       }
     },
     captureSaveSnapshot(): EditorSaveCapture {
+      if (!PageChangeReasonSchema.safeParse(this.changeReason).success) {
+        throw new Error(this.$t('editor:save.changeReasonInvalid', { defaultValue: 'Use a single line of at most 200 characters without controls or bidi formatting.' }))
+      }
       const editorCapture = this.captureEditorState()
       const pageInput = this.getPageInput(editorCapture.text)
       const identity = Object.freeze({ ...this.getOfflineDraftIdentity() })
       return Object.freeze({
         pageInput,
+        changeReason: this.changeReason,
         editVersion: editorCapture.editVersion,
         identity,
         content: pageInput.content,
@@ -2687,6 +2715,7 @@ export default defineComponent({
         scriptJs: wikiStore.page.scriptJs,
         tags: [...wikiStore.page.tags],
         title: wikiStore.page.title,
+        ...(this.changeReason ? { changeReason: this.changeReason } : {}),
         pageFeatures: normalizePageFeatures(wikiStore.page.pageFeatures),
         ...brandingInput,
         ...(okfMetadata === undefined ? {} : { okfMetadata: _.cloneDeep(okfMetadata) })
@@ -2827,6 +2856,11 @@ export default defineComponent({
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+  }
+
+  .editor-change-reason {
+    flex: none;
+    padding: var(--wiki-space-3) clamp(var(--wiki-space-4), 4vw, var(--wiki-space-8)) var(--wiki-space-2);
   }
 
   .editor-active-editor {

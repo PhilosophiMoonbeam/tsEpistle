@@ -1,4 +1,5 @@
 import { sameOriginJsonFetch } from '../json-transport.ts'
+import { tagColorBucket } from '../../../shared/tag-colors.ts'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -9,6 +10,8 @@ type PageIndexItem = {
   path: string
   href: string
   updatedAt: string
+  tags: string[]
+  pageAccent: string | null
 }
 
 const readPageIndexItems = (payload: unknown): PageIndexItem[] => {
@@ -23,6 +26,12 @@ const readPageIndexItems = (payload: unknown): PageIndexItem[] => {
     const path = Reflect.get(input, 'path')
     const href = Reflect.get(input, 'href')
     const updatedAt = Reflect.get(input, 'updatedAt')
+    const tags = Reflect.get(input, 'tags') ?? []
+    const rawAccent = Reflect.get(input, 'pageAccent')
+    const pageAccent = typeof rawAccent === 'string' && /^#[0-9a-f]{6}$/i.test(rawAccent) ? rawAccent : null
+    if (!Array.isArray(tags) || tags.length > 100 || tags.some(tag => typeof tag !== 'string' || tag.length === 0 || tag.length > 255)) {
+      throw new TypeError(`Page index item ${index} has invalid tags.`)
+    }
     if (!Number.isSafeInteger(id) || typeof id !== 'number' || id < 1 || typeof title !== 'string' || title.length > 255) {
       throw new TypeError(`Page index item ${index} has invalid identity fields.`)
     }
@@ -35,7 +44,7 @@ const readPageIndexItems = (payload: unknown): PageIndexItem[] => {
     if (typeof updatedAt !== 'string' || Number.isNaN(Date.parse(updatedAt))) {
       throw new TypeError(`Page index item ${index} has an invalid update timestamp.`)
     }
-    return { id, title, description, path, href, updatedAt }
+    return { id, title, description, path, href, updatedAt, tags, pageAccent }
   })
 }
 
@@ -70,12 +79,18 @@ export const hydratePageIndex = async (element: HTMLElement, fetchImpl: FetchLik
     list.className = 'content-extension-index__list'
     list.setAttribute('role', 'list')
     const showIcons = element.dataset.indexShowIcons === 'true'
+    const showTags = element.dataset.indexShowTags === 'true'
+    const showPageAccent = element.dataset.indexShowPageAccent === 'true'
     for (const item of items) {
       const listItem = element.ownerDocument.createElement('li')
       listItem.className = 'content-extension-index__item'
       const link = element.ownerDocument.createElement('a')
       link.className = 'content-extension-index__link'
       link.href = item.href
+      if (showPageAccent) {
+        link.classList.add('content-extension-index__link--page-accent')
+        if (item.pageAccent) link.style.setProperty('--index-page-accent', item.pageAccent)
+      }
       if (showIcons) {
         const icon = element.ownerDocument.createElement('span')
         icon.className = 'content-extension-index__icon'
@@ -93,6 +108,18 @@ export const hydratePageIndex = async (element: HTMLElement, fetchImpl: FetchLik
         description.className = 'content-extension-index__description'
         description.textContent = item.description
         copy.append(description)
+      }
+      if (showTags && item.tags.length > 0) {
+        const tags = element.ownerDocument.createElement('span')
+        tags.className = 'content-extension-index__tags'
+        for (const tag of item.tags) {
+          const chip = element.ownerDocument.createElement('bdi')
+          chip.className = 'content-extension-index__tag wiki-tag-color'
+          chip.dataset.tagColor = tagColorBucket(tag)
+          chip.textContent = tag
+          tags.append(chip)
+        }
+        copy.append(tags)
       }
       link.append(copy)
       listItem.append(link)

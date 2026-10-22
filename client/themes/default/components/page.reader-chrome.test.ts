@@ -223,6 +223,29 @@ describe('page reader chrome template', () => {
     expect(bar?.hasAttribute('aria-valuenow')).toBe(false)
   })
 
+  it('shows the decorative navigation cue only while enabled and pending without changing reading progress or busy status', async () => {
+    const idle = (await renderTemplate(PAGE, baseState({ readingProgress: 42 }))).document
+    const readingBar = idle.querySelector('.page-position')?.outerHTML
+    for (const showPageProgress of [false, true]) {
+      for (const navigationPending of [false, true]) {
+        const doc = (await renderTemplate(PAGE, baseState({ showPageProgress, navigationPending, readingProgress: 42 }))).document
+        const cue = doc.querySelector('.page-navigation-progress')
+        expect(cue !== null).toBe(showPageProgress && navigationPending)
+        expect(doc.querySelector('.page-position')?.outerHTML).toBe(readingBar)
+        expect(doc.querySelector('[aria-busy="true"]') !== null).toBe(navigationPending)
+        if (cue) {
+          expect(cue.getAttribute('aria-hidden')).toBe('true')
+          expect(cue.hasAttribute('role')).toBe(false)
+          expect(cue.hasAttribute('aria-valuenow')).toBe(false)
+          expect(cue.textContent).toBe('')
+        }
+      }
+    }
+    const print = (await renderTemplate(PAGE, baseState({ printView: true, showPageProgress: true, navigationPending: true }))).document
+    expect(print.querySelector('.page-navigation-progress')).toBeNull()
+    expect(print.querySelector('.page-position')).toBeNull()
+  })
+
   it('labels the discussion view and identifies the focus-reading control', async () => {
     const { document } = await renderTemplate(
       PAGE,
@@ -298,6 +321,7 @@ const page = new Function(
   'filterOutlineTree',
   'getInitialExpandedAnchors',
   'revealContentExtensionTarget',
+  'AbortController',
   executableScript
 )(
   (options: unknown) => options,
@@ -322,7 +346,8 @@ const page = new Function(
   buildOutlineTree,
   filterOutlineTree,
   getInitialExpandedAnchors,
-  revealContentExtensionTarget
+  revealContentExtensionTarget,
+  browserWindow.AbortController
 ) as Rules
 
 const call = (name: string, vm: Record<string, unknown>) => page.computed[name]!.call(vm)
@@ -478,6 +503,56 @@ describe('page reader chrome rules', () => {
     expect(label(5, '   ')).toBe('common:page.reviewerById(id=5)')
     // A selected reviewer without a name argument reuses the name from the history.
     expect(label(3)).toBe('Grace Hopper')
+  })
+})
+
+describe('page route motion policy', () => {
+  beforeEach(() => resetBody())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetBody()
+  })
+
+  it('requires site transitions and no OS reduced-motion preference, cleaning up interrupted entrances', () => {
+    browserDocument.body.innerHTML = '<main><h1>Next page</h1></main>'
+    const content = browserDocument.querySelector('main')!
+    let reducedMotion = false
+    const originalMatchMedia = browserWindow.matchMedia
+    vi.spyOn(browserWindow, 'matchMedia').mockImplementation(query => ({
+      ...originalMatchMedia(query),
+      matches: query === '(prefers-reduced-motion: reduce)' && reducedMotion
+    }))
+    const vm = {
+      $refs: { content },
+      pageTransitions: true,
+      routeAnimationAbortController: null as AbortController | null
+    }
+    const animate = () => page.methods.animatePageRoute!.call(vm)
+    animate()
+    expect(content.classList.contains('page-main--route-enter')).toBe(true)
+    const first = vm.routeAnimationAbortController!
+    animate()
+    expect(first.signal.aborted).toBe(true)
+    expect(content.classList.contains('page-main--route-enter')).toBe(true)
+    content.dispatchEvent(new browserWindow.Event('animationend', { bubbles: true }))
+    expect(content.classList.contains('page-main--route-enter')).toBe(false)
+    expect(vm.routeAnimationAbortController).toBeNull()
+
+    for (const enabled of [false, true]) {
+      for (const reduced of [false, true]) {
+        vm.pageTransitions = true
+        reducedMotion = false
+        animate()
+        const previous = vm.routeAnimationAbortController!
+        vm.pageTransitions = enabled
+        reducedMotion = reduced
+        animate()
+        expect(previous.signal.aborted).toBe(true)
+        expect(content.classList.contains('page-main--route-enter')).toBe(enabled && !reduced)
+        expect(vm.routeAnimationAbortController !== null).toBe(enabled && !reduced)
+      }
+    }
+    vm.routeAnimationAbortController?.abort()
   })
 })
 

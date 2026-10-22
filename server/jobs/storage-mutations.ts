@@ -11,6 +11,7 @@ import { parseOkfFilePath } from '../okf/format.ts'
 import { isRecord } from '../models/moduleTypes.ts'
 import type { StoragePageEncodingInput } from '../modules/storage/page-document.ts'
 import { z } from 'zod'
+import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 
 interface StorageTargetRow {
   key: string
@@ -25,6 +26,7 @@ export interface StorageMutationPageLocation {
   localeCode: string
   contentType: string
   visibility: string
+  sourceRevision?: string | number | bigint
 }
 
 interface MutationAuthor {
@@ -33,35 +35,45 @@ interface MutationAuthor {
   email: string
 }
 
-const StorageMutationPayloadSchema = z.strictObject({
-  entityType: z.enum(['page', 'asset']),
-  entityId: z.number().int().positive().safe(),
-  paths: z
-    .array(
-      z
-        .string()
-        .min(1)
-        .max(2048)
-        .refine(value => {
-          if (value.startsWith('/') || value.includes('\\')) return false
-          for (let index = 0; index < value.length; index += 1) {
-            if (value.charCodeAt(index) <= 31) return false
-          }
-          return value.split('/').every(part => part !== '..' && part !== '.' && part !== '')
-        })
-    )
-    .min(1)
-    .max(2),
-  targetKey: z.string().min(1).max(255),
-  targetConfigurationRevision: z.string().min(1),
-  authorId: z.number().int().positive().safe(),
-  authorName: z.string(),
-  authorEmail: z.string()
-})
+const StorageMutationPayloadSchema = z
+  .strictObject({
+    entityType: z.enum(['page', 'asset']),
+    entityId: z.number().int().positive().safe(),
+    sourceRevision: z
+      .string()
+      .regex(/^[1-9][0-9]*$/u)
+      .optional(),
+    changeReason: PageChangeReasonSchema,
+    paths: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(2048)
+          .refine(value => {
+            if (value.startsWith('/') || value.includes('\\')) return false
+            for (let index = 0; index < value.length; index += 1) {
+              if (value.charCodeAt(index) <= 31) return false
+            }
+            return value.split('/').every(part => part !== '..' && part !== '.' && part !== '')
+          })
+      )
+      .min(1)
+      .max(2),
+    targetKey: z.string().min(1).max(255),
+    targetConfigurationRevision: z.string().min(1),
+    authorId: z.number().int().positive().safe(),
+    authorName: z.string(),
+    authorEmail: z.string()
+  })
+  .refine(
+    input => input.changeReason === undefined || (input.entityType === 'page' && input.sourceRevision !== undefined),
+    'A change reason requires a page source revision'
+  )
 export type StorageMutationPayload = z.infer<typeof StorageMutationPayloadSchema>
 
 export interface StorageMutationDispatch {
-  writePage(page: StoragePageEncodingInput & { authorName: string; authorEmail: string }): Promise<unknown>
+  writePage(page: StoragePageEncodingInput & { authorName: string; authorEmail: string; changeReason?: string }): Promise<unknown>
   writeAsset(asset: { path: string; data: Buffer; authorId: number; authorName: string; authorEmail: string }): Promise<unknown>
   removePath(asset: { path: string; authorId: number; authorName: string; authorEmail: string }): Promise<unknown>
 }
@@ -105,7 +117,7 @@ const enabledTargets = async (transaction: Knex.Transaction): Promise<StorageTar
 
 const admit = async (
   transaction: Knex.Transaction,
-  input: { entityType: 'page' | 'asset'; entityId: number; author: MutationAuthor },
+  input: { entityType: 'page' | 'asset'; entityId: number; author: MutationAuthor; sourceRevision?: string; changeReason?: string },
   locations: (target: StorageTargetRow) => string[]
 ): Promise<void> => {
   const store = new DurableJobStore(transaction)
@@ -114,10 +126,12 @@ const admit = async (
     if (paths.length === 0) continue
     await store.enqueue({
       type: 'storage-mutation',
-      version: 1,
+      version: input.entityType === 'page' ? 2 : 1,
       payload: StorageMutationPayloadSchema.parse({
         entityType: input.entityType,
         entityId: input.entityId,
+        ...(input.sourceRevision === undefined ? {} : { sourceRevision: input.sourceRevision }),
+        ...(input.changeReason === undefined ? {} : { changeReason: input.changeReason }),
         paths,
         targetKey: target.key,
         targetConfigurationRevision: nativeStorageMutationConfigurationKey(target),
@@ -132,13 +146,29 @@ const admit = async (
 /** Called in the canonical transaction, including deletes. No source or blob is copied to the queue. */
 export const enqueuePageStorageMutation = async (
   transaction: Knex.Transaction,
-  input: { pageId: number; previous?: StorageMutationPageLocation; author: MutationAuthor; skipStorage?: boolean | undefined }
+  input: {
+    pageId: number
+    previous?: StorageMutationPageLocation
+    author: MutationAuthor
+    skipStorage?: boolean | undefined
+    sourceRevision?: string | number | bigint
+    changeReason?: string
+  }
 ): Promise<void> => {
+  const changeReason = PageChangeReasonSchema.parse(input.changeReason)
   if (input.skipStorage) return
-  const current = await transaction<StorageMutationPageLocation>('pages').where('id', input.pageId).first('path', 'localeCode', 'contentType', 'visibility')
+  const current = await transaction<StorageMutationPageLocation>('pages')
+    .where('id', input.pageId)
+    .first('path', 'localeCode', 'contentType', 'visibility', 'sourceRevision')
   const locations = [input.previous, current].filter((page): page is StorageMutationPageLocation => page?.visibility === 'public')
   if (locations.length === 0) return
-  await admit(transaction, { entityType: 'page', entityId: input.pageId, author: input.author }, target => locations.map(page => pagePath(page, target)))
+  const sourceRevision = String(current?.sourceRevision ?? input.sourceRevision ?? input.previous?.sourceRevision)
+  if (!/^[1-9][0-9]*$/u.test(sourceRevision)) throw new TypeError('Storage page mutation requires its canonical source revision')
+  await admit(
+    transaction,
+    { entityType: 'page', entityId: input.pageId, author: input.author, sourceRevision, ...(changeReason === undefined ? {} : { changeReason }) },
+    target => locations.map(page => pagePath(page, target))
+  )
 }
 
 export const enqueueAssetStorageMutation = async (
@@ -264,8 +294,12 @@ const currentAsset = async (transaction: Knex.Transaction, relativePath: string)
 export const createStorageMutationHandler =
   (): DurableJobHandler =>
   async (job, { knex, signal }) => {
-    if (job.type !== 'storage-mutation' || job.version !== 1) throw new TypeError('Invalid storage mutation job identity')
+    if (job.type !== 'storage-mutation' || (job.version !== 1 && job.version !== 2)) throw new TypeError('Invalid storage mutation job identity')
     const input = StorageMutationPayloadSchema.parse(job.payload)
+    if (job.version === 1 && (input.sourceRevision !== undefined || input.changeReason !== undefined))
+      throw new TypeError('Revision-bound storage work requires protocol 2')
+    if (job.version === 2 && (input.entityType !== 'page' || input.sourceRevision === undefined))
+      throw new TypeError('Protocol 2 requires a canonical page revision')
     // Git invokes this callback only after acquiring its public, non-inheritable turn.
     try {
       signal.throwIfAborted()
@@ -300,8 +334,22 @@ export const createStorageMutationHandler =
               // Imported legacy filenames can remain upstream while Markdown egress uses OKF.
               // A newer importer-owned path is not an orphan of this older asset/page mutation.
               if (!page && !asset && (await hasImportedPageOwner(transaction, relativePath, target, input))) continue
-              if (page) await dispatch.writePage(page)
-              else if (asset) {
+              if (page) {
+                // Old reasonless jobs keep canonical convergence. New work must not
+                // consume a newer revision before its own durable reason can run.
+                if (
+                  input.entityType === 'page' &&
+                  page.id === input.entityId &&
+                  input.sourceRevision !== undefined &&
+                  String(page.sourceRevision) !== input.sourceRevision
+                )
+                  continue
+                const changeReason =
+                  input.targetKey === 'git' && input.entityType === 'page' && page.id === input.entityId && String(page.sourceRevision) === input.sourceRevision
+                    ? input.changeReason
+                    : undefined
+                await dispatch.writePage(changeReason === undefined ? page : { ...page, changeReason })
+              } else if (asset) {
                 const row = await transaction<{ data: Buffer | Uint8Array | string }>('assetData').where('id', asset.id).first('data')
                 if (!row) throw new Error('Canonical storage asset bytes are unavailable')
                 const author = await transaction<{ name: string; email: string }>('users').where('id', asset.authorId).first('name', 'email')

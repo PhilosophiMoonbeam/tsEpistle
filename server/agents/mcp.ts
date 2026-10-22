@@ -22,10 +22,12 @@ import { AGENT_TOOL_NAMES, type AgentActionName, type AgentFeatureFlags } from '
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import { ACTION_CATALOG, actionDefinition } from './actions/catalog.ts'
 import { type ActionAdmissionSnapshot, type ActionAuthority, ActionKernel, ActionKernelError, type McpActionDescriptor, toMcpAction } from './actions/kernel.ts'
+import { type GlossaryReadActionDependencies, registerGlossaryReadActions } from './actions/glossary-reads.ts'
 import { type PageProposalActionDependencies, registerPageProposalActions } from './actions/page-proposals.ts'
 import { type PageReadActionDependencies, registerPageReadActions } from './actions/page-reads.ts'
 import { registerSkillReadActions } from './actions/skill-reads.ts'
 import { canonicalMcpResource } from './origins.ts'
+import { McpOwnerRateLimiter } from './mcp-limiter.ts'
 import { getMcpProposal } from './proposals/repository.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import { validateSkillVirtualPath } from './skills/virtual-path.ts'
@@ -68,6 +70,10 @@ export interface WikiMcpConfiguration {
 export interface WikiMcpDependencies {
   readonly knex: Knex
   readonly operations: PageReadActionDependencies['operations'] & PageProposalActionDependencies['operations']
+  readonly glossary: {
+    readonly operations: GlossaryReadActionDependencies['operations']
+    readonly enabled: () => boolean
+  }
   readonly authenticate: RequestHandler
   readonly resolvePrincipal: (apiKeyId: number, groupId: number) => Promise<Express.User>
   readonly config: WikiMcpConfiguration
@@ -159,8 +165,12 @@ const supportsApprovalContinuation = (context: ServerContext): boolean => {
   const capabilities: unknown = Reflect.get(context.mcpReq.envelope ?? {}, CLIENT_CAPABILITIES_META_KEY)
   if (capabilities === null || typeof capabilities !== 'object' || Array.isArray(capabilities)) return false
   const elicitation: unknown = Reflect.get(capabilities, 'elicitation')
-  return elicitation !== null && typeof elicitation === 'object' && !Array.isArray(elicitation) &&
+  return (
+    elicitation !== null &&
+    typeof elicitation === 'object' &&
+    !Array.isArray(elicitation) &&
     (Reflect.get(elicitation, 'form') !== undefined || Reflect.get(elicitation, 'url') === undefined)
+  )
 }
 
 const requiresApprovalContinuation = (name: AgentActionName): boolean => {
@@ -220,6 +230,7 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
   const hostnames = [resourceUrl.hostname]
   const skillRuntime = new SkillRuntime(dependencies.knex)
   const kernel = new ActionKernel()
+  const admissionLimiter = new McpOwnerRateLimiter()
   const resolveRequester = async (authority: ActionAuthority): Promise<Express.User> => {
     if (authority.requester.kind !== 'apiKey') throw new ActionKernelError('AUTHENTICATION_REQUIRED', 'MCP page actions require an API key', 401)
     return dependencies.resolvePrincipal(authority.requester.apiKeyId, authority.requester.groupId)
@@ -239,6 +250,7 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     snapshotSigningSecret: dependencies.config.snapshotSigningSecret
   })
   registerSkillReadActions(kernel, skillRuntime)
+  registerGlossaryReadActions(kernel, { operations: dependencies.glossary.operations, resolveRequester })
 
   const codecs = dependencies.config.requestStateKeys.map(key =>
     createRequestStateCodec<McpApprovalState>({
@@ -265,6 +277,12 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     const identity = identityFrom(authInfo)
     const principal = await dependencies.resolvePrincipal(identity.apiKeyId, identity.groupId)
     const permissions = permissionsFor(principal)
+    if (
+      (principal.personalMcpAccess !== 'read-only' && principal.personalMcpAccess !== 'read-write') ||
+      !Number.isSafeInteger(principal.ownershipUserId) ||
+      (principal.ownershipUserId ?? 0) <= 0
+    )
+      throw new ActionKernelError('AUTHENTICATION_REQUIRED', 'A current personal MCP owner is required', 401)
     if (!permissions.some(permission => permission === 'use:mcp' || permission === 'manage:system')) {
       throw new ActionKernelError('MCP_PERMISSION_REQUIRED', 'API key group lacks use:mcp', 403)
     }
@@ -281,6 +299,9 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
         Number.isSafeInteger(principal.ownershipUserId) &&
         principal.ownershipUserId > 0
           ? { personalMcpOwnerUserId: principal.ownershipUserId }
+          : {}),
+        ...(!dependencies.glossary.enabled()
+          ? { allowedActions: (Object.keys(ACTION_CATALOG) as AgentActionName[]).filter(name => name !== 'glossary.list' && name !== 'glossary.get') }
           : {}),
         featureFlags: {
           ...featureFlags(dependencies.config),
@@ -563,6 +584,21 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
       return res.status(401).json({ error: 'API key MCP resource claim is invalid' })
     }
     if (claimed.href !== resourceUrl.href) return res.status(403).json({ error: 'API key is bound to a different MCP resource' })
+    // Resolve the live owner before charging: keys are not independent quotas,
+    // and stale request principals must not charge another account's bucket.
+    let currentSnapshot: ActionAdmissionSnapshot
+    try {
+      currentSnapshot = (
+        await admissionFor({ token, clientId: '', scopes: [], extra: { apiKeyId: req.authContext.apiKeyId, groupId: req.authContext.groupId } })
+      ).snapshot
+    } catch (error: unknown) {
+      if (error instanceof ActionKernelError) return res.status(error.status).json({ error: error.message })
+      return next(error)
+    }
+    const retryAfter = admissionLimiter.consume(currentSnapshot.personalMcpOwnerUserId!)
+    if (retryAfter > 0) {
+      return res.status(429).set('Retry-After', String(retryAfter)).set('Cache-Control', 'no-store').json({ error: 'MCP request rate limit exceeded' })
+    }
     // Reject modern body claims without their required HTTP version header before SDK dispatch.
     const body: unknown = req.body
     if (req.method === 'POST' && req.get('MCP-Protocol-Version') === undefined && body && typeof body === 'object' && !Array.isArray(body)) {

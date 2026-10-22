@@ -64,6 +64,7 @@ const evaluate = new Function(
   'timezoneOptions',
   'PasswordVisibilityToggle',
   'requestConfirmation',
+  'AvatarCropDialog',
   executable
 )
 // The real shared password toggle, so the profile keeps its fixed name and pressed state.
@@ -155,6 +156,30 @@ const profile = (overrides: Partial<Profile> = {}): Profile => ({
   ...overrides
 })
 const placeholder = Vue.defineComponent({ render: () => Vue.h('div') })
+// This suite owns the profile/API boundary. Native browser smoke exercises real
+// decoding and crop gestures; this controllable child also simulates late work.
+const cropAttempts: Array<{ source: File; cropped: File; apply: () => void; cancel: () => void }> = []
+const AvatarCropDialog = Vue.defineComponent({
+  props: ['file', 'selectionId', 'reduceMotion', 'onApply', 'onCancel'],
+  setup(props) {
+    const selectionId = Number(props.selectionId)
+    const onApply = props.onApply as (file: File, selectionId: number) => void
+    const onCancel = props.onCancel as (selectionId: number) => void
+    const cropped = new File(['cropped image'], 'avatar.jpg', { type: 'image/jpeg' })
+    const attempt = {
+      source: props.file as File,
+      cropped,
+      apply: () => onApply(cropped, selectionId),
+      cancel: () => onCancel(selectionId)
+    }
+    cropAttempts.push(attempt)
+    return () =>
+      Vue.h('section', { role: 'dialog', 'aria-label': 'Crop your avatar' }, [
+        Vue.h('button', { type: 'button', onClick: attempt.cancel }, 'Cancel crop'),
+        Vue.h('button', { type: 'button', onClick: attempt.apply }, 'Apply crop')
+      ])
+  }
+})
 const AdminHero = Vue.defineComponent({
   props: ['title', 'description', 'icon', 'eyebrow', 'headingId'],
   setup(props, { slots }) {
@@ -245,6 +270,7 @@ afterEach(() => {
     if (themeStyle) themeStyle.textContent = themeStyleContent
     else currentStyle?.remove()
     for (const restore of restorers.splice(0).reverse()) restore()
+    cropAttempts.length = 0
   }
   expect(componentErrors).toEqual([])
 })
@@ -308,7 +334,8 @@ const mount = async (initialProfile = profile()) => {
     draftModel.snapshotProfileDraft,
     draftModel.timezoneOptions,
     PasswordVisibilityToggle,
-    requestConfirmation
+    requestConfirmation,
+    AvatarCropDialog
   ) as ComponentOptions
   app = Vue.createApp({ ...options, render })
   fixtureScope = Vue.effectScope()
@@ -395,7 +422,7 @@ const deferred = () => {
   return { promise, resolve, reject }
 }
 const requestsTo = (fetch: { mock: { calls: Array<[string, RequestInit?]> } }, url: string) =>
-  fetch.mock.calls.filter(([target, init]) => target === url && init?.method === 'PATCH')
+  fetch.mock.calls.filter(([target, init]) => target === url && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(init?.method ?? ''))
 
 describe('profile workspace contracts', () => {
   test('edits every account field inline with localized labels and hides the decorative provider mark', async () => {
@@ -578,6 +605,8 @@ describe('profile workspace contracts', () => {
     fetch.mockImplementationOnce(() => pending.promise)
     input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
     await settle()
+    button(host, 'Apply crop').click()
+    await settle()
     expect(activeLoading.has('profile-avatar')).toBe(true)
 
     if (boundary === 'account change') {
@@ -753,7 +782,75 @@ describe('profile workspace contracts', () => {
     expect(submit.disabled).toBe(false)
   })
 
-  test('uploads a selected avatar, revises its preview and offers removal only for an uploaded avatar', async () => {
+  test('cancelling the crop sends no avatar mutation and returns focus to Upload', async () => {
+    const { host, fetch, activeLoading } = await mount()
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(input, 'files', { configurable: true, value: [new File(['source'], 'avatar.png', { type: 'image/png' })] })
+    input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await settle()
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+    const attempt = cropAttempts.at(-1)!
+    button(host, 'Cancel crop').click()
+    await settle()
+    // Even a late encoder result after Cancel cannot mutate the account.
+    attempt.apply()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile/avatar')).toHaveLength(0)
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement === button(host, 'Importer un avatar')).toBe(true)
+    expect(activeLoading.has('profile-avatar')).toBe(false)
+  })
+
+  test.each(['account change', 'profile reload', 'unmount'])('discards an unsubmitted crop after %s, including a late Apply', async boundary => {
+    const { host, vm, fetch, store, activeLoading } = await mount()
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(['source'], 'avatar.png', { type: 'image/png' })
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] })
+    input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await settle()
+    const attempt = cropAttempts.at(-1)!
+    if (boundary === 'account change') {
+      fetch.mockImplementation(async (url: string) => {
+        if (url === '/_api/users/profile') return response(profile({ id: 74, name: 'Account B' }))
+        if (url === '/_api/locales') return response([])
+        throw new Error(`Unexpected stale-crop request: ${url}`)
+      })
+      store.user.id = 74
+      await settle()
+    } else if (boundary === 'profile reload') {
+      await vm.loadProfile()
+      await settle()
+    } else {
+      app!.unmount()
+      app = undefined
+    }
+    attempt.apply()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile/avatar')).toHaveLength(0)
+    expect(activeLoading.has('profile-avatar')).toBe(false)
+    expect(store.showError).not.toHaveBeenCalled()
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+
+    if (boundary === 'account change') {
+      const currentInput = host.querySelector<HTMLInputElement>('input[type="file"]')!
+      Object.defineProperty(currentInput, 'files', { configurable: true, value: [file] })
+      currentInput.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+      await settle()
+      // The previous dialog cannot close or apply the new account's selection.
+      attempt.cancel()
+      attempt.apply()
+      await settle()
+      expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+      expect(requestsTo(fetch, '/_api/users/profile/avatar')).toHaveLength(0)
+      fetch.mockResolvedValueOnce(response({ message: 'Avatar uploaded', pictureUrl: 'internal' }))
+      button(host, 'Apply crop').click()
+      await settle()
+      const request = requestsTo(fetch, '/_api/users/profile/avatar').at(-1)!
+      expect(new Headers(request[1]?.headers).get('X-TsEpistle-Profile-Account')).toBe('74')
+    }
+  })
+
+  test('stages a selected avatar and uploads only the applied crop, then keeps removal and failure recovery usable', async () => {
     const { host, fetch, activeLoading } = await mount()
     await intersectAvatar(host)
     expect(host.querySelector('.profile-avatar-preview img')?.getAttribute('src')).toBe('https://provider.example/avatar.png')
@@ -781,8 +878,21 @@ describe('profile workspace contracts', () => {
     fetch.mockImplementationOnce(() => pending.promise)
     input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
     await settle()
+    expect(requestsTo(fetch, '/_api/users/profile/avatar')).toHaveLength(0)
+    expect(activeLoading.has('profile-avatar')).toBe(false)
+    const attempt = cropAttempts.at(-1)!
+    expect(attempt.source).toBe(file)
+    button(host, 'Apply crop').click()
+    await settle()
     expect(fetch.mock.calls.at(-1)?.[0]).toBe('/_api/users/profile/avatar')
     expect(fetch.mock.calls.at(-1)?.[1]?.method).toBe('POST')
+    const request = requestsTo(fetch, '/_api/users/profile/avatar').at(-1)!
+    expect(new Headers(request[1]?.headers).get('X-TsEpistle-Profile-Account')).toBe('73')
+    const body = request[1]?.body
+    if (!(body instanceof FormData)) throw new TypeError('Avatar request must contain multipart form data.')
+    const submitted = body.get('image') as File
+    expect(await submitted.text()).toBe(await attempt.cropped.text())
+    expect(submitted.type).toBe('image/jpeg')
     expect(input.disabled).toBe(true)
     expect(upload.disabled).toBe(true)
     expect(upload.getAttribute('aria-busy')).toBe('true')
@@ -812,9 +922,21 @@ describe('profile workspace contracts', () => {
     fetch.mockRejectedValueOnce(new Error('Image upload denied'))
     input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
     await settle()
+    button(host, 'Apply crop').click()
+    await settle()
     expect(host.querySelector('.profile-avatar-actions [role="alert"]')?.textContent).toContain('Image upload denied')
     expect(host.querySelector('.profile-avatar-actions [role="status"]')).toBeNull()
     expect(input.disabled).toBe(false)
+    expect(upload.disabled).toBe(false)
+    expect(activeLoading.has('profile-avatar')).toBe(false)
+    expect(document.activeElement === upload).toBe(true)
+    fetch.mockResolvedValueOnce(response({ message: 'Avatar uploaded', pictureUrl: 'internal' }))
+    input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+    await settle()
+    button(host, 'Apply crop').click()
+    await settle()
+    expect(host.querySelector('.profile-avatar-actions [role="alert"]')).toBeNull()
+    expect(host.querySelector('.profile-avatar-actions [role="status"]')).toBeTruthy()
     expect(upload.disabled).toBe(false)
     expect(activeLoading.has('profile-avatar')).toBe(false)
   })

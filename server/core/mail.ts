@@ -7,6 +7,7 @@ import fs from 'fs-extra'
 import path from 'node:path'
 import { resolveActiveBranding } from '../helpers/site-logo-branding.ts'
 import { MAIL_TEMPLATES, type MailTemplateData, type MailTemplateKey } from '../../shared/mail-workspace.ts'
+import { parsePublicOrigin } from '../../shared/general-policy.ts'
 import localization from './localization.ts'
 import {
   mailRuntimeConfiguration,
@@ -87,20 +88,26 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
   const render = async (options: MailOptions, configuration: MailRuntimeConfiguration): Promise<SendMailOptions> => {
     const input = structuredClone(options),
       brandingConfig = { ...wiki.config },
-      definition = MAIL_TEMPLATES.find(template => template.key === input.template)
-    if (!definition) throw new wiki.Error.MailTemplateFailed()
+      definition = MAIL_TEMPLATES.find(template => template.key === input.template),
+      publicOrigin = parsePublicOrigin(brandingConfig.host)
+    if (!definition || (input.template !== 'test' && !publicOrigin)) throw new wiki.Error.MailTemplateFailed()
     const sourceData = input.data ?? {}
     const recipient: unknown = await wiki.models.knex('users').select('communicationLocale').where({ email: input.to }).first()
-    const preferredLocale = typeof recipient === 'object' && recipient !== null
-      ? Reflect.get(recipient, 'communicationLocale') ?? null
-      : null
+    const preferredLocale = typeof recipient === 'object' && recipient !== null ? (Reflect.get(recipient, 'communicationLocale') ?? null) : null
     const mailLocale = await mailLocalization.resolveMailLocale(preferredLocale)
     const parameters: Record<string, string> = { siteTitle: brandingConfig.title, siteName: brandingConfig.title }
     const webUrl = (value: unknown): string => {
       if (typeof value !== 'string') throw new wiki.Error.MailTemplateFailed()
       try {
         const parsed = new URL(value)
-        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Unsupported mail URL protocol.')
+        if (
+          !publicOrigin ||
+          (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+          parsed.origin !== publicOrigin ||
+          parsed.username ||
+          parsed.password
+        )
+          throw new Error('Mail action URL does not match the configured public origin.')
         return parsed.toString()
       } catch {
         throw new wiki.Error.MailTemplateFailed()
@@ -111,8 +118,7 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
     } else if (input.template === 'page-watch') {
       if (!sourceData.action || !('actions' in definition)) throw new wiki.Error.MailTemplateFailed()
       const action = definition.actions[sourceData.action]
-      if (!action || typeof sourceData.actorName !== 'string' || typeof sourceData.pageTitle !== 'string')
-        throw new wiki.Error.MailTemplateFailed()
+      if (!action || typeof sourceData.actorName !== 'string' || typeof sourceData.pageTitle !== 'string') throw new wiki.Error.MailTemplateFailed()
       parameters.actorName = sourceData.actorName
       parameters.pageTitle = sourceData.pageTitle
       parameters.url = webUrl(sourceData.url)
@@ -136,7 +142,7 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
       .join('\n\n')
     const template = await api.loadTemplate(input.template),
       logo = deps.resolveLogo ? await deps.resolveLogo() : (await resolveActiveBranding(wiki.models.knex, brandingConfig.logoUrl)).logoUrl,
-      logoUrl = logo ? new URL(logo, brandingConfig.host) : null,
+      logoUrl = logo && publicOrigin ? new URL(logo, publicOrigin) : null,
       body = template({
         ...parameters,
         __mail: copy,

@@ -13,6 +13,7 @@ import editorsRouter from './editors.ts'
 import groupsRouter from './groups.ts'
 import glossaryRouter from './glossary.ts'
 import localesRouter from './locales.ts'
+import liveNotesRouter from './live-notes.ts'
 import loggingRouter from './logging.ts'
 import mailRouter from './mail.ts'
 import tlsRouter from './tls.ts'
@@ -57,6 +58,7 @@ router.use('/developer-flags', developerFlagsRouter)
 router.use('/extensions', extensionsRouter)
 router.use('/utilities', utilitiesRouter)
 router.use('/locales', localesRouter)
+router.use('/live-notes', liveNotesRouter)
 router.use('/groups', groupsRouter)
 router.use('/glossary', glossaryRouter)
 router.use('/editors', editorsRouter)

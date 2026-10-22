@@ -45,6 +45,9 @@
             v-list-item.profile-nav__item(to='/pages' color='primary' rounded='lg')
               template(v-slot:prepend): v-icon mdi-file-document-outline
               v-list-item-title {{ $t('profile:pages.title') }}
+            v-list-item.profile-nav__item(to='/notes' color='primary' rounded='lg')
+              template(v-slot:prepend): v-icon mdi-note-edit-outline
+              v-list-item-title {{ $t('common:liveNotes.inventory', { defaultValue: 'My live notes' }) }}
             v-list-item.profile-nav__item(to='/discussions' color='primary' rounded='lg')
               template(v-slot:prepend): v-icon mdi-comment-text-multiple-outline
               v-list-item-title {{ $t('profile:nav.discussions', { defaultValue: 'My discussions' }) }}

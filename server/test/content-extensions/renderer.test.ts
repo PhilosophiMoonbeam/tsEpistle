@@ -13,11 +13,12 @@ const baseConfig = {
   underline: false
 }
 
-const renderMarkdown = (input: string) => markdownRenderer.render.call({
-  input,
-  config: baseConfig,
-  children: []
-})
+const renderMarkdown = (input: string) =>
+  markdownRenderer.render.call({
+    input,
+    config: baseConfig,
+    children: []
+  })
 
 describe('content extension Markdown rendering', () => {
   let db: Knex
@@ -34,9 +35,13 @@ describe('content extension Markdown rendering', () => {
       table.boolean('isEnabled').notNullable()
       table.integer('version').notNullable()
     })
-    await db('contentExtensions').insert([
-      'qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map'
-    ].map(key => ({ key, isEnabled: true, version: 1 })))
+    await db('contentExtensions').insert(
+      ['qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map'].map(key => ({
+        key,
+        isEnabled: true,
+        version: 1
+      }))
+    )
     global.WIKI = { models: { knex: db } }
   })
 
@@ -131,6 +136,8 @@ describe('content extension Markdown rendering', () => {
         depth: 2,
         columns: 3,
         showIcons: true,
+        showTags: true,
+        showPageAccent: true,
         order: 'title',
         limit: 40,
         emptyLabel: 'Nothing readable here.'
@@ -144,6 +151,8 @@ describe('content extension Markdown rendering', () => {
     expect(rendered).toContain('data-index-path="guide"')
     expect(rendered).toContain('data-index-depth="2"')
     expect(rendered).toContain('data-index-show-icons="true"')
+    expect(rendered).toContain('data-index-show-tags="true"')
+    expect(rendered).toContain('data-index-show-page-accent="true"')
     expect(rendered).toContain('data-index-order="title"')
     expect(rendered).toContain('data-index-empty-label="Nothing readable here."')
     const document = new DOMParser().parseFromString(rendered, 'text/html')
@@ -155,11 +164,18 @@ describe('content extension Markdown rendering', () => {
   })
 
   it('renders the remaining extensions as sanitized static, local, or consent-gated output', async () => {
-    const render = async (input: unknown): Promise<string> => renderMarkdown(
-      serializeContentExtensionFence(parseContentExtensionEnvelope(input))
-    )
+    const render = async (input: unknown): Promise<string> => renderMarkdown(serializeContentExtensionFence(parseContentExtensionEnvelope(input)))
     const [tabs, spoiler, infobox, pdf, media, youtube, diagram, kroki, plantuml, map] = await Promise.all([
-      render({ key: 'tabs', version: 1, props: { tabs: [{ label: 'A', content: '<b>Alpha</b>', headingLevel: 2 }, { label: 'B', content: 'Beta' }] } }),
+      render({
+        key: 'tabs',
+        version: 1,
+        props: {
+          tabs: [
+            { label: 'A', content: '<b>Alpha</b>', headingLevel: 2 },
+            { label: 'B', content: 'Beta' }
+          ]
+        }
+      }),
       render({ key: 'spoiler', version: 1, props: { content: '<img src=x onerror=alert(1)>' } }),
       render({ key: 'infobox', version: 1, props: { title: 'City', facts: [{ label: 'Metro', value: true }] } }),
       render({ key: 'pdf', version: 1, props: { src: '/uploads/guide.pdf', title: 'Guide' } }),
@@ -228,7 +244,11 @@ describe('content extension Markdown rendering', () => {
     const invalidRendered = await renderMarkdown(invalid)
     expect(invalidRendered).toContain('&quot;unknown&quot;')
 
-    for (const [source, rendered] of [[valid, disabled], [valid, incompatible], [invalid, invalidRendered]] as const) {
+    for (const [source, rendered] of [
+      [valid, disabled],
+      [valid, incompatible],
+      [invalid, invalidRendered]
+    ] as const) {
       const document = new DOMParser().parseFromString(rendered, 'text/html')
       expect(document.querySelector('pre code')?.textContent).toBe(`${source.split('\n')[1]}\n`)
       expect(document.querySelector('figure.content-extension--qr, svg')).toBeNull()

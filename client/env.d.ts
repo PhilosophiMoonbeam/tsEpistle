@@ -22,6 +22,8 @@ export type SiteConfig = {
   initialAppearance?: 'light' | 'dark' | 'system'
   readerLayout?: import('../shared/theme-policy.ts').ReaderLayout
   codeTheme?: CodeTheme
+  pageTransitions?: boolean
+  showPageProgress?: boolean
   tocPosition: string
   lang: string
   localeRevision?: string

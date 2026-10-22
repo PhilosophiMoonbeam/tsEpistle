@@ -44,6 +44,7 @@ import { PageBrandingAssignmentSchema } from '../../shared/page-branding.ts'
 import type { PageBrandingAssignment } from '../../shared/page-branding.ts'
 import { DEFAULT_PAGE_FEATURES, PageFeaturesSchema, normalizePageFeatures, parsePageFeatures } from '../../shared/page-features.ts'
 import type { PageFeatures } from '../../shared/page-features.ts'
+import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import { authorizePageBrandingAssignment } from '../helpers/asset-branding.ts'
 import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
 import { pageRequiresUnlock } from '../operations/page-protection.ts'
@@ -161,6 +162,7 @@ interface CreatePageOptions {
   isPublished: boolean | number
   isSearchable?: boolean | number
   title: string
+  changeReason?: string
   publishEndDate?: string | null
   publishStartDate?: string | null
   scriptCss?: string
@@ -185,6 +187,7 @@ interface UpdatePageOptions {
   isPublished?: boolean | number
   isSearchable?: boolean | number
   title?: string
+  changeReason?: string
   tags?: string[]
   expectedUpdatedAt?: string
   expectedSourceRevision?: string
@@ -438,6 +441,14 @@ const pageUpdateConflict = (): Error & { status: number } =>
     name: 'PageUpdateConflict',
     status: 409
   })
+const pageChangeReason = (value: unknown): string | undefined => {
+  const parsed = PageChangeReasonSchema.safeParse(value)
+  if (!parsed.success)
+    throw new errors.ApplicationError('changeReason must be a single line of at most 200 characters without controls or bidi formatting.', {
+      code: 'INVALID_INPUT'
+    })
+  return parsed.data
+}
 const collaborationDraftDiscardedConflict = (): Error & { status: number } =>
   Object.assign(new Error('This collaboration draft was discarded. Reload the page before saving.'), {
     name: 'CollaborationDraftDiscarded',
@@ -650,6 +661,7 @@ interface CanonicalPageCommitInput {
   expectedUpdatedAt?: boolean
   tagsChanged?: boolean
   skipStorage?: boolean | undefined
+  changeReason?: string | undefined
 }
 
 const saveCanonicalPageRevision = async (input: CanonicalPageCommitInput): Promise<void> => {
@@ -686,7 +698,8 @@ const saveCanonicalPageRevision = async (input: CanonicalPageCommitInput): Promi
     pageId: input.page.id,
     previous: input.page,
     author: input.user,
-    skipStorage: input.skipStorage
+    skipStorage: input.skipStorage,
+    ...(input.changeReason === undefined ? {} : { changeReason: input.changeReason })
   })
 }
 const pageHasActiveApproval = async (database: Knex | Knex.Transaction, pageId: number): Promise<boolean> =>
@@ -1039,6 +1052,7 @@ export default class Page extends Model {
    */
   static async createPage(opts: CreatePageOptions): Promise<Page> {
     rejectApiPrincipalMutation(opts.user)
+    const changeReason = pageChangeReason(opts.changeReason)
     // -> Validate path
     if (opts.path.includes('.') || opts.path.includes(' ') || opts.path.includes('\\') || opts.path.includes('//')) {
       throw new wiki.Error.PageIllegalPath()
@@ -1149,7 +1163,12 @@ export default class Page extends Model {
       await assertNoStorageAssetAtPagePaths(transaction, inserted)
       await enqueueCurrentPageProjections(transaction, inserted.id, 'create')
       await writePageOutboxEvent(transaction, 'page.created', inserted, opts.user)
-      await enqueuePageStorageMutation(transaction, { pageId: inserted.id, author: opts.user, skipStorage: opts.skipStorage })
+      await enqueuePageStorageMutation(transaction, {
+        pageId: inserted.id,
+        author: opts.user,
+        skipStorage: opts.skipStorage,
+        ...(changeReason === undefined ? {} : { changeReason })
+      })
       return inserted.id
     })
     const page = await wiki.models.pages.getPageFromDb(createdPageId)
@@ -1188,6 +1207,7 @@ export default class Page extends Model {
    */
   static async updatePage(opts: UpdatePageOptions): Promise<Page> {
     rejectApiPrincipalMutation(opts.user)
+    const changeReason = pageChangeReason(opts.changeReason)
     // -> Fetch original page
     const ogPage = await wiki.models.pages.query().findById(opts.id)
     if (ogPage && ogPage.visibility === 'public') await loadPageTags(ogPage)
@@ -1457,7 +1477,8 @@ export default class Page extends Model {
         ...(willMove ? { previousLocation: projectionLocation(ogPage) } : {}),
         expectedUpdatedAt: opts.expectedUpdatedAt !== undefined,
         tagsChanged,
-        skipStorage: opts.skipStorage
+        skipStorage: opts.skipStorage,
+        changeReason
       })
       if (opts.action === 'restored') {
         const identity = await transaction<Pick<Page, 'id' | 'sourceRevision' | 'localeCode' | 'path' | 'visibility'>>('pages')
@@ -2176,7 +2197,13 @@ export default class Page extends Model {
       })
       await writePageOutboxEvent(transaction, 'page.deleted', page, user)
       await wiki.models.pages.query(transaction).delete().where('id', page.id)
-      await enqueuePageStorageMutation(transaction, { pageId: page.id, previous: page, author: user, skipStorage: opts.skipStorage })
+      await enqueuePageStorageMutation(transaction, {
+        pageId: page.id,
+        previous: page,
+        sourceRevision: deletionRevision.sourceRevision,
+        author: user,
+        skipStorage: opts.skipStorage
+      })
     })
     await notifyCollaboration(page.id)
     await wiki.models.pages.deletePageFromCache(page.hash)

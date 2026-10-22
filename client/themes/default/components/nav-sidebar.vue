@@ -223,6 +223,7 @@ export default defineComponent({
       } as NavigationTreeItem,
       parents: [] as NavigationTreeItem[],
       loadedCache: [] as number[],
+      loadedBrowseLocationKey: null as string | null,
       browseRequestSequence: 0,
       browseRequestController: null as AbortController | null
     }
@@ -271,6 +272,7 @@ export default defineComponent({
       this.parents = []
       this.currentItems = []
       this.loadedCache = []
+      this.loadedBrowseLocationKey = null
     },
     sidebarLinkClicked (event: MouseEvent | KeyboardEvent) {
       const target = event.currentTarget
@@ -286,9 +288,9 @@ export default defineComponent({
       } catch {
         // Navigation remains usable when browser storage is unavailable.
       }
-      if (mode === 'browse' && this.loadedCache.length < 1) {
+      if (mode === 'browse' && (this.loadedCache.length < 1 || this.loadedBrowseLocationKey !== this.pageLocationKey)) {
         if (this.expandParentByDefault) this.loadFromCurrentPath()
-        else this.fetchBrowseItems()
+        else this.fetchBrowseItems({ id: 0, title: `/ ${this.$t('common:sidebar.root')}` })
       }
     },
     async fetchBrowseItems (requestedItem?: NavigationTreeItem) {
@@ -299,6 +301,7 @@ export default defineComponent({
       const requestController = markRaw(new AbortController())
       this.browseRequestController = requestController
       const locale = this.locale
+      const pageLocationKey = this.pageLocationKey
       loadingStart(wikiStore, 'browse-load')
       this.navLoading = true
       this.navError = ''
@@ -326,6 +329,7 @@ export default defineComponent({
         this.currentParent = item
         this.currentItems = items
         this.loadedCache = _.union(this.loadedCache, [item.id])
+        this.loadedBrowseLocationKey = pageLocationKey
       } catch (error) {
         if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
           if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) reportServerConnectionFailure()
@@ -347,6 +351,7 @@ export default defineComponent({
       const locale = this.locale
       const path = this.path
       const pageId = wikiStore.page.id
+      const pageLocationKey = this.pageLocationKey
       loadingStart(wikiStore, 'browse-load')
       this.navLoading = true
       this.navError = ''
@@ -381,6 +386,7 @@ export default defineComponent({
         this.currentParent = currentParent
         this.loadedCache = [curPage.parent]
         this.currentItems = _.filter(items, ['parent', curPage.parent])
+        this.loadedBrowseLocationKey = pageLocationKey
       } catch (error) {
         if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
           if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) reportServerConnectionFailure()
@@ -393,8 +399,9 @@ export default defineComponent({
       }
     },
     retryBrowse () {
-      if (this.currentParent.id === 0 && this.expandParentByDefault && this.loadedCache.length < 1) {
-        void this.loadFromCurrentPath()
+      if (this.loadedBrowseLocationKey !== this.pageLocationKey) {
+        if (this.expandParentByDefault) void this.loadFromCurrentPath()
+        else void this.fetchBrowseItems({ id: 0, title: `/ ${this.$t('common:sidebar.root')}` })
       } else {
         void this.fetchBrowseItems(this.currentParent)
       }

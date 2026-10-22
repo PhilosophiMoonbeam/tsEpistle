@@ -117,6 +117,8 @@ export interface IndexContentExtensionEnvelope {
     depth?: number
     columns?: 1 | 2 | 3
     showIcons?: boolean
+    showTags?: boolean
+    showPageAccent?: boolean
     order?: 'path' | 'title' | 'updated'
     limit?: number
     emptyLabel?: string
@@ -575,7 +577,11 @@ function validIndexPath(value: string): boolean {
 
 function parseIndexEnvelope(propsInput: unknown): IndexContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
-  rejectUnknownProperties(props, ['path', 'locale', 'depth', 'columns', 'showIcons', 'order', 'limit', 'emptyLabel'], 'Content extension props')
+  rejectUnknownProperties(
+    props,
+    ['path', 'locale', 'depth', 'columns', 'showIcons', 'showTags', 'showPageAccent', 'order', 'limit', 'emptyLabel'],
+    'Content extension props'
+  )
   if (typeof props.path !== 'string' || !validIndexPath(props.path)) {
     throw new Error('Content extension props.path must be a normalized page path without leading or trailing slashes.')
   }
@@ -585,6 +591,8 @@ function parseIndexEnvelope(propsInput: unknown): IndexContentExtensionEnvelope 
   const depth = boundedInteger(props.depth, 'Content extension props.depth', 0, 5, 0)
   const columns = boundedInteger(props.columns, 'Content extension props.columns', 1, 3, 2) as 1 | 2 | 3
   const showIcons = strictBoolean(props.showIcons, 'Content extension props.showIcons', false)
+  const showTags = strictBoolean(props.showTags, 'Content extension props.showTags', false)
+  const showPageAccent = strictBoolean(props.showPageAccent, 'Content extension props.showPageAccent', false)
   const order = props.order ?? 'path'
   if (order !== 'path' && order !== 'title' && order !== 'updated') {
     throw new Error('Content extension props.order must be "path", "title", or "updated".')
@@ -594,7 +602,18 @@ function parseIndexEnvelope(propsInput: unknown): IndexContentExtensionEnvelope 
   return {
     key: 'index',
     version: 1,
-    props: { path: props.path, locale: props.locale, depth, columns, showIcons, order, limit, ...(emptyLabel === undefined ? {} : { emptyLabel }) }
+    props: {
+      path: props.path,
+      locale: props.locale,
+      depth,
+      columns,
+      showIcons,
+      showTags,
+      showPageAccent,
+      order,
+      limit,
+      ...(emptyLabel === undefined ? {} : { emptyLabel })
+    }
   }
 }
 
@@ -818,6 +837,8 @@ function canonicalProps(envelope: ContentExtensionEnvelope): Record<string, unkn
         depth: envelope.props.depth,
         columns: envelope.props.columns,
         showIcons: envelope.props.showIcons,
+        showTags: envelope.props.showTags,
+        showPageAccent: envelope.props.showPageAccent,
         order: envelope.props.order,
         limit: envelope.props.limit,
         ...(envelope.props.emptyLabel === undefined ? {} : { emptyLabel: envelope.props.emptyLabel })

@@ -16,7 +16,7 @@ import { up as createStorageAdministration } from '../../db/migrations/tsepistle
 import { createStorageMutationHandler, enqueueAssetStorageMutation, enqueuePageStorageMutation } from '../../jobs/storage-mutations.ts'
 import { withGitMutationLock } from '../../modules/storage/git/mutation-lock.ts'
 import { openStorageRoot, type StorageRootHandle } from '../../modules/storage/local-filesystem.ts'
-import { okfFilePath } from '../../okf/format.ts'
+import { okfFilePath, parseOkfDocument } from '../../okf/format.ts'
 import type StorageModel from '../../models/storage.ts'
 import type AssetModel from '../../models/assets.ts'
 import { lockSearchIndex } from '../../helpers/search-contract.ts'
@@ -29,7 +29,8 @@ import type { StorageModuleDefinition, StorageTargetDraft } from '../../../share
 const connection = getPostgresTestConnection('_storage_mutation_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const author = { id: 1, name: 'Native Storage Test', email: 'storage@example.test' }
-const handlers = { 'storage-mutation@1': createStorageMutationHandler() }
+const mutationHandler = createStorageMutationHandler()
+const handlers = { 'storage-mutation@1': mutationHandler, 'storage-mutation@2': mutationHandler }
 
 suite('PostgreSQL canonical storage mutations with real Git', () => {
   let db: Knex
@@ -59,12 +60,12 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     extra: {},
     isPublished: true
   })
-  const mutatePage = async (id: number, patch: Record<string, unknown>) =>
+  const mutatePage = async (id: number, patch: Record<string, unknown>, changeReason?: string) =>
     db.transaction(async transaction => {
       await lockSearchIndex(transaction, false)
       const previous = await transaction('pages').where({ id }).forUpdate().first()
       await transaction('pages').where({ id }).update(patch)
-      await enqueuePageStorageMutation(transaction, { pageId: id, previous, author })
+      await enqueuePageStorageMutation(transaction, { pageId: id, previous, author, ...(changeReason === undefined ? {} : { changeReason }) })
     })
   const ready = async () =>
     db('durableJobs')
@@ -297,7 +298,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
       release.resolve()
       await incumbent
     }
-    await db('pages').where({ id: 1 }).update({ content: 'Latest canonical source after restart', sourceRevision: 2 })
+    await mutatePage(1, { content: 'Latest canonical source after restart', sourceRevision: 2 })
     // A partially written crash worktree must be replayable without fetching an older remote.
     await root.writeAtomic(okfFilePath('en', 'busy'), 'Interrupted older write')
     await drain(db)
@@ -305,6 +306,84 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     expect((await db('durableJobs').first()).payload).not.toContain('Latest canonical source after restart')
     expect(git('show', `HEAD:${okfFilePath('en', 'busy')}`)).toContain('Latest canonical source after restart')
     expect(git('status', '--porcelain')).toBe('')
+  })
+
+  it('retains a reason and exact revision across a failed turn, runtime restart and idempotent replay', async () => {
+    const reason = '--amend is literal human text, not a Git option'
+    await db.transaction(async transaction => {
+      await transaction('pages').insert(page(1, 'reasoned', 'The exact reasoned source'))
+      await enqueuePageStorageMutation(transaction, { pageId: 1, author, changeReason: reason })
+    })
+    const admitted = await db('durableJobs').first()
+    expect(JSON.parse(admitted.payload)).toMatchObject({ sourceRevision: '1', changeReason: reason })
+    expect(admitted.payload).not.toContain('The exact reasoned source')
+    const store = new DurableJobStore(replica)
+    expect(await store.claim({ workerId: 'previous-build', supportedIdentities: ['storage-mutation@1'] })).toEqual([])
+    const [claimed] = await store.claim({ workerId: 'reason-before-restart', supportedIdentities: Object.keys(handlers) })
+    if (!claimed) throw new Error('Reasoned mutation was not claimed')
+    await store.fail(claimed, new DurableJobDeferral(new Error('Interrupted before its Git turn'), true))
+    expect((await db('durableJobs').where({ id: admitted.id }).first()).payload).toBe(admitted.payload)
+    Storage.activeTargets = []
+    Storage.targets = []
+    await root.close()
+    root = await openStorageRoot(repository)
+    await activate()
+    await drain()
+    expect(git('log', '-1', '--format=%s')).toBe(reason)
+    const document = git('show', `HEAD:${okfFilePath('en', 'reasoned')}`)
+    expect(document).toContain('The exact reasoned source')
+    expect(parseOkfDocument(document).metadata['x-wiki']).toMatchObject({ source_revision: '1' })
+    expect(document).not.toContain(reason)
+    const commit = git('rev-parse', 'HEAD')
+    await db('durableJobs')
+      .where({ id: admitted.id })
+      .update({ state: 'pending', completedAt: null, nextRunAt: new Date(0) })
+    await drain()
+    expect(git('rev-parse', 'HEAD')).toBe(commit)
+    expect(await db('durableJobs').where({ id: admitted.id }).first()).toMatchObject({ state: 'succeeded', payload: admitted.payload })
+  })
+
+  for (const earlierReason of [undefined, 'Explain only the earlier revision']) {
+    it(`does not let an older ${earlierReason === undefined ? 'generic' : 'reasoned'} leased job consume the newer reasoned revision`, async () => {
+      await db.transaction(async transaction => {
+        await transaction('pages').insert(page(1, 'queued', 'Initial exported body'))
+        await enqueuePageStorageMutation(transaction, { pageId: 1, author })
+      })
+      await drain()
+      const originalCommit = git('rev-parse', 'HEAD')
+      await mutatePage(1, { content: 'Earlier queued body', sourceRevision: 2 }, earlierReason)
+      const store = new DurableJobStore(replica)
+      const [older] = await store.claim({ workerId: 'older-queued-save', supportedIdentities: Object.keys(handlers) })
+      if (!older) throw new Error('Earlier save was not claimed')
+      expect(older.payload).toMatchObject({ sourceRevision: '2' })
+      await mutatePage(1, { content: 'Newer queued body', sourceRevision: 3 }, 'Explain exactly the newer revision')
+      await mutationHandler(older, { knex: replica, signal: new AbortController().signal })
+      expect(await store.complete(older)).toBe(true)
+      expect(git('rev-parse', 'HEAD')).toBe(originalCommit)
+      expect(git('show', `HEAD:${okfFilePath('en', 'queued')}`)).toContain('Initial exported body')
+      await drain()
+      expect(git('log', '-1', '--format=%s')).toBe('Explain exactly the newer revision')
+      expect(git('show', `HEAD:${okfFilePath('en', 'queued')}`)).toContain('Newer queued body')
+      expect(git('log', '-p', '--all')).not.toContain('Earlier queued body')
+      if (earlierReason !== undefined) expect(git('log', '--format=%s')).not.toContain(earlierReason)
+    })
+  }
+
+  it('replays a historical revisionless durable payload with the server-owned generic message', async () => {
+    await db.transaction(async transaction => {
+      await transaction('pages').insert(page(1, 'historical', 'Previous body'))
+      await enqueuePageStorageMutation(transaction, { pageId: 1, author })
+    })
+    const admitted = await db('durableJobs').first()
+    const { sourceRevision: _revision, ...historical } = JSON.parse(admitted.payload)
+    await db('durableJobs')
+      .where({ id: admitted.id })
+      .update({ version: 1, payload: JSON.stringify(historical) })
+    await db('pages').where({ id: 1 }).update({ content: 'Current canonical historical body', sourceRevision: 2 })
+    await drain()
+    expect(git('log', '-1', '--format=%s')).toBe(`docs: update ${okfFilePath('en', 'historical')}`)
+    expect(git('show', `HEAD:${okfFilePath('en', 'historical')}`)).toContain('Current canonical historical body')
+    expect(await db('durableJobs').where({ id: admitted.id }).first()).toMatchObject({ state: 'succeeded', payload: JSON.stringify(historical) })
   })
 
   it('retains a busy Git target independently while a healthy native disk target converges', async () => {
@@ -357,10 +436,10 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
       await enqueuePageStorageMutation(transaction, { pageId: 1, author })
     })
     const store = new DurableJobStore(db)
-    const [job] = await store.claim({ workerId: 'waiting-turn', supportedIdentities: ['storage-mutation@1'] })
+    const [job] = await store.claim({ workerId: 'waiting-turn', supportedIdentities: Object.keys(handlers) })
     if (!job) throw new Error('Storage job missing')
     await withGitMutationLock(replica, 'git', async () => {
-      await expect(handlers['storage-mutation@1'](job, { knex: db, signal: new AbortController().signal })).rejects.toMatchObject({
+      await expect(mutationHandler(job, { knex: db, signal: new AbortController().signal })).rejects.toMatchObject({
         name: 'DurableJobDeferral',
         cause: { code: 'STORAGE_GIT_BUSY' }
       })
@@ -379,7 +458,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
       await enqueuePageStorageMutation(transaction, { pageId: 1, author })
     })
     await drain()
-    await mutatePage(1, { path: 'new', localeCode: 'fr', content: 'Moved current body', sourceRevision: 2 })
+    await mutatePage(1, { path: 'new', localeCode: 'fr', content: 'Moved current body', sourceRevision: 2 }, 'Explain the moved page')
     await db.transaction(async transaction => {
       await transaction('pages').insert(page(2, 'old', 'New imported owner body'))
       await enqueuePageStorageMutation(transaction, { pageId: 2, author, skipStorage: true })
@@ -387,6 +466,8 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     await drain()
     expect(git('show', `HEAD:${okfFilePath('en', 'old')}`)).toContain('New imported owner body')
     expect(git('show', `HEAD:${okfFilePath('fr', 'new')}`)).toContain('Moved current body')
+    expect(git('log', '-1', '--format=%s', '--', okfFilePath('en', 'old'))).toBe(`docs: update ${okfFilePath('en', 'old')}`)
+    expect(git('log', '-1', '--format=%s', '--', okfFilePath('fr', 'new'))).toBe('Explain the moved page')
     await mutatePage(1, { contentType: 'html', editorKey: 'code', content: '<p>Converted</p>', sourceRevision: 3 })
     await drain()
     expect(git('ls-tree', '-r', '--name-only', 'HEAD')).not.toContain(okfFilePath('fr', 'new'))
@@ -962,7 +1043,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     })
     const firstStore = new DurableJobStore(db)
     const secondStore = new DurableJobStore(replica)
-    const [old] = await firstStore.claim({ workerId: 'crashed', supportedIdentities: ['storage-mutation@1'] })
+    const [old] = await firstStore.claim({ workerId: 'crashed', supportedIdentities: Object.keys(handlers) })
     if (!old) throw new Error('Storage job was not claimed')
     await db('durableJobs')
       .where({ id: old.id })
@@ -970,7 +1051,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     expect(await firstStore.extendLease(old)).toBe(false)
     expect(await firstStore.complete(old)).toBe(false)
     expect(await firstStore.fail(old, new DurableJobDeferral(new Error('expired')))).toBe(false)
-    const [current] = await secondStore.claim({ workerId: 'replacement', supportedIdentities: ['storage-mutation@1'] })
+    const [current] = await secondStore.claim({ workerId: 'replacement', supportedIdentities: Object.keys(handlers) })
     if (!current) throw new Error('Crashed storage lease was not reclaimed')
     expect(current.attempts).toBe(current.maxAttempts)
     expect(await firstStore.complete(old)).toBe(false)
@@ -981,7 +1062,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     aborted.abort(new Error('Worker shutdown before its real Git turn'))
     let interruption: unknown
     try {
-      await handlers['storage-mutation@1'](current, { knex: replica, signal: aborted.signal })
+      await mutationHandler(current, { knex: replica, signal: aborted.signal })
     } catch (error) {
       interruption = error
     }
@@ -989,9 +1070,9 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     expect(await secondStore.fail(current, interruption)).toBe(true)
     expect(await secondStore.get(current.id)).toMatchObject({ state: 'pending', attempts: current.maxAttempts, completedAt: null })
     await ready()
-    const [resumed] = await secondStore.claim({ workerId: 'resumed', supportedIdentities: ['storage-mutation@1'] })
+    const [resumed] = await secondStore.claim({ workerId: 'resumed', supportedIdentities: Object.keys(handlers) })
     if (!resumed) throw new Error('Interrupted ceiling job was not retained')
-    await handlers['storage-mutation@1'](resumed, { knex: replica, signal: new AbortController().signal })
+    await mutationHandler(resumed, { knex: replica, signal: new AbortController().signal })
     expect(await secondStore.complete(resumed)).toBe(true)
     expect(git('show', `HEAD:${okfFilePath('en', 'crash')}`)).toContain('Current canonical source')
   })
@@ -1036,7 +1117,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     expect(git('status', '--porcelain')).toBe('')
     const store = new DurableJobStore(replica)
     await ready()
-    const [job] = await store.claim({ workerId: 'bounded-delay', supportedIdentities: ['storage-mutation@1'] })
+    const [job] = await store.claim({ workerId: 'bounded-delay', supportedIdentities: Object.keys(handlers) })
     if (!job) throw new Error('Storage job missing')
     const now = new Date()
     await store.fail(job, new DurableJobDeferral(new Error('provider unavailable')), () => Infinity, now)
@@ -1045,7 +1126,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     await db('durableJobs')
       .where({ id: job.id })
       .update({ attempts: job.maxAttempts, nextRunAt: new Date(0) })
-    const [capped] = await store.claim({ workerId: 'capped-busy', supportedIdentities: ['storage-mutation@1'] })
+    const [capped] = await store.claim({ workerId: 'capped-busy', supportedIdentities: Object.keys(handlers) })
     if (!capped) throw new Error('Storage ceiling job missing')
     await store.fail(capped, new DurableJobDeferral(new Error('busy at retry ceiling'), true))
     expect(await store.get(job.id)).toMatchObject({ state: 'pending', attempts: job.maxAttempts })

@@ -58,7 +58,7 @@ export interface RunDurableJobsOptions extends Omit<ClaimDurableJobs, 'supported
 
 export type DurableJobHandler = (job: DurableJob, context: { knex: Knex; signal: AbortSignal }) => Promise<void>
 
-/** Only storage-mutation@1 may defer an admitted canonical write without exhausting it. */
+/** Supported storage-mutation protocols may defer canonical writes without exhausting them. */
 export class DurableJobDeferral extends Error {
   readonly contention: boolean
   constructor(cause: unknown, contention = false) {
@@ -68,7 +68,8 @@ export class DurableJobDeferral extends Error {
   }
 }
 
-const isRetainedStorageMutation = (job: Pick<DurableJob, 'type' | 'version'>): boolean => job.type === 'storage-mutation' && job.version === 1
+const isRetainedStorageMutation = (job: Pick<DurableJob, 'type' | 'version'>): boolean =>
+  job.type === 'storage-mutation' && (job.version === 1 || job.version === 2)
 
 const tableName = 'durableJobs'
 const defaultLeaseMs = 30_000
@@ -122,7 +123,9 @@ const deserializeJob = (row: DurableJobRow): DurableJob => {
 const applyEligiblePredicate = (query: Knex.QueryBuilder, now: Date): Knex.QueryBuilder =>
   query
     .where('nextRunAt', '<=', now)
-    .where(attempts => attempts.whereRaw('?? < ??', ['attempts', 'maxAttempts']).orWhere({ type: 'storage-mutation', version: 1 }))
+    .where(attempts =>
+      attempts.whereRaw('?? < ??', ['attempts', 'maxAttempts']).orWhere(storage => storage.where('type', 'storage-mutation').whereIn('version', [1, 2]))
+    )
     .where((eligible: Knex.QueryBuilder) => {
       eligible.where('state', 'pending').orWhere((expired: Knex.QueryBuilder) => {
         expired.where('state', 'running').andWhere('leaseExpiresAt', '<=', now)
@@ -202,7 +205,7 @@ export class DurableJobStore {
         .where('state', 'running')
         .where('leaseExpiresAt', '<=', now)
         .whereRaw('?? >= ??', ['attempts', 'maxAttempts'])
-        .whereNot(identity => identity.where({ type: 'storage-mutation', version: 1 })),
+        .whereNot(identity => identity.where('type', 'storage-mutation').whereIn('version', [1, 2])),
       supported
     ).update({
       state: 'failed',
@@ -232,11 +235,12 @@ export class DurableJobStore {
         leaseOwner: input.workerId,
         leaseToken,
         leaseExpiresAt,
-        attempts: this.knex.raw('CASE WHEN ?? = ? AND ?? = ? AND ?? >= ?? THEN ?? ELSE ?? + 1 END', [
+        attempts: this.knex.raw('CASE WHEN ?? = ? AND ?? IN (?, ?) AND ?? >= ?? THEN ?? ELSE ?? + 1 END', [
           'type',
           'storage-mutation',
           'version',
           1,
+          2,
           'attempts',
           'maxAttempts',
           'maxAttempts',
@@ -328,7 +332,7 @@ export class DurableJobStore {
     const updated = await this.knex<DurableJobRow>(tableName)
       .where('id', id)
       .whereIn('state', ['pending', 'running'])
-      .whereNot(identity => identity.where({ type: 'storage-mutation', version: 1 }))
+      .whereNot(identity => identity.where('type', 'storage-mutation').whereIn('version', [1, 2]))
       .update({
         state: 'cancelled',
         leaseOwner: null,

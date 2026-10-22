@@ -291,7 +291,7 @@ make_plan() {
       case "$probe" in
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
-        native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
+        native-live-notes-schema|native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
         personal-mcp-credential-kind-and-owner-schema) ;;
         external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
@@ -890,6 +890,91 @@ verify_postconditions() {
             );")"
           [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result legacy operations without preserved copies)"
         fi
+        ;;
+      native-live-notes-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -Atc "
+          WITH expected(table_name,column_name,data_type,max_length,nullable) AS (VALUES
+            ('liveNotes','id','uuid',NULL,'NO'),('liveNotes','key','character varying',64,'NO'),
+            ('liveNotes','ownerId','integer',NULL,'YES'),('liveNotes','access','character varying',8,'NO'),
+            ('liveNotes','state','text',NULL,'NO'),('liveNotes','title','character varying',200,'NO'),
+            ('liveNotes','revision','bigint',NULL,'NO'),('liveNotes','everEdited','boolean',NULL,'NO'),
+            ('liveNotes','createdAt','timestamp with time zone',NULL,'NO'),('liveNotes','updatedAt','timestamp with time zone',NULL,'NO'),
+            ('liveNotes','touchedAt','timestamp with time zone',NULL,'NO'),('liveNotes','deletedAt','timestamp with time zone',NULL,'YES'),
+            ('liveNoteRevisions','noteId','uuid',NULL,'NO'),('liveNoteRevisions','revision','bigint',NULL,'NO'),
+            ('liveNoteRevisions','state','text',NULL,'NO'),('liveNoteRevisions','title','character varying',200,'NO'),
+            ('liveNoteRevisions','access','character varying',8,'NO'),('liveNoteRevisions','actorId','integer',NULL,'YES'),
+            ('liveNoteRevisions','createdAt','timestamp with time zone',NULL,'NO'),
+            ('liveNoteRequests','noteId','uuid',NULL,'NO'),('liveNoteRequests','actorId','integer',NULL,'NO'),
+            ('liveNoteRequests','requestId','character varying',128,'NO'),('liveNoteRequests','updateHash','character varying',64,'NO'),
+            ('liveNoteConnections','id','character varying',128,'NO'),('liveNoteConnections','noteId','uuid',NULL,'NO'),
+            ('liveNoteConnections','expiresAt','timestamp with time zone',NULL,'NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length AND c.is_nullable=e.nullable;")"
+        [[ "$result" == 26 ]] || die "Postcondition failed: $probe ($result/26 columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -Atc "
+          WITH expected(tab,kind,cols) AS (VALUES
+            ('liveNotes','p',ARRAY['id']),('liveNotes','u',ARRAY['key']),
+            ('liveNoteRevisions','p',ARRAY['noteId','revision']),
+            ('liveNoteRequests','p',ARRAY['noteId','actorId','requestId']),
+            ('liveNoteConnections','p',ARRAY['id'])
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.tab AND c.contype::text=e.kind AND c.convalidated
+              AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(n,o)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.n ORDER BY k.o)=e.cols);")"
+        [[ "$result" == 5 ]] || die "Postcondition failed: $probe ($result/5 identity constraints)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -Atc "
+          WITH expected(tab,col,target,action) AS (VALUES
+            ('liveNotes','ownerId','users','n'),('liveNoteRevisions','actorId','users','n'),
+            ('liveNoteRequests','actorId','users','c'),
+            ('liveNoteRevisions','noteId','liveNotes','c'),('liveNoteRequests','noteId','liveNotes','c'),
+            ('liveNoteConnections','noteId','liveNotes','c')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            JOIN pg_class r ON r.oid=c.confrelid
+            JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=c.conkey[1]
+            JOIN pg_attribute b ON b.attrelid=r.oid AND b.attnum=c.confkey[1]
+            WHERE t.relnamespace=current_schema()::regnamespace AND r.relnamespace=t.relnamespace
+              AND t.relname=e.tab AND r.relname=e.target AND a.attname=e.col AND b.attname='id'
+              AND c.contype='f' AND c.convalidated AND c.confdeltype::text=e.action AND cardinality(c.conkey)=1);")"
+        [[ "$result" == 6 ]] || die "Postcondition failed: $probe ($result/6 foreign keys)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -Atc "
+          SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='liveNoteConnections'
+            AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=2
+            AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(n,o)
+              JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.n WHERE k.o<=2 ORDER BY k.o)=ARRAY['noteId','expiresAt'];")"
+        [[ "$result" -ge 1 ]] || die "Postcondition failed: $probe (active lease index)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          WITH expected(col,definition) AS (VALUES
+            ('access','CHECKaccess=ANYARRAY[''private'',''read'',''edit'']'),
+            ('revision','CHECKrevision>=0ANDrevision<=9007199254740991')
+          ), checks AS (
+            SELECT c.conkey,t.oid,
+              -- Preserve quoted values while removing only deparser syntax and casts.
+              replace(replace(regexp_replace(pg_get_constraintdef(c.oid),
+                '(''[^'']*'')|::character varying|::text\\[\\]|::text|::bigint|[[:space:]()]', '\\1', 'g'),
+                '''0''','0'), '''9007199254740991''','9007199254740991') AS definition
+            FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='liveNotes'
+              AND c.contype='c' AND c.convalidated
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM checks c JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=c.conkey[1]
+            WHERE cardinality(c.conkey)=1 AND a.attname=e.col AND c.definition=e.definition);
+          COMMIT;")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 access and safe revision checks)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          SELECT (SELECT count(*) FROM \"liveNotes\" WHERE access NOT IN ('private','read','edit') OR revision<0 OR revision>9007199254740991)
+            + (SELECT count(*) FROM \"liveNoteRevisions\" WHERE access NOT IN ('private','read','edit') OR revision<0 OR revision>9007199254740991)
+            + (SELECT count(*) FROM \"liveNoteRevisions\" r JOIN \"liveNotes\" n ON n.id=r.\"noteId\" WHERE r.revision>n.revision)
+            + (SELECT count(*) FROM \"liveNotes\" n WHERE NOT EXISTS (
+                SELECT 1 FROM \"liveNoteRevisions\" r WHERE r.\"noteId\"=n.id AND r.revision=n.revision
+                  AND r.state=n.state AND r.access=n.access AND r.title=n.title));
+          COMMIT;")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid document/history rows)"
         ;;
       native-glossary-schema)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "

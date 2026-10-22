@@ -9,6 +9,10 @@ export const normalizeCodeTheme = (input: unknown): CodeTheme => {
   return result.success ? result.data : 'native'
 }
 
+// Keep existing route motion and leave the new navigation cue opt-in.
+export const normalizePageTransitions = (input: unknown): boolean => (typeof input === 'boolean' ? input : true)
+export const normalizeShowPageProgress = (input: unknown): boolean => (typeof input === 'boolean' ? input : false)
+
 export const ReaderLayoutSchema = z
   .object({
     textSize: z.number().int().min(14).max(24),
@@ -32,6 +36,8 @@ export const ThemePolicySchema = z
     tocPosition: z.enum(['left', 'right', 'off']),
     reading: ReaderLayoutSchema,
     codeTheme: CodeThemeSchema,
+    pageTransitions: z.boolean().default(true),
+    showPageProgress: z.boolean().default(false),
     injectCSS: z.string().max(65536),
     injectHead: z.string().max(65536),
     injectBody: z.string().max(65536)
@@ -54,6 +60,8 @@ export const themePolicyFromConfiguration = (configuration: Record<string, unkno
     tocPosition: (raw.tocPosition || 'left') as ThemePolicy['tocPosition'],
     reading: normalizeReaderLayout(raw.reading),
     codeTheme: normalizeCodeTheme(raw.codeTheme),
+    pageTransitions: normalizePageTransitions(raw.pageTransitions),
+    showPageProgress: normalizeShowPageProgress(raw.showPageProgress),
     injectCSS: typeof raw.injectCSS === 'string' ? raw.injectCSS : '',
     injectHead: typeof raw.injectHead === 'string' ? raw.injectHead : '',
     injectBody: typeof raw.injectBody === 'string' ? raw.injectBody : ''
@@ -68,6 +76,8 @@ export const themeFieldLabels: Record<keyof ThemePolicy, string> = {
   tocPosition: 'Contents position',
   reading: 'Reader typography',
   codeTheme: 'Code appearance',
+  pageTransitions: 'Page transitions',
+  showPageProgress: 'Navigation loading cue',
   injectCSS: 'Custom CSS',
   injectHead: 'Head HTML',
   injectBody: 'Body HTML'

@@ -17,6 +17,7 @@ import 'katex/dist/contrib/mhchem.mjs'
 
 import { renderMarkdownCodeFence } from '../../../../shared/markdown-code-fence.ts'
 import mdImsize from '../../../../shared/markdown-it-image-size.ts'
+import markdownItQuoteAttribution from '../../../../shared/markdown-it-quote-attribution.ts'
 import { decodeBase64Text } from '../../../helpers/base64.ts'
 import {
   MERMAID_MAX_DIAGRAMS_PER_ROOT,
@@ -29,12 +30,7 @@ import Prism from '../../../libs/prism/setup.ts'
 import katexHelper from '../common/katex.ts'
 import plantuml from './plantuml.ts'
 import tabsetHelper from './tabset.ts'
-import {
-  parseWikiLinkAt,
-  resolveWikiLinkHref,
-  WIKI_LINKS_DISABLED,
-  type WikiLinkOptions
-} from '../../../../shared/wikilinks.ts'
+import { parseWikiLinkAt, resolveWikiLinkHref, WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
 
 DOMPurify.addHook('uponSanitizeElement', node => {
   if (!(node instanceof Element)) return
@@ -66,6 +62,7 @@ export function createWikiMarkdownRenderer(wikiLinks: WikiLinkOptions = WIKI_LIN
     .use(mdDeflist)
     .use(mdFootnote)
     .use(mdImsize)
+    .use(markdownItQuoteAttribution)
   if (wikiLinks.enabled) {
     markdown.inline.ruler.after('html_inline', 'wiki_link', (state, silent) => {
       const source = state.src.slice(state.pos)

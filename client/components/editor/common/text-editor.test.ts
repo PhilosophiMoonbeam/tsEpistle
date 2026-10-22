@@ -73,6 +73,34 @@ describe('TextEditor', () => {
     expect(editor.getValue()).toBe('first\nsecond')
   })
 
+  it('distinguishes deliberate viewport input from selection and scroll notifications', () => {
+    let interactions = 0
+    let scrolls = 0
+    const { editor, parent } = createEditor({
+      value: 'one\ntwo\nthree',
+      onInteraction: () => {
+        interactions++
+      },
+      onScroll: () => {
+        scrolls++
+      }
+    })
+    editor.setSelection({ line: 1, ch: 1 })
+    const before = editor.cursor()
+    const content = parent.querySelector<HTMLElement>('.cm-content')!
+    const scroller = parent.querySelector<HTMLElement>('.cm-scroller')!
+    expect(interactions).toBe(0)
+    content.dispatchEvent(new Event('wheel', { bubbles: true }))
+    expect(interactions).toBe(1)
+    scroller.dispatchEvent(new Event('scroll'))
+    expect(scrolls).toBe(1)
+    expect(interactions).toBe(1)
+    editor.scrollToLine(2)
+    expect(editor.cursor()).toEqual(before)
+    expect(editor.getValue()).toBe('one\ntwo\nthree')
+    expect(editor.historyDepth()).toEqual({ undo: 0, redo: 0 })
+  })
+
   it('resolves the Unicode word under an empty selection', () => {
     const value = 'Alpha café, omega'
     const { editor } = createEditor({ value })

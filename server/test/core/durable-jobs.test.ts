@@ -369,6 +369,22 @@ describe('portable durable jobs', () => {
     expect(pool.numUsed()).toBe(usedBefore)
   })
 
+  it('retains unresolved canonical storage work in both protocols but reclaims completed receipts', async () => {
+    const oldDate = new Date('2026-01-01T00:00:00.000Z')
+    for (const version of [1, 2]) {
+      for (const state of ['failed', 'succeeded']) {
+        const job = await store.enqueue({ type: 'storage-mutation', version, payload: {} })
+        await knex('durableJobs').where('id', job.id).update({ state, completedAt: oldDate, updatedAt: oldDate })
+      }
+    }
+    const cleanup = await store.enqueue({ type: 'cleanup-durable-jobs', version: 1, payload: {} })
+    await cleanupDurableJobs(cleanup, { knex, signal: new AbortController().signal })
+    expect(await knex('durableJobs').where('type', 'storage-mutation').orderBy('version').select('version', 'state')).toEqual([
+      { version: 1, state: 'failed' },
+      { version: 2, state: 'failed' }
+    ])
+  })
+
   it('drains cleanup backlogs in at most 500-row handlers with deduplicated continuations and preserved data', async () => {
     await insertCleanupBacklog(1100)
     await knex.schema.createTable('assetRelocationEffects', table => {

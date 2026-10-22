@@ -247,6 +247,7 @@ const registrations = [
   asyncComponent('AdminHero', () => import('./components/common/admin-hero.vue')),
   asyncComponent('Comments', () => import('./components/comments.vue')),
   asyncComponent('Editor', () => import('./components/editor.vue')),
+  asyncComponent('LiveNote', () => import('./components/notes/live-note.vue')),
   asyncComponent('History', () => import('./components/history.vue')),
   asyncComponent('Loader', () => import('./components/common/loader.vue')),
   asyncComponent('Login', () => import('./components/login.vue')),
