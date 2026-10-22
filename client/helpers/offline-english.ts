@@ -127,6 +127,7 @@ export const offlineEnglish = {
     savedPages: 'Saved pages',
     skipContent: 'Skip to content',
     reconnect: 'Reconnect',
+    openLivePage: 'Open live page',
     openNavigation: 'Open navigation'
   },
   offlineLibrary: {

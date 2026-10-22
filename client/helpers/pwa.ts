@@ -216,6 +216,7 @@ type SafetyRequestContext = {
 
 type ProbeAttempt = {
   epoch: number
+  deadline: number
   controller: AbortController
   promise: Promise<boolean>
 }
@@ -283,7 +284,6 @@ const suspendConnectionProbe = (): void => {
   connectionEpoch += 1
   activeProbe?.controller.abort()
   activeProbe = undefined
-  if (state.connectionState === 'checking') setConnection(state.onlineHint === false ? 'offline' : 'server-unavailable')
 }
 
 const scheduleConnectionRetry = (): void => {
@@ -1004,9 +1004,9 @@ const markUpdateReady = (registration: ServiceWorkerRegistration): void => {
   } catch {
     // Lifecycle callbacks are observers and must not break registration.
   }
-  // A waiting worker can remain idle indefinitely without this request. The
-  // worker still requires a current safe vote from every open page before it
-  // calls skipWaiting(), so starting preparation cannot discard editor work.
+  // Announce waiting deployments without interrupting a reader. Preparation
+  // can resume here only after an explicit update request; every open page
+  // must still supply a current safe vote before skipWaiting().
   queueMicrotask(() => {
     if (
       !pageSuspended &&
@@ -1193,7 +1193,7 @@ const recheckOfflineStartupRegistration = (): void => {
 const handleOnlineHint = (): void => {
   state.onlineHint = true
   recheckOfflineStartupRegistration()
-  if (connectionProbeAllowed()) void retryServerConnection()
+  if (connectionProbeAllowed()) void retryServerConnection({ quiet: true })
 }
 
 const handleOfflineHint = (): void => {
@@ -1208,7 +1208,9 @@ const handleOfflineHint = (): void => {
 
 /** Re-read the browser hint at interaction/resume boundaries, even if its event was missed. */
 export function observeBrowserConnection(): void {
-  if (state.mode !== 'retirement' && hasNavigator() && navigator.onLine === false && state.onlineHint !== false) handleOfflineHint()
+  if (state.mode === 'retirement' || !hasNavigator()) return
+  if (navigator.onLine === false && state.onlineHint !== false) handleOfflineHint()
+  else if (navigator.onLine === true && state.onlineHint !== true) handleOnlineHint()
 }
 
 /** A failed transport request invalidates an earlier successful health check. */
@@ -1226,9 +1228,10 @@ export function reportServerConnectionFailure(): void {
 const resumeConnection = (): void => {
   observeBrowserConnection()
   recheckOfflineStartupRegistration()
-  if (state.mode === 'retirement' || !connectionProbeAllowed() || activeProbe) return
-  if (state.connectionState === 'online') void retryServerConnection({ quiet: true })
-  else scheduleConnectionRetry()
+  if (state.mode === 'retirement' || !connectionProbeAllowed()) return
+  // Foreground activity bypasses retry backoff, but a recent check can serve
+  // adjacent focus/pageshow/visibility events without another request.
+  void retryServerConnection({ quiet: true, reusePending: true })
 }
 
 const attachWindowListeners = (): void => {
@@ -1344,8 +1347,7 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
   }
   if (!initialConnectionProbeStarted) {
     initialConnectionProbeStarted = true
-    if (connectionProbeAllowed()) void retryServerConnection()
-    else setConnection(state.onlineHint === false ? 'offline' : 'server-unavailable')
+    if (connectionProbeAllowed()) void retryServerConnection({ reusePending: true })
   }
   if (registrationReference) return Promise.resolve(registrationReference)
   if (registrationInFlight) return registrationInFlight
@@ -1358,7 +1360,7 @@ export function registerPwa(callbacks: PwaLifecycleCallbacks = {}): Promise<Serv
 
 export async function retryServerConnection(options: { quiet?: boolean; reusePending?: boolean } = {}): Promise<boolean> {
   if (hasWindow() && (pageSuspended || document.visibilityState === 'hidden')) return false
-  if (options.reusePending && activeProbe) return activeProbe.promise
+  if (options.reusePending && activeProbe && Date.now() < activeProbe.deadline) return activeProbe.promise
   clearConnectionRetry()
   const epoch = ++connectionEpoch
   activeProbe?.controller.abort()
@@ -1376,11 +1378,18 @@ export async function retryServerConnection(options: { quiet?: boolean; reusePen
     setConnection('checking')
   }
   const controller = new AbortController()
+  const deadline = Date.now() + PROBE_DEADLINE_MS
   let rejectTimeout = (_reason?: unknown): void => {}
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     rejectTimeout = reject
   })
   const timeout = setTimeout(() => {
+    if (epoch === connectionEpoch && Date.now() >= deadline + PROBE_DEADLINE_MS) {
+      // Sleeping documents can deliver an old timeout before their resume
+      // events. That deadline says nothing about the current connection.
+      suspendConnectionProbe()
+      if (connectionProbeAllowed()) void retryServerConnection({ quiet: true })
+    }
     controller.abort()
     rejectTimeout(new Error('The server health check timed out.'))
   }, PROBE_DEADLINE_MS)
@@ -1418,7 +1427,7 @@ export async function retryServerConnection(options: { quiet?: boolean; reusePen
       if (epoch === connectionEpoch) scheduleConnectionRetry()
     }
   })()
-  activeProbe = { epoch, controller, promise }
+  activeProbe = { epoch, deadline, controller, promise }
   return promise
 }
 
@@ -1942,8 +1951,7 @@ const runPwaStartupGate = async (bundleRelease: string, callbacks: PwaLifecycleC
   observeBrowserConnection()
   if (!initialConnectionProbeStarted && state.mode !== 'retirement') {
     initialConnectionProbeStarted = true
-    if (connectionProbeAllowed()) void retryServerConnection()
-    else setConnection(state.onlineHint === false ? 'offline' : 'server-unavailable')
+    if (connectionProbeAllowed()) void retryServerConnection({ reusePending: true })
   }
   if (state.mode === 'retirement') {
     state.registrationState = 'unsupported'
@@ -2219,7 +2227,7 @@ export function preparePwaStartup(bundleRelease: string, callbacks: PwaLifecycle
 }
 
 const requestPwaUpdateAutomatically = (): Promise<boolean> => {
-  if ((startupRefreshDeferred.value || startupAutomaticRefreshDisabled) && !startupExplicitRefreshAllowed) return Promise.resolve(false)
+  if (!startupExplicitRefreshAllowed) return Promise.resolve(false)
   if (updateRequestInFlight) return updateRequestInFlight
   updateRequestInFlight = requestUpdate().finally(() => {
     updateRequestInFlight = undefined

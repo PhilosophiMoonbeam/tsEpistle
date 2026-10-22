@@ -80,6 +80,20 @@ Measure cold and warm navigation separately, with route, viewport, CPU/network e
 
 Reader outline geometry is refreshed on layout invalidation, with one heading rectangle collection reused for visibility and position; scrolling keeps the cached binary-search path. Reader-rail invalidations coalesce into the existing settling loop, and alignment writes defer dependent height reads to the next frame. Header-title fitting reuses an unchanged geometry/typography result but invalidates on title, size, presentation, and font-loading changes. Preserve anchor selection, late fonts, responsive resizing, sticky-rail seams, and print layout when changing these paths.
 
+### 3.5 Long-lived tabs and Agent continuity
+
+Returning to a visible tab performs an immediate, shared health check rather than waiting through retry backoff. Suspending a pending check is not evidence that the server failed. Fresh checks are shared across adjacent focus/pageshow/visibility events; overdue checks and substantially sleep-delayed deadlines are fenced before fresh verification. A real foreground timeout or unhealthy response still makes server-dependent actions unavailable. Browser connection hints, server availability, and authentication remain separate states.
+
+A waiting application update does not activate and refresh an already-open reader merely because the tab regains focus. Use the existing explicit update/refresh action when convenient; the pre-mount document/bundle/worker reconciliation and all-tab reload-safety protocol remain mandatory.
+
+A cached reader stays at its selected canonical URL and reading position when the connection returns. Account verification and saved-page synchronization resume without replacing the document. **Open live page** is an explicit action: it verifies that the destination is readable before loading the live server-owned document. A connection retry or saved-page selection alone never triggers that navigation.
+
+Wiki Agent has no independent live-overlay idle cutoff. Its existing closed-chat resume selector lasts **eight hours** instead of fifteen minutes, scoped to the same owner, page, and browser tab; it is not authorization. Reopening and Send still obtain current server authority. Expired signed admission metadata is renewed by the existing fresh-read boundary, not by extending credential validity. Failed event streams are closed, reauthorized, and reconnected at the current cursor; resume reads cannot supersede an in-flight Send.
+
+Agent thread reads have a **15-second transport deadline**, distinct from conversation lifetime. A suspended browser cannot publish a late authority response merely because its timeout callback was delayed; resume replaces expired background reads and releases expired Send preflight reads without replaying a POST. Recent admission reads and already accepted mutations retain their existing concurrency fences.
+
+A confirmed terminal authentication, authorization, or conversation failure closes the overlay through its normal focus-restoring path rather than leaving a refusing workspace open. Existing identity-loss cleanup remains mandatory on 401. Same-owner unsent drafts survive conversation loss; only explicit reopening after confirmed missing/expired conversation authority may create a replacement chat and recover that composition. Background recovery never creates a chat, resends a message, or cancels a server-side run.
+
 ## 4. Capability model
 
 | Capability | Offline | Reconnected behavior |

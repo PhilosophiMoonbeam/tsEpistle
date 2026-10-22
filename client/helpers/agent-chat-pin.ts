@@ -5,7 +5,9 @@ export const isAgentSessionId = (value: unknown): value is string => AgentSessio
 export const AGENT_CHAT_PIN_STORAGE_KEY = 'agents.chat-pin.v1'
 export const AGENT_CHAT_RECENT_STORAGE_KEY = 'agents.chat-recent.v1'
 export const AGENT_CHAT_PIN_VERSION = 1 as const
-export const AGENT_CHAT_RECENT_MAX_AGE = 15 * 60_000
+// A working day of closed-chat continuity, not an authorization or live-UI
+// timeout. Reopening still reads current owner/session authority from the server.
+export const AGENT_CHAT_RECENT_MAX_AGE = 8 * 60 * 60_000
 const PageSelector = z.strictObject({ id: z.number().int().positive(), locale: z.string().min(1).max(35) })
 const ContextSelector = z.strictObject({
   page: PageSelector.nullable(),

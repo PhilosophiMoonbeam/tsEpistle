@@ -155,6 +155,80 @@ describe('offline bootstrap navigation recovery', () => {
       navigation.remove()
     }
   })
+
+  it('keeps the selected reader on reconnect and navigates only after an explicit live-page request', async () => {
+    setLocation('/en/saved/1#section')
+    const replace = vi.fn()
+    const location = { href: browserWindow.location.href, replace }
+    vi.stubGlobal('window', new Proxy(browserWindow, {
+      get(target, key) {
+        if (key === 'location') return location
+        const value = Reflect.get(target, key, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    }))
+    vi.stubGlobal('siteConfig', { title: 'Offline test', lang: 'en' })
+    const pwaState = Vue.reactive({ connectionState: 'offline' })
+    const fetchPage = vi.fn(async () => ({
+      ok: true, redirected: false, url: location.href,
+      headers: new Headers({ 'Content-Type': 'text/html' }),
+      body: { cancel: async () => undefined }
+    }))
+    vi.stubGlobal('fetch', fetchPage)
+    const retryServerConnection = vi.fn(async () => { pwaState.connectionState = 'online'; return true })
+    const store = Vue.reactive({
+      page: { title: '', mode: 'view' }, user: { authenticated: false, ...defaults },
+      authRefreshOutcome: 'anonymous', refreshAuth: async () => 'anonymous'
+    })
+    const SelectedReader = Vue.defineComponent({
+      emits: ['selected'],
+      setup(_, { emit }) {
+        Vue.onMounted(() => emit('selected', { snapshot: { title: 'Saved reader' } }))
+        return () => Vue.h('article', 'Saved reader')
+      }
+    })
+    const component = shellComponent({
+      './components/pwa/offline-library.vue': { default: SelectedReader },
+      './components/pwa/offline-navigation.vue': { default: empty },
+      './components/pwa/offline-settings.vue': { default: empty },
+      './helpers/offline-storage.ts': { openOfflineStorage: async () => { throw new Error('IndexedDB unavailable') } },
+      './helpers/offline-session.ts': { currentOfflineReadingHandle: () => null, OFFLINE_READING_STATE_EVENT: 'test-reading-state' },
+      './helpers/offline-sync.ts': { OFFLINE_SYNC_COORDINATOR_KEY, createOfflineSyncUnavailableResult,
+        createOfflineSyncCoordinator: () => { throw new Error('No storage') } },
+      './helpers/pwa.ts': { pwaState, retryServerConnection },
+      './store/index.ts': { wikiStore: store },
+      './helpers/use-translate.ts': { useTranslate: () => (key: string) => key },
+      './helpers/index.ts': presentation,
+      './helpers/offline-presentation.ts': offlinePresentation,
+      './helpers/pwa-route-policy.ts': pwaRoutePolicy
+    })
+    app = Vue.createApp(component)
+    for (const name of ['v-app', 'v-navigation-drawer', 'v-main', 'v-icon', 'v-alert', 'nav-header', 'search-results', 'notify'])
+      app.component(name, passthrough)
+    app.component('v-btn', Vue.defineComponent({
+      setup: (_, { slots, attrs }) => () => Vue.h('button', attrs, slots.default?.())
+    }))
+    app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
+    app.config.globalProperties.$t = (key: string) => key
+    const host = document.createElement('div')
+    document.body.append(host)
+    app.mount(host)
+    await settle()
+    const reader = host.querySelector('article')
+    host.querySelector('button')!.click()
+    await settle()
+    expect(retryServerConnection).toHaveBeenCalledTimes(1)
+    expect(fetchPage).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
+    expect(host.querySelector('article')).toBe(reader)
+    expect(location.href).toBe(browserWindow.location.href)
+    const openLive = Array.from(host.querySelectorAll('button')).find(button => button.textContent === 'common:offlineApp.openLivePage')!
+    expect(openLive).toBeDefined()
+    openLive.click()
+    await settle()
+    expect(fetchPage).toHaveBeenCalledTimes(1)
+    expect(replace).toHaveBeenCalledWith(location.href)
+  })
 })
 
 describe('offline shell reader-date authentication lifecycle', () => {

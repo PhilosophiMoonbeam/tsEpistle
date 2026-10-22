@@ -807,6 +807,7 @@ let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
 let pendingPanelFocusKind: 'history' | 'memory' | null = null
 let disposed = false
+let closingForExpiry = false
 let initializationEpoch = 0
 let initializationKey = ''
 let initialization: Promise<boolean> | null = null
@@ -815,7 +816,7 @@ let retryGeneration = 0
 let promptGeneration = 0
 let actionGeneration = 0
 const isComponentCurrent = (generation: number, ownerId: number): boolean =>
-  !disposed && componentGeneration === generation && props.ownerId === ownerId
+  !disposed && !closingForExpiry && componentGeneration === generation && props.ownerId === ownerId
 const starterReasonId = `${panelIdPrefix}-starter-reason`
 const sendStarter = (prompt: string): void => {
   if (!canSubmit.value || promptSubmissionPending.value) return
@@ -1082,7 +1083,7 @@ const initializationAuthorityKey = (): string =>
     currentPage: currentPage.value
   })
 const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean> => {
-  if (disposed) return Promise.resolve(false)
+  if (disposed || closingForExpiry) return Promise.resolve(false)
   if (admissionBlocked.value && !request.forceFresh) return Promise.resolve(false)
   const allowCreate = request.allowCreate ?? true
   const authorityKey = `${initializationAuthorityKey()}:create=${allowCreate}`
@@ -1194,7 +1195,7 @@ const sendPrompt = async (
   media?: AgentMediaSubmission
 ): Promise<boolean> => {
   const prompt = content.trim()
-  if (disposed) { completion?.(false); return false }
+  if (disposed || closingForExpiry) { completion?.(false); return false }
   if (connectionBlocked.value) {
     waitingForConnection.value = true
     completion?.(false)
@@ -1649,6 +1650,13 @@ watch(() => {
     void reconcileTranscriptGrowth(transcriptFollowing.value)
   }
 }, { flush: 'post' })
+watch(() => agents.workspaceCloseReason, reason => {
+  if (!reason || disposed || closingForExpiry) return
+  closingForExpiry = true
+  // Use the owning overlay's normal close/focus-restoration contract. Closing
+  // this view never cancels an accepted server run or replays an old request.
+  emit('close')
+})
 watch(networkPaused, paused => {
   if (!paused && pwaState.connectionState === 'online') waitingForConnection.value = false
 })

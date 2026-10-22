@@ -713,27 +713,35 @@ describe('PWA pre-mount release gate', () => {
 })
 
 describe('PWA helper lifecycle', () => {
-  it('prepares an update already waiting when the page opens', async () => {
+  it('offers an update already waiting when the page opens but prepares it only on request', async () => {
+    vi.useFakeTimers()
     const harness = await createHarness()
     try {
       const waiting = createWorker(new EventHub())
       waiting.state = 'installed'
       harness.registration.waiting = waiting
-      await harness.module.registerPwa()
-      await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
+      const onUpdateReady = vi.fn()
+      await harness.module.registerPwa({ onUpdateReady })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onUpdateReady).toHaveBeenCalledTimes(1)
+      expect(harness.module.pwaState.updateReady).toBe(true)
+      expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(false)
+      expect(await harness.module.requestPwaUpdate()).toBe(true)
       expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(1)
     } finally {
       harness.restore()
+      vi.useRealTimers()
     }
   })
 
-  it('restarts preparation after a page resumes with its previous reply port closed', async () => {
+  it('restarts explicitly requested preparation after a page resumes with its previous reply port closed', async () => {
     const harness = await createHarness()
     try {
       const waiting = createWorker(new EventHub())
       waiting.state = 'installed'
       harness.registration.waiting = waiting
       await harness.module.registerPwa()
+      expect(await harness.module.requestPwaUpdate()).toBe(true)
       await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
       const previousPort = waiting.replies.findLast(reply => reply.type === 'PWA_PREPARE_UPDATE')!.port
       harness.windowHub.emit('pagehide', { persisted: true })
@@ -745,10 +753,19 @@ describe('PWA helper lifecycle', () => {
     }
   })
 
-  it('starts preparation automatically when a new worker is waiting', async () => {
-    const harness = await createHarness()
+  it('keeps a coherent resumed reader on its release until a new waiting update is explicitly requested', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness('feature', true, RELEASE_A)
     try {
-      await harness.module.registerPwa()
+      const onNeedReload = vi.fn(() => harness.reloadCalls())
+      const onUpdateReady = vi.fn()
+      const startup = harness.module.preparePwaStartup(RELEASE_A, { onNeedReload, onUpdateReady })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.activeWorker.replies.some(reply => reply.type === 'PWA_OFFLINE_READY_REQUEST')).toBe(true)
+      harness.sendWorkerMessage(notReadyMessage(RELEASE_A))
+      expect(await startup).toBe('continue')
+      expect(harness.module.startupRefreshDeferred.value).toBe(false)
+
       const waitingHub = new EventHub()
       const waiting = createWorker(waitingHub)
       waiting.state = 'installing'
@@ -757,17 +774,44 @@ describe('PWA helper lifecycle', () => {
       waiting.state = 'installed'
       harness.registration.waiting = waiting
       waitingHub.emit('statechange')
-      await vi.waitFor(() =>
-        expect(waiting.messages.some(message => (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE')).toBe(true)
-      )
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onUpdateReady).toHaveBeenCalledTimes(1)
       expect(harness.module.pwaState.updateReady).toBe(true)
-      expect(waiting.messages.filter(message => (message as { message: { type: string } }).message.type === 'PWA_PREPARE_UPDATE')).toHaveLength(1)
+      expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(false)
+
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      harness.windowHub.emit('visibilitychange')
+      harness.windowHub.emit('pagehide', { persisted: true })
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      harness.windowHub.emit('pageshow', { persisted: true })
+      harness.windowHub.emit('focus')
+      harness.windowHub.emit('visibilitychange')
+      harness.module.setReloadSafetyProvider(() => ({ safe: true, revision: 'reader-resumed' }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(waiting.replies.some(reply => reply.type === 'PWA_CONNECT')).toBe(true)
+      expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(false)
+      expect(onNeedReload).not.toHaveBeenCalled()
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+
+      expect(await harness.module.requestPwaUpdate()).toBe(true)
+      expect(waiting.replies.filter(reply => reply.type === 'PWA_PREPARE_UPDATE')).toHaveLength(1)
+      activateWaitingWorker(
+        harness,
+        waiting,
+        waitingHub,
+        { workerId: 'worker-b', release: RELEASE_B, roundNonce: 'requested-update' },
+        'controllerchange-first'
+      )
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onNeedReload).toHaveBeenCalledTimes(1)
+      expect(harness.reloadCalls).toHaveBeenCalledTimes(1)
     } finally {
       harness.restore()
+      vi.useRealTimers()
     }
   })
 
-  it('retries a deferred automatic update after unsafe editor work becomes safe', async () => {
+  it('retries a deferred explicitly requested update after unsafe editor work becomes safe', async () => {
     const harness = await createHarness()
     try {
       await harness.module.registerPwa()
@@ -779,6 +823,7 @@ describe('PWA helper lifecycle', () => {
       waiting.state = 'installed'
       harness.registration.waiting = waiting
       waitingHub.emit('statechange')
+      expect(await harness.module.requestPwaUpdate()).toBe(true)
       await vi.waitFor(() => expect(waiting.replies.some(reply => reply.type === 'PWA_PREPARE_UPDATE')).toBe(true))
 
       harness.module.setReloadSafetyProvider(() => ({ safe: false, revision: 'editor-dirty' }))
@@ -1145,6 +1190,167 @@ describe('PWA helper lifecycle', () => {
 })
 
 describe('foreground connection recovery', () => {
+  for (const event of ['focus', 'pageshow', 'visibilitychange']) {
+    it(`immediately rechecks an unavailable tab on ${event} instead of waiting for its retry backoff`, async () => {
+      vi.useFakeTimers()
+      const harness = await createHarness()
+      try {
+        harness.setFetchImplementation(async () => new Response('{}', { status: 503 }))
+        await harness.module.registerPwa()
+        await vi.advanceTimersByTimeAsync(0)
+        for (const delay of [3_000, 6_000, 12_000, 24_000]) await vi.advanceTimersByTimeAsync(delay)
+        const before = harness.fetchCalls.length
+        expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+        harness.setFetchImplementation(async () => new Response('{}', { status: 200 }))
+
+        harness.windowHub.emit(event)
+        expect(harness.fetchCalls).toHaveLength(before + 1)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(harness.module.pwaState.connectionState).toBe('online')
+        expect(harness.reloadCalls).not.toHaveBeenCalled()
+      } finally {
+        harness.restore()
+        vi.useRealTimers()
+      }
+    })
+  }
+
+  it('does not report a server failure when an initial check is suspended by another tab', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      const pending = Promise.withResolvers<Response>()
+      harness.setFetchImplementation(() => pending.promise)
+      await harness.module.registerPwa()
+      expect(harness.module.pwaState.connectionState).toBe('checking')
+
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      harness.windowHub.emit('visibilitychange')
+      expect(harness.module.pwaState.connectionState).toBe('checking')
+      expect(harness.module.pwaState.serverReachable).toBeNull()
+      pending.resolve(new Response('{}', { status: 200 }))
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(harness.fetchCalls).toHaveLength(1)
+      expect(harness.module.pwaState.lastProbeAt).toBeNull()
+
+      harness.setFetchImplementation(async () => new Response('{}', { status: 200 }))
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      harness.windowHub.emit('visibilitychange')
+      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.module.pwaState.connectionState).toBe('checking')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps an unprobed background document unverified until its first foreground check', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      await harness.module.registerPwa()
+      expect(harness.fetchCalls).toHaveLength(0)
+      expect(harness.module.pwaState.connectionState).toBe('checking')
+      expect(harness.module.pwaState.serverReachable).toBeNull()
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      harness.windowHub.emit('visibilitychange')
+      expect(harness.fetchCalls).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('replaces a check stranded across sleep while preserving the last healthy state', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    const clock = vi.spyOn(Date, 'now')
+    try {
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(0)
+      const lastProbeAt = harness.module.pwaState.lastProbeAt
+      const pending = Promise.withResolvers<Response>()
+      harness.setFetchImplementation(() => pending.promise)
+      const stranded = harness.module.retryServerConnection({ quiet: true })
+      expect(harness.fetchCalls).toHaveLength(2)
+      clock.mockReturnValue(Date.now() + 600_000)
+      harness.setFetchImplementation(async () => new Response('{}', { status: 200 }))
+
+      harness.windowHub.emit('focus')
+      expect(harness.fetchCalls).toHaveLength(3)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.module.pwaState.lastProbeAt).toBeGreaterThan(lastProbeAt!)
+      pending.reject(new TypeError('The sleeping connection was closed'))
+      expect(await stranded).toBe(false)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      expect(harness.module.pwaState.serverReachable).toBe(true)
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+    } finally {
+      clock.mockRestore()
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('rechecks a sleep-delayed timeout before publishing any connection failure', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    const clock = vi.spyOn(Date, 'now')
+    try {
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(0)
+      const pending = Promise.withResolvers<Response>()
+      harness.setFetchImplementation(() => pending.promise)
+      const stranded = harness.module.retryServerConnection({ quiet: true })
+      clock.mockReturnValue(Date.now() + 600_000)
+      harness.setFetchImplementation(async () => {
+        expect(harness.module.pwaState.connectionState).toBe('online')
+        return new Response('{}', { status: 200 })
+      })
+
+      // The event loop can drain the old deadline before delivering focus.
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await stranded).toBe(false)
+      expect(harness.fetchCalls).toHaveLength(3)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      expect(harness.module.pwaState.serverHealthy).toBe(true)
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+    } finally {
+      clock.mockRestore()
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('still reports a foreground health timeout as a real failure', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness()
+    try {
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(0)
+      const pending = Promise.withResolvers<Response>()
+      harness.setFetchImplementation(() => pending.promise)
+      const retry = harness.module.retryServerConnection({ quiet: true })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await retry).toBe(false)
+      expect(harness.fetchCalls).toHaveLength(2)
+      expect(harness.module.pwaState.connectionState).toBe('server-unavailable')
+      expect(harness.module.pwaState.serverReachable).toBe(false)
+      expect(harness.module.pwaState.serverHealthy).toBe(false)
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
   it('recovers from an unavailable server without requiring another browser online event', async () => {
     vi.useFakeTimers()
     const harness = await createHarness()
@@ -1270,14 +1476,12 @@ describe('foreground connection recovery', () => {
       expect(harness.fetchCalls).toHaveLength(1)
       Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
       harness.windowHub.emit('visibilitychange')
-      await vi.advanceTimersByTimeAsync(3_000)
       expect(harness.fetchCalls).toHaveLength(2)
       harness.windowHub.emit('pagehide')
       harness.windowHub.emit('online')
       await vi.advanceTimersByTimeAsync(60_000)
       expect(harness.fetchCalls).toHaveLength(2)
       harness.windowHub.emit('pageshow')
-      await vi.advanceTimersByTimeAsync(6_000)
       expect(harness.fetchCalls).toHaveLength(3)
     } finally {
       harness.restore()
@@ -1309,6 +1513,9 @@ describe('foreground connection recovery', () => {
       expect(harness.fetchCalls).toHaveLength(2)
       harness.setFetchImplementation(async () => new Response('{}', { status: 200 }))
       harness.windowHub.emit('pageshow')
+      // Resume starts the fetch immediately. Drain its promise before the
+      // fake-clock helper advances timers past that request's deadline.
+      await vi.advanceTimersByTimeAsync(0)
       await vi.advanceTimersByTimeAsync(6_000)
       expect(harness.module.pwaState.connectionState).toBe('online')
       expect(harness.fetchCalls).toHaveLength(3)
@@ -1387,6 +1594,29 @@ describe('connection loss without a browser event', () => {
     }
   })
 
+  it('recovers a missed online hint at an interaction boundary without waiting for its browser event', async () => {
+    vi.useFakeTimers()
+    const harness = await createHarness('feature', false)
+    try {
+      harness.setFetchImplementation(async () => { throw new TypeError('Disconnected') })
+      await harness.module.registerPwa()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.module.pwaState.connectionState).toBe('offline')
+      harness.setOnline(true)
+      harness.setFetchImplementation(async () => new Response('{}', { status: 200 }))
+
+      harness.module.observeBrowserConnection()
+      expect(harness.module.pwaState.onlineHint).toBe(true)
+      expect(harness.fetchCalls).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.module.pwaState.connectionState).toBe('online')
+      expect(harness.reloadCalls).not.toHaveBeenCalled()
+    } finally {
+      harness.restore()
+      vi.useRealTimers()
+    }
+  })
+
   it('reuses a pending quiet check when Browse is activated', async () => {
     const harness = await createHarness()
     try {
@@ -1402,6 +1632,7 @@ describe('connection loss without a browser event', () => {
       )
       const first = harness.module.retryServerConnection({ quiet: true })
       const second = harness.module.retryServerConnection({ quiet: true, reusePending: true })
+      for (const event of ['focus', 'pageshow', 'visibilitychange']) harness.windowHub.emit(event)
       expect(harness.fetchCalls).toHaveLength(before + 1)
       expect(harness.module.pwaState.connectionState).toBe('online')
       finish(new Response('{}', { status: 200 }))

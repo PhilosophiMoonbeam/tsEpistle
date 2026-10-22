@@ -1022,7 +1022,7 @@ export default defineComponent({
       else this.searchMode = 'search'
     },
     captureAgentExcursion(): void {
-      // The store owns the same-page, 15-minute resume window; a search
+      // The store owns the same-page, eight-hour closed-chat resume window; a search
       // excursion must not create an explicit session override without expiry.
       this.agentResumeSessionId = null
     },

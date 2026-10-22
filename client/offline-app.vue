@@ -176,7 +176,7 @@ async function openStorage(): Promise<void> {
 }
 async function retry(): Promise<void> {
   retrying.value = true
-  try { await retryServerConnection(); await restoreServerPage() } finally { retrying.value = false }
+  try { await retryServerConnection() } finally { retrying.value = false }
 }
 async function restoreServerPage(): Promise<void> {
   if (settingsView || restored || pwaState.connectionState !== 'online') return
@@ -202,13 +202,11 @@ watch(() => pwaState.connectionState, state => {
   if (state !== 'online') { coordinator?.invalidateIdentity(); return }
   void wikiStore.refreshAuth()
   coordinator?.observe('online')
-  void restoreServerPage()
 })
 function selectRecord(record: OfflineSnapshotRecord | null): void {
   selected.value = record
   if (!record) return
   wikiStore.page.title = record.snapshot.title
-  void restoreServerPage()
 }
 onMounted(() => {
   wikiStore.page.mode = settingsView ? 'profile' : 'view'
@@ -245,6 +243,7 @@ onBeforeUnmount(() => {
         <v-icon :icon="pwaState.connectionState === 'online' ? 'mdi-cloud-check-outline' : 'mdi-cloud-off-outline'" size="20" />
         <span>{{ connectionMessage }}</span>
         <v-btn v-if="pwaState.connectionState !== 'online'" size="small" variant="text" :loading="retrying" @click="retry">{{ $t('common:offlineApp.reconnect') }}</v-btn>
+        <v-btn v-else-if="!settingsView" size="small" variant="text" @click="restoreServerPage">{{ $t('common:offlineApp.openLivePage') }}</v-btn>
       </div>
       <OfflineSettings v-if="settingsView" />
       <div v-else class="offline-reading-surface">

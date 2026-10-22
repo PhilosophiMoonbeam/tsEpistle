@@ -176,6 +176,7 @@ describe('Agent chat refresh fallback', () => {
     closeWorkspace?.()
     closeWorkspace = null
     vi.useRealTimers()
+    vi.setSystemTime()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     FakeEventSource.instances = []
@@ -372,6 +373,99 @@ describe('Agent chat refresh fallback', () => {
     await flushMicrotasks()
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(FakeEventSource.instances).toHaveLength(2)
+  })
+
+  it('replaces a failed idle stream only after an authoritative read and resumes at its current cursor', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const thread = activeThread()
+    const refreshed = { ...thread, session: { ...thread.session, currentRun: { ...thread.session.currentRun!, eventSequence: 8 } } }
+    store.thread = thread
+    store.setDraft(thread.session.id, 'Keep my next question')
+    const fetcher = vi.spyOn(window, 'fetch')
+      .mockResolvedValueOnce(Response.json({ message: 'Temporary disconnect' }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json(refreshed))
+
+    store.connectCurrentRun()
+    const failed = FakeEventSource.instances[0]!
+    failed.emit('error', '')
+    failed.emit('error', '')
+    failed.emit('run.started', '99')
+    expect(failed.close).toHaveBeenCalledTimes(1)
+    expect(store.source).toBeNull()
+    expect(store.eventSequence).toBe(1)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(FakeEventSource.instances).toHaveLength(1)
+    expect(store.connection).toBe('reconnecting')
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(FakeEventSource.instances).toHaveLength(2)
+    expect(FakeEventSource.instances[1]?.url).toContain('after=8')
+    expect(fetcher.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true)
+    expect(store.drafts[thread.session.id]?.text).toBe('Keep my next question')
+  })
+
+  it('replaces a stranded read after suspended timers and coalesces resume events without accepting its late response', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const thread = activeThread()
+    store.thread = thread
+    const response = deferred<Response>()
+    const strandedResponse = deferred<Response>()
+    const fetcher = vi.spyOn(window, 'fetch')
+      .mockImplementationOnce(() => strandedResponse.promise)
+      .mockImplementation(() => response.promise)
+    store.connectCurrentRun()
+    const stranded = store.refreshThread()
+
+    // Advance wall time only: browser suspension need not run timeout callbacks
+    // or produce a visibility transition before the window receives focus.
+    vi.setSystemTime(Date.now() + 24 * 60 * 60_000)
+    window.dispatchEvent(new Event('focus'))
+    window.dispatchEvent(new Event('pageshow'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    expect(fetcher.mock.calls[1]?.[1]?.signal?.aborted).toBe(false)
+    await expect(stranded).resolves.toMatchObject({ accepted: false, current: false })
+    response.resolve(Response.json({ ...thread, session: { ...thread.session, currentRun: { ...thread.session.currentRun!, eventSequence: 9 } } }))
+    await flushMicrotasks()
+    expect(FakeEventSource.instances).toHaveLength(2)
+    expect(FakeEventSource.instances[1]?.url).toContain('after=9')
+    strandedResponse.resolve(Response.json({ ...thread, session: { ...thread.session, title: 'Stale before sleep' } }))
+    await flushMicrotasks()
+    expect(store.thread?.session.title).toBe(thread.session.title)
+    expect(fetcher.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true)
+  })
+
+  it('settles an unresponsive read at its deadline even when transport ignores abort', async () => {
+    vi.useFakeTimers()
+    const store = createStore()
+    store.thread = activeThread()
+    const response = deferred<Response>()
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation(() => response.promise)
+    const refreshing = store.refreshThread()
+    await vi.advanceTimersByTimeAsync(15_000)
+    await expect(refreshing).resolves.toMatchObject({ accepted: false, current: true, error: { status: 408, retryable: true } })
+    expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    expect(store.refreshController).toBeNull()
+    expect(store.networkPaused).toBe(true)
+  })
+
+  it('rejects a read completing beyond its wall-clock deadline before suspended timers execute', async () => {
+    const store = createStore()
+    const thread = activeThread()
+    store.thread = thread
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const response = deferred<Response>()
+    vi.spyOn(window, 'fetch').mockImplementation(() => response.promise)
+    const refreshing = store.refreshThread()
+    now += 15_000
+    response.resolve(Response.json({ ...thread, session: { ...thread.session, title: 'Expired authority response' } }))
+    await expect(refreshing).resolves.toMatchObject({ accepted: false, current: true, error: { status: 408 } })
+    expect(store.thread?.session.title).toBe(thread.session.title)
   })
 
   it('ignores stale SSE callbacks after the workspace closes', () => {
@@ -1134,6 +1228,7 @@ describe('Agent session mutations', () => {
     expect(store.sessionMutationBusy).toBe(true)
     expect(store.endSessionMutation(newToken!)).toBe(true)
     expect(store.sessionMutationBusy).toBe(false)
+    store.closeWorkspace()
   })
   it('restores an unfiled current conversation and its stream when clearing fails', async () => {
     setActivePinia(createPinia())
@@ -1805,6 +1900,7 @@ describe('Agent chat pin availability', () => {
     store.setCurrentChatPinned(true)
     expect(store.pinnedSessionId).toBe(selected.session.id)
     expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(selected.session.id)
+    store.closeWorkspace()
   })
 
   it('blocks pin mutations during a history read while retaining the displayed chat', async () => {
@@ -1881,6 +1977,7 @@ describe('Agent chat pin availability', () => {
     store.setCurrentChatPinned(false)
     expect(store.pinnedSessionId).toBe(retained.session.id)
     expect(JSON.parse(window.sessionStorage.getItem(AGENT_CHAT_PIN_STORAGE_KEY)!).sessionId).toBe(retained.session.id)
+    store.closeWorkspace()
   })
 
   it('keeps settled active runs and goals pinnable', () => {
@@ -1946,7 +2043,7 @@ describe('Automatic agent send admission', () => {
     vi.restoreAllMocks()
   })
 
-  it('sends a historical session using fresh automatic admission without a profile inventory request', async () => {
+  it('renews expired historical admission without a profile inventory request or a resume event superseding Send', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     const active = activeThread()
@@ -1954,7 +2051,7 @@ describe('Automatic agent send admission', () => {
     const historicalProfileId = '00000000-0000-4000-8000-000000000099'
     const origin: AgentThreadState = {
       ...active,
-      session: { ...active.session, providerProfileId: historicalProfileId, currentRun: null }
+      session: { ...active.session, providerProfileId: historicalProfileId, profileResolutionToken: admissionToken(sessionId, 1, { exp: 1 }), currentRun: null }
     }
     const freshToken = admissionToken(sessionId, 1, { exp: 4_000_000_001 })
     const fresh: AgentThreadState = { ...origin, session: { ...origin.session, profileResolutionToken: freshToken } }
@@ -1968,10 +2065,12 @@ describe('Automatic agent send admission', () => {
     store.setDraft(sessionId, 'Continue this historical conversation')
     store.setDraft('00000000-0000-4000-8000-000000000098', 'Another conversation draft')
     let posted = false
+    const freshness = deferred<Response>()
+    store.listenForVisibility()
     const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
-      if (path === `/_api/agents/sessions/${sessionId}` && method === 'GET') return Promise.resolve(Response.json(posted ? accepted : fresh))
+      if (path === `/_api/agents/sessions/${sessionId}` && method === 'GET') return posted ? Promise.resolve(Response.json(accepted)) : freshness.promise
       if (path === `/_api/agents/sessions/${sessionId}/messages` && method === 'POST') {
         posted = true
         return Promise.resolve(Response.json({ run: active.session.currentRun, replayed: false }, { status: 202 }))
@@ -1981,7 +2080,14 @@ describe('Automatic agent send admission', () => {
       return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
     })
 
-    await expect(store.send('Continue this historical conversation')).resolves.toBe(true)
+    const sending = store.send('Continue this historical conversation')
+    window.dispatchEvent(new Event('focus'))
+    window.dispatchEvent(new Event('pageshow'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(false)
+    freshness.resolve(Response.json(fresh))
+    await expect(sending).resolves.toBe(true)
 
     const postCalls = fetcher.mock.calls.filter(call => call[1]?.method === 'POST')
     expect(postCalls).toHaveLength(1)
@@ -1996,6 +2102,42 @@ describe('Automatic agent send admission', () => {
     expect(store.thread?.session).toMatchObject({ providerProfileId: historicalProfileId, currentRun: { id: active.session.currentRun!.id } })
     expect(store.drafts[sessionId]?.text).toBe('')
     expect(store.drafts['00000000-0000-4000-8000-000000000098']?.text).toBe('Another conversation draft')
+    store.closeWorkspace()
+  })
+
+  it('releases an expired Send read on resume and refreshes without replaying the captured mutation', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const active = activeThread()
+    const origin = { ...active, session: { ...active.session, currentRun: null } }
+    store.thread = origin
+    store.pinOwnerId = 1
+    store.csrfToken = 'csrf'
+    markWorkspaceReady(store)
+    store.setDraft(origin.session.id, 'Do not send automatically after sleep')
+    store.listenForVisibility()
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const stranded = deferred<Response>()
+    const fetcher = vi.spyOn(window, 'fetch')
+      .mockImplementationOnce(() => stranded.promise)
+      .mockImplementation(() => Promise.resolve(Response.json(origin)))
+
+    const sending = store.send('Do not send automatically after sleep')
+    expect(store.sessionMutationBusy).toBe(true)
+    now += 15_000
+    window.dispatchEvent(new Event('focus'))
+    await expect(sending).resolves.toBe(false)
+    await flushMicrotasks()
+    expect(store.sessionMutationBusy).toBe(false)
+    expect(store.sending).toBe(false)
+    expect(store.isWorkspaceReady()).toBe(true)
+    expect(store.drafts[origin.session.id]?.text).toBe('Do not send automatically after sleep')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true)
+    stranded.resolve(Response.json({ ...origin, session: { ...origin.session, title: 'Must remain fenced' } }))
+    await flushMicrotasks()
+    expect(store.thread?.session.title).toBe(origin.session.title)
     store.closeWorkspace()
   })
 

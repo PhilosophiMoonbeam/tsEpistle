@@ -131,6 +131,31 @@ const fetchFromWindow: typeof fetch = (input, init) => window.fetch(input, init)
 const SSE_INACTIVITY_MS = 15_000
 const SSE_RETRY_BASE_MS = 1_000
 const SSE_RETRY_MAX_MS = 30_000
+const THREAD_READ_TIMEOUT_MS = 15_000
+
+// Abort must settle the consumer even if a suspended/custom transport ignores
+// its signal. The wall clock also fences responses when timer callbacks slept.
+const readThreadWithDeadline = async (
+  csrfToken: string,
+  sessionId: string,
+  controller: AbortController,
+  deadline = Date.now() + THREAD_READ_TIMEOUT_MS
+): Promise<AgentThreadState> => {
+  const signal = controller.signal
+  if (signal.aborted) throw signal.reason
+  const { promise: aborted, reject } = Promise.withResolvers<never>()
+  const onAbort = (): void => reject(signal.reason)
+  signal.addEventListener('abort', onAbort, { once: true })
+  const timer = window.setTimeout(() => controller.abort(new AgentApiError(408, 'The conversation read timed out. Try again.')), Math.max(0, deadline - Date.now()))
+  try {
+    const thread = await Promise.race([getAgentThread(fetchFromWindow, csrfToken, sessionId, signal), aborted])
+    if (Date.now() >= deadline) throw new AgentApiError(408, 'The conversation read timed out. Try again.')
+    return thread
+  } finally {
+    window.clearTimeout(timer)
+    signal.removeEventListener('abort', onAbort)
+  }
+}
 export { isAgentSessionId }
 export interface AgentRefreshResult {
   /**
@@ -197,6 +222,7 @@ export const useAgentsStore = defineStore('agents', {
     initializationGeneration: 0,
     initializationController: null as AbortController | null,
     refreshController: null as AbortController | null,
+    refreshDeadlineAt: null as number | null,
     connectionGeneration: 0,
     reconnectAttempt: 0,
     visibilityListening: false,
@@ -213,6 +239,7 @@ export const useAgentsStore = defineStore('agents', {
     folderReloadController: null as AbortController | null,
     workspaceDisposed: false,
     initializedWorkspaceVersion: null as number | null,
+    workspaceCloseReason: null as 'authentication' | 'access' | 'session-unavailable' | null,
     pinnedSessionId: null as string | null,
     pinStorageAvailable: true,
     pinOwnerId: null as number | null,
@@ -290,6 +317,7 @@ export const useAgentsStore = defineStore('agents', {
 
       this.pinOwnerId = options.ownerId
       this.cancelSessionTransition()
+      this.workspaceCloseReason = null
       this.networkPaused = true
       this.initializationAdmissionFailure = null
       this.skillsLoadGeneration += 1
@@ -361,6 +389,7 @@ export const useAgentsStore = defineStore('agents', {
             ].filter((id): id is string => id !== null)
           )
         ]
+        let unavailableDraft: AgentDraft | undefined
         for (const candidate of candidates) {
           if (!isCurrent()) return false
           try {
@@ -368,11 +397,19 @@ export const useAgentsStore = defineStore('agents', {
             if (initialized) break
           } catch (error) {
             if (!(error instanceof AgentApiError) || (error.status !== 404 && error.status !== 410)) throw error
+            unavailableDraft ??= this.drafts[candidate]
             if (candidate === pinnedSessionId) this.clearPinnedState()
             if (candidate === recent?.sessionId) clearAgentChatRecent()
           }
         }
-        if (!initialized && allowCreate && isCurrent()) initialized = await this.newSession('saved', undefined, true)
+        if (!initialized && allowCreate && isCurrent()) {
+          initialized = await this.newSession('saved', undefined, true)
+          if (initialized && isCurrent() && unavailableDraft && this.thread) {
+            // Only explicit entry may create a replacement for a gone chat.
+            // Recover its unsent composition for review, never an old POST.
+            this.updateDraft(this.thread.session.id, JSON.parse(JSON.stringify(unavailableDraft)) as AgentDraft)
+          }
+        }
         if (initialized && isCurrent()) {
           if (this.thread?.session.id === this.pinnedSessionId) {
             const context = previousThread?.session.id === this.thread.session.id && previousContext ? previousContext : pin.context
@@ -399,6 +436,7 @@ export const useAgentsStore = defineStore('agents', {
           this.networkPaused = true
           if (error instanceof AgentApiError && error.status === 401) {
             this.destroyWorkspace()
+            this.workspaceCloseReason = 'authentication'
             this.initializationAdmissionFailure = 'authentication'
             this.error = translate('common:agentWorkspace.authenticationRequiredMessage')
           } else if (error instanceof AgentApiError && error.status === 403) {
@@ -587,6 +625,8 @@ export const useAgentsStore = defineStore('agents', {
     listenForVisibility() {
       if (this.visibilityListening) return
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
+      window.addEventListener('focus', this.handleVisibilityChange)
+      window.addEventListener('pageshow', this.handleVisibilityChange)
       this.visibilityListening = true
     },
     beginSessionTransition(kind: 'read' | 'mutation' = 'mutation') {
@@ -658,7 +698,11 @@ export const useAgentsStore = defineStore('agents', {
       this.sessionsReloading = false
       this.sessionsLoadingMore = false
       this.closeStream()
-      if (this.visibilityListening) document.removeEventListener('visibilitychange', this.handleVisibilityChange)
+      if (this.visibilityListening) {
+        document.removeEventListener('visibilitychange', this.handleVisibilityChange)
+        window.removeEventListener('focus', this.handleVisibilityChange)
+        window.removeEventListener('pageshow', this.handleVisibilityChange)
+      }
       this.visibilityListening = false
     },
     /**
@@ -827,7 +871,7 @@ export const useAgentsStore = defineStore('agents', {
       const { version, controller } = this.beginSessionReadTransition()
       const isCurrent = (): boolean => this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && this.isSessionTransitionCurrent(version)
       try {
-        const candidate = await getAgentThread(fetchFromWindow, this.csrfToken, sessionId, controller.signal)
+        const candidate = await readThreadWithDeadline(this.csrfToken, sessionId, controller)
         if (!isCurrent()) return false
         this.sessionTransitionController = null
         this.sessionTransitionKind = null
@@ -855,6 +899,7 @@ export const useAgentsStore = defineStore('agents', {
     invalidateRefresh() {
       this.refreshGeneration += 1
       this.refreshSessionId = null
+      this.refreshDeadlineAt = null
       this.refreshController?.abort()
       this.refreshController = null
     },
@@ -872,13 +917,15 @@ export const useAgentsStore = defineStore('agents', {
       this.refreshController?.abort()
       const controller = markRaw(new AbortController())
       this.refreshController = controller
+      const deadline = Date.now() + THREAD_READ_TIMEOUT_MS
+      this.refreshDeadlineAt = deadline
       const isCurrent = (): boolean =>
         this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
         this.refreshSessionId === sessionId &&
         this.refreshGeneration === generation &&
         this.refreshController === controller
       try {
-        const refreshed = await getAgentThread(fetchFromWindow, this.csrfToken, sessionId, controller.signal)
+        const refreshed = await readThreadWithDeadline(this.csrfToken, sessionId, controller, deadline)
         if (!isCurrent()) return refreshResult(false, false)
         this.thread = markRaw(refreshed)
         this.initializedWorkspaceVersion = workspaceVersion
@@ -888,17 +935,30 @@ export const useAgentsStore = defineStore('agents', {
       } catch (error) {
         const current =
           this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && this.refreshSessionId === sessionId && this.refreshGeneration === generation
+        if (!current) return refreshResult(false, false)
         if (current) {
           this.initializedWorkspaceVersion = null
           this.networkPaused = true
           if (error instanceof AgentApiError && error.status === 401) {
             this.destroyWorkspace()
+            this.workspaceCloseReason = 'authentication'
+            return refreshResult(false, false, error)
+          }
+          if (error instanceof AgentApiError && (error.status === 403 || error.status === 404 || error.status === 410)) {
+            // Retain same-owner drafts and selectors, not stale admission. Reopening
+            // must read current authority and may discover that this chat is gone.
+            this.closeWorkspace()
+            this.error = error.status === 403 ? translate('common:agentWorkspace.admissionRequiredMessage') : error.message
+            this.workspaceCloseReason = error.status === 403 ? 'access' : 'session-unavailable'
             return refreshResult(false, false, error)
           }
         }
         return refreshResult(false, current, error)
       } finally {
-        if (this.refreshGeneration === generation && this.refreshController === controller) this.refreshController = null
+        if (this.refreshGeneration === generation && this.refreshController === controller) {
+          this.refreshController = null
+          this.refreshDeadlineAt = null
+        }
       }
     },
     async reloadSessions(): Promise<AgentRefreshResult> {
@@ -1853,10 +1913,11 @@ export const useAgentsStore = defineStore('agents', {
       this.connection = 'connecting'
       this.reconnectAttempt = 0
       let terminalObserved = false
+      let streamFailed = false
       this.source = markRaw(
         subscribeAgentRun(runId, run.eventSequence, {
           event: (type: AgentEventType, sequence: number) => {
-            if (!this.isConnectionCurrent(generation, workspaceVersion, sessionId, runId)) return
+            if (streamFailed || !this.isConnectionCurrent(generation, workspaceVersion, sessionId, runId)) return
             const terminal = terminalEvents.has(type)
             this.connection = terminal ? 'reconnecting' : 'connected'
             this.reconnectAttempt = 0
@@ -1875,6 +1936,12 @@ export const useAgentsStore = defineStore('agents', {
           },
           error: () => {
             if (terminalObserved || !this.isConnectionCurrent(generation, workspaceVersion, sessionId, runId)) return
+            if (streamFailed) return
+            streamFailed = true
+            // A failed EventSource can be permanently CLOSED after an idle
+            // proxy/auth disconnect. Re-authorize via GET before replacing it.
+            this.source?.close()
+            this.source = null
             this.connection = 'reconnecting'
             if (this.watchdogTimer !== null) window.clearTimeout(this.watchdogTimer)
             this.watchdogTimer = null
@@ -2006,6 +2073,11 @@ export const useAgentsStore = defineStore('agents', {
       const workspaceVersion = this.workspaceVersion
       const sessionId = this.thread?.session.id
       if (!sessionId || !this.isWorkspaceCurrent(workspaceVersion)) return
+      // Keep a recent authority read single-flight, but a read stranded across
+      // sleep cannot hold the workspace or Send lease indefinitely.
+      const expiredRead = this.refreshController !== null && this.refreshDeadlineAt !== null && Date.now() >= this.refreshDeadlineAt
+      if (expiredRead) this.invalidateRefresh()
+      if (this.loading || (this.sessionMutationBusy && !expiredRead) || this.refreshController !== null) return
       const observedRunId = this.thread?.session.currentRun?.id
       this.networkPaused = false
       this.connection = observedRunId ? 'reconnecting' : 'idle'

@@ -121,20 +121,25 @@ afterEach(() => {
 })
 
 describe('Agent chat continuity', () => {
-  it('resumes a same-page chat before fifteen minutes, stamps duplicate closes once, and expires at the boundary', async () => {
+  it('resumes a same-page draft for eight hours, stamps duplicate closes once, and expires at the wall-clock boundary', async () => {
     const api = fixture()
     let now = 1_000_000
     vi.spyOn(Date, 'now').mockImplementation(() => now)
     const store = createStore()
     expect(await initialize(store)).toBe(true)
+    store.setDraft(id(1), 'Keep my unsent working-day draft')
     store.closeWorkspace()
     now += 60_000
     store.closeWorkspace()
     expect(readAgentChatRecent(1, page(1))?.closedAt).toBe(1_000_000)
+    // A suspended tab may return without any timer callbacks having run.
+    now = 1_000_000 + 8 * 60 * 60_000 - 1
     expect(await initialize(store)).toBe(true)
     expect(api.created).toBe(1)
+    expect(store.drafts[id(1)]?.text).toBe('Keep my unsent working-day draft')
+    expect(api.fetcher.mock.calls.filter(([url]) => url === `/_api/agents/sessions/${id(1)}`)).toHaveLength(1)
     store.closeWorkspace()
-    now += AGENT_CHAT_RECENT_MAX_AGE
+    now += 8 * 60 * 60_000
     expect(await initialize(store)).toBe(true)
     expect(api.created).toBe(2)
   })

@@ -2907,7 +2907,93 @@ describe('Inline Agent initialization admission', () => {
     expect(workspace.store.initializationAdmissionFailure).toBe('authentication')
     expect(workspace.store.isWorkspaceReady()).toBe(false)
     expect(workspace.store.isWorkspaceMutationReady()).toBe(false)
+    expect(state.emitted.filter(event => event[0] === 'close')).toHaveLength(1)
     expect(state.connectionProbe).not.toHaveBeenCalled()
+  })
+
+  for (const status of [401, 403, 404, 410]) {
+    it(`closes a runtime ${status} refusal through the overlay contract without replaying requests`, async () => {
+      const workspace = realWorkspace()
+      const state = workspace.state()
+      const mounted = mountInlineAgent(state)
+      await settle()
+      workspace.store.setDraft(sessionId, 'Unsent private question')
+      workspace.threadRead.pending = Promise.resolve(Response.json({ error: 'Current conversation is unavailable' }, { status }))
+      const beforeResume = workspace.requests.length
+
+      workspace.store.handleVisibilityChange()
+      await settle()
+
+      expect(state.emitted.filter(event => event[0] === 'close')).toHaveLength(1)
+      expect(workspace.store.workspaceDisposed).toBe(true)
+      expect(workspace.store.workspaceCloseReason).toBe(status === 401 ? 'authentication' : status === 403 ? 'access' : 'session-unavailable')
+      expect(workspace.requests.slice(beforeResume)).toEqual([{ method: 'GET', path: `/_api/agents/sessions/${sessionId}` }])
+      expect(await state.sendPrompt('Never replay a stale request')).toBe(false)
+      expect(workspace.requests.slice(beforeResume)).toHaveLength(1)
+      if (status === 401) {
+        expect(workspace.store.thread).toBeNull()
+        expect(workspace.store.drafts).toEqual({})
+        expect(workspace.store.pinOwnerId).toBeNull()
+      } else {
+        expect(workspace.store.drafts[sessionId]?.text).toBe('Unsent private question')
+        expect(workspace.store.pinOwnerId).toBe(2)
+      }
+      mounted.unmount()
+    })
+  }
+
+  it('reopens after session expiry with a fresh authority read and starts a fresh chat only on explicit entry', async () => {
+    const workspace = realWorkspace()
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state)
+    await settle()
+    workspace.store.setDraft(sessionId, 'Recover from history, never auto-send')
+    workspace.threadRead.pending = Promise.resolve(Response.json({ error: 'Expired' }, { status: 410 }))
+    await workspace.store.refreshThread()
+    await settle()
+    expect(state.emitted.some(event => event[0] === 'close')).toBe(true)
+    const afterExpiry = workspace.requests.length
+    expect(workspace.requests.every(request => request.method === 'GET')).toBe(true)
+    mounted.unmount()
+
+    const fresh = threadFixture('00000000-0000-4000-8000-000000000090', 'saved')
+    workspace.creations.push({ retention: 'saved', thread: fresh })
+    const reopenedState = workspace.state()
+    const reopened = mountInlineAgent(reopenedState)
+    await expect(reopenedState.ensureInitialized()).resolves.toBe(true)
+    await settle()
+    expect(workspace.requests.slice(afterExpiry).some(request => request.path === `/_api/agents/sessions/${sessionId}` && request.method === 'GET')).toBe(true)
+    expect(workspace.requests.slice(afterExpiry).filter(request => request.method === 'POST')).toEqual([{ method: 'POST', path: '/_api/agents/sessions' }])
+    expect(workspace.store.thread?.session.id).toBe(fresh.session.id)
+    expect(workspace.store.isWorkspaceReady()).toBe(true)
+    expect(workspace.store.workspaceCloseReason).toBeNull()
+    expect(workspace.store.drafts[fresh.session.id]?.text).toBe('Recover from history, never auto-send')
+    expect(reopened.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe('Recover from history, never auto-send')
+    expect(workspace.messageInputs).toEqual([])
+    reopened.unmount()
+  })
+
+  it('requires current permission again after a runtime access refusal instead of reviving cached authority', async () => {
+    const workspace = realWorkspace()
+    const mounted = mountInlineAgent(workspace.state())
+    await settle()
+    workspace.store.setDraft(sessionId, 'Keep until this owner is reauthorized')
+    workspace.threadRead.pending = Promise.resolve(Response.json({ error: 'Permission denied' }, { status: 403 }))
+    await workspace.store.refreshThread()
+    await settle()
+    mounted.unmount()
+
+    workspace.authorization.pending = Promise.resolve(Response.json({ error: 'Permission denied' }, { status: 403 }))
+    const reopenedState = workspace.state()
+    const reopened = mountInlineAgent(reopenedState)
+    await settle()
+    expect(workspace.store.initializationAdmissionFailure).toBe('access')
+    expect(workspace.store.isWorkspaceReady()).toBe(false)
+    expect(reopened.root.querySelector('.inline-agent__admission-alert')?.textContent).toContain('access permission')
+    expect(await reopenedState.sendPrompt('Do not bypass current denial')).toBe(false)
+    expect(workspace.requests.every(request => request.method === 'GET')).toBe(true)
+    expect(workspace.store.drafts[sessionId]?.text).toBe('Keep until this owner is reauthorized')
+    reopened.unmount()
   })
 
   it('still offers connection recovery for transient service failures', async () => {

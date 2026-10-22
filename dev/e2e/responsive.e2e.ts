@@ -2576,7 +2576,7 @@ test.describe('responsive UI quality matrix', () => {
   test.describe('Agent browser context fixture', () => {
     test.use({ serviceWorkers: 'block' })
 
-    test('Agent continuity resumes briefly on the same page and starts fresh after expiry or navigation', async ({ page }, testInfo) => {
+    test('Agent continuity resumes within a working day and starts fresh after expiry or navigation', async ({ page }, testInfo) => {
       test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
       await installAgentContinuityPages(page)
       const fixture = await installEnabledAgentFixture(page, { distinctSessionIds: true })
@@ -2588,13 +2588,17 @@ test.describe('responsive UI quality matrix', () => {
         await closeContinuityAgent(page)
         await page.reload({ waitUntil: 'domcontentloaded' })
         await expect(page.locator('.nav-header')).toBeVisible({ timeout: 15_000 })
+        await page.evaluate(() => {
+          const original = Date.now
+          Date.now = () => original() + 30 * 60_000
+        })
         agent = await openContinuityAgent(page)
         await expect(agent.locator('.agent-message--user')).toContainText('Keep this conversation briefly.')
         expect(creates()).toBe(1)
         await closeContinuityAgent(page)
         await page.evaluate(() => {
           const original = Date.now
-          Date.now = () => original() + 15 * 60_000 + 1
+          Date.now = () => original() + 8 * 60 * 60_000 + 1
         })
         agent = await openContinuityAgent(page)
         await expect(agent.locator('.agent-message--user')).toHaveCount(0)
@@ -2608,6 +2612,46 @@ test.describe('responsive UI quality matrix', () => {
         await expect(agent.locator('.agent-context__page-chip')).toContainText('Context page B')
         fixture.assertNoUnexpectedRequests()
       } finally {
+        await fixture.dispose()
+      }
+    })
+
+    test('resumed expired Agent closes without sending and explicit reopening recovers its draft', async ({ page }, testInfo) => {
+      test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
+      await installAgentContinuityPages(page)
+      const fixture = await installEnabledAgentFixture(page, { distinctSessionIds: true })
+      let expired = false
+      let expiredReads = 0
+      const expireSession = async (route: import('@playwright/test').Route) => {
+        const path = new URL(route.request().url()).pathname
+        if (expired && route.request().method() === 'GET' && /^\/_api\/agents\/sessions\/[^/]+$/.test(path)) {
+          expiredReads++
+          await route.fulfill({ status: 410, contentType: 'application/json', body: JSON.stringify({ error: 'Session expired', code: 'AGENT_RESOURCE_NOT_FOUND' }) })
+          return
+        }
+        if (route.request().method() === 'POST' && path === '/_api/agents/sessions') expired = false
+        await route.fallback()
+      }
+      await page.route('**/_api/agents/**', expireSession)
+      try {
+        let agent = await openContinuityAgent(page, '/agent-context-fixture-a')
+        const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent', exact: true })
+        await expect(composer).toBeEnabled()
+        await composer.fill('Preserve this unsent composition across expiry.')
+        const documentIdentity = await page.evaluate(() => performance.timeOrigin)
+        expired = true
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+        await expect(page.getByRole('dialog', { name: 'Wiki Agent workspace', exact: true })).toHaveCount(0)
+        expect(expiredReads).toBeGreaterThan(0)
+        expect(fixture.requests.filter(request => request.includes('/messages'))).toEqual([])
+        expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentIdentity)
+        agent = await openContinuityAgent(page)
+        await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent', exact: true })).toHaveValue('Preserve this unsent composition across expiry.')
+        expect(fixture.requests.filter(request => request === 'POST /_api/agents/sessions')).toHaveLength(2)
+        expect(fixture.requests.filter(request => request.includes('/messages'))).toEqual([])
+        fixture.assertNoUnexpectedRequests()
+      } finally {
+        await page.unroute('**/_api/agents/**', expireSession)
         await fixture.dispose()
       }
     })
