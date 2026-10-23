@@ -443,7 +443,7 @@ import AgentDictationWaveform from './agent-dictation-waveform.vue'
 import { agentAttachmentMimeTypes, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
-import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
+import { filterSkillsForCommand } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
@@ -778,9 +778,10 @@ const selectedSkills = computed(() => selectedSkillIds.value.flatMap(id => {
   const skill = visibleSkillByVersionId.value.get(id)
   return skill ? [skill] : []
 }))
+// The server catalog is already authorized; exposure mode describes sharing,
+// not whether a visible skill can be selected for this message.
 const skillMenuItems = computed(() => [
-  ...filterUserSelectableSkills(props.skills),
-  ...filterPreferredBuiltInSkills(props.skills, preferredSkillIdByVersionId.value),
+  ...props.skills,
   ...props.preferredSkills
     .filter(skill => skill.sourcePath.startsWith('personal/') && !visibleSkillIds.value.has(skill.skillId))
     .map(skill => ({ ...skill, exposureMode: undefined }))

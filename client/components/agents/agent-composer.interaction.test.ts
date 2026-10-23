@@ -4,7 +4,7 @@ import { setImmediate as yieldEventLoop } from 'node:timers/promises'
 
 import { compileScript, compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
-import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
+import { filterSkillsForCommand } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { agentAttachmentMimeTypes } from '../../helpers/agent-media.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
@@ -21,7 +21,7 @@ interface TestSkill {
   readonly versionId: string
   readonly name: string
   readonly description: string
-  readonly exposureMode: 'owner'
+  readonly exposureMode: 'all_agent_users' | 'groups' | 'owner'
   readonly isAgentDiscoverable: boolean
 }
 
@@ -79,7 +79,7 @@ for (const statement of compiledScript.scriptSetupAst) {
 scriptParts.push(script.slice(previousImportEnd))
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptParts.join(''))
 const evaluateComposer = new Function(
-  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, unref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, agentAttachmentMimeTypes, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
+  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, unref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, agentAttachmentMimeTypes, filterSkillsForCommand, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
   `${executableScript}
 return { ${setupNames.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
@@ -444,9 +444,7 @@ const loadComposer = (
       },
     defineExpose: () => {},
     agentAttachmentMimeTypes,
-    filterPreferredBuiltInSkills,
     filterSkillsForCommand,
-    filterUserSelectableSkills,
     caretBoundsFromMirror,
     calculateComposerSizing,
     scrollTopForCaret,
@@ -550,9 +548,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
         defineEmits: () => emit,
         defineExpose: expose,
         agentAttachmentMimeTypes,
-        filterPreferredBuiltInSkills,
         filterSkillsForCommand,
-        filterUserSelectableSkills,
         caretBoundsFromMirror,
         calculateComposerSizing,
         scrollTopForCaret,
@@ -709,7 +705,7 @@ describe('Agent composer slash-command keyboard gates', () => {
   })
 
   it('submits a disabled preferred result literally without assigning an active option', () => {
-    const skill = makeSkill('docs')
+    const skill: TestSkill = { ...makeSkill('docs'), exposureMode: 'all_agent_users' }
     const composer = loadComposer({
       skills: [skill],
       preferredSkills: [{ skillId: skill.id, versionId: skill.versionId, sourcePath: 'built-in/docs' }]
@@ -899,7 +895,7 @@ describe('Real Agent composer slash boundaries', () => {
   })
 
   it('accepts a whitespace-delimited slash command while preserving the preceding draft', async () => {
-    const mounted = mountRealComposers([{ skills: [makeSkill('release-notes')] }])
+    const mounted = mountRealComposers([{ skills: [{ ...makeSkill('release-notes'), exposureMode: 'all_agent_users' }] }])
     const root = mounted.roots[0]
     const textarea = root?.querySelector<HTMLTextAreaElement>('textarea')
     const submit = root?.querySelector<HTMLButtonElement>('.agent-composer__submit')
@@ -1127,6 +1123,53 @@ describe('Agent composer media and menu interactions', () => {
     expect(activeOwnedMenu(create, '[aria-label="Creation tools"]')).toBeNull()
   })
 
+  it('lets users select and deselect authorized organization skills, then drops revoked versions before sending', async () => {
+    const shared: TestSkill = { ...makeSkill('wiki-authoring'), exposureMode: 'all_agent_users' }
+    const grouped: TestSkill = { ...makeSkill('opportunity-parser'), exposureMode: 'groups' }
+    const options = Vue.reactive({ skills: [shared, grouped] })
+    const mounted = mountRealComposers([options])
+    const root = mounted.roots[0]
+    const moreMenu = await openRealMoreMenu(root, true)
+    const trigger = moreMenu.querySelector<HTMLElement>('[aria-haspopup="dialog"]')
+    if (!trigger) throw new Error('The Skills trigger did not render')
+    const menu = await openOwnedMenu(trigger, '.agent-composer-skill-menu__card', 'organization Skills popup', true)
+    const row = (name: string): HTMLElement => {
+      const result = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent === name)
+      if (!result) throw new Error(`Authorized skill ${name} did not render`)
+      return result
+    }
+    const attached = (): string => root.querySelector('[aria-label="Skills attached as context for the next message"]')?.textContent ?? ''
+    row(shared.name).click()
+    row(grouped.name).click()
+    await Vue.nextTick()
+    expect(attached()).toContain(shared.name)
+    expect(attached()).toContain(grouped.name)
+    row(shared.name).click()
+    await Vue.nextTick()
+    expect(attached()).not.toContain(shared.name)
+    expect(attached()).toContain(grouped.name)
+    row(shared.name).click()
+    await Vue.nextTick()
+    options.skills = [shared]
+    await Vue.nextTick()
+    expect(attached()).toContain(shared.name)
+    expect(attached()).not.toContain(grouped.name)
+    expect(menu.textContent).not.toContain(grouped.name)
+    await closeOwnedMenu(menu)
+    await closeOwnedMenu(moreMenu)
+    const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
+    const submit = root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    if (!textarea || !submit) throw new Error('Composer controls did not render')
+    textarea.value = 'Author the summary'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    submit.click()
+    await Vue.nextTick()
+    expect(mounted.sent).toEqual([
+      expect.objectContaining({ content: 'Author the summary', invokedSkillVersionIds: [shared.versionId], mode: 'message' })
+    ])
+  })
+
   it('focuses the native action in an empty Skills popup and restores each opener on Escape', async () => {
     const mounted = mountRealComposers([{ skills: [] }])
     const root = mounted.roots[0]
@@ -1248,7 +1291,7 @@ describe('Agent composer media and menu interactions', () => {
   })
 
   it('explains invocation limits in the real slash list and skills card without selecting', async () => {
-    const mounted = mountRealComposers([{ skills: [makeSkill('docs')], invocationLimit: 0 }])
+    const mounted = mountRealComposers([{ skills: [{ ...makeSkill('docs'), exposureMode: 'groups' }], invocationLimit: 0 }])
     const root = mounted.roots[0]
     const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
     if (!textarea) throw new Error('Composer textarea did not render')

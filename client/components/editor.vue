@@ -2603,6 +2603,14 @@ export default defineComponent({
           this.editorAdapter.replaceText(this.savedState.content, { detached: true })
           this.editorAdapter.markPersisted?.(this.editorAdapter.capture().editVersion)
         }
+        if (discardCollaboration) {
+          // The reset can terminally notify this tab before its HTTP receipt arrives.
+          // Retire that owned generation only after both drafts and the live adapter
+          // have been cleaned up; peer-discard and failed-cleanup guards stay intact.
+          this.collaborationActive = false
+          this.collaborationGeneration = null
+          this.collaborationDiscarded = false
+        }
         this.dialogUnsaved = false
         this.discardError = ''
         if (wikiStore.editor.mode !== 'create' && this.offlineConnectionState === 'online') {

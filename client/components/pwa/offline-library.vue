@@ -16,6 +16,7 @@ import {
   type OfflineSearchResult
 } from '../../helpers/offline-search.ts'
 import {
+  OfflineStorageError,
   subscribeOfflineStorageChanges,
   type OfflineStorage
 } from '../../helpers/offline-storage.ts'
@@ -442,6 +443,9 @@ const normalizeError = (error: unknown, fallback: string): string => {
   return fallback
 }
 
+const isPolicyRevisionFenced = (error: unknown): boolean =>
+  error instanceof OfflineStorageError && error.code === 'policy-revision-fenced'
+
 const toSearchDocument = (record: OfflineSnapshotRecord): OfflineSearchDocumentV1 => ({
   schemaVersion: record.snapshot.schemaVersion,
   siteId: record.siteId,
@@ -783,7 +787,8 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
         }
       )
     }
-    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch) || !opened) {
+    if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
+    if (!opened) {
       finishReaderError(operation, key, t('common:offlineLibrary.savedPageNoLonger'))
       return
     }
@@ -822,6 +827,10 @@ const openRecord = async (record: OfflineVisibleRecord, event?: MouseEvent, opti
     }
   } catch (error) {
     if (!isReaderCurrent(operation, key, generation, revision, expectedPolicyRevision, openHandle, openEpoch)) return
+    if (isPolicyRevisionFenced(error)) {
+      void loadRecords({ preservePolicyError: Boolean(policyError.value) })
+      return
+    }
     finishReaderError(operation, key, normalizeError(error, t('common:offlineLibrary.savedPageFailedIntegrity')))
     emit('error', readerMessage.value)
   }
@@ -864,6 +873,9 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
   const preservePolicyError = options.preservePolicyError === true
   if (!preservePolicyError) policyError.value = ''
   const token = ++loadToken
+  // A refresh owns revalidating and reopening an unfinished selection. Retire
+  // its predecessor before storage settles, not only when the new corpus commits.
+  if (readerState.value === 'loading') ++readerToken
   const readerOperationAtStart = readerToken
   const selectedKeyAtStart = selectedKey.value
   const reading = {
@@ -1088,6 +1100,10 @@ const loadRecords = async (options: { preservePolicyError?: boolean } = {}): Pro
     return true
   } catch (error) {
     if (!currentLoad() || isAbortError(error)) return false
+    if (isPolicyRevisionFenced(error)) {
+      void loadRecords(options)
+      return false
+    }
     if (selectedKeyAtStart && selectedKey.value === selectedKeyAtStart && readerToken === readerOperationAtStart) {
       finishReaderError(readerOperationAtStart, selectedKeyAtStart, t('common:offlineLibrary.savedPagesChangedDevice'))
     }

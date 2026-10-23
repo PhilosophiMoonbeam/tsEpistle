@@ -14,13 +14,15 @@ describe('administration settings discovery', () => {
     expect(items.find(item => item.key === 'graphql')?.href).toBe('/graphql')
     expect(items.find(item => item.key === 'pages')?.count).toBe(15)
   })
-  test('discovers page recovery and integrity only for system administrators', () => {
+  test('discovers page recovery, integrity and shared assets only for system administrators', () => {
     const adminPaths = catalog(['manage:system']).flatMap(group => group.items.map(item => item.to))
     const pageWriterPaths = catalog(['write:pages']).flatMap(group => group.items.map(item => item.to))
     expect(adminPaths).toContain('/pages/recycle-bin')
     expect(adminPaths).toContain('/pages/integrity')
+    expect(adminPaths).toContain('/assets')
     expect(pageWriterPaths).not.toContain('/pages/recycle-bin')
     expect(pageWriterPaths).not.toContain('/pages/integrity')
+    expect(pageWriterPaths).not.toContain('/assets')
   })
 
   test('filters before searching so restricted settings cannot leak into results', () => {

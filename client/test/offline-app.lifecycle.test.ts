@@ -959,6 +959,121 @@ describe('saved-page reader and library settings lifecycle', () => {
     expect(errors).toEqual([])
   })
 
+  it('refreshes the current private policy when opening is fenced before its change notice arrives', async () => {
+    const fixture = await offlineFixture({ privateVault: true, unlocked: true, privateOnly: true })
+    const { host, notices, errors } = await fixture.mount()
+    const { promise: reachedRead, resolve: started } = Promise.withResolvers<void>()
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>()
+    fixture.state.beforeSnapshotRead = async opts => {
+      if (!opts.readingHandle || opts.expectedPolicyRevision === undefined) return
+      fixture.state.beforeSnapshotRead = null
+      started()
+      await gate
+    }
+    host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
+    await reachedRead
+    fixture.state.privateBodies[0] = await savedRecord(fixture.privateSite, 1, 'Private reader', '<p>Current private body</p>')
+    fixture.state.privatePolicyRevision += 1
+    fixture.state.revision += 1
+    release()
+
+    await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Current private body'))
+    expect(host.querySelector('#offline-reader-status')!.classList.contains('is-ready')).toBe(true)
+    expect(notices).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('retires a pending private open before its replacement policy refresh has committed', async () => {
+    const fixture = await offlineFixture({ privateVault: true, unlocked: true, privateOnly: true })
+    const { host, notices, errors } = await fixture.mount()
+    const { promise: reachedOpen, resolve: openStarted } = Promise.withResolvers<void>()
+    const { promise: openGate, resolve: releaseOpen } = Promise.withResolvers<void>()
+    fixture.state.beforeSnapshotRead = async opts => {
+      if (!opts.readingHandle || opts.expectedPolicyRevision === undefined) return
+      fixture.state.beforeSnapshotRead = null
+      openStarted()
+      await openGate
+    }
+    host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
+    await reachedOpen
+    const { promise: reachedRefresh, resolve: refreshStarted } = Promise.withResolvers<void>()
+    const { promise: refreshGate, resolve: releaseRefresh } = Promise.withResolvers<void>()
+    fixture.state.beforePolicyRead = async opts => {
+      if (opts.readingHandle) return
+      refreshStarted()
+      await refreshGate
+    }
+    fixture.state.privatePolicyRevision += 1
+    fixture.publish('policy')
+    await reachedRefresh
+    releaseOpen()
+    await fixture.settle()
+
+    expect(host.querySelector('#offline-reader-status')!.classList.contains('is-error')).toBe(false)
+    expect(notices).toEqual([])
+    fixture.state.beforePolicyRead = null
+    releaseRefresh()
+    await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Private reader body'))
+    expect(host.querySelector('#offline-reader-status')!.classList.contains('is-ready')).toBe(true)
+    expect(notices).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('refreshes a fenced library load without publishing its obsolete failure over the selected reader', async () => {
+    const fixture = await offlineFixture()
+    setLocation('/?saved=1')
+    const { host, notices, errors } = await fixture.mount(false, false)
+    host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
+    await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Reader A body'))
+    const { promise: reachedRead, resolve: started } = Promise.withResolvers<void>()
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>()
+    fixture.state.beforeSnapshotRead = async opts => {
+      if (opts.readingHandle || opts.expectedPolicyRevision === undefined) return
+      fixture.state.beforeSnapshotRead = null
+      started()
+      await gate
+    }
+    fixture.publish('policy')
+    await reachedRead
+    fixture.state.publicBodies[0] = await savedRecord(fixture.origin, 1, 'Reader A', '<p>Current public body</p>')
+    fixture.state.publicPolicyRevision += 1
+    fixture.state.revision += 1
+    release()
+
+    await vi.waitFor(() => expect(host.querySelector('.offline-page-body')?.textContent).toBe('Current public body'))
+    expect(host.querySelector('#offline-reader-status')!.classList.contains('is-ready')).toBe(true)
+    expect(notices).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('does not publish an already-read private body after the vault locks', async () => {
+    const fixture = await offlineFixture({ privateVault: true, unlocked: true, privateOnly: true })
+    const { host, notices, errors } = await fixture.mount()
+    const { promise: reachedRead, resolve: started } = Promise.withResolvers<void>()
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>()
+    const readSnapshotCorpus = fixture.storage.readSnapshotCorpus
+    let blocked = false
+    fixture.storage.readSnapshotCorpus = vi.fn(async (opts: OfflineStorageGenerationOptions & { selector?: OfflineSnapshotSelector } = {}) => {
+      const result = await readSnapshotCorpus(opts)
+      if (!blocked && opts.readingHandle && opts.expectedPolicyRevision !== undefined) {
+        blocked = true
+        started()
+        await gate
+      }
+      return result
+    })
+    host.querySelector<HTMLButtonElement>('.page-card .secondary-button')!.click()
+    await reachedRead
+    fixture.sessionModule.lockOfflineReading()
+    release()
+    await fixture.settle()
+
+    expect(host.querySelector('.offline-reader')).toBeNull()
+    expect(host.textContent).not.toContain('Private reader body')
+    expect(notices).toEqual([])
+    expect(errors).toEqual([])
+  })
+
   it('renders a changed authoritative selected body without resetting its reading position', async () => {
     const fixture = await offlineFixture()
     const { host, errors } = await fixture.mount(false, false)

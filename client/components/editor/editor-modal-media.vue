@@ -165,7 +165,7 @@
               v-pagination(v-model='pagination', :length='pageTotal', color='primary')
             footer.editor-media-footer
               .editor-media-count.text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: displayedAssets.length })}}
-              .editor-media-actions
+              .editor-media-actions(v-if='!isManaging')
                 v-btn.radius-7(variant="outlined", @click='cancel')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
@@ -216,7 +216,7 @@
             ) {{ queuedFileCount > 0 ? $t('editor:assets.uploadCount', { count: queuedFileCount }) : $t('common:actions.upload') }}
 
 
-        v-card.editor-media-panel.radius-7(v-if='!isBranding && currentAsset && currentAsset.kind === `IMAGE`')
+        v-card.editor-media-panel.radius-7(v-if='!isBranding && !isManaging && currentAsset && currentAsset.kind === `IMAGE`')
           v-card-text.editor-media-panel-content.pb-0
             h2.editor-media-heading
               v-icon(aria-hidden='true') mdi-format-align-top
@@ -578,7 +578,7 @@ type AssetTableHeader = {
   sortable?: boolean
   align?: 'start' | 'end' | 'center'
 }
-export type MediaPickerPurpose = 'insert' | 'page-branding'
+export type MediaPickerPurpose = 'insert' | 'page-branding' | 'manage'
 
 export type BrandingSelection = {
   assignment: PageBrandingAssignment
@@ -674,6 +674,11 @@ export default defineComponent({
       folders: markRaw([] as AssetFolder[]),
       files: [] as FilePondFile[],
       assets: markRaw([] as Asset[]),
+      managedMedia: {
+        folderTree: [] as AssetFolder[],
+        currentFolderId: 0,
+        currentFileId: null as number | null
+      },
       pagination: 1,
       imageAlignments: IMAGE_ALIGNMENTS.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.alignment_${item.value || 'none'}`) })),
       mediaSortBy: MEDIA_SORT_BY,
@@ -735,7 +740,11 @@ export default defineComponent({
     }
   },
   computed: {
-    currentInsertionOwner(): string { return imageInsertionOwner() },
+    currentInsertionOwner(): string {
+      return this.isManaging
+        ? JSON.stringify([wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch])
+        : imageInsertionOwner()
+    },
     imageAltValid(): boolean { return isValidEditorImageAlt(this.imageAlt) },
     imageWidthValid(): boolean { return normalizeEditorImageDimension(this.imageWidth) !== null },
     imageHeightValid(): boolean { return normalizeEditorImageDimension(this.imageHeight) !== null },
@@ -752,26 +761,31 @@ export default defineComponent({
       }
     },
     folderTree(): AssetFolder[] {
-      return wikiStore.editor.media.folderTree as AssetFolder[]
+      return this.isManaging ? this.managedMedia.folderTree : wikiStore.editor.media.folderTree as AssetFolder[]
     },
     currentFolderId: {
       get() {
-        return wikiStore.editor.media.currentFolderId
+        return this.isManaging ? this.managedMedia.currentFolderId : wikiStore.editor.media.currentFolderId
       },
       set(value: number) {
-        wikiStore.editor.media.currentFolderId = value
+        if (this.isManaging) this.managedMedia.currentFolderId = value
+        else wikiStore.editor.media.currentFolderId = value
       }
     },
     currentFileId: {
       get() {
-        return wikiStore.editor.media.currentFileId
+        return this.isManaging ? this.managedMedia.currentFileId : wikiStore.editor.media.currentFileId
       },
       set(value: number | null) {
-        wikiStore.editor.media.currentFileId = value
+        if (this.isManaging) this.managedMedia.currentFileId = value
+        else wikiStore.editor.media.currentFileId = value
       }
     },
     isBranding(): boolean {
       return this.purpose === 'page-branding'
+    },
+    isManaging(): boolean {
+      return this.purpose === 'manage'
     },
     displayedAssets(): Asset[] {
       return this.isBranding ? this.assets.filter(isPageBrandingAsset) : this.assets
@@ -911,7 +925,7 @@ export default defineComponent({
       }
     },
     isPrivatePage(): boolean {
-      return wikiStore.page.visibility === 'private'
+      return !this.isManaging && wikiStore.page.visibility === 'private'
     },
     filePondServerOpts () {
       return {
@@ -1139,7 +1153,7 @@ export default defineComponent({
       if (this.currentFileId === assetId) this.currentFileId = null
     },
     confirmSelection () {
-      if (!this.isAssetActionable(this.currentFileId)) return
+      if (!this.isBranding || !this.isAssetActionable(this.currentFileId)) return
       const assignment = PageBrandingAssignmentSchema.safeParse({ assetId: this.currentFileId })
       const view = PageBrandingViewSchema.safeParse(this.brandingView)
       if (!assignment.success || !view.success || view.data.assetId !== assignment.data.assetId) {
@@ -1211,7 +1225,7 @@ export default defineComponent({
       this.queuedFileCount = Array.isArray(files) ? files.length : 0
     },
     insert () {
-      if (this.isBranding || this.disposed) return
+      if (this.isBranding || this.isManaging || this.disposed) return
       if (this.insertionOwner !== this.currentInsertionOwner) return
       if (!this.isAssetActionable(this.currentFileId)) return
       const asset = _.find(this.assets, ['id', this.currentFileId])
@@ -1297,12 +1311,14 @@ export default defineComponent({
       this.selectAsset(assetId)
     },
     downFolder(folder: AssetFolder) {
-      wikiStore.pushMediaFolder(folder)
+      if (this.isManaging) this.managedMedia.folderTree.push(folder)
+      else wikiStore.pushMediaFolder(folder)
       this.currentFolderId = folder.id
       this.currentFileId = null
     },
     upFolder() {
-      wikiStore.popMediaFolder()
+      if (this.isManaging) this.managedMedia.folderTree.pop()
+      else wikiStore.popMediaFolder()
       const parentFolder = _.last(this.folderTree as AssetFolder[])
       this.currentFolderId = parentFolder ? parentFolder.id : 0
       this.currentFileId = null
@@ -1618,6 +1634,7 @@ export default defineComponent({
       }
     },
     cancel () {
+      if (this.isManaging) return
       if (this.isBranding) {
         this.invalidateBrandingSelection()
         if (this.currentFileId !== null) this.currentFileId = null

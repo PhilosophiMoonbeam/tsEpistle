@@ -2,7 +2,7 @@
   v-app.notfound-app
     nav-header
     v-main
-      main.notfound(aria-labelledby='notfound-title')
+      section.notfound(aria-labelledby='notfound-title')
         .notfound-content
           .newpage-mark(aria-hidden='true')
             img(src='/_assets/svg/icon-delete-file.svg', alt='')

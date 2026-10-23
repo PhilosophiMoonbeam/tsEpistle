@@ -18,7 +18,7 @@ import { fallbackLocalizationLabel } from '../../modules/localization.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
-import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
+import { filterSkillsForCommand } from './agent-skill-command.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/inline-agent-chat.vue')
@@ -302,9 +302,7 @@ const evaluateComposer = new Function(
   'defineProps',
   'defineEmits',
   'defineExpose',
-  'filterPreferredBuiltInSkills',
   'filterSkillsForCommand',
-  'filterUserSelectableSkills',
   'caretBoundsFromMirror',
   'calculateComposerSizing',
   'scrollTopForCaret',
@@ -877,9 +875,7 @@ const mountInlineAgent = (
         () => props,
         () => emit,
         expose,
-        filterPreferredBuiltInSkills,
         filterSkillsForCommand,
-        filterUserSelectableSkills,
         caretBoundsFromMirror,
         calculateComposerSizing,
         scrollTopForCaret,
@@ -2714,14 +2710,12 @@ describe('Inline Agent conversation starters', () => {
     await settle()
     expect(lockState.agentCalls.send).not.toHaveBeenCalled()
   })
-  it('keeps a blocked, unopened workspace inside the body glass with starters above a bottom-docked composer', async () => {
+  it('keeps a blocked, unopened workspace notice with starters above a bottom-docked composer', async () => {
     const lockState = loadGoalLockState(null)
     ;(lockState.thread as ValueRef<unknown>).value = null
     ;(lockState.networkPaused as ValueRef<boolean>).value = true
     const mounted = mountInlineAgent(lockState)
     await settle()
-    // The notice lives in the blurred conversation body, never in the
-    // transparent card gap between the header and the body.
     const notices = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__connection-alert'))
     expect(notices).toHaveLength(1)
     expect(notices[0]?.parentElement?.classList.contains('inline-agent__body')).toBe(true)

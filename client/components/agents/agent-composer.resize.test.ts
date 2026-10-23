@@ -162,7 +162,6 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     'HTMLElement',
     'HTMLTextAreaElement',
     'filterSkillsForCommand',
-    'filterUserSelectableSkills',
     'caretBoundsFromMirror',
     'calculateComposerSizing',
     'scrollTopForCaret',
@@ -207,7 +206,6 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     FakeElement,
     FakeTextArea,
     () => [],
-    <T>(skills: readonly T[]) => [...skills],
     caretBoundsFromMirror,
     calculateComposerSizing,
     scrollTopForCaret

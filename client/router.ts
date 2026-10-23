@@ -22,6 +22,7 @@ const adminRoutes = (): RouteRecordRaw[] => [
   { path: '/pages/:id(\\d+)', component: () => import('./components/admin/admin-pages-edit.vue') },
   { path: '/pages/visualize', component: () => import('./components/admin/admin-pages-visualize.vue') },
   { path: '/tags', component: () => import('./components/admin/admin-tags.vue') },
+  { path: '/assets', component: () => import('./components/admin/admin-assets.vue') },
   { path: '/theme', component: () => import('./components/admin/admin-theme.vue') },
   { path: '/groups', component: () => import('./components/admin/admin-groups.vue') },
   { path: '/groups/:id(\\d+)', component: () => import('./components/admin/admin-groups-edit.vue') },

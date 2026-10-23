@@ -21,7 +21,17 @@
 
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-5" role="status">
       {{ notice }}
-      <router-link v-if="restoredPageId" class="recovery-result-link" :to="`/pages/${restoredPageId}`">{{ $t('admin:pagesRecycleBin.openRestoredPageAdministration') }}</router-link>
+      <router-link v-if="restoredPage" class="recovery-result-link" :to="`/pages/${restoredPage.id}`">{{ $t('admin:pagesRecycleBin.openRestoredPageAdministration') }}</router-link>
+    </v-alert>
+    <v-alert v-if="restoredPage" :type="renderReady ? 'success' : renderError ? 'warning' : 'info'" variant="tonal" class="mb-5" role="status" :aria-busy="renderLoading">
+      <template v-if="renderReady">
+        <a class="recovery-result-link" :href="restoredHref">{{ $t('admin:pagesEdit.viewPage') }}</a>
+      </template>
+      <template v-else>
+        {{ renderError || $t('editor:save.waitingForRender') }}
+        <v-btn v-if="!renderLoading" variant="text" prepend-icon="mdi-refresh" @click="checkRestoredRender">{{ $t('history:retry') }}</v-btn>
+        <v-progress-circular v-else indeterminate size="18" class="ml-2" aria-hidden="true" />
+      </template>
     </v-alert>
     <v-alert v-if="errorMessage" type="error" variant="tonal" class="mb-5" role="alert">{{ errorMessage }}</v-alert>
 
@@ -160,6 +170,8 @@
 <script lang="ts">
 import { translate } from '../../modules/localization.ts'
 import { defineComponent } from 'vue'
+import { pageHref } from '../../helpers/admin-pages.ts'
+import { waitForPageRender, type PageRenderTarget } from '../../helpers/pages-api.ts'
 import {
   DELETED_PAGE_RECOVERY_PAGE_SIZE,
   DeletedPageRecoveryInspectSchema,
@@ -184,7 +196,12 @@ interface RecycleBinState {
   ownerIdInput: string
   errorMessage: string
   notice: string
-  restoredPageId: number | null
+  restoredPage: PageRenderTarget | null
+  renderReady: boolean
+  renderLoading: boolean
+  renderError: string
+  renderController: AbortController | null
+  disposed: boolean
   confirmOpen: boolean
   listRequest: number
   inspectRequest: number
@@ -234,10 +251,20 @@ export default defineComponent({
       ownerIdInput: '',
       errorMessage: '',
       notice: '',
-      restoredPageId: null,
+      restoredPage: null,
+      renderReady: false,
+      renderLoading: false,
+      renderError: '',
+      renderController: null,
+      disposed: false,
       confirmOpen: false,
       listRequest: 0,
       inspectRequest: 0
+    }
+  },
+  computed: {
+    restoredHref(): string {
+      return this.restoredPage ? pageHref(this.restoredPage) : ''
     }
   },
   methods: {
@@ -260,11 +287,10 @@ export default defineComponent({
       return item.protection.isProtected ? this.$t('admin:pagesRecycleBin.passwordProtectionRetainedV', { visibility, version: item.protection.version, interpolation: { escapeValue: false } }) : visibility
     },
     async loadFirstPage(): Promise<void> {
+      if (this.disposed) return
       const request = ++this.listRequest
       this.listLoading = true
       this.errorMessage = ''
-      this.notice = ''
-      this.restoredPageId = null
       this.items = []
       this.hasMore = false
       this.nextBeforeVersionId = null
@@ -276,7 +302,7 @@ export default defineComponent({
         const payload = await apiRequest(`/_api/pages/deleted?limit=${DELETED_PAGE_RECOVERY_PAGE_SIZE}`)
         const parsed = DeletedPageRecoveryListSchema.safeParse(payload)
         if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryBinReturnedInvalid'))
-        if (request !== this.listRequest) return
+        if (this.disposed || request !== this.listRequest) return
         this.items = parsed.data.items
         this.hasMore = parsed.data.hasMore
         this.nextBeforeVersionId = parsed.data.nextBeforeVersionId
@@ -311,8 +337,6 @@ export default defineComponent({
       this.inspected = null
       this.inspectLoading = true
       this.errorMessage = ''
-      this.notice = ''
-      this.restoredPageId = null
       this.restorePath = item.path
       this.restoreLocale = item.localeCode
       this.ownerIdInput = ''
@@ -342,10 +366,11 @@ export default defineComponent({
       this.confirmOpen = true
     },
     async restoreSelected(): Promise<void> {
-      if (!this.inspected || this.restoring) return
+      if (!this.inspected || this.restoring || this.disposed) return
       const pageId = this.inspected.pageId
       const versionId = this.inspected.deletionVersionId
       const ownerId = this.inspected.ownerResolutionRequired ? Number(this.ownerIdInput) : undefined
+      const visibility = this.inspected.restoreMode === 'quarantine' ? 'private' : this.inspected.visibility
       this.restoring = true
       this.errorMessage = ''
       try {
@@ -356,26 +381,66 @@ export default defineComponent({
             ...(ownerId === undefined ? {} : { ownerId })
           })
         })
+        if (this.disposed) return
         const parsed = DeletedPageRecoveryResultSchema.safeParse(payload)
-        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryOperationReturnedInvalid'))
+        if (!parsed.success || parsed.data.pageId !== pageId) throw new Error(this.$t('admin:pagesRecycleBin.recoveryOperationReturnedInvalid'))
         this.confirmOpen = false
         await this.loadFirstPage()
+        if (this.disposed) return
         this.notice = parsed.data.quarantined
           ? this.$t('admin:pagesRecycleBin.pageWasRestoredInto', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
           : this.$t('admin:pagesRecycleBin.pageWasRestoredRetained', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
-        this.restoredPageId = parsed.data.pageId
+        this.renderController?.abort()
+        this.renderLoading = false
+        this.renderReady = false
+        this.renderError = ''
+        this.restoredPage = {
+          id: parsed.data.pageId,
+          sourceRevision: parsed.data.sourceRevision,
+          locale: parsed.data.localeCode,
+          path: parsed.data.path,
+          visibility
+        }
+        await this.checkRestoredRender()
       } catch (error) {
+        if (this.disposed) return
         this.confirmOpen = false
         await this.loadFirstPage()
         this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
       } finally {
         this.restoring = false
       }
+    },
+    async checkRestoredRender(): Promise<void> {
+      const target = this.restoredPage
+      if (!target || this.renderLoading || this.disposed) return
+      const controller = new AbortController()
+      this.renderController = controller
+      this.renderLoading = true
+      this.renderReady = false
+      this.renderError = ''
+      try {
+        await waitForPageRender(window.fetch.bind(window), target, controller.signal, this.$t('history:restore.renderNotReady'))
+        if (!controller.signal.aborted && this.restoredPage === target && !this.disposed) this.renderReady = true
+      } catch {
+        if (!controller.signal.aborted && this.restoredPage === target && !this.disposed) this.renderError = this.$t('history:restore.renderNotReady')
+      } finally {
+        if (this.renderController === controller) {
+          this.renderController = null
+          this.renderLoading = false
+        }
+      }
     }
   },
   mounted() {
     void this.loadFirstPage()
-  }
+  },
+  beforeUnmount() {
+    this.disposed = true
+    this.renderController?.abort()
+    this.listRequest += 1
+    this.inspectRequest += 1
+  },
 })
 </script>
 

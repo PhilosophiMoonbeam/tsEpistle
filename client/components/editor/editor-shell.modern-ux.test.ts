@@ -20,6 +20,7 @@ import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 import * as imagePropertiesHelpers from '../../helpers/editor-image-properties'
 import { isPageRenderPending, waitForPageRender, type PageRenderTarget } from '../../helpers/pages-api.ts'
+import { EditorAdapterController } from './common/editor-adapter.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
@@ -1784,63 +1785,100 @@ describe('modern editor shell interaction contract', () => {
     })
   }
 
-  test('resets the durable Markdown draft before restoring a public page and exiting', async () => {
-    const store = createStore()
-    const testWindow = createTestWindow()
-    let persistenceCalls = 0
-    const discardedDrafts: Array<{ pageId: number; expectedUpdatedAt: string; expectedSourceRevision: string }> = []
-    const context = createShellHarness(store, testWindow, {
-      discardCollaborationDraft: async (_fetcher, pageId, expectedUpdatedAt, expectedSourceRevision) => {
-        discardedDrafts.push({ pageId, expectedUpdatedAt, expectedSourceRevision })
-      },
-      createPage: async () => {
-        persistenceCalls++
-        return { id: 0, updatedAt: '' }
-      },
-      updatePage: async () => {
-        persistenceCalls++
-        return { sourceRevision: 'unexpected', updatedAt: '' }
-      },
-      changePageVisibility: async () => {
-        persistenceCalls++
-        return { sourceRevision: 'unexpected' }
-      }
+  for (const visibility of ['public', 'private'] as const) {
+    test(`retires its own terminal Markdown discard notification before one-click exit: ${visibility}`, async () => {
+      const store = createStore()
+      store.page.visibility = visibility
+      const testWindow = createTestWindow()
+      let persistenceCalls = 0
+      let editorText = store.editor.content
+      let live = true
+      const discardedDrafts: Array<{ pageId: number; expectedUpdatedAt: string; expectedSourceRevision: string }> = []
+      const context = createShellHarness(store, testWindow, {
+        discardCollaborationDraft: async (_fetcher, pageId, expectedUpdatedAt, expectedSourceRevision) => {
+          discardedDrafts.push({ pageId, expectedUpdatedAt, expectedSourceRevision })
+          // The real reset closes this tab's old-generation socket before its
+          // HTTP response necessarily settles.
+          context.handleCollaborationState({ active: false, discarded: true, generation: null })
+          await Promise.resolve()
+        },
+        createPage: async () => {
+          persistenceCalls++
+          return { id: 0, updatedAt: '' }
+        },
+        updatePage: async () => {
+          persistenceCalls++
+          return { sourceRevision: 'unexpected', updatedAt: '' }
+        },
+        changePageVisibility: async () => {
+          persistenceCalls++
+          return { sourceRevision: 'unexpected' }
+        }
+      })
+      const adapter = new EditorAdapterController({
+        readText: () => editorText,
+        writeText: text => {
+          editorText = text
+          store.editor.content = text
+        },
+        clearText: () => {
+          editorText = ''
+          store.editor.content = ''
+        },
+        destroyCollaboration: () => {
+          live = false
+          context.handleCollaborationState({ active: false, discarded: false, generation: null })
+        },
+        collaborationBacklog: () => live ? 1 : 0
+      })
+      adapter.initialize()
+      context.editorAdapter = Vue.markRaw(adapter)
+      adapter.onState(safety => {
+        context.editorAdapterSafety = safety
+      })
+      const expected = _.cloneDeep(context.savedState)
+      applyEveryEdit(store)
+      adapter.replaceText(store.editor.content)
+      context.dialogUnsaved = true
+      context.navigationTimer = 77
+
+      await context.discardAndExit()
+
+      expect(mutableSnapshot(store)).toEqual(expected)
+      expect(adapter.capture().text).toBe(expected.content)
+      expect(adapter.snapshot().nonPersisted).toBe(false)
+      expect(adapter.snapshot().collaborationBacklog).toBe(0)
+      expect(context.collaborationActive).toBe(false)
+      expect(context.collaborationGeneration).toBeNull()
+      expect(context.collaborationDiscarded).toBe(false)
+      expect(testWindow.location.assigned).toEqual([`${visibility === 'private' ? '/_private' : ''}/en/persisted-path`])
+      expect(testWindow.clearedTimers).toEqual([77])
+      expect(testWindow.scheduledTimers).toEqual([])
+      expect(context.navigationTimer).toBeNull()
+      expect(context.exitConfirmed).toBe(true)
+      expect(context.dialogUnsaved).toBe(false)
+      expect(context.currentEditor).toBe('editorMarkdown')
+      expect(context.progressShown).toBe(0)
+      expect(context.progressHidden).toBe(0)
+      expect(store.notifications).toEqual([])
+      expect(store.loadingOwners).toEqual([])
+      expect(persistenceCalls).toBe(0)
+      expect(context.localDiscardCalls).toBe(1)
+      expect(discardedDrafts).toEqual([
+        {
+          pageId: 12,
+          expectedUpdatedAt: '2026-09-03T11:00:00.000Z',
+          expectedSourceRevision: '1'
+        }
+      ])
+      expect(store.page.tags).not.toBe(context.savedState.tags)
+      expect(store.page.okf).not.toBe(context.savedState.okf)
+      store.page.tags.push('new live tag')
+      store.page.okf.authority.metadata = { type: 'LiveOnly' }
+      expect(context.savedState.tags).toEqual(['persisted-tag'])
+      expect(context.savedState.okf.authority.metadata).toEqual({ type: 'Reference', status: 'stable' })
     })
-    const expected = _.cloneDeep(context.savedState)
-    applyEveryEdit(store)
-    context.dialogUnsaved = true
-    context.navigationTimer = 77
-
-    await context.discardAndExit()
-
-    expect(mutableSnapshot(store)).toEqual(expected)
-    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
-    expect(testWindow.clearedTimers).toEqual([77])
-    expect(testWindow.scheduledTimers).toEqual([])
-    expect(context.navigationTimer).toBeNull()
-    expect(context.exitConfirmed).toBe(true)
-    expect(context.dialogUnsaved).toBe(false)
-    expect(context.currentEditor).toBe('editorMarkdown')
-    expect(context.progressShown).toBe(0)
-    expect(context.progressHidden).toBe(0)
-    expect(store.notifications).toEqual([])
-    expect(store.loadingOwners).toEqual([])
-    expect(persistenceCalls).toBe(0)
-    expect(context.localDiscardCalls).toBe(1)
-    expect(discardedDrafts).toEqual([
-      {
-        pageId: 12,
-        expectedUpdatedAt: '2026-09-03T11:00:00.000Z',
-        expectedSourceRevision: '1'
-      }
-    ])
-    expect(store.page.tags).not.toBe(context.savedState.tags)
-    expect(store.page.okf).not.toBe(context.savedState.okf)
-    store.page.tags.push('new live tag')
-    store.page.okf.authority.metadata = { type: 'LiveOnly' }
-    expect(context.savedState.tags).toEqual(['persisted-tag'])
-    expect(context.savedState.okf.authority.metadata).toEqual({ type: 'Reference', status: 'stable' })
-  })
+  }
 
   test('restores private and create baselines to their canonical destinations', async () => {
     const privateStore = createStore()
@@ -2067,7 +2105,11 @@ describe('modern editor shell interaction contract', () => {
   test('keeps the unsaved dialog open and displays the real discard failure', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
-    const context = createShellHarness(store, testWindow)
+    const context = createShellHarness(store, testWindow, {
+      discardCollaborationDraft: async () => {
+        context.handleCollaborationState({ active: false, discarded: true, generation: null })
+      }
+    })
     const coordinator = context.offlineDraftCoordinator
     if (!coordinator) throw new Error('Expected an offline draft coordinator')
     coordinator.discardCurrentDraft = async () => false
@@ -2080,6 +2122,7 @@ describe('modern editor shell interaction contract', () => {
     expect(context.dialogUnsaved).toBe(true)
     expect(context.discardError).toBe('The local draft could not be discarded.')
     expect(context.isDirty).toBe(true)
+    expect(context.collaborationDiscarded).toBe(true)
     expect(testWindow.location.assigned).toEqual([])
     expect(store.notifications).toEqual([
       {

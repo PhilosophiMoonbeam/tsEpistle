@@ -4,13 +4,16 @@ import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import type PageModel from '../models/pages.ts'
 import type PageHistoryModel from '../models/pageHistory.ts'
+import { PageProjectionLifecycle } from '../core/page-mutation-outbox.ts'
 
 const writeOutboxEvent = vi.fn(async (_knex: unknown, _event: unknown) => undefined)
 const redactProtectedPageForSearch = vi.fn((page: unknown) => page)
 const syncProtectedPageAssets = vi.fn(async (_knex: unknown, _pageId: number, _content: string, _render: string) => undefined)
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
+const databaseInit = vi.fn(async () => wikiGlobal.WIKI!.models)
 
 vi.mockModule('../core/outbox.ts', import.meta.url, () => ({ writeOutboxEvent }))
+vi.mockModule('../core/db.ts', import.meta.url, () => ({ default: { init: databaseInit } }))
 vi.mockModule('../operations/page-protection.ts', import.meta.url, () => ({
   redactProtectedPageForSearch,
   syncProtectedPageAssets,
@@ -148,6 +151,21 @@ const installSchema = async (): Promise<void> => {
     table.increments('id').primary()
     table.text('tag').notNullable()
     table.text('title').notNullable()
+  })
+  await db.schema.createTable('pageLinks', table => {
+    table.increments('id').primary()
+    table.integer('pageId').notNullable()
+    table.text('localeCode').notNullable()
+    table.text('path').notNullable()
+    table.unique(['pageId', 'localeCode', 'path'])
+  })
+  await db.schema.createTable('pagesVector', table => {
+    table.integer('pageId').primary()
+    table.bigInteger('sourceRevision').notNullable()
+  })
+  await db.schema.createTable('pagesWords', table => {
+    table.integer('pageId').notNullable()
+    table.text('word').notNullable()
   })
   await db.schema.createTable('pageAccessPasswords', table => {
     table.integer('pageId').primary()
@@ -518,6 +536,65 @@ describe('deleted page restore writer', () => {
       ])
     )
     expect(pageChanged).toHaveBeenCalledWith(41, true)
+  })
+
+  it('certifies a restored private draft through the native render lease and recovers a failed pipeline without another mutation', async () => {
+    await insertDeletedSnapshot()
+    await seedPreviousEffect()
+    await db('users').insert([
+      { id: admin.id, email: admin.email, isActive: true, isSystem: false },
+      { id: formerOwner.id, email: formerOwner.email, isActive: true, isSystem: false }
+    ])
+    await db('locales').insert({ code: 'en' })
+    const restored = await Page.restoreDeletedPage(restoreOptions() as never)
+    const committed = await db('pages').where({ id: restored.pageId }).first()
+    const effects = await db('pageMutationOutbox').where({ pageId: restored.pageId, sourceRevision: restored.sourceRevision }).select('id', 'payload', 'payloadSha256').orderBy('id')
+    const pipeline = [{
+      key: 'markdownCore',
+      config: { allowHTML: false, linebreaks: false, linkify: false, typographer: false, quotes: 'English', underline: false },
+      children: []
+    }]
+    const getRenderingPipeline = vi.fn(async () => [] as typeof pipeline)
+    const runtime = wikiGlobal.WIKI!
+    runtime.configSvc = { loadFromDb: async () => undefined, applyFlags: async () => undefined }
+    runtime.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    Object.assign(runtime.models as object, { renderers: { fetchDefinitions: async () => undefined, getRenderingPipeline } })
+    // The worker closes only its own database handle in production; this fixture shares one in-memory handle.
+    vi.spyOn(db, 'destroy').mockResolvedValue(undefined)
+    vi.spyOn(Page, 'savePageToCache').mockResolvedValue(undefined)
+    vi.spyOn(Page, 'getPageFromCache').mockResolvedValue(false)
+    const nativeRender = (await vi.importFresh('../jobs/render-page.ts', import.meta.url)).default
+    vi.mocked(Page.renderPage).mockImplementation(async (page, fence) => nativeRender({ pageId: page.id, ...fence }))
+    const lifecycle = new PageProjectionLifecycle(db, 'restored-draft-render', {
+      renderPage: async (id, fence) => { await Page.renderPage({ id }, fence) },
+      evictLocation: async () => undefined,
+      reconcileSearchPage: async () => { throw new Error('A private draft must not be indexed') },
+      removeSearchPage: async pageId => {
+        await db('pagesVector').where({ pageId }).delete()
+        await db('pagesWords').where({ pageId }).delete()
+      }
+    })
+    const lookup = { path: committed.path, locale: committed.localeCode, visibility: committed.visibility, ownerId: committed.ownerId }
+    await lifecycle.runOnce()
+    await expect(Page.getPage(lookup)).rejects.toMatchObject({ status: 503, name: 'PAGE_RENDER_PENDING' })
+    expect(await db('pages').where({ id: restored.pageId }).first()).toEqual(committed)
+    expect(await db('pageMutationOutbox').where({ pageId: restored.pageId, effectKind: 'render', sourceRevision: restored.sourceRevision }).first()).toMatchObject({ status: 'retry', attempts: 1 })
+
+    getRenderingPipeline.mockResolvedValue(pipeline)
+    await db('pageMutationOutbox').where({ pageId: restored.pageId, effectKind: 'render', sourceRevision: restored.sourceRevision }).update({ availableAt: new Date().toISOString() })
+    await lifecycle.runOnce()
+    const rendered = await Page.getPage(lookup)
+    expect(rendered).toMatchObject({
+      id: restored.pageId, visibility: 'private', ownerId: formerOwner.id, isPublished: 0,
+      content: committed.content, sourceRevision: 9, renderedSourceRevision: 9
+    })
+    expect(rendered && rendered.render).toContain('<h1>Historical identity guide</h1>')
+    const receipt = await db('pageMutationOutbox').where({ pageId: restored.pageId, effectKind: 'render', sourceRevision: restored.sourceRevision }).first()
+    expect(receipt).toMatchObject({ status: 'succeeded', attempts: 2, leaseToken: null })
+    expect(JSON.parse(receipt.postcondition)).toMatchObject({ satisfied: true, observedSourceRevision: restored.sourceRevision })
+    expect(await db('pageMutationOutbox').where({ pageId: restored.pageId, sourceRevision: restored.sourceRevision }).select('id', 'payload', 'payloadSha256').orderBy('id')).toEqual(effects)
+    expect(await db('pagesVector').where({ pageId: restored.pageId })).toEqual([])
+    expect(await db('pageHistory').where({ pageId: restored.pageId }).orderBy('id')).toHaveLength(2)
   })
 
   it('quarantines a legacy snapshot as private and unpublished under the recovering administrator', async () => {

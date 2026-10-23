@@ -1833,7 +1833,7 @@ export default defineComponent({
 
   &--ask {
     animation: none;
-    background: transparent;
+    background: rgb(var(--v-theme-background));
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     height: 100dvh;
@@ -1843,9 +1843,6 @@ export default defineComponent({
     z-index: 1009;
   }
 
-  &--ask &-container--ask {
-    background: transparent;
-  }
 
   &-container {
     box-sizing: border-box;
@@ -2297,8 +2294,6 @@ export default defineComponent({
   --search-header-height: 48px;
 }
 
-// Keep opacity off the glass surfaces' ancestors: a translucent ancestor
-// becomes a backdrop root and hides the page from blur until the fade ends.
 .search-results-container--ask .inline-agent__toolbar > *,
 .search-results-container--ask .inline-agent__body > * {
   animation: agentContentReveal var(--wiki-motion-slow) var(--wiki-motion-ease-out);

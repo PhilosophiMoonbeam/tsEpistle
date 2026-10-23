@@ -90,6 +90,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function requireDatabaseEnvironment(value: unknown): void {
+  if (typeof value === 'string') {
+    cfgHelper.parseConfigValue(value, true)
+  } else if (isRecord(value)) {
+    for (const key in value) {
+      if (Object.hasOwn(value, key)) requireDatabaseEnvironment(value[key])
+    }
+  }
+}
+
 // Installation-scoped draft identity; INSTANCE_ID remains process/replica-scoped.
 const OFFLINE_DRAFT_SITE_ID_CONFIG_KEY = 'offlineDraftSiteId' as const
 const OFFLINE_DRAFT_SITE_ID_ENVIRONMENT_VARIABLE = 'OFFLINE_DRAFT_SITE_ID' as const
@@ -199,11 +209,31 @@ const configService: ConfigService = {
     let appconfig: AppConfig
     let appdata: AppData
     try {
-      const loadedConfig = yaml.load(cfgHelper.parseConfigValue(fs.readFileSync(confPaths.config, 'utf8')))
+      const source = fs.readFileSync(confPaths.config, 'utf8')
+      const rawConfig = yaml.load(source)
+      const loadedConfig = yaml.load(cfgHelper.parseConfigValue(source))
       const loadedData = yaml.load(fs.readFileSync(confPaths.data, 'utf8'))
       if (!isRecord(loadedConfig)) throw new Error('Configuration file must contain a mapping')
       if (!isAppData(loadedData)) throw new Error('Application data contains invalid configuration defaults')
       const mergedConfig = _.defaultsDeep(loadedConfig, loadedData.defaults.config)
+      if (!process.env.DATABASE_URL && isRecord(rawConfig) && isRecord(rawConfig.db)) {
+        for (const key of ['host', 'port', 'user', 'pass', 'db']) {
+          if (key !== 'pass' || !process.env.DB_PASS_FILE) requireDatabaseEnvironment(rawConfig.db[key])
+        }
+        const db = mergedConfig.db
+        if (
+          isRecord(db) &&
+          (db.ssl === true || db.ssl === 'true' || db.ssl === 1 || db.ssl === '1') &&
+          isRecord(db.sslOptions) &&
+          db.sslOptions.auto === false
+        ) {
+          requireDatabaseEnvironment(rawConfig.db.sslOptions)
+        }
+      }
+      if (process.env.DB_PASS_FILE && isRecord(mergedConfig.db)) {
+        console.info(chalk.blue('DB_PASS_FILE is defined. Will use secret from file.'))
+        mergedConfig.db.pass = fs.readFileSync(process.env.DB_PASS_FILE, 'utf8').trim()
+      }
       if (!isAppConfig(mergedConfig)) throw new Error('Configuration file contains invalid values')
       appconfig = mergedConfig
       appdata = loadedData
@@ -218,17 +248,6 @@ const configService: ConfigService = {
 
     if (Number(appconfig.port) < 1 || process.env.HEROKU) {
       appconfig.port = process.env.PORT || 80
-    }
-
-    if (process.env.DB_PASS_FILE) {
-      console.info(chalk.blue('DB_PASS_FILE is defined. Will use secret from file.'))
-      try {
-        appconfig.db.pass = fs.readFileSync(process.env.DB_PASS_FILE, 'utf8').trim()
-      } catch (error) {
-        console.error(chalk.red.bold('>>> Failed to read Docker Secret File using path defined in DB_PASS_FILE env variable!'))
-        console.error(errorMessage(error))
-        process.exit(1)
-      }
     }
 
     const offlineDraftSiteId = configuredOfflineDraftSiteId()

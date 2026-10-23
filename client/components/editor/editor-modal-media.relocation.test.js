@@ -3,6 +3,8 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import * as cheerio from 'cheerio'
 import pug from 'pug'
+import * as lodash from 'lodash-es'
+import { isSafeEditorImageSource, isValidEditorImageAlt, normalizeEditorImageDimension } from '../../helpers/editor-image-properties'
 import { describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document } from '../../test/browser-dom.mts'
 import { createModalFocusScope } from '../common/modal-focus-scope'
@@ -30,7 +32,7 @@ const loadMediaComponent = ({ relocateAssetRequest, wikiStore, window, fetchAsse
   const dependencies = {
     PageBrandingAssignmentSchema: { safeParse: () => ({ success: false }) },
     PageBrandingViewSchema: { safeParse: () => ({ success: false }) },
-    _: {},
+    _: lodash,
     createAssetFolder: async () => undefined,
     createModalFocusScope: () => ({ deactivate: () => undefined }),
     defineComponent: value => value,
@@ -40,9 +42,12 @@ const loadMediaComponent = ({ relocateAssetRequest, wikiStore, window, fetchAsse
     fetchAssetFolders: fetchAssetFolders ?? (async () => []),
     fetchAssets: fetchAssets ?? (async () => []),
     isRecord: value => typeof value === 'object' && value !== null,
+    isSafeEditorImageSource,
+    isValidEditorImageAlt,
+    normalizeEditorImageDimension,
     markRaw: value => value,
     relocateAssetRequest,
-    vueFilePond: () => ({}),
+    vueFilePond: () => ({ render: () => null }),
     wikiStore,
     window
   }
@@ -63,7 +68,7 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
   const notifications = []
   const errors = []
   const loading = []
-  const wikiStore = {
+  const wikiStore = Vue.reactive({
     startLoading: owner => loading.push(`start:${owner}`),
     stopLoading: owner => loading.push(`stop:${owner}`),
     showError: error => errors.push(error),
@@ -79,7 +84,7 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
       }
     },
     page: { id: 42, locale: 'en', path: 'media', visibility: 'public' }
-  }
+  })
   const relocationCalls = []
   const component = loadMediaComponent({
     relocateAssetRequest: async (_fetch, assetId, input) => {
@@ -112,7 +117,7 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
     configurable: true,
     get: () => component.computed.relocationStatusMessage.call(context)
   })
-  return { context, errors, loading, notifications, relocationCalls }
+  return { component, context, errors, loading, notifications, relocationCalls }
 }
 
 describe('editor media relocation admission state', () => {
@@ -269,6 +274,97 @@ describe('editor media upload and thumbnails', () => {
     release([])
     await first
     expect(context.uploading).toBe(false)
+  })
+})
+
+describe('standalone shared asset workspace', () => {
+  const compileComponentRender = filename => {
+    const descriptor = parse(fs.readFileSync(filename, 'utf8'), { filename }).descriptor
+    const compiled = compileTemplate({
+      source: descriptor.template.content,
+      filename,
+      id: filename,
+      preprocessLang: descriptor.template.lang,
+      preprocessOptions: { doctype: 'html' },
+      compilerOptions: { mode: 'function' }
+    })
+    if (compiled.errors.length) throw compiled.errors[0]
+    return new Function('Vue', compiled.code)(Vue)
+  }
+  const mountManager = async purpose => {
+    const rootAsset = { id: 7, filename: 'shared-logo.png', folderId: 0, kind: 'IMAGE', ext: '.png', fileSize: 80, createdAt: '2026-01-01T00:00:00Z', description: '' }
+    const folderAsset = { ...rootAsset, id: 8, filename: 'folder-logo.png', folderId: 3 }
+    const { component, context } = createHarness({
+      fetchAssets: async (_fetch, folderId) => folderId === 0 ? [rootAsset] : [folderAsset],
+      fetchAssetFolders: async (_fetch, folderId) => folderId === 0 ? [{ id: 3, name: 'logos', slug: 'logos' }] : []
+    })
+    context.wikiStore.page.visibility = 'private'
+    context.wikiStore.editor.activeModal = 'editorModalMedia'
+    context.wikiStore.editor.media = {
+      currentFolderId: 91,
+      currentFileId: 92,
+      folderTree: [{ id: 91, name: 'editor-folder', slug: 'editor-folder' }]
+    }
+    const before = structuredClone({ page: Vue.toRaw(context.wikiStore.page), editor: Vue.toRaw(context.wikiStore.editor) })
+    const app = Vue.createApp({ ...component, render: compileComponentRender(componentPath) }, { purpose, embedded: true })
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.component('VCardChin', Vue.defineComponent({
+      render: compileComponentRender(path.join(process.cwd(), 'client/components/common/v-card-chin.vue'))
+    }))
+    app.component('i18next', Vue.defineComponent({
+      props: { tag: { type: String, default: 'div' } },
+      setup: (props, { slots }) => () => Vue.h(props.tag, slots.default?.())
+    }))
+    app.config.globalProperties.$t = translateEnglish
+    app.config.globalProperties.$helpers = { formatMoment: () => 'recently' }
+    const root = document.body.appendChild(document.createElement('div'))
+    const model = app.mount(root)
+    await vi.waitFor(() => expect(model.loading).toBe(false))
+    return { app, root, model, store: context.wikiStore, before }
+  }
+
+  test('opens shared assets at root, navigates folders independently and exposes management without editor insertion', async () => {
+    const { app, root, model, store, before } = await mountManager('manage')
+    try {
+      expect(root.textContent).toContain('shared-logo.png')
+      expect(model.currentFolderId).toBe(0)
+      expect(root.querySelector('.editor-media-upload-header')).not.toBeNull()
+      expect(root.querySelector('.editor-media-actions')).toBeNull()
+      model.selectAsset(7)
+      await Vue.nextTick()
+      expect(model.currentAsset.filename).toBe('shared-logo.png')
+      expect(root.querySelector('textarea')).toBeNull()
+      expect(model.isResizableAsset(model.currentAsset)).toBe(true)
+      model.insert()
+      model.cancel()
+      root.querySelector('.editor-media-folder').click()
+      await vi.waitFor(() => expect(root.textContent).toContain('folder-logo.png'))
+      expect(model.assetPath(model.currentAsset ?? model.assets[0])).toBe('/logos/folder-logo.png')
+      const parent = root.querySelector('.editor-media-folders .editor-media-icon-button')
+      parent.click()
+      await vi.waitFor(() => expect(root.textContent).toContain('shared-logo.png'))
+      expect(model.currentFolderId).toBe(0)
+      expect({ page: store.page, editor: store.editor }).toEqual(before)
+    } finally {
+      app.unmount()
+      root.remove()
+    }
+  })
+
+  test('keeps private-page editor uploads prohibited and preserves insertion controls', async () => {
+    const { app, root, model } = await mountManager('insert')
+    try {
+      expect(root.querySelector('.editor-media-upload-header')).toBeNull()
+      expect(root.querySelector('.editor-media-actions')).not.toBeNull()
+      await expect(model.upload()).rejects.toThrow(translateEnglish('editor:editorModalMedia.assetsSiteWideCannot'))
+      model.selectAsset(8)
+      await Vue.nextTick()
+      expect(model.currentAsset?.id).toBe(8)
+      expect(root.querySelector('textarea')).not.toBeNull()
+    } finally {
+      app.unmount()
+      root.remove()
+    }
   })
 })
 

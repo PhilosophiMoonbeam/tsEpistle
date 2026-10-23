@@ -2,7 +2,7 @@
   v-app.unauthorized-app
     nav-header
     v-main
-      main.unauthorized(aria-labelledby='unauthorized-title')
+      section.unauthorized(aria-labelledby='unauthorized-title')
         .unauthorized-content
           .newpage-mark(aria-hidden='true')
             img(src='/_assets/svg/icon-delete-shield.svg', alt='')

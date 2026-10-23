@@ -11,7 +11,7 @@
       <v-alert v-if="policyConflict" type="warning" variant="tonal">{{ t('thePolicyChangedElsewhereYourDraftIs') }}</v-alert>
       <v-checkbox v-model="draft.enabled" :label="t('enableAutomaticRouting')" :disabled="busy || loading || denied" />
       <v-select v-model="draft.decisionProviderId" :items="providerOptions" item-title="title" item-value="value" item-props="props" clearable :label="t('agentDecisionProviderBlankUsesDecisionDefault')" :disabled="busy || loading || denied" />
-      <p v-if="selectedDecision">{{ t('classifierRevisionCredentialChecked', { displayName: selectedDecision.displayName, dialect: selectedDecision.config.kind === 'typesafe' ? t('nativeTypeSafeJev') : t('customDialect', { dialect: selectedDecision.config.dialect }), model: selectedDecision.config.model, revision: selectedDecision.revision, disabled: selectedDecision.enabled ? t('enabled') : t('disabled'), missing: selectedDecision.secretConfigured ? t('configured') : t('missing'), value: selectedDecision.checkedAt || t('never'), default: selectedDecision.isDefault ? t('decisionDefaultSuffix') : '' }) }}</p>
+      <p v-if="selectedDecision">{{ t('classifierRevisionCredentialChecked', { displayName: selectedDecision.displayName, dialect: selectedDecision.config.kind === 'typesafe' ? t('nativeTypeSafeJev') : t('customDialect', { dialect: selectedDecision.config.dialect, interpolation: { escapeValue: false } }), model: selectedDecision.config.model, revision: selectedDecision.revision, disabled: selectedDecision.enabled ? t('enabled') : t('disabled'), missing: selectedDecision.secretConfigured ? t('configured') : t('missing'), value: selectedDecision.checkedAt || t('never'), default: selectedDecision.isDefault ? t('decisionDefaultSuffix') : '', interpolation: { escapeValue: false } }) }}</p>
       <v-alert v-if="decisionProblem" type="warning" variant="tonal">{{ decisionProblem }} <v-btn variant="text" @click="emit('navigate', 'decision')">{{ t('configureDecisionProviders') }}</v-btn></v-alert>
       <v-alert v-if="!profiles.some(p => p.isGlobalDefault && modelReady(p) && p.exposureMode === 'all_agent_users')" type="warning" variant="tonal">{{ t('noReadyAdministratorDefaultIsAvailableConfigure') }}<v-btn variant="text" @click="emit('navigate', 'profiles')">{{ t('configureGenerativeModels') }}</v-btn></v-alert>
       <div class="fields"><v-text-field v-for="field in policyFields" :key="field.key" v-model.number="draft[field.key]" type="number" :step="field.step" :error-messages="policyErrors[field.key]" :label="field.label" :disabled="busy || loading || denied" /></div>
@@ -61,7 +61,8 @@ const providerOptions = computed(() => providers.value.map(p => ({
     selection: t(p.isDefault ? 'defaultProvider' : 'alternativeProvider'),
     enabled: t(p.enabled ? 'enabled' : 'disabled'),
     credential: t(p.secretConfigured ? 'configured' : 'missing'),
-    checked: t(p.checkedAt ? 'checked' : 'notChecked')
+    checked: t(p.checkedAt ? 'checked' : 'notChecked'),
+    interpolation: { escapeValue: false }
   }),
   value: p.id,
   props: { disabled: !p.enabled || !p.secretConfigured || !p.checkedAt }

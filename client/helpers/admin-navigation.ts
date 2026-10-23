@@ -70,6 +70,16 @@ export function buildAdminNavigation(translate: (key: string) => string, permiss
           keywords: ''
         },
         {
+          key: 'assets',
+          label: 'Assets',
+          icon: 'mdi-folder-image',
+          to: '/assets',
+          permission: 'manage:system',
+          count: info.assetsTotal,
+          description: 'Shared files, folders and image management',
+          keywords: 'upload media images storage'
+        },
+        {
           key: 'editor',
           label: 'Editors',
           icon: 'mdi-pencil-ruler',

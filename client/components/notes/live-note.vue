@@ -2,11 +2,11 @@
   <v-app class="live-note-app">
     <nav-header />
     <v-main>
-      <main class="live-note" :aria-busy="loading">
+      <div class="live-note" :aria-busy="loading">
         <header class="live-note__header">
           <div><a href="/p/notes">{{ t('inventory', 'My live notes') }}</a><h1>{{ note?.title || t('untitled', 'Untitled note') }}</h1><code v-if="note">{{ note.key }}</code></div>
           <div class="live-note__actions" v-if="note">
-            <button v-if="note.canEdit" type="button" :aria-pressed="mode === 'read'" @click="setMode(mode === 'read' ? 'edit' : 'read')">{{ mode === 'read' ? t('editor', 'Editor') : t('reader', 'Reader') }}</button>
+            <button v-if="note.canEdit" type="button" @click="setMode(mode === 'read' ? 'edit' : 'read')">{{ mode === 'read' ? t('editor', 'Editor') : t('reader', 'Reader') }}</button>
             <button type="button" @click="download">{{ t('download', 'Download Markdown') }}</button>
             <button type="button" :disabled="busy || !accepted" @click="loadHistory(false)">{{ t('history', 'History') }}</button>
             <button v-if="canPublish" type="button" :disabled="!settled || busy || publicationUncertain" @click="openPublication">{{ t('publish', 'Publish as page') }}</button>
@@ -59,7 +59,7 @@
             <button type="button" :disabled="publishing" @click="closePublication">{{ t('close', 'Close') }}</button>
           </form>
         </section>
-      </main>
+      </div>
     </v-main>
     <nav-footer /><notify /><search-results /><confirm-dialog-host />
   </v-app>
