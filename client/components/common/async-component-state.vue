@@ -94,7 +94,7 @@ export default AsyncComponentState
   height: 2rem;
   font-size: 2rem;
   line-height: 1;
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-primary-ink);
 }
 
 .async-component-state__error-icon {
