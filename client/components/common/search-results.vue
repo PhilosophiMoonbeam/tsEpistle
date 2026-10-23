@@ -1833,7 +1833,7 @@ export default defineComponent({
 
   &--ask {
     animation: none;
-    background: rgb(var(--v-theme-background));
+    background: transparent;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     height: 100dvh;
@@ -1841,6 +1841,9 @@ export default defineComponent({
     overflow: hidden;
     isolation: isolate;
     z-index: 1009;
+  }
+  &--ask &-container--ask {
+    background: transparent;
   }
 
 
