@@ -192,9 +192,25 @@ describe('Ask modal accessibility contract', () => {
       methods.handleBackdropClick.call(state, { target: returnToSearch })
       expect(closeCalls).toBe(1)
 
+      // Model the overlay's two 10px scrollbar gutters at a nonzero origin.
+      backdrop.getBoundingClientRect = () => ({ left: 100 })
+      Object.defineProperties(backdrop, {
+        clientLeft: { value: 10 },
+        clientWidth: { value: 980 }
+      })
+      backdrop.addEventListener('click', event => methods.handleBackdropClick.call(state, event))
+      for (const clientX of [105, 1090, 1095]) {
+        backdrop.dispatchEvent(new dom.window.MouseEvent('click', { clientX }))
+      }
+      expect(closeCalls).toBe(1)
+      for (const clientX of [110, 1089]) {
+        backdrop.dispatchEvent(new dom.window.MouseEvent('click', { clientX }))
+      }
+      expect(closeCalls).toBe(3)
+
       state.isAgentOpen = true
       methods.handleBackdropClick.call(state, { target: backdrop })
-      expect(closeCalls).toBe(1)
+      expect(closeCalls).toBe(3)
     } finally {
       if (originalElement) Object.defineProperty(globalThis, 'Element', originalElement)
       else delete globalThis.Element

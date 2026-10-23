@@ -988,6 +988,12 @@ export default defineComponent({
       const target = event.target
       // Returning from Agent changes the mode before this same click bubbles here.
       if (target instanceof Element && target.closest('.search-results-search, .wiki-source-preview, .inline-agent')) return
+      const viewport = event.currentTarget
+      if (target === viewport && viewport instanceof Element) {
+        // Native scrollbar clicks scroll the overlay; they do not dismiss it.
+        const contentLeft = viewport.getBoundingClientRect().left + viewport.clientLeft
+        if (event.clientX < contentLeft || event.clientX >= contentLeft + viewport.clientWidth) return
+      }
       this.closeSearch()
     },
     captureSearchRestoreTarget(event: FocusEvent): void {
