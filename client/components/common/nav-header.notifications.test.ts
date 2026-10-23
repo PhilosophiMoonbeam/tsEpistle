@@ -530,10 +530,15 @@ afterEach(() => {
 })
 
 describe('search header affordances', () => {
-  it.each([false, true])('keeps clearable search reusable after a null clear (small screen: %s)', async smAndDown => {
+  it.each([false, true])('retains a dismissed search and allows explicit clear and replacement (small screen: %s)', async smAndDown => {
     const mounted = await mountHeader({ hideSearch: false, smAndDown })
-    const vm = mounted.vm as unknown as { search: string | null }
+    const vm = mounted.vm as unknown as { search: string | null, searchIsFocused: boolean, searchClose: () => void }
     vm.search = 'initial query'
+    vm.searchIsFocused = true
+    vm.searchClose()
+    await settle()
+    expect(vm.searchIsFocused).toBe(false)
+    expect(vm.search).toBe('initial query')
     vm.search = null
     await settle()
     expect(wikiStore.site.search).toBe('')

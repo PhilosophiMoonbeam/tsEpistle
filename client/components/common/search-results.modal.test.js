@@ -168,6 +168,7 @@ describe('Ask modal accessibility contract', () => {
     searchSurface.append(searchChild)
     preview.append(previewChild)
     backdrop.append(searchSurface, preview, agent)
+    fixtureDocument.body.append(backdrop)
 
     Object.defineProperty(globalThis, 'Element', {
       configurable: true,
@@ -196,21 +197,36 @@ describe('Ask modal accessibility contract', () => {
       backdrop.getBoundingClientRect = () => ({ left: 100 })
       Object.defineProperties(backdrop, {
         clientLeft: { value: 10 },
-        clientWidth: { value: 980 }
+        clientWidth: { value: 980 },
+        clientHeight: { value: 400 },
+        scrollHeight: { configurable: true, value: 1000 }
       })
       backdrop.addEventListener('click', event => methods.handleBackdropClick.call(state, event))
-      for (const clientX of [105, 1090, 1095]) {
+      for (const clientX of [1090, 1095]) {
         backdrop.dispatchEvent(new dom.window.MouseEvent('click', { clientX }))
       }
       expect(closeCalls).toBe(1)
-      for (const clientX of [110, 1089]) {
+      // The mirrored gutter is still ordinary backdrop, not a second scrollbar.
+      for (const clientX of [105, 110, 1089]) {
         backdrop.dispatchEvent(new dom.window.MouseEvent('click', { clientX }))
       }
-      expect(closeCalls).toBe(3)
+      expect(closeCalls).toBe(4)
+      backdrop.style.direction = 'rtl'
+      for (const clientX of [105, 109]) {
+        backdrop.dispatchEvent(new dom.window.MouseEvent('click', { clientX }))
+      }
+      expect(closeCalls).toBe(4)
+      backdrop.dispatchEvent(new dom.window.MouseEvent('click', { clientX: 1095 }))
+      expect(closeCalls).toBe(5)
+      Object.defineProperty(backdrop, 'scrollHeight', { value: 400 })
+      for (const clientX of [105, 1095]) {
+        backdrop.dispatchEvent(new dom.window.MouseEvent('click', { clientX }))
+      }
+      expect(closeCalls).toBe(7)
 
       state.isAgentOpen = true
       methods.handleBackdropClick.call(state, { target: backdrop })
-      expect(closeCalls).toBe(3)
+      expect(closeCalls).toBe(7)
     } finally {
       if (originalElement) Object.defineProperty(globalThis, 'Element', originalElement)
       else delete globalThis.Element
@@ -412,7 +428,7 @@ describe('Ask modal accessibility contract', () => {
       agentComposer.dispatchEvent(searchEscape)
       expect(searchEscape.defaultPrevented).toBe(true)
       expect(state.searchIsFocused).toBe(false)
-      expect(state.search).toBe('')
+      expect(state.search).toBe('search again')
       expect(state.searchModalFocusScope).toBeNull()
       expect(fixtureDocument.activeElement).toBe(pageOpener)
       expect(agentStore.closeWorkspaceCalls).toBe(1)
@@ -425,7 +441,7 @@ describe('Ask modal accessibility contract', () => {
       methods.activateSearchModal.call(state, pageOpener)
       headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
       expect(state.searchIsFocused).toBe(false)
-      expect(state.search).toBe('')
+      expect(state.search).toBe('directly focused search')
       expect(state.searchModalFocusScope).toBeNull()
       expect(fixtureDocument.activeElement).toBe(headerSearch)
       expect(nextHeaderAction.hasAttribute('inert')).toBe(false)

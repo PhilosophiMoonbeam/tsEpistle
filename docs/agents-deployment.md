@@ -18,6 +18,8 @@ Ctrl/⌘+Shift+A toggles Wiki Agent open and closed; closing does not open Searc
 
 Search keeps its rounded header flush with both card borders. The surrounding overlay owns scrolling, outside the painted card, so scrollbar space does not leave an inset strip beside **Close search**. Filters and results remain in one scroll flow on short screens and at enlarged text sizes; the Agent workspace retains its separate full-viewport layout and contextual glass.
 
+Clicking the page backdrop, **Close search**, or Escape dismisses ordinary search without clearing its query and current results. Clicking the search field reopens them; explicitly clearing or replacing its text starts a new search. Only an active scrollbar rail is exempt from backdrop dismissal; empty gutter space remains dismissible.
+
 The welcome area scrolls in short viewports so lower starters remain reachable above the sticky composer. Without a current-page hint, **Explore the Wiki** starts from a bounded locale-root discovery window at the supported maximum depth, reads chosen page IDs, and offers a source-cited sample with a follow-up topic question. A shallow or empty navigation window is not proof of Wiki-wide absence; discovery metadata never becomes citation evidence.
 
 ### Request admission and provider continuation

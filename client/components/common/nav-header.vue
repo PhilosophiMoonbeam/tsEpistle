@@ -16,6 +16,7 @@
           :loading='searchIsLoading'
           @keydown.enter='searchEnter($event)'
           @focus='searchFocus'
+          @click:control='searchFocus'
           @keydown.down='searchMove(`down`, $event)'
           @keydown.up='searchMove(`up`, $event)'
           autocomplete='off'
@@ -80,6 +81,7 @@
                 :loading='searchIsLoading',
                 @keydown.enter='searchEnter($event)'
                 @focus='searchFocus'
+                @click:control='searchFocus'
                 @keydown.down='searchMove(`down`, $event)'
                 @keydown.up='searchMove(`up`, $event)'
                 autocomplete='off'
@@ -1207,9 +1209,10 @@ export default defineComponent({
       if (this.beforeSearchExit?.() === false) return
       this.searchFocusGeneration += 1
       this.searchIsComposing = false
+      const closingAgent = this.searchMode === 'ask'
       this.searchIsFocused = false
       this.searchMode = 'search'
-      this.search = ''
+      if (closingAgent) this.search = ''
     },
     handleSearchFocusCommand (): void {
       if (this.hideSearch || (this.dense && this.$vuetify.display.mdAndUp)) return

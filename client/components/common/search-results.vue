@@ -2,7 +2,7 @@
   //- Search keeps focus in the header field, outside this dialog, so it relies on the
   //- modal focus scope (inert, aria-hidden page) instead of aria-modal; Agent mode is modal.
   .search-results(
-    v-if='isAgentOpen || searchIsFocused || normalizedSearch.length > 1 || glossaryOpened'
+    v-if='isAgentOpen || searchIsFocused || glossaryOpened'
     :class='{ "search-results--ask": isAgentOpen, "search-results--glossary": !isAgentOpen && searchScope === `glossary` }'
     role='dialog'
     :aria-modal='isAgentOpen ? `true` : undefined'
@@ -765,6 +765,7 @@ export default defineComponent({
       }
       if (open) {
         void this.activateAgentModal()
+        if (this.searchMode === 'search' && !this.hasFreshResponse) this.queueSearch(this.search)
         return
       }
       const restoreFocus = this.searchExitRestoreFocus
@@ -816,8 +817,7 @@ export default defineComponent({
       this.searchIsFocused = true
     }
     if (this.isAgentOpen) this.latchAgentOpeningPage()
-    if (this.searchMode === 'search' && this.normalizedSearch.length >= 2) {
-      this.searchIsFocused = true
+    if (this.searchMode === 'search' && this.searchIsFocused && this.normalizedSearch.length >= 2) {
       this.queueSearch(this.search)
     }
     onSearchMove(this.handleSearchMove)
@@ -989,10 +989,11 @@ export default defineComponent({
       // Returning from Agent changes the mode before this same click bubbles here.
       if (target instanceof Element && target.closest('.search-results-search, .wiki-source-preview, .inline-agent')) return
       const viewport = event.currentTarget
-      if (target === viewport && viewport instanceof Element) {
-        // Native scrollbar clicks scroll the overlay; they do not dismiss it.
+      if (target === viewport && viewport instanceof Element && viewport.scrollHeight > viewport.clientHeight) {
+        // Only the active scrollbar rail is exempt; mirrored gutter space is backdrop.
         const contentLeft = viewport.getBoundingClientRect().left + viewport.clientLeft
-        if (event.clientX < contentLeft || event.clientX >= contentLeft + viewport.clientWidth) return
+        const rtl = viewport.ownerDocument.defaultView?.getComputedStyle(viewport).direction === 'rtl'
+        if (rtl ? event.clientX < contentLeft : event.clientX >= contentLeft + viewport.clientWidth) return
       }
       this.closeSearch()
     },
@@ -1045,7 +1046,7 @@ export default defineComponent({
     },
     syncSearchInputA11y(): HTMLElement[] {
       const controls = this.findSearchControls()
-      const searchVisible = !this.isAgentOpen && (this.searchIsFocused || this.normalizedSearch.length >= 2)
+      const searchVisible = !this.isAgentOpen && this.searchIsFocused
       const active = searchVisible ? this.activeDescendant : undefined
       for (const input of controls) {
         input.setAttribute('role', this.searchScope === 'glossary' ? 'searchbox' : 'combobox')
@@ -1314,6 +1315,7 @@ export default defineComponent({
     closeSearch(): void {
       if (this.glossaryOpened && !this.glossary!.navigate(null)) return
       if (this.searchScope === 'glossary') this.searchScope = 'wiki'
+      const closingAgent = this.searchMode === 'ask'
       const shouldCloseAgentWorkspace = this.isAgentOpen || Boolean(this.agentResumeSessionId)
       // Dismissing a directly focused desktop field must allow the next Tab to
       // continue along the header, not restore its previous sibling and reopen.
@@ -1337,7 +1339,7 @@ export default defineComponent({
       this.finishSearchFocus(!keepSearchControlFocus)
       this.searchIsFocused = false
       this.searchMode = 'search'
-      this.search = ''
+      if (closingAgent) this.search = ''
       this.approvalId = ''
       this.agentResumeSessionId = null
       this.agentOpeningPage = null
