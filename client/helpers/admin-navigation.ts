@@ -75,7 +75,7 @@ export function buildAdminNavigation(translate: (key: string) => string, permiss
           icon: 'mdi-folder-image',
           to: '/assets',
           permission: 'manage:system',
-          count: info.assetsTotal,
+          count: info.assetsTotal ?? undefined,
           description: 'Shared files, folders and image management',
           keywords: 'upload media images storage'
         },
