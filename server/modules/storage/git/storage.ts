@@ -16,8 +16,6 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import _ from 'lodash'
-import { pipeline } from 'node:stream/promises'
-import { Transform, type TransformCallback } from 'node:stream'
 
 import pageHelper from '../../../helpers/page.ts'
 import assetHelper from '../../../helpers/asset.ts'
@@ -26,6 +24,7 @@ import type { StorageImportAdmission } from '../disk/common.ts'
 import type { StorageImportResult } from '../types.ts'
 import { classifyStoragePageImport, encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 import { PageChangeReasonSchema } from '../../../../shared/page-change-reason.ts'
+import { isStorageGitBranchName, storageGitRepositoryIssue } from '../../../../shared/storage-workspace.ts'
 import {
   assertAssetLocationAssetSettled,
   assertAssetLocationReservations,
@@ -61,7 +60,7 @@ import type { StorageLocalLocation } from '../../types.ts'
 import { currentGitMutationTurn, GitStorageBusyError, withGitMutationLock } from './mutation-lock.ts'
 import type { StorageMutationDispatch } from '../../../jobs/storage-mutations.ts'
 import { storagePagePath } from '../../../helpers/storage-page-path.ts'
-import { assertNoPublicStoragePageAtPath } from '../../../helpers/storage-path-admission.ts'
+import { assertNoPublicStoragePageAtPath, assertStorageAssetDestinationAllowed } from '../../../helpers/storage-path-admission.ts'
 
 export interface GitStorageFile {
   file: { stats: StorageFileIdentityExpectation }
@@ -247,22 +246,8 @@ function gitExecutable(context: GitStorageContext): string {
 }
 
 function assertBranch(branch: string): void {
-  if (
-    typeof branch !== 'string' ||
-    branch.length === 0 ||
-    branch.length > 255 ||
-    branch.startsWith('-') ||
-    branch.includes('..') ||
-    branch.includes('@{') ||
-    branch.startsWith('/') ||
-    branch.endsWith('/') ||
-    branch.includes('\0') ||
-    Array.from(branch).some(character => {
-      const code = character.codePointAt(0) ?? 0
-      return code < 32 || code === 127
-    })
-  ) {
-    throw new Error('Invalid branch! Make sure it exists on the remote first.')
+  if (typeof branch !== 'string' || !isStorageGitBranchName(branch)) {
+    throw new Error('Enter a valid Git branch name of at most 255 characters.')
   }
 }
 
@@ -582,6 +567,9 @@ const plugin: GitStoragePlugin = {
     if (previousRoot) await previousRoot.close()
     this.repoPath = path.resolve(wiki.ROOTPATH, this.config.localRepoPath)
     try {
+      assertBranch(this.config.branch)
+      const repositoryIssue = storageGitRepositoryIssue(this.config.repoUrl, this.config.authType)
+      if (repositoryIssue) throw new Error(repositoryIssue)
       await mkdir(this.repoPath, { recursive: true, mode: 0o700 })
       this.root = await openStorageRoot(this.repoPath)
       this.git = true
@@ -639,12 +627,12 @@ const plugin: GitStoragePlugin = {
               : undefined
           await command.run(['config', '--local', 'core.sshCommand', gitStorageSshCommand(identityPath, knownHostsPath)])
           wiki.logger.info('(STORAGE/GIT) Adding origin remote via SSH...')
-          await command.run(['remote', 'add', 'origin', this.config.repoUrl])
+          await command.run(['remote', 'add', 'origin', this.config.repoUrl.trim()])
           break
         }
         default: {
           wiki.logger.info('(STORAGE/GIT) Adding origin remote via HTTP/S...')
-          const originUrl = gitStorageHttpRemote(this.config.repoUrl, this.config.basicUsername, this.config.basicPassword)
+          const originUrl = gitStorageHttpRemote(this.config.repoUrl, this.config.basicUsername ?? '', this.config.basicPassword ?? '')
           await command.run(['remote', 'add', 'origin', originUrl])
           break
         }
@@ -753,10 +741,9 @@ const plugin: GitStoragePlugin = {
 
       if (_.includes(['sync', 'push'], this.mode)) {
         wiki.logger.info(`(STORAGE/GIT) Performing push to origin on branch ${branch}...`)
-        const pushOptions = ['push', '--signed=if-asked']
-        // Never force-push over unseen remote history.
-        pushOptions.push('origin', branch)
-        await command.run(pushOptions, { captureStdout: false })
+        // Respect explicitly configured signing; server support alone does not
+        // establish that the application has a signing identity.
+        await command.run(['push', 'origin', branch], { captureStdout: false })
       }
 
       if (recovered) wiki.logger.warn(`(STORAGE/GIT) Recovered an unfinished ${recovered} before synchronization.`)
@@ -1110,6 +1097,7 @@ const plugin: GitStoragePlugin = {
    * @param {Object} asset Asset to upload
    */
   async assetUploaded(asset) {
+    assertStorageAssetDestinationAllowed(asset.path)
     const root = requireRoot(this)
     const command = mutationGit(this)
     wiki.logger.info(`(STORAGE/GIT) Committing new file ${asset.path}...`)
@@ -1126,6 +1114,8 @@ const plugin: GitStoragePlugin = {
    * @param {Object} asset Asset to upload
    */
   async assetDeleted(asset) {
+    // A legacy asset row must never authorize deletion of Git's own metadata.
+    if (isStorageGitMetadataPath(asset.path)) return
     const root = requireRoot(this)
     const command = mutationGit(this)
     wiki.logger.info(`(STORAGE/GIT) Committing removed file ${asset.path}...`)
@@ -1142,6 +1132,8 @@ const plugin: GitStoragePlugin = {
    * @param {Object} asset Asset to upload
    */
   async assetRenamed(asset) {
+    assertGitPath(asset.path)
+    assertStorageAssetDestinationAllowed(asset.destinationPath)
     const root = requireRoot(this)
     const command = mutationGit(this)
     wiki.logger.info(`(STORAGE/GIT) Committing file move from ${asset.path} to ${asset.destinationPath}...`)
@@ -1160,6 +1152,7 @@ const plugin: GitStoragePlugin = {
     )
   },
   async assetRelocated(asset: StorageAssetRelocation) {
+    assertStorageAssetDestinationAllowed(asset.destinationPath)
     const root = requireRoot(this)
     await collectStorageEntries(root)
     const command = mutationGit(this)
@@ -1177,7 +1170,7 @@ const plugin: GitStoragePlugin = {
     }
 
     let source: StorageFileHandle | undefined
-    if (asset.sourcePath !== asset.destinationPath) {
+    if (asset.sourcePath !== asset.destinationPath && !isStorageGitMetadataPath(asset.sourcePath)) {
       try {
         source = await root.openFile(asset.sourcePath, asset.sourceIdentity)
       } catch (error: unknown) {
@@ -1196,12 +1189,13 @@ const plugin: GitStoragePlugin = {
         await source.close()
       }
     }
-    const changedPaths = asset.sourcePath === asset.destinationPath ? [asset.destinationPath] : [asset.sourcePath, asset.destinationPath]
+    const sourceTracked = asset.sourcePath !== asset.destinationPath && !isStorageGitMetadataPath(asset.sourcePath) && (await isGitTracked(command, asset.sourcePath))
+    const changedPaths = sourceTracked ? [asset.sourcePath, asset.destinationPath] : [asset.destinationPath]
     await command.run([
       'add',
       '-A',
       '--',
-      ...(asset.sourcePath !== asset.destinationPath && (await isGitTracked(command, asset.sourcePath)) ? [asset.sourcePath] : []),
+      ...(sourceTracked ? [asset.sourcePath] : []),
       asset.destinationPath
     ])
     await commitGitPaths(command, `docs: relocate ${asset.sourcePath} to ${asset.destinationPath}`, changedPaths, `${asset.authorName} <${asset.authorEmail}>`)
@@ -1237,72 +1231,55 @@ const plugin: GitStoragePlugin = {
     wiki.logger.info('(STORAGE/GIT) Adding all untracked content...')
     await collectStorageEntries(root)
 
-    await pipeline(
-      wiki.models.knex
-        .column(
-          'id',
-          'path',
-          'localeCode',
-          'title',
-          'description',
-          'contentType',
-          'content',
-          'sourceRevision',
-          'authorId',
-          'extra',
-          'isPublished',
-          'updatedAt',
-          'createdAt',
-          'editorKey'
-        )
-        .select()
-        .from('pages')
-        .where({ visibility: 'public' })
-        .stream(),
-      new Transform({
-        objectMode: true,
-        transform: async (page: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          try {
-            if (!isPageExportRow(page)) throw new TypeError('Git page export stream yielded an invalid page')
-            const pageObject = await wiki.models.pages.query().findOne({ id: page.id })
-            if (!pageObject) throw new Error(`Page ${page.id} was not found during Git export`)
-            const relatedTags = await pageObject.$relatedQuery('tags')
-            page.tags = relatedTags.flatMap(tag => (typeof tag.tag === 'string' ? [{ tag: tag.tag }] : []))
-
-            const fileName = gitPagePath(page, this.config.alwaysNamespace)
-            wiki.logger.info(`(STORAGE/GIT) Adding page ${fileName}...`)
-            await currentGitMutationTurn().assertHeld()
-            await root.writeAtomic(fileName, serializePage(page))
-            await command.run(['add', '--', `./${fileName}`])
-            callback()
-          } catch (error: unknown) {
-            callback(error instanceof Error ? error : new Error(String(error)))
-          }
-        }
-      })
-    )
-
+    // Refuse legacy invalid destinations before staging any unrelated pages.
     const assetFolders = await wiki.models.assetFolders.getAllPaths()
-    await pipeline(
-      wiki.models.knex.column('filename', 'folderId', 'data').select().from('assets').join('assetData', 'assets.id', '=', 'assetData.id').stream(),
-      new Transform({
-        objectMode: true,
-        transform: async (asset: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          try {
-            if (!isAssetExportRow(asset)) throw new TypeError('Git asset export stream yielded an invalid asset')
-            const folderPath = asset.folderId === null ? undefined : assetFolders[asset.folderId]
-            const filename = folderPath ? `${folderPath}/${asset.filename}` : asset.filename
-            wiki.logger.info(`(STORAGE/GIT) Adding asset ${filename}...`)
-            await currentGitMutationTurn().assertHeld()
-            await root.writeAtomic(filename, asset.data)
-            await command.run(['add', '--', `./${filename}`])
-            callback()
-          } catch (error: unknown) {
-            callback(error instanceof Error ? error : new Error(String(error)))
-          }
-        }
-      })
-    )
+    const destinations = wiki.models.knex.column('filename', 'folderId').select().from('assets').stream()
+    for await (const asset of destinations) {
+      if (
+        typeof asset !== 'object' || asset === null ||
+        !('filename' in asset) || typeof asset.filename !== 'string' ||
+        !('folderId' in asset) || (asset.folderId !== null && typeof asset.folderId !== 'number')
+      ) throw new TypeError('Git asset export inventory yielded an invalid destination')
+      const folderPath = asset.folderId === null ? undefined : assetFolders[asset.folderId]
+      assertStorageAssetDestinationAllowed(folderPath ? `${folderPath}/${asset.filename}` : asset.filename)
+    }
+
+    // Consume streams in the admitted async context. Driver event callbacks do
+    // not necessarily inherit the PostgreSQL mutation turn's AsyncLocalStorage.
+    const pages = wiki.models.knex
+      .column(
+        'id', 'path', 'localeCode', 'title', 'description', 'contentType',
+        'content', 'sourceRevision', 'authorId', 'extra', 'isPublished',
+        'updatedAt', 'createdAt', 'editorKey'
+      )
+      .select()
+      .from('pages')
+      .where({ visibility: 'public' })
+      .stream()
+    for await (const page of pages) {
+      if (!isPageExportRow(page)) throw new TypeError('Git page export stream yielded an invalid page')
+      const pageObject = await wiki.models.pages.query().findOne({ id: page.id })
+      if (!pageObject) throw new Error(`Page ${page.id} was not found during Git export`)
+      const relatedTags = await pageObject.$relatedQuery('tags')
+      page.tags = relatedTags.flatMap(tag => (typeof tag.tag === 'string' ? [{ tag: tag.tag }] : []))
+      const fileName = gitPagePath(page, this.config.alwaysNamespace)
+      wiki.logger.info(`(STORAGE/GIT) Adding page ${fileName}...`)
+      await currentGitMutationTurn().assertHeld()
+      await root.writeAtomic(fileName, serializePage(page))
+      await command.run(['add', '--', `./${fileName}`])
+    }
+
+    const assets = wiki.models.knex.column('filename', 'folderId', 'data').select().from('assets').join('assetData', 'assets.id', '=', 'assetData.id').stream()
+    for await (const asset of assets) {
+      if (!isAssetExportRow(asset)) throw new TypeError('Git asset export stream yielded an invalid asset')
+      const folderPath = asset.folderId === null ? undefined : assetFolders[asset.folderId]
+      const filename = folderPath ? `${folderPath}/${asset.filename}` : asset.filename
+      assertStorageAssetDestinationAllowed(filename)
+      wiki.logger.info(`(STORAGE/GIT) Adding asset ${filename}...`)
+      await currentGitMutationTurn().assertHeld()
+      await root.writeAtomic(filename, asset.data)
+      await command.run(['add', '--', `./${filename}`])
+    }
 
     await commitGitPaths(command, 'docs: add all untracked content', [])
     wiki.logger.info('(STORAGE/GIT) All content is now tracked.')

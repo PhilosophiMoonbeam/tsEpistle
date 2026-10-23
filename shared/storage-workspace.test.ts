@@ -41,6 +41,11 @@ describe('Storage configuration and effect contracts', () => {
       expect(isStorageGitBranchName(name)).toBe(valid)
     }
     expect(isStorageGitBranchName('@{-1}')).toBe(false)
+    expect(isStorageGitBranchName('a'.repeat(255))).toBe(true)
+    for (const name of ['a'.repeat(256), Array(10).fill('a'.repeat(30)).join('/')]) {
+      execFileSync('git', ['check-ref-format', '--branch', name], { stdio: 'ignore' })
+      expect(isStorageGitBranchName(name)).toBe(false)
+    }
   })
   it('describes real archive and Git recreation effects, without promising a full workspace backup', () => {
     expect(storageActionDefinition('disk', 'backup')?.effect).toContain('does not first refresh files from the database')
@@ -100,5 +105,61 @@ describe('Storage configuration and effect contracts', () => {
     target.config.sshPrivateKeyPath = '/keys/wiki'
     target.config.branch = ' main '
     expect(storageConfigurationIssues(target)).toContain('Enter a valid Git branch name.')
+  })
+  it('matches the selected Git authentication transport while preserving SSH and intentional local remotes', () => {
+    const target = {
+      key: 'git',
+      config: {
+        repoUrl: '',
+        branch: 'main',
+        localRepoPath: './data/repo',
+        defaultName: 'Wiki',
+        defaultEmail: 'wiki@example.test',
+        authType: 'ssh',
+        sshPrivateKeyMode: 'path',
+        sshPrivateKeyPath: '/keys/wiki'
+      },
+      secrets: {}
+    }
+    for (const address of [
+      'git@alias:team/repo.git',
+      "alias:team/quoted 'repository'.git",
+      'git@[::1]:team/repo.git',
+      'ssh://git@[::1]:2222/team/repo.git',
+      'ssh://alias:2222/team/repo.git',
+      "/tmp/quoted 'repository'.git",
+      './local/repo.git',
+      './local:repo.git',
+      '../local/repo.git',
+      'bare-repository.git',
+      '  git@alias:team/repo.git  ',
+      'file:///tmp/repo.git'
+    ]) {
+      target.config.repoUrl = address
+      expect(storageConfigurationIssues(target)).toEqual([])
+    }
+    for (const address of ['https://git.example.test/repo.git', 'http://git.example.test/repo.git', 'git://alias/repo', 'https::repo', 'ssh://']) {
+      target.config.repoUrl = address
+      expect(storageConfigurationIssues(target)).toHaveLength(1)
+    }
+    target.config.authType = 'basic'
+    for (const address of ['https://git.example.test/repo.git', 'http://git.example.test/repo.git', 'git.example.test/repo.git']) {
+      target.config.repoUrl = address
+      expect(storageConfigurationIssues(target)).toEqual([])
+    }
+    for (const address of [
+      'ssh://git@alias/repo.git',
+      'git@alias:repo.git',
+      'file:///tmp/repo.git',
+      'https://user:password@git.example.test/repo.git',
+      'https://git.example.test/repo.git?query',
+      'https://git.example.test/repo.git#fragment'
+    ]) {
+      target.config.repoUrl = address
+      expect(storageConfigurationIssues(target)).toHaveLength(1)
+    }
+    target.config.repoUrl = 'https://git.example.test/repo.git'
+    target.config.branch = Array(10).fill('a'.repeat(30)).join('/')
+    expect(storageConfigurationIssues(target)).toEqual(['Enter a valid Git branch name.'])
   })
 })

@@ -28,7 +28,10 @@ import { isStorageInternalPath, isStorageReservedPath } from '../modules/storage
 import { openStorageRoot, type StorageFileHandle, type StorageRootHandle } from '../modules/storage/local-filesystem.ts'
 import { assertAssetLocationAssetSettled, assertAssetLocationReservations, lockAssetLocation, withAssetLocationLocks } from '../helpers/asset-location-lock.ts'
 import { enqueueAssetStorageMutation } from '../jobs/storage-mutations.ts'
-import { assertNoPublicStoragePageAtPath } from '../helpers/storage-path-admission.ts'
+import { assertNoPublicStoragePageAtPath, assertStorageAssetDestinationAllowed } from '../helpers/storage-path-admission.ts'
+import errors from '../operations/errors.ts'
+
+const { ApplicationError } = errors
 
 const uploadFlights = new Map<string, Promise<void>>()
 
@@ -61,6 +64,19 @@ interface UploadOptions {
   user: AssetUser
   maxBytes?: number
   skipStorage?: boolean | undefined
+}
+
+const assertUploadDestination = async (opts: UploadOptions, transaction?: Knex.Transaction): Promise<void> => {
+  assertStorageAssetDestinationAllowed(opts.assetPath)
+  const hierarchy = opts.folderId ? await wiki.models.assetFolders.getHierarchy(opts.folderId, transaction) : []
+  const canonicalPath = hierarchy.length > 0 ? `${hierarchy.map(folder => folder.slug).join('/')}/${opts.originalname}` : opts.originalname
+  assertStorageAssetDestinationAllowed(canonicalPath)
+  if (canonicalPath !== opts.assetPath) {
+    throw new ApplicationError('The asset destination does not match its filename and folder. Refresh the folder and try again.', {
+      status: 400,
+      code: 'ASSET_PATH_INVALID'
+    })
+  }
 }
 
 interface AssetDataRow {
@@ -298,6 +314,7 @@ export default class Asset extends Model {
   }
 
   static async upload(opts: UploadOptions): Promise<void> {
+    assertStorageAssetDestinationAllowed(opts.assetPath)
     const configuredLimit = validateUploadLimit(wiki.config?.uploads?.maxFileSize)
     const modeLimit = opts.mode === 'upload' ? configuredLimit : boundedImportAssetLimit(configuredLimit)
     if (opts.maxBytes !== undefined && (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes < 0)) {
@@ -322,6 +339,7 @@ export default class Asset extends Model {
         await assertHeld?.()
         return enqueueAssetUpload(fileHash, async () => {
           await assertHeld?.()
+          await assertUploadDestination(opts)
           const source = await openAssetSource(opts.path, opts.mode, opts.size)
           let stagedDirectory: string | undefined
           try {
@@ -346,6 +364,7 @@ export default class Asset extends Model {
             let reservation: AssetBrandingAnalysisReservation | undefined
             try {
               await wiki.models.knex.transaction(async transaction => {
+                await assertUploadDestination(opts, transaction)
                 await assertNoPublicStoragePageAtPath(transaction, opts.assetPath)
                 await lockAssetLocation(transaction, opts.assetPath)
                 await assertAssetLocationReservations(transaction, [opts.assetPath])

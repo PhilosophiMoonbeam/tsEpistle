@@ -79,6 +79,7 @@ const createRelocationDatabase = async () => {
   await db.schema.createTable('assetFolders', table => {
     table.integer('id').primary()
     table.string('slug').notNullable()
+    table.string('name')
     table.integer('parentId').nullable()
   })
   await db.schema.createTable('durableJobs', table => {
@@ -201,7 +202,7 @@ const installImageResizeWiki = ({
         flushTempUploads: vi.fn(),
         deleteAssetCaches: vi.fn().mockResolvedValue(undefined)
       },
-      assetFolders: { query: vi.fn(() => db('assetFolders')), getHierarchy: vi.fn(async () => []) },
+      assetFolders: { query: vi.fn((transaction = db) => transaction('assetFolders')), getHierarchy: vi.fn(async () => []) },
       knex: db,
       storage
     }
@@ -520,6 +521,89 @@ describe('asset operations', () => {
         hash: assetHash('renamed.png')
       })
       expect(pageAccess.mock.calls.map(([, , context]) => context.path)).toEqual(expect.arrayContaining(['source/old.png', 'renamed.png']))
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it.each([
+    { slugs: ['.git'], filename: 'new.tmp', ext: '.tmp' },
+    { slugs: ['media', '.GiT'], filename: 'new.tmp', ext: '.tmp' },
+    { slugs: ['_manual'], filename: 'new.tmp', ext: '.tmp' },
+    { slugs: ['_daily'], filename: 'new.tmp', ext: '.tmp' },
+    { slugs: [], filename: '.asset.42.12345678-1234-4234-8234-123456789abc.tmp', ext: '.tmp' },
+    { slugs: [], filename: '.git', ext: '' }
+  ])('rejects internal rename and move destinations without canonical or durable effects: %j', async ({ slugs, filename, ext }) => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const hierarchy = slugs.map((slug, index) => ({ id: index + 42, slug, parentId: index === 0 ? null : index + 41 }))
+      if (hierarchy.length > 0) await db('assetFolders').insert(hierarchy)
+      const asset = { id: 7, filename: `old${ext}`, hash: assetHash(`old${ext}`), ext, folderId: null }
+      const bytes = Buffer.from('retained canonical bytes')
+      await db('assets').insert(asset)
+      await db('assetData').insert({ id: asset.id, data: bytes })
+      const assetQuery = createAssetQuery(db)
+      const target = { key: 'disk', active: true, supportsAssetRelocation: true }
+      const { storage } = await installRelocationWiki({ db, assetQuery, targets: [target], getHierarchy: async () => hierarchy })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      await expect(operations.relocate({
+        requester,
+        id: asset.id,
+        filename,
+        folderId: hierarchy.at(-1)?.id ?? null
+      })).rejects.toMatchObject({ status: 400, name: 'ASSET_PATH_INVALID' })
+
+      expect(await db('assets')).toEqual([asset])
+      expect(Buffer.from((await db('assetData').first()).data)).toEqual(bytes)
+      expect(await db('assetRelocationOperations')).toEqual([])
+      expect(await db('assetRelocationEffects')).toEqual([])
+      expect(await db('durableJobs')).toEqual([])
+      expect(storage.deleteAssetCaches).not.toHaveBeenCalled()
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it.each([
+    { sourceSlugs: ['.GiT'], targetSlugs: [] },
+    { sourceSlugs: ['_manual'], targetSlugs: ['media', '_manual'] },
+    { sourceSlugs: [], targetSlugs: ['media', '_daily'] }
+  ])('allows legacy source recovery and valid nested backup names: %j', async ({ sourceSlugs, targetSlugs }) => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const sourceHierarchy = sourceSlugs.map((slug, index) => ({ id: index + 42, slug, parentId: index === 0 ? null : index + 41 }))
+      const targetHierarchy = targetSlugs.map((slug, index) => ({ id: index + 52, slug, parentId: index === 0 ? null : index + 51 }))
+      if (sourceHierarchy.length + targetHierarchy.length > 0) await db('assetFolders').insert([...sourceHierarchy, ...targetHierarchy])
+      const sourcePath = [...sourceSlugs, 'old.tmp'].join('/')
+      const destinationPath = [...targetSlugs, 'new.tmp'].join('/')
+      const asset = { id: 7, filename: 'old.tmp', hash: assetHash(sourcePath), ext: '.tmp', folderId: sourceHierarchy.at(-1)?.id ?? null }
+      await db('assets').insert(asset)
+      await db('assetData').insert({ id: asset.id, data: Buffer.from('recoverable bytes') })
+      const assetQuery = createAssetQuery(db)
+      const target = { key: 'disk', active: true, supportsAssetRelocation: true }
+      await installRelocationWiki({
+        db,
+        assetQuery,
+        targets: [target],
+        getHierarchy: async id => id === sourceHierarchy.at(-1)?.id ? sourceHierarchy : targetHierarchy
+      })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      const receipt = await operations.relocate({
+        requester,
+        id: asset.id,
+        filename: 'new.tmp',
+        folderId: targetHierarchy.at(-1)?.id ?? null
+      })
+
+      expect(receipt).toMatchObject({ sourcePath, destinationPath, status: 'pending' })
+      expect(await db('assets').first()).toMatchObject({ filename: 'new.tmp', hash: assetHash(destinationPath), folderId: targetHierarchy.at(-1)?.id ?? null })
+      expect(Buffer.from((await db('assetData').first()).data).toString()).toBe('recoverable bytes')
+      expect(await db('assetRelocationEffects')).toHaveLength(1)
+      expect(await db('durableJobs')).toHaveLength(1)
     } finally {
       await db.destroy()
     }
@@ -956,6 +1040,47 @@ describe('asset operations', () => {
     }
   })
 
+
+  it.each([
+    { parentSlugs: [], slug: '.GiT', allowed: false },
+    { parentSlugs: ['media'], slug: '.GiT', allowed: false },
+    { parentSlugs: [], slug: '_manual', allowed: false },
+    { parentSlugs: [], slug: '_daily', allowed: false },
+    { parentSlugs: ['.GiT'], slug: 'child', allowed: false },
+    { parentSlugs: [], slug: '.asset.42.12345678-1234-4234-8234-123456789abc.tmp', allowed: false },
+    { parentSlugs: ['media'], slug: '_manual', allowed: true },
+    { parentSlugs: ['media'], slug: '_daily', allowed: true },
+    { parentSlugs: [], slug: '.gitignore', allowed: true },
+    { parentSlugs: [], slug: '.asset.42.not-a-uuid.tmp', allowed: true }
+  ])('applies the storage namespace policy to the complete folder destination: %j', async ({ parentSlugs, slug, allowed }) => {
+    const db = await createRelocationDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['write:assets'] }
+      const hierarchy = parentSlugs.map((parentSlug, index) => ({ id: index + 42, slug: parentSlug, parentId: index === 0 ? null : index + 41 }))
+      if (hierarchy.length > 0) await db('assetFolders').insert(hierarchy)
+      const before = await db('assetFolders').orderBy('id')
+      await installRelocationWiki({ db, assetQuery: createAssetQuery(db), getHierarchy: async () => hierarchy })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+      const admission = operations.createFolder({ requester, slug, parentFolderId: hierarchy.at(-1)?.id ?? 0 })
+
+      if (allowed) {
+        await admission
+        expect(await db('assetFolders').where({ slug: slug.toLowerCase() }).first()).toMatchObject({
+          slug: slug.toLowerCase(),
+          parentId: hierarchy.at(-1)?.id ?? null
+        })
+        expect(await db('assetFolders')).toHaveLength(before.length + 1)
+      } else {
+        await expect(admission).rejects.toMatchObject({ status: 400, name: 'ASSET_PATH_INVALID' })
+        expect(await db('assetFolders').orderBy('id')).toEqual(before)
+      }
+      expect(await db('assets')).toEqual([])
+      expect(await db('assetRelocationOperations')).toEqual([])
+      expect(await db('durableJobs')).toEqual([])
+    } finally {
+      await db.destroy()
+    }
+  })
 
   it('authorizes the canonical nested destination before collision lookup or insertion', async () => {
     const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['write:assets'] }
@@ -1426,6 +1551,39 @@ describe('asset operations', () => {
       const effects = await db('durableJobs')
       expect(effects).toHaveLength(1)
       expect(JSON.parse(effects[0].payload)).toMatchObject({ entityType: 'asset', entityId: receipt.assetId, paths: ['copy.webp'] })
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('rejects an internal resize destination before publishing a derived asset or mutation', async () => {
+    const db = await createImageResizeDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+      const sourceBytes = await sharp({ create: { width: 8, height: 4, channels: 3, background: 'red' } }).png().toBuffer()
+      const source = await insertResizeSource(db, sourceBytes)
+      const folder = { id: 42, slug: '.GiT', parentId: null }
+      await db('assetFolders').insert(folder)
+      installImageResizeWiki({ db })
+      global.WIKI.models.assetFolders.getHierarchy.mockImplementation(async () => [folder])
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+
+      await expect(operations.resizeImage({
+        requester,
+        id: source.id,
+        destination: { filename: 'copy.png', folderId: folder.id },
+        width: 4,
+        height: 4,
+        aspectPolicy: 'preserve',
+        format: 'png',
+        quality: 80,
+        animationPolicy: 'preserve'
+      })).rejects.toMatchObject({ status: 400, name: 'ASSET_PATH_INVALID' })
+
+      expect(await db('assets')).toEqual([source])
+      expect(Buffer.from((await db('assetData').first()).data)).toEqual(sourceBytes)
+      expect(await db('durableJobs')).toEqual([])
+      expect(global.WIKI.models.assets.deleteAssetCaches).not.toHaveBeenCalled()
     } finally {
       await db.destroy()
     }

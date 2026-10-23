@@ -18,8 +18,15 @@ describe('Storage SSH trust and Git connection files', () => {
     expect(decodeURIComponent(url.username)).toBe(username)
     expect(decodeURIComponent(url.password)).toBe(password)
     expect(gitStorageHttpRemote('git.example.test/team/repo.git', '', '')).toBe('https://git.example.test/team/repo.git')
-    expect(() => gitStorageHttpRemote('https://hidden:credential@git.example.test/repo', 'user', 'pass')).toThrow()
-    expect(() => gitStorageHttpRemote('ftp://git.example.test/repo', 'user', 'pass')).toThrow()
+    for (const address of [
+      'https://hidden:credential@git.example.test/repo',
+      'ftp://git.example.test/repo',
+      'ssh://git@alias:2222/repo',
+      'git@alias:repo',
+      'file:///tmp/repo',
+      'https://git.example.test/repo?query',
+      'https://git.example.test/repo#fragment'
+    ]) expect(() => gitStorageHttpRemote(address, 'user', 'pass')).toThrow()
     expect(() => gitStorageSshCommand('/keys/$(command)')).toThrow()
   })
 
@@ -33,6 +40,16 @@ describe('Storage SSH trust and Git connection files', () => {
       expect(await writeGitStorageConnectionFile(root, 'git-ssh.pem', 'replacement')).toBe(file)
       expect(await readFile(file, 'utf8')).toBe('replacement\n')
       expect((await stat(file)).mode & 0o777).toBe(0o600)
+      const normalized = await writeGitStorageConnectionFile(root, 'git-ssh.pem', 'fixture\r\nkey\r\n')
+      expect(await readFile(normalized, 'utf8')).toBe('fixture\nkey\n')
+      for (const invalid of ['fixture\0private', 'fixture\rprivate', 'fixture\u2028private', 'fixture\ud800private']) {
+        await expect(writeGitStorageConnectionFile(root, 'git-ssh.pem', invalid)).rejects.toThrow(
+          'The SSH private key must contain ASCII text with LF or CRLF line endings.'
+        )
+        expect(await readFile(normalized, 'utf8')).toBe('fixture\nkey\n')
+      }
+      const hosts = await writeGitStorageConnectionFile(root, 'git-known-hosts', 'fixture-host\r\n')
+      expect(await readFile(hosts, 'utf8')).toBe('fixture-host\r\n')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -76,8 +93,9 @@ describe('Storage SSH trust and Git connection files', () => {
         server!.listen(0, '127.0.0.1', resolve)
       })
       const port = (server.address() as { port: number }).port
-      const known = await writeGitStorageConnectionFile(root, 'git-known-hosts', `[127.0.0.1]:${port} ${publicKey}`)
-      const command = gitStorageSshCommand(identity, known)
+      const known = await writeGitStorageConnectionFile(root, 'git-known-hosts', `[127.0.0.1]:${port} ${publicKey}\r\n`)
+      const pastedIdentity = await writeGitStorageConnectionFile(root, 'git-ssh.pem', (await readFile(identity, 'utf8')).replaceAll('\n', '\r\n'))
+      const command = gitStorageSshCommand(pastedIdentity, known)
       const connectGit = async () => {
         const child = Bun.spawn(['/bin/sh', '-c', `${command} -p ${port} -o ConnectTimeout=2 -o LogLevel=ERROR 127.0.0.1 true`], {
           stdout: 'pipe',

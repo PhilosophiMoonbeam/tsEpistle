@@ -9,12 +9,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
+import { up as installPageRevisionTrigger } from '../../db/migrations/tsepistle-000035-page-search-inclusion.ts'
 import { enqueuePageStorageMutation } from '../../jobs/storage-mutations.ts'
 import { lockSearchIndex } from '../../helpers/search-contract.ts'
 import { evaluateGroupAccess } from '../../helpers/group-access.ts'
 import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 import pageHelper from '../../helpers/page.ts'
-import { okfFilePath } from '../../okf/format.ts'
+import { OKF_MAX_DOCUMENT_BYTES, okfFilePath } from '../../okf/format.ts'
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../../modules/storage/page-document.ts'
 import type PageModel from '../../models/pages.ts'
 import type AssetModel from '../../models/assets.ts'
 import type PageHistoryModel from '../../models/pageHistory.ts'
@@ -206,6 +208,7 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
       CREATE TABLE "assetData" (id integer PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE, data bytea NOT NULL);
       CREATE TABLE "assetRelocationEffects" (id serial PRIMARY KEY, "assetId" integer, status text, "sourcePath" text, "destinationPath" text);
     `)
+    await installPageRevisionTrigger(db)
     await db('users').insert([author, assetWriter].map(({ id, name, email }) => ({ id, name, email })))
     await db('locales').insert([{ code: 'en' }, { code: 'fr' }])
     const wiki = {
@@ -465,5 +468,104 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
       await holder
       await pendingPage
     }
+  })
+
+  it.each([false, true])('rejects oversized Markdown creation atomically, including importer suppression=%s', async skipStorage => {
+    const before = await snapshot()
+    await expect(Page.createPage({
+      path: 'oversized-create',
+      locale: 'en',
+      user: author,
+      content: 'é'.repeat(OKF_MAX_DOCUMENT_BYTES / 2),
+      editor: 'markdown',
+      description: '',
+      visibility: 'public',
+      isPublished: true,
+      title: 'Oversized create',
+      tags: ['must-not-persist'],
+      skipStorage
+    })).rejects.toMatchObject({ name: 'OKF_DOCUMENT_TOO_LARGE', status: 413, message: expect.stringContaining('Reduce the content or metadata') })
+    expect(await snapshot()).toEqual(before)
+    expect(await db('tags').where({ tag: 'must-not-persist' })).toHaveLength(0)
+  })
+
+  it('admits the exact rendered Markdown boundary and rolls back oversized content and metadata updates', async () => {
+    const saved = await Page.createPage({
+      path: 'size-boundary', locale: 'en', user: author, content: 'Initial body',
+      editor: 'markdown', description: 'A Unicode résumé', visibility: 'public',
+      isPublished: true, title: 'Boundary', tags: ['kept'],
+      okfMetadata: { type: 'Reference', vendor_extension: { retained: 'metadata counts too' } }
+    })
+    await db('pages').where({ id: saved.id }).update({ sourceRevision: 9 })
+    const canonicalTag = `canonical-${'x'.repeat(120)}`
+    const [canonical] = await db('tags').insert({ tag: canonicalTag, title: canonicalTag }).returning('id')
+    if (!canonical) throw new Error('Missing canonical tag fixture')
+    await db('tags').insert({ tag: 'alias', title: 'Alias', redirectToId: canonical.id })
+    const markdown = (input: StoragePageEncodingInput): string => {
+      const encoded = encodeStoragePageDocument(input)
+      if (typeof encoded !== 'object' || encoded === null || typeof encoded.markdown !== 'string') throw new Error('Expected canonical Markdown')
+      return encoded.markdown
+    }
+    const prefix = `[Linked concept](/en/index)\n${'é'.repeat(128)}\n`
+    const expectedInput = { ...saved, sourceRevision: '10', tags: ['kept', canonicalTag], content: prefix }
+    const content = prefix + 'a'.repeat(OKF_MAX_DOCUMENT_BYTES - Buffer.byteLength(markdown(expectedInput), 'utf8'))
+    expect(Buffer.byteLength(content, 'utf8')).toBeLessThan(OKF_MAX_DOCUMENT_BYTES)
+    const before = await snapshot()
+    const tagsBefore = await db('tags').orderBy('id')
+    await expect(Page.updatePage({
+      id: saved.id, user: author, content: `${content}a`, tags: ['kept', 'alias']
+    })).rejects.toMatchObject({ name: 'OKF_DOCUMENT_TOO_LARGE', status: 413 })
+    expect(await snapshot()).toEqual(before)
+    expect(await db('tags').orderBy('id')).toEqual(tagsBefore)
+
+    const admitted = await Page.updatePage({ id: saved.id, user: author, content, tags: ['kept', 'alias'] })
+    const encoded = markdown(admitted)
+    expect(Buffer.byteLength(encoded, 'utf8')).toBe(OKF_MAX_DOCUMENT_BYTES)
+    expect(encoded).toContain('/en/index.concept.md')
+    expect(encoded).toContain(canonicalTag)
+    expect(String(admitted.sourceRevision)).toBe('10')
+    expect(await db('durableJobs')).toHaveLength(2)
+    const admittedSnapshot = await snapshot()
+    await expect(Page.updatePage({ id: saved.id, user: author, title: 'Boundary!' }))
+      .rejects.toMatchObject({ name: 'OKF_DOCUMENT_TOO_LARGE', status: 413 })
+    expect(await snapshot()).toEqual(admittedSnapshot)
+
+    // Simulate a pre-admission legacy row without changing or discarding its jobs.
+    await db('pages').where({ id: saved.id }).update({ content: `${content}legacy-oversize`, sourceRevision: 11 })
+    expect((await Page.getPageFromDb(saved.id))?.content).toBe(`${content}legacy-oversize`)
+    const repaired = await Page.updatePage({ id: saved.id, user: author, content: 'Repaired by shrinking' })
+    expect(repaired.content).toBe('Repaired by shrinking')
+    expect(Buffer.byteLength(markdown(repaired), 'utf8')).toBeLessThan(OKF_MAX_DOCUMENT_BYTES)
+    expect(await db('durableJobs')).toHaveLength(3)
+  })
+
+  it.each(['html', 'json'])('does not impose the Markdown document cap on canonical %s pages', async editor => {
+    const content = editor === 'html' ? `<p>${'a'.repeat(OKF_MAX_DOCUMENT_BYTES)}</p>` : JSON.stringify({ body: 'a'.repeat(OKF_MAX_DOCUMENT_BYTES) })
+    const page = await Page.createPage({
+      path: `large-${editor}`, locale: 'en', user: author, content,
+      editor, description: '', visibility: 'public', isPublished: true, title: `Large ${editor}`
+    })
+    expect(page.content).toBe(content)
+    if (editor === 'html') {
+      const before = await snapshot()
+      await expect(Page.convertPage({ id: page.id, user: author, editor: 'markdown' }))
+        .rejects.toMatchObject({ name: 'OKF_DOCUMENT_TOO_LARGE', status: 413 })
+      expect(await snapshot()).toEqual(before)
+    }
+  })
+
+  it('keeps oversized private Markdown repairable but rejects making it public before it is exportable', async () => {
+    const page = await Page.createPage({
+      path: 'private-size', locale: 'en', user: author, content: 'a'.repeat(OKF_MAX_DOCUMENT_BYTES),
+      editor: 'markdown', description: '', visibility: 'private', isPublished: true, title: 'Private size'
+    })
+    const before = await snapshot()
+    await expect(Page.changeVisibility({ id: page.id, user: author, visibility: 'public', confirmPublication: true }))
+      .rejects.toMatchObject({ name: 'OKF_DOCUMENT_TOO_LARGE', status: 413 })
+    expect(await snapshot()).toEqual(before)
+    await Page.updatePage({ id: page.id, user: author, content: 'Private repair', tags: ['repaired'] })
+    const published = await Page.changeVisibility({ id: page.id, user: author, visibility: 'public', confirmPublication: true })
+    expect(published.visibility).toBe('public')
+    expect(await db('durableJobs')).toHaveLength(1)
   })
 })

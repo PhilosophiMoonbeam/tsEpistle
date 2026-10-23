@@ -56,6 +56,15 @@ describe('Git bounded admission', () => {
     await expect(admitGitTree(internal, oid)).rejects.toThrow('internal path')
   })
 
+  it('admits pages with uploads disabled without admitting nonempty assets', async () => {
+    const page = fakeCommand(`100644 blob ${oid}          3\tpage.md\0`)
+    const admission = await admitGitTree(page, oid, { maxAssetBytes: 0 })
+    expect(admission.filesByPath.get('page.md')).toMatchObject({ path: 'page.md', size: 3, type: 'blob' })
+
+    const asset = fakeCommand(`100644 blob ${oid}          1\tasset.bin\0`)
+    await expect(admitGitTree(asset, oid, { maxAssetBytes: 0 })).rejects.toThrow('0-byte limit')
+  })
+
   it('parses raw NUL name-status paths without human rename formatting', async () => {
     const command = fakeCommand(
       'R100\0old => name.txt\0new\tname.txt\0' +

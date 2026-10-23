@@ -13,7 +13,7 @@ import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
 import { storageConfigurationKey } from '../helpers/storage-configuration-key.ts'
 import { isRecord } from '../models/moduleTypes.ts'
-import { assertNoPublicStoragePageAtPath } from '../helpers/storage-path-admission.ts'
+import { assertNoPublicStoragePageAtPath, assertStorageAssetDestinationAllowed } from '../helpers/storage-path-admission.ts'
 
 import { AssetFolderHierarchyError } from '../models/assetFolders.ts'
 import { resolveAssetBrandingView, stripAssetBrandingMetadata } from '../helpers/asset-branding.ts'
@@ -284,6 +284,7 @@ const createFolder = async ({ requester, slug, parentFolderId }: { requester: Re
     if (!auth.checkPageAccess(requester, ['manage:system', 'write:assets'], { path: destinationPath }, authority)) {
       throw folderCreationForbidden()
     }
+    assertStorageAssetDestinationAllowed(destinationPath)
 
     await lockFolderDestination(transaction, destinationPath)
     const query = models.assetFolders.query(transaction).where({ slug: folderSlug })
@@ -458,6 +459,7 @@ const resizeImage = async ({
     if (!auth.checkPageAccess(requester, ['write:assets'], { path: preflightDestinationPath }, authority)) {
       throw imageResizeDestinationForbidden()
     }
+    assertStorageAssetDestinationAllowed(preflightDestinationPath)
     await assertAssetLocationAssetSettled(transaction, asset.id)
     const dataRow = await transaction<AssetDataRow>('assetData').where('id', id).first('data')
     if (!dataRow) throw imageResizeUnavailable()

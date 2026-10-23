@@ -124,7 +124,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
         "createdAt" timestamptz NOT NULL, "updatedAt" timestamptz NOT NULL, "editorKey" text NOT NULL, extra jsonb NOT NULL, "isPublished" boolean NOT NULL);
       CREATE TABLE tags (id integer PRIMARY KEY, tag text NOT NULL);
       CREATE TABLE "pageTags" ("pageId" integer NOT NULL, "tagId" integer NOT NULL);
-      CREATE TABLE "assetFolders" (id integer PRIMARY KEY, slug text NOT NULL, "parentId" integer);
+      CREATE TABLE "assetFolders" (id integer PRIMARY KEY, name text NOT NULL DEFAULT '', slug text NOT NULL, "parentId" integer);
       CREATE TABLE assets (id serial PRIMARY KEY, hash text NOT NULL UNIQUE, filename text NOT NULL, "folderId" integer, "authorId" integer NOT NULL,
         ext text NOT NULL, kind text NOT NULL, mime text NOT NULL, "fileSize" integer NOT NULL, metadata jsonb NOT NULL DEFAULT '{}',
         "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now());
@@ -234,6 +234,123 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
   afterAll(async () => {
     globalThis.WIKI = originalWiki
     await Promise.all([db?.destroy(), replica?.destroy()])
+  })
+
+  const prepareRemote = async (mode: 'sync' | 'push' | 'pull') => {
+    await writeFile(path.join(repository, 'page.md'), 'A page-only repository\n')
+    git('add', 'page.md')
+    git('commit', '--quiet', '-m', 'Initial remote page')
+    const remote = path.join(directory, 'remote.git')
+    git('clone', '--bare', '--quiet', repository, remote)
+    git('--git-dir', remote, 'config', 'receive.certNonceSeed', 'disposable-native-test')
+    git('config', 'gpg.program', path.join(directory, 'no-signing-program'))
+    git('config', 'push.gpgSign', 'false')
+    const provider = Storage.activeTargets[0]!.fn
+    Object.assign(provider, {
+      mode,
+      config: { ...provider.config, authType: 'ssh', repoUrl: remote, sshPrivateKeyPath: path.join(directory, 'unused-local-transport-key') }
+    })
+    return { provider, remote }
+  }
+
+  it.each(['sync', 'push'] as const)('publishes in %s mode when the remote advertises optional signing but no signer is configured', async mode => {
+    const { provider, remote } = await prepareRemote(mode)
+    git('commit', '--quiet', '--allow-empty', '-m', 'Unpublished wiki revision')
+    const expected = git('rev-parse', 'HEAD')
+    await provider.init()
+    expect(git('--git-dir', remote, 'rev-parse', 'refs/heads/main')).toBe(expected)
+    expect(git('status', '--porcelain')).toBe('')
+  })
+
+  it('preserves an explicitly configured signing requirement instead of silently publishing unsigned', async () => {
+    const { provider, remote } = await prepareRemote('push')
+    const published = git('--git-dir', remote, 'rev-parse', 'refs/heads/main')
+    git('commit', '--quiet', '--allow-empty', '-m', 'Revision requiring configured signer')
+    git('config', 'push.gpgSign', 'true')
+    await expect(provider.init()).rejects.toThrow()
+    expect(git('--git-dir', remote, 'rev-parse', 'refs/heads/main')).toBe(published)
+    expect(git('log', '-1', '--format=%s')).toBe('Revision requiring configured signer')
+  })
+
+  it('synchronizes a page-only repository while workspace asset uploads are disabled', async () => {
+    const { provider } = await prepareRemote('pull')
+    globalThis.WIKI.config.uploads.maxFileSize = 0
+    await provider.init()
+    expect(await readFile(path.join(repository, 'page.md'), 'utf8')).toBe('A page-only repository\n')
+    expect(git('branch', '--show-current')).toBe('main')
+    expect(git('status', '--porcelain')).toBe('')
+  })
+
+  it('refuses internal asset destinations before touching Git metadata or the working tree', async () => {
+    const provider = Storage.activeTargets[0]!.fn
+    const originalConfig = await readFile(path.join(repository, '.git', 'config'))
+    const asset = {
+      id: 1, path: '.git/config', filename: 'config', folderId: null,
+      destinationPath: '.git/config', data: Buffer.from('Canonical asset bytes'),
+      authorName: author.name, authorEmail: author.email, moveAuthorName: author.name, moveAuthorEmail: author.email
+    }
+    if (!provider.assetUploaded || !provider.assetRenamed || !provider.assetRelocated) throw new Error('Missing Git asset hooks')
+    await expect(provider.assetUploaded(asset)).rejects.toMatchObject({ name: 'ASSET_PATH_INVALID', status: 400 })
+    await writeFile(path.join(repository, 'source.bin'), asset.data)
+    await expect(provider.assetRenamed({ ...asset, path: 'source.bin', destinationPath: '_manual/asset.bin' })).rejects.toMatchObject({ name: 'ASSET_PATH_INVALID', status: 400 })
+    await expect(provider.assetRelocated({
+      id: asset.id, sourcePath: 'source.bin', destinationPath: 'nested/.GIT/config',
+      data: asset.data, contentSha256: 'unused-before-admission', authorName: author.name, authorEmail: author.email
+    })).rejects.toMatchObject({ name: 'ASSET_PATH_INVALID', status: 400 })
+    expect(await readFile(path.join(repository, '.git', 'config'))).toEqual(originalConfig)
+    expect(await readFile(path.join(repository, 'source.bin'))).toEqual(asset.data)
+    expect(git('status', '--porcelain')).toBe('?? source.bin')
+  })
+
+  it('recovers a legacy metadata-named asset from canonical bytes without moving or deleting repository metadata', async () => {
+    const provider = Storage.activeTargets[0]!.fn
+    const originalConfig = await readFile(path.join(repository, '.git', 'config'))
+    const data = Buffer.from('Recovered canonical asset, not repository configuration')
+    const { createHash } = await import('node:crypto')
+    if (!provider.assetDeleted || !provider.assetRelocated) throw new Error('Missing Git asset recovery hooks')
+    await provider.assetRelocated({
+      id: 1, sourcePath: '.git/config', destinationPath: 'recovered.bin', data,
+      contentSha256: createHash('sha256').update(data).digest('hex'), authorName: author.name, authorEmail: author.email
+    })
+    await provider.assetDeleted({
+      id: 1, path: '.git/config', filename: 'config', folderId: null, destinationPath: '',
+      data, authorName: author.name, authorEmail: author.email, moveAuthorName: author.name, moveAuthorEmail: author.email
+    })
+    expect(await readFile(path.join(repository, '.git', 'config'))).toEqual(originalConfig)
+    expect(git('show', 'HEAD:recovered.bin')).toBe(data.toString())
+    expect(git('status', '--porcelain')).toBe('')
+  })
+
+  it('keeps bulk export clean when a legacy asset destination is rejected, then exports after its repair', async () => {
+    const { provider } = await prepareRemote('push')
+    await provider.init()
+    const Page = (await import('../../models/pages.ts')).default
+    Page.knex(db)
+    const Tag = (await import('../../models/tags.ts')).default
+    Tag.knex(db)
+    Object.assign(globalThis.WIKI.models, { pages: Page })
+    await db('pages').insert(page(1, 'bulk-probe'))
+    await db('assetFolders').insert({ id: 5, name: 'Legacy', slug: '.git', parentId: null })
+    const [asset] = await db('assets').insert({
+      hash: 'legacy-bulk-asset', filename: 'config', folderId: 5, authorId: 1,
+      ext: '', kind: 'binary', mime: 'application/octet-stream', fileSize: 12
+    }).returning('id')
+    await db('assetData').insert({ id: asset.id, data: Buffer.from('Legacy bytes') })
+    const head = git('rev-parse', 'HEAD')
+    const originalConfig = await readFile(path.join(repository, '.git', 'config'))
+    const bulkExport = Reflect.get(provider, 'syncUntracked')
+    if (typeof bulkExport !== 'function') throw new Error('Missing Git bulk export')
+
+    await expect(bulkExport.call(provider)).rejects.toMatchObject({ name: 'ASSET_PATH_INVALID', status: 400 })
+    expect(git('status', '--porcelain')).toBe('')
+    expect(git('rev-parse', 'HEAD')).toBe(head)
+    expect(await readFile(path.join(repository, '.git', 'config'))).toEqual(originalConfig)
+
+    await db('assetFolders').where({ id: 5 }).update({ slug: 'recovered' })
+    await bulkExport.call(provider)
+    expect(parseOkfDocument(git('show', 'HEAD:en/bulk-probe.md')).body).toBe('Current canonical source')
+    expect(git('show', 'HEAD:recovered/config')).toBe('Legacy bytes')
+    expect(git('status', '--porcelain')).toBe('')
   })
 
   it('rolls back actual upload bytes and canonical rows when durable admission fails', async () => {

@@ -12,6 +12,7 @@ import { OKF_MAX_DOCUMENT_BYTES, parseOkfFilePath } from '../../../okf/format.ts
 import type { StorageImportResult, StoragePageProcessResult } from '../types.ts'
 import { classifyStoragePageImport, type StoragePageIngestionOptions } from '../page-document.ts'
 import { IMPORT_MAX_ASSET_BYTES, IMPORT_MAX_ENTRIES, ImportBudget, boundedImportAssetLimit } from '../import-budget.ts'
+import { assertStorageAssetDestinationAllowed } from '../../../helpers/storage-path-admission.ts'
 
 const mime = mimeTypesModule.lookup
 
@@ -422,6 +423,7 @@ const plugin = {
 
   async processAsset({ user, root, relPath, file, moduleName, maxAssetBytes, source }: ImportAssetSource): Promise<void> {
     const normalizedRelPath = relPath.replace(/\\/g, '/')
+    assertStorageAssetDestinationAllowed(normalizedRelPath)
     wiki.logger.info(`(STORAGE/${moduleName}) Asset marked for import: ${normalizedRelPath}`)
     const secureSource = source ?? (await root.openFile(normalizedRelPath, file.stats))
     const closeSource = source === undefined

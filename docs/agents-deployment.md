@@ -313,6 +313,17 @@ Configure Knex options under the existing top-level `pool`, not `db.pool`. Accou
 
 Measure warmed idle CPU/RSS and SQL/transaction rates separately from startup, rebuilds and active work. Track oldest eligible queue age, failed/expired leases, finite-audit completion, PostgreSQL waits and event-loop/HTTP latency under a real mutation or scheduled publication boundary. A stable repair count alone is not proof of idle scheduling, and a health response is not behavioral proof. Use container CPU/memory limits with headroom for the host and database; qualify the intended corpus and enabled workload before raising concurrency.
 
+### Git storage readiness and content admission
+
+- Use a dedicated working-copy directory: initialization replaces its configured remotes. The configured remote branch must already exist, including in Push mode. Match its actual name (`main` versus the default `master`); saved and runtime branch validation share the 255-character limit.
+- Select SSH for SSH/scp-style addresses or an intentional local filesystem transport, and Basic for HTTP(S). Authentication/transport mismatches are rejected before repository initialization. Basic passwords and personal access tokens remain secret configuration; keep TLS verification enabled.
+- SSH requires an unpassphrased identity and trusted server keys. Pasted private-key CRLF line endings are normalized to LF; unsupported key text is rejected without replacing the current key. Unknown or changed host keys remain refused.
+- Sync and Push no longer request signed push certificates merely because a server supports them. Explicit Git signing configuration is still honored and requires a functioning signer; server-required signing failures remain errors. Unseen remote history is never force-overwritten.
+- With workspace uploads disabled by `uploads.maxFileSize: 0`, page-only Git synchronization remains available. Nonempty asset ingestion remains disabled; existing import, tree, process and file-size bounds are not relaxed.
+- Public Markdown saves validate the actual canonical OKF document, including metadata, UTF-8 bytes and converted links, inside the canonical transaction. Documents above 1 MiB or the frontmatter bound are rejected with actionable errors and no committed page/history/tag/outbox changes. Private pages remain repairable; making them public applies the same admission.
+- Asset destinations cannot occupy Git metadata, root backup namespaces or descriptor temporary files. Legacy records can still be deleted or relocated to valid destinations; their names never authorize moving or deleting Git's own metadata.
+- Use **Import Everything** for the initial bulk import of existing remote content, and **Add Untracked Changes** to export existing shared database content. **Force Sync** respects the selected direction and refuses pending mutations. Repair failed canonical content rather than deleting retained mutation jobs to unblock synchronization.
+
 ### Development Sprint local-tailnet deployment and rollback
 
 Use this path for routine code-only feature and fix deployment to the maintained local tailnet:

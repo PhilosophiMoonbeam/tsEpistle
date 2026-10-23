@@ -1797,14 +1797,16 @@ describe('Git storage rename identities', () => {
         editorKey: 'html'
       }
     ]
-    let streamIndex = 0
     global.WIKI.models.knex = {
       ...global.WIKI.models.knex,
       column: vi.fn(() => {
-        const rows = streamIndex++ === 0 ? pages : []
+        let rows = []
         const builder = {
           select: vi.fn(() => builder),
-          from: vi.fn(() => builder),
+          from: vi.fn(table => {
+            rows = table === 'pages' ? pages : []
+            return builder
+          }),
           where: vi.fn(() => builder),
           join: vi.fn(() => builder),
           stream: vi.fn(() => Readable.from(rows))

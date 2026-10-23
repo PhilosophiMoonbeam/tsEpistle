@@ -18,6 +18,7 @@ let Asset: typeof AssetModel
 let removeAsset: typeof assetOperations.remove
 let branding: typeof AssetBranding
 let localLookup = vi.fn()
+let assetHierarchy = vi.fn(async (folderId: number): Promise<Array<{ slug: string }>> => (folderId === 42 ? [{ slug: '.git' }] : []))
 
 interface AssetResponse {
   req: { method: string; headers: Record<string, string> }
@@ -156,9 +157,10 @@ describe('asset aggregate persistence', () => {
     })
     await db('storage').insert({ key: 'disk', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
     localLookup = vi.fn().mockResolvedValue([])
+    assetHierarchy = vi.fn(async (folderId: number): Promise<Array<{ slug: string }>> => (folderId === 42 ? [{ slug: '.git' }] : []))
     const models: Record<string, unknown> = {
       knex: db,
-      assetFolders: { getHierarchy: vi.fn(async (folderId: number) => (folderId === 42 ? [{ slug: '.git' }] : [])) },
+      assetFolders: { getHierarchy: assetHierarchy },
       storage: { getLocalLocations: localLookup }
     }
     wikiGlobal.WIKI = {
@@ -208,6 +210,127 @@ describe('asset aggregate persistence', () => {
     expect(blobs).toHaveLength(1)
     expect(blobs[0].id).toBe(assets[0].id)
     expect(['first', 'second']).toContain(Buffer.from(blobs[0].data).toString())
+  })
+
+  it.each([
+    ['.git/config', 'upload'],
+    ['media/.GiT/config', 'import'],
+    ['_manual/probe.txt', 'upload'],
+    ['_daily/probe.txt', 'import'],
+    ['media/.asset.42.12345678-1234-4234-8234-123456789abc.tmp', 'import']
+  ])('rejects internal upload destination %s without changing existing canonical data or storage', async (assetPath, mode) => {
+    const slugs = assetPath.split('/').slice(0, -1)
+    const folderId = slugs.length > 0 ? 42 : null
+    assetHierarchy.mockImplementation(async () => slugs.map(slug => ({ slug })))
+    const previousBytes = Buffer.from('retained bytes')
+    const existing = await insertAsset(assetPath, previousBytes, { folderId })
+    const before = await db('assets').first()
+    const cachePath = path.join(tempRoot, 'data', 'cache', `${existing.hash}.dat`)
+    await mkdir(path.dirname(cachePath), { recursive: true })
+    await writeFile(cachePath, previousBytes)
+    const source = mode === 'upload' ? path.join(tempRoot, 'data', 'uploads', 'rejected-source') : path.join(tempRoot, 'rejected-source')
+    await mkdir(path.dirname(source), { recursive: true })
+    await writeFile(source, 'replacement')
+
+    await expect(Asset.upload({
+      originalname: path.posix.basename(assetPath),
+      assetPath,
+      mimetype: 'text/plain',
+      size: 11,
+      folderId,
+      path: source,
+      mode,
+      user: { id: 7, name: 'Test User', email: 'test@example.com' }
+    })).rejects.toMatchObject({ status: 400, name: 'ASSET_PATH_INVALID' })
+
+    expect(await db('assets')).toEqual([before])
+    expect(Buffer.from((await db('assetData').first()).data)).toEqual(previousBytes)
+    expect(await readFile(cachePath)).toEqual(previousBytes)
+    expect(await readFile(source, 'utf8')).toBe('replacement')
+    expect(await db('durableJobs')).toEqual([])
+    expect(localLookup).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { originalname: 'safe.txt', folderId: 42 },
+    { originalname: '.git', folderId: null },
+    { originalname: 'different.txt', folderId: null }
+  ])('rejects a disguised canonical upload destination before opening the source: %j', async ({ originalname, folderId }) => {
+    await expect(Asset.upload({
+      originalname,
+      assetPath: 'safe.txt',
+      mimetype: 'text/plain',
+      size: 1,
+      folderId,
+      path: path.join(tempRoot, 'does-not-exist'),
+      mode: 'import',
+      user: { id: 7, name: 'Test User', email: 'test@example.com' }
+    })).rejects.toMatchObject({ status: 400, name: 'ASSET_PATH_INVALID' })
+
+    expect(await db('assets')).toEqual([])
+    expect(await db('assetData')).toEqual([])
+    expect(await db('durableJobs')).toEqual([])
+    await expect(access(path.join(tempRoot, 'data', 'cache'))).rejects.toThrow()
+  })
+
+  it('rechecks the canonical folder destination inside the upload transaction before persistence', async () => {
+    assetHierarchy
+      .mockResolvedValueOnce([{ slug: 'media' }])
+      .mockResolvedValueOnce([{ slug: '.GiT' }])
+    const source = path.join(tempRoot, 'changed-folder-source')
+    await writeFile(source, 'valid asset')
+
+    await expect(Asset.upload({
+      originalname: 'file.txt',
+      assetPath: 'media/file.txt',
+      mimetype: 'text/plain',
+      size: 11,
+      folderId: 7,
+      path: source,
+      mode: 'import',
+      user: { id: 7, name: 'Test User', email: 'test@example.com' }
+    })).rejects.toMatchObject({ status: 400, name: 'ASSET_PATH_INVALID' })
+
+    expect(await db('assets')).toEqual([])
+    expect(await db('assetData')).toEqual([])
+    expect(await db('durableJobs')).toEqual([])
+    expect(await readFile(source, 'utf8')).toBe('valid asset')
+    await expect(access(path.join(tempRoot, 'data', 'cache'))).rejects.toThrow()
+  })
+
+  it.each([
+    '.gitignore',
+    'media/.git-backup/config',
+    'media/_manual/probe.txt',
+    'media/_daily/probe.txt',
+    '_MANUAL/probe.txt',
+    'media/.asset.42.not-a-uuid.tmp'
+  ])('preserves supported asset destination %s', async assetPath => {
+    const parts = assetPath.split('/')
+    const filename = parts.pop()
+    if (!filename) throw new Error('Missing fixture filename')
+    assetHierarchy.mockImplementation(async () => parts.map(slug => ({ slug })))
+    const source = path.join(tempRoot, 'valid-source')
+    await writeFile(source, 'valid asset')
+
+    await Asset.upload({
+      originalname: filename,
+      assetPath,
+      mimetype: 'text/plain',
+      size: 11,
+      folderId: parts.length > 0 ? 7 : null,
+      path: source,
+      mode: 'import',
+      user: { id: 7, name: 'Test User', email: 'test@example.com' }
+    })
+
+    const asset = await db('assets').first()
+    expect(asset).toMatchObject({ filename, hash: createHash('sha1').update(assetPath).digest('hex') })
+    expect(Buffer.from((await db('assetData').first()).data).toString()).toBe('valid asset')
+    expect(await readFile(path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`), 'utf8')).toBe('valid asset')
+    const jobs = await db('durableJobs')
+    expect(jobs).toHaveLength(1)
+    expect(JSON.parse(jobs[0].payload)).toMatchObject({ entityType: 'asset', entityId: asset.id, paths: [assetPath] })
   })
 
   it('uploads safe and hostile SVGs through the real scheduler worker and serves only sanitized canonical bytes', async () => {
@@ -383,6 +506,29 @@ describe('asset aggregate persistence', () => {
     const jobs = await db('durableJobs')
     expect(jobs).toHaveLength(1)
     expect(JSON.parse(jobs[0].payload)).toMatchObject({ entityType: 'asset', entityId: asset.id, paths: ['logo.txt'] })
+  })
+
+  it.each([
+    '.git/config',
+    '_manual/probe.txt',
+    '.asset.42.12345678-1234-4234-8234-123456789abc.tmp'
+  ])('admits removal of legacy internal asset %s and retains its durable cleanup mutation', async assetPath => {
+    const parts = assetPath.split('/')
+    parts.pop()
+    assetHierarchy.mockImplementation(async () => parts.map(slug => ({ slug })))
+    const asset = await insertAsset(assetPath, Buffer.from('legacy data'), { folderId: parts.length > 0 ? 42 : null })
+    const cachePath = path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`)
+    await mkdir(path.dirname(cachePath), { recursive: true })
+    await writeFile(cachePath, 'legacy cache')
+
+    await removeAsset({ requester: { id: 7, name: 'Test User', email: 'test@example.com' }, id: asset.id })
+
+    expect(await db('assets')).toEqual([])
+    expect(await db('assetData')).toEqual([])
+    await expect(access(cachePath)).rejects.toThrow()
+    const jobs = await db('durableJobs')
+    expect(jobs).toHaveLength(1)
+    expect(JSON.parse(jobs[0].payload)).toMatchObject({ entityType: 'asset', entityId: asset.id, paths: [assetPath] })
   })
 
   it('rolls back a delete and preserves its cache when durable admission fails', async () => {

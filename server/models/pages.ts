@@ -51,6 +51,7 @@ import { pageRequiresUnlock } from '../operations/page-protection.ts'
 import { lockAssetMutationFence } from '../helpers/asset-location-lock.ts'
 import { assertNoStorageAssetAtPagePaths } from '../helpers/storage-path-admission.ts'
 import { enqueuePageStorageMutation } from '../jobs/storage-mutations.ts'
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../modules/storage/page-document.ts'
 
 type UnknownRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is UnknownRecord => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -618,6 +619,30 @@ interface ProjectionPageRow {
   readonly ownerId: number | null
 }
 
+type CanonicalProjectionPageRow = ProjectionPageRow & Omit<StoragePageEncodingInput, 'extra'> & { readonly extra: unknown }
+
+const assertCanonicalPageExportable = async (transaction: Knex.Transaction, page: CanonicalProjectionPageRow): Promise<void> => {
+  // Private pages never enter storage. Publishing them passes this same boundary.
+  if (page.visibility !== 'public' || page.contentType !== 'markdown') return
+  const tags = await transaction<{ tag: string }>('tags')
+    .join('pageTags', 'pageTags.tagId', 'tags.id')
+    .where('pageTags.pageId', page.id)
+    .select('tags.tag')
+    .orderBy('tags.tag')
+  const extra = parseStoredJson(page.extra)
+  if (extra !== null && extra !== undefined && !isRecord(extra)) throw new TypeError('Storage page extra must be an object')
+  try {
+    encodeStoragePageDocument({ ...page, extra: extra ?? null, tags })
+  } catch (error: unknown) {
+    if (!(error instanceof OkfDocumentError)) throw error
+    const tooLarge = error.code === 'OKF_DOCUMENT_TOO_LARGE' || error.code === 'OKF_FRONTMATTER_TOO_LARGE'
+    throw new errors.ApplicationError(
+      `Markdown page cannot be saved for storage: ${error.message}.${tooLarge ? ' Reduce the content or metadata and try again.' : ''}`,
+      { code: error.code, status: tooLarge ? 413 : 400 }
+    )
+  }
+}
+
 const projectionLocation = (page: Pick<ProjectionPageRow, 'localeCode' | 'path' | 'visibility' | 'ownerId'>) => ({
   locale: page.localeCode,
   path: page.path,
@@ -631,12 +656,18 @@ const enqueueCurrentPageProjections = async (
   action: PageProjectionPayload['action'],
   previousLocation?: ReturnType<typeof projectionLocation>
 ): Promise<void> => {
-  const page = await transaction<ProjectionPageRow>('pages')
-    .select('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
+  const page = await transaction<CanonicalProjectionPageRow>('pages')
+    .select(
+      'id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId',
+      'contentType', 'title', 'description', 'authorId', 'createdAt', 'updatedAt', 'extra', 'isPublished', 'editorKey'
+    )
     .where({ id: pageId })
     .forUpdate()
     .first()
   if (!page) throw new wiki.Error.PageNotFound()
+  // Admit the exact trigger-owned revision, timestamps and associated tags before
+  // any durable projection/storage job. Failure rolls back the canonical transaction.
+  await assertCanonicalPageExportable(transaction, page)
   await enqueuePageMutationEffects(transaction, {
     pageId,
     sourceRevision: page.sourceRevision,

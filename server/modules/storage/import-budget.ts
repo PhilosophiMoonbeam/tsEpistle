@@ -47,5 +47,9 @@ export const validateUploadLimit = (configuredLimit: unknown): number => {
   return configuredLimit
 }
 
-export const boundedImportAssetLimit = (configuredLimit: unknown): number =>
-  Math.min(validateUploadLimit(configuredLimit), IMPORT_MAX_ASSET_BYTES)
+/** Zero disables asset ingestion without disabling page inventory or import. */
+export const boundedImportAssetLimit = (configuredLimit: unknown): number => {
+  if (typeof configuredLimit !== 'number') throw new RangeError('Storage import asset limit must be a non-negative safe integer')
+  assertSafeLimit(configuredLimit, 'Storage import asset limit')
+  return Math.min(configuredLimit, IMPORT_MAX_ASSET_BYTES)
+}

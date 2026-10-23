@@ -4,6 +4,10 @@ import { lockSearchIndex } from './search-contract.ts'
 import { storagePagePath } from './storage-page-path.ts'
 import type { StoragePagePathIdentity, StoragePagePathOptions } from './storage-page-path.ts'
 import { okfFilePath, parseOkfFilePath } from '../okf/format.ts'
+import { isStorageInternalPath } from '../modules/storage/internal-path.ts'
+import errors from '../operations/errors.ts'
+
+const { ApplicationError } = errors
 
 interface StorageTargetRow {
   key: string
@@ -26,6 +30,16 @@ export class StoragePathCollisionError extends Error {
   }
 }
 
+/** Admit destinations only; legacy internal sources must remain removable or recoverable. */
+export const assertStorageAssetDestinationAllowed = (assetPath: string): void => {
+  if (isStorageInternalPath(assetPath)) {
+    throw new ApplicationError('The asset destination uses an internal storage path. Choose another filename or folder.', {
+      status: 400,
+      code: 'ASSET_PATH_INVALID'
+    })
+  }
+}
+
 const pagePathOptions = (target: StorageTargetRow): StoragePagePathOptions => {
   const runtime = (globalThis as typeof globalThis & { WIKI: AdmissionRuntime }).WIKI
   const lang = runtime.config.lang
@@ -45,6 +59,7 @@ const enabledPagePathOptions = async (transaction: Knex.Transaction): Promise<St
 
 /** Authorize the asset destination first; the caller must already hold the exclusive asset session fence. */
 export const assertNoPublicStoragePageAtPath = async (transaction: Knex.Transaction, assetPath: string): Promise<void> => {
+  assertStorageAssetDestinationAllowed(assetPath)
   await lockSearchIndex(transaction, false)
   const options = await enabledPagePathOptions(transaction)
   if (options.length === 0) return

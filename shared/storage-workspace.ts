@@ -77,6 +77,7 @@ export interface StorageConfigurationWorkspace {
 /** Literal branch names; previous-checkout shorthand is unsuitable for saved configuration. */
 export const isStorageGitBranchName = (value: string): boolean =>
   Boolean(value) &&
+  value.length <= 255 &&
   !value.startsWith('-') &&
   !value.includes('..') &&
   !value.includes('@{') &&
@@ -84,6 +85,37 @@ export const isStorageGitBranchName = (value: string): boolean =>
   !Array.from(value).some(character => character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127) &&
   !/[~^:?*[\\]/.test(value) &&
   value.split('/').every(part => Boolean(part) && !part.startsWith('.') && !part.endsWith('.lock'))
+
+/** SSH mode intentionally permits local Git transports as well as SSH remotes. */
+export const storageGitRepositoryIssue = (address: string, authType: string): string | null => {
+  if (!address.trim() || /[\0\r\n]/.test(address)) return 'Enter a valid repository address without control characters.'
+  address = address.trim()
+  if (authType === 'ssh') {
+    const scheme = /^([a-z][a-z\d+.-]*):\/\//i.exec(address)
+    if (!scheme) {
+      // Git's remote-helper syntax is not an SSH or local filesystem transport.
+      if (/^[a-z][a-z\d+.-]*::/i.test(address)) return 'Use an SSH repository address or an explicit local filesystem path with SSH authentication.'
+      return null
+    }
+    if (!['ssh', 'file'].includes(scheme[1]!.toLowerCase()))
+      return 'Use an SSH repository address or an explicit local filesystem path with SSH authentication.'
+    try {
+      const url = new URL(address)
+      if (url.protocol === 'ssh:' && !url.hostname) return 'Enter a valid SSH repository address.'
+    } catch {
+      return 'Enter a valid SSH or local filesystem repository address.'
+    }
+    return null
+  }
+  try {
+    const url = new URL(address.includes('://') ? address : `https://${address}`)
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+      return 'Use an HTTP(S) repository address without embedded credentials, query or fragment.'
+  } catch {
+    return 'Enter a valid HTTP(S) repository address.'
+  }
+  return null
+}
 
 export const storageActionDefinition = (key: string, handler: string): StorageActionDefinition | null => {
   if (handler === 'exportAll' && ['s3', 's3generic', 'digitalocean', 'azure', 'sftp'].includes(key))
@@ -191,14 +223,10 @@ export const storageConfigurationIssues = (target: Pick<StorageTargetView, 'key'
       if (config.sshPrivateKeyMode === 'contents') required('sshPrivateKeyContent', 'Private key')
       else required('sshPrivateKeyPath', 'Private-key path')
       if (/["`$\r\n\0]/.test(text('sshPrivateKeyPath'))) issues.push('The private-key path contains unsupported command characters.')
-    } else if (text('repoUrl')) {
-      try {
-        const url = new URL(text('repoUrl').includes('://') ? text('repoUrl') : `https://${text('repoUrl')}`)
-        if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
-          issues.push('Use an HTTP(S) repository address without embedded credentials, query or fragment.')
-      } catch {
-        issues.push('Enter a valid HTTP(S) repository address.')
-      }
+    }
+    if (text('repoUrl')) {
+      const issue = storageGitRepositoryIssue(String(config.repoUrl), String(config.authType))
+      if (issue) issues.push(issue)
     }
     const branch = typeof config.branch === 'string' ? config.branch : ''
     if (branch && !isStorageGitBranchName(branch)) issues.push('Enter a valid Git branch name.')
