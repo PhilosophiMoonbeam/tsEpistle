@@ -2,7 +2,7 @@
   <section
     ref="inlineAgentRoot"
     class="inline-agent"
-    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen }"
+    :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen, 'inline-agent--contextual': includesCurrentPage && !approvalId, 'inline-agent--had-contextual-glass': hasHadContextualGlass }"
     :data-panel-mode="panelMode"
     :aria-labelledby="workspaceTitleId"
     :aria-busy="loading || Boolean(creatingRetention) || connectionRetrying || sessionMutationBusy"
@@ -966,6 +966,10 @@ const connectionTone = computed<'ready' | 'error' | 'busy'>(() => connectionBloc
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
 const draftPage = computed(() => activeDraft.value.currentPageOverride === undefined ? currentPage.value : activeDraft.value.currentPageOverride ?? currentPage.value)
 const includesCurrentPage = computed(() => Boolean(draftPage.value && activeDraft.value.includeCurrentPage))
+const hasHadContextualGlass = ref(false)
+watch(() => includesCurrentPage.value && !props.approvalId, active => {
+  if (active) hasHadContextualGlass.value = true
+}, { immediate: true })
 /* Labels and descriptions are locale keys; prompts are model input and stay as written. */
 const starters = computed(() => [
   ...(includesCurrentPage.value
@@ -1940,6 +1944,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-align: start;
   transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
+.inline-agent--contextual,
+.inline-agent--contextual .inline-agent__card {
+  background: transparent;
+}
 
 .inline-agent__toolbar {
   display: flex;
@@ -1958,6 +1966,17 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
+}
+.inline-agent--had-contextual-glass .inline-agent__toolbar,
+.inline-agent--had-contextual-glass .inline-agent__body {
+  animation: agentOpaqueGlassRetire var(--wiki-motion-slow) step-end;
+}
+/* Contextual glass signals that the underlying page is included in the chat. */
+.inline-agent--contextual .inline-agent__toolbar {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 64%, transparent) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  backdrop-filter: blur(36px) saturate(160%);
+  animation: none;
 }
 /* Either left-side panel brings the remaining swap toggle flush to the panel. */
 .inline-agent--history .inline-agent__toolbar,
@@ -2255,6 +2274,28 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   transition: background-color var(--wiki-motion-slow) var(--wiki-motion-ease);
 }
 
+.inline-agent--contextual .inline-agent__body {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 36%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  backdrop-filter: blur(10px) saturate(150%);
+  animation: none;
+}
+@keyframes agentOpaqueGlassRetire {
+  from, to {
+    -webkit-backdrop-filter: var(--wiki-chrome-blur);
+    backdrop-filter: var(--wiki-chrome-blur);
+  }
+}
+@supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
+    background: rgb(var(--v-theme-background)) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    animation: none;
+  }
+}
+
 .inline-agent__transcript-wrap {
   position: relative;
   display: flex;
@@ -2538,6 +2579,32 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-wrap: balance;
 }
 
+.inline-agent__welcome-title::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: -.9em -1em;
+  border-radius: 50%;
+  background: radial-gradient(ellipse closest-side,
+    rgb(var(--v-theme-background)) 0% 64%,
+    rgba(var(--v-theme-background), .92) 72%,
+    rgba(var(--v-theme-background), .45) 86%,
+    rgba(var(--v-theme-background), 0) 100%);
+  filter: blur(12px);
+  opacity: 0;
+  transition: opacity var(--wiki-motion-slow) var(--wiki-motion-ease);
+  pointer-events: none;
+}
+@supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
+    .inline-agent--contextual .inline-agent__welcome-title::before {
+      opacity: 1;
+    }
+  }
+}
+@container inline-agent-transcript (max-width: 900px) {
+  .inline-agent__welcome-title::before { inset-inline: 0; }
+}
 
 .inline-agent__welcome-line {
   position: relative;
@@ -3140,8 +3207,21 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 }
 
+@media (prefers-reduced-transparency: reduce) {
+  .inline-agent .inline-agent__toolbar,
+  .inline-agent .inline-agent__body {
+    background: rgb(var(--v-theme-background)) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    animation: none;
+    transition: none;
+  }
+}
 
 @media (forced-colors: active) {
+  .inline-agent__welcome-title::before {
+    display: none;
+  }
   .inline-agent__card,
   .inline-agent__side {
     border: 1px solid CanvasText;

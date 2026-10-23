@@ -12,6 +12,8 @@ Redundant composer helper notices are removed; actionable connection, admission 
 
 Memory and History share one exclusive left panel at every viewport width. Opening either replaces the other directly, with in-panel controls for swapping views. Desktop panels leave the conversation visible; narrow layouts retain modal focus trapping and focus restoration. Memory mutations continue to block unsafe closing or switching.
 
+The Wiki Agent workspace spans the full viewport without uncovered side columns. With the current page included, its contextual glass retains the established 64% toolbar surface with 36px blur and 36% conversation surface with 10px blur. Excluding the page restores opaque surfaces; messages, composer and side panels remain readable on their own surfaces. Reduced-transparency preferences, forced colors and browsers without backdrop-filter support retain opaque accessibility fallbacks.
+
 Ctrl/⌘+Shift+A toggles Wiki Agent open and closed; closing does not open Search. Ctrl/⌘+K remains the separate Search shortcut.
 
 The welcome area scrolls in short viewports so lower starters remain reachable above the sticky composer. Without a current-page hint, **Explore the Wiki** starts from a bounded locale-root discovery window at the supported maximum depth, reads chosen page IDs, and offers a source-cited sample with a follow-up topic question. A shallow or empty navigation window is not proof of Wiki-wide absence; discovery metadata never becomes citation evidence.
