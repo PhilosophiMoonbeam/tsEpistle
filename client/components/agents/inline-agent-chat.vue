@@ -1017,8 +1017,9 @@ const reviewRequest = async (messageId: string): Promise<void> => {
   const original = selected?.role === 'user'
     ? selected
     : selected?.role === 'assistant' && selected.runId
-      // Admission reserves consecutive user/assistant ordinals; user.runId is null.
-      ? thread.value?.messages.find(message => message.role === 'user' && message.runId === null && message.ordinal === selected.ordinal - 1)
+      // Projected turns share a run; an admitted historical user row may still be unbound.
+      ? thread.value?.messages.find(message => message.role === 'user' && message.ordinal === selected.ordinal - 1 &&
+        (message.runId === selected.runId || message.runId === null))
       : undefined
   if (!original) {
     agents.updateDraft(sessionId, { includeCurrentPage: false, currentPageOverride: null })

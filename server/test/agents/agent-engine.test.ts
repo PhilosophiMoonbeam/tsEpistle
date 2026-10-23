@@ -2220,12 +2220,16 @@ describe('Ax agent engine', () => {
   })
 
   it.each([
-    ['Homepage |🏘️', true],
-    ['Homepage |🏠', false]
-  ] as const)('preserves exact Unicode title identity despite positive native proof: %s', async (reported, accepted) => {
+    ['Homepage |🏘️', 'supports', true],
+    ['Homepage |🏠', 'supports', false],
+    ['Homepage |🏘️', 'not_supported', false],
+    ['Homepage |🏘️', 'uncertain probability', false],
+    ['Homepage |🏘️', 'uncertain confidence', false],
+    ['Homepage |🏘️', 'supports above floor', true]
+  ] as const)('requires exact Unicode title identity and independent native proof: %s / %s', async (reported, verdict, accepted) => {
     const title = 'Homepage |🏘️'
-    const statement = `The page is titled "${reported}".`
-    const decisions = sourceReadDecisions('supports', () => {
+    const statement = `The title of the page is "${reported}".`
+    const decisions = sourceReadDecisions(verdict, () => {
       expect(fixture.text.mock.calls).toHaveLength(0)
     })
     const fixture = typedRootFixture(
@@ -2237,7 +2241,7 @@ describe('Ax agent engine', () => {
       undefined,
       {
         title,
-        content: `# ${title}\n\nThe page is available.`,
+        content: '# Page details\n\nThe page is available.',
         request: 'Read page 42 and report its exact title.'
       },
       decisions
@@ -2252,6 +2256,15 @@ describe('Ax agent engine', () => {
       expect(published).not.toContain(statement)
       expect(result.citations ?? []).toEqual([])
       expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
+      if (reported === title)
+        expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toContainEqual(
+          expect.objectContaining({
+            accepted: false,
+            claims: [
+              expect.objectContaining({ titleAssertion: true, authoritativeTitle: title, integritySupported: true, supported: false })
+            ]
+          })
+        )
     }
   })
 

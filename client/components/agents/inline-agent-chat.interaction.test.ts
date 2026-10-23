@@ -663,7 +663,6 @@ const reviewThread = (
     messages: [
       {
         ...common,
-        runId: null,
         id: '00000000-0000-4000-8000-000000000061', ordinal: 0, role: 'user', status: 'complete',
         content: 'What is the dominant color and geometric shape in this uploaded image? Use only the uploaded image, not Wiki pages.',
         ...(currentPage !== undefined ? { currentPage } : {}),
@@ -1024,7 +1023,11 @@ describe('Inline Agent historical Review scope', () => {
   }
 
   it('restores historical file-only exclusion before explicit Send without reuploading its image', async () => {
-    const historical = reviewThread(null)
+    const bound = reviewThread(null)
+    const historical = {
+      ...bound,
+      messages: [{ ...bound.messages[0], runId: null }, bound.messages[1]]
+    }
     const workspace = realWorkspace('saved', routePage, historical)
     const mounted = mountInlineAgent(workspace.state(), { realThread: true })
     await settle()
