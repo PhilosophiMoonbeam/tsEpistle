@@ -54,6 +54,9 @@ type OfflineDatabaseInspection = {
   snapshots: OfflineSnapshotRow[]
   searchDocuments: OfflineSearchRow[]
   draftCount: number
+  readingVaultCount: number
+  readingVaultDigest: string | null
+  privateSnapshotDigests: string[]
 }
 
 type OwnedCacheInspection = {
@@ -87,7 +90,7 @@ async function inspectOfflineDatabase(page: Page): Promise<OfflineDatabaseInspec
     }
 
     const database = await openDatabase()
-    const requestedStores = ['meta', 'snapshots', 'drafts', 'searchDocuments']
+    const requestedStores = ['meta', 'snapshots', 'drafts', 'searchDocuments', 'readingVault', 'privateRecords']
     const storeNames = requestedStores.filter(name => database.objectStoreNames.contains(name))
     if (storeNames.length === 0) {
       const databaseVersion = database.version
@@ -98,7 +101,10 @@ async function inspectOfflineDatabase(page: Page): Promise<OfflineDatabaseInspec
         meta: null,
         snapshots: [],
         searchDocuments: [],
-        draftCount: 0
+        draftCount: 0,
+        readingVaultCount: 0,
+        readingVaultDigest: null,
+        privateSnapshotDigests: []
       } satisfies OfflineDatabaseInspection
     }
 
@@ -119,13 +125,30 @@ async function inspectOfflineDatabase(page: Page): Promise<OfflineDatabaseInspec
     const databaseVersion = database.version
     database.close()
     const byStore = new Map(storeNames.map((name, index) => [name, values[index] ?? []]))
+    // Compare the original opaque snapshot/search bytes across cold entries;
+    // policy diagnostics may legitimately change without replacing those copies.
+    const opaqueDigest = async (value: unknown): Promise<string> => {
+      const bytes = new TextEncoder().encode(JSON.stringify(value, (_key, item) =>
+        item instanceof Uint8Array ? Array.from(item) : item))
+      return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+        byte => byte.toString(16).padStart(2, '0')).join('')
+    }
+    const privateSnapshotDigests = await Promise.all((byStore.get('privateRecords') ?? [])
+      .filter(value => {
+        const record = value as { kind?: unknown }
+        return record.kind === 'snapshot' || record.kind === 'search'
+      })
+      .map(opaqueDigest))
     return {
       databaseVersion,
       storeNames,
       meta: (byStore.get('meta')?.[0] as Record<string, unknown> | undefined) ?? null,
       snapshots: (byStore.get('snapshots') ?? []) as OfflineSnapshotRow[],
       searchDocuments: (byStore.get('searchDocuments') ?? []) as OfflineSearchRow[],
-      draftCount: byStore.get('drafts')?.length ?? 0
+      draftCount: byStore.get('drafts')?.length ?? 0,
+      readingVaultCount: byStore.get('readingVault')?.length ?? 0,
+      readingVaultDigest: byStore.get('readingVault')?.length ? await opaqueDigest(byStore.get('readingVault')![0]) : null,
+      privateSnapshotDigests: privateSnapshotDigests.sort()
     } satisfies OfflineDatabaseInspection
   }, OFFLINE_DB_NAME)
 }
@@ -553,6 +576,52 @@ test.describe('integrated offline access', () => {
       await reading.getByRole('button', { name: 'Lock private pages', exact: true }).click()
       await expect(reading.getByRole('button', { name: 'Unlock private pages', exact: true })).toBeVisible()
       await expect(privateCard).toHaveCount(0)
+
+      // Reproduce the full public-reader navigation that boots index-offline,
+      // not just a warm private reader or a mocked forwarded identity.
+      const originalPrivate = await inspectOfflineDatabase(page)
+      expect(originalPrivate.readingVaultCount).toBe(1)
+      expect(originalPrivate.privateSnapshotDigests.length).toBeGreaterThanOrEqual(2)
+      await search.fill(saved.snapshot.title)
+      const warmDocument = await page.evaluate(() => performance.timeOrigin)
+      await page.getByRole('button', { name: `Open saved page ${saved.snapshot.title}`, exact: true }).click()
+      await expect(page.locator('.offline-application')).toBeVisible()
+      await expect(page.locator('#offline-reader-title')).toHaveText(saved.snapshot.title)
+      expect(await page.evaluate(() => performance.timeOrigin)).not.toBe(warmDocument)
+      await page.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
+      await waitForOfflineSettings(page)
+      await expect(reading.getByRole('button', { name: 'Unlock private pages', exact: true })).toBeVisible()
+      const coldPrivate = await inspectOfflineDatabase(page)
+      expect(coldPrivate.readingVaultDigest).toBe(originalPrivate.readingVaultDigest)
+      expect(coldPrivate.privateSnapshotDigests).toEqual(originalPrivate.privateSnapshotDigests)
+
+      const wrongSecret = `${unlockSecret[0] === 'A' ? 'B' : 'A'}${unlockSecret.slice(1)}`
+      await privateUnlockInput.fill(wrongSecret)
+      await reading.getByRole('button', { name: 'Unlock private pages', exact: true }).click()
+      await expect(reading).toContainText('The private offline vault could not be unlocked.')
+      await search.fill(privateSnapshot.title)
+      await expect(privateCard).toHaveCount(0)
+      await privateUnlockInput.fill(unlockSecret)
+      await reading.getByRole('button', { name: 'Unlock private pages', exact: true }).click()
+      await expect(privateCard).toHaveCount(1)
+      await privateCard.getByRole('button', { name: /^Open saved page /u }).click()
+      await expect(page.locator('#offline-reader-title')).toHaveText(privateSnapshot.title)
+      await expect(page.locator('.offline-page-body')).toHaveText('Private offline history\nThis encrypted saved page retains its unlock through browser history.')
+      expect((await inspectOfflineDatabase(page)).privateSnapshotDigests).toEqual(originalPrivate.privateSnapshotDigests)
+
+      // A same-account reconnect is not a new login after unavailable cold
+      // bootstrap, and must not mistake the shell's missing site for a mismatch.
+      await page.context().setOffline(false)
+      await expect(page.locator('.offline-connection')).toContainText('Connected.', { timeout: 30_000 })
+      await page.locator('.account-menu__trigger').click()
+      await expect(page.locator('.account-menu__profile')).toHaveAttribute('href', '/p')
+      await page.keyboard.press('Escape')
+      await page.getByRole('button', { name: 'Back to saved pages', exact: true }).click()
+      await waitForOfflineSettings(page)
+      const reconnectedPrivate = await inspectOfflineDatabase(page)
+      expect(reconnectedPrivate.readingVaultCount).toBe(1)
+      expect(reconnectedPrivate.meta?.sessionGeneration).toBe(originalPrivate.meta?.sessionGeneration)
+      expect(reconnectedPrivate.readingVaultDigest).toBe(originalPrivate.readingVaultDigest)
     } finally {
       unlockSecret = ''
       await page.context().setOffline(false)

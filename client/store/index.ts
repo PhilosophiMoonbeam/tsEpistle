@@ -180,10 +180,11 @@ const currentOfflineOrigin = (): string => {
   }
 }
 
-const currentOfflineSiteId = (origin: string): string => {
+const currentOfflineSiteId = (origin: string): string | null => {
   if (typeof window === 'undefined') return origin
   try {
     const configured = Reflect.get(Reflect.get(window, 'siteConfig') ?? {}, 'offlineDraftSiteId')
+    if (configured === null) return null
     return typeof configured === 'string' && configured.trim().length > 0 ? configured.trim() : origin
   } catch {
     return origin
@@ -196,10 +197,13 @@ const isMatchingReadingVault = (vault: unknown, accountId: number, authVersion: 
   if (!context || typeof context !== 'object' || Array.isArray(context)) return false
   const origin = currentOfflineOrigin()
   const siteId = currentOfflineSiteId(origin)
+  // The bundled offline document has no verified installation configuration.
+  // Unknown authority is not a mismatch; the normal server bootstrap still
+  // checks the exact site. This never supplies an authenticated user or key.
   return (
     origin.length > 0 &&
     Reflect.get(context, 'canonicalOrigin') === origin &&
-    Reflect.get(context, 'siteId') === siteId &&
+    (siteId === null || Reflect.get(context, 'siteId') === siteId) &&
     Reflect.get(context, 'accountId') === accountId &&
     Reflect.get(context, 'authVersion') === authVersion
   )
@@ -489,7 +493,7 @@ export const useWikiStore = defineStore('wiki', {
         }
         return 'unavailable'
       }
-      const authWasSettled = this.authRefreshSettled
+      const authWasAnonymous = this.authRefreshOutcome === 'anonymous'
       const pendingLogoutAtStart = pendingOfflineLogout()
       const previousAccountIdAtStart = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : undefined
       const pendingLogoutBlocksWarmIdentity =
@@ -597,7 +601,8 @@ export const useWikiStore = defineStore('wiki', {
           const previousAuthenticatedId = this.user.authenticated && isPositiveAccountId(this.user.id) ? this.user.id : null
           const authVersion = profile.authVersion
           const accountChanged = previousAuthenticatedId !== null && previousAuthenticatedId !== id
-          const passiveLogin = authWasSettled && previousAuthenticatedId === null
+          // A completed but unavailable cold probe is not a verified logout.
+          const passiveLogin = authWasAnonymous && previousAuthenticatedId === null
           const securityVersionChanged = previousAuthenticatedId === id && Number.isSafeInteger(this.user.authVersion) && this.user.authVersion !== authVersion
           const pendingLogout = pendingOfflineLogout()
           if (

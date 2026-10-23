@@ -106,6 +106,8 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
       title: publicPresentationTitle(saved.title) || 'tsEpistle',
       theme: 'default',
       darkMode: false,
+      // Presentation cache is not authority for the installation namespace.
+      offlineDraftSiteId: null,
       themeColors: normalizeThemeColors(saved.themeColors),
       readerLayout: normalizeReaderLayout(saved.readerLayout),
       codeTheme: normalizeCodeTheme(saved.codeTheme),

@@ -2,7 +2,7 @@
   v-snackbar.nav-notify(
     :key='notificationRevision'
     :color='notificationColor'
-    location='bottom center'
+    location='top start'
     min-height='68'
     v-model='notificationState'
     :timeout='notificationTimeout'
@@ -90,10 +90,13 @@ export default defineComponent({
 
 <style lang='scss'>
 .nav-notify {
-  margin-bottom: calc(var(--wiki-footer-height) + 12px + env(safe-area-inset-bottom));
+  margin-top: calc(var(--wiki-chrome-height) + var(--wiki-space-3) + env(safe-area-inset-top));
+  margin-inline: calc(var(--wiki-space-3) + max(env(safe-area-inset-left), env(safe-area-inset-right)));
 
   .v-snackbar__wrapper {
     position: relative;
+    min-width: 0;
+    width: min(30rem, calc(100vw - 6rem));
     overflow: hidden;
     border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent);
     border-radius: var(--wiki-panel-radius);
@@ -142,6 +145,8 @@ export default defineComponent({
 .nav-notify-message {
   min-width: 0;
   overflow-wrap: anywhere;
+  max-block-size: min(28vh, 10rem);
+  overflow-y: auto;
 }
 
 .nav-notify-close {
@@ -149,12 +154,7 @@ export default defineComponent({
   margin-inline-start: auto;
 }
 
-
 @media (max-width: 599px) {
-  .nav-notify {
-    margin-inline: 12px;
-  }
-
   .nav-notify-content,
   .nav-notify-announcement {
     align-items: flex-start;

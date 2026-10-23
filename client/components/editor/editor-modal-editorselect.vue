@@ -19,6 +19,7 @@
 <script lang='ts'>
 import { fetchPage } from '../../helpers/pages-api.ts'
 import { resolveTemplateEditorPath } from '../../helpers/editor-template.ts'
+import { goBackOrHome } from '../../helpers/state-page-actions.ts'
 import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
@@ -65,7 +66,7 @@ export default defineComponent({
       this.isShown = false
     },
     goBack () {
-      window.history.go(-1)
+      goBackOrHome('/')
     },
     fromTemplate () {
       if (this.templateLoading) return

@@ -1671,7 +1671,7 @@ export const useAgentsStore = defineStore('agents', {
         }
       }
     },
-    async removeSession(sessionId: string): Promise<boolean> {
+    async removeSession(sessionId: string, onCommitted?: () => void): Promise<boolean> {
       if (!this.isWorkspaceReady()) return false
       const mutationToken = this.beginSessionMutation()
       if (mutationToken === null) return false
@@ -1682,7 +1682,6 @@ export const useAgentsStore = defineStore('agents', {
         const version = this.beginSessionTransition()
         try {
           await deleteAgentSession(fetchFromWindow, this.csrfToken, sessionId)
-          delete this.drafts[sessionId]
         } catch (error) {
           if (this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && error instanceof AgentApiError && (error.status === 404 || error.status === 410))
             this.clearConversationSelection(sessionId)
@@ -1694,8 +1693,15 @@ export const useAgentsStore = defineStore('agents', {
           if (!this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) || !this.isSessionTransitionCurrent(version)) return false
           throw error
         }
-        if (!this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)) return true
+        if (
+          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
+          !this.isSessionTransitionCurrent(version) ||
+          !this.isSessionMutationOwned(mutationToken)
+        ) return true
+        delete this.drafts[sessionId]
         this.clearConversationSelection(sessionId)
+        // Let the initiating UI acknowledge this commit before the thread transition invalidates it.
+        onCommitted?.()
         const removedDisplayedSession = this.thread?.session.id === sessionId
         if (this.isSessionTransitionCurrent(version) && removedDisplayedSession) {
           this.closeStream()

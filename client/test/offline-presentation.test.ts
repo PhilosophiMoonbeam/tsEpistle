@@ -25,6 +25,7 @@ describe('offline presentation branding allowlist', () => {
       logoEffect: { private: 'never persisted' },
       agentCsrfToken: 'secret',
       user: { authenticated: true, privatePageTitle: 'secret page' },
+      offlineDraftSiteId: 'server-installation',
       lang: 'en',
       rtl: false
     })
@@ -35,6 +36,8 @@ describe('offline presentation branding allowlist', () => {
     expect(stored).not.toMatch(/secret|authenticated|private|logoEffect/u)
     expect(offlinePresentation().config.logoUrl).toBe(logo)
     expect(offlinePresentation().config.logoEffect).toBeNull()
+    expect(JSON.parse(stored)).not.toHaveProperty('offlineDraftSiteId')
+    expect(offlinePresentation().config.offlineDraftSiteId).toBeNull()
   })
 
   it('revalidates local presentation data and permits the exact bundled default', () => {
@@ -45,6 +48,11 @@ describe('offline presentation branding allowlist', () => {
     }
     values.set(key, JSON.stringify({ logoUrl: OFFLINE_DEFAULT_LOGO_PATH }))
     expect(offlinePresentation().config.logoUrl).toBe(OFFLINE_DEFAULT_LOGO_PATH)
+  })
+
+  it('does not turn a local installation hint into verified bootstrap authority', () => {
+    presentationStorage(JSON.stringify({ offlineDraftSiteId: 'forged-installation' }))
+    expect(offlinePresentation().config.offlineDraftSiteId).toBeNull()
   })
 })
 

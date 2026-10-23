@@ -1245,24 +1245,30 @@ const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
   if (disposed || !session || networkBlocked.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
   const identity = captureOperationIdentity()
+  let acknowledged = false
   deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {
-    const committed = await agents.removeSession(session.id)
+    const committed = await agents.removeSession(session.id, () => {
+      if (!isOperationCurrent(identity) || deletingSession.value !== session) return
+      // Acknowledge before retiring the active thread invalidates this operation.
+      acknowledged = true
+      committedDeletedSessionIds.value = new Set(committedDeletedSessionIds.value).add(session.id)
+      destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
+      deletingSession.value = null
+    })
     if (!isOperationCurrent(identity)) return
     if (!committed) {
-      dialogError.value = t('common:agentHistoryPanel.conversationCouldNotDeleted')
+      if (deletingSession.value === session) dialogError.value = t('common:agentHistoryPanel.conversationCouldNotDeleted')
       return
     }
-    committedDeletedSessionIds.value = new Set(committedDeletedSessionIds.value).add(session.id)
-    destructiveRestoreTarget.value = componentElement(historyCloseButton.value)
-    deletingSession.value = null
+    if (!acknowledged || deletingSession.value !== null) return
     const refreshResult = await refreshSessions(identity)
     if (!isOperationCurrent(identity)) return
     if (!refreshResult.accepted || !refreshResult.current) {
       sessionsRefreshError.value = t('common:agentHistoryPanel.conversationDeletedButHistory', { refreshResult: refreshResultMessage(refreshResult, t('common:agentHistoryPanel.refreshHistoryBeforeRelying2')), interpolation: { escapeValue: false } })
     }
   } catch (value) {
-    if (isOperationCurrent(identity)) dialogError.value = message(value, t('common:agentHistoryPanel.conversationCouldNotDeleted'))
+    if (isOperationCurrent(identity) && deletingSession.value === session) dialogError.value = message(value, t('common:agentHistoryPanel.conversationCouldNotDeleted'))
   } finally {
     if (!disposed) deleting.value = false
   }

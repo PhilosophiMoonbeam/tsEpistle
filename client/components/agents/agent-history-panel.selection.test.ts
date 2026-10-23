@@ -1,11 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createPinia, setActivePinia, storeToRefs } from 'pinia'
+import { computed, effectScope, nextTick, onWatcherCleanup, ref, shallowRef, watch } from 'vue'
 
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
-import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
+import type { AgentConversationFolderView, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
-import type { AgentRefreshResult } from '../../store/agents.ts'
+import { clearAgentChatRecent } from '../../helpers/agent-chat-continuity.ts'
+import { useAgentsStore, type AgentRefreshResult } from '../../store/agents.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 globalThis.useTranslate = () => translateEnglish
@@ -21,7 +24,7 @@ interface PanelAgents {
   createFolder?: (name: string) => Promise<unknown>
   moveSessionToFolder?: (sessionId: string, folderId: string | null) => Promise<unknown>
   renameSession?: (sessionId: string, title: string) => Promise<unknown>
-  removeSession?: (sessionId: string) => Promise<boolean>
+  removeSession?: (sessionId: string, onCommitted?: () => void) => Promise<boolean>
   deleteFolder?: (folderId: string, expectedVersion: number) => Promise<boolean>
 }
 
@@ -394,6 +397,208 @@ const makeDragEvent = (): {
     preventDefault
   }
 }
+
+const makeThread = (session: AgentSessionSummary): AgentThreadState => ({
+  session: {
+    ...session,
+    status: 'active',
+    profileResolutionToken: 'token',
+    mediaCapabilities: null,
+    skills: [],
+    currentRun: null
+  },
+  routingDecisions: [],
+  specialistInvocations: [],
+  messages: [],
+  tools: [],
+  tasks: [],
+  goal: null,
+  proposals: [],
+  artifacts: [],
+  suggestions: [],
+  historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
+})
+
+// Exercise the component's actual Vue watchers together with the real store.
+const loadDeletionPanel = (active: AgentSessionSummary, sessions: AgentSessionSummary[], folders: AgentConversationFolderView[] = []) => {
+  setActivePinia(createPinia())
+  const store = useAgentsStore()
+  store.csrfToken = 'csrf-token'
+  store.routeSync = false
+  store.workspaceOwnerId = 1
+  store.thread = makeThread(active)
+  store.sessions = sessions
+  store.folders = folders
+  store.connection = 'idle'
+  store.initializedWorkspaceVersion = store.workspaceVersion
+  const scope = effectScope()
+  const unmountCallbacks: Array<() => void> = []
+  const dependencies = {
+    computed,
+    nextTick,
+    onBeforeUnmount: (callback: () => void) => unmountCallbacks.push(callback),
+    onMounted: () => {},
+    onWatcherCleanup,
+    ref,
+    shallowRef,
+    useId: () => 'deletion-panel',
+    useTemplateRef: () => shallowRef(null),
+    watch,
+    storeToRefs,
+    defineProps: () => ({ headingId: 'history-title', descriptionId: 'history-description' }),
+    defineEmits: () => vi.fn(),
+    useAgentsStore: () => store,
+    agentConversationFolderNameKey,
+    cleanAgentConversationFolderName,
+    createModalFocusScope: () => ({ deactivate: () => {} }),
+    window,
+    document,
+    HTMLElement
+  }
+  const evaluate = new Function(...Object.keys(dependencies), `${executableScript}
+    return { beginDeleteSession, deleteSession, deletingSession, deleting, dialogError, displaySessions, openFolderIds, searchQuery }
+  `) as (...args: unknown[]) => Pick<PanelHarness, 'beginDeleteSession' | 'deleteSession' | 'deletingSession' | 'dialogError' | 'displaySessions' | 'openFolderIds' | 'searchQuery'> & { deleting: Ref<boolean> }
+  const panel = scope.run(() => evaluate(...Object.values(dependencies)))!
+  let unmounted = false
+  const unmount = () => {
+    if (unmounted) return
+    unmounted = true
+    for (const callback of unmountCallbacks) callback()
+    scope.stop()
+  }
+  return { store, panel, unmount }
+}
+
+describe('Agent history deletion commit lifecycle', () => {
+  const cleanups: Array<() => void> = []
+  afterEach(() => {
+    for (const cleanup of cleanups.splice(0)) cleanup()
+    vi.restoreAllMocks()
+    clearAgentChatRecent()
+  })
+
+  const setup = (current = true) => {
+    const folder = makeFolder()
+    const target = makeSession()
+    const active = current ? target : makeSession({ id: '00000000-0000-4000-8000-000000000003' })
+    const kept = makeSession({ id: '00000000-0000-4000-8000-000000000004', folderId: folder.id })
+    const replacement = makeSession({ id: '00000000-0000-4000-8000-000000000005', title: '', retention: 'saved' })
+    const harness = loadDeletionPanel(active, [target, kept], [folder])
+    cleanups.push(() => {
+      harness.unmount()
+      harness.store.closeWorkspace()
+    })
+    harness.store.setDraft(target.id, 'Retire this draft')
+    return { ...harness, target, active, kept, replacement, folder }
+  }
+
+  it.each([
+    { current: true, replacementFails: false },
+    { current: false, replacementFails: false },
+    { current: true, replacementFails: true }
+  ])('acknowledges a committed delete once without disturbing archive selection (%j)', async ({ current, replacementFails }) => {
+    const { store, panel, target, active, kept, replacement, folder } = setup(current)
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input) === `/_api/agents/sessions/${target.id}` && init?.method === 'DELETE') return new Response(null, { status: 204 })
+      if (String(input) === '/_api/agents/sessions' && init?.method === 'POST')
+        return replacementFails ? Response.json({ message: 'Create unavailable' }, { status: 503 }) : Response.json(makeThread(replacement), { status: 201 })
+      if (String(input) === '/_api/agents/sessions') return Response.json({ sessions: [kept], nextCursor: null })
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${input}`)
+    })
+    panel.openFolderIds.value = [folder.id]
+    panel.searchQuery.value = target.title
+    await nextTick()
+    const selectedFolders = [...panel.openFolderIds.value]
+    panel.beginDeleteSession(target, null)
+
+    await panel.deleteSession()
+    await nextTick()
+    await panel.deleteSession()
+
+    expect(panel.deletingSession.value).toBeNull()
+    expect(panel.deleting.value).toBe(false)
+    expect(panel.dialogError.value).toBe('')
+    expect(store.thread?.session.id).toBe(current ? (replacementFails ? undefined : replacement.id) : active.id)
+    if (replacementFails) expect(store.error.length).toBeGreaterThan(0)
+    expect(store.drafts[target.id]).toBeUndefined()
+    expect(panel.displaySessions.value.some(session => session.id === target.id)).toBe(false)
+    expect(panel.searchQuery.value).toBe(target.title)
+    expect(panel.openFolderIds.value).toEqual(selectedFolders)
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1)
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(current ? 1 : 0)
+  })
+
+  it('keeps a failed delete retryable and acknowledges only the successful request', async () => {
+    const { store, panel, target, kept, replacement } = setup()
+    let deletes = 0
+    vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input) === `/_api/agents/sessions/${target.id}` && init?.method === 'DELETE')
+        return ++deletes === 1 ? Response.json({ message: 'Request rejected' }, { status: 503 }) : new Response(null, { status: 204 })
+      if (String(input) === '/_api/agents/sessions' && init?.method === 'POST') return Response.json(makeThread(replacement), { status: 201 })
+      if (String(input) === '/_api/agents/sessions') return Response.json({ sessions: deletes === 1 ? [target, kept] : [kept], nextCursor: null })
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${input}`)
+    })
+    panel.beginDeleteSession(target, null)
+    await panel.deleteSession()
+
+    expect(panel.deletingSession.value).toBe(target)
+    expect(panel.deleting.value).toBe(false)
+    expect(panel.dialogError.value.length).toBeGreaterThan(0)
+    expect(store.thread?.session.id).toBe(target.id)
+    expect(store.drafts[target.id]?.text).toBe('Retire this draft')
+    expect(deletes).toBe(1)
+
+    await panel.deleteSession()
+
+    expect(panel.deletingSession.value).toBeNull()
+    expect(store.thread?.session.id).toBe(replacement.id)
+    expect(deletes).toBe(2)
+  })
+
+  it.each(['owner', 'auth-generation', 'workspace', 'active-context', 'unmount', 'newer-dialog'] as const)(
+    'does not acknowledge into unrelated state after a pending %s change',
+    async boundary => {
+      const { store, panel, target, kept, replacement, unmount } = setup()
+      const { promise: pendingDelete, resolve: resolveDelete } = Promise.withResolvers<Response>()
+      const fetcher = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+        if (String(input) === `/_api/agents/sessions/${target.id}` && init?.method === 'DELETE') return pendingDelete
+        if (String(input) === '/_api/agents/sessions' && init?.method === 'POST') return Response.json(makeThread(replacement), { status: 201 })
+        if (String(input) === '/_api/agents/sessions') return Response.json({ sessions: [kept], nextCursor: null })
+        throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${input}`)
+      })
+      panel.beginDeleteSession(target, null)
+      const removing = panel.deleteSession()
+      if (boundary === 'owner') store.workspaceOwnerId = 2
+      if (boundary === 'auth-generation') store.ownerGeneration += 1
+      if (boundary === 'workspace') store.workspaceVersion += 1
+      if (boundary === 'active-context') {
+        store.beginSessionTransition()
+        store.thread = makeThread(kept)
+      }
+      if (boundary === 'unmount') unmount()
+      if (boundary === 'newer-dialog') panel.deletingSession.value = kept
+      if (boundary === 'owner' || boundary === 'auth-generation' || boundary === 'workspace') store.thread = makeThread(kept)
+      if (boundary !== 'unmount' && boundary !== 'newer-dialog') {
+        store.setDraft(target.id, 'New-context draft')
+        panel.deletingSession.value = kept
+      }
+      await nextTick()
+      resolveDelete(new Response(null, { status: 204 }))
+      await removing
+      await nextTick()
+
+      expect(panel.deletingSession.value).toBe(boundary === 'unmount' ? target : kept)
+      expect(panel.dialogError.value).toBe('')
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1)
+      if (boundary !== 'unmount' && boundary !== 'newer-dialog') {
+        expect(store.thread?.session.id).toBe(kept.id)
+        expect(store.drafts[target.id]?.text).toBe('New-context draft')
+        expect(store.sessions.map(session => session.id)).toEqual([target.id, kept.id])
+        expect(fetcher.mock.calls).toHaveLength(1)
+      }
+    }
+  )
+})
 
 describe('Agent history session selection', () => {
   afterEach(() => {
@@ -962,7 +1167,7 @@ describe('Agent history session selection', () => {
     panel.beginDeleteSession(session, null)
     await panel.deleteSession()
 
-    expect(removeSession).toHaveBeenCalledWith(session.id)
+    expect(removeSession).toHaveBeenCalledTimes(1)
     expect(panel.deletingSession.value).toBe(session)
     expect(panel.dialogError.value).toMatch(/could not|failed|unable/i)
     expect(panel.displaySessions.value).toEqual([session])

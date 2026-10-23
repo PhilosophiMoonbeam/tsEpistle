@@ -6,7 +6,7 @@ const { JSDOM } = jsdom
 interface WikiContext { logger: { info(message: string): void, error(message: string): void } }
 const wiki = WIKI as unknown as WikiContext
 
-export default async function sanitizeSvg (svgPath: string): Promise<void> {
+export default async function sanitizeSvg ({ path: svgPath }: { path: string }): Promise<void> {
   wiki.logger.info('Sanitizing SVG file upload...')
   try {
     const svgContents = await fs.readFile(svgPath, 'utf8')

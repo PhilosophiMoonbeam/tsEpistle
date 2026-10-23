@@ -4,6 +4,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
+import { JSDOM } from 'jsdom'
 import type AssetModel from '../../models/assets.ts'
 import type * as AssetBranding from '../../helpers/asset-branding.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
@@ -163,7 +164,7 @@ describe('asset aggregate persistence', () => {
     wikiGlobal.WIKI = {
       ROOTPATH: tempRoot,
       config: { dataPath: 'data', lang: { code: 'en', namespacing: false }, uploads: { maxFileSize: 5 * 1024 * 1024, scanSVG: false, forceDownload: false } },
-      logger: { warn: vi.fn(), error: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       scheduler: { registerJob: vi.fn() },
       auth: {
         checkAccess: vi.fn().mockReturnValue(true),
@@ -208,6 +209,75 @@ describe('asset aggregate persistence', () => {
     expect(blobs[0].id).toBe(assets[0].id)
     expect(['first', 'second']).toContain(Buffer.from(blobs[0].data).toString())
   })
+
+  it('uploads safe and hostile SVGs through the real scheduler worker and serves only sanitized canonical bytes', async () => {
+    const coreDirectory = path.join(tempRoot, 'server', 'core')
+    await mkdir(coreDirectory, { recursive: true })
+    await mkdir(path.join(tempRoot, 'server', 'app'), { recursive: true })
+    await writeFile(path.join(tempRoot, 'config.yml'), '{}')
+    await writeFile(path.join(tempRoot, 'server', 'app', 'data.yml'), JSON.stringify({
+      defaults: { config: { db: { pass: '' }, flags: { ldapdebug: false, sqllog: false }, port: 8080 } }
+    }))
+    await writeFile(path.join(tempRoot, 'server', '.build-metadata.json'), JSON.stringify({
+      revision: 'a'.repeat(40), date: '2026-10-23T00:00:00Z'
+    }))
+    // Only the entrypoint is local: parsing, dynamic dispatch and sanitization use production modules.
+    // Defer importing the worker until its child-only configuration is installed.
+    await writeFile(path.join(coreDirectory, 'worker.ts'), `
+      process.env.CONFIG_FILE = ${JSON.stringify(path.join(tempRoot, 'config.yml'))}
+      delete process.env.dockerdev
+      delete process.env.DB_PASS_FILE
+      await import(${JSON.stringify(new URL('../../core/worker.ts', import.meta.url).href)})
+    `)
+    const wiki = wikiGlobal.WIKI as { config: { uploads: { scanSVG: boolean } }; scheduler: unknown }
+    wiki.config.uploads.scanSVG = true
+    const scheduler = (await vi.importFresh('../../core/scheduler.ts', import.meta.url)).default
+    wiki.scheduler = scheduler
+    const safe = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M1 1h20v20H1z"/></svg>'
+    const hostile = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" onload="alert(1)"><script>alert(2)</script><foreignObject><iframe src="https://example.invalid/"/></foreignObject><a href="javascript:alert(3)"><path onclick="alert(4)" fill="currentColor" d="M1 1h20v20H1z"/></a></svg>'
+    try {
+      for (const [filename, contents] of [['safe.svg', safe], ['hostile.svg', hostile]] as const) {
+        const source = path.join(tempRoot, filename)
+        await writeFile(source, contents)
+        await Asset.upload({
+          originalname: filename,
+          assetPath: filename,
+          mimetype: 'image/svg+xml',
+          size: Buffer.byteLength(contents),
+          folderId: null,
+          path: source,
+          mode: 'import',
+          user: { id: 7, name: 'Test User', email: 'test@example.com' },
+          skipStorage: true
+        })
+        await rm(path.join(tempRoot, 'data', 'cache', `${createHash('sha1').update(filename).digest('hex')}.dat`))
+        const response = responseForAsset()
+        await Asset.getAsset(filename, asResponse(response))
+        expect(response.statusCode).toBe(200)
+        const served = Buffer.from(response.body as Uint8Array).toString()
+        const dom = new JSDOM(served, { contentType: 'image/svg+xml' })
+        try {
+          expect(dom.window.document.documentElement.localName).toBe('svg')
+          if (filename === 'safe.svg') {
+            const shape = dom.window.document.querySelector('path')
+            expect(shape?.getAttribute('fill')).toBe('currentColor')
+            expect(shape?.getAttribute('d')).toBe('M1 1h20v20H1z')
+          }
+          expect(dom.window.document.querySelector('script, foreignObject, iframe, [onload], [onclick]')).toBeNull()
+          expect(served).not.toContain('javascript:')
+        } finally {
+          dom.window.close()
+        }
+        const row = await db('assets').where({ filename }).first('id', 'hash', 'fileSize')
+        expect(Buffer.from((await db('assetData').where({ id: row.id }).first('data')).data).toString()).toBe(served)
+        expect(row.fileSize).toBe(Buffer.byteLength(served))
+        expect(await readFile(source, 'utf8')).toBe(contents)
+      }
+      expect(wiki.config.uploads.scanSVG).toBe(true)
+    } finally {
+      await scheduler.stop()
+    }
+  }, 20_000)
 
   it('preserves branded asset bytes and metadata when replacement analysis is busy', async () => {
     await upload(path.join(tempRoot, 'initial-upload'), 'old bytes', { skipStorage: true })

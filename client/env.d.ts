@@ -44,7 +44,8 @@ export type SiteConfig = {
   agentSkillsEnabled: boolean
   agentGoalsEnabled: boolean
   agentCsrfToken: string
-  offlineDraftSiteId?: string
+  /** null in the bundled offline shell: no server-verified installation identity. */
+  offlineDraftSiteId?: string | null
   path?: string
   devMode?: boolean
 }

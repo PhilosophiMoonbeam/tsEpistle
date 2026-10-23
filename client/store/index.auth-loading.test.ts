@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
+import { invalidateOfflineSession } from '../helpers/offline-session.ts'
 import type * as WikiStoreModule from './index.ts'
 
 type StorageStub = {
@@ -663,6 +664,100 @@ describe('root authentication and loading ownership', () => {
     expect(store.notification).toMatchObject({ isActive: true, style: 'red', icon: 'alert' })
   })
 
+  it.each([
+    { offlineShell: false, unavailableProbe: true },
+    { offlineShell: true, unavailableProbe: true },
+    { offlineShell: true, unavailableProbe: false }
+  ])('retains a cold vault without a verified identity transition: %j', async ({ offlineShell, unavailableProbe }) => {
+    const storage = {
+      currentSessionGeneration: vi.fn(async () => 4),
+      getReadingVault: vi.fn(async () => ({
+        context: {
+          canonicalOrigin: 'https://wiki.example.test',
+          siteId: 'site-fixture',
+          accountId: 42,
+          authVersion: 1
+        }
+      })),
+      bumpSessionGeneration: vi.fn(async () => 5),
+      close: vi.fn()
+    }
+    vi.mockModule('../helpers/offline-storage.ts', import.meta.url, () => ({
+      openOfflineStorage: vi.fn(async () => storage)
+    }))
+    let online = !unavailableProbe
+    installWindow(vi.fn(async () => {
+      if (!online) throw new TypeError('network unavailable')
+      return new Response(JSON.stringify({ authenticated: true, user: { id: 42, authVersion: 1 } }), {
+        headers: { 'content-type': 'application/json' }
+      })
+    }))
+    window.siteConfig.offlineDraftSiteId = offlineShell ? null : 'site-fixture'
+    const { useWikiStore, pinia } = await vi.importFresh<typeof WikiStoreModule>('./index.ts', import.meta.url)
+    const store = useWikiStore(pinia)
+    const epoch = store.offlineIdentityEpoch
+    if (unavailableProbe) {
+      await expect(store.refreshAuth()).resolves.toBe('unavailable')
+      expect(store.user.authenticated).toBe(false)
+      expect(store.offlineIdentityReady).toBe(false)
+      expect(storage.getReadingVault).not.toHaveBeenCalled()
+      online = true
+    }
+    await expect(store.refreshAuth()).resolves.toBe('authenticated')
+    expect(storage.getReadingVault).toHaveBeenCalledOnce()
+    expect(storage.bumpSessionGeneration).not.toHaveBeenCalled()
+    expect(store.offlineIdentityEpoch).toBe(epoch)
+    expect(store.user.id).toBe(42)
+  })
+
+  it('does not retire a vault from a stale asynchronous bootstrap inspection', async () => {
+    const inspectionStarted = Promise.withResolvers<void>()
+    const inspection = Promise.withResolvers<unknown>()
+    const storage = {
+      currentSessionGeneration: vi.fn(async () => 4),
+      getReadingVault: vi.fn(() => {
+        inspectionStarted.resolve()
+        return inspection.promise
+      }),
+      bumpSessionGeneration: vi.fn(async () => 5),
+      close: vi.fn()
+    }
+    vi.mockModule('../helpers/offline-storage.ts', import.meta.url, () => ({
+      openOfflineStorage: vi.fn(async () => storage)
+    }))
+    installWindow(vi.fn(async () => new Response(
+      JSON.stringify({ authenticated: true, user: { id: 42, authVersion: 1 } }),
+      { headers: { 'content-type': 'application/json' } }
+    )))
+    const { useWikiStore, pinia } = await vi.importFresh<typeof WikiStoreModule>('./index.ts', import.meta.url)
+    const store = useWikiStore(pinia)
+    const refresh = store.refreshAuth()
+    await inspectionStarted.promise
+    const initialEpoch = store.offlineIdentityEpoch
+    const remote = new BroadcastChannel('tsepistle-offline-session')
+    try {
+      remote.postMessage('invalidate')
+      await vi.waitFor(() => {
+        expect(store.offlineIdentityEpoch).toBe(initialEpoch + 1)
+        expect(store.offlineIdentityReady).toBe(false)
+      })
+      inspection.resolve({
+        context: {
+          canonicalOrigin: 'https://wiki.example.test',
+          siteId: 'obsolete-site',
+          accountId: 42,
+          authVersion: 1
+        }
+      })
+      await expect(refresh).resolves.toBe('unavailable')
+      expect(storage.bumpSessionGeneration).not.toHaveBeenCalled()
+      expect(store.user.authenticated).toBe(false)
+      expect(store.offlineIdentityReady).toBe(false)
+    } finally {
+      remote.close()
+    }
+  })
+
   it('keeps a matching vault for a configured installation identity', async () => {
     const storage = {
       currentSessionGeneration: vi.fn(async () => 4),
@@ -704,15 +799,24 @@ describe('root authentication and loading ownership', () => {
     expect(store.offlineIdentityReady).toBe(true)
   })
 
-  it('retires a persisted vault whose site or account authority no longer matches', async () => {
+  it.each([
+    { context: { siteId: 'other-site' }, offlineShell: false },
+    { context: { canonicalOrigin: 'https://other.example.test' }, offlineShell: false },
+    { context: { accountId: 7 }, offlineShell: false },
+    { context: { authVersion: 2 }, offlineShell: false },
+    { context: { canonicalOrigin: 'https://other.example.test' }, offlineShell: true },
+    { context: { accountId: 7 }, offlineShell: true },
+    { context: { authVersion: 2 }, offlineShell: true }
+  ])('retires a verified vault mismatch: %j', async ({ context, offlineShell }) => {
     const storage = {
       currentSessionGeneration: vi.fn(async () => 4),
       getReadingVault: vi.fn(async () => ({
         context: {
           canonicalOrigin: 'https://wiki.example.test',
-          siteId: 'other-site',
+          siteId: 'https://wiki.example.test',
           accountId: 42,
-          authVersion: 1
+          authVersion: 1,
+          ...context
         }
       })),
       bumpSessionGeneration: vi.fn(async () => 5),
@@ -730,6 +834,7 @@ describe('root authentication and loading ownership', () => {
         })
     )
     installWindow(fetch)
+    if (offlineShell) window.siteConfig.offlineDraftSiteId = null
     const { useWikiStore, pinia } = await vi.importFresh<typeof WikiStoreModule>('./index.ts', import.meta.url)
     const store = useWikiStore(pinia)
     store.user.authenticated = true

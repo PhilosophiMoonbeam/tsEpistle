@@ -328,7 +328,7 @@ export default class Asset extends Model {
             const staged = await stageAssetSource(source.file, maxBytes)
             stagedDirectory = staged.directory
             if (wiki.config.uploads.scanSVG && (opts.mimetype.toLowerCase().startsWith('image/svg') || fileInfo.ext.toLowerCase() === '.svg')) {
-              const svgSanitizeJob = await wiki.scheduler.registerJob({ name: 'sanitize-svg', immediate: true, worker: true }, staged.path)
+              const svgSanitizeJob = await wiki.scheduler.registerJob({ name: 'sanitize-svg', immediate: true, worker: true }, { path: staged.path })
               await svgSanitizeJob.finished
             }
 
@@ -340,6 +340,7 @@ export default class Asset extends Model {
                 await stagedFile.close()
               }
             })
+            assetRow.fileSize = fileBuffer.byteLength
             const insertedRow = { ...assetRow, authorId: opts.user.id }
             const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
             let reservation: AssetBrandingAnalysisReservation | undefined
@@ -533,7 +534,7 @@ const wiki = WIKI as unknown as {
     uploads: { maxFileSize: number; scanSVG: boolean; forceDownload: boolean }
   }
   logger: { warn: (error: unknown) => void; error: (error: unknown) => void }
-  scheduler: { registerJob: (definition: { name: string; immediate: boolean; worker: boolean }, path: string) => Promise<{ finished: Promise<unknown> }> }
+  scheduler: { registerJob: (definition: { name: string; immediate: boolean; worker: boolean }, data: { path: string }) => Promise<{ finished: Promise<unknown> }> }
   models: {
     assets: typeof Asset
     assetFolders: typeof AssetFolder

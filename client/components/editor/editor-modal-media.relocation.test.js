@@ -3,6 +3,7 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import * as cheerio from 'cheerio'
 import pug from 'pug'
+import sharp from 'sharp'
 import * as lodash from 'lodash-es'
 import { isSafeEditorImageSource, isValidEditorImageAlt, normalizeEditorImageDimension } from '../../helpers/editor-image-properties'
 import { describe, expect, test, vi } from '../../../server/test/bun-test.mts'
@@ -92,7 +93,11 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
       return receiptFor('pending')
     },
     wikiStore,
-    window: { fetch: async () => undefined },
+    window: {
+      fetch: async () => undefined,
+      setTimeout: browserWindow.setTimeout.bind(browserWindow),
+      clearTimeout: browserWindow.clearTimeout.bind(browserWindow)
+    },
     fetchAssets,
     fetchAssetFolders
   })
@@ -106,6 +111,9 @@ const createHarness = ({ waitForRelocation, fetchAssets, fetchAssetFolders } = {
     currentFileId: 7,
     currentFolderId: 0,
     disposed: false,
+    loadedFolderId: 0,
+    loadedFolderPath: '',
+    folderTree: [],
     isRenameValid: true,
     relocationFolderId: 0,
     renameAssetName: 'new.png',
@@ -238,15 +246,18 @@ describe('editor media relocation admission state', () => {
 describe('editor media upload and thumbnails', () => {
   test('builds encoded thumbnail URLs, file icons and folder-aware insert paths', () => {
     const { context } = createHarness()
-    context.folderTree = [{ id: 3, slug: 'brand kit' }]
-    context.currentFolderId = 3
+    context.loadedFolderPath = 'brand kit'
     expect(context.assetPath({ filename: 'logo mark.png' })).toBe('/brand kit/logo mark.png')
     expect(context.assetUrl({ filename: 'logo mark.png' })).toBe('/brand%20kit/logo%20mark.png')
     expect(context.assetIcon({ kind: 'BINARY', ext: '.PDF' })).toBe('mdi-file-pdf-box')
     expect(context.assetIcon({ kind: 'BINARY', ext: '.bin' })).toBe('mdi-file-outline')
-    context.markThumbnailFailed(5)
-    context.markThumbnailFailed(5)
-    expect(context.failedThumbnailIds).toEqual([5])
+    const asset = { id: 5, filename: 'broken.png' }
+    context.assets = [asset]
+    const image = document.createElement('img')
+    image.setAttribute('src', context.assetUrl(asset))
+    context.markThumbnailFailed(asset, { currentTarget: image })
+    context.markThumbnailFailed(asset, { currentTarget: image })
+    expect(context.failedThumbnailUrls).toEqual({ 5: '/brand%20kit/broken.png' })
   })
 
   test('counts staged files and runs one upload at a time', async () => {
@@ -291,12 +302,12 @@ describe('standalone shared asset workspace', () => {
     if (compiled.errors.length) throw compiled.errors[0]
     return new Function('Vue', compiled.code)(Vue)
   }
-  const mountManager = async purpose => {
+  const mountManager = async (purpose, options = {}) => {
     const rootAsset = { id: 7, filename: 'shared-logo.png', folderId: 0, kind: 'IMAGE', ext: '.png', fileSize: 80, createdAt: '2026-01-01T00:00:00Z', description: '' }
     const folderAsset = { ...rootAsset, id: 8, filename: 'folder-logo.png', folderId: 3 }
     const { component, context } = createHarness({
-      fetchAssets: async (_fetch, folderId) => folderId === 0 ? [rootAsset] : [folderAsset],
-      fetchAssetFolders: async (_fetch, folderId) => folderId === 0 ? [{ id: 3, name: 'logos', slug: 'logos' }] : []
+      fetchAssets: options.fetchAssets ?? (async (_fetch, folderId) => folderId === 0 ? [rootAsset] : [folderAsset]),
+      fetchAssetFolders: options.fetchAssetFolders ?? (async (_fetch, folderId) => folderId === 0 ? [{ id: 3, name: 'logos', slug: 'logos' }] : [])
     })
     context.wikiStore.page.visibility = 'private'
     context.wikiStore.editor.activeModal = 'editorModalMedia'
@@ -306,6 +317,8 @@ describe('standalone shared asset workspace', () => {
       folderTree: [{ id: 91, name: 'editor-folder', slug: 'editor-folder' }]
     }
     const before = structuredClone({ page: Vue.toRaw(context.wikiStore.page), editor: Vue.toRaw(context.wikiStore.editor) })
+    if (options.filePondComponent) component.components.FilePond = options.filePondComponent
+    if (options.filePondServerOpts) component.computed.filePondServerOpts = () => options.filePondServerOpts
     const app = Vue.createApp({ ...component, render: compileComponentRender(componentPath) }, { purpose, embedded: true })
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
     app.component('VCardChin', Vue.defineComponent({
@@ -351,10 +364,179 @@ describe('standalone shared asset workspace', () => {
     }
   })
 
+  test('retains both raster files while the native FilePond queue waits for each upload acknowledgment', async () => {
+    const objectUrlDescriptor = Object.getOwnPropertyDescriptor(browserWindow.URL, 'createObjectURL')
+    const globalDescriptors = ['CustomEvent', 'FileReader', 'File', 'Blob'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)])
+    Object.defineProperty(browserWindow.URL, 'createObjectURL', { configurable: true, value: () => 'blob:asset-upload-fixture' })
+    Object.defineProperty(globalThis, 'CustomEvent', { configurable: true, value: browserWindow.CustomEvent })
+    Object.defineProperty(globalThis, 'FileReader', { configurable: true, value: browserWindow.FileReader })
+    Object.defineProperty(globalThis, 'File', { configurable: true, value: browserWindow.File })
+    Object.defineProperty(globalThis, 'Blob', { configurable: true, value: browserWindow.Blob })
+    // FilePond detects browser support at import time, after this fixture installs its browser APIs.
+    const { default: vueFilePond } = await import('vue-filepond')
+    const started = []
+    const accepted = []
+    const acknowledgments = []
+    let active = 0
+    let maximumActive = 0
+    const { app, root, model } = await mountManager('manage', {
+      filePondComponent: vueFilePond(),
+      fetchAssets: async () => [...accepted],
+      filePondServerOpts: {
+        process: (_fieldName, file, metadata, load, error) => {
+          active++
+          maximumActive = Math.max(maximumActive, active)
+          started.push({ filename: file.name, folderId: metadata.folderId })
+          if (active > 1) {
+            active--
+            error('Asset location is still being reconciled.')
+            return { abort: () => undefined }
+          }
+          acknowledgments.push(() => {
+            active--
+            accepted.push({ id: accepted.length + 1, filename: file.name, folderId: 0, kind: 'IMAGE', ext: file.name.endsWith('.png') ? '.png' : '.jpg', fileSize: file.size, createdAt: '2026-01-01T00:00:00Z' })
+            load('ok')
+          })
+          return { abort: () => undefined }
+        }
+      }
+    })
+    try {
+      const raster = sharp({ create: { width: 2, height: 2, channels: 3, background: '#236fa1' } })
+      const png = await raster.clone().png().toBuffer()
+      const jpeg = await raster.clone().jpeg().toBuffer()
+      const pond = model.$refs.pond
+      await pond.addFiles([
+        new browserWindow.File([png], 'first.png', { type: 'image/png' }),
+        new browserWindow.File([jpeg], 'second.jpg', { type: 'image/jpeg' })
+      ])
+      await Vue.nextTick()
+      await vi.waitFor(() => expect(model.queuedFileCount).toBe(2))
+      root.querySelector('.editor-media-upload-action').click()
+      await vi.waitFor(() => expect(started).toHaveLength(1), { timeout: 5_000 })
+      expect(accepted).toHaveLength(0)
+      expect(model.uploading).toBe(true)
+      acknowledgments.shift()()
+      await vi.waitFor(() => expect(started).toHaveLength(2), { timeout: 5_000 })
+      expect(accepted.map(asset => asset.filename)).toEqual(['first.png'])
+      acknowledgments.shift()()
+      await vi.waitFor(() => expect(model.uploading).toBe(false), { timeout: 5_000 })
+      await vi.waitFor(() => expect(root.textContent).toContain('second.jpg'))
+      expect(maximumActive).toBe(1)
+      expect(started).toEqual([{ filename: 'first.png', folderId: 0 }, { filename: 'second.jpg', folderId: 0 }])
+      expect(model.assets.map(asset => asset.filename)).toEqual(['first.png', 'second.jpg'])
+      expect(root.textContent).toContain('first.png')
+    } finally {
+      app.unmount()
+      root.remove()
+      if (objectUrlDescriptor) Object.defineProperty(browserWindow.URL, 'createObjectURL', objectUrlDescriptor)
+      else Reflect.deleteProperty(browserWindow.URL, 'createObjectURL')
+      for (const [name, descriptor] of globalDescriptors) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+        else Reflect.deleteProperty(globalThis, name)
+      }
+    }
+  }, 15_000)
+
+  test('never renders old rows under a new folder prefix and fences late loads and image errors', async () => {
+    const rootAsset = { id: 7, filename: 'root.png', folderId: 0, kind: 'IMAGE', ext: '.png', fileSize: 80, createdAt: '2026-01-01T00:00:00Z' }
+    let childAsset = { ...rootAsset, id: 8, filename: 'child.png', folderId: 3 }
+    const deferred = Promise.withResolvers()
+    let deferChild = true
+    const { app, root, model } = await mountManager('manage', {
+      fetchAssets: async (_fetch, id) => {
+        if (id === 0) return [{ ...rootAsset }]
+        if (deferChild) return deferred.promise
+        return [{ ...childAsset }]
+      }
+    })
+    try {
+      const originalImage = root.querySelector('.editor-media-thumb img')
+      expect(originalImage.getAttribute('src')).toBe('/root.png')
+      root.querySelector('.editor-media-folder').click()
+      await Vue.nextTick()
+      expect(root.querySelector('.editor-media-thumb img')).toBeNull()
+      originalImage.dispatchEvent(new browserWindow.Event('error'))
+      expect(model.failedThumbnailUrls).toEqual({})
+      root.querySelector('.editor-media-folders .editor-media-icon-button').click()
+      await vi.waitFor(() => expect(root.querySelector('.editor-media-thumb img')?.getAttribute('src')).toBe('/root.png'))
+      deferred.resolve([{ ...childAsset }])
+      await Vue.nextTick()
+      await Vue.nextTick()
+      expect(model.assets[0].filename).toBe('root.png')
+      deferChild = false
+      root.querySelector('.editor-media-folder').click()
+      await vi.waitFor(() => expect(root.querySelector('.editor-media-thumb img')?.getAttribute('src')).toBe('/logos/child.png'))
+      const failedImage = root.querySelector('.editor-media-thumb img')
+      failedImage.dispatchEvent(new browserWindow.Event('error'))
+      await Vue.nextTick()
+      expect(root.querySelector('.editor-media-thumb img')).toBeNull()
+      await model.refresh()
+      await Vue.nextTick()
+      expect(root.querySelector('.editor-media-thumb img')).toBeNull()
+      childAsset = { ...childAsset, filename: 'renamed.png' }
+      await model.refresh()
+      await Vue.nextTick()
+      expect(root.querySelector('.editor-media-thumb img')?.getAttribute('src')).toBe('/logos/renamed.png')
+      failedImage.dispatchEvent(new browserWindow.Event('error'))
+      await Vue.nextTick()
+      expect(root.querySelector('.editor-media-thumb img')?.getAttribute('src')).toBe('/logos/renamed.png')
+    } finally {
+      deferred.resolve([])
+      app.unmount()
+      root.remove()
+    }
+  })
+
+  test('renders current, ancestor, child and root destinations with canonical rename paths and authoritative receipts', async () => {
+    const image = { id: 8, filename: 'copy.png', folderId: 4, kind: 'IMAGE', ext: '.png', fileSize: 80, createdAt: '2026-01-01T00:00:00Z' }
+    const parent = { id: 3, name: 'Brand Assets', slug: 'brand-assets' }
+    const nested = { id: 4, name: 'Logos', slug: 'logos' }
+    const child = { id: 5, name: 'Icons', slug: 'icons' }
+    const { app, root, model } = await mountManager('manage', {
+      fetchAssets: async (_fetch, id) => id === 4 ? [{ ...image }] : [],
+      fetchAssetFolders: async (_fetch, id) => id === 0 ? [parent] : id === 3 ? [nested] : [child]
+    })
+    try {
+      model.downFolder(parent)
+      await vi.waitFor(() => expect(model.loadedFolderId).toBe(3))
+      model.downFolder(nested)
+      await vi.waitFor(() => expect(root.textContent).toContain('copy.png'))
+      model.openRenameDialog(8)
+      model.renameAssetName = 'renamed.png'
+      await Vue.nextTick()
+      expect(model.relocationFolderItems).toEqual([
+        { title: '/', value: 0, path: '' },
+        { title: '/Brand Assets', value: 3, path: 'brand-assets' },
+        { title: '/Brand Assets/Logos', value: 4, path: 'brand-assets/logos' },
+        { title: '/Brand Assets/Logos/Icons', value: 5, path: 'brand-assets/logos/icons' }
+      ])
+      await vi.waitFor(() => expect(document.body.textContent).toContain('brand-assets/logos/copy.png → brand-assets/logos/renamed.png'))
+      const dialog = document.querySelector('[aria-labelledby="editor-media-rename-title"]')
+      expect(dialog.textContent).toContain('/Brand Assets/Logos')
+      model.relocationFolderId = 3
+      await Vue.nextTick()
+      expect(dialog.textContent).toContain('brand-assets/logos/copy.png → brand-assets/renamed.png')
+      model.relocationFolderId = 5
+      await Vue.nextTick()
+      expect(dialog.textContent).toContain('brand-assets/logos/icons/renamed.png')
+      model.relocationFolderId = 0
+      await Vue.nextTick()
+      expect(dialog.textContent).toContain('brand-assets/logos/copy.png → renamed.png')
+      model.relocationReceipt = receiptFor('succeeded')
+      await Vue.nextTick()
+      expect(dialog.textContent).toContain('old.png → new.png')
+    } finally {
+      app.unmount()
+      root.remove()
+    }
+  })
+
   test('keeps private-page editor uploads prohibited and preserves insertion controls', async () => {
     const { app, root, model } = await mountManager('insert')
     try {
       expect(root.querySelector('.editor-media-upload-header')).toBeNull()
+      expect(root.querySelectorAll('input[type="file"]')).toHaveLength(0)
       expect(root.querySelector('.editor-media-actions')).not.toBeNull()
       await expect(model.upload()).rejects.toThrow(translateEnglish('editor:editorModalMedia.assetsSiteWideCannot'))
       model.selectAsset(8)

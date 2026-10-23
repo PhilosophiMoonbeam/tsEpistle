@@ -50,7 +50,7 @@
             .editor-media-folders(v-if='folders.length > 0 || currentFolderId > 0')
               v-btn.editor-media-icon-button(variant="outlined", icon, :aria-label='$t(`editor:editorModalMedia.openParentFolder`)', @click='upFolder()', :disabled='currentFolderId === 0')
                 v-icon mdi-folder-upload
-              v-btn.editor-media-folder(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
+              v-btn.editor-media-folder(v-for='folder of displayedFolders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
                 v-icon(start) mdi-folder
                 span.text-body-small {{ folder.name }}
             v-alert.editor-media-branding-notice.mb-3(v-if='isBranding', type='info', variant='tonal', density='compact')
@@ -73,7 +73,7 @@
             )
               template(v-slot:item='props')
                 tr.is-clickable(
-                  :key='props.item.id'
+                  :key='`${props.item.id}:${assetUrl(props.item)}`'
                   :class='{ "is-stale": !isAssetActionable(props.item.id) }'
                   :tabindex='isAssetActionable(props.item.id) ? 0 : -1'
                   :aria-current='currentFileId === props.item.id ? `true` : undefined'
@@ -85,14 +85,14 @@
                   td.editor-media-thumb-cell
                     .editor-media-thumb(aria-hidden='true')
                       img(
-                        v-if='props.item.kind === `IMAGE` && !failedThumbnailIds.includes(props.item.id)'
+                        v-if='props.item.kind === `IMAGE` && failedThumbnailUrls[props.item.id] !== assetUrl(props.item)'
                         :src='assetUrl(props.item)'
                         alt=''
                         width='40'
                         height='40'
                         loading='lazy'
                         decoding='async'
-                        @error='markThumbnailFailed(props.item.id)'
+                        @error='markThumbnailFailed(props.item, $event)'
                       )
                       v-icon(v-else, size='22') {{ assetIcon(props.item) }}
                   td.editor-media-filename
@@ -187,6 +187,7 @@
               v-btn.editor-media-browse.radius-7(variant="tonal", color='primary', :aria-label='$t(`editor:editorModalMedia.browseFiles`)', @click='browse')
                 v-icon(start) mdi-plus-box-multiple
                 span {{$t('common:actions.browse')}}
+            //- A completed /u response releases the canonical asset namespace fence before the next file.
             file-pond.mt-3(
               name='mediaUpload'
               ref='pond'
@@ -194,6 +195,7 @@
               allow-multiple
               :files='files'
               :max-files='10'
+              :max-parallel-uploads='1'
               :server='filePondServerOpts'
               :instant-upload='false'
               :allow-revert='false'
@@ -674,6 +676,8 @@ export default defineComponent({
       folders: markRaw([] as AssetFolder[]),
       files: [] as FilePondFile[],
       assets: markRaw([] as Asset[]),
+      loadedFolderId: null as number | null,
+      loadedFolderPath: '',
       managedMedia: {
         folderTree: [] as AssetFolder[],
         currentFolderId: 0,
@@ -721,7 +725,7 @@ export default defineComponent({
       resizeAnimationPolicies: RESIZE_ANIMATION_POLICIES.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.animationPolicy_${item.value}`) })),
       mediaLoadError: '',
       staleAssetIds: [] as number[],
-      failedThumbnailIds: [] as number[],
+      failedThumbnailUrls: {} as Record<number, string>,
       queuedFileCount: 0,
       uploading: false,
       brandingView: null as PageBrandingView | null,
@@ -787,7 +791,11 @@ export default defineComponent({
     isManaging(): boolean {
       return this.purpose === 'manage'
     },
+    displayedFolders(): AssetFolder[] {
+      return this.loadedFolderId === this.currentFolderId ? this.folders : []
+    },
     displayedAssets(): Asset[] {
+      if (this.loadedFolderId !== this.currentFolderId) return []
       return this.isBranding ? this.assets.filter(isPageBrandingAsset) : this.assets
     },
     canConfirmSelection(): boolean {
@@ -858,40 +866,33 @@ export default defineComponent({
       const currentFolderId = current?.folderId ?? this.currentFolderId
       return Boolean(current && name && name.length <= 255 && !/[\/\\]/.test(name) && (name !== current.filename || this.relocationFolderId !== currentFolderId))
     },
-    relocationFolderItems(): Array<{ title: string; value: number }> {
-      const items = [{ title: '/', value: 0 }]
+    relocationFolderItems(): Array<{ title: string; value: number; path: string }> {
+      return this.resizeFolderItems
+    },
+    resizeFolderItems(): Array<{ title: string; value: number; path: string }> {
+      const items = [{ title: '/', value: 0, path: '' }]
+      let title = ''
       let path = ''
       for (const folder of this.folderTree) {
-        path = path ? `${path}/${folder.name}` : folder.name
-        if (folder.id !== this.currentFolderId) items.push({ title: `/${path}`, value: folder.id })
+        title = title ? `${title}/${folder.name}` : folder.name
+        path = path ? `${path}/${folder.slug}` : folder.slug
+        items.push({ title: `/${title}`, value: folder.id, path })
       }
-      const currentPath = this.folderTree.map(folder => folder.name).join('/')
-      for (const folder of this.folders) {
-        if (folder.id === this.currentFolderId) continue
-        items.push({ title: currentPath ? `/${currentPath}/${folder.name}` : `/${folder.name}`, value: folder.id })
-      }
-      return items.filter((item, index, all) => all.findIndex(candidate => candidate.value === item.value) === index)
-    },
-    resizeFolderItems(): Array<{ title: string; value: number }> {
-      const items = [{ title: '/', value: 0 }]
-      let path = ''
-      for (const folder of this.folderTree as AssetFolder[]) {
-        path = path ? `${path}/${folder.name}` : folder.name
-        items.push({ title: `/${path}`, value: folder.id })
-      }
-      const currentPath = (this.folderTree as AssetFolder[]).map(folder => folder.name).join('/')
-      for (const folder of this.folders as AssetFolder[]) {
-        items.push({ title: currentPath ? `/${currentPath}/${folder.name}` : `/${folder.name}`, value: folder.id })
+      for (const folder of this.displayedFolders) {
+        items.push({
+          title: title ? `/${title}/${folder.name}` : `/${folder.name}`,
+          value: folder.id,
+          path: path ? `${path}/${folder.slug}` : folder.slug
+        })
       }
       return items.filter((item, index, all) => all.findIndex(candidate => candidate.value === item.value) === index)
     },
     relocationSourcePath(): string {
-      const folderPath = this.folderTree.map(folder => folder.name).join('/')
-      return folderPath ? `${folderPath}/${this.currentAsset?.filename ?? ''}` : this.currentAsset?.filename ?? ''
+      return this.currentAsset ? this.assetPath(this.currentAsset).replace(/^\//, '') : ''
     },
     relocationDestinationPath(): string {
       const folder = this.relocationFolderItems.find(item => item.value === this.relocationFolderId)
-      const folderPath = folder?.title.replace(/^\/|\/$/g, '') ?? ''
+      const folderPath = folder?.path ?? ''
       return folderPath ? `${folderPath}/${this.renameAssetName.trim()}` : this.renameAssetName.trim()
     },
     relocationStatusType(): 'info' | 'success' | 'warning' | 'error' {
@@ -1141,7 +1142,7 @@ export default defineComponent({
       }
     },
     isAssetActionable (id: number | null): boolean {
-      return id !== null && !this.staleAssetIds.includes(id)
+      return id !== null && this.loadedFolderId === this.currentFolderId && !this.staleAssetIds.includes(id)
     },
     assetAriaLabel (asset: Asset): string {
       if (!this.isAssetActionable(asset.id)) return this.$t('editor:editorModalMedia.unavailableUntilAssetsReload', { filename: asset.filename, interpolation: { escapeValue: false } })
@@ -1203,8 +1204,7 @@ export default defineComponent({
       }
     },
     assetPath (asset: Asset): string {
-      const folderPath = (this.folderTree as AssetFolder[]).map((f: AssetFolder) => f.slug).join('/')
-      return this.currentFolderId > 0 ? `/${folderPath}/${asset.filename}` : `/${asset.filename}`
+      return this.loadedFolderPath ? `/${this.loadedFolderPath}/${asset.filename}` : `/${asset.filename}`
     },
     assetUrl (asset: Asset): string {
       return encodeURI(this.assetPath(asset))
@@ -1218,8 +1218,11 @@ export default defineComponent({
       if (['.zip', '.gz', '.tar', '.7z', '.rar'].includes(ext)) return 'mdi-folder-zip-outline'
       return 'mdi-file-outline'
     },
-    markThumbnailFailed (assetId: number) {
-      if (!this.failedThumbnailIds.includes(assetId)) this.failedThumbnailIds.push(assetId)
+    markThumbnailFailed (asset: Asset, event: Event) {
+      if (this.disposed || this.loadedFolderId !== this.currentFolderId || !this.assets.includes(asset)) return
+      const url = this.assetUrl(asset)
+      if (!(event.currentTarget instanceof HTMLImageElement) || event.currentTarget.getAttribute('src') !== url) return
+      if (this.failedThumbnailUrls[asset.id] !== url) this.failedThumbnailUrls[asset.id] = url
     },
     syncQueuedFiles (files: unknown) {
       this.queuedFileCount = Array.isArray(files) ? files.length : 0
@@ -1582,6 +1585,8 @@ export default defineComponent({
     },
     async loadMedia (): Promise<boolean> {
       const request = ++this.mediaRequest
+      const folderId = this.currentFolderId
+      const folderPath = this.folderTree.map(folder => folder.slug).join('/')
       this.mediaAbortController?.abort()
       const abortController = markRaw(new AbortController())
       this.mediaAbortController = abortController
@@ -1593,7 +1598,7 @@ export default defineComponent({
         wikiStore.startLoading('editor-media-folders-list-refresh')
       }
       try {
-        const folderId = this.currentFolderId
+        // Rows and their paths are published together only for this navigation snapshot.
         const fetchWithSignal = (url: string, init?: RequestInit) => window.fetch(url, {
           ...init,
           signal: abortController.signal
@@ -1605,8 +1610,11 @@ export default defineComponent({
           fetchAssetFolders(fetchWithSignal, folderId),
           assetsPromise
         ])
-        if (this.disposed || request !== this.mediaRequest || folderId !== this.currentFolderId) return false
+        if (this.disposed || request !== this.mediaRequest || folderId !== this.currentFolderId ||
+          folderPath !== this.folderTree.map(folder => folder.slug).join('/')) return false
         const visibleAssets = this.isBranding ? assets.filter(isPageBrandingAsset) : assets
+        this.loadedFolderId = folderId
+        this.loadedFolderPath = folderPath
         this.folders = markRaw(folders)
         this.assets = markRaw(visibleAssets)
         this.staleAssetIds = []
@@ -1615,7 +1623,7 @@ export default defineComponent({
         }
         return true
       } catch (err) {
-        if (this.disposed || request !== this.mediaRequest) return false
+        if (this.disposed || request !== this.mediaRequest || folderId !== this.currentFolderId || isAbortError(err)) return false
         this.mediaLoadError = this.$t('editor:editorModalMedia.unableLoadAssetsTry')
         wikiStore.showError(err)
         return false

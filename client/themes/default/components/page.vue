@@ -790,9 +790,9 @@
               v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', :disabled='approvalLoading || !approvalActionReady', @click='transitionPageApproval(`cancel`)') {{$t('common:page.cancelRequest')}}
             v-spacer
             v-btn(@click='approvalDialog = false') {{$t('common:actions.close')}}
-    v-dialog(v-model='offlineUnlockOpen', max-width='480', :persistent='offlineUnlockBusy')
+    v-dialog(v-model='offlineUnlockOpen', max-width='480', :persistent='offlineUnlockBusy', aria-labelledby='page-private-offline-unlock-title')
       v-card
-        v-card-title {{ $t(`common:page.unlockPrivateOfflinePages`) }}
+        v-card-title(id='page-private-offline-unlock-title') {{ $t(`common:page.unlockPrivateOfflinePages`) }}
         v-card-text
           p {{ $t(`common:page.enterSecretSavedWhen`) }}
           v-text-field(
