@@ -1830,6 +1830,15 @@ export default defineComponent({
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+  // Scroll outside the painted card so the scrollbar gutter cannot detach
+  // its header from the right border. Keep both outer margins balanced.
+  &:not(.search-results--ask) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--wiki-space-3);
+    scrollbar-gutter: stable both-edges;
+  }
+
 
   &--ask {
     animation: none;
@@ -1895,15 +1904,9 @@ export default defineComponent({
     display: flex;
     flex-direction: column;
     margin-inline: auto;
-    max-height: calc(100dvh - var(--search-overlay-top-offset) - max(var(--wiki-space-4), env(safe-area-inset-bottom, 0px)));
     min-height: 0;
-    // One scroller keeps filters from consuming the results' entire height at
-    // enlarged text sizes or on short viewports.
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scroll-padding-block: var(--wiki-space-3);
-    scrollbar-gutter: stable;
+    // The overlay owns the single scroller, including filters at large text sizes.
+    overflow: clip;
     border: 1px solid var(--wiki-surface-border-strong);
     border-radius: var(--wiki-hero-radius);
     background: var(--wiki-surface-raised);
