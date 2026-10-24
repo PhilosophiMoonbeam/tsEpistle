@@ -63,6 +63,11 @@ jobs:
     - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
       with:
         bun-version: ${{ env.BUN_VERSION }}
+    # The pinned upstream Playwright CLI retains its declared Node runtime.
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version: 24.15.0
+        package-manager-cache: false
     - name: Install Media Test Tools
       run: |
         sudo apt-get update
@@ -71,6 +76,8 @@ jobs:
         ffprobe -version
     - name: Install Dependencies
       run: bun install --frozen-lockfile
+    - name: Install Matching Offline Browser
+      run: node "$(bun --no-env-file -p "require.resolve('@playwright/test/cli')")" install --with-deps --only-shell chromium
     - name: Detect Helm Chart Changes
       id: chart-changes
       run: echo "changed=${{ needs.changes.outputs.chart_changed }}" >> "$GITHUB_OUTPUT"

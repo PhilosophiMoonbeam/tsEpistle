@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import * as fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -133,7 +134,13 @@ async function inside(runDir: string, namespace: string, revision: string): Prom
   }
   try {
     await gate('dependencies', ['bun', 'install', '--frozen-lockfile'], 4)
-    await gate('quality', ['bun', 'run', 'ci'], 8)
+    const offlineBrowserCache = `PLAYWRIGHT_BROWSERS_PATH=${path.join(runDir, 'offline-browser')}`
+    await gate(
+      'offline-browser',
+      ['env', offlineBrowserCache, 'node', createRequire(import.meta.url).resolve('@playwright/test/cli'), 'install', '--only-shell', 'chromium'],
+      1
+    )
+    await gate('quality', ['env', offlineBrowserCache, 'bun', 'run', 'ci'], 8)
     const tag = `local/tsepistle:ci-${revision.slice(0, 12)}-${namespace.split('-').at(-1)}`
     await gate('image', ['bun', 'run', 'docker:build', tag], 1, 8, true)
     const image = JSON.parse(capture(['docker', 'image', 'inspect', tag]))[0]

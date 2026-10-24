@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { fileURLToPath } from 'node:url'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { chromium, type Browser, type Page } from 'playwright-core'
+import { chromium, type Browser, type Page } from '@playwright/test'
 import type { OfflinePagePolicyRecord, OfflinePrivateEnvelopeV1, OfflineSnapshotRecord } from '../../shared/offline.ts'
 import { createOfflineSyncUnavailableResult, type OfflineSyncPassResult } from '../helpers/offline-sync.ts'
 
@@ -11,7 +11,6 @@ import { createOfflineSyncUnavailableResult, type OfflineSyncPassResult } from '
 
 const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', import.meta.url))
 const syncPath = fileURLToPath(new URL('../helpers/offline-sync.ts', import.meta.url))
-const executablePath = process.env.CHROME_BIN ?? '/usr/bin/google-chrome'
 const siteId = 'https://offline-sync.example.test'
 const currentTime = '2026-09-16T00:00:00.000Z'
 const oldTime = '2026-07-01T00:00:00.000Z'
@@ -813,7 +812,7 @@ beforeAll(async () => {
   })
   driverURL = `${testServer.url}adapter.js`
   // The launcher must not outlive the existing five-second aggregate hook.
-  browserLaunch = chromium.launch({ headless: true, executablePath, chromiumSandbox: false, timeout: Math.max(1, deadline - performance.now()) })
+  browserLaunch = chromium.launch({ headless: true, chromiumSandbox: false, timeout: Math.max(1, deadline - performance.now()) })
   browser = await browserLaunch
   page = await browser.newPage()
   await page.goto(`${testServer.url}blank`, { waitUntil: 'load', timeout: Math.max(1, deadline - performance.now()) })

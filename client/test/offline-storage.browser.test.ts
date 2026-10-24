@@ -2,13 +2,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { fileURLToPath } from 'node:url'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { chromium, type Browser, type Page } from 'playwright-core'
+import { chromium, type Browser, type Page } from '@playwright/test'
 import { OFFLINE_KEY_VERSION, type OfflineDraftEnvelopeV1, type OfflinePageSnapshotV1 } from '../../shared/offline.ts'
 
 const storagePath = fileURLToPath(new URL('../helpers/offline-storage.ts', import.meta.url))
 const sessionPath = fileURLToPath(new URL('../helpers/offline-session.ts', import.meta.url))
 const cryptoPath = fileURLToPath(new URL('../helpers/offline-crypto.ts', import.meta.url))
-const executablePath = process.env.CHROME_BIN ?? '/usr/bin/google-chrome'
 const capturedAt = '2026-09-01T00:00:00.000Z'
 const privateKeyId = 'A'.repeat(22)
 
@@ -921,7 +920,7 @@ beforeAll(async () => {
   })
   driverURL = `${testServer.url}adapter.js`
   // The launcher must not outlive the existing five-second aggregate hook.
-  browserLaunch = chromium.launch({ headless: true, executablePath, chromiumSandbox: false, timeout: Math.max(1, deadline - performance.now()) })
+  browserLaunch = chromium.launch({ headless: true, chromiumSandbox: false, timeout: Math.max(1, deadline - performance.now()) })
   browser = await browserLaunch
   page = await browser.newPage()
   await page.goto(`${testServer.url}blank`, { waitUntil: 'load', timeout: Math.max(1, deadline - performance.now()) })
