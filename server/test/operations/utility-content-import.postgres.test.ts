@@ -188,7 +188,7 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
         syncInterval: 'P0D',
         config: JSON.stringify({
           authType: 'ssh',
-          repoUrl: 'https://old.example.test/repo.git',
+          repoUrl: 'git@old.example.test:repo.git',
           branch: 'main',
           sshPrivateKeyMode: 'contents',
           sshPrivateKeyPath: '',
@@ -253,7 +253,7 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
     const before = await db('storage').where('key', 'git').first()
     const importDisk = () =>
       runUtilityContentImport(requester, { mode: 'disk', path: '/approved-source' }, 'Import the approved content source', async () => undefined)
-    await expect(importDisk()).resolves.toMatchObject({ outcome: 'succeeded', counts: { total: 1, succeeded: 1, failed: 0 } })
+    expect(await importDisk()).toMatchObject({ outcome: 'succeeded', counts: { total: 1, succeeded: 1, failed: 0 } })
     expect(await db('storage').where('key', 'git').first()).toEqual(before)
     await expectPublishedDisk()
     const afterFirst = await db('settings').where('key', 'storageAdministration').first()
@@ -283,6 +283,8 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
     const input = await contentRequest()
     await utilities.start(requester, input)
     await expect(terminalReceipt(input.id)).resolves.toMatchObject({ state: 'uncertain', phase: 'interrupted' })
+    // Prove the intended interference was reached, not an earlier validation failure.
+    expect(await db('settings').where('key', 'unrelatedUtilitiesSetting').first()).toMatchObject({ value: { changed: true } })
     expect(executeAction).not.toHaveBeenCalled()
   })
 })
