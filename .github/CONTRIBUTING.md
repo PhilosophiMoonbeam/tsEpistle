@@ -49,6 +49,8 @@ GraphQL Tools utility security upgrades must retain compatible execution-variabl
 
 Keep dedicated agent release dependency contracts aligned with an intentional SDK upgrade after exercising the engine consumers; preserve exact versions and runtime/test-only placement checks.
 
+Keep dependency-audit repairs limited to the affected package families and compatible major lines, then regenerate the lockfile/license inventory and exercise their runtime consumers. Undici retains separate 7.x and 8.x consumers; Bun 1.4.3 provides native `markAsUncloneable`, so the obsolete 8.10.2 compatibility fallback is not carried forward. A clean audit does not replace compressed-request, multipart-teardown, HTTP-client/integrity, validation-boundary or application checks; do not suppress advisories or weaken those gates.
+
 ## Code review process
 
 The bigger the pull request, the longer it will take to review and merge. Try to break down large pull requests in smaller chunks that are easier to review and merge.

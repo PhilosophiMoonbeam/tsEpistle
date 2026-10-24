@@ -183,7 +183,7 @@
     "moment": "2.31.0",
     "moment-timezone": "0.6.3",
     "ms": "2.1.3",
-    "multer": "2.4.0",
+    "multer": "2.5.0",
     "nanoid": "6.0.2",
     "node-2fa": "2.0.3",
     "node-cache": "5.1.2",
@@ -229,7 +229,7 @@
     "turndown": "7.2.4",
     "twemoji": "14.0.2",
     "uc.micro": "3.0.0",
-    "undici": "8.10.2",
+    "undici": "8.12.2",
     "uslug": "1.0.4",
     "validator": "13.15.35",
     "winston": "3.19.0",
@@ -239,7 +239,7 @@
     "y-protocols": "1.0.7",
     "yargs": "18.1.0",
     "yjs": "13.6.32",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
@@ -344,17 +344,16 @@
     "@xmldom/xmldom": "0.8.15",
     "dompurify": "3.4.17",
     "encoding-sniffer": "1.0.2",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "hono": "4.13.11",
     "ip-address": "10.7.4",
     "node-uuid": "1.4.8",
     "underscore": "1.13.8",
-    "undici@7": "7.29.1"
+    "undici@7": "7.30.1"
   },
   "patchedDependencies": {
     "@asciidoctor/core@4.1.1": "patches/@asciidoctor__core@4.1.1.patch",
     "markdown-it-multimd-table@4.2.3": "patches/markdown-it-multimd-table@4.2.3.patch",
-    "undici@8.10.2": "patches/undici@8.10.2.patch",
     "better-sqlite3@13.0.3": "patches/better-sqlite3@13.0.3.patch",
     "@tresjs/core@5.9.2": "patches/@tresjs__core@5.9.2.patch"
   },

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "bcb9efc44cef8f3f6b85cef74265ca8a5a7fb9c9f143ee666fdae1c690374ddd",
+    "sha256": "8200a87d7434da9a71c776f4b5e0cf10a488847c32fd8223e9e19bbe05b67bb3",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -2834,7 +2834,7 @@
     {
       "name": "body-parser",
       "versions": [
-        "2.3.0"
+        "2.4.0"
       ],
       "license": "MIT"
     },
@@ -3660,7 +3660,7 @@
     {
       "name": "fast-uri",
       "versions": [
-        "3.1.8"
+        "3.1.9"
       ],
       "license": "BSD-3-Clause",
       "author": "Vincent Le Goff <vince.legoff@gmail.com> (https://github.com/zekth)",
@@ -4827,7 +4827,7 @@
     {
       "name": "multer",
       "versions": [
-        "2.4.0"
+        "2.5.0"
       ],
       "license": "MIT"
     },
@@ -5659,7 +5659,8 @@
     {
       "name": "qs",
       "versions": [
-        "6.16.0"
+        "6.16.0",
+        "6.16.1"
       ],
       "license": "BSD-3-Clause",
       "homepage": "https://github.com/ljharb/qs"
@@ -6464,8 +6465,8 @@
     {
       "name": "undici",
       "versions": [
-        "7.29.1",
-        "8.10.2"
+        "7.30.1",
+        "8.12.2"
       ],
       "license": "MIT",
       "homepage": "https://undici.nodejs.org"
@@ -6864,8 +6865,8 @@
     {
       "name": "zod",
       "versions": [
-        "4.4.3",
-        "4.6.5"
+        "4.6.6",
+        "4.6.7"
       ],
       "license": "MIT",
       "author": "Colin McDonnell <zod@colinhacks.com>",
