@@ -43,6 +43,8 @@ interface GoalHarness {
   statusLabel: Ref<string>
   statusColor: Ref<string>
   budgetPercent: Ref<number>
+  outcomeLabel: Ref<string>
+  nextAction: Ref<string>
   blockerMessages: Ref<readonly AgentCompletionIssue[]>
   budgetMetrics: Ref<readonly { label: string; value: string; limit: string }[]>
   timelineLabel: Ref<string>
@@ -135,6 +137,9 @@ const loadGoal = (
     'defineModel',
     'defineEmits',
     `${executableScript}\nreturn {
+      t,
+      outcomeLabel,
+      nextAction,
       statusLabel,
       statusColor,
       statusIcon,
@@ -244,9 +249,7 @@ describe('Agent goal status interaction', () => {
               currentCycleTokens: 'Token im aktuellen Zyklus',
               due: 'Fällig',
               agentWillContinueAcross: 'Der Agent setzt die Arbeit über mehrere Durchläufe fort.',
-              completed: 'Abgeschlossen',
-              completedRun_one: 'In {{count, number}} Durchlauf abgeschlossen.',
-              completedRun_other: 'In {{count, number}} Durchläufen abgeschlossen.'
+              completed: 'Abgeschlossen'
             }
           }
         }
@@ -285,7 +288,6 @@ describe('Agent goal status interaction', () => {
       harness.goal.status = 'completed'
       await Vue.nextTick()
       expect(status.textContent).toBe('Abgeschlossen')
-      expect(harness.progressLabel.value).toBe('In 2 Durchläufen abgeschlossen.')
     } finally {
       app.unmount()
       host.remove()
@@ -357,6 +359,42 @@ describe('Agent goal status interaction', () => {
       expect(document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe(String(percent))
       expect(document.querySelector('.agent-goal__progress-heading strong')?.textContent).toMatch(new RegExp(`\\b${percent}%`))
     }
+  })
+
+  it('keeps the recorded outcome independent of resource consumption and terminal run status', async () => {
+    for (const outcome of ['complete', 'partial', 'blocked'] as const) {
+      const issue = { code: 'REVIEW_REQUIRED', message: 'Review the unresolved migration.', retryable: false }
+      const goal = makeGoal({
+        status: 'completed',
+        consumedTokens: 1_000,
+        consumedToolCalls: 10,
+        continuationCount: 4,
+        completion: { outcome, issues: outcome === 'complete' ? [] : [issue] }
+      })
+      const harness = loadGoal(goal, true)
+      const before = harness.outcomeLabel.value
+      expect(before).toMatch(new RegExp(outcome, 'i'))
+      harness.goal.consumedTokens = 1
+      harness.goal.consumedToolCalls = 0
+      harness.goal.continuationCount = 0
+      expect(harness.outcomeLabel.value).toBe(before)
+      for (const expanded of [false, true]) {
+        const document = new JSDOM(await renderGoalStatus(goal, expanded)).window.document
+        const assessment = document.querySelector(expanded ? '.agent-goal__outcome h3' : '.agent-goal__collapsed-meta strong')
+        expect(assessment?.textContent).toBe(before)
+        expect(assessment?.textContent).not.toContain('%')
+        if (outcome !== 'complete') expect(document.body.textContent).toContain(issue.message)
+        if (expanded) {
+          const next = document.querySelector('.agent-goal__next-action')
+          const resources = document.querySelector('[role="progressbar"]')
+          expect(next).not.toBeNull()
+          expect(resources).not.toBeNull()
+          expect(next!.compareDocumentPosition(resources!) & 4).toBe(4)
+        }
+      }
+    }
+    const unassessed = loadGoal(makeGoal({ status: 'completed', completion: null, consumedTokens: 1_000 }), false)
+    expect(unassessed.outcomeLabel.value).not.toBe(loadGoal(makeGoal({ completion: { outcome: 'complete', issues: [] } }), false).outcomeLabel.value)
   })
 
   it('surfaces the goal error alongside completion blocker details', () => {

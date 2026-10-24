@@ -104,6 +104,102 @@ describe('clearable search recovery', () => {
     methods.selectSearchScope.call(state, 'downloaded')
     expect(state).toMatchObject({ search: 'pizza', searchScope: 'downloaded', searchRestrictLocale: false, searchRestrictPath: false, previewSelector: null })
   })
+
+  for (const destination of ['closed-drawer', 'open-drawer', 'unavailable-navigation']) {
+    test(`Browse preserves the search draft and uses the ${destination} escape`, async () => {
+      const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+      const dom = new JSDOM(
+        `<!doctype html><html><body>
+        <button class="page-nav-toggle" aria-controls="page-navigation-drawer" aria-expanded="${destination === 'closed-drawer' ? 'false' : 'true'}">Navigation</button>
+        <div id="page-navigation-drawer"><nav class="nav-sidebar">
+          <button disabled>Unavailable action</button><a href="/en/hidden" aria-hidden="true">Hidden page</a><a href="/en/guide">Guide</a>
+        </nav></div><main><h1>Current article</h1></main>
+      </body></html>`,
+        { url: 'https://wiki.test/en/current', pretendToBeVisual: true }
+      )
+      try {
+        const document = dom.window.document
+        // jsdom has no layout: these fixtures model visibility only, not browser geometry.
+        for (const element of document.querySelectorAll('*')) element.getClientRects = () => [{ width: 100, height: 44 }]
+        const toggle = document.querySelector('.page-nav-toggle')
+        const guide = document.querySelector('a[href="/en/guide"]')
+        const article = document.querySelector('main')
+        if (destination === 'unavailable-navigation') {
+          toggle.disabled = true
+          guide.style.visibility = 'hidden'
+        }
+        let drawerOpens = 0
+        toggle.addEventListener('click', () => {
+          drawerOpens += 1
+        })
+        const methods = compileSearchMethods(source, ['closeSearch', 'browseCurrentView'], {
+          document,
+          window: dom.window,
+          useAgentsStore: () => ({
+            closeWorkspace: () => {
+              throw new Error('Browse must not start or close an Agent workspace')
+            }
+          })
+        })
+        const response = { results: [{ id: 19, title: 'Previous result' }], suggestions: ['try this phrase'] }
+        const state = {
+          search: 'unfamiliar task words',
+          searchScope: 'wiki',
+          searchRestrictLocale: true,
+          searchRestrictPath: true,
+          response,
+          responseKey: 'retained-query-key',
+          responseQuery: 'unfamiliar task words',
+          cursor: 0,
+          searchMode: 'search',
+          searchIsFocused: true,
+          isAgentOpen: false,
+          searchInputOpenedByTab: false,
+          searchRequestId: 4,
+          directPromptHandoffId: 2,
+          searchTimer: null,
+          searchAbortController: null,
+          moreAbortController: null,
+          agentResumeSessionId: null,
+          resolveInlineAgentWaiters: () => {},
+          finishSearchFocus: () => {},
+          $nextTick: () => Promise.resolve(),
+          closeSearch() {
+            methods.closeSearch.call(this)
+          }
+        }
+        await methods.browseCurrentView.call(state)
+        expect(state.searchIsFocused).toBe(false)
+        expect(state).toMatchObject({
+          search: 'unfamiliar task words',
+          searchScope: 'wiki',
+          searchRestrictLocale: true,
+          searchRestrictPath: true,
+          responseKey: 'retained-query-key',
+          responseQuery: 'unfamiliar task words',
+          cursor: 0
+        })
+        expect(state.response).toBe(response)
+        expect(dom.window.location.href).toBe('https://wiki.test/en/current')
+        if (destination === 'closed-drawer') expect(drawerOpens).toBe(1)
+        else {
+          expect(drawerOpens).toBe(0)
+          // A native main landmark is a useful fallback even when its heading is
+          // not focusable. The action must make that landmark programmatically
+          // focusable rather than leave focus on the dismissed search surface.
+          const expectedTarget = destination === 'open-drawer' ? guide : article
+          expect(document.activeElement === expectedTarget).toBe(true)
+          if (destination === 'unavailable-navigation') expect(article.getAttribute('tabindex')).toBe('-1')
+        }
+        // Reopening the same mounted search does not replace its recoverable draft.
+        state.searchIsFocused = true
+        expect(state.response.results[0].title).toBe('Previous result')
+        expect(state.search).toBe('unfamiliar task words')
+      } finally {
+        dom.window.close()
+      }
+    })
+  }
 })
 
 describe('Ask modal accessibility contract', () => {

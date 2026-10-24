@@ -2298,6 +2298,44 @@ describe('Agent empty conversation lifecycle', () => {
   })
 })
 
+const pendingDecisionThread = (): AgentThreadState => {
+  const thread = activeThread()
+  const proposalId = '00000000-0000-4000-8000-000000000003'
+  return {
+    ...thread,
+    session: { ...thread.session, currentRun: { ...thread.session.currentRun!, status: 'awaiting_approval' } },
+    proposals: [
+      {
+        id: proposalId,
+        sourceKind: 'agent',
+        actionName: 'pages.preparePatch',
+        risk: 'proposal',
+        status: 'pending',
+        summary: 'Update the validation page.',
+        target: { id: 42, locale: 'en', path: 'validation', title: 'Validation', contentType: 'markdown', sourceRevision: '7' },
+        pageLink: null,
+        baseSourceRevision: '7',
+        authoritySha256: 'a'.repeat(64),
+        inputHash: 'b'.repeat(64),
+        patchSha256: 'c'.repeat(64),
+        resultCanonicalSha256: 'd'.repeat(64),
+        diffSha256: 'e'.repeat(64),
+        diff: '-Old instructions\n+Reviewed instructions',
+        expiresAt: '2099-08-23T20:10:00.000Z',
+        approval: {
+          id: '00000000-0000-4000-8000-000000000004',
+          proposalId,
+          status: 'pending',
+          requestedAt: '2026-08-23T20:00:00.000Z',
+          expiresAt: '2099-08-23T20:10:00.000Z',
+          decidedAt: null,
+          decisionNote: null
+        }
+      }
+    ]
+  }
+}
+
 describe('Agent proposal decisions', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -2376,6 +2414,75 @@ describe('Agent proposal decisions', () => {
     expect(store.thread?.proposals).toEqual([])
     expect(store.decidingApprovalId).toBeNull()
   })
+
+  it('does not decide a replacement proposal with the earlier reviewed approval identity', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.thread = pendingDecisionThread()
+    markWorkspaceReady(store)
+    const old = store.thread.proposals[0]!
+    const replacement = {
+      ...old,
+      id: '00000000-0000-4000-8000-000000000005',
+      baseSourceRevision: '8',
+      diff: '-Reviewed instructions\n+New revision requiring review',
+      approval: {
+        ...old.approval!,
+        id: '00000000-0000-4000-8000-000000000006',
+        proposalId: '00000000-0000-4000-8000-000000000005'
+      }
+    }
+    store.thread = { ...store.thread, proposals: [replacement] }
+    const fetcher = vi.spyOn(window, 'fetch')
+    await store.decideProposal(old.id, old.approval!.id, 'approved')
+    await store.decideProposal(replacement.id, old.approval!.id, 'approved')
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(store.thread.proposals[0]?.approval?.status).toBe('pending')
+    expect(store.decidingApprovalId).toBeNull()
+  })
+
+  it('keeps a revision-conflicted decision pending for authoritative review instead of applying or retrying it', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.thread = pendingDecisionThread()
+    markWorkspaceReady(store)
+    const proposal = store.thread.proposals[0]!
+    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(Response.json({ error: 'The reviewed base revision has changed.' }, { status: 409 }))
+    await store.decideProposal(proposal.id, proposal.approval!.id, 'approved')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(store.thread.proposals[0]?.approval?.status).toBe('pending')
+    expect(store.thread.proposals[0]?.status).toBe('pending')
+    expect(store.error).not.toBe('')
+    expect(store.decidingApprovalId).toBeNull()
+    expect(store.sessionMutationBusy).toBe(false)
+  })
+
+  for (const boundary of ['owner', 'workspace', 'session'] as const) {
+    it(`does not install a late denial receipt after the ${boundary} authority changes`, async () => {
+      setActivePinia(createPinia())
+      const store = useAgentsStore()
+      store.csrfToken = 'csrf-token'
+      store.thread = pendingDecisionThread()
+      markWorkspaceReady(store)
+      const proposal = store.thread.proposals[0]!
+      const pending = deferred<Response>()
+      const fetcher = vi.spyOn(window, 'fetch').mockReturnValue(pending.promise)
+      const deciding = store.decideProposal(proposal.id, proposal.approval!.id, 'denied', undefined, 'Keep the rollback procedure.')
+      expect(store.decidingApprovalId).toBe(proposal.approval!.id)
+      const next = threadForSession('00000000-0000-4000-8000-000000000007', '00000000-0000-4000-8000-000000000008')
+      if (boundary === 'owner') store.ownerGeneration += 1
+      if (boundary === 'workspace') store.workspaceVersion += 1
+      store.thread = boundary === 'session' ? next : { ...next, session: { ...next.session, id: store.thread.session.id } }
+      const current = store.thread
+      pending.resolve(Response.json({ proposalId: proposal.id, approvalId: proposal.approval!.id, status: 'denied', decidedAt: '2026-08-23T20:01:00.000Z' }))
+      await deciding
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(store.thread).toBe(current)
+      expect(store.thread.proposals).toEqual([])
+    })
+  }
 })
 
 describe('Agent unfiled history clearing', () => {

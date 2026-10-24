@@ -112,6 +112,18 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
           :aria-label="$t('common:pageRatings.removeMine')"
           @click="removeVote"
         ) {{ $t('common:pageRatings.remove') }}
+
+      section.wiki-page-ratings__discussion.mt-4(v-if="offerDiscussion && canDiscuss")
+        p.text-body-small {{ t('discussionOffer', { defaultValue: 'Your rating is saved. Optionally explain your task, intended outcome, or an unclear passage in the page discussion.' }) }}
+        template(v-if="discussionDraft === null")
+          v-btn.mt-2(type="button" size="small" variant="outlined" @click="prepareDiscussion") {{ t('prepareDiscussion', { defaultValue: 'Prepare discussion draft' }) }}
+        template(v-else)
+          p.text-body-small.my-2 {{ t('discussionConsent', { defaultValue: 'This is an editable draft, not a post or a subscription. Only the discussion Post button publishes it.' }) }}
+          v-textarea(v-model="discussionDraft" :label="t('discussionDraft', { defaultValue: 'Discussion draft (Markdown)' })" rows="5" auto-grow variant="outlined" hide-details)
+          v-btn.my-2(type="button" size="small" variant="text" :aria-expanded="previewDiscussion" @click="previewDiscussion = !previewDiscussion") {{ t('previewDiscussion', { defaultValue: 'Toggle draft preview' }) }}
+          .text-body-small.mb-3(v-if="previewDiscussion" v-html="discussionPreview")
+          v-btn(type="button" size="small" variant="outlined" :disabled="!discussionDraft.trim() || !canVote" @click="useDiscussionDraft") {{ t('useDiscussionDraft', { defaultValue: 'Use draft in discussion' }) }}
+        v-btn.mt-2(type="button" size="small" variant="text" @click="dismissDiscussion") {{ t('declineDiscussion', { defaultValue: 'Not now — keep rating only' }) }}
 </template>
 
 <script setup lang="ts">
@@ -121,8 +133,10 @@ import AsyncState from './common/async-state.vue'
 import { fetchPageRating, PageRatingApiError, putPageRating, removePageRating } from '../helpers/page-ratings-api.ts'
 import type { PageRatingView, PageRatingVote } from '../../shared/page-ratings.ts'
 import { wikiStore } from '../store/index.ts'
+import { renderSafeMarkdown } from '../helpers/safe-markdown.ts'
 
-const props = defineProps<{ pageId: number }>()
+const props = defineProps<{ pageId: number; discussionEnabled?: boolean }>()
+const emit = defineEmits<{ 'prepare-feedback': [content: string] }>()
 const t = (key: string, options?: Record<string, unknown>): string => i18next.t(`common:pageRatings.${key}`, options)
 const starValues = [1, 2, 3, 4, 5] as const
 const view = ref<PageRatingView | null>(null)
@@ -133,6 +147,10 @@ const stale = ref(false)
 const staleMessage = ref('')
 const feedback = ref('')
 const pendingVote = ref<number | null>(null)
+const offerDiscussion = ref(false)
+const discussionDraft = ref<string | null>(null)
+const previewDiscussion = ref(false)
+const discussionPreview = computed(() => renderSafeMarkdown(discussionDraft.value ?? ''))
 let requestSequence = 0
 let contextSequence = 0
 let activeController: AbortController | null = null
@@ -149,6 +167,22 @@ const isHuman = computed(() =>
   wikiStore.authRefreshPending === false
 )
 const canVote = computed(() => isHuman.value && view.value !== null && !loading.value && !submitting.value && !stale.value)
+const canDiscuss = computed(() => isHuman.value && props.discussionEnabled === true &&
+  wikiStore.page.id === props.pageId && wikiStore.page.effectivePermissions.comments.read &&
+  wikiStore.page.effectivePermissions.comments.write && !stale.value)
+const dismissDiscussion = (): void => {
+  offerDiscussion.value = false
+  discussionDraft.value = null
+  previewDiscussion.value = false
+}
+const prepareDiscussion = (): void => {
+  if (!canDiscuss.value) return
+  discussionDraft.value = t('discussionTemplate', { defaultValue: 'Task: \n\nIntended outcome: \n\nUnclear passage: ' })
+}
+const useDiscussionDraft = (): void => {
+  if (!canDiscuss.value || !canVote.value || !discussionDraft.value?.trim()) return
+  emit('prepare-feedback', discussionDraft.value)
+}
 const summary = computed(() => {
   const rating = view.value
   if (!rating || rating.count === 0) return t('none')
@@ -239,6 +273,8 @@ const saveVote = async (value: number): Promise<void> => {
     view.value = result
     stale.value = false
     feedback.value = t('saved')
+    if ((vote.kind === 'thumbs' && value === -1) || (vote.kind === 'stars' && value <= 2)) offerDiscussion.value = true
+    else dismissDiscussion()
   } catch (cause) {
     if (!currentContext(generation, pageId)) return
     if (cause instanceof PageRatingApiError && cause.status === 409) {
@@ -270,6 +306,7 @@ const removeVote = async (): Promise<void> => {
     view.value = result
     stale.value = false
     feedback.value = t('removed')
+    dismissDiscussion()
   } catch (cause) {
     if (!currentContext(generation, pageId)) return
     if (cause instanceof PageRatingApiError && cause.status === 409) {
@@ -288,7 +325,7 @@ const removeVote = async (): Promise<void> => {
 }
 
 watch(
-  [() => props.pageId, isHuman],
+  [() => props.pageId, isHuman, () => wikiStore.user.id, () => wikiStore.user.authVersion, () => wikiStore.offlineIdentityEpoch],
   ([pageId, human]) => {
     contextSequence++
     requestSequence++
@@ -302,10 +339,13 @@ watch(
     stale.value = false
     staleMessage.value = ''
     feedback.value = ''
+    dismissDiscussion()
     if (human && Number.isSafeInteger(pageId) && pageId > 0) void fetchCurrentRating()
   },
-  { immediate: true }
+  { immediate: true, flush: 'sync' }
 )
+
+watch(canDiscuss, allowed => { if (!allowed) dismissDiscussion() }, { flush: 'sync' })
 
 onBeforeUnmount(() => {
   disposed = true
@@ -558,6 +598,32 @@ onBeforeUnmount(() => {
   min-width: 30px;
   min-height: 30px;
   height: 30px;
+}
+
+.wiki-page-ratings__discussion {
+  min-width: 0;
+  border-top: 1px solid var(--wiki-surface-border);
+  padding-top: 12px;
+  overflow-wrap: anywhere;
+}
+
+.wiki-page-ratings__discussion :deep(.v-btn) {
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  height: auto;
+  padding-block: 8px;
+  white-space: normal;
+  text-align: start;
+}
+
+.wiki-page-ratings__discussion :deep(.v-btn__content) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.wiki-page-ratings__discussion :deep(pre) {
+  white-space: pre-wrap;
 }
 
 @media (forced-colors: active) {

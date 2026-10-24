@@ -1,9 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { document } from '../test/browser-dom.mts'
 
 import { describe, expect, test, vi } from '../../server/test/bun-test.mts'
 import { parseWikiNavigationDocument, type WikiPagePayload } from '../helpers/wiki-navigation'
 import { focusDiscussionThread } from '../helpers/discussion-annotation-events'
+
+// Vue must capture the singleton document installed by browser-dom.
+const Vue = await import('vue')
 
 type NavigationOptions = {
   popState?: boolean
@@ -25,6 +29,9 @@ type NavigationVm = {
   updateDocumentMetadata: (title: string, description: string, url: URL) => void
   restoreScroll: (destination: URL, savedScrollY?: number) => void
   focusHashThread: () => void
+  feedbackDiscussionEnabled: boolean
+  selectPageView: (view: 'article' | 'talk' | 'links') => Promise<void>
+  $refs: { comments?: { prepareFeedbackDraft: (content: string) => Promise<void> } }
 }
 
 type WikiPageComponentOptions = {
@@ -33,12 +40,15 @@ type WikiPageComponentOptions = {
     showPageProgress: (this: NavigationVm) => boolean
     linksVisible: (this: NavigationVm) => boolean
     ratingsVisible: (this: NavigationVm) => boolean
+    feedbackDiscussionEnabled: (this: NavigationVm) => boolean
     lastEditorVisible: (this: NavigationVm) => boolean
   }
   methods: {
     navigate: (this: NavigationVm, destination: URL, options?: NavigationOptions) => Promise<void>
     handleHashChange: (this: NavigationVm) => void
     focusHashThread: (this: NavigationVm) => void
+    prepareFeedbackDraft: (this: NavigationVm, content: string) => Promise<void>
+    selectPageView: (this: NavigationVm, view: 'article' | 'talk' | 'links') => Promise<void>
   }
 }
 
@@ -98,7 +108,16 @@ const pageDocument = (): string => `<!doctype html>
   </body>
 </html>`
 
-const loadComponent = (fetchResponse: Response, site = { pageTransitions: true, showPageProgress: false }) => {
+const loadComponent = (
+  fetchResponse: Response,
+  site = { pageTransitions: true, showPageProgress: false },
+  authority = {
+    user: { id: 7, authVersion: 3 },
+    offlineIdentityEpoch: 1,
+    page: { id: 42, effectivePermissions: { comments: { read: true, write: true } } }
+  },
+  nextTick = () => Promise.resolve()
+) => {
   const fetch = vi.fn(async () => fetchResponse)
   const evaluate = new Function(
     'defineComponent',
@@ -123,8 +142,8 @@ const loadComponent = (fetchResponse: Response, site = { pageTransitions: true, 
 
   const component = evaluate(
     (options: WikiPageComponentOptions) => options,
-    <Value>(value: Value): Value => value,
-    () => Promise.resolve(),
+    Vue.markRaw,
+    nextTick,
     {},
     {},
     {},
@@ -135,7 +154,9 @@ const loadComponent = (fetchResponse: Response, site = { pageTransitions: true, 
     () => () => undefined,
     () => false,
     parseWikiNavigationDocument,
-    { site },
+    // Retain the live authority object: spreading it snapshots scalar identity
+    // epochs while nested user and ACL mutations still appear to work.
+    Object.assign(authority, { site }),
     fetch,
     focusDiscussionThread,
     (callback: FrameRequestCallback) => {
@@ -180,7 +201,12 @@ const navigationVm = (component = loadComponent(new Response()).component): Navi
   restoreScroll: vi.fn(),
   focusHashThread() {
     component.methods.focusHashThread.call(this)
-  }
+  },
+  feedbackDiscussionEnabled: false,
+  selectPageView(view) {
+    return component.methods.selectPageView.call(this, view)
+  },
+  $refs: {}
 })
 
 const navigate = async (fetchResponse: Response): Promise<NavigationVm> => {
@@ -229,6 +255,75 @@ describe('wiki page feature visibility', () => {
     vm.currentPage = { ...vm.currentPage, pageFeatures: enabledFeatures, ratingsSiteEnabled: false }
     expect(component.computed.ratingsVisible.call(vm)).toBe(false)
   })
+})
+
+describe('contextual feedback discussion handoff', () => {
+  const draft = 'Task: configure a service\nExpected: a working setup\nMissing: a final command'
+  const setup = (nextTick = () => Promise.resolve()) => {
+    const authority = {
+      user: { id: 7, authVersion: 3 },
+      offlineIdentityEpoch: 1,
+      page: { id: 42, effectivePermissions: { comments: { read: true, write: true } } }
+    }
+    const { component } = loadComponent(new Response(), undefined, authority, nextTick)
+    const vm = navigationVm(component)
+    vm.currentPage.props.commentsEnabled = true
+    const receiveDraft = vi.fn(async (_content: string) => {})
+    vm.$refs.comments = { prepareFeedbackDraft: receiveDraft }
+    Object.defineProperty(vm, 'feedbackDiscussionEnabled', { get: () => component.computed.feedbackDiscussionEnabled.call(vm) })
+    return { component, vm, authority, receiveDraft }
+  }
+
+  test('opens the current native discussion and passes the editable feedback to its composer', async () => {
+    const { component, vm, receiveDraft } = setup()
+    const previousUrl = window.location.href
+    try {
+      await component.methods.prepareFeedbackDraft.call(vm, draft)
+      expect(vm.activePageView).toBe('talk')
+      expect(new URL(vm.currentUrl).hash).toBe('#discussion')
+      expect(receiveDraft).toHaveBeenCalledWith(draft)
+      expect(receiveDraft).toHaveBeenCalledOnce()
+      expect(vm.restoreScroll).toHaveBeenCalledWith(new URL(vm.currentUrl))
+    } finally {
+      window.history.replaceState(null, '', previousUrl)
+    }
+  })
+
+  for (const denied of ['external', 'disabled', 'wrong-page', 'read-denied', 'write-denied', 'empty']) {
+    test(`does not leave the article or hand a feedback draft to ${denied} discussion`, async () => {
+      const { component, vm, authority, receiveDraft } = setup()
+      if (denied === 'external') vm.currentPage.props.commentsExternal = true
+      if (denied === 'disabled') vm.currentPage.props.commentsEnabled = false
+      if (denied === 'wrong-page') authority.page.id = 99
+      if (denied === 'read-denied') authority.page.effectivePermissions.comments.read = false
+      if (denied === 'write-denied') authority.page.effectivePermissions.comments.write = false
+      await component.methods.prepareFeedbackDraft.call(vm, denied === 'empty' ? '  ' : draft)
+      expect(vm.activePageView).toBe('article')
+      expect(receiveDraft).not.toHaveBeenCalled()
+    })
+  }
+
+  for (const changed of ['owner', 'auth-version', 'identity-epoch', 'page', 'acl']) {
+    test(`drops a queued feedback handoff after ${changed} changes`, async () => {
+      const mounted = Promise.withResolvers<void>()
+      const { component, vm, authority, receiveDraft } = setup(() => mounted.promise)
+      const previousUrl = window.location.href
+      try {
+        const preparing = component.methods.prepareFeedbackDraft.call(vm, draft)
+        expect(vm.activePageView).toBe('talk')
+        if (changed === 'owner') authority.user.id = 8
+        if (changed === 'auth-version') authority.user.authVersion++
+        if (changed === 'identity-epoch') authority.offlineIdentityEpoch++
+        if (changed === 'page') vm.currentPage = { ...payload(), props: { ...payload().props, pageId: 99, commentsEnabled: true } }
+        if (changed === 'acl') authority.page.effectivePermissions.comments.write = false
+        mounted.resolve()
+        await preparing
+        expect(receiveDraft).not.toHaveBeenCalled()
+      } finally {
+        window.history.replaceState(null, '', previousUrl)
+      }
+    })
+  }
 })
 
 describe('wiki page navigation response boundary', () => {

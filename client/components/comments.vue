@@ -6,6 +6,7 @@
         span {{ readinessMessage }}
         v-spacer
         v-btn(size='small', variant='text', prepend-icon='mdi-refresh', :loading='connectionRetrying', :disabled='connectionRetrying', @click='retryFetch') {{ readinessRetryLabel }}
+    p.text-body-small.mb-3(v-if='feedbackDraftMessage', role='status', aria-live='polite') {{ feedbackDraftMessage }}
 
     form.comments-composer(
       v-if='permissions.write && (connectionBlocked || !authorityReady || availability?.canPost)'
@@ -14,6 +15,9 @@
       novalidate
       @submit.prevent='postComment'
     )
+      v-alert.comments-feedback-draft.mb-3(v-if='feedbackDraftActive', type='info', variant='tonal')
+        p {{ $t('common:comments.feedbackDraftHelp', { defaultValue: 'Feedback draft: edit this text, then explicitly Post to start a discussion. Replies are responses; a resolved passage is a thread state, not proof that the page changed.' }) }}
+        v-btn.mt-2(type='button', size='small', variant='text', :disabled='isPosting', @click='discardFeedbackText') {{ $t('common:comments.discardFeedbackText', { defaultValue: 'Discard feedback text (keep attached passages)' }) }}
       .comments-replying.d-flex.align-center.mb-3(v-if='replyTo > 0')
         v-icon.mr-2(size='18' aria-hidden='true') mdi-reply
         span.text-body-small
@@ -198,6 +202,14 @@
                     v-btn(size='small', variant='text', @click='jumpToAnnotation(annotation.anchor)') Find passage
                     v-btn(v-if='canChangeAnnotation(cm)', size='small', variant='text', :disabled='!authorityReady || connectionBlocked || changingAnnotationId !== 0', :loading='changingAnnotationId === annotation.id', @click='changeAnnotationState(cm, annotation)') {{ annotation.resolvedAt ? 'Reopen' : 'Resolve' }}
                   p.text-body-small.mt-2(v-if='annotationErrors[annotation.id]', role='status', aria-live='polite') {{ annotationErrors[annotation.id] }}
+            comment-reply-opt-in.mt-4(
+              v-if='replyOptInCommentId === cm.id && feedbackHuman && commentReady'
+              :key='`${contextKey}:${cm.id}`'
+              :page-id='pageId'
+              :contribution-id='cm.id'
+              :authorized='commentReady'
+              @dismiss='replyOptInCommentId = 0'
+            )
             form.comments-post-editcontent.mt-3(v-if='commentEditId === cm.id', novalidate, @submit.prevent='updateComment')
               v-textarea(
                 variant="outlined"
@@ -273,6 +285,7 @@ import type { DiscussionAnnotation, DiscussionAnnotationAnchor, DiscussionAnnota
 import { changeDiscussionAnnotation, isDiscussionAnchor } from '../helpers/discussion-annotations-api.ts'
 import { discussionAnnotationsChanged, jumpDiscussionAnnotation, onComposeDiscussionAnnotation, onFocusDiscussionThread } from '../helpers/discussion-annotation-events.ts'
 import { renderSafeMarkdown } from '../helpers/safe-markdown.ts'
+import CommentReplyOptIn from './common/comment-reply-opt-in.vue'
 
 type CommentWithInitials = CommentRow & {
   initials: string
@@ -335,7 +348,8 @@ type ComposerSnapshot = {
 
 export default defineComponent({
   components: {
-    AsyncState
+    AsyncState,
+    CommentReplyOptIn
   },
   setup () {
     return {
@@ -357,6 +371,9 @@ export default defineComponent({
       transportGeneration: 0,
       newcomment: '',
       annotationDrafts: [] as DiscussionAnnotationInput[],
+      feedbackDraftActive: false,
+      feedbackDraftMessage: '',
+      replyOptInCommentId: 0,
       annotationErrors: {} as Record<number, string>,
       changingAnnotationId: 0,
       annotationGeneration: 0,
@@ -409,7 +426,7 @@ export default defineComponent({
       const id = wikiStore.user.id
       return this.isAuthenticated && Number.isSafeInteger(id) && id > 0 ? id : 0
     },
-    contextKey(): string { return `${this.ownerId}:${wikiStore.user.authVersion}:${this.pageId}` },
+    contextKey(): string { return `${this.ownerId}:${wikiStore.user.authVersion}:${wikiStore.offlineIdentityEpoch}:${this.pageId}` },
     permissions(): CommentPermissions { return wikiStore.page.effectivePermissions.comments },
     pwaConnectionState(): string { return pwaState.connectionState },
     connectionUnavailable(): boolean {
@@ -447,6 +464,11 @@ export default defineComponent({
       return this.authorityReady && !this.connectionBlocked && this.permissions.manage
     },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
+    feedbackHuman(): boolean {
+      return this.isAuthenticated && this.ownerId > 0 && this.ownerId !== 2 &&
+        wikiStore.user.email !== 'api@localhost' && wikiStore.authRefreshSettled === true &&
+        wikiStore.authRefreshOutcome === 'authenticated' && wikiStore.authRefreshPending === false
+    },
     userDisplayName(): string { return wikiStore.user.name },
     annotationNotes(): Record<number, string> {
       const notes: Record<number, string> = {}
@@ -557,6 +579,42 @@ export default defineComponent({
     wikiStore.stopLoading('comments-delete')
   },
   methods: {
+    async prepareFeedbackDraft (content: string): Promise<void> {
+      this.ensureContext()
+      if (!content.trim() || !this.feedbackHuman || !this.permissions.write || this.connectionBlocked) return
+      const context = this.captureContext()
+      const revision = this.composerRevision
+      const hasDraft = (): boolean => this.newcomment.length > 0 || this.annotationDrafts.length > 0 ||
+        this.replyTo > 0 || this.isPosting || this.isBusy || this.uncertainCreate
+      const keepDraftMessage = this.$t('common:comments.feedbackDraftPreserved', { defaultValue: 'Your existing discussion draft, reply, and attached passages have not been changed. Post or clear that draft before bringing in feedback text; your feedback draft remains in the rating panel.' })
+      if (hasDraft()) {
+        this.feedbackDraftMessage = keepDraftMessage
+        this.newCommentTextarea()?.focus()
+        return
+      }
+      this.hasIntersected = true
+      const loaded = await this.fetch(true)
+      if (!this.isCurrentContext(context) || !this.feedbackHuman || !loaded || !this.commentReady) return
+      if (revision !== this.composerRevision || hasDraft()) {
+        this.feedbackDraftMessage = keepDraftMessage
+        return
+      }
+      this.newcomment = content
+      this.feedbackDraftActive = true
+      this.feedbackDraftMessage = ''
+      this.noteComposerInput()
+      this.$nextTick(() => {
+        if (!this.isCurrentContext(context) || !this.commentReady) return
+        this.newCommentTextarea()?.focus()
+      })
+    },
+    discardFeedbackText (): void {
+      if (!this.feedbackDraftActive || this.isPosting) return
+      this.newcomment = ''
+      this.feedbackDraftActive = false
+      this.feedbackDraftMessage = ''
+      this.noteComposerInput()
+    },
     removeAnnotationDraft (index: number): void {
       if (this.isPosting) return
       this.annotationDrafts.splice(index, 1)
@@ -635,6 +693,9 @@ export default defineComponent({
       this.fetchError = ''
       this.newcomment = ''
       this.annotationDrafts = []
+      this.feedbackDraftActive = false
+      this.feedbackDraftMessage = ''
+      this.replyOptInCommentId = 0
       this.annotationErrors = {}
       this.changingAnnotationId = 0
       this.annotationGeneration += 1
@@ -911,6 +972,8 @@ export default defineComponent({
       if (!this.composerMatches(snapshot)) return false
       this.newcomment = ''
       this.annotationDrafts = []
+      this.feedbackDraftActive = false
+      this.feedbackDraftMessage = ''
       this.guestName = ''
       this.guestEmail = ''
       this.replyTo = 0
@@ -1126,8 +1189,11 @@ export default defineComponent({
           icon: 'check'
         })
         const refreshed = await this.fetch(false)
-        if (!this.isCurrentContext(context) || generation !== this.postGeneration || !refreshed || !cleared) return
-        if (!this.comments.some(comment => comment.id === response.id)) return
+        if (!this.isCurrentContext(context) || generation !== this.postGeneration || !refreshed) return
+        const posted = this.comments.find(comment => comment.id === response.id && comment.authorId === context.ownerId)
+        if (!posted) return
+        if (this.feedbackHuman && this.commentReady) this.replyOptInCommentId = posted.id
+        if (!cleared) return
         this.$nextTick(() => {
           if (!this.isCurrentContext(context) || generation !== this.postGeneration) return
           void this.goTo(`#comment-post-id-${response.id}`, this.scrollOptions())
@@ -1331,6 +1397,18 @@ export default defineComponent({
 
 .comments-composer-field textarea {
   line-height: var(--wiki-leading-body);
+}
+.comments-feedback-draft .v-btn {
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  height: auto;
+  padding-block: 8px;
+  white-space: normal;
+}
+.comments-feedback-draft .v-btn__content {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .comments-replying {
   padding: var(--wiki-space-2) var(--wiki-space-3);

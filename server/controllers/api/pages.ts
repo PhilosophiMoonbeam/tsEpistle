@@ -35,6 +35,7 @@ import {
   DeletedPageRecoveryResultSchema,
   DeletedPageRecoveryRestoreRequestSchema
 } from '../../../shared/deleted-page-recovery.ts'
+import { PAGE_CREATION_OWNER_HEADER } from '../../../shared/page-creation.ts'
 
 const router = express.Router()
 
@@ -748,12 +749,97 @@ router.get('/tree', async (req, res, next) => {
   }
 })
 
-router.post('/', async (req, res, next) => {
+const requirePageCreationOwner = (req: Request, res: Response): boolean => {
+  const ownerId = principalId(req.user)
+  if (ownerId === null || ownerId === 2 || isApiPrincipal(req.user)) {
+    res.status(401).json({ error: 'A current browser account is required.', code: 'AUTH_REQUIRED' })
+    return false
+  }
+  const claimed = requestHeader(req, PAGE_CREATION_OWNER_HEADER)
+  if (typeof claimed !== 'string' || !/^[1-9][0-9]*$/u.test(claimed) || !Number.isSafeInteger(Number(claimed))) {
+    res.status(400).json({ error: 'X-Page-Creation-Owner must be a canonical positive decimal string.', code: 'INVALID_INPUT' })
+    return false
+  }
+  if (Number(claimed) !== ownerId) {
+    res.status(409).json({ error: 'Account changed. Refresh your account.', code: 'PAGE_CREATION_OWNER_CHANGED' })
+    return false
+  }
+  return true
+}
+
+const sendPageCreationError = (res: Response, next: express.NextFunction, error: unknown): void => {
+  const legacyStatus =
+    error instanceof Error
+      ? ({ PageIllegalPath: 400, PageEmptyContent: 400, PageCreateForbidden: 403, PageDuplicateCreate: 409, PagePathCollision: 409 } as Record<string, number>)[
+          error.name
+        ]
+      : undefined
+  const status = legacyStatus ?? errorStatus(error, 0)
+  if (status >= 400 && status < 500) {
+    const code = error instanceof errors.ApplicationError ? error.name : typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined
+    res.status(status).json({
+      error: errorMessage(error, 'Page creation request failed.'),
+      ...(typeof code === 'string' ? { code } : {})
+    })
+    return
+  }
+  next(error)
+}
+
+router.get('/creation-requests/:requestId', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  if (!requirePageCreationOwner(req, res)) return
   try {
-    const page = await pageOperations.create({ ...pageOperationContext(req), input: requestBody(req) })
+    res.json(await pageOperations.creationStatus({ ...pageOperationContext(req), requestId: req.params.requestId }))
+  } catch (error) {
+    sendPageCreationError(res, next, error)
+  }
+})
+
+router.get('/creation-origins/live-notes/:noteId', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  if (!requirePageCreationOwner(req, res)) return
+  try {
+    res.json(
+      await pageOperations.noteCreationInventory({
+        ...pageOperationContext(req),
+        noteId: req.params.noteId,
+        ...(req.query.cursor === undefined ? {} : { cursor: req.query.cursor })
+      })
+    )
+  } catch (error) {
+    sendPageCreationError(res, next, error)
+  }
+})
+
+router.get('/creation-origins/agent-answers/:sessionId/:messageId', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  if (!requirePageCreationOwner(req, res)) return
+  try {
+    res.json(
+      await pageOperations.answerCreationInventory({
+        ...pageOperationContext(req),
+        originSessionId: req.params.sessionId,
+        messageId: req.params.messageId,
+        ...(req.query.cursor === undefined ? {} : { cursor: req.query.cursor })
+      })
+    )
+  } catch (error) {
+    sendPageCreationError(res, next, error)
+  }
+})
+
+router.post('/', async (req, res, next) => {
+  const body = requestBody(req)
+  if (Object.hasOwn(body, 'creationRequestId') || Object.hasOwn(body, 'creationOrigin')) {
+    setPrivatePageHeaders(res)
+    if (!requirePageCreationOwner(req, res)) return
+  }
+  try {
+    const page = await pageOperations.create({ ...pageOperationContext(req), input: body })
     res.status(201).json({ page: pageResponse(req, page, await getWikiAuth().loadPageRuleAuthority(req.user)) })
   } catch (err) {
-    sendOperationError(res, next, err, 'Page creation failed')
+    sendPageCreationError(res, next, err)
   }
 })
 

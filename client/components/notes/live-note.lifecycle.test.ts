@@ -14,8 +14,13 @@ import MarkdownIt from 'markdown-it'
 import { LiveNoteCollaboration, decodeNoteState, encodeNoteUpdate, type NoteCollaborationOptions } from '../../helpers/live-note-collaboration.ts'
 import { LiveNoteHistory } from '../../helpers/live-note-history.ts'
 import { LiveNotesApiError, type LiveNotesApi } from '../../helpers/live-notes-api.ts'
-import { captureNotePublication } from '../../helpers/live-note-publication.ts'
-import type { PageWriteInput } from '../../helpers/pages-api.ts'
+import { captureNotePublication } from '../../../shared/live-note-publication.ts'
+import { createPage as writePage, type PageWriteInput } from '../../helpers/pages-api.ts'
+import { listLiveNoteCreations, readPageCreationStatus, PageCreationApiError } from '../../helpers/page-creation-api.ts'
+import { PAGE_CREATION_OWNER_HEADER, type PageCreationCommitted, type PageCreationInventory, type PageCreationStatus } from '../../../shared/page-creation.ts'
+import { wikiSourceHref } from '../../../shared/wiki-source.ts'
+import { helpers } from '../../helpers/index.ts'
+import { describePageVisibility } from '../editor/common/page-visibility.ts'
 import { LIVE_NOTE_MAX_TEXT_BYTES, parseLiveNoteClientMessage, type LiveNoteView } from '../../../shared/live-notes.ts'
 
 // Vue must capture the browser-dom window installed above, not a pre-DOM module instance.
@@ -33,14 +38,27 @@ for (const statement of metadata.scriptSetupAst!) {
 }
 parts.push(script.slice(end))
 const source = new Bun.Transpiler({ loader: 'ts' }).transformSync(parts.join(''))
-const bindings = Object.keys(metadata.bindings!).filter(name => metadata.bindings![name] !== 'props' && !metadata.imports?.[name])
+// Match script-setup exposure: locals plus runtime imports used by the template.
+const bindings = Object.keys(metadata.bindings!)
+  .filter(name => metadata.bindings![name] !== 'props' && (!metadata.imports?.[name] || (!metadata.imports[name].isType && metadata.imports[name].isUsedInTemplate)))
+  .map(name => {
+    if (metadata.imports?.[name]) return `get ${name}() { return ${name} }`
+    if (metadata.bindings![name] === 'setup-let') return `get ${name}() { return ${name} }, set ${name}(value) { ${name} = value }`
+    return name
+  })
 const evaluate = new Function(
   `{ ${[...Object.keys(metadata.imports!), 'siteConfig', 'siteLangs'].join(', ')} }`,
   `${source}\nreturn { ${bindings.join(', ')} }`
 )
-const template = compileTemplate({ source: descriptor.template!.content, filename, id: 'note-lifecycle', compilerOptions: { mode: 'function' } })
+const template = compileTemplate({
+  source: descriptor.template!.content,
+  filename,
+  id: 'note-lifecycle',
+  compilerOptions: { mode: 'function', prefixIdentifiers: true, bindingMetadata: metadata.bindings, expressionPlugins: ['typescript'] }
+})
 if (template.errors.length) throw template.errors[0]
-const render = new Function('Vue', template.code)(Vue) as RenderFunction
+// Template event expressions can contain TypeScript just like the setup script.
+const render = new Function('Vue', new Bun.Transpiler({ loader: 'ts' }).transformSync(template.code))(Vue) as RenderFunction
 const apps: App[] = []
 const initialViewportWidth = browserWindow.innerWidth
 class Socket {
@@ -90,10 +108,31 @@ const note = (canEdit = true, revision = 0): LiveNoteView => ({
   state: encodeNoteUpdate(Y.encodeStateAsUpdate(server))
 })
 
-async function mount(
-  canEdit = true,
-  publishResult: () => Promise<unknown> = async () => ({ id: 1, sourceRevision: '1', updatedAt: '2026-10-22T00:00:00.000Z' })
-) {
+const emptyCreations: PageCreationInventory = { items: [], hasMore: false, nextCursor: null }
+const creationReceipt = (requestId: string, overrides: Partial<PageCreationCommitted> = {}): PageCreationCommitted => ({
+  status: 'committed',
+  requestId,
+  sourceRevision: '3',
+  createdAt: '2026-10-22T00:00:00.000Z',
+  creationOrigin: { kind: 'live-note', noteId: note().id, revision: 0 },
+  destination: {
+    id: 71,
+    sourceRevision: '9',
+    path: 'actual/moved-page',
+    locale: 'en',
+    title: 'Authorized destination',
+    visibility: 'private',
+    isPublished: false
+  },
+  ...overrides
+})
+const jsonResponse = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } })
+type PublicationTransport = {
+  create?: (input: PageWriteInput) => Promise<Response>
+  status?: (requestId: string) => Promise<PageCreationStatus | Response>
+  inventory?: () => Promise<PageCreationInventory | Response>
+}
+async function mount(canEdit = true, transport: PublicationTransport = {}) {
   setLocation('/p/notes/test-note?mode=edit')
   server.transact(() => {
     const text = server.getText('content')
@@ -119,7 +158,25 @@ async function mount(
     user: { id: 1, authVersion: 1, authenticated: true, permissions: ['write:notes', 'write:pages'] },
     waitForAuthRefresh: async () => 'authenticated'
   })
-  const createPage = vi.fn((_fetcher: typeof fetch, _input: PageWriteInput) => publishResult())
+  const writes: PageWriteInput[] = []
+  const fetchPageCreation = vi.spyOn(browserWindow, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url === '/_api/pages' && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as PageWriteInput
+      writes.push(body)
+      return transport.create ? transport.create(body) : jsonResponse({ page: { id: 71, sourceRevision: 3, updatedAt: '2026-10-22T00:00:00.000Z' } })
+    }
+    if (url.startsWith('/_api/pages/creation-requests/')) {
+      const requestId = url.split('/').at(-1)!
+      const result = transport.status ? await transport.status(requestId) : creationReceipt(requestId)
+      return result instanceof Response ? result : jsonResponse(result)
+    }
+    if (url.startsWith('/_api/pages/creation-origins/live-notes/')) {
+      const result = transport.inventory ? await transport.inventory() : emptyCreations
+      return result instanceof Response ? result : jsonResponse(result)
+    }
+    throw new Error(`Unexpected publication request: ${url}`)
+  })
   let safety: (() => { safe: boolean }) | null = null
   class MountedCollaboration extends LiveNoteCollaboration {
     constructor(options: NoteCollaborationOptions) {
@@ -151,13 +208,19 @@ async function mount(
         LiveNoteHistory,
         Y,
         wikiStore: store,
-        translate: (_key: string, options: { defaultValue: string }) => options.defaultValue,
+        translate: (_key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? _key,
         createLiveNotesApi: () => api,
         LiveNotesApiError,
         LiveNoteCollaboration: MountedCollaboration,
         decodeNoteState,
         captureNotePublication,
-        createPage,
+        createPage: writePage,
+        listLiveNoteCreations,
+        readPageCreationStatus,
+        PageCreationApiError,
+        wikiSourceHref,
+        helpers,
+        describePageVisibility,
         createWikiMarkdownRenderer: () => new MarkdownIt(),
         sanitizeWikiMarkdownHtml: (html: string) => html,
         enhanceWikiMarkdownPreview: () => {},
@@ -189,8 +252,11 @@ async function mount(
   sockets[0].open()
   sockets[0].message({ type: 'sync', note: initial })
   await settle()
-  const editor = EditorView.findFromDOM(host.querySelector<HTMLElement>('.cm-editor')!)!
-  return { host, editor, sockets, clients, api, store, createPage, errors, reloadSafe: () => safety?.().safe }
+  expect(errors).toEqual([])
+  const editorHost = host.querySelector<HTMLElement>('.cm-editor')
+  expect(editorHost).not.toBeNull()
+  const editor = EditorView.findFromDOM(editorHost!)!
+  return { host, editor, sockets, clients, api, store, fetchPageCreation, writes, errors, reloadSafe: () => safety?.().safe }
 }
 afterEach(() => {
   for (const app of apps.splice(0)) app.unmount()
@@ -254,42 +320,219 @@ it('renders live reader updates with no editing, sharing, publishing or destruct
   expect(mounted.errors).toEqual([])
 })
 
-it('publishes one captured revision via normal page creation and never retries an uncertain outcome', async () => {
-  const mounted = await mount(true, async () => {
-    throw new TypeError('Connection interrupted')
-  })
-  button(mounted.host, 'Publish as page').click()
+const publicationForm = (host: HTMLElement) => host.querySelector<HTMLFormElement>('[aria-labelledby="note-publish-title"] form')!
+const submitPublication = async (host: HTMLElement) => {
+  publicationForm(host).dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
   await settle()
-  const form = mounted.host.querySelector<HTMLFormElement>('.live-note__publication form')!
-  const path = form.querySelectorAll<HTMLInputElement>('input')[1]
-  path.value = 'notes/published'
+}
+const openPublication = async (host: HTMLElement) => {
+  button(host, 'Publish as page').click()
+  await settle()
+}
+
+it('keeps the canonical capture independent and recovers a lost success with one POST and an explicit receipt GET', async () => {
+  const status = vi.fn(async (requestId: string) => creationReceipt(requestId))
+  const mounted = await mount(true, {
+    create: async () => {
+      throw new TypeError('Connection interrupted after commit')
+    },
+    status
+  })
+  await openPublication(mounted.host)
+  const form = publicationForm(mounted.host)
+  const destination = form.querySelector<HTMLDetailsElement>('details:has(input)')!
+  destination.querySelector<HTMLElement>('summary')!.click()
+  destination.dispatchEvent(new browserWindow.Event('toggle'))
+  await settle()
+  expect(destination.open).toBe(true)
+  const path = destination.querySelector<HTMLInputElement>('input')!
+  path.value = 'notes/requested-path'
   path.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
   server.getText('content').insert(server.getText('content').length, '\nLater collaborator change')
   mounted.sockets[0].message({ type: 'sync', note: note(true, 1) })
   await settle()
-  form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
-  await settle()
-  expect(mounted.createPage).toHaveBeenCalledTimes(1)
-  expect(mounted.createPage.mock.calls[0][1]).toMatchObject({
+  await submitPublication(mounted.host)
+  expect(mounted.writes).toHaveLength(1)
+  expect(mounted.writes[0]).toMatchObject({
     title: 'Title',
     content: 'Body ![asset](/assets/image.png)',
     locale: 'en',
-    path: 'notes/published',
+    path: 'notes/requested-path',
+    visibility: 'private',
     isPublished: false,
-    editor: 'markdown'
+    creationRequestId: expect.any(String),
+    creationOrigin: { kind: 'live-note', noteId: note().id, revision: 0 }
   })
-  expect(mounted.clients[0].text.toString()).toContain('# Title')
-  expect(mounted.clients[0].text.toString()).toContain('Later collaborator change')
-  expect(form.textContent).toContain('This request will not be retried')
-  form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
-  await settle()
-  expect(mounted.createPage).toHaveBeenCalledTimes(1)
+  const post = mounted.fetchPageCreation.mock.calls.find(([, init]) => init?.method === 'POST')!
+  expect(new Headers(post[1]?.headers).get(PAGE_CREATION_OWNER_HEADER)).toBe('1')
+  expect(status).not.toHaveBeenCalled()
+  await submitPublication(mounted.host)
   button(mounted.host, 'Close').click()
   await settle()
-  expect(button(mounted.host, 'Publish as page').disabled).toBe(true)
-  expect(mounted.host.textContent).toContain('This request will not be retried')
+  await openPublication(mounted.host)
+  expect(publicationForm(mounted.host).querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true)
+  button(mounted.host, 'Check creation status').click()
+  await settle()
+  expect(status).toHaveBeenCalledTimes(1)
+  expect(status).toHaveBeenCalledWith(mounted.writes[0].creationRequestId)
+  expect(mounted.writes).toHaveLength(1)
+  const link = mounted.host.querySelector<HTMLAnchorElement>('a[href*="actual/moved-page"]')
+  expect(link?.textContent).toBe('Authorized destination')
+  expect(mounted.host.querySelector('a[href*="notes/requested-path"]')).toBeNull()
+  const inventory = mounted.host.querySelector('[aria-labelledby="note-creations-title"]')!
+  expect(inventory.textContent).toMatch(/Created page revision\s+3/u)
+  expect(inventory.textContent).toMatch(/Current page revision\s+9/u)
+  expect(mounted.clients[0].text.toString()).toBe('# Title\n\nBody ![asset](/assets/image.png)\nLater collaborator change')
+  expect(mounted.api.remove).not.toHaveBeenCalled()
+  expect(mounted.api.restore).not.toHaveBeenCalled()
   expect(mounted.errors).toEqual([])
 })
+
+for (const outcome of ['unknown', 'missing', 'malformed'] as const) {
+  it(`does not interpret a ${outcome} status check as permission to create another page`, async () => {
+    const mounted = await mount(true, {
+      create: async () => {
+        throw new TypeError('Lost response')
+      },
+      status: async requestId =>
+        outcome === 'unknown'
+          ? { status: 'unknown', requestId }
+          : outcome === 'missing'
+            ? jsonResponse({ error: 'Not available' }, 404)
+            : jsonResponse({ status: 'committed', requestId })
+    })
+    await openPublication(mounted.host)
+    await submitPublication(mounted.host)
+    button(mounted.host, 'Check creation status').click()
+    await settle()
+    await submitPublication(mounted.host)
+    expect(mounted.writes).toHaveLength(1)
+    expect(button(mounted.host, 'Review a corrected new attempt')).toBeUndefined()
+    expect(button(mounted.host, 'Prepare another snapshot')).toBeUndefined()
+    expect(mounted.host.querySelector('a[href*="actual/moved-page"]')).toBeNull()
+    expect(mounted.host.querySelector('[aria-labelledby="note-publish-title"] pre')?.textContent).toBe('Body ![asset](/assets/image.png)')
+    expect(mounted.errors).toEqual([])
+  })
+}
+
+it('requires a deliberate correction after a definite rejection and uses a fresh request identity for the retained capture', async () => {
+  const create = vi
+    .fn(async () => jsonResponse({ page: { id: 71, sourceRevision: 3, updatedAt: '2026-10-22T00:00:00.000Z' } }))
+    .mockResolvedValueOnce(jsonResponse({ error: 'That destination is occupied.', code: 'PAGE_CONFLICT' }, 409))
+  const mounted = await mount(true, { create })
+  await openPublication(mounted.host)
+  await submitPublication(mounted.host)
+  await submitPublication(mounted.host)
+  expect(mounted.writes).toHaveLength(1)
+  button(mounted.host, 'Review a corrected new attempt').click()
+  await settle()
+  const title = publicationForm(mounted.host).querySelector<HTMLInputElement>('input')!
+  title.value = 'Corrected title'
+  title.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+  await submitPublication(mounted.host)
+  expect(mounted.writes).toHaveLength(2)
+  expect(mounted.writes[1].creationRequestId).not.toBe(mounted.writes[0].creationRequestId)
+  expect(mounted.writes[1]).toMatchObject({
+    title: 'Corrected title',
+    content: 'Body ![asset](/assets/image.png)',
+    creationOrigin: mounted.writes[0].creationOrigin
+  })
+  expect(mounted.errors).toEqual([])
+})
+
+it('reconciles an already-committed conflict without enabling a corrected retry or leaking a redacted destination', async () => {
+  const status = vi.fn(async (requestId: string) => creationReceipt(requestId, { destination: null }))
+  const mounted = await mount(true, {
+    create: async () => jsonResponse({ error: 'Already committed', code: 'PAGE_CREATION_ALREADY_COMMITTED' }, 409),
+    status
+  })
+  await openPublication(mounted.host)
+  await submitPublication(mounted.host)
+  expect(status).toHaveBeenCalledTimes(1)
+  expect(status).toHaveBeenCalledWith(mounted.writes[0].creationRequestId)
+  expect(button(mounted.host, 'Review a corrected new attempt')).toBeUndefined()
+  expect(button(mounted.host, 'Prepare another snapshot')).toBeDefined()
+  await submitPublication(mounted.host)
+  expect(mounted.writes).toHaveLength(1)
+  expect(mounted.host.querySelector('[aria-labelledby="note-creations-title"] li')?.textContent).toContain('Creation is confirmed')
+  expect(mounted.host.querySelector('[aria-labelledby="note-creations-title"] a')).toBeNull()
+  expect(mounted.errors).toEqual([])
+})
+
+it('recovers multiple intentional publications after reopening by their actual destinations, without writing or changing the note', async () => {
+  const first = creationReceipt('1ce8ef11-12c4-4a45-a761-2743761911aa')
+  const second = creationReceipt('5f788aa1-a114-4c94-b52e-591e0f17c03a', {
+    sourceRevision: '4',
+    creationOrigin: { kind: 'live-note', noteId: note().id, revision: 7 },
+    destination: {
+      id: 72,
+      sourceRevision: '12',
+      path: 'actual/second-page',
+      locale: 'fr',
+      title: 'Another publication',
+      visibility: 'public',
+      isPublished: true
+    }
+  })
+  const mounted = await mount(true, { inventory: async () => ({ ...emptyCreations, items: [second, first] }) })
+  const inventory = mounted.host.querySelector('[aria-labelledby="note-creations-title"]')!
+  expect([...inventory.querySelectorAll('a')].map(link => [link.textContent, link.getAttribute('href')])).toEqual([
+    ['Another publication', '/fr/actual/second-page'],
+    ['Authorized destination', '/_private/en/actual/moved-page']
+  ])
+  expect(inventory.querySelectorAll('li')).toHaveLength(2)
+  expect(inventory.textContent).toMatch(/Committed capture: note revision\s+7/u)
+  expect(mounted.writes).toHaveLength(0)
+  expect(mounted.editor.state.doc.toString()).toBe('# Title\n\nBody ![asset](/assets/image.png)')
+  await openPublication(mounted.host)
+  await submitPublication(mounted.host)
+  button(mounted.host, 'Prepare another snapshot').click()
+  await settle()
+  await submitPublication(mounted.host)
+  expect(mounted.writes).toHaveLength(2)
+  expect(mounted.writes[1].creationRequestId).not.toBe(mounted.writes[0].creationRequestId)
+  expect(mounted.api.remove).not.toHaveBeenCalled()
+  expect(mounted.errors).toEqual([])
+})
+
+for (const boundary of ['identity', 'permission', 'source'] as const) {
+  it(`clears receipt metadata and ignores an in-flight success after ${boundary} loss while keeping captured Markdown`, async () => {
+    const pending = Promise.withResolvers<PageCreationStatus>()
+    const prior = creationReceipt('1ce8ef11-12c4-4a45-a761-2743761911aa')
+    const mounted = await mount(true, {
+      inventory: async () => ({ ...emptyCreations, items: [prior] }),
+      create: async () => {
+        throw new TypeError('Lost response')
+      },
+      status: () => pending.promise
+    })
+    expect(mounted.host.textContent).toContain('Authorized destination')
+    await openPublication(mounted.host)
+    await submitPublication(mounted.host)
+    button(mounted.host, 'Check creation status').click()
+    await settle()
+    if (boundary === 'identity') mounted.store.user.id = 2
+    else if (boundary === 'permission') {
+      vi.mocked(mounted.api.read).mockRejectedValue(new LiveNotesApiError(403, 'NOTE_FORBIDDEN', 'Access revoked'))
+      mounted.store.user.permissions = []
+    } else mounted.sockets[0].message({ type: 'error', code: 'NOTE_FORBIDDEN', error: 'Source no longer accessible' })
+    await settle()
+    expect(mounted.host.textContent).not.toContain('Authorized destination')
+    pending.resolve(
+      creationReceipt(mounted.writes[0].creationRequestId!, {
+        destination: { ...prior.destination!, title: 'Late private destination' }
+      })
+    )
+    await settle()
+    expect(mounted.host.textContent).not.toContain('Late private destination')
+    expect(mounted.host.querySelector('a[href*="actual/"]')).toBeNull()
+    expect(mounted.host.querySelector('[aria-labelledby="note-publish-title"] pre')?.textContent).toBe('Body ![asset](/assets/image.png)')
+    expect(mounted.clients[0].text.toString()).toContain('Body ![asset](/assets/image.png)')
+    await submitPublication(mounted.host)
+    expect(mounted.writes).toHaveLength(1)
+    expect(mounted.errors).toEqual([])
+  })
+}
 
 it('fences the live writer synchronously on account change while leaving recovery text available', async () => {
   const mounted = await mount()
@@ -396,5 +639,42 @@ it('resumes the same document and pending request after same-account unavailable
   mounted.sockets[1].message({ type: 'ack', requestId: request.requestId, note: note(true, 1) })
   await settle()
   expect(mounted.clients[0].pendingCount).toBe(0)
+  expect(mounted.errors).toEqual([])
+})
+
+for (const boundary of ['identity', 'permission', 'source'] as const) {
+  it(`does not turn a late page POST success into a receipt after note ${boundary} loss`, async () => {
+    const pending = Promise.withResolvers<Response>()
+    const status = vi.fn(async (requestId: string) => creationReceipt(requestId))
+    const mounted = await mount(true, { create: () => pending.promise, status })
+    await openPublication(mounted.host)
+    await submitPublication(mounted.host)
+    expect(mounted.writes).toHaveLength(1)
+    if (boundary === 'identity') mounted.store.user.id = 2
+    else if (boundary === 'permission') {
+      vi.mocked(mounted.api.read).mockRejectedValue(new LiveNotesApiError(403, 'NOTE_FORBIDDEN', 'Access revoked'))
+      mounted.store.user.permissions = []
+    } else mounted.sockets[0].message({ type: 'error', code: 'NOTE_FORBIDDEN', error: 'Source access revoked' })
+    await settle()
+    pending.resolve(jsonResponse({ page: { id: 999, sourceRevision: 23, updatedAt: '2026-10-22T00:00:00.000Z' } }))
+    await settle()
+    expect(status).not.toHaveBeenCalled()
+    expect(mounted.host.querySelector('[aria-labelledby="note-creations-title"] a')).toBeNull()
+    expect(mounted.host.querySelector('[aria-labelledby="note-publish-title"] pre')?.textContent).toBe('Body ![asset](/assets/image.png)')
+    await submitPublication(mounted.host)
+    expect(mounted.writes).toHaveLength(1)
+    expect(mounted.errors).toEqual([])
+  })
+}
+
+it('keeps a malformed 4xx write response uncertain rather than offering a corrected second POST', async () => {
+  const mounted = await mount(true, { create: async () => jsonResponse({}, 409) })
+  await openPublication(mounted.host)
+  await submitPublication(mounted.host)
+  expect(button(mounted.host, 'Review a corrected new attempt')).toBeUndefined()
+  expect(button(mounted.host, 'Check creation status')).toBeDefined()
+  await submitPublication(mounted.host)
+  expect(mounted.writes).toHaveLength(1)
+  expect(mounted.host.querySelector('[aria-labelledby="note-publish-title"] pre')?.textContent).toBe('Body ![asset](/assets/image.png)')
   expect(mounted.errors).toEqual([])
 })

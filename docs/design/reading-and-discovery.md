@@ -29,6 +29,14 @@ The priority is faster orientation in existing knowledge, not a new visual syste
 
 The serif/gold design, search ranking, provider behavior, permissions, and persisted data formats are unchanged. The approved aggregate JavaScript allowance increases by 24 KiB; every initial-load, login, and individual-chunk limit remains unchanged. Local and clean Docker builds have different aggregate measurements and both pass their fixed limits.
 
+## Search start and recovery
+
+- Search starts with the reader's task, question, or likely page wording rather than syntax examples. **Search syntax help** is a collapsed native disclosure, available in online Wiki search at the start and alongside results, including an empty result. Downloaded search keeps its existing plain-text guidance.
+- **Browse current view** is available at search start and after a fresh zero-result response, independently of Agent availability or sign-in. It closes Search without changing the query, filters, or retained response. On a reader page it opens the existing navigation drawer through its own control when needed, or focuses available navigation. When navigation is disabled or hidden, and in other views, it returns keyboard focus to the existing main content. It does not create a new browse route or fetch a separate discovery index.
+- Reopening Search in that same mounted view restores the query and retained results through the existing in-memory state. A connection, scope, or query change still uses the existing freshness checks. This is not durable history: a full reload or leaving the view can discard the response. Raw queries are not added to URLs or persistent browser storage.
+- Empty results suggest different task names, fewer words, broader terms, and clearing active filters. They distinguish no accessible matches in the current scope from proof that information does not exist. When connected, missing-information guidance points only to a relevant page discussion if the reader has access and posting is available, or an existing administrator contact method. Search creates no request, assigns no owner, and notifies nobody. There is no invented steward route or request inbox.
+- Ask remains the existing deliberate, editable draft hand-off, with its existing permission and connectivity gates; Browse does not depend on it. Result freshness, modified-click behavior, downloaded search, modal focus restoration, and live authorization retain their existing paths.
+
 ## Verification
 
 Targeted navigation, outline, search modal and inline Agent contracts; client type checking; repository lint; production build and bundle budgets. Browser checks cover live search, filtering, section jumps, active headings, Escape, skip-link focus, dark mode, reduced motion, and 320/390/768/1024/1440 px layouts. Real wiki content was used for browser verification; content and screenshots are deliberately excluded from this document.

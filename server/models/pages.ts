@@ -52,6 +52,10 @@ import { lockAssetMutationFence } from '../helpers/asset-location-lock.ts'
 import { assertNoStorageAssetAtPagePaths } from '../helpers/storage-path-admission.ts'
 import { enqueuePageStorageMutation } from '../jobs/storage-mutations.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../modules/storage/page-document.ts'
+import { PageCreationFieldsSchema, type PageCreationOrigin } from '../../shared/page-creation.ts'
+import { captureNotePublication } from '../../shared/live-note-publication.ts'
+import { authorizePageCreationAccount, readLiveNotePublication } from '../operations/live-notes.ts'
+import { authorizeAgentAnswerCreationOrigin, lockPageCreationOwner } from '../helpers/page-creation-origin.ts'
 
 type UnknownRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is UnknownRecord => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -178,6 +182,8 @@ interface CreatePageOptions {
     sessionId: string
   }
   skipStorage?: boolean | undefined
+  creationRequestId?: string
+  creationOrigin?: PageCreationOrigin
 }
 
 interface UpdatePageOptions {
@@ -658,7 +664,7 @@ const enqueueCurrentPageProjections = async (
 ): Promise<void> => {
   const page = await transaction<CanonicalProjectionPageRow>('pages')
     .select(
-      'id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId',
+'id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId',
       'contentType', 'title', 'description', 'authorId', 'createdAt', 'updatedAt', 'extra', 'isPublished', 'editorKey'
     )
     .where({ id: pageId })
@@ -1083,6 +1089,19 @@ export default class Page extends Model {
    */
   static async createPage(opts: CreatePageOptions): Promise<Page> {
     rejectApiPrincipalMutation(opts.user)
+    let creationRequestId: string | undefined
+    let creationOrigin: PageCreationOrigin | undefined
+    if (opts.creationRequestId !== undefined || opts.creationOrigin !== undefined) {
+      const receiptFields = PageCreationFieldsSchema.safeParse({
+        creationRequestId: opts.creationRequestId,
+        creationOrigin: opts.creationOrigin
+      })
+      if (!receiptFields.success) {
+        throw new errors.ApplicationError('Page creation receipt input is invalid.', { status: 400, code: 'INVALID_INPUT' })
+      }
+      creationRequestId = receiptFields.data.creationRequestId
+      creationOrigin = receiptFields.data.creationOrigin
+    }
     const changeReason = pageChangeReason(opts.changeReason)
     // -> Validate path
     if (opts.path.includes('.') || opts.path.includes(' ') || opts.path.includes('\\') || opts.path.includes('//')) {
@@ -1104,16 +1123,19 @@ export default class Page extends Model {
     opts.tags = normalizedTags
     const ownerId = opts.visibility === 'private' ? principalId(opts.user) : null
 
-    const dupCheck = await wiki.models.pages
-      .query()
-      .select('id')
-      .where({
-        visibility: opts.visibility,
-        ownerId,
-        localeCode: opts.locale,
-        path: opts.path
-      })
-      .first()
+    const dupCheck =
+      creationRequestId === undefined
+        ? await wiki.models.pages
+            .query()
+            .select('id')
+            .where({
+              visibility: opts.visibility,
+              ownerId,
+              localeCode: opts.locale,
+              path: opts.path
+            })
+            .first()
+        : undefined
     if (dupCheck) {
       throw new wiki.Error.PageDuplicateCreate()
     }
@@ -1142,6 +1164,46 @@ export default class Page extends Model {
     await authorizeBrandingAssignment(branding, opts)
 
     const createdPageId = await wiki.models.knex.transaction(async transaction => {
+      let receiptOwnerId: number | undefined
+      if (creationRequestId !== undefined) {
+        // Receipt transactions join Agent admission before taking any row or
+        // asset/search locks. Ordinary creates do not acquire this fence.
+        await lockPageCreationOwner(transaction, opts.user)
+        receiptOwnerId = (await authorizePageCreationAccount(transaction, opts.user)).id
+        // Admission fence → groups/account → source → assets/search.
+        // The owner fence serializes receipt attempts; the unique key is the
+        // final cross-writer backstop.
+        const committed = await transaction('pageCreationReceipts').where({ ownerId: receiptOwnerId, requestId: creationRequestId }).first('requestId')
+        if (committed) {
+          throw new errors.ApplicationError('This creation request already committed. Check its read-only status.', {
+            status: 409,
+            code: 'PAGE_CREATION_ALREADY_COMMITTED'
+          })
+        }
+        if (creationOrigin?.kind === 'live-note') {
+          const saved = await readLiveNotePublication(transaction, opts.user, creationOrigin.noteId, creationOrigin.revision)
+          if (!saved) throw new Error('Expected a captured live note revision')
+          const captured = captureNotePublication(saved.text, saved.revision)
+          if (opts.editor !== 'markdown' || opts.content !== captured.content) {
+            throw new errors.ApplicationError('The publication body must match the captured saved note revision.', {
+              status: 409,
+              code: 'NOTE_CAPTURE_MISMATCH'
+            })
+          }
+        }
+        if (creationOrigin?.kind === 'agent-answer') await authorizeAgentAnswerCreationOrigin(transaction, opts.user, creationOrigin)
+        const duplicate = await wiki.models.pages
+          .query(transaction)
+          .select('id')
+          .where({
+            visibility: opts.visibility,
+            ownerId,
+            localeCode: opts.locale,
+            path: opts.path
+          })
+          .first()
+        if (duplicate) throw new wiki.Error.PageDuplicateCreate()
+      }
       await lockAssetMutationFence(transaction, true)
       await lockSearchIndex(transaction, false)
       const inserted = await wiki.models.pages.query(transaction).insert({
@@ -1200,6 +1262,21 @@ export default class Page extends Model {
         skipStorage: opts.skipStorage,
         ...(changeReason === undefined ? {} : { changeReason })
       })
+      if (creationRequestId !== undefined && receiptOwnerId !== undefined) {
+        const committedPage = await transaction('pages').where({ id: inserted.id }).first('sourceRevision')
+        if (!committedPage) throw new Error('Created page revision is unavailable')
+        await transaction('pageCreationReceipts').insert({
+          ownerId: receiptOwnerId,
+          requestId: creationRequestId,
+          pageId: inserted.id,
+          sourceRevision: committedPage.sourceRevision,
+          originKind: creationOrigin?.kind ?? null,
+          originId: creationOrigin?.kind === 'live-note' ? creationOrigin.noteId : (creationOrigin?.messageId ?? null),
+          originRevision: creationOrigin?.kind === 'live-note' ? creationOrigin.revision : null,
+          originSessionId: creationOrigin?.kind === 'agent-answer' ? creationOrigin.sessionId : null,
+          createdAt: new Date()
+        })
+      }
       return inserted.id
     })
     const page = await wiki.models.pages.getPageFromDb(createdPageId)

@@ -9,7 +9,7 @@
             <button v-if="note.canEdit" type="button" @click="setMode(mode === 'read' ? 'edit' : 'read')">{{ mode === 'read' ? t('editor', 'Editor') : t('reader', 'Reader') }}</button>
             <button type="button" @click="download">{{ t('download', 'Download Markdown') }}</button>
             <button type="button" :disabled="busy || !accepted" @click="loadHistory(false)">{{ t('history', 'History') }}</button>
-            <button v-if="canPublish" type="button" :disabled="!settled || busy || publicationUncertain" @click="openPublication">{{ t('publish', 'Publish as page') }}</button>
+            <button v-if="canPublish" type="button" :disabled="!settled || busy" @click="openPublication">{{ t('publish', 'Publish as page') }}</button>
           </div>
         </header>
         <p role="status" aria-live="polite">{{ statusText }}</p>
@@ -21,7 +21,8 @@
         </div>
         <p v-if="note && !note.canEdit">{{ t('readOnly', 'You have read-only access to this note.') }}</p>
         <p v-if="pending">{{ t('pendingHelp', 'Unsaved changes remain in this tab. Keep it open until saved, or download your Markdown before leaving.') }}</p>
-        <p v-if="publicationUncertain && !publication" role="alert">{{ publishError }}</p>
+        <div v-if="publicationUncertain && !publicationOpen" role="alert"><p>{{ publishError }}</p><button type="button" :disabled="checkingCreation || !receiptAccess" @click="checkCreation">{{ t('checkCreation', 'Check creation status') }}</button></div>
+        <p v-if="note && accepted">{{ t('savedLocation', 'Saved on this Wiki as a live note, not a wiki page.') }} {{ noteAccessText }}</p>
         <div v-if="note" class="live-note__workspace">
           <section v-show="mode === 'edit' && note.canEdit" :aria-label="t('editor', 'Editor')"><div ref="editorHost" class="live-note__editor" /></section>
           <article v-show="mode === 'read' || !note.canEdit" ref="previewHost" class="contents live-note__preview" :aria-label="t('reader', 'Reader')" v-html="previewHtml" />
@@ -29,7 +30,7 @@
         <details v-if="note?.canManage" class="live-note__management">
           <summary>{{ t('manage', 'Manage note') }}</summary>
           <form class="live-note__form" @submit.prevent="saveAccess">
-            <label>{{ t('access', 'Sharing access') }}<select v-model="access" :disabled="busy || !settled"><option value="private">{{ t('private', 'Private — owner only') }}</option><option value="read">{{ t('read', 'Read — eligible wiki readers') }}</option><option value="edit">{{ t('edit', 'Edit — eligible wiki collaborators') }}</option></select></label>
+            <label>{{ t('access', 'Sharing access') }}<select v-model="access" :disabled="busy || !settled"><option value="private">{{ t('privateAccess', 'Private — owner and authorized administrators') }}</option><option value="read">{{ t('read', 'Read — eligible wiki readers') }}</option><option value="edit">{{ t('edit', 'Edit — eligible wiki collaborators') }}</option></select></label>
             <p>{{ t('sharingHelp', 'The link is an address, not a credential. Wiki note permissions and asset permissions still apply.') }}</p>
             <button type="submit" :disabled="busy || !settled || access === note.access">{{ t('saveAccess', 'Save access') }}</button>
             <button type="button" class="live-note__danger" :disabled="busy || !settled" @click="remove">{{ t('delete', 'Delete note') }}</button>
@@ -43,19 +44,39 @@
           <button v-if="historyCursor" type="button" :disabled="historyLoading" @click="loadHistory(true)">{{ t('loadMore', 'Load more') }}</button>
           <div v-if="historical"><h3>{{ t('revision', 'Revision') }} {{ historical.revision }}</h3><pre class="live-note__snapshot">{{ historicalText }}</pre><button v-if="note?.canManage" type="button" :disabled="busy || !settled || historical.revision === note.revision" @click="restore">{{ t('restore', 'Restore this revision') }}</button></div>
         </section>
-        <section v-if="publication" class="live-note__publication" aria-labelledby="note-publish-title">
+        <section v-if="receiptAccess" class="live-note__publication" aria-labelledby="note-creations-title">
+          <h2 id="note-creations-title">{{ t('creations', 'Pages you created from this note') }}</h2>
+          <p>{{ t('snapshotHelp', 'Each creation is an independent snapshot. Later note edits do not update pages, and page edits do not update this note.') }}</p>
+          <button type="button" :disabled="inventoryLoading" @click="loadCreations(false)">{{ t('refreshCreations', 'Refresh created pages') }}</button>
+          <p v-if="inventoryLoading" role="status">{{ t('loadingCreations', 'Loading created pages…') }}</p><p v-if="inventoryError" role="alert">{{ inventoryError }}</p>
+          <p v-if="inventoryLoaded && !creations.length">{{ t('noCreations', 'No confirmed page creations are available for this account.') }}</p>
+          <ul><li v-for="receipt in creations" :key="receipt.requestId">
+            <p>{{ t('committedCapture', 'Committed capture: note revision') }} {{ receipt.creationOrigin?.kind === 'live-note' ? receipt.creationOrigin.revision : '—' }} · {{ t('createdPageRevision', 'Created page revision') }} {{ receipt.sourceRevision }} · {{ formatDate(receipt.createdAt) }}</p>
+            <template v-if="receipt.destination"><a :href="wikiSourceHref(receipt.destination)">{{ receipt.destination.title || t('openPage', 'Open created page') }}</a><p>{{ t('currentPageRevision', 'Current page revision') }} {{ receipt.destination.sourceRevision }} · {{ receipt.destination.isPublished ? t('publishedState', 'Publication enabled') : t('draftState', 'Unpublished draft') }} · {{ receipt.destination.visibility === 'private' ? t('privatePageAccess', 'Private page; current owner and administrator access rules apply.') : t('publicPageAccess', 'Public namespace; current wiki permissions and publication rules still apply.') }}</p></template>
+            <p v-else>{{ t('committedUnavailable', 'Creation is confirmed, but this destination is not currently available to you.') }}</p>
+          </li></ul>
+          <button v-if="inventoryCursor" type="button" :disabled="inventoryLoading" @click="loadCreations(true)">{{ t('loadMore', 'Load more') }}</button>
+        </section>
+        <section v-if="publication && publicationOpen" class="live-note__publication" aria-labelledby="note-publish-title">
           <h2 id="note-publish-title" tabindex="-1">{{ t('publish', 'Publish as page') }}</h2>
           <p>{{ t('publishHelp', 'Creates a normal wiki page from the captured revision. Later note edits are not included, and the note is kept.') }} {{ t('revision', 'Revision') }} {{ publication.revision }}</p>
+          <p>{{ t('safeDraft', 'Starts as a private, unpublished draft. Review its title and destination before creating it. This does not mark the content as reviewed by anyone else.') }}</p>
           <form class="live-note__form" @submit.prevent="publish">
             <label>{{ t('title', 'Page title') }}<input v-model="publishTitle" required maxlength="255" :disabled="publishing || publicationAttempted" /></label>
-            <label>{{ t('path', 'Page path') }}<input v-model="publishPath" required pattern="[^?#]+" :disabled="publishing || publicationAttempted" /></label>
-            <label>{{ t('locale', 'Locale') }}<select v-model="publishLocale" required :disabled="publishing || publicationAttempted"><option v-for="locale in locales" :key="locale.code" :value="locale.code">{{ locale.name || locale.code }}</option></select></label>
+            <p v-if="!customDestination">{{ t('destinationPreview', 'Page destination') }}: <code>{{ publishLocale }}/{{ effectivePublishPath || '…' }}</code> <button type="button" :disabled="publishing || publicationAttempted" @click="publishPath = effectivePublishPath; customDestination = true">{{ t('customDestination', 'Use a custom destination') }}</button></p>
+            <details :open="customDestination" @toggle="customDestination = ($event.target as HTMLDetailsElement).open"><summary>{{ t('destinationDetails', 'Custom destination details (optional)') }}</summary>
+              <label>{{ t('path', 'Page path') }}<input v-model="publishPath" :placeholder="helpers.makeSafePath(publishTitle)" pattern="[^?#]+" :disabled="publishing || publicationAttempted" /></label>
+              <label>{{ t('locale', 'Locale') }}<select v-model="publishLocale" required :disabled="publishing || publicationAttempted"><option v-for="locale in locales" :key="locale.code" :value="locale.code">{{ locale.name || locale.code }}</option></select></label>
+            </details>
             <label>{{ t('pageVisibility', 'Page visibility') }}<select v-model="publishVisibility" :disabled="publishing || publicationAttempted"><option value="public">{{ t('publicPage', 'Public') }}</option><option value="private">{{ t('privatePage', 'Private') }}</option></select></label>
             <label class="live-note__check"><input v-model="publishPublished" type="checkbox" :disabled="publishing || publicationAttempted" />{{ t('published', 'Published (unchecked creates a draft)') }}</label>
+            <p>{{ publicationAudience }}</p><p>{{ t('snapshotHelp', 'Each creation is an independent snapshot. Later note edits do not update pages, and page edits do not update this note.') }}</p>
             <details><summary>{{ t('capturedBody', 'Captured page body') }}</summary><pre class="live-note__snapshot">{{ publication.content }}</pre></details>
             <p v-if="publishError" role="alert">{{ publishError }}</p>
-            <p v-if="publishedHref" role="status"><a :href="publishedHref">{{ t('openPage', 'Open created page') }}</a></p>
-            <button type="submit" :disabled="publishing || publicationAttempted || !canPublish">{{ publishing ? t('publishing', 'Creating page…') : t('createPage', 'Create page once') }}</button>
+            <button v-if="publicationUncertain" type="button" :disabled="checkingCreation || !receiptAccess" @click="checkCreation">{{ checkingCreation ? t('checkingCreation', 'Checking creation status…') : t('checkCreation', 'Check creation status') }}</button>
+            <button v-if="publicationRejected" type="button" :disabled="publishing || !canPublish || !receiptAccess" @click="correctPublication">{{ t('correctPublication', 'Review a corrected new attempt') }}</button>
+            <button v-if="publicationCommitted" type="button" :disabled="!settled || !canPublish" @click="newPublication">{{ t('anotherPublication', 'Prepare another snapshot') }}</button>
+            <button type="submit" :disabled="publishing || publicationAttempted || !canPublish || !receiptAccess">{{ publishing ? t('publishing', 'Creating page…') : t('createPage', 'Create page once') }}</button>
             <button type="button" :disabled="publishing" @click="closePublication">{{ t('close', 'Close') }}</button>
           </form>
         </section>
@@ -78,8 +99,13 @@ import { translate } from '../../modules/localization.ts'
 import { createLiveNotesApi, LiveNotesApiError } from '../../helpers/live-notes-api.ts'
 import { LiveNoteHistory } from '../../helpers/live-note-history.ts'
 import { LiveNoteCollaboration, decodeNoteState } from '../../helpers/live-note-collaboration.ts'
-import { captureNotePublication, type NotePublicationCapture } from '../../helpers/live-note-publication.ts'
+import { captureNotePublication, type NotePublicationCapture } from '../../../shared/live-note-publication.ts'
 import { createPage } from '../../helpers/pages-api.ts'
+import { listLiveNoteCreations, readPageCreationStatus, PageCreationApiError } from '../../helpers/page-creation-api.ts'
+import type { PageCreationCommitted } from '../../../shared/page-creation.ts'
+import { wikiSourceHref } from '../../../shared/wiki-source.ts'
+import { helpers } from '../../helpers/index.ts'
+import { describePageVisibility } from '../editor/common/page-visibility.ts'
 import { notifyReloadSafetyChanged, setReloadSafetyProvider } from '../../helpers/pwa.ts'
 import { createWikiMarkdownRenderer, sanitizeWikiMarkdownHtml, enhanceWikiMarkdownPreview } from '../editor/markdown/preview.ts'
 import { requestConfirmation } from '../common/confirm-dialog.ts'
@@ -100,8 +126,13 @@ const access = ref<LiveNoteAccess>('private')
 const historyOpen = ref(false), historyLoading = ref(false), historyError = ref(''), historyItems = ref<LiveNoteHistoryItem[]>([]), historyCursor = ref<string | null>(null)
 const historical = shallowRef<LiveNoteView | null>(null), historicalText = ref('')
 const publication = shallowRef<NotePublicationCapture | null>(null)
-const publishTitle = ref(''), publishPath = ref(''), publishLocale = ref(siteConfig.lang), publishVisibility = ref<'public' | 'private'>('public'), publishPublished = ref(false)
-const publishing = ref(false), publicationAttempted = ref(false), publicationUncertain = ref(false), publishError = ref(''), publishedHref = ref('')
+const publishTitle = ref(''), publishPath = ref(''), publishLocale = ref(siteConfig.lang), publishVisibility = ref<'public' | 'private'>('private'), publishPublished = ref(false)
+const publishing = ref(false), publicationAttempted = ref(false), publicationUncertain = ref(false), publishError = ref('')
+const publicationOpen = ref(false), publicationRejected = ref(false), publicationCommitted = ref(false), checkingCreation = ref(false), creationRequestId = ref(''), customDestination = ref(false)
+const creations = ref<PageCreationCommitted[]>([]), inventoryCursor = ref<string | null>(null), inventoryLoading = ref(false), inventoryLoaded = ref(false), inventoryError = ref('')
+const effectivePublishPath = computed(() => publishPath.value.trim() ? publishPath.value.replace(/^\/+|\/+$/gu, '') : helpers.makeSafePath(publishTitle.value))
+const publicationAudience = computed(() => { const summary = describePageVisibility({ visibility: publishVisibility.value, isPublished: publishPublished.value }); return translate(summary.summaryKey, summary.values) })
+const noteAccessText = computed(() => note.value?.access === 'private' ? t('notePrivateAccess', 'Private note: owner and authorized administrators can access it.') : note.value?.access === 'read' ? t('noteReadAccess', 'Shared note: eligible wiki readers can read; note permissions still apply.') : t('noteEditAccess', 'Shared note: eligible wiki collaborators can edit; note permissions still apply.'))
 const locales = typeof siteLangs !== 'undefined' && siteLangs.length ? siteLangs : [{ code: siteConfig.lang, name: siteConfig.lang }]
 const source = ref('')
 const renderer = createWikiMarkdownRenderer()
@@ -110,6 +141,7 @@ const connectionError = computed(() => { void tick.value; return collaboration.v
 const pending = computed(() => { void tick.value; return collaboration.value?.pendingCount ?? 0 })
 const settled = computed(() => { void tick.value; return accepted.value && collaboration.value?.state === 'connected' && !pending.value })
 const canPublish = computed(() => { void tick.value; return note.value?.canEdit && actor === identity() && accepted.value && wikiStore.user.authenticated && (wikiStore.user.permissions.includes('write:pages') || wikiStore.user.permissions.includes('manage:system')) && collaboration.value?.state !== 'blocked' })
+const receiptAccess = computed(() => { void tick.value; return Boolean(accepted.value && actor === identity() && wikiStore.user.authenticated && collaboration.value?.state === 'connected') })
 const dirtyAccess = computed(() => Boolean(note.value?.canManage && access.value !== note.value.access))
 const unsafeExit = computed(() => Boolean(pending.value || busy.value || publishing.value || dirtyAccess.value || (publication.value && !publicationAttempted.value)))
 const statusText = computed(() => {
@@ -118,7 +150,7 @@ const statusText = computed(() => {
   if (collaboration.value.state === 'blocked') return t('blocked', 'Connection stopped — local recovery is available.')
   if (collaboration.value.state === 'offline') return t('offline', 'Disconnected — reconnecting. Changes are not yet saved.')
   if (collaboration.value.state === 'connecting') return t('connecting', 'Connecting…')
-  return pending.value ? t('saving', 'Saving changes…') : t('saved', 'All changes saved')
+  return pending.value ? t('saving', 'Saving changes…') : t('savedOnWiki', 'All changes saved on this Wiki')
 })
 let editor: EditorView | null = null
 let history: LiveNoteHistory | null = null
@@ -240,52 +272,113 @@ async function restore() {
   if (accepted.value) await loadHistory(false)
 }
 function openPublication() {
-  if (publication.value) { document.getElementById('note-publish-title')?.focus(); return }
+  if (publication.value) { publicationOpen.value = true; void nextTick(() => document.getElementById('note-publish-title')?.focus()); return }
   if (!settled.value || !canPublish.value || !note.value || publicationUncertain.value) return
   publication.value = captureNotePublication(source.value, note.value.revision)
-  publishTitle.value = publication.value.title; publishPath.value = ''; publishError.value = ''; publishedHref.value = ''; publicationAttempted.value = false
+  publicationOpen.value = true; publishTitle.value = publication.value.title; publishPath.value = ''; publishLocale.value = siteConfig.lang
+  publishVisibility.value = 'private'; publishPublished.value = false; customDestination.value = false
+  publishError.value = ''; publicationAttempted.value = false; publicationRejected.value = false; publicationCommitted.value = false; creationRequestId.value = crypto.randomUUID()
   void nextTick(() => document.getElementById('note-publish-title')?.focus())
 }
 async function closePublication() {
   if (publishing.value) return
   if (!publicationAttempted.value && !await requestConfirmation({ title: t('closePublication', 'Close publication form?'), message: t('closePublicationHelp', 'The note is kept, but these page destination choices will be discarded.'), confirmLabel: t('close', 'Close') })) return
-  publication.value = null
+  publicationOpen.value = false
+  if (!publicationAttempted.value) publication.value = null
+}
+function correctPublication() {
+  if (!publicationRejected.value || !canPublish.value || !receiptAccess.value) return
+  creationRequestId.value = crypto.randomUUID(); publicationAttempted.value = false; publicationRejected.value = false; publishError.value = ''
+}
+function newPublication() {
+  if (!publicationCommitted.value || !settled.value || !canPublish.value) return
+  publication.value = null; openPublication()
+}
+let receiptController = new AbortController(), receiptGeneration = 0
+function clearReceiptMetadata() {
+  receiptGeneration++; receiptController.abort(); receiptController = new AbortController()
+  creations.value = []; inventoryCursor.value = null; inventoryLoaded.value = false; inventoryLoading.value = false; inventoryError.value = ''; checkingCreation.value = false
+}
+async function loadCreations(more: boolean) {
+  if (!receiptAccess.value || !note.value || inventoryLoading.value) return
+  const capturedActor = actor, epoch = generation, readEpoch = receiptGeneration, noteId = note.value.id, ownerId = wikiStore.user.id
+  inventoryLoading.value = true; inventoryError.value = ''
+  if (!more) creations.value = []
+  try {
+    const result = await listLiveNoteCreations(window.fetch.bind(window), ownerId, noteId, more ? inventoryCursor.value : null, receiptController.signal)
+    if (!current(epoch, capturedActor) || readEpoch !== receiptGeneration || !receiptAccess.value || note.value?.id !== noteId) return
+    creations.value = more ? [...creations.value, ...result.items.filter(item => !creations.value.some(existing => existing.requestId === item.requestId))] : result.items
+    inventoryCursor.value = result.nextCursor; inventoryLoaded.value = true
+  } catch (caught) {
+    if (!current(epoch, capturedActor) || readEpoch !== receiptGeneration) return
+    clearReceiptMetadata()
+    inventoryError.value = caught instanceof Error ? caught.message : t('creationsFailed', 'Created pages could not be loaded. No destination is confirmed by this check.')
+    if (caught instanceof PageCreationApiError && [401, 403, 404].includes(caught.status)) { accepted.value = false; collaboration.value?.block(inventoryError.value) }
+  } finally { if (current(epoch, capturedActor) && readEpoch === receiptGeneration) inventoryLoading.value = false }
+}
+async function checkCreation() {
+  if (!creationRequestId.value || !receiptAccess.value || checkingCreation.value) return
+  const capturedActor = actor, epoch = generation, readEpoch = receiptGeneration, requestId = creationRequestId.value, ownerId = wikiStore.user.id
+  checkingCreation.value = true
+  try {
+    const result = await readPageCreationStatus(window.fetch.bind(window), ownerId, requestId, receiptController.signal)
+    if (!current(epoch, capturedActor) || readEpoch !== receiptGeneration || !receiptAccess.value || requestId !== creationRequestId.value) return
+    if (result.status === 'unknown') {
+      publishError.value = t('creationUnknown', 'Creation is still unknown. Your captured content is kept; do not submit it again. You can check status again.')
+      return
+    }
+    publicationUncertain.value = false; publicationCommitted.value = true; publicationRejected.value = false
+    creations.value = [result, ...creations.value.filter(item => item.requestId !== result.requestId)]
+    publishError.value = result.destination ? t('creationConfirmed', 'Page creation confirmed. The current authorized destination is listed under Pages you created from this note.') : t('committedUnavailable', 'Creation is confirmed, but this destination is not currently available to you.')
+  } catch (caught) {
+    if (!current(epoch, capturedActor) || readEpoch !== receiptGeneration) return
+    clearReceiptMetadata()
+    publishError.value = t('creationCheckUnknown', 'This check could not confirm the result. Missing or inaccessible information does not prove creation failed. Captured content is kept; no request will be replayed.')
+    if (caught instanceof PageCreationApiError && [401, 403].includes(caught.status)) { accepted.value = false; collaboration.value?.block(publishError.value) }
+  } finally { if (current(epoch, capturedActor) && readEpoch === receiptGeneration) checkingCreation.value = false }
 }
 async function publish() {
-  if (!publication.value || !canPublish.value || publicationAttempted.value || publishing.value || actor !== identity()) return
-  const capturedActor = actor, epoch = generation, capture = publication.value
-  const destination = { locale: publishLocale.value, path: publishPath.value.replace(/^\/+|\/+$/gu, ''), visibility: publishVisibility.value }
+  if (!publication.value || !canPublish.value || !receiptAccess.value || publicationAttempted.value || publishing.value || actor !== identity() || !note.value) return
+  const capturedActor = actor, epoch = generation, authorityEpoch = receiptGeneration, capture = publication.value, ownerId = wikiStore.user.id, requestId = creationRequestId.value, noteId = note.value.id, csrfToken = siteConfig.agentCsrfToken
+  const destination = { locale: publishLocale.value, path: effectivePublishPath.value, visibility: publishVisibility.value }
   if (!publishTitle.value.trim() || !destination.path || !destination.locale) return
-  publishing.value = true; publicationAttempted.value = true; publishError.value = ''
+  publishing.value = true; publicationAttempted.value = true; publicationUncertain.value = true; publishError.value = t('creationUncertain', 'Creation is not confirmed. Your captured content is kept. Use Check creation status; this request will not be replayed.')
   try {
-    await createPage((input, init) => window.fetch(input, { ...init, signal: controller.signal }), {
+    await createPage((input, init) => window.fetch(input, { ...init, headers: { ...init.headers, 'x-wiki-csrf': csrfToken }, signal: controller.signal }), {
       content: capture.content, title: publishTitle.value.trim(), description: '', editor: 'markdown', visibility: destination.visibility,
-      isPublished: publishPublished.value, locale: destination.locale, path: destination.path, publishEndDate: '', publishStartDate: '', scriptCss: '', scriptJs: '', tags: []
-    })
-    if (!current(epoch, capturedActor)) return
-    publishedHref.value = `${destination.visibility === 'private' ? '/_private' : ''}/${encodeURIComponent(destination.locale)}/${destination.path.split('/').map(encodeURIComponent).join('/')}`
+      isPublished: publishPublished.value, locale: destination.locale, path: destination.path, publishEndDate: '', publishStartDate: '', scriptCss: '', scriptJs: '', tags: [],
+      creationRequestId: requestId, creationOrigin: { kind: 'live-note', noteId, revision: capture.revision }
+    }, t('publishFailed', 'Page creation could not be confirmed.'), ownerId)
+    if (!current(epoch, capturedActor) || authorityEpoch !== receiptGeneration || !canPublish.value || !receiptAccess.value) return
+    await checkCreation()
   } catch (caught) {
-    if (current(epoch, capturedActor)) {
-      publicationUncertain.value = true
-      publishError.value = `${caught instanceof Error ? caught.message : t('publishFailed', 'Page creation could not be confirmed.')} ${t('noRetry', 'This request will not be retried. Check your pages for the destination before starting another publication.')}`
-    }
+    if (!current(epoch, capturedActor) || authorityEpoch !== receiptGeneration || !canPublish.value || !receiptAccess.value) return
+    const status = caught instanceof Error ? Reflect.get(caught, 'status') : undefined
+    const code = caught instanceof Error ? Reflect.get(caught, 'code') : undefined
+    if (code === 'PAGE_CREATION_ALREADY_COMMITTED') { await checkCreation(); return }
+    const definiteRejection = caught instanceof Error && Reflect.get(caught, 'responseRejected') === true && typeof status === 'number' && status >= 400 && status < 500
+    publicationRejected.value = definiteRejection; publicationUncertain.value = !definiteRejection
+    publishError.value = `${caught instanceof Error ? caught.message : t('publishFailed', 'Page creation could not be confirmed.')} ${definiteRejection ? t('creationRejected', 'This attempt was rejected. Your captured content is kept. Review a corrected new attempt before deliberately creating again.') : t('creationUncertain', 'Creation is not confirmed. Your captured content is kept. Use Check creation status; this request will not be replayed.')}`
   } finally { if (current(epoch, capturedActor)) publishing.value = false }
 }
 watch([identity, () => wikiStore.authRefreshOutcome, () => wikiStore.user.permissions.join(',')], () => {
   if (!actor) return
   if (actor !== identity()) {
     generation++; controller.abort(); accepted.value = false; busy.value = false; loading.value = false; publishing.value = false
-    historical.value = null; historicalText.value = ''; historyItems.value = []; historyOpen.value = false; publication.value = null
+    clearReceiptMetadata()
+    historical.value = null; historicalText.value = ''; historyItems.value = []; historyOpen.value = false
+    if (publicationAttempted.value) { publicationUncertain.value = true; publishError.value = t('creationIdentityChanged', 'Account or session changed. Captured content is kept, but creation status and destinations cannot be shown in this session. Reopen the source under the original account to recover authorized creations.') }
     collaboration.value?.invalidateIdentity()
     return
   }
   // Verification readiness is reversible; only an actual actor/session boundary
   // permanently stops this document. Never retry uncertain REST mutations.
   generation++; controller.abort(); controller = new AbortController()
+  clearReceiptMetadata()
   accepted.value = false; busy.value = false; loading.value = false; historyLoading.value = false
   if (publishing.value) {
     publicationUncertain.value = true
-    publishError.value = t('noRetry', 'This request will not be retried. Check your pages for the destination before starting another publication.')
+    publishError.value = t('creationUncertain', 'Creation is not confirmed. Your captured content is kept. Use Check creation status; this request will not be replayed.')
   }
   publishing.value = false
   collaboration.value?.setAuthorizationReady(false)
@@ -294,6 +387,14 @@ watch([identity, () => wikiStore.authRefreshOutcome, () => wikiStore.user.permis
       if (accepted.value && actor === identity()) collaboration.value?.setAuthorizationReady(true)
     })
   }
+}, { flush: 'sync' })
+watch(receiptAccess, value => {
+  clearReceiptMetadata()
+  if (value) void loadCreations(false)
+}, { flush: 'sync' })
+watch(() => `${note.value?.access}:${note.value?.canEdit}:${note.value?.canManage}`, () => {
+  clearReceiptMetadata()
+  if (receiptAccess.value) void loadCreations(false)
 }, { flush: 'sync' })
 watch(previewHtml, async () => { await nextTick(); if (previewHost.value) enhanceWikiMarkdownPreview(previewHost.value) })
 let safetyRevision = 0
@@ -337,7 +438,7 @@ onMounted(async () => {
   finally { if (current(epoch, actor)) loading.value = false }
 })
 onBeforeUnmount(() => {
-  disposed = true; generation++; controller.abort(); editor?.destroy(); history?.destroy(); collaboration.value?.destroy()
+  disposed = true; generation++; controller.abort(); receiptController.abort(); editor?.destroy(); history?.destroy(); collaboration.value?.destroy()
   setReloadSafetyProvider(null)
   window.removeEventListener('beforeunload', beforeLeave); window.removeEventListener('popstate', popMode)
 })

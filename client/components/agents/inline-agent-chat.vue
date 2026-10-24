@@ -358,6 +358,8 @@
                 :deciding-approval-id="decidingApprovalId"
                 :can-submit="canSubmit"
                 :network-blocked="connectionBlocked"
+                :correction-unavailable-reason="correctionUnavailableReason"
+                @prepare-correction="prepareCorrection"
                 @suggest="preparePrompt"
                 @review-request="reviewRequest"
                 @edit-image="composer?.editImage($event)"
@@ -923,6 +925,9 @@ const submitUnavailableReason = computed(() => admissionBlocked.value
                 : openGoal.value
                   ? goalSubmitUnavailableReason.value
                   : '')
+const correctionUnavailableReason = computed(() => openGoal.value
+  ? t('common:inlineAgentChat.correctionGoalLocked', { defaultValue: 'A goal is still open. There is no guidance queue: explicitly cancel it with Cancel goal, wait for cancellation to be confirmed, then prepare and send a new request that restates the objective. Denying a proposal does not cancel the goal.' })
+  : submitUnavailableReason.value)
 const starterUnavailableReason = computed(() => promptSubmissionPending.value
   ? t('common:inlineAgentChat.sendingMessage')
   : !canSubmit.value ? submitUnavailableReason.value : '')
@@ -1044,6 +1049,34 @@ const reviewRequest = async (messageId: string): Promise<void> => {
     thread.value?.session.id !== sessionId
   ) return
   await composer.value?.setDraft(prompt)
+}
+const prepareCorrection = async (proposalId: string): Promise<void> => {
+  const generation = componentGeneration
+  const ownerId = props.ownerId
+  const workspaceVersion = agents.workspaceVersion
+  const ownerGeneration = agents.ownerGeneration
+  const sessionId = thread.value?.session.id
+  const proposal = thread.value?.proposals.find(candidate => candidate.id === proposalId)
+  const note = proposal?.approval?.decisionNote
+  if (!sessionId || !proposal || proposal.approval?.status !== 'denied' || !note || !canSubmit.value || !composer.value || !mediaReplacementAllowed()) return
+  const originalDraft = agents.drafts[sessionId]
+  if (originalDraft?.text.trim() && !await confirmDraftDiscard()) return
+  if (
+    !isComponentCurrent(generation, ownerId) || agents.workspaceVersion !== workspaceVersion ||
+    agents.ownerGeneration !== ownerGeneration || thread.value?.session.id !== sessionId ||
+    agents.drafts[sessionId] !== originalDraft || !canSubmit.value || !composer.value || !mediaReplacementAllowed()
+  ) return
+  const current = thread.value?.proposals.find(candidate => candidate.id === proposalId)
+  if (current?.approval?.status !== 'denied' || current.approval.decisionNote !== note) return
+  const prompt = t('common:inlineAgentChat.correctionPrompt', {
+    defaultValue: 'Prepare a new proposal for this corrected request. The earlier proposal was denied and is not authorized. Recheck current access and revisions; do not apply the old proposal. Any new write needs fresh approval.\n\nDenied proposal: {{summary}}\nTarget: {{target}}\n\nRequested changes (please review and restate the full objective before sending):\n{{note}}',
+    summary: proposal.summary,
+    target: proposal.target ? `${proposal.target.locale}/${proposal.target.path}` : proposal.actionName,
+    note,
+    interpolation: { escapeValue: false }
+  })
+  agents.updateDraft(sessionId, { mode: 'message' })
+  await composer.value.setDraft(prompt)
 }
 const initializationFailureMessage = (value: unknown): string =>
   value instanceof Error && value.message
@@ -1224,9 +1257,9 @@ const networkActionAllowed = (): boolean => {
   waitingForConnection.value = true
   return false
 }
-const handleDecision = (proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string): void => {
+const handleDecision = (proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string, decisionNote?: string): void => {
   if (disposed || connectionBlocked.value || !agents.isWorkspaceMutationReady()) return
-  void agents.decideProposal(proposalId, approvalId, decision, confirmationPath)
+  void agents.decideProposal(proposalId, approvalId, decision, confirmationPath, decisionNote)
 }
 const pauseGoal = (): void => {
   if (networkActionAllowed()) void agents.pauseGoal()

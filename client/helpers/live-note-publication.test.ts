@@ -1,5 +1,5 @@
 import { describe, expect, it } from '../../server/test/bun-test.mts'
-import { captureNotePublication } from './live-note-publication.ts'
+import { captureNotePublication } from '../../shared/live-note-publication.ts'
 
 describe('note page publication capture', () => {
   it('takes the first real H1, not a fenced example, removes only that heading and leaves canonical asset URLs unchanged', () => {

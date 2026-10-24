@@ -111,19 +111,12 @@
           .search-results-help(v-if='normalizedSearch.length < 2')
             .search-results-help-mark(aria-hidden='true')
               v-icon(icon='mdi-text-search' size='34')
-            h3 {{ $t('common:searchPanel.helpTitle') }}
+            h3 {{ $t('common:searchPanel.taskStartTitle', { defaultValue: 'Start with what you need to do' }) }}
             p(v-if='offlineSearchActive') {{ $t('common:searchPanel.helpOffline') }}
-            p(v-else) {{ $t('common:searchPanel.helpOnline') }}
-            .search-results-syntax-tips(v-if='!offlineSearchActive')
-              span.search-results-syntax-tip
-                kbd "exact phrase"
-                | {{ $t('common:searchPanel.tipExact') }}
-              span.search-results-syntax-tip
-                kbd -word
-                | {{ $t('common:searchPanel.tipExclude') }}
-              span.search-results-syntax-tip
-                kbd or
-                | {{ $t('common:searchPanel.tipEither') }}
+            p(v-else) {{ $t('common:searchPanel.taskStartHelp', { defaultValue: 'Search for a task, question, or words a page might use. Not sure what to call it? Browse the current view and its available navigation first.' }) }}
+            .search-results-empty-actions
+              v-btn.search-results-browse(color='primary' variant='tonal' prepend-icon='mdi-book-open-page-variant-outline' @click='browseCurrentView' data-modal-focus-key='search-browse-start') {{ $t('common:searchPanel.browseCurrentView', { defaultValue: 'Browse current view' }) }}
+            p.search-results-reason {{ $t('common:searchPanel.browseKeepsSearch', { defaultValue: 'Your search stays here while you browse this view. Reopen Search to return.' }) }}
           .search-results-loader(v-else-if='searchIsLoading && !results.length && !suggestions.length')
             async-state(
               state='loading'
@@ -168,7 +161,9 @@
                 :title='$t(`common:header.searchNoResult`)'
                 :message='emptyResultsMessage'
               )
+              p.search-results-recovery {{ $t('common:searchPanel.recoveryTerms', { defaultValue: 'Try a different name for the task, fewer words, or a broader term. If filters are active, clear them to search more widely.' }) }}
               .search-results-empty-actions
+                v-btn.search-results-browse(color='primary' variant='tonal' prepend-icon='mdi-book-open-page-variant-outline' @click='browseCurrentView' data-modal-focus-key='search-browse-empty') {{ $t('common:searchPanel.browseCurrentView', { defaultValue: 'Browse current view' }) }}
                 v-btn(v-if='hasActiveSearchFilters' color='primary' variant='tonal' prepend-icon='mdi-filter-remove-outline' @click='clearSearchScope') {{ $t('common:searchPanel.clearFilters') }}
                 v-btn.search-results-empty-ask(
                   v-if='canAsk || serverUnavailable'
@@ -182,6 +177,8 @@
                 ) {{ $t('common:searchPanel.askWikiAbout', { query: normalizedSearch }) }}
               p.search-results-reason#wiki-search-draft-hint(v-if='canAsk') {{ $t('common:searchPanel.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}
               p.search-results-reason#wiki-search-ask-reason(v-if='!canAsk && serverUnavailable') {{ askUnavailableReason }}
+              p.search-results-reason {{ $t('common:searchPanel.browseKeepsSearch', { defaultValue: 'Your search stays here while you browse this view. Reopen Search to return.' }) }}
+              p.search-results-recovery(v-if='!offlineSearchActive') {{ $t('common:searchPanel.missingInformationHelp', { defaultValue: 'Still missing information? Use a relevant page discussion if you have access and posting is available, or contact your wiki administrator through an existing contact method. Search does not send a request or notify anyone.' }) }}
             template(v-if='results.length > 0')
               v-list.search-results-items(
                 id='wiki-search-results'
@@ -282,6 +279,18 @@
                   )
                     v-list-item-title {{ term }}
                   v-divider(v-if='idx < suggestions.length - 1' aria-hidden='true')
+          details.search-results-syntax(v-if='!offlineSearchActive')
+            summary(tabindex='0') {{ $t('common:searchPanel.syntaxHelp', { defaultValue: 'Search syntax help' }) }}
+            .search-results-syntax-tips
+              span.search-results-syntax-tip
+                kbd "exact phrase"
+                | {{ $t('common:searchPanel.tipExact') }}
+              span.search-results-syntax-tip
+                kbd -word
+                | {{ $t('common:searchPanel.tipExclude') }}
+              span.search-results-syntax-tip
+                kbd or
+                | {{ $t('common:searchPanel.tipEither') }}
         .search-results-keyboard-hint(
           v-if='!isAgentOpen && searchScope !== `glossary` && normalizedSearch.length >= 2'
           aria-hidden='true'
@@ -579,7 +588,7 @@ export default defineComponent({
     },
     emptyResultsMessage(): string {
       if (this.offlineSearchActive) return this.$t('common:searchPanel.emptySaved')
-      return this.canAsk ? this.$t('common:searchPanel.emptyAsk') : this.$t('common:searchPanel.empty')
+      return this.$t('common:searchPanel.emptyAccessible', { defaultValue: 'No accessible matches in this search scope. This does not establish whether the information exists elsewhere or requires different access.' })
     },
     /** One summary line for the single "More results" paging model; truncation is folded in here. */
     resultSummary(): string {
@@ -1349,6 +1358,35 @@ export default defineComponent({
       url.searchParams.delete('agentApproval')
       window.history.replaceState(window.history.state, '', url)
     },
+    async browseCurrentView(): Promise<void> {
+      // Stay in this mounted view: its search response and the store's query remain
+      // in memory, without putting the query in a URL or persistent storage.
+      this.closeSearch()
+      await this.$nextTick()
+      if (this.searchIsFocused || this.isAgentOpen) return
+      const visible = (element: HTMLElement): boolean =>
+        element.getClientRects().length > 0 &&
+        window.getComputedStyle(element).visibility !== 'hidden' &&
+        !element.closest('[inert], [aria-hidden="true"]') &&
+        !element.matches(':disabled')
+      const toggle = Array.from(document.querySelectorAll<HTMLElement>('.page-nav-toggle[aria-controls="page-navigation-drawer"]')).find(visible)
+      if (toggle?.getAttribute('aria-expanded') === 'false') {
+        // Reuse the reader's drawer lifecycle and its keyboard focus hand-off.
+        toggle.click()
+        return
+      }
+      const navigation = Array.from(document.querySelectorAll<HTMLElement>('#page-navigation-drawer .nav-sidebar button, #page-navigation-drawer .nav-sidebar a[href]')).find(visible)
+      if (navigation) {
+        navigation.focus({ preventScroll: true })
+        return
+      }
+      // NONE/hidden navigation and non-reader views still have a useful escape.
+      const content = Array.from(document.querySelectorAll<HTMLElement>('main h1, main')).find(visible)
+      if (content) {
+        if (!content.hasAttribute('tabindex')) content.setAttribute('tabindex', '-1')
+        content.focus({ preventScroll: true })
+      }
+    },
     clearSearchScope(): void {
       this.searchRestrictLocale = false
       this.searchRestrictPath = false
@@ -2042,6 +2080,22 @@ export default defineComponent({
     margin-top: var(--wiki-space-4);
     width: 100%;
   }
+  &-browse {
+    min-height: max(2.75rem, var(--wiki-control-height));
+    max-width: 100%;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: normal;
+    .v-btn__content { white-space: normal; overflow-wrap: anywhere; }
+  }
+  &-recovery {
+    max-width: 36rem;
+    margin: var(--wiki-space-3) 0 0;
+    color: var(--wiki-text-muted);
+    font-size: .875rem;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
   &-empty-ask {
     letter-spacing: 0;
     max-width: min(100%, 36rem);
@@ -2088,6 +2142,21 @@ export default defineComponent({
     max-width: 32rem;
   }
 
+  &-help p.search-results-reason { margin-top: var(--wiki-space-3); }
+  &-syntax {
+    margin-top: var(--wiki-space-4);
+    border-top: 1px solid var(--wiki-surface-border);
+    color: var(--wiki-text-muted);
+    font-size: .875rem;
+  }
+  &-syntax > summary {
+    min-height: 2.75rem;
+    padding: var(--wiki-space-3) var(--wiki-space-2);
+    cursor: pointer;
+    overflow-wrap: anywhere;
+    border-radius: var(--wiki-radius-xs);
+    &:focus-visible { box-shadow: inset var(--wiki-focus-ring); }
+  }
   &-syntax-tips {
     display: flex;
     flex-wrap: wrap;

@@ -1549,7 +1549,7 @@ export const useAgentsStore = defineStore('agents', {
         this.endSessionMutation(mutationToken)
       }
     },
-    async decideProposal(proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string) {
+    async decideProposal(proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string, decisionNote?: string) {
       if (!this.isWorkspaceMutationReady()) return
       const thread = this.thread
       const sessionId = thread?.session.id
@@ -1563,6 +1563,7 @@ export const useAgentsStore = defineStore('agents', {
         this.decidingApprovalId
       )
         return
+      if (decisionNote !== undefined && (decision !== 'denied' || !decisionNote.trim() || decisionNote.length > 4_000)) return
       const workspaceVersion = this.workspaceVersion
       const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
@@ -1573,7 +1574,8 @@ export const useAgentsStore = defineStore('agents', {
       try {
         await decideAgentProposal(fetchFromWindow, this.csrfToken, proposalId, approvalId, {
           decision,
-          ...(confirmationPath === undefined ? {} : { confirmationPath })
+          ...(confirmationPath === undefined ? {} : { confirmationPath }),
+          ...(decisionNote === undefined ? {} : { decisionNote })
         })
         if (
           !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||

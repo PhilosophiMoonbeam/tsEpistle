@@ -51,6 +51,17 @@ import type { PageFeatures } from '../../shared/page-features.ts'
 import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import { DeletedPageRecoverySecurityContextSchema } from '../models/pages.ts'
 import type { DeletedPageRecoverySecurityContext } from '../models/pages.ts'
+import {
+  PAGE_CREATION_INVENTORY_LIMIT,
+  PageCreationInventorySchema,
+  PageCreationRequestIdSchema,
+  PageCreationStatusSchema,
+  type PageCreationCommitted,
+  type PageCreationInventory,
+  type PageCreationStatus
+} from '../../shared/page-creation.ts'
+import { authorizePageCreationAccount, readLiveNotePublication } from './live-notes.ts'
+import { authorizeAgentAnswerCreationOrigin, lockPageCreationOwner } from '../helpers/page-creation-origin.ts'
 const MOVE_REVIEW_PAGE_SIZE = 20
 const MOVE_REVIEW_CANDIDATE_BATCH = 100
 const MOVE_REVIEW_SCAN_LIMIT = 10_000
@@ -3091,6 +3102,184 @@ const getConflictLatest = async (input: OperationInput) => {
   return { ...projectedPage, tags: projectedPage.tags.map(tag => tag.tag), locale: projectedPage.localeCode }
 }
 
+interface PageCreationReceiptRow {
+  ownerId: number
+  requestId: string
+  pageId: number
+  sourceRevision: string | number
+  originKind: 'live-note' | 'agent-answer' | null
+  originId: string | null
+  originRevision: string | number | null
+  originSessionId: string | null
+  createdAt: Date | string
+}
+
+const creationReceiptProjection = async (
+  transaction: Knex.Transaction,
+  input: OperationInput,
+  row: PageCreationReceiptRow,
+  authority: PageRuleAuthority,
+  originAvailable = true,
+  lockedPages?: ReadonlyMap<number, PageRecord>
+): Promise<PageCreationCommitted> => {
+  const page = !originAvailable
+    ? undefined
+    : lockedPages !== undefined
+      ? lockedPages.get(row.pageId)
+      : await transaction<PageRecord>('pages').where({ id: row.pageId }).forShare().first()
+  let destination: PageCreationCommitted['destination'] = null
+  if (page) {
+    page.tags = await transaction<TagRecord>('tags').join('pageTags', 'pageTags.tagId', 'tags.id').where('pageTags.pageId', page.id).select('tags.*')
+    normalizePageBooleans(page)
+    if (
+      canAccessCurrentPageSource(input.requester, page, authority) &&
+      !(await pageRequiresUnlock({
+        requester: input.requester,
+        pageId: page.id,
+        sessionId: typeof input.sessionId === 'string' ? input.sessionId : '',
+        transaction,
+        readOnly: true
+      }))
+    ) {
+      destination = {
+        id: page.id,
+        sourceRevision: String(page.sourceRevision),
+        path: page.path,
+        locale: page.localeCode,
+        title: page.title,
+        visibility: page.visibility,
+        isPublished: page.isPublished
+      }
+    }
+  }
+  return {
+    status: 'committed',
+    requestId: row.requestId,
+    sourceRevision: String(row.sourceRevision),
+    createdAt: new Date(row.createdAt).toISOString(),
+    creationOrigin:
+      originAvailable && row.originKind === 'live-note' && row.originId !== null && row.originRevision !== null
+        ? { kind: 'live-note', noteId: row.originId, revision: Number(row.originRevision) }
+        : originAvailable && row.originKind === 'agent-answer' && row.originId !== null && row.originSessionId !== null
+          ? { kind: 'agent-answer', sessionId: row.originSessionId, messageId: row.originId }
+          : null,
+    destination
+  }
+}
+
+const creationStatus = async (input: OperationInput): Promise<PageCreationStatus> => {
+  const requestId = PageCreationRequestIdSchema.safeParse(input.requestId)
+  if (!requestId.success) throw new ApplicationError('The creation request ID is invalid.', { status: 400, code: 'INVALID_INPUT' })
+  return wiki.models.knex.transaction(async transaction => {
+    await lockPageCreationOwner(transaction, input.requester)
+    const owner = await authorizePageCreationAccount(transaction, input.requester)
+    const authority = await authorityFor(input, transaction)
+    const row = await transaction<PageCreationReceiptRow>('pageCreationReceipts').where({ ownerId: owner.id, requestId: requestId.data }).first()
+    let originAvailable = true
+    if (row?.originKind === 'live-note' && row.originId !== null) {
+      try {
+        await readLiveNotePublication(transaction, input.requester, row.originId)
+      } catch (error) {
+        if (error instanceof ApplicationError && error.status === 404) originAvailable = false
+        else throw error
+      }
+    }
+    if (row?.originKind === 'agent-answer' && row.originId !== null && row.originSessionId !== null) {
+      try {
+        await authorizeAgentAnswerCreationOrigin(transaction, input.requester, {
+          kind: 'agent-answer',
+          sessionId: row.originSessionId,
+          messageId: row.originId
+        })
+      } catch (error) {
+        if (error instanceof ApplicationError && error.status === 404) originAvailable = false
+        else throw error
+      }
+    }
+    return PageCreationStatusSchema.parse(
+      row ? await creationReceiptProjection(transaction, input, row, authority, originAvailable) : { status: 'unknown', requestId: requestId.data }
+    )
+  })
+}
+
+const readCreationInventory = async (
+  transaction: Knex.Transaction,
+  input: OperationInput,
+  where: { ownerId: number; originKind: 'live-note' | 'agent-answer'; originId: string; originSessionId?: string },
+  cursor: string | undefined
+): Promise<PageCreationInventory> => {
+  const authority = await authorityFor(input, transaction)
+  const rows: PageCreationReceiptRow[] = await transaction<PageCreationReceiptRow>('pageCreationReceipts')
+    .where(where)
+    .modify(query => {
+      if (cursor !== undefined) query.where('requestId', '>', cursor)
+    })
+    .orderBy('requestId')
+    .limit(PAGE_CREATION_INVENTORY_LIMIT + 1)
+  const selected = rows.slice(0, PAGE_CREATION_INVENTORY_LIMIT)
+  // Page mutations lock multiple destinations by numeric ID, not by receipt UUID.
+  const lockedPages = new Map<number, PageRecord>()
+  if (selected.length > 0) {
+    const pages = await transaction<PageRecord>('pages')
+      .whereIn('id', [...new Set(selected.map(row => row.pageId))])
+      .orderBy('id')
+      .forShare()
+    for (const page of pages) lockedPages.set(page.id, page)
+  }
+  const items: PageCreationCommitted[] = []
+  for (const row of selected) items.push(await creationReceiptProjection(transaction, input, row, authority, true, lockedPages))
+  const hasMore = rows.length > selected.length
+  return PageCreationInventorySchema.parse({ items, hasMore, nextCursor: hasMore ? selected.at(-1)!.requestId : null })
+}
+
+const noteCreationInventory = async (input: OperationInput): Promise<PageCreationInventory> => {
+  const noteId = PageCreationRequestIdSchema.safeParse(input.noteId)
+  const cursor = input.cursor === undefined ? undefined : PageCreationRequestIdSchema.safeParse(input.cursor)
+  if (!noteId.success || (cursor !== undefined && !cursor.success)) {
+    throw new ApplicationError('The creation inventory input is invalid.', { status: 400, code: 'INVALID_INPUT' })
+  }
+  return wiki.models.knex.transaction(async transaction => {
+    await lockPageCreationOwner(transaction, input.requester)
+    const owner = await authorizePageCreationAccount(transaction, input.requester)
+    await readLiveNotePublication(transaction, input.requester, noteId.data)
+    return readCreationInventory(
+      transaction,
+      input,
+      { ownerId: owner.id, originKind: 'live-note', originId: noteId.data },
+      cursor?.success ? cursor.data : undefined
+    )
+  })
+}
+
+const answerCreationInventory = async (input: OperationInput): Promise<PageCreationInventory> => {
+  const sessionId = PageCreationRequestIdSchema.safeParse(input.originSessionId)
+  const messageId = PageCreationRequestIdSchema.safeParse(input.messageId)
+  const cursor = input.cursor === undefined ? undefined : PageCreationRequestIdSchema.safeParse(input.cursor)
+  if (!sessionId.success || !messageId.success || (cursor !== undefined && !cursor.success)) {
+    throw new ApplicationError('The creation inventory input is invalid.', { status: 400, code: 'INVALID_INPUT' })
+  }
+  return wiki.models.knex.transaction(async transaction => {
+    await lockPageCreationOwner(transaction, input.requester)
+    const owner = await authorizePageCreationAccount(transaction, input.requester)
+    await authorizeAgentAnswerCreationOrigin(transaction, input.requester, {
+      kind: 'agent-answer',
+      sessionId: sessionId.data,
+      messageId: messageId.data
+    })
+    return readCreationInventory(
+      transaction,
+      input,
+      {
+        ownerId: owner.id,
+        originKind: 'agent-answer',
+        originId: messageId.data,
+        originSessionId: sessionId.data
+      },
+      cursor?.success ? cursor.data : undefined
+    )
+  })
+}
+
 const create = (input: OperationInput): unknown => {
   const payload = mutationPayload(input, ['ownerId', 'isPrivate', 'privateNS'])
   if (payload.isSearchable !== undefined) payload.isSearchable = optionalBoolean(payload.isSearchable, 'isSearchable')
@@ -3453,6 +3642,9 @@ export default {
   checkConflict,
   convert,
   create,
+  creationStatus,
+  noteCreationInventory,
+  answerCreationInventory,
   discover,
   get,
   getOfflinePrivateSnapshot,

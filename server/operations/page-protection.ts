@@ -245,13 +245,14 @@ export const pageRequiresUnlock = async (input: {
   sessionId: string
   now?: Date
   transaction?: Knex.Transaction
+  readOnly?: boolean
 }): Promise<boolean> => {
   if (managesSystem(input.requester)) return false
   const knex = input.transaction ?? wiki.models.knex
   const protection = await knex<ProtectionRow>('pageAccessPasswords').where({ pageId: input.pageId }).first()
   if (!protection) return false
   const now = input.now ?? new Date()
-  await knex('pageUnlockGrants').where({ pageId: input.pageId, sessionId: input.sessionId }).where('expiresAt', '<=', now).delete()
+  if (!input.readOnly) await knex('pageUnlockGrants').where({ pageId: input.pageId, sessionId: input.sessionId }).where('expiresAt', '<=', now).delete()
   if (!input.sessionId) return true
   const grant = await knex('pageUnlockGrants')
     .where({ pageId: input.pageId, sessionId: input.sessionId, userId: principalId(input.requester), passwordVersion: protection.version })

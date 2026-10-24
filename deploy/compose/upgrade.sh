@@ -291,7 +291,7 @@ make_plan() {
       case "$probe" in
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
-        native-live-notes-schema|native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
+        native-page-creation-receipts-schema|native-live-notes-schema|native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
         personal-mcp-credential-kind-and-owner-schema) ;;
         external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
@@ -890,6 +890,65 @@ verify_postconditions() {
             );")"
           [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result legacy operations without preserved copies)"
         fi
+        ;;
+      native-page-creation-receipts-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          WITH expected(column_name,data_type,max_length,nullable) AS (VALUES
+            ('ownerId','integer',NULL,'NO'),('requestId','uuid',NULL,'NO'),
+            ('pageId','integer',NULL,'NO'),('sourceRevision','bigint',NULL,'NO'),
+            ('originKind','character varying',16,'YES'),('originId','uuid',NULL,'YES'),
+            ('originRevision','bigint',NULL,'YES'),('originSessionId','uuid',NULL,'YES'),
+            ('createdAt','timestamp with time zone',NULL,'NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name='pageCreationReceipts' AND c.column_name=e.column_name
+            WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length AND c.is_nullable=e.nullable;
+          COMMIT;")"
+        [[ "$result" == 9 ]] || die "Postcondition failed: $probe ($result/9 receipt columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          SELECT count(*) FROM pg_constraint c
+          WHERE c.conrelid='\"pageCreationReceipts\"'::regclass AND c.contype='p' AND c.convalidated
+            AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(n,o)
+              JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.n ORDER BY k.o)=ARRAY['ownerId','requestId'];
+          COMMIT;")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (owner/request identity)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          SELECT CASE WHEN count(*)=1 AND bool_and(c.confrelid='users'::regclass AND c.confdeltype='c' AND c.convalidated
+            AND cardinality(c.conkey)=1 AND a.attname='ownerId' AND b.attname='id') THEN 1 ELSE 0 END
+          FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1]
+            JOIN pg_attribute b ON b.attrelid=c.confrelid AND b.attnum=c.confkey[1]
+          WHERE c.conrelid='\"pageCreationReceipts\"'::regclass AND c.contype='f';
+          COMMIT;")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (owner foreign key or destructive source/destination foreign key)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          SELECT count(*) FROM pg_constraint c WHERE c.conrelid='\"pageCreationReceipts\"'::regclass
+            AND c.contype='c' AND c.convalidated
+            AND c.conname IN ('page_creation_source_revision_check','page_creation_origin_check');
+          COMMIT;")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (validated revision/origin checks)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          SELECT count(*) FROM pg_index i WHERE i.indrelid='\"pageCreationReceipts\"'::regclass
+            AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=4
+            AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(n,o)
+              JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.n WHERE k.o<=4 ORDER BY k.o)
+              =ARRAY['ownerId','originKind','originId','requestId'];
+          COMMIT;")"
+        [[ "$result" -ge 1 ]] || die "Postcondition failed: $probe (origin inventory index)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -qAtc "
+          BEGIN READ ONLY;
+          SELECT count(*) FROM \"pageCreationReceipts\" r
+          WHERE r.\"sourceRevision\"<=0 OR NOT EXISTS (SELECT 1 FROM users u WHERE u.id=r.\"ownerId\")
+            OR ((r.\"originKind\" IS NULL AND r.\"originId\" IS NULL AND r.\"originRevision\" IS NULL AND r.\"originSessionId\" IS NULL)
+              OR (r.\"originKind\" IS NOT NULL AND r.\"originKind\"='live-note' AND r.\"originId\" IS NOT NULL
+                AND r.\"originRevision\" IS NOT NULL AND r.\"originRevision\">=0 AND r.\"originRevision\"<=9007199254740991 AND r.\"originSessionId\" IS NULL)
+              OR (r.\"originKind\" IS NOT NULL AND r.\"originKind\"='agent-answer' AND r.\"originId\" IS NOT NULL
+                AND r.\"originSessionId\" IS NOT NULL AND r.\"originRevision\" IS NULL)) IS NOT TRUE;
+          COMMIT;")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe ($result invalid authoritative receipt rows)"
         ;;
       native-live-notes-schema)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -v ON_ERROR_STOP=1 -Atc "

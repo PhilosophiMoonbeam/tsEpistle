@@ -756,6 +756,8 @@ let browser: Browser
 let page: Page
 let driverURL: string
 let testServer: { url: URL; stop: (closeActiveConnections?: boolean) => void }
+let browserLaunch: Promise<Browser> | undefined
+let fixtureClosed = false
 const databaseNames = new Set<string>()
 
 const invoke = async (operation: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
@@ -790,12 +792,18 @@ const snapshotRequests = (run: SyncRun): number[] =>
     .sort((left, right) => left - right)
 
 beforeAll(async () => {
+  const deadline = performance.now() + 5_000
   tempDirectory = await mkdtemp(`${tmpdir()}/tsepistle-offline-sync-`)
+  if (fixtureClosed) {
+    await rm(tempDirectory, { recursive: true, force: true })
+    throw new Error('Offline sync fixture closed during setup.')
+  }
   const entry = `${tempDirectory}/browser-entry.ts`
   await Bun.write(entry, driverSource(storagePath, syncPath))
   const build = await Bun.build({ entrypoints: [entry], target: 'browser', format: 'esm', sourcemap: 'none' })
   if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'))
   const output = await build.outputs[0]!.text()
+  if (fixtureClosed) throw new Error('Offline sync fixture closed during setup.')
   testServer = Bun.serve({
     port: 0,
     fetch(request) {
@@ -804,9 +812,11 @@ beforeAll(async () => {
     }
   })
   driverURL = `${testServer.url}adapter.js`
-  browser = await chromium.launch({ headless: true, executablePath, chromiumSandbox: false })
+  // The launcher must not outlive the existing five-second aggregate hook.
+  browserLaunch = chromium.launch({ headless: true, executablePath, chromiumSandbox: false, timeout: Math.max(1, deadline - performance.now()) })
+  browser = await browserLaunch
   page = await browser.newPage()
-  await page.goto(`${testServer.url}blank`, { waitUntil: 'load' })
+  await page.goto(`${testServer.url}blank`, { waitUntil: 'load', timeout: Math.max(1, deadline - performance.now()) })
 })
 
 beforeEach(() => {
@@ -819,9 +829,11 @@ afterEach(async () => {
 })
 
 afterAll(async () => {
+  fixtureClosed = true
   try {
-    if (page) await page.close()
-    if (browser) await browser.close()
+    // Join a pending launcher even when beforeAll timed out before assigning browser.
+    const launched = await browserLaunch?.catch(() => undefined)
+    if (launched) await launched.close()
   } finally {
     testServer?.stop(true)
     if (tempDirectory) await rm(tempDirectory, { recursive: true, force: true })

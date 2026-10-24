@@ -49,8 +49,16 @@ const passthrough = (tag = 'div') =>
 const Textarea = Vue.defineComponent({
   inheritAttrs: false,
   props: ['modelValue', 'disabled'],
-  setup(props, { attrs }) {
-    return () => Vue.h('div', attrs, [Vue.h('textarea', { value: props.modelValue, disabled: props.disabled })])
+  emits: ['update:modelValue'],
+  setup(props, { attrs, emit }) {
+    return () =>
+      Vue.h('div', attrs, [
+        Vue.h('textarea', {
+          value: props.modelValue,
+          disabled: props.disabled,
+          onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
+        })
+      ])
   }
 })
 const cleanups: Array<() => void> = []
@@ -93,6 +101,10 @@ type CommentsView = {
   replyTo: number
   annotationErrors: Record<number, string>
   postComment: () => Promise<void>
+  prepareFeedbackDraft: (content: string) => Promise<void>
+  feedbackDraftActive: boolean
+  feedbackDraftMessage: string
+  noteComposerInput: () => void
   availability: { enabled: boolean; closed: boolean; canPost: boolean } | null
   changeAnnotationState: (comment: VisibleComment, annotation: DiscussionAnnotation) => Promise<void>
 }
@@ -106,8 +118,12 @@ const mountComments = async (options: { write?: boolean; transport?: (url: strin
         }))
   )
   const store = Vue.reactive({
-    page: { id: 9, effectivePermissions: { comments: { write: options.write ?? false, manage: true } } },
-    user: { id: 7, authenticated: true, name: 'Reader' },
+    page: { id: 9, effectivePermissions: { comments: { read: true, write: options.write ?? false, manage: true } } },
+    user: { id: 7, authenticated: true, authVersion: 3, email: 'reader@example.test', name: 'Reader' },
+    offlineIdentityEpoch: 1,
+    authRefreshSettled: true,
+    authRefreshOutcome: 'authenticated',
+    authRefreshPending: false,
     startLoading: vi.fn(),
     stopLoading: vi.fn(),
     showNotification: vi.fn()
@@ -121,6 +137,7 @@ const mountComments = async (options: { write?: boolean; transport?: (url: strin
     wikiStore: store,
     pwaState: connection,
     AsyncState: passthrough(),
+    CommentReplyOptIn: passthrough(),
     CommentApiError,
     fetchComment,
     createComment,
@@ -290,6 +307,90 @@ describe('passage discussion handoffs', () => {
     expect(comments.newcomment).toBe('Keep my draft')
     expect(comments.annotationDrafts[0]!.note).toBe('Unposted note')
   })
+})
+
+describe('optional contextual feedback drafts', () => {
+  const anchor = { exact: 'Keep this passage', prefix: '', suffix: '', heading: 'Guide', offset: 0 }
+  const draft = 'Task: install the service\nExpected outcome: a running service\nWhat is missing: the final command'
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
+  const writes = (calls: Array<[string, RequestInit?]>) => calls.filter(([, init]) => init?.method && init.method !== 'GET')
+
+  for (const existing of ['comment', 'reply', 'passages'] as const) {
+    it(`preserves an existing ${existing} instead of replacing it with rating feedback`, async () => {
+      const { comments, host, transport } = await mountComments({ write: true })
+      if (existing === 'comment') comments.newcomment = 'My unfinished comment'
+      if (existing === 'reply') comments.replyTo = 42
+      if (existing === 'passages') {
+        composeDiscussionAnnotation(9, anchor)
+        comments.annotationDrafts[0]!.note = 'My attached note'
+      }
+      await Vue.nextTick()
+      const before = { content: comments.newcomment, replyTo: comments.replyTo, annotations: JSON.stringify(comments.annotationDrafts) }
+      await comments.prepareFeedbackDraft(draft)
+      await settle()
+      expect(comments.newcomment).toBe(before.content)
+      expect(comments.replyTo).toBe(before.replyTo)
+      expect(JSON.stringify(comments.annotationDrafts)).toBe(before.annotations)
+      expect(comments.feedbackDraftActive).toBe(false)
+      const preservedNotice = host.querySelector('p[role="status"]')
+      expect(preservedNotice).not.toBeNull()
+      expect(writes(transport.mock.calls)).toEqual([])
+    })
+  }
+
+  it('fetches fresh discussion availability before exposing an editable draft and never posts it', async () => {
+    const acl = Promise.withResolvers<Response>()
+    const { comments, host, transport } = await mountComments({
+      write: true,
+      transport: async url => (url.includes('/availability/') ? acl.promise : json([]))
+    })
+    const preparing = comments.prepareFeedbackDraft(draft)
+    await Vue.nextTick()
+    expect(comments.newcomment).toBe('')
+    expect(comments.feedbackDraftActive).toBe(false)
+    expect(transport.mock.calls.map(([url]) => url).sort()).toEqual(['/_api/comments/availability/9', '/_api/comments?pageId=9'].sort())
+    acl.resolve(json({ enabled: true, closed: false, canPost: true }))
+    await preparing
+    await settle()
+    const textarea = host.querySelector<HTMLTextAreaElement>('.comments-composer textarea')!
+    expect(textarea.value).toBe(draft)
+    expect(textarea.disabled).toBe(false)
+    expect(document.activeElement).toBe(textarea)
+    expect(comments.feedbackDraftActive).toBe(true)
+    textarea.value = 'My edited feedback'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await settle()
+    expect(comments.newcomment).toBe('My edited feedback')
+    expect(writes(transport.mock.calls)).toEqual([])
+  })
+
+  for (const outcome of ['closed', 'denied', 'owner-change', 'page-change', 'typing'] as const) {
+    it(`does not replace the composer after a delayed ${outcome} availability response`, async () => {
+      const acl = Promise.withResolvers<Response>()
+      const { comments, host, store, transport } = await mountComments({
+        write: true,
+        transport: async url => (url.includes('/availability/') ? acl.promise : json([]))
+      })
+      const preparing = comments.prepareFeedbackDraft(draft)
+      if (outcome === 'owner-change') store.user.id = 8
+      if (outcome === 'page-change') store.page.id = 10
+      if (outcome === 'typing') {
+        comments.newcomment = 'Typed while access was checked'
+        comments.noteComposerInput()
+      }
+      acl.resolve(
+        outcome === 'denied'
+          ? json({ error: 'No discussion access' }, 403)
+          : json({ enabled: true, closed: outcome === 'closed', canPost: outcome !== 'closed' })
+      )
+      await preparing
+      await settle()
+      expect(comments.newcomment).toBe(outcome === 'typing' ? 'Typed while access was checked' : '')
+      expect(comments.feedbackDraftActive).toBe(false)
+      expect(host.querySelector('.comments-feedback-draft')).toBeNull()
+      expect(writes(transport.mock.calls)).toEqual([])
+    })
+  }
 })
 
 describe('comment edit focus handoff', () => {

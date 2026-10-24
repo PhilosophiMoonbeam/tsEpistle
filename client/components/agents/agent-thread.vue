@@ -169,7 +169,7 @@
               <span>{{ $t('common:agentThread.search', { value: entry.message.knowledgeContext.scope.kind === 'selected' ? $t('common:agentThread.selectedPages') : entry.message.knowledgeContext.scope.kind === 'section' ? entry.message.knowledgeContext.scope.path : entry.message.knowledgeContext.scope.kind === 'locale' ? entry.message.knowledgeContext.scope.locale.toUpperCase() : $t('common:agentThread.allWiki'), interpolation: { escapeValue: false } }) }}</span>
               <v-btn v-for="source in entry.message.knowledgeContext.sources" :key="source.id" size="x-small" variant="text" prepend-icon="mdi-file-document-outline" :aria-label="$t('common:agentThread.preview', { pageLabel: source.title, interpolation: { escapeValue: false } })" @click="previewSelector = { id: source.id }">{{ $t('common:agentThread.revision', { title: source.title, sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } }) }}</v-btn>
             </div>
-            <AgentAnswerActions v-if="entry.message.role === 'assistant' && entry.message.status === 'complete' && entry.message.content" :content="entry.message.content" :citations="entry.message.citations" :google-search-grounding="entry.message.googleSearchGrounding" />
+            <AgentAnswerActions v-if="entry.message.role === 'assistant' && entry.message.status === 'complete' && entry.message.content" :session-id="thread.session.id" :message-id="entry.message.id" :content="entry.message.content" :citations="entry.message.citations" :google-search-grounding="entry.message.googleSearchGrounding" />
             <details v-if="entry.googleSearchCitations?.length" class="agent-sources agent-web-sources mt-3" :aria-label="$t('common:agentThread.googleSearchSources')">
               <summary class="agent-sources__heading">
                 <v-icon icon="mdi-web" size="18" aria-hidden="true" />
@@ -296,6 +296,9 @@
           :proposal="proposalEntry.proposal"
           :busy="Boolean(decidingApprovalId)"
           :network-blocked="networkBlocked"
+          :can-prepare-correction="canSubmit"
+          :correction-unavailable-reason="correctionUnavailableReason"
+          @prepare-correction="proposalId => emit('prepareCorrection', proposalId)"
           @decision="forwardDecision"
         />
       </template>
@@ -378,6 +381,7 @@ const props = defineProps<{
   canSubmit?: boolean
   imageEditingEnabled?: boolean
   networkBlocked?: boolean
+  correctionUnavailableReason?: string
 }>()
 const emit = defineEmits<{
   editImage: [media: AgentMediaView]
@@ -385,14 +389,16 @@ const emit = defineEmits<{
   askSource: [source: WikiSource]
   suggest: [prompt: string]
   reviewRequest: [messageId: string]
-  decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string]
+  decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string, decisionNote?: string]
+  prepareCorrection: [proposalId: string]
 }>()
 const forwardDecision = (
   proposalId: string,
   approvalId: string,
   decision: 'approved' | 'denied',
-  confirmationPath?: string
-): void => emit('decision', proposalId, approvalId, decision, confirmationPath)
+  confirmationPath?: string,
+  decisionNote?: string
+): void => emit('decision', proposalId, approvalId, decision, confirmationPath, decisionNote)
 
 // Detached attachments keep downloading while the session lives, but re-attaching
 // re-uploads a copy as a new pending composer attachment, so require confirmation.

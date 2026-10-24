@@ -88,6 +88,7 @@
         </span>
         <small>{{ $t('common:agentToolCard.diffLinesCount', { count: diffLines.length }) }}</small>
       </summary>
+      <p class="agent-operation__review-context">{{ t('common:agentToolCard.exactDiffContext', { defaultValue: 'This is the exact stored proposal diff, not a full before-and-after page comparison. Canonical full page bodies are not provided. Approval is bound to this proposal and its recorded base revision; it cannot authorize a newer revision.' }) }}</p>
       <div class="proposal-diff">
         <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="$t('common:agentToolCard.proposedOutputRecord', { path: proposal.target?.path || actionLabel, interpolation: { escapeValue: false } })"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
         <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" :aria-controls="`agent-approval-diff-${proposal.id}`" :aria-expanded="expanded" @click="expanded = !expanded">
@@ -122,6 +123,28 @@
       <div class="agent-operation__decision-copy">
         <strong>{{ $t('common:agentToolCard.chooseDeliberately') }}</strong>
         <small>{{ $t('common:agentToolCard.denyLeavesWikiUnchanged', { reviewDescription, interpolation: { escapeValue: false } }) }}</small>
+      </div>
+      <div class="agent-operation__feedback">
+        <v-btn v-if="!feedbackOpen" variant="text" :disabled="!canDecide" @click="feedbackOpen = true">
+          {{ t('common:agentToolCard.draftChanges', { defaultValue: 'Draft change request' }) }}
+        </v-btn>
+        <template v-else>
+          <p :id="`agent-feedback-context-${proposal.id}`">{{ t('common:agentToolCard.feedbackPending', { defaultValue: 'Draft only: nothing is sent while editing. The old proposal remains pending until denial is confirmed. Confirming below saves this note with a denial; it does not send a new model request.' }) }}</p>
+          <v-textarea
+            v-model="feedbackDraft"
+            :label="t('common:agentToolCard.feedbackLabel', { defaultValue: 'What should change?' })"
+            :aria-describedby="`agent-feedback-context-${proposal.id}`"
+            maxlength="4000"
+            counter
+            rows="3"
+            :disabled="!canDecide"
+          />
+          <p v-if="correctionUnavailableReason">{{ correctionUnavailableReason }}</p>
+          <v-btn variant="outlined" :disabled="!canDecide || !feedbackDraft.trim() || feedbackDraft.length > 4000" :loading="decisionInFlight === 'denied'" @click="decide('denied', feedbackDraft.trim())">
+            {{ t('common:agentToolCard.confirmDenyFeedback', { defaultValue: 'Confirm denial with feedback' }) }}
+          </v-btn>
+          <v-btn variant="text" :disabled="!canDecide" @click="feedbackOpen = false">{{ t('common:agentToolCard.keepPending', { defaultValue: 'Keep proposal pending' }) }}</v-btn>
+        </template>
       </div>
       <div class="agent-operation__actions">
         <v-btn
@@ -193,6 +216,13 @@
           <dt>{{ $t('common:agentToolCard.decisionNote') }}</dt><dd>{{ proposal.approval.decisionNote }}</dd>
         </template>
       </dl>
+      <div v-if="proposal.approval?.status === 'denied' && proposal.approval.decisionNote" class="agent-operation__feedback">
+        <p>{{ t('common:agentToolCard.freshRequestContext', { defaultValue: 'The denial and note are saved. Prepare an editable new request, then review and send it deliberately. No model request is sent by preparing a draft; any resulting write proposal requires fresh approval.' }) }}</p>
+        <p v-if="correctionUnavailableReason" role="status">{{ correctionUnavailableReason }}</p>
+        <v-btn variant="tonal" :disabled="!canPrepareCorrection || busy || networkBlocked" @click="prepareCorrection">
+          {{ t('common:agentToolCard.prepareFreshRequest', { defaultValue: 'Prepare new request draft' }) }}
+        </v-btn>
+      </div>
 
       <details class="operation-disclosure">
         <summary>
@@ -251,11 +281,16 @@ const t: typeof translate = (key, options) => {
   return translate(key, options)
 }
 
-const props = defineProps<{ tool: AgentToolCallView; proposal: AgentProposalView; busy?: boolean; networkBlocked?: boolean }>()
-const emit = defineEmits<{ decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string] }>()
+const props = defineProps<{ tool: AgentToolCallView; proposal: AgentProposalView; busy?: boolean; networkBlocked?: boolean; canPrepareCorrection?: boolean; correctionUnavailableReason?: string }>()
+const emit = defineEmits<{
+  decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string, decisionNote?: string]
+  prepareCorrection: [proposalId: string]
+}>()
 const collapsedLineCount = 80
 const expanded = ref(false)
 const confirmationPath = ref('')
+const feedbackOpen = ref(false)
+const feedbackDraft = ref('')
 const expiryTick = ref(0)
 const decisionInFlight = ref<'approved' | 'denied' | null>(null)
 const decisionMessageKey = ref('')
@@ -443,6 +478,8 @@ watch(() => props.proposal.id, () => {
   expanded.value = false
   decisionInFlight.value = null
   decisionMessageKey.value = ''
+  feedbackOpen.value = false
+  feedbackDraft.value = ''
 })
 watch(locallyExpired, (expired, wasExpired) => {
   if (!expired || wasExpired) return
@@ -483,7 +520,11 @@ watch(() => props.busy, busy => {
   if (target) void nextTick(() => elementForRef(target)?.focus())
 })
 onBeforeUnmount(stopExpiryTimer)
-const decide = (decision: 'approved' | 'denied'): void => {
+const prepareCorrection = (): void => {
+  if (!props.canPrepareCorrection || props.busy || props.networkBlocked || props.proposal.approval?.status !== 'denied' || !props.proposal.approval.decisionNote) return
+  emit('prepareCorrection', props.proposal.id)
+}
+const decide = (decision: 'approved' | 'denied', decisionNote?: string): void => {
   const approval = props.proposal.approval
   if (!approval) return
   if (hasExpired()) {
@@ -493,9 +534,10 @@ const decide = (decision: 'approved' | 'denied'): void => {
   if (!canDecide.value) return
   if (decision === 'approved' && !reviewAdequate.value) return
   if (decision === 'approved' && props.proposal.risk === 'destructive-write' && confirmationPath.value !== props.proposal.target?.path) return
+  if (decisionNote !== undefined && (decision !== 'denied' || !feedbackOpen.value || !decisionNote.trim() || decisionNote.length > 4000)) return
   decisionInFlight.value = decision
   decisionMessageKey.value = decision === 'approved' ? 'common:agentToolCard.submittingApproval' : 'common:agentToolCard.submittingDenial'
-  emit('decision', props.proposal.id, approval.id, decision, props.proposal.risk === 'destructive-write' ? confirmationPath.value : undefined)
+  emit('decision', props.proposal.id, approval.id, decision, decision === 'approved' && props.proposal.risk === 'destructive-write' ? confirmationPath.value : undefined, decisionNote)
   void nextTick(() => {
     if (props.busy || !approvalPending.value || decisionInFlight.value !== decision) return
     decisionMessageKey.value = 'common:agentToolCard.decisionCouldNotCompleted'
@@ -523,6 +565,12 @@ const decide = (decision: 'approved' | 'denied'): void => {
 .agent-operation {
   padding: var(--wiki-space-4);
 }
+.agent-operation__review-context,
+.agent-operation__feedback p { color: var(--wiki-text-muted); font-size: .8rem; line-height: 1.5; margin-block: var(--wiki-space-2); overflow-wrap: anywhere; }
+.agent-operation__review-context { padding-inline: var(--wiki-space-3); }
+.agent-operation__feedback { min-width: 0; }
+.agent-operation__decision:has(.agent-operation__feedback) { flex-direction: column; align-items: stretch; }
+.agent-operation__feedback :deep(.v-btn__content) { white-space: normal; overflow-wrap: anywhere; }
 
 .agent-operation--destructive {
   --operation-accent: rgb(var(--v-theme-error));

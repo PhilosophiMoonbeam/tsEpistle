@@ -3,8 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { createPinia, type StoreGeneric, storeToRefs } from 'pinia'
-import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import type { StoreGeneric } from 'pinia'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentThreadState } from '../../../shared/agents/contracts.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
@@ -15,7 +15,6 @@ import { searchPages } from '../../helpers/pages-api.ts'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
 import { fallbackLocalizationLabel } from '../../modules/localization.ts'
-import { useAgentsStore } from '../../store/agents.ts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { filterSkillsForCommand } from './agent-skill-command.ts'
@@ -38,12 +37,40 @@ if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new E
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 
-globalThis.useTranslate = () => translateEnglish
+const priorSiteConfig = Object.getOwnPropertyDescriptor(browserWindow, 'siteConfig')
+const installSiteConfig = () => {
+  Object.defineProperty(browserWindow, 'siteConfig', {
+    configurable: true,
+    writable: true,
+    value: {
+      company: '',
+      contentLicense: '',
+      footerOverride: '',
+      banner: { isEnabled: false, title: '', content: '' },
+      darkMode: false,
+      tocPosition: 'left',
+      pageTransitions: true,
+      showPageProgress: false,
+      title: 'Test Wiki',
+      logoUrl: '',
+      product: { name: 'Test', version: '1.0.0' },
+      lang: 'en',
+      agentCsrfToken: 'csrf'
+    }
+  })
+}
+// Real transcript children import the root store while their modules initialize.
+installSiteConfig()
+beforeEach(installSiteConfig)
 
 resetBody()
 
 // Vuetify snapshots browser capabilities during module evaluation, so the DOM must exist before loading it here.
 const Vue = await import('vue')
+// Static store imports would capture Vue before this browser/configuration boundary.
+const { createPinia, storeToRefs } = await import('pinia')
+const { useAgentsStore } = await import('../../store/agents.ts')
+const { useTranslate } = await import('../../helpers/use-translate.ts')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
@@ -69,6 +96,8 @@ const skillMenuComponent = (await import('./agent-composer-skill-menu.vue')).def
 const mediaComposerComponent = (await import('./agent-composer-media.vue')).default
 // The real transcript must load after the SFC plugin; a static import bypasses that boundary.
 const threadComponent = (await import('./agent-thread.vue')).default
+// The SFC loader above must be installed before the real goal module is evaluated.
+const goalStatusComponent = (await import('./agent-goal-status.vue')).default
 const testPwaState = Vue.reactive({ connectionState: 'online' as 'online' | 'offline' | 'server-unavailable' })
 
 const compiledTemplate = compileTemplate({
@@ -102,7 +131,7 @@ const renderPicker = new Function('Vue', pickerTemplate.code)(Vue) as () => unkn
 const pickerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(pickerDescriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
 const pickerBindings = Array.from(pickerDescriptor.scriptSetup.content.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluatePicker = new Function(
-  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, searchPages, fetchWikiSource, AgentKnowledgeContextSchema }',
+  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, searchPages, fetchWikiSource, AgentKnowledgeContextSchema, useTranslate }',
   `${pickerScript}\nreturn { mergeProps, ${pickerBindings.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
 const contextPickerComponent = Vue.defineComponent({
@@ -128,7 +157,8 @@ const contextPickerComponent = Vue.defineComponent({
       defineEmits: () => emit,
       searchPages,
       fetchWikiSource,
-      AgentKnowledgeContextSchema
+      AgentKnowledgeContextSchema,
+      useTranslate
     })
   },
   render: renderPicker
@@ -178,6 +208,7 @@ interface LockState {
   discardDraftOpen: ValueRef<boolean>
   offlineComposerDraft: ValueRef<string>
   resolveDraftDiscard: (discard: boolean) => void
+  prepareCorrection: (proposalId: string) => Promise<void>
   agentCalls: {
     drafts: Record<string, AgentDraft>
     clearUnfiledHistory: (...args: unknown[]) => unknown
@@ -296,6 +327,7 @@ const evaluateComposer = new Function(
   'onBeforeUnmount',
   'onMounted',
   'ref',
+  'unref',
   'useTemplateRef',
   'useId',
   'watch',
@@ -308,6 +340,7 @@ const evaluateComposer = new Function(
   'scrollTopForCaret',
   'agentMediaContentUrl',
   'agentAttachmentMimeTypes',
+  'useTranslate',
   `${executableComposerScript}\nreturn { ${composerBindings.join(', ')} }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
@@ -413,7 +446,7 @@ const loadGoalLockState = (
   const pendingStartersFrames: Array<{ callback: (now: number) => void }> = []
   const clearedStartersFrameIds: number[] = []
   const evaluate = new Function(
-    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, clearTimeout, requestAnimationFrame, cancelAnimationFrame, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection, wikiStore, resolveUserPicture, emptyAgentDraft, agentToolAcceptsImages }',
+    '{ computed, nextTick, onBeforeUnmount, onMounted, ref, setTimeout, clearTimeout, requestAnimationFrame, cancelAnimationFrame, useTemplateRef, useId, watch, storeToRefs, defineProps, defineEmits, useAgentsStore, activeOwnedOverlayRoots, createModalFocusScope, isAgentApprovalOutsideViewport, shouldFollowGoalExpansion, pwaState, retryServerConnection, wikiStore, resolveUserPicture, emptyAgentDraft, agentToolAcceptsImages, useTranslate }',
     `${executableScript}\nreturn { ...storeToRefs(agents), ${bindingNames.join(', ')} }`
   ) as (dependencies: Record<string, unknown>) => LockState
 
@@ -458,7 +491,9 @@ const loadGoalLockState = (
       wikiStore: { user: { id: 2, name: 'Test User', pictureUrl: '' } },
       resolveUserPicture,
       emptyAgentDraft,
-      agentToolAcceptsImages
+      agentToolAcceptsImages,
+      // This effect scope is evaluated before mounting, outside a component context.
+      useTranslate: () => translateEnglish
     })
   ) as LockState
   let disposed = false
@@ -648,6 +683,71 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
   suggestions: [],
   historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
 })
+
+const proposalThread = (status: 'pending' | 'denied' = 'pending'): AgentThreadState => {
+  const proposalId = '00000000-0000-4000-8000-000000000070'
+  const runId = '00000000-0000-4000-8000-000000000071'
+  const expiresAt = '2099-09-15T10:10:00.000Z'
+  return {
+    ...threadFixture(),
+    messages: [
+      {
+        id: '00000000-0000-4000-8000-000000000072',
+        runId,
+        ordinal: 1,
+        role: 'assistant',
+        status: 'complete',
+        content: '',
+        citations: [],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ],
+    tools: [
+      {
+        id: '00000000-0000-4000-8000-000000000073',
+        runId,
+        actionName: 'pages.preparePatch',
+        title: 'Update release procedure',
+        state: status === 'pending' ? 'awaitingApproval' : 'denied',
+        risk: 'proposal',
+        summary: null,
+        proposalId,
+        startedAt: timestamp,
+        completedAt: null
+      }
+    ],
+    proposals: [
+      {
+        id: proposalId,
+        sourceKind: 'agent',
+        actionName: 'pages.preparePatch',
+        risk: 'proposal',
+        status,
+        summary: 'Update the release procedure.',
+        target: { id: 42, locale: 'en', path: 'handbook/release', title: 'Release procedure', contentType: 'markdown', sourceRevision: '7' },
+        pageLink: null,
+        baseSourceRevision: '7',
+        authoritySha256: 'a'.repeat(64),
+        inputHash: 'b'.repeat(64),
+        patchSha256: 'c'.repeat(64),
+        resultCanonicalSha256: 'd'.repeat(64),
+        diffSha256: 'e'.repeat(64),
+        diff: '-Publish immediately\n+Wait for reviewer confirmation',
+        expiresAt,
+        approval: {
+          id: '00000000-0000-4000-8000-000000000074',
+          proposalId,
+          status,
+          requestedAt: timestamp,
+          expiresAt,
+          decidedAt: status === 'denied' ? timestamp : null,
+          decisionNote: status === 'denied' ? 'Keep the rollback instructions and add a reviewer checkpoint.' : null
+        }
+      }
+    ]
+  }
+}
 const reviewSource = (id: number): WikiSource => ({
   id, locale: 'en', path: `handbook/source-${id}`, title: `Source ${id}`, description: 'Page description',
   sourceRevision: '7', updatedAt: timestamp, visibility: 'public', excerpt: 'Authorized page excerpt', excerptTruncated: false
@@ -693,6 +793,8 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
   const threadRead = { pending: null as Promise<Response> | null }
   const sourceResponses = new Map<number, Response | Promise<Response>>()
   const messageInputs: Array<Record<string, unknown>> = []
+  const decisionFailure = { response: null as Response | null }
+  const decisionInputs: Array<Record<string, unknown>> = []
   const requests: Array<{ method: string; path: string }> = []
   const summary = () => {
     const { session } = serverThread
@@ -708,6 +810,34 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
       const response = sourceResponses.get(Number(url.searchParams.get('id')))
       if (!response) throw new Error('Unexpected source preview')
       return response
+    }
+    const decision = serverThread.proposals.find(proposal => path === `/_api/agents/proposals/${proposal.id}/approvals/${proposal.approval?.id}/decision`)
+    if (decision && method === 'POST') {
+      decisionInputs.push(body)
+      if (decisionFailure.response) return decisionFailure.response.clone()
+      if (body.decision !== 'denied') throw new Error('This fixture permits denial only')
+      serverThread = {
+        ...serverThread,
+        tools: serverThread.tools.map(tool => (tool.proposalId === decision.id ? { ...tool, state: 'denied' } : tool)),
+        proposals: serverThread.proposals.map(proposal =>
+          proposal.id === decision.id
+            ? {
+                ...proposal,
+                status: 'denied',
+                approval: { ...proposal.approval!, status: 'denied', decidedAt: timestamp, decisionNote: String(body.decisionNote ?? '') }
+              }
+            : proposal
+        )
+      }
+      return Response.json({ proposalId: decision.id, approvalId: decision.approval!.id, status: 'denied', decidedAt: timestamp })
+    }
+    if (serverThread.goal && path === `/_api/agents/goals/${serverThread.goal.id}/cancel` && method === 'POST') {
+      if (body.expectedVersion !== serverThread.goal.version) throw new Error('Unexpected goal cancellation version')
+      serverThread = {
+        ...serverThread,
+        goal: { ...serverThread.goal, status: 'cancelled', version: serverThread.goal.version + 1, completedAt: timestamp }
+      }
+      return Response.json({ goal: serverThread.goal })
     }
     if (path === '/_api/agents/skills') return Response.json({ skills: [] })
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
@@ -793,7 +923,20 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     store.closeWorkspace()
     store.$dispose()
   })
-  return { store, state, creations, authorization, mediaUpload, sendResponse, threadRead, messageInputs, requests, sourceResponses }
+  return {
+    store,
+    state,
+    creations,
+    authorization,
+    mediaUpload,
+    sendResponse,
+    threadRead,
+    messageInputs,
+    decisionInputs,
+    decisionFailure,
+    requests,
+    sourceResponses
+  }
 }
 
 const menuAction = (items: HTMLElement[], name: string): HTMLElement => {
@@ -809,6 +952,7 @@ const mountInlineAgent = (
     readonly approvalJumpVisible?: boolean
     readonly followJumpVisible?: boolean
     readonly realThread?: boolean
+    readonly realGoal?: boolean
     readonly mediaComponent?: Vue.Component
   } = {}
 ): MountedInlineAgent => {
@@ -868,6 +1012,7 @@ const mountInlineAgent = (
         Vue.onBeforeUnmount,
         Vue.onMounted,
         Vue.ref,
+        Vue.unref,
         Vue.useTemplateRef,
         Vue.useId,
         Vue.watch,
@@ -879,7 +1024,8 @@ const mountInlineAgent = (
         calculateComposerSizing,
         scrollTopForCaret,
         agentMediaContentUrl,
-        agentAttachmentMimeTypes
+        agentAttachmentMimeTypes,
+        useTranslate
       )
       return bindings
     },
@@ -900,16 +1046,15 @@ const mountInlineAgent = (
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
   for (const name of [
-    'AgentGoalStatus',
     'AgentMcpApproval',
     'AgentMemoryManager',
     'AgentPersonalSkills',
     'AgentPersonalMcp',
-    'AgentThread',
     'WikiSourcePreview'
   ])
     app.component(name, componentStub)
-  if (options.realThread) app.component('AgentThread', threadComponent)
+  app.component('AgentThread', options.realThread ? threadComponent : componentStub)
+  app.component('AgentGoalStatus', options.realGoal ? goalStatusComponent : componentStub)
   app.component(
     'AgentHistoryPanel',
     Vue.defineComponent({
@@ -1006,6 +1151,8 @@ afterEach(() => {
   vi.restoreAllMocks()
   document.body.replaceChildren()
   testPwaState.connectionState = 'online'
+  if (priorSiteConfig) Object.defineProperty(browserWindow, 'siteConfig', priorSiteConfig)
+  else Reflect.deleteProperty(browserWindow, 'siteConfig')
   vi.useRealTimers()
 })
 describe('Inline Agent historical Review scope', () => {
@@ -1202,6 +1349,313 @@ describe('Inline Agent historical Review scope', () => {
       expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
     })
   }
+})
+
+describe('Inline Agent proposal feedback and deliberate correction', () => {
+  const feedbackButton = (root: ParentNode, key: string): HTMLButtonElement => {
+    const button = [...root.querySelectorAll<HTMLButtonElement>('button')].find(candidate => candidate.textContent?.trim() === translateEnglish(key))
+    if (!button) throw new Error(`Missing proposal action: ${key}`)
+    return button
+  }
+  const correctionButton = (root: ParentNode) => feedbackButton(root, 'common:agentToolCard.prepareFreshRequest')
+  const composerInput = (root: ParentNode): HTMLTextAreaElement => {
+    const input = root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    if (!input) throw new Error('Composer input missing')
+    return input
+  }
+  const edit = async (input: HTMLTextAreaElement, value: string): Promise<void> => {
+    input.value = value
+    input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await settle()
+  }
+  const settleMutation = async (store: StoreGeneric): Promise<void> => {
+    // The owned mutation includes the authoritative GET, not just its POST response.
+    await vi.waitFor(() => expect(store.sessionMutationBusy).toBe(false))
+    await settle()
+  }
+
+  it('keeps edits and cancellation local, then persists one explicit denial and prepares an editable unsent request', async () => {
+    const workspace = realWorkspace('saved', null, proposalThread())
+    const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+    await settle()
+    feedbackButton(mounted.root, 'common:agentToolCard.draftChanges').click()
+    await settle()
+    const feedback = mounted.root.querySelector<HTMLTextAreaElement>('.agent-operation__feedback textarea')
+    if (!feedback) throw new Error('Feedback textarea missing')
+    const note = 'Keep the rollback instructions; require <reviewer> confirmation.'
+    await edit(feedback, note)
+    feedbackButton(mounted.root, 'common:agentToolCard.keepPending').click()
+    await settle()
+    expect(workspace.decisionInputs).toEqual([])
+    expect(workspace.messageInputs).toEqual([])
+    expect(workspace.store.thread?.proposals[0]?.approval?.status).toBe('pending')
+    feedbackButton(mounted.root, 'common:agentToolCard.draftChanges').click()
+    await settle()
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('.agent-operation__feedback textarea')?.value).toBe(note)
+    const confirm = feedbackButton(mounted.root, 'common:agentToolCard.confirmDenyFeedback')
+    confirm.click()
+    confirm.click()
+    await settleMutation(workspace.store)
+    expect(workspace.decisionInputs).toEqual([{ decision: 'denied', decisionNote: note }])
+    expect(workspace.store.error).toBe('')
+    expect(workspace.requests).toContainEqual({ method: 'GET', path: `/_api/agents/sessions/${sessionId}` })
+    expect(workspace.store.thread?.proposals[0]?.approval).toMatchObject({ status: 'denied', decisionNote: note })
+    const receipt = mounted.root.querySelector<HTMLDetailsElement>('.agent-operation-receipt')
+    expect(receipt).not.toBeNull()
+    receipt!.open = true
+    expect(receipt!.textContent).toContain(note)
+    expect(receipt!.querySelector('reviewer')).toBeNull()
+    expect(workspace.messageInputs).toEqual([])
+    correctionButton(receipt!).click()
+    await settle()
+    const draft = composerInput(mounted.root)
+    expect(draft.value).toContain(note)
+    expect(workspace.store.drafts[sessionId]?.mode).toBe('message')
+    expect(workspace.messageInputs).toEqual([])
+    const corrected = `Restated objective: update the release procedure.\n${note}\nRetain the rollback section verbatim.`
+    await edit(draft, corrected)
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')!.click()
+    await settle()
+    expect(workspace.messageInputs).toHaveLength(1)
+    expect(workspace.messageInputs[0]?.content).toBe(corrected)
+    expect(workspace.decisionInputs).toHaveLength(1)
+    expect(workspace.store.thread?.proposals[0]?.approval?.status).toBe('denied')
+  })
+
+  it('retains unsent feedback after a failed denial and retries only on another explicit confirmation', async () => {
+    const workspace = realWorkspace('saved', null, proposalThread())
+    workspace.decisionFailure.response = Response.json({ error: 'Decision unavailable.' }, { status: 503 })
+    const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+    await settle()
+    feedbackButton(mounted.root, 'common:agentToolCard.draftChanges').click()
+    await settle()
+    const input = mounted.root.querySelector<HTMLTextAreaElement>('.agent-operation__feedback textarea')!
+    const note = 'Keep the rollback procedure.'
+    await edit(input, note)
+    feedbackButton(mounted.root, 'common:agentToolCard.confirmDenyFeedback').click()
+    await settleMutation(workspace.store)
+    expect(workspace.decisionInputs).toHaveLength(1)
+    expect(workspace.store.thread?.proposals[0]?.approval?.status).toBe('pending')
+    expect(input.value).toBe(note)
+    expect(workspace.messageInputs).toEqual([])
+    workspace.decisionFailure.response = null
+    await settle()
+    expect(workspace.decisionInputs).toHaveLength(1)
+    feedbackButton(mounted.root, 'common:agentToolCard.confirmDenyFeedback').click()
+    await settleMutation(workspace.store)
+    expect(workspace.decisionInputs).toHaveLength(2)
+    expect(workspace.store.error).toBe('')
+    expect(workspace.requests).toContainEqual({ method: 'GET', path: `/_api/agents/sessions/${sessionId}` })
+    expect(workspace.store.thread?.proposals[0]?.approval).toMatchObject({ status: 'denied', decisionNote: note })
+    expect(mounted.root.querySelector('.agent-operation-receipt')?.textContent).toContain(note)
+    expect(workspace.messageInputs).toEqual([])
+  })
+
+  it('requires exact destructive confirmation again for a replacement proposal and clears the previous feedback', async () => {
+    const thread = proposalThread()
+    const original = thread.proposals[0]
+    const destructive: AgentThreadState = {
+      ...thread,
+      tools: thread.tools.map(tool => ({ ...tool, actionName: 'pages.prepareDelete', risk: 'destructive-write' })),
+      proposals: [{ ...original, actionName: 'pages.prepareDelete', risk: 'destructive-write' }]
+    }
+    const workspace = realWorkspace('saved', null, destructive)
+    const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+    await settle()
+    const approve = mounted.root.querySelector<HTMLButtonElement>('.agent-operation__actions button:last-child')!
+    const pathInput = mounted.root.querySelector<HTMLInputElement>('.agent-operation__confirmation input')!
+    expect(approve.disabled).toBe(true)
+    pathInput.value = `/${original.target!.path}`
+    pathInput.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await settle()
+    expect(approve.disabled).toBe(true)
+    pathInput.value = original.target!.path
+    pathInput.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await settle()
+    expect(approve.disabled).toBe(false)
+    feedbackButton(mounted.root, 'common:agentToolCard.draftChanges').click()
+    await settle()
+    await edit(mounted.root.querySelector<HTMLTextAreaElement>('.agent-operation__feedback textarea')!, 'Feedback for the old revision only')
+    const newId = '00000000-0000-4000-8000-000000000075'
+    workspace.store.thread = {
+      ...destructive,
+      tools: destructive.tools.map(tool => ({ ...tool, proposalId: newId })),
+      proposals: [
+        {
+          ...destructive.proposals[0],
+          id: newId,
+          baseSourceRevision: '8',
+          diff: '-New revision that requires separate review',
+          approval: { ...original.approval!, id: '00000000-0000-4000-8000-000000000076', proposalId: newId }
+        }
+      ]
+    }
+    await settle()
+    expect(pathInput.value).toBe('')
+    expect(approve.disabled).toBe(true)
+    approve.click()
+    expect(mounted.root.querySelector('.agent-operation__feedback textarea')).toBeNull()
+    expect(mounted.root.querySelector('.proposal-diff')?.textContent).toContain('New revision that requires separate review')
+    expect(workspace.decisionInputs).toEqual([])
+    expect(workspace.messageInputs).toEqual([])
+  })
+
+  for (const gate of ['offline', 'expired', 'unreviewable'] as const) {
+    it(`does not approve an ${gate} proposal from the mounted review`, async () => {
+      const thread = proposalThread()
+      const initial = {
+        ...thread,
+        proposals: thread.proposals.map(proposal => ({
+          ...proposal,
+          ...(gate === 'expired'
+            ? {
+                expiresAt: '2020-01-01T00:00:00.000Z',
+                approval: { ...proposal.approval!, expiresAt: '2020-01-01T00:00:00.000Z' }
+              }
+            : {}),
+          ...(gate === 'unreviewable' ? { target: null, diff: null } : {})
+        }))
+      }
+      const workspace = realWorkspace('saved', null, initial)
+      const mounted = mountInlineAgent(workspace.state(), { realThread: true })
+      await settle()
+      if (gate === 'offline') {
+        testPwaState.connectionState = 'offline'
+        await settle()
+      }
+      const approve = mounted.root.querySelector<HTMLButtonElement>('.agent-operation__actions button:last-child')
+      if (gate === 'expired') expect(approve).toBeNull()
+      else {
+        expect(approve?.disabled).toBe(true)
+        approve!.click()
+      }
+      expect(workspace.decisionInputs).toEqual([])
+      expect(workspace.messageInputs).toEqual([])
+      expect(workspace.store.thread?.proposals[0]?.approval?.status).toBe('pending')
+    })
+  }
+
+  it('does not replace an existing draft until the user confirms replacement', async () => {
+    const workspace = realWorkspace('saved', null, proposalThread('denied'))
+    workspace.store.updateDraft(sessionId, { text: 'Keep my unsent objective', mode: 'goal' })
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state, { realThread: true })
+    await settle()
+    const receipt = mounted.root.querySelector<HTMLDetailsElement>('.agent-operation-receipt')!
+    receipt.open = true
+    correctionButton(receipt).click()
+    await settle()
+    expect(state.discardDraftOpen.value).toBe(true)
+    state.resolveDraftDiscard(false)
+    await settle()
+    expect(composerInput(mounted.root).value).toBe('Keep my unsent objective')
+    expect(workspace.store.drafts[sessionId]?.mode).toBe('goal')
+    correctionButton(receipt).click()
+    await settle()
+    state.resolveDraftDiscard(true)
+    await settle()
+    expect(composerInput(mounted.root).value).toContain(workspace.store.thread!.proposals[0].approval!.decisionNote!)
+    expect(workspace.store.drafts[sessionId]?.mode).toBe('message')
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+  })
+
+  for (const boundary of ['owner', 'workspace', 'session', 'draft', 'receipt'] as const) {
+    it(`does not overwrite a draft after a correction confirmation crosses the ${boundary} boundary`, async () => {
+      const workspace = realWorkspace('saved', null, proposalThread('denied'))
+      workspace.store.updateDraft(sessionId, { text: 'Original unsent request' })
+      const state = workspace.state()
+      const mounted = mountInlineAgent(state, { realThread: true })
+      await settle()
+      const receipt = mounted.root.querySelector<HTMLDetailsElement>('.agent-operation-receipt')!
+      receipt.open = true
+      correctionButton(receipt).click()
+      await settle()
+      expect(state.discardDraftOpen.value).toBe(true)
+      state.resolveDraftDiscard(true)
+      if (boundary === 'owner') workspace.store.ownerGeneration += 1
+      if (boundary === 'workspace') {
+        workspace.store.workspaceVersion += 1
+        workspace.store.initializedWorkspaceVersion = workspace.store.workspaceVersion
+      }
+      if (boundary === 'session') {
+        workspace.store.thread = threadFixture('00000000-0000-4000-8000-000000000004')
+        workspace.store.updateDraft(workspace.store.thread.session.id, { text: 'Other conversation draft' })
+      }
+      if (boundary === 'draft') workspace.store.updateDraft(sessionId, { text: 'Newer unsent request' })
+      if (boundary === 'receipt') {
+        const current = workspace.store.thread!
+        workspace.store.thread = {
+          ...current,
+          proposals: current.proposals.map(proposal => ({ ...proposal, approval: { ...proposal.approval!, decisionNote: 'A different correction' } }))
+        }
+      }
+      await settle()
+      expect(workspace.store.drafts[sessionId]?.text).toBe(boundary === 'draft' ? 'Newer unsent request' : 'Original unsent request')
+      if (boundary === 'session') expect(composerInput(mounted.root).value).toBe('Other conversation draft')
+      expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+    })
+  }
+
+  it('keeps a denied-proposal correction blocked while a goal is open, then permits only draft preparation after explicit cancellation', async () => {
+    const thread = proposalThread('denied')
+    const goal: NonNullable<AgentThreadState['goal']> = {
+      id: '00000000-0000-4000-8000-000000000080',
+      sessionId,
+      objective: 'Update the release procedure',
+      status: 'blocked',
+      version: 1,
+      currentRunId: null,
+      continuationCount: 0,
+      maxContinuations: 4,
+      consumedTokens: 100,
+      maxTokens: 1_000,
+      consumedToolCalls: 1,
+      maxToolCalls: 10,
+      budgetPolicyVersion: 2,
+      budgetSelection: 'pending',
+      tokenTier: null,
+      tokenAllowance: null,
+      budgetCycle: 0,
+      budgetLimitReason: null,
+      canRenewTokenBudget: false,
+      startedAt: timestamp,
+      deadlineAt: '2099-09-15T10:10:00.000Z',
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null,
+      completion: { outcome: 'blocked', issues: [{ code: 'APPROVAL_DENIED', message: 'The proposed change was denied.', retryable: false }] }
+    }
+    const workspace = realWorkspace('saved', null, { ...thread, goal })
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state, { realThread: true, realGoal: true })
+    await settle()
+    const receipt = mounted.root.querySelector<HTMLDetailsElement>('.agent-operation-receipt')!
+    receipt.open = true
+    expect(correctionButton(receipt).disabled).toBe(true)
+    await state.prepareCorrection(thread.proposals[0].id)
+    expect(composerInput(mounted.root).value).toBe('')
+    expect(workspace.store.thread?.goal?.status).toBe('blocked')
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+    if (!mounted.root.querySelector('.agent-goal__actions')) {
+      mounted.root.querySelector<HTMLButtonElement>('.agent-goal__toggle')!.click()
+      await settle()
+    }
+    feedbackButton(mounted.root.querySelector('.agent-goal__actions')!, 'common:agentGoalStatus.cancelGoal').click()
+    await settle()
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
+    feedbackButton(document.querySelector('.agent-goal__dialog-actions')!, 'common:agentGoalStatus.cancelGoal').click()
+    await settleMutation(workspace.store)
+    expect(workspace.store.error).toBe('')
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([{ method: 'POST', path: `/_api/agents/goals/${goal.id}/cancel` }])
+    expect(workspace.requests).toContainEqual({ method: 'GET', path: `/_api/agents/sessions/${sessionId}` })
+    expect(workspace.store.thread?.goal?.status).toBe('cancelled')
+    expect(workspace.messageInputs).toEqual([])
+    expect(correctionButton(receipt).disabled).toBe(false)
+    correctionButton(receipt).click()
+    await settle()
+    expect(composerInput(mounted.root).value).toContain(thread.proposals[0].approval!.decisionNote!)
+    expect(workspace.messageInputs).toEqual([])
+  })
 })
 
 describe('Inline Agent mobile panel controls', () => {
@@ -2629,7 +3083,6 @@ describe('Agent workspace action semantics', () => {
     expect(stop?.textContent?.trim()).toBe('Stop response')
     expect(primary.querySelector('.agent-composer__submit')).toBeNull()
   })
-
 
   it('announces Review needed with Stop instead of Send while awaiting approval', () => {
     const mounted = mountInlineAgent(loadGoalLockState('active', false, 'awaiting_approval'))

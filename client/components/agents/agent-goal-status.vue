@@ -19,9 +19,9 @@
       >{{ statusLabel }}</span>
       <span :id="goalCollapsedObjectiveId" class="agent-goal__collapsed-objective">{{ goal.objective }}</span>
       <span class="agent-goal__collapsed-meta">
-        <span>{{ $t('common:agentGoalStatus.run', { continuationCount: formatBudgetValue(goal.continuationCount + 1), interpolation: { escapeValue: false } }) }}</span>
-        <span aria-hidden="true">·</span>
-        <span>{{ $t('common:agentGoalStatus.peak', { budgetPercent: formatBudgetValue(Math.round(budgetPercent)), interpolation: { escapeValue: false } }) }}</span>
+        <strong>{{ outcomeLabel }}</strong>
+        <span>{{ nextAction }}</span>
+        <span v-if="blockerMessages.length">{{ blockerMessages[0]?.message }}</span>
       </span>
       <button
         :id="goalToggleId"
@@ -54,6 +54,29 @@
           </div>
           <v-chip class="agent-goal__status" :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
         </header>
+        <section class="agent-goal__outcome" :aria-label="t('common:agentGoalStatus.outcome', { defaultValue: 'Outcome and next action' })">
+          <h3>{{ outcomeLabel }}</h3>
+          <p class="agent-goal__next-action">{{ nextAction }}</p>
+        </section>
+        <p class="agent-goal__summary">{{ progressLabel }}</p>
+
+        <aside
+          v-if="blockerMessages.length"
+          class="agent-goal__blockers"
+          :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }"
+          :aria-labelledby="goalBlockersTitleId"
+        >
+          <div class="agent-goal__blockers-heading">
+            <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
+            <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? $t('common:agentGoalStatus.whyGoalStopped') : $t('common:agentGoalStatus.needsAttention') }}</h3>
+          </div>
+          <ul>
+            <li v-for="{ issue, key } in blockerEntries" :key="key">
+              <span>{{ issue.message }}</span>
+              <span class="agent-goal__issue-state">{{ issue.retryable ? $t('common:agentGoalStatus.canContinueAfterReview') : $t('common:agentGoalStatus.notAutomaticallyRetryable') }}</span>
+            </li>
+          </ul>
+        </aside>
 
         <div class="agent-goal__continuity" role="group" :aria-label="$t('common:agentGoalStatus.goalContinuity')">
           <span><v-icon icon="mdi-source-branch" size="15" /> {{ $t('common:agentGoalStatus.run2', { continuationCount: formatBudgetValue(goal.continuationCount + 1), maxContinuations: formatBudgetValue(goal.maxContinuations + 1), interpolation: { escapeValue: false } }) }}</span>
@@ -149,25 +172,6 @@
           >{{ $t('common:agentGoalStatus.continueAnotherTokenCycle', { renewalAllowanceLabel, interpolation: { escapeValue: false } }) }}</v-btn>
         </section>
 
-        <p class="agent-goal__summary">{{ progressLabel }}</p>
-
-        <aside
-          v-if="blockerMessages.length"
-          class="agent-goal__blockers"
-          :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }"
-          :aria-labelledby="goalBlockersTitleId"
-        >
-          <div class="agent-goal__blockers-heading">
-            <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
-            <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? $t('common:agentGoalStatus.whyGoalStopped') : $t('common:agentGoalStatus.needsAttention') }}</h3>
-          </div>
-          <ul>
-            <li v-for="{ issue, key } in blockerEntries" :key="key">
-              <span>{{ issue.message }}</span>
-              <span class="agent-goal__issue-state">{{ issue.retryable ? $t('common:agentGoalStatus.canContinueAfterReview') : $t('common:agentGoalStatus.notAutomaticallyRetryable') }}</span>
-            </li>
-          </ul>
-        </aside>
 
         <p v-if="networkBlocked" class="agent-goal__network-note" role="status" aria-live="polite">
           {{ $t('common:agentGoalStatus.connectionRequiredChangeGoal') }}
@@ -461,8 +465,29 @@ const budgetAriaLabel = computed(() => {
   void localeRevision.value
   return t('common:agentGoalStatus.used', { value: budgetLabel.value, value2: formatBudgetValue(Math.round(budgetPercent.value)), interpolation: { escapeValue: false } })
 })
+const outcomeLabel = computed(() => {
+  void localeRevision.value
+  if (goal.completion?.outcome === 'complete') return t('common:agentGoalStatus.outcomeComplete', { defaultValue: 'Assessment: complete' })
+  if (goal.completion?.outcome === 'partial') return t('common:agentGoalStatus.outcomePartial', { defaultValue: 'Assessment: partial result' })
+  if (goal.completion?.outcome === 'blocked') return t('common:agentGoalStatus.outcomeBlocked', { defaultValue: 'Assessment: blocked' })
+  if (goal.completion?.outcome === 'retry') return t('common:agentGoalStatus.outcomeRetry', { defaultValue: 'Assessment: further work needed' })
+  if (goal.status === 'active') return t('common:agentGoalStatus.outcomeActive', { defaultValue: 'Active — no completion assessment yet' })
+  return t('common:agentGoalStatus.outcomeUnassessed', { defaultValue: 'No completion assessment recorded' })
+})
+const nextAction = computed(() => {
+  void localeRevision.value
+  if (goal.status === 'active') return t('common:agentGoalStatus.nextActive', { defaultValue: 'Review any pending approval; otherwise wait for this run. To change the objective, explicitly cancel the goal and send a new request.' })
+  if (goal.status === 'paused') return t('common:agentGoalStatus.nextPaused', { defaultValue: 'Resume to continue the same objective, or explicitly cancel the goal and restate it in a new request.' })
+  if (goal.status === 'blocked') return t('common:agentGoalStatus.nextBlocked', { defaultValue: 'Review the issues before resuming. To change the objective, explicitly cancel the goal and send a new request.' })
+  if (goal.status === 'budget_limited') return canRenewTokenBudget.value
+    ? t('common:agentGoalStatus.nextRenew', { defaultValue: 'Review the result and issues before explicitly confirming another token cycle.' })
+    : t('common:agentGoalStatus.nextLimited', { defaultValue: 'Review the result and limiting reason. This goal cannot renew; any further work needs a new request.' })
+  if (goal.completion?.outcome === 'complete') return t('common:agentGoalStatus.nextComplete', { defaultValue: 'Review the result and any recorded issues. Further changes need a new request and fresh approval for proposed writes.' })
+  return t('common:agentGoalStatus.nextReview', { defaultValue: 'Review the available result and unresolved issues, then send a new request if further work is needed.' })
+})
 const progressLabel = computed(() => {
   void localeRevision.value
+  if (goal.status === 'completed' && goal.completion?.outcome !== 'complete') return t('common:agentGoalStatus.endedAssessment', { defaultValue: 'The goal has ended. Use the recorded assessment above to judge the result; resource use is not a measure of accomplishment.' })
   if (goal.status === 'completed') return t('common:agentGoalStatus.completedRun', { count: goal.continuationCount + 1, interpolation: { escapeValue: false } })
   if (goal.status === 'budget_limited') {
     return canRenewTokenBudget.value
@@ -519,12 +544,12 @@ const progressLabel = computed(() => {
   display: grid;
   flex: 0 0 auto;
   gap: var(--wiki-space-2);
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 2fr) auto;
   min-height: 2.5rem;
   padding: var(--wiki-space-1) var(--wiki-space-2);
 }
 .agent-goal--expanded .agent-goal__summary-row {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 2fr) auto;
 }
 .agent-goal__mark {
   align-items: center;
@@ -564,14 +589,14 @@ const progressLabel = computed(() => {
   white-space: nowrap;
 }
 .agent-goal__collapsed-meta {
-  align-items: center;
+  align-items: flex-start;
   color: var(--wiki-text-muted);
-  display: inline-flex;
-  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   font-size: var(--wiki-type-micro, .75rem);
-  font-variant-numeric: tabular-nums;
   gap: var(--wiki-space-1);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .agent-goal__toggle {
   align-items: center;
@@ -725,6 +750,9 @@ const progressLabel = computed(() => {
   line-height: 1.5;
   margin: var(--wiki-space-3) 0 0;
 }
+.agent-goal__outcome { margin-top: var(--wiki-space-3); }
+.agent-goal__outcome h3 { color: var(--goal-ink); font-size: .85rem; }
+.agent-goal__next-action { font-size: .8rem; line-height: 1.5; margin-top: var(--wiki-space-1); }
 .agent-goal__renewal {
   background: color-mix(in srgb, rgb(var(--v-theme-warning)) 8%, var(--wiki-surface-raised));
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 30%, var(--wiki-surface-border));

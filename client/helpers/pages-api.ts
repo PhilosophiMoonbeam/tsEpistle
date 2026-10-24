@@ -4,6 +4,7 @@ import { parseCollaborationSession, type CollaborationSession } from '../../shar
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import { PageFeaturesSchema, normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
+import { PAGE_CREATION_OWNER_HEADER, PageCreationFieldsSchema, type PageCreationOrigin } from '../../shared/page-creation.ts'
 import {
   offlineIneligibleReason,
   OfflinePageSnapshotV1Schema,
@@ -30,6 +31,7 @@ type FetchImpl = (
     headers: {
       Accept: 'application/json'
       'Content-Type'?: 'application/json'
+      'X-Page-Creation-Owner'?: string
     }
     body?: string
     signal?: AbortSignal
@@ -496,9 +498,15 @@ async function parseJsonResponse(response: JsonResponse, fallbackMessage: string
       else if (typeof detail === 'string' && detail.length > 0) message = detail
     }
     const failure = errorWithResponseStatus(new Error(message), response, fallbackMessage)
+    if (
+      isRecord(payload) &&
+      ((typeof payload.error === 'string' && payload.error.length > 0) || (typeof payload.message === 'string' && payload.message.length > 0))
+    ) {
+      Object.defineProperty(failure, 'responseRejected', { configurable: true, enumerable: true, value: true, writable: false })
+    }
     // Offline snapshot refusals may name a known reason code; anything else is dropped.
     const reason = isRecord(payload) ? offlineIneligibleReason(payload.reason) : null
-    if (isRecord(payload) && payload.code === 'PAGE_RENDER_PENDING') {
+    if (isRecord(payload) && (payload.code === 'PAGE_RENDER_PENDING' || payload.code === 'PAGE_CREATION_ALREADY_COMMITTED')) {
       Object.defineProperty(failure, 'code', { configurable: true, enumerable: true, value: payload.code, writable: false })
     }
     if (reason) Object.defineProperty(failure, 'offlineReason', { configurable: true, enumerable: true, value: reason, writable: false })
@@ -1099,6 +1107,8 @@ export type PageWriteInput = {
   okfMetadata?: Record<string, unknown>
   pageFeatures?: PageFeatures
   branding?: PageBrandingAssignment | null
+  creationRequestId?: string
+  creationOrigin?: PageCreationOrigin
 }
 
 export type PageConflictLatest = {
@@ -1177,14 +1187,16 @@ async function sendJson<T = unknown>(
   method: string,
   body: unknown,
   fallbackMessage: string,
-  normalize?: (payload: unknown, fallbackMessage: string) => T
+  normalize?: (payload: unknown, fallbackMessage: string) => T,
+  headers?: Record<string, string>
 ): Promise<T> {
   const response = await sameOriginJsonFetch(fetchImpl, url, {
     method,
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json',
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      ...headers
     },
     body: JSON.stringify(body)
   })
@@ -1210,9 +1222,29 @@ function isNullableNumber(value: unknown): value is number | null {
   return value === null || typeof value === 'number'
 }
 
-export async function createPage(fetchImpl: FetchImpl, input: PageWriteInput, fallbackMessage = 'Page creation failed'): Promise<WrittenPage> {
-  const normalizedInput = normalizePageWriteInput(input, fallbackMessage)
-  return sendJson(fetchImpl, '/_api/pages', 'POST', normalizedInput, fallbackMessage, payload => normalizeWrittenPage(payload, fallbackMessage, true))
+export async function createPage(
+  fetchImpl: FetchImpl,
+  input: PageWriteInput,
+  fallbackMessage = 'Page creation failed',
+  creationOwnerId?: number
+): Promise<WrittenPage> {
+  let normalizedInput = normalizePageWriteInput(input, fallbackMessage)
+  const receipt = input.creationRequestId !== undefined || input.creationOrigin !== undefined
+  if (receipt) {
+    if (typeof creationOwnerId !== 'number' || !Number.isSafeInteger(creationOwnerId) || creationOwnerId < 1) throw new Error(fallbackMessage)
+    const fields = PageCreationFieldsSchema.safeParse({ creationRequestId: input.creationRequestId, creationOrigin: input.creationOrigin })
+    if (!fields.success) throw new Error(fallbackMessage)
+    normalizedInput = { ...normalizedInput, ...fields.data }
+  }
+  return sendJson(
+    fetchImpl,
+    '/_api/pages',
+    'POST',
+    normalizedInput,
+    fallbackMessage,
+    payload => normalizeWrittenPage(payload, fallbackMessage, true),
+    receipt ? { [PAGE_CREATION_OWNER_HEADER]: String(creationOwnerId) } : undefined
+  )
 }
 
 export async function updatePage(

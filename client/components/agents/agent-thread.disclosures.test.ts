@@ -117,6 +117,8 @@ const renderDuplicateSources = async (): Promise<string> => {
   const component = Object.assign(
     defineComponent({
       setup: () => ({
+        t: translateEnglish,
+        correctionUnavailableReason: '',
         thread,
         threadPresentation,
         threadProjection,

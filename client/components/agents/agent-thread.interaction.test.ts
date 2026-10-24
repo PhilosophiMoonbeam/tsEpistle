@@ -78,7 +78,7 @@ const evaluateAgentThread = new Function(
   'agentMediaContentUrl',
   'placeAgentArtifacts',
   `${executableScript}
-return { artifactPlacement, artifactTimeLabel, temporalMetadataFor, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
+return { t, artifactPlacement, artifactTimeLabel, temporalMetadataFor, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
@@ -288,9 +288,10 @@ const mountThread = async (
       userPicture: { type: Object, required: true },
       decidingApprovalId: { type: String, default: null },
       canSubmit: { type: Boolean, default: true },
+      correctionUnavailableReason: String,
       networkBlocked: { type: Boolean, default: false }
     },
-    emits: ['askSource', 'suggest', 'reviewRequest', 'decision', 'reattach'],
+    emits: ['askSource', 'suggest', 'reviewRequest', 'decision', 'prepareCorrection', 'reattach'],
     setup(props, { emit }) {
       const setup = evaluateAgentThread(
         Vue.computed,

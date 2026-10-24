@@ -16,14 +16,14 @@
       slot(v-if='navigationKey === 0' name='contents')
       .wiki-page-rendered-contents(v-else v-html='contentHtml')
     template(v-slot:comments)
-      Comments(v-if='currentPage.props.commentsEnabled && !currentPage.props.commentsExternal')
+      Comments(v-if='currentPage.props.commentsEnabled && !currentPage.props.commentsExternal' ref='comments')
       template(v-else)
         slot(v-if='navigationKey === 0' name='comments')
         .wiki-page-rendered-comments(v-else-if='commentsHtml' v-html='commentsHtml')
     template(v-slot:links='slotProps')
       WikiPageLinks(v-bind='slotProps')
     template(v-slot:ratings='slotProps')
-      WikiPageRatings(v-bind='slotProps')
+      WikiPageRatings(v-bind='slotProps' :discussion-enabled='feedbackDiscussionEnabled' @prepare-feedback='prepareFeedbackDraft')
 </template>
 
 <script lang="ts">
@@ -111,6 +111,11 @@ export default defineComponent({
     ratingsVisible(): boolean {
       return this.currentPage.pageFeatures.ratingsAllowed && this.currentPage.ratingsSiteEnabled
     },
+    feedbackDiscussionEnabled(): boolean {
+      return this.currentPage.props.commentsEnabled && !this.currentPage.props.commentsExternal &&
+        wikiStore.page.id === this.currentPage.props.pageId &&
+        wikiStore.page.effectivePermissions.comments.read && wikiStore.page.effectivePermissions.comments.write
+    },
     lastEditorVisible(): boolean {
       return this.currentPage.pageFeatures.lastEditorVisible
     }
@@ -145,6 +150,17 @@ export default defineComponent({
     }
   },
   methods: {
+    async prepareFeedbackDraft(content: string): Promise<void> {
+      if (!this.feedbackDiscussionEnabled || !content.trim()) return
+      const pageId = this.currentPage.props.pageId
+      const identity = `${wikiStore.user.id}:${wikiStore.user.authVersion}:${wikiStore.offlineIdentityEpoch}`
+      await this.selectPageView('talk')
+      await nextTick()
+      if (!this.feedbackDiscussionEnabled || pageId !== this.currentPage.props.pageId ||
+        identity !== `${wikiStore.user.id}:${wikiStore.user.authVersion}:${wikiStore.offlineIdentityEpoch}`) return
+      const comments = this.$refs.comments as { prepareFeedbackDraft?: (draft: string) => Promise<void> } | undefined
+      await comments?.prepareFeedbackDraft?.(content)
+    },
     async selectPageView(view: PageView): Promise<void> {
       if (view === this.activePageView || (view === 'links' && !this.linksVisible)) return
       this.saveCurrentHistoryScroll()

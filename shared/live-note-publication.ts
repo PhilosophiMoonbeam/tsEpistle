@@ -6,7 +6,7 @@ export interface NotePublicationCapture {
   title: string
   content: string
 }
-/** Capture once, before the user reviews destination fields. Assets remain canonical. */
+/** Capture a saved body once; the reviewed destination title remains editable metadata. */
 export function captureNotePublication(source: string, revision: number): NotePublicationCapture {
   const tokens = markdown.parse(source, {})
   const headingIndex = tokens.findIndex(token => token.type === 'heading_open' && token.tag === 'h1')

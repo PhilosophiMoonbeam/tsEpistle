@@ -26,6 +26,7 @@ import {
   validateOkfMetadataPayload,
   waitForPageRender
 } from './pages-api.ts'
+import { readPageCreationStatus } from './page-creation-api.ts'
 
 function createJsonResponse(payload, ok = true) {
   return {
@@ -615,6 +616,59 @@ describe('pages api helper', () => {
     await expect(updatePage(fetchImpl, 7, {}, '0')).rejects.toThrow('Page update failed')
     await expect(updatePage(fetchImpl, 7, {}, '8', 0)).rejects.toThrow('Page update failed')
   })
+  test('rejects invalid receipt identities before any page is posted', async () => {
+    const requestId = '1ce8ef11-12c4-4a45-a761-2743761911aa'
+    const origin = { kind: 'live-note', noteId: '146e48d1-d094-498a-8c0b-a1cf862ce44e', revision: 17 }
+    for (const [input, owner] of [
+      [{ creationRequestId: requestId, creationOrigin: origin }, undefined],
+      [{ creationRequestId: requestId }, 0],
+      [{ creationRequestId: requestId }, 1.5],
+      [{ creationOrigin: origin }, 1],
+      [{ creationRequestId: 'not-a-request-id', creationOrigin: origin }, 1],
+      [{ creationRequestId: requestId, creationOrigin: { ...origin, revision: -1 } }, 1],
+      [{ creationRequestId: requestId, creationOrigin: { kind: 'agent-answer', sessionId: requestId } }, 1]
+    ]) {
+      const fetchImpl = vi.fn()
+      await expect(createPage(fetchImpl, input, 'Creation unconfirmed', owner)).rejects.toThrow('Creation unconfirmed')
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  })
+
+  test('distinguishes a parsed rejection and an already committed conflict from an unconfirmed malformed response without replay', async () => {
+    for (const [response, expected] of [
+      [
+        { ...createJsonResponse({ error: 'Correct the destination', code: 'PAGE_CONFLICT' }, false), status: 409 },
+        { status: 409, responseRejected: true }
+      ],
+      [
+        { ...createJsonResponse({ error: 'Already created', code: 'PAGE_CREATION_ALREADY_COMMITTED' }, false), status: 409 },
+        { status: 409, code: 'PAGE_CREATION_ALREADY_COMMITTED', responseRejected: true }
+      ],
+      [{ ...createJsonResponse({}, false), status: 409 }, { status: 409 }],
+      [{ ...createJsonResponse({ page: { id: 71 } }), status: 200 }, {}]
+    ]) {
+      const fetchImpl = vi.fn().mockResolvedValue(response)
+      const failure = await createPage(fetchImpl, { content: 'Retained source' }).catch(error => error)
+      expect(failure).toBeInstanceOf(Error)
+      expect(failure).toMatchObject(expected)
+      if (!expected.responseRejected) expect(failure.responseRejected).not.toBe(true)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  test('rejects unrelated or malformed creation statuses rather than inventing confirmed absence', async () => {
+    const requestId = '1ce8ef11-12c4-4a45-a761-2743761911aa'
+    for (const payload of [
+      { status: 'unknown', requestId: '5f788aa1-a114-4c94-b52e-591e0f17c03a' },
+      { status: 'missing', requestId },
+      { status: 'committed', requestId, destination: null }
+    ]) {
+      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+      await expect(readPageCreationStatus(fetchImpl, 4, requestId)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  })
+
   test('transports normalized optional save reasons on create and update without changing the page source', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } }))
     await createPage(fetchImpl, { content: 'Exact source', changeReason: '  Explain the example  ' })

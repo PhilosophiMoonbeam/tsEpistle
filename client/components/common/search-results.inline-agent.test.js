@@ -346,15 +346,20 @@ describe('inline Ask mode contract', () => {
     const scheduler = useSearchScheduler()
     try {
       const pendingByQuery = new Map()
-      const methods = compileSearchMethods(search, ['queueSearch', 'runSearch', 'handleResultClick', 'navigateToPage'], {
-        searchPages: (_fetcher, query) => {
-          const request = deferred()
-          pendingByQuery.set(query, request)
-          return request.promise
-        },
-        getErrorMessage: value => (value instanceof Error ? value.message : String(value)),
-        wikiStore: { page: { locale: 'en', path: 'guide' } }
-      })
+      const methods = compileSearchMethods(
+        search,
+        ['queueSearch', 'runSearch', 'handleResultClick', 'navigateToPage', 'handleSearchEnter', 'handleSearchMove'],
+        {
+          searchPages: (_fetcher, query) => {
+            const request = deferred()
+            pendingByQuery.set(query, request)
+            return request.promise
+          },
+          getErrorMessage: value => (value instanceof Error ? value.message : String(value)),
+          wikiStore: { page: { locale: 'en', path: 'guide' } }
+        }
+      )
+      const freshness = compileSearchMethods(search, ['hasFreshResponse'], {}, 'computed')
       const retainedResponse = {
         results: [{ id: 1, title: 'Retained result' }],
         suggestions: [],
@@ -369,7 +374,10 @@ describe('inline Ask mode contract', () => {
         searchAbortController: null,
         searchError: '',
         searchIsLoading: false,
-        hasFreshResponse: false,
+        get hasFreshResponse() {
+          return freshness.hasFreshResponse.call(this)
+        },
+        searchScope: 'wiki',
         searchMode: 'search',
         searchRequestId: 0,
         searchRequestKey: 'replacement-key',
@@ -377,6 +385,13 @@ describe('inline Ask mode contract', () => {
         searchRestrictPath: false,
         serverCapabilitiesAvailable: true,
         searchTimer: null,
+        canAsk: false,
+        get results() {
+          return this.response.results
+        },
+        get suggestions() {
+          return this.response.suggestions
+        },
         closeSearch() {
           throw new Error('A stale result must not close search.')
         },
@@ -410,6 +425,11 @@ describe('inline Ask mode contract', () => {
         expect(prevented).toBe(true)
         methods.navigateToPage.call(state, item)
       }
+      const cursorBefore = state.cursor
+      methods.handleSearchMove.call(state, 'down')
+      await methods.handleSearchEnter.call(state)
+      expect(state.cursor).toBe(cursorBefore)
+      expect(state.response).toBe(retainedResponse)
 
       scheduler.runNext()
       expect(state.searchIsLoading).toBe(true)
@@ -630,6 +650,53 @@ describe('inline Ask mode contract', () => {
     expect(state.isAgentOpen).toBe(false)
     expect(state.canAsk).toBe(false)
   })
+
+  for (const unavailable of ['feature-disabled', 'permission-denied', 'unverified-session', 'server-unavailable']) {
+    test(`does not create or submit an Ask draft when ${unavailable}`, async () => {
+      const dependencies = {
+        wikiStore: { user: { permissions: unavailable === 'permission-denied' ? [] : ['use:agents'] } },
+        siteConfig: { agentsEnabled: unavailable !== 'feature-disabled' }
+      }
+      const computed = compileSearchMethods(search, ['agentAuthorityReady', 'canAsk'], dependencies, 'computed')
+      const methods = compileSearchMethods(search, ['openAsk', 'askCurrentQuery', 'askSource', 'submitAskPrompt'], dependencies)
+      const preparations = []
+      const submissions = []
+      const response = { results: [{ id: 9, title: 'Keep the reader result' }], suggestions: ['another phrase'] }
+      const state = {
+        search: 'keep my question',
+        normalizedSearch: 'keep my question',
+        searchMode: 'search',
+        searchIsFocused: true,
+        response,
+        searchRestrictLocale: true,
+        searchRestrictPath: true,
+        directPromptHandoffId: 3,
+        directPromptHandoffPending: false,
+        authAuthorityReady: unavailable !== 'unverified-session',
+        serverCapabilitiesAvailable: unavailable !== 'server-unavailable',
+        waitForInlineAgent: async () => ({
+          preparePrompt: (...args) => preparations.push(args),
+          sendPrompt: (...args) => submissions.push(args)
+        }),
+        sendAskPrompt: (...args) => submissions.push(args)
+      }
+      for (const [name, getter] of Object.entries(computed)) Object.defineProperty(state, name, { get: () => getter.call(state) })
+      expect(state.canAsk).toBe(false)
+      methods.openAsk.call(state)
+      await methods.askCurrentQuery.call(state)
+      await methods.askSource.call(state, { title: 'Current result' })
+      expect(state.searchMode).toBe('search')
+      state.searchMode = 'ask'
+      await methods.submitAskPrompt.call(state)
+      expect(preparations).toEqual([])
+      expect(submissions).toEqual([])
+      expect(state.directPromptHandoffId).toBe(3)
+      expect(state.search).toBe('keep my question')
+      expect(state.response).toBe(response)
+      expect(state.searchRestrictLocale).toBe(true)
+      expect(state.searchRestrictPath).toBe(true)
+    })
+  }
 
   test('Ask waits through loading refs and their transient removal before preparing the clicked scope', async () => {
     const prepared = []

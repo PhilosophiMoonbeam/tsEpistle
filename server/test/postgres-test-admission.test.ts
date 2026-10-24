@@ -121,6 +121,89 @@ describe('isolated PostgreSQL test admission', () => {
     }
   }, 15_000)
 
+  it.each([2, 4])(
+    'gives browser files an exclusive lane through teardown while retaining %i ordinary workers and failure reporting',
+    async workers => {
+      const directory = await mkdtemp(join(tmpdir(), 'isolated-browser-lane-'))
+      try {
+        const events = join(directory, 'events.jsonl')
+        const files: string[] = []
+        const names: string[] = []
+        for (const group of ['before', 'browser', 'after']) {
+          const count = group === 'browser' ? 2 : workers
+          for (let index = 0; index < count; index++) {
+            const name = `${group}-${index}`
+            names.push(name)
+            const file = join(directory, `${name}${group === 'browser' ? '.browser' : ''}.${index === 1 && group === 'browser' ? 'spec' : 'test'}.ts`)
+            files.push(file)
+            const peers = group === 'browser' ? [] : Array.from({ length: count }, (_, peer) => join(directory, `${group}-${peer}.ready`))
+            await writeFile(
+              file,
+              `
+            import { appendFileSync, existsSync, watch, writeFileSync } from 'node:fs';
+            import { afterAll, beforeAll, expect, test } from 'bun:test';
+            const record = phase => appendFileSync(${JSON.stringify(events)}, JSON.stringify({ name: ${JSON.stringify(name)}, phase }) + '\\n');
+            record('start');
+            beforeAll(async () => {
+              const peers = ${JSON.stringify(peers)};
+              const { promise, resolve, reject } = Promise.withResolvers();
+              const watcher = watch(${JSON.stringify(directory)}, { signal: AbortSignal.timeout(2_000) }, () => {
+                if (peers.every(file => existsSync(file))) watcher.close();
+              });
+              watcher.once('error', reject);
+              watcher.once('close', () => peers.every(file => existsSync(file)) ? resolve() : reject(new Error('Ordinary workers did not overlap.')));
+              writeFileSync(${JSON.stringify(join(directory, `${name}.ready`))}, '');
+              if (peers.every(file => existsSync(file))) watcher.close();
+              await promise;
+            });
+            test('fixture result', () => { expect(${JSON.stringify(name !== 'browser-0')}).toBe(true); });
+            afterAll(async () => {
+              // Await a real cleanup child, not a guessed sleep or a fake clock.
+              const cleanup = Bun.spawn([process.execPath, '-e', 'process.exit(0)'], { stdout: 'ignore', stderr: 'ignore' });
+              expect(await cleanup.exited).toBe(0);
+              record('end');
+            });
+          `
+            )
+          }
+        }
+        const result = await execute([runner, ...files], { BUN_TEST_JOBS: String(workers) })
+        expect(result.exitCode).toBe(1)
+        expect(result.stderr).toContain(`${files.length - 1}/${files.length} test files passed; 1 failures.`)
+        expect(result.stderr).toContain('browser-0.browser.test.ts')
+        const records = (await Bun.file(events).text())
+          .trim()
+          .split('\n')
+          .map(line => JSON.parse(line) as { name: string; phase: string })
+        const active = new Set<string>()
+        const starts: string[] = []
+        const ends: string[] = []
+        let ordinaryPeak = 0
+        for (const record of records) {
+          if (record.phase === 'start') {
+            expect(active.has(record.name)).toBe(false)
+            if (record.name.startsWith('browser-')) expect(active.size).toBe(0)
+            else expect(Array.from(active).some(name => name.startsWith('browser-'))).toBe(false)
+            active.add(record.name)
+            starts.push(record.name)
+            if (!record.name.startsWith('browser-')) ordinaryPeak = Math.max(ordinaryPeak, active.size)
+          } else {
+            expect(record.phase).toBe('end')
+            expect(active.delete(record.name)).toBe(true)
+            ends.push(record.name)
+          }
+        }
+        expect(active.size).toBe(0)
+        expect(starts.sort()).toEqual([...names].sort())
+        expect(ends.sort()).toEqual([...names].sort())
+        expect(ordinaryPeak).toBe(workers)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    },
+    15_000
+  )
+
   it('rejects parent database targets and dynamic, aliased, ambiguous or absent native declarations before allocation', async () => {
     const target = await execute([runner, '--postgres', import.meta.path], { WIKI_TEST_POSTGRES_DATABASE: 'wiki_production' })
     expect(target.exitCode).not.toBe(0)

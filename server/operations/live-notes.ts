@@ -239,42 +239,65 @@ const expected = (row: Note, input: unknown, extra: readonly string[] = []): Rec
   return input
 }
 
+// Group policy → account → note is also the administration lock order. Share
+// locks fence revocation/membership changes throughout the note transaction.
+const authority = async (tx: Knex.Transaction, requester: LiveNoteRequester): Promise<Authority> => {
+  if (
+    !requester ||
+    typeof requester.id !== 'number' ||
+    !Number.isSafeInteger(requester.id) ||
+    requester.id < 1 ||
+    'api' in requester ||
+    'grp' in requester ||
+    ('ownershipUserId' in requester && requester.ownershipUserId !== requester.id && !(requester.id === 2 && requester.ownershipUserId === null))
+  )
+    fail('A current browser account is required.', 401, 'AUTH_REQUIRED')
+  const groups = await tx<Group>('groups').select('id', 'permissions').orderBy('id').forShare()
+  const account = await tx<Account>('users').where('id', requester.id).forShare().first()
+  const current =
+    requester.id === 2
+      ? account?.id === 2 &&
+        account.isActive === true &&
+        sessionVersion(requester.authVersion) !== null &&
+        sessionVersion(requester.authVersion) === sessionVersion(account.authVersion)
+      : accountSessionIsCurrent({ id: requester.id, authVersion: requester.authVersion }, account)
+  if (!current || !account) fail('Your account session changed. Sign in again.', 401, 'AUTH_REQUIRED')
+  const memberships = await tx<{ groupId: number }>('userGroups').where('userId', account.id).select('groupId')
+  const ids = new Set(memberships.map(item => item.groupId))
+  const grants = account.id === 1 ? ['manage:system'] : [...new Set(groups.filter(group => ids.has(group.id)).flatMap(group => permissions(group.permissions)))]
+  const system = account.id !== 2 && grants.includes('manage:system')
+  const write = account.id !== 2 && (system || grants.includes('write:notes'))
+  const read = system || grants.includes('read:notes') || write
+  const authVersion = sessionVersion(account.authVersion)
+  if (authVersion === null) fail('Your account session changed. Sign in again.', 401, 'AUTH_REQUIRED')
+  const principal: LiveNotePrincipal = { ...account, authVersion, permissions: grants }
+  return { principal, read, write, system }
+}
+export const authorizePageCreationAccount = async (tx: Knex.Transaction, requester: LiveNoteRequester): Promise<LiveNotePrincipal> => {
+  const access = await authority(tx, requester)
+  if (access.principal.id === 2) fail('A current browser account is required.', 401, 'AUTH_REQUIRED')
+  return access.principal
+}
+
+/** Read-only within the caller's transaction: current policy fences retained snapshots. */
+export const readLiveNotePublication = async (
+  tx: Knex.Transaction,
+  requester: LiveNoteRequester,
+  noteId: string,
+  revision?: number
+): Promise<{ text: string; revision: number } | null> => {
+  const access = await authority(tx, requester)
+  if (access.principal.id === 2) fail('A current browser account is required.', 401, 'AUTH_REQUIRED')
+  const row = await tx<Note>('liveNotes').where({ id: noteId }).whereNull('deletedAt').forShare().first()
+  if (!row || !access.read || (!access.system && row.ownerId !== access.principal.id && row.access === 'private')) return missing()
+  if (revision === undefined) return null
+  if (!isLiveNoteRevision(revision)) invalid()
+  const captured = await tx<Revision>('liveNoteRevisions').where({ noteId: row.id, revision }).first()
+  if (!captured) fail('The captured live note revision is unavailable.', 409, 'NOTE_REVISION_UNAVAILABLE')
+  return { text: stateContent(captured.state), revision: revisionNumber(captured.revision) }
+}
+
 export const createLiveNotesStore = ({ db, secret, audience, now = () => new Date(), onCommitted }: Dependencies): LiveNotesOperations => {
-  // Group policy → account → note is also the administration lock order. Share
-  // locks fence revocation/membership changes throughout the note transaction.
-  const authority = async (tx: Knex.Transaction, requester: LiveNoteRequester): Promise<Authority> => {
-    if (
-      !requester ||
-      typeof requester.id !== 'number' ||
-      !Number.isSafeInteger(requester.id) ||
-      requester.id < 1 ||
-      'api' in requester ||
-      'grp' in requester ||
-      ('ownershipUserId' in requester && requester.ownershipUserId !== requester.id && !(requester.id === 2 && requester.ownershipUserId === null))
-    )
-      fail('A current browser account is required.', 401, 'AUTH_REQUIRED')
-    const groups = await tx<Group>('groups').select('id', 'permissions').orderBy('id').forShare()
-    const account = await tx<Account>('users').where('id', requester.id).forShare().first()
-    const current =
-      requester.id === 2
-        ? account?.id === 2 &&
-          account.isActive === true &&
-          sessionVersion(requester.authVersion) !== null &&
-          sessionVersion(requester.authVersion) === sessionVersion(account.authVersion)
-        : accountSessionIsCurrent({ id: requester.id, authVersion: requester.authVersion }, account)
-    if (!current || !account) fail('Your account session changed. Sign in again.', 401, 'AUTH_REQUIRED')
-    const memberships = await tx<{ groupId: number }>('userGroups').where('userId', account.id).select('groupId')
-    const ids = new Set(memberships.map(item => item.groupId))
-    const grants =
-      account.id === 1 ? ['manage:system'] : [...new Set(groups.filter(group => ids.has(group.id)).flatMap(group => permissions(group.permissions)))]
-    const system = account.id !== 2 && grants.includes('manage:system')
-    const write = account.id !== 2 && (system || grants.includes('write:notes'))
-    const read = system || grants.includes('read:notes') || write
-    const authVersion = sessionVersion(account.authVersion)
-    if (authVersion === null) fail('Your account session changed. Sign in again.', 401, 'AUTH_REQUIRED')
-    const principal: LiveNotePrincipal = { ...account, authVersion, permissions: grants }
-    return { principal, read, write, system }
-  }
   const capabilities = (access: Authority, row: Note) => ({
     canEdit: access.write && (access.system || row.ownerId === access.principal.id || row.access === 'edit'),
     canManage: access.write && (access.system || row.ownerId === access.principal.id)

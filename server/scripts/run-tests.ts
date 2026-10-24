@@ -230,8 +230,8 @@ const main = async (): Promise<void> => {
       const existing = await sql('SELECT datname FROM pg_catalog.pg_database WHERE datname = ? OR left(datname, ?) = ?', [namespace, namespace.length + 1, `${namespace}_`])
       if (existing.rows.length > 0) throw new Error(`Native namespace contains existing databases; refusing reuse without modifying them: ${namespace}`)
     }
-    const runWorker = async (): Promise<void> => {
-      while (!interrupted && nextJob < jobs.length) {
+    const runWorker = async (end: number): Promise<void> => {
+      while (!interrupted && nextJob < end) {
         const ordinal = nextJob++
         const job = jobs[ordinal]!
         const database = databases[ordinal]
@@ -276,9 +276,17 @@ const main = async (): Promise<void> => {
         }
       }
     }
-    const workers = await Promise.allSettled(Array.from({ length: workerCount }, runWorker))
-    for (const worker of workers) {
-      if (worker.status === 'rejected') failures.push({ file: 'worker', output: message(worker.reason) })
+    // A browser file owns the host lane, including fixture teardown. Drain the
+    // ordinary pool first so Chromium startup cannot compete with media workers.
+    const browserFile = /\.browser\.(?:test|spec)\.[jt]sx?$/
+    while (!interrupted && nextJob < jobs.length) {
+      const exclusive = browserFile.test(jobs[nextJob]!.file)
+      let end = nextJob + 1
+      if (!exclusive) while (end < jobs.length && !browserFile.test(jobs[end]!.file)) end++
+      const workers = await Promise.allSettled(Array.from({ length: exclusive ? 1 : workerCount }, () => runWorker(end)))
+      for (const worker of workers) {
+        if (worker.status === 'rejected') failures.push({ file: 'worker', output: message(worker.reason) })
+      }
     }
   } catch (error) {
     failures.push({ file: 'runner', output: message(error) })

@@ -860,6 +860,9 @@ let tempDirectory: string
 let browser: Browser
 let page: Page
 let driverURL: string
+let testServer: { url: URL; stop: (closeActiveConnections?: boolean) => void } | undefined
+let browserLaunch: Promise<Browser> | undefined
+let fixtureClosed = false
 const databaseNames = new Set<string>()
 
 const invoke = async (operation: string, payload: Record<string, unknown> = {}): Promise<Outcome> => {
@@ -896,13 +899,19 @@ const freshDatabase = (prefix: string): string => {
 const readDump = async (name: string): Promise<SnapshotDump> => await succeeded<SnapshotDump>('dump', { name })
 
 beforeAll(async () => {
+  const deadline = performance.now() + 5_000
   tempDirectory = await mkdtemp(`${tmpdir()}/tsepistle-offline-storage-`)
+  if (fixtureClosed) {
+    await rm(tempDirectory, { recursive: true, force: true })
+    throw new Error('Offline storage fixture closed during setup.')
+  }
   const entry = `${tempDirectory}/browser-entry.ts`
   await Bun.write(entry, driverSource(storagePath, sessionPath, cryptoPath))
   const build = await Bun.build({ entrypoints: [entry], target: 'browser', format: 'esm', sourcemap: 'none' })
   if (!build.success) throw new Error(build.logs.map(log => log.message).join('\n'))
   const output = await build.outputs[0]!.text()
-  const server = Bun.serve({
+  if (fixtureClosed) throw new Error('Offline storage fixture closed during setup.')
+  testServer = Bun.serve({
     port: 0,
     fetch(request) {
       if (new URL(request.url).pathname === '/adapter.js')
@@ -910,11 +919,12 @@ beforeAll(async () => {
       return new Response('<!doctype html><title>offline adapter test</title>', { headers: { 'content-type': 'text/html' } })
     }
   })
-  driverURL = `${server.url}adapter.js`
-  browser = await chromium.launch({ headless: true, executablePath, chromiumSandbox: false })
+  driverURL = `${testServer.url}adapter.js`
+  // The launcher must not outlive the existing five-second aggregate hook.
+  browserLaunch = chromium.launch({ headless: true, executablePath, chromiumSandbox: false, timeout: Math.max(1, deadline - performance.now()) })
+  browser = await browserLaunch
   page = await browser.newPage()
-  await page.goto(`${server.url}blank`, { waitUntil: 'load' })
-  ;(globalThis as Record<string, unknown>).__offlineAdapterTestServer = server
+  await page.goto(`${testServer.url}blank`, { waitUntil: 'load', timeout: Math.max(1, deadline - performance.now()) })
 })
 
 beforeEach(() => {
@@ -927,12 +937,13 @@ afterEach(async () => {
 })
 
 afterAll(async () => {
+  fixtureClosed = true
   try {
-    if (page) await page.close()
-    if (browser) await browser.close()
+    // Join a pending launcher even when beforeAll timed out before assigning browser.
+    const launched = await browserLaunch?.catch(() => undefined)
+    if (launched) await launched.close()
   } finally {
-    const server = (globalThis as Record<string, unknown>).__offlineAdapterTestServer as { stop: (closeActiveConnections?: boolean) => void } | undefined
-    server?.stop(true)
+    testServer?.stop(true)
     if (tempDirectory) await rm(tempDirectory, { recursive: true, force: true })
   }
 })

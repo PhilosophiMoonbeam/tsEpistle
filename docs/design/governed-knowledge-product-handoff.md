@@ -1,12 +1,12 @@
 # Making governed knowledge easy, rewarding, and useful
 
-Agent-to-agent product handoff · 2026-10-22
+Agent-to-agent product handoff · 2026-10-22 · engineering baseline and bounded decisions updated 2026-10-24
 
 **Primary audience:** organizations running a governed knowledge platform, explicitly selected by the user during this investigation.
 
 **Investigation:** `tsEpistle-m35`. **Implementation epic:** `tsEpistle-hnz`; work packages and dependencies appear below. Beads owns task status; this document owns the product rationale and acceptance contract.
 
-**Reviewed source:** `7dc057de81f581e8f2d9bcf40eb2c338c284dba8`. The maintained local Wiki container reported that same revision. No application code, configuration, content, permissions, or services were changed. This is a product investigation and implementation handoff, not release certification. Selecting a governed organizational audience does not activate Enterprise Release.
+**Reviewed source:** the original investigation used `7dc057de81f581e8f2d9bcf40eb2c338c284dba8`, matching its maintained local Wiki container. The engineering baseline below uses source and maintained image `e0a2ec211d332e14076ce4b7975af081ba68d08e`. The original investigation changed no application code, configuration, content, permissions, or services; the later baseline created and edited temporary synthetic content as explicitly described below. This remains a product acceptance contract, not release certification. The current Development Sprint authorizes bounded implementation; selecting a governed organizational audience does not activate Enterprise Release.
 
 ## The central insight
 
@@ -39,9 +39,139 @@ Live observation used a fresh anonymous Chromium context through the installed P
 | Glossary selected in that anonymous context | This role reached an explicit permission-denied explanation | That organizational members have the same permissions or that the authorization boundary is defective |
 | Escape closed search | That dismissal worked in this context | A comprehensive keyboard/focus audit |
 
-No Agent/provider request, authenticated editing, publishing, approval, notification delivery, fault injection, or user interview was performed. The phone Page Actions activator was exercised, but its contents were not established by the scoped menu-role lookup; mobile discovery conclusions below rely on source. Screenshots and instance article content are deliberately excluded from this repository handoff. The report does not claim adoption, retention, speed, or satisfaction gains already occurred.
+The original investigation performed no Agent/provider request, authenticated editing, publishing, approval, notification delivery, fault injection, or user interview. The later native administrator attempts below extend that evidence; they do not retroactively validate the original observation set. The original phone Page Actions activator was exercised, but its contents were not established by the scoped menu-role lookup; mobile discovery conclusions below rely on source. Screenshots and instance article content are deliberately excluded from this repository handoff. No adoption, retention, speed, or satisfaction gains are claimed.
 
-**Confidence:** high in the cited implementation facts; medium in the proposed interaction remedies; unvalidated in audience prevalence and business impact. Read “hypothesis” literally. The next agent should baseline the relevant task before investing in persistent models or broad new surfaces.
+**Confidence:** high in the cited implementation facts; medium in the proposed interaction remedies; unvalidated in audience prevalence and business impact. Read “hypothesis” literally. An engineering baseline can justify bounded recovery work; it cannot substitute for observing organizational readers, contributors, and reviewers.
+
+## Engineering pilot and baseline — not a human outcome study
+
+This section records the `tsEpistle-hnz.1` engineering inputs and bounded decisions across `.2`–`.5`. Source inspection, native attempts, future acceptance, and unknown human outcomes are deliberately separate. None establishes a real recurring organizational job, named steward commitment, domain review, participant satisfaction, or adoption outcome.
+
+### Current implementation acceptance — supersedes human/organizational dependencies
+
+**Current user clarification:** implement a change only when it is generally helpful and its behavior can be demonstrated through agent-operated Playwright/native browser tests. If either condition cannot be established, skip it and close the corresponding speculative requirement with an evidence/rationale note rather than add speculative work or leave it as an implementation blocker. This instruction supersedes the original implementation dependency on participant studies, real organizational top jobs, steward appointments, domain-review policy, subjective effort, adoption or satisfaction outcomes. Those remain unknown, not completion blockers. The original insight/Acceptance paragraphs below are retained as product rationale and optional future research, not an obligation to recruit humans or leave the epic open.
+
+Browser evidence can establish rendered state, authorized navigation, preserved drafts, explicit consent actions, safe rejection, receipts and recovery under controlled scenarios. It cannot establish unfamiliar users' comprehension, subjective effort, actual organizational relevance or adoption. Never relabel the former as proof of the latter. Use existing maintained authorized navigation only; do not create speculative task destinations, seed production content, or introduce persistent applicability/steward/review metadata. Operational creation receipts have the distinct bounded purpose described below.
+
+| Candidate | Generally helpful, browser-provable scope | Disposition and limits |
+| --- | --- | --- |
+| Receipt and creation recovery | Preserve captured work; reopen the authoritative created artifact; read-only lost-response status; distinguish rejection/unknown; prevent duplicates and revoked disclosure. | Implement and exercise permitted/denied/unknown cases with synthetic fixtures. Source evidence justifies the design; success is not claimed until native acceptance runs. |
+| Reader recovery | Query survives browse and return; empty results provide an authorized escape; existing Ask remains editable and unsent until explicit action. | Implement maintained-navigation recovery and test role, disabled-Agent, keyboard and phone cases. Skip invented organizational task links and ownerless escalation destinations. |
+| Agent outcome and revision | Outcome facts and next actions are visible separately from budget; explicit denial/note and fresh review remain fenced; cancel/restate is explicit. | Implement only existing-contract behavior that can be exercised. Keep exact diff; skip rendered before/after under the current projection, new guidance semantics and new approval states. Human interpretation/decision accuracy remains unmeasured. |
+| Contextual feedback | Vote remains a pure vote; optional discussion context is editable and unposted; reply/watch consent names its category/channel; declining preserves settings; revoked access discloses nothing. | Implement and exercise these concrete states using existing discussions/preferences. An actual permitted synthetic reply and resolved thread can be tested; organic stewardship responsiveness, subjective usefulness and workload are not required or claimed. |
+| Applicability and human measurement | Optional authored examples can illustrate scope and distinguish editing, publication approval and domain review. | Retain the three examples below as opt-in authored examples only. Skip automated review badges, new content metadata, real-job/steward claims and human outcome collection as implementation deliverables. Any later voluntary study uses the privacy policy below, not a new analytics system. |
+
+### Current source evidence and resolved premises
+
+The following findings describe baseline revision `e0a2ec211d332e14076ce4b7975af081ba68d08e`, not current implementation acceptance. Links navigate the maintained source and may now contain the replacement behavior; baseline absence is not a claim that it remains absent. The independent capture, Agent/review, and reader/feedback investigations refine these premises; the current acceptance override above governs delivery scope.
+
+| Baseline evidence | Decision and boundary |
+| --- | --- |
+| At baseline, [`WrittenPage` and `createPage`](../../client/helpers/pages-api.ts) returned page id, update time, and source revision; [note publication](../../client/components/notes/live-note.vue) and [answer draft creation](../../client/components/agents/agent-answer-actions.vue) discarded that receipt. [Note capture, now shared](../../shared/live-note-publication.ts#L10), records a note revision. | Preserve the existing receipt and distinguish captured note revision from committed page source revision. A new receipt is not a reason to rebuild ordinary page creation. |
+| At baseline, [live-note summary](../../shared/live-notes.ts), [live-note persistence](../../server/db/migrations/tsepistle-000067-live-notes.ts), and [page insertion](../../server/models/pages.ts) stored no note/answer-to-page publication relationship. Existing [authorized page preview](../../server/operations/pages.ts) and [editor receipt reconciliation](../../client/helpers/pages-api.ts) required a known page identity. | The conditional lineage investigation was resolved: the baseline lacked durable origin/request proof for lost creation responses or reopening. Migration 68 adds the bounded receipt below; acceptance requires authoritative status and origin-inventory exercises. Recent-page lists, path availability, content similarity, and search absence cannot prove identity or rejection. |
+| Baseline [publication error handling](../../client/components/notes/live-note.vue) treated every error as uncertain; [answer draft save](../../client/components/agents/agent-answer-actions.vue) had no equivalent ambiguous-attempt fence. Baseline [Page API error classification](../../server/controllers/api/pages.ts) did not cover all legacy create errors. | Separate definite response rejection from unresolved transport outcome. Lost-response success needs authoritative read-only reconciliation, not mutation replay. Legacy-error masking was a source-path finding, not an exercised native rejection result. |
+| [Empty search and zero-result actions](../../client/components/common/search-results.vue#L107) already offer syntax help, filter clearing and authorized draft-only Ask; [header browse](../../client/components/common/nav-header.vue#L53) routes to `/t`, while [tag URL state](../../client/components/tags.vue#L809) has no search-draft intake. [Welcome](../../client/components/welcome.vue#L3) is an installation surface. | Do not claim search or Ask is absent. The gaps are task orientation and a query-preserving browse escape, especially when Ask is unavailable. Use maintained authorized navigation, not invented organizational destinations. |
+| [Goal completion/outcome and proposal contracts](../../shared/agents/contracts.ts#L438) contain host-owned completion facts, diff, base revision and digests, but no canonical before/after bodies; [proposal projection](../../server/agents/projection.ts#L414) does not authorize such bodies. | Lead with factual outcome, limitations and next action, not resource percentage as accomplishment. **Rendered before/after is skipped:** the current projection supplies no authorized canonical bodies. Keep exact diff; do not create a new representation, reconstruct full bodies from a bounded diff or fetch latest content as the approved revision for this epic. |
+| [Open-goal composer locks](../../client/components/agents/inline-agent-chat.vue#L819), [goal cancellation](../../server/agents/runtime.ts#L5302), and [decision contracts](../../shared/agents/contracts.ts#L656) already define explicit control paths. Proposal statuses have no `superseded` value. | Correct a misunderstood active goal through existing explicit cancel/restate, not hidden “Add guidance” semantics; pausing alone does not unlock ordinary submission. Revision feedback uses explicit denial plus `decisionNote` and a deliberate fresh draft/proposal. Preparing feedback is not cancellation, and denial is not a new request-changes ledger state. |
+| [Ratings](../../client/components/wiki-page-ratings.vue#L218) are votes only; [discussion composition/reconciliation](../../client/components/comments.vue#L1003) and [resolve/reopen](../../client/components/comments.vue#L571) exist. [Category preferences](../../client/components/profile/notifications.vue#L37) default off, but [page-watch creation](../../server/operations/page-watching.ts#L307) defaults both page channels on. | Keep a negative vote pure. Optional context must remain an editable discussion draft until deliberate posting. Offer exact category/channel consent rather than silently using the bell as a narrow opt-in. Acknowledgment means an actual reply; resolution is thread state, not proof of a content correction. |
+| [Reader provenance](../../client/themes/default/components/page.vue#L465) reports editing, and [existing Markdown admonitions](../../server/modules/rendering/markdown-core/admonitions.ts#L20) support authored applicability blocks. | Content-led applicability needs no new schema, certification badge, or production-content mutation. Modification time and publication approval do not establish domain validity. |
+
+**Bounded receipt decision — current implementation contract.** [Migration 68](../../server/db/migrations/tsepistle-000068-page-creation-receipts.ts) adds private per-owner/request proof; [page insertion](../../server/models/pages.ts) commits page and receipt atomically with request serialization and owner/request uniqueness. The receipt binds immutable page id and committed source revision, not path identity, with optional captured live-note revision or owned Agent answer origin. [Read-only status and origin inventory](../../server/operations/pages.ts) recheck the current account, source access and destination source-read/password-unlock authority before projecting metadata. A deleted or revoked origin/destination yields only permitted generic committed/unavailable state. Missing receipt means unknown, never confirmed rejection. A definite validation/permission/conflict rejection permits deliberate correction with a new request id; never automatic repost. Validate the exact captured note revision/body, not the latest note. Multiple intentional publications remain independent snapshots with distinct request ids. Keep private origins out of public `page.extra`, OKF provenance, exports, and knowledge projections. This is operational proof, not analytics, two-way synchronization or a generic lineage framework; migration/recovery risks are documented in [deployment operations](../agents-deployment.md#current-creation-receipts).
+
+Use the existing [page-visibility vocabulary](../../client/components/editor/common/page-visibility.ts#L34) for audience explanations. “Saved on this device,” “saved on the Wiki,” current access, publication state, and domain review answer different questions. “Public” is not unrestricted access; private note wording must not promise exclusion of administrators where existing policy permits system access.
+
+### Native current-state attempts already observed
+
+These are developer-operated synthetic attempts, not participant sessions or successful governed-task measurements.
+
+| Attempt | Observed result | Limit |
+| --- | --- | --- |
+| Anonymous Chromium, desktop 1440×1000, loopback application: Ctrl+K and a synthetic no-match search | Search opened and returned zero matches with “No pages matching your query” and “Try a different term or a broader scope.” No Browse or owned request-help escape appeared. | Does not establish missing knowledge, signed-in member behavior, mobile recovery, or task comprehension. |
+| Native administrator sign-in at the canonical tailnet origin | Genuine sign-in succeeded. A loopback sign-in was rejected with 403 by the exact-origin policy. | The denial is an authorization boundary working, not evidence that sign-in is generally broken. Administrator capabilities are not member-role evidence. |
+| Settled administrator `/p/notes` inventory, blank-key creation, and CodeMirror editing of a synthetic private note | Inventory foregrounded optional Custom key before Create private note. Creation reached an editor, and the synthetic edit subsequently reached “All changes saved.” | Editor appearance included connecting state and is not a confirmed useful-outcome timing measurement. No task-success time, reader audience understanding, or safe-leave comprehension was measured. |
+| Open the saved note's Publish as page form | Form showed captured revision 97, extracted title, blank destination path, Public selected, Published unchecked, body disclosure, and Create page once. Screenshot was visually inspected. | No page-creation mutation was performed in this form attempt. This does not validate publication, its receipt, reopening, rejection, or uncertain-outcome recovery. |
+| Profile hydration during sign-in | An initial signed-in-required display settled into the correct form after authorization hydration. | A transient observation only; no defect is asserted from this attempt. |
+| Native private-note creation with committed response deliberately lost | `POST /_api/live-notes` committed with 201 before its response was intentionally aborted. The existing UI showed a no-auto-retry warning and disabled Create. Reload inventory found the requested synthetic key; exactly one create POST occurred, and GET of that exact key returned 200. The attempt's own fixture was then deleted with 200. | Establishes committed/lost-response/manual-inventory recovery for **note creation only**, not page publication or durable publication-receipt recovery. No numeric task time, human comprehension, or adoption result was retained or inferred. |
+| Synthetic Agent harmful-edit review in native Chromium | With genuine session identity checks intact and Agent responses supplied only by route fixtures, the exact diff for an unsupported release claim was visible. Deliberate Deny rendered “Change denied”; the current card had no feedback textarea. | No provider request or Wiki page write occurred. Establishes fixture-driven UI behavior, not a persisted server denial, real review accuracy or human comprehension. |
+| Synthetic blocked/partial Agent goal in native Chromium | Host-fact fixtures supplied blocked status and partial completion. The collapsed view showed “Needs attention,” the synthetic objective, Run 2, “80% peak” and Show details. Expanding exposed missing evidence; ordinary composer input remained disabled while the goal was open. | Demonstrates current presentation and the open-goal composer fence under fixtures, not actual Agent accomplishment, perceived effort or successful objective correction. |
+| Genuine notification-preferences form | `/p/notifications` displayed the current preferences form. Save preferences was disabled; no settings were changed. | Read-only form observation, not evidence of opt-in, notification delivery, reply receipt or consent-flow completion. |
+
+These additional attempts used Node 24 and pinned Playwright 1.64.0. Recorded harness durations include setup, reloads or waits and are not human task times or achievement/improvement metrics.
+
+The note was temporary synthetic baseline material, not organizational guidance. The lost-response attempt's own fixture was deleted as recorded above; that is not proof of a complete publication lifecycle or cleanup of any other fixture. Baseline source receipt-discard evidence is separate from the native form observation.
+
+### Ranked interventions and future acceptance
+
+1. **Receipt and creation recovery (`.3`) first:** the confirmed source-level loss of receipt/origin and risky ambiguous answer retry block trustworthy contribution/reopening. Exercise committed success with lost response, definite rejection, permission loss, and unknown outcome; preserve captured work, no duplicate writes, and no revoked metadata.
+2. **Reader recovery (`.2`) next:** the native anonymous no-match dead end supports a query-preserving browse escape using maintained authorized navigation, with syntax help retained and request/Ask kept as an explicit editable draft. Skip speculative task links or invented steward routes; explain when a supported request route is unavailable.
+3. **Agent interpretation and revision (`.4`):** use existing completion facts for complete/partial/blocked and next action, keep resource use distinct, and preserve exact-diff review with explicit denial/feedback/fresh approval. Active-goal correction stays explicit cancel/restate.
+4. **Contextual feedback (`.5`):** optional contextual discussion and explicit reply/watch consent, preserving settings on decline, current identity/ACL invalidation, and default-off global preferences. Applicability examples are optional authored content, not a requirement to publish content or appoint stewards.
+
+This ranking is an engineering decision from the stated evidence, not measured organizational cost. Delivery requires the generally helpful, browser-provable behavior in the current acceptance table, with its permission/revision/privacy fences. The original human-outcome aspirations remain visible but are intentionally not implementation prerequisites. Report native acceptance results only after the relevant scenarios actually occur; no human before/after sessions are required.
+
+**Verification ownership:** `.1` source/native baseline proof is recorded above. Main owns final verification of `.2` reader recovery, `.3` receipt states/recovery, `.4` outcomes/denial, `.5` contextual feedback and `.6` inherited CI repair. Record exercised results and delivery status in those Beads issues; this product contract is not a CI, deployment or release-attestation record.
+
+### Three executable authored-content examples — explicitly synthetic
+
+These are optional, facilitator-ready authored examples and task scripts for a sanctioned synthetic pilot, **not existing production pages, real recurring jobs, assigned stewards, or reviewed procedures**. They are not required implementation tasks or authorization to seed content. Place the text only in an explicitly approved synthetic fixture if choosing to run the examples; this document creates no page, schema, access grant, or analytics. Use current controls for baseline attempts and proposed controls only after implementation. Record unavailability or failure rather than coach around it. No pilot execution or human result is claimed here.
+
+**Synthetic job A — find the applicable procedure.** Supply an authorized fixture titled “SYNTHETIC — Training-room projector restart” with this body:
+
+> **Use this when:** a training-room display is blank during the synthetic rehearsal and its status light is green.
+>
+> **Applies to:** the fictional training-room projector model A in this fixture only; no real equipment.
+>
+> **Responsible steward role (explicitly synthetic):** rehearsal facilities steward; no person is assigned and no response commitment exists.
+>
+> **Last domain review:** explicitly unverified; neither the fixture's edit date nor publication approval is a domain review.
+>
+> **Procedure:** check the selected input, reconnect the fictional display cable, then restart the fictional projector once. If the display remains blank, stop the rehearsal task.
+>
+> **Exceptions:** do not use this procedure for a red status light, unfamiliar model, or real electrical/safety problem.
+>
+> **Relevant next action:** consult the separately labeled synthetic “Model A input checklist” fixture to check the selected input; it is relevant because the first step depends on that choice. If unavailable or out of scope, state that no owned help route has been established; do not invent a real contact.
+
+Give the reader a green-light/model-A prompt and then a red-light or model-B variant. Ask them to find the answer, explain applicability, source/review limits and next action, and say why the checklist is relevant before opening it. Repeat with a restricted fixture and a no-match term. Correctly declining inapplicable guidance or using a genuinely owned authorized escalation can succeed; inaccessible metadata must stay hidden. Failure to find an established escalation is recorded as blocked, not success.
+
+**Synthetic job B — capture and deliberately publish knowledge.** Supply this seed for a private synthetic note titled “SYNTHETIC — Rehearsal handoff decision”:
+
+> **Use this when:** preserving a fictional rehearsal decision for later editing and deliberate sharing.
+>
+> **Applies to:** the sandbox rehearsal only, not a real operational policy or permission to disclose information.
+>
+> **Responsible steward role (explicitly synthetic):** rehearsal knowledge steward; unassigned, with no response commitment.
+>
+> **Last domain review:** explicitly unverified; note save and page publication do not assert review.
+>
+> **Decision:** use the fictional blue room for the next rehearsal because its training display is available.
+>
+> **Exceptions:** no actual booking, customer information, credentials, or organizational approval belongs in this fixture.
+>
+> **Relevant next action:** deliberately create a private unpublished page snapshot in an approved sandbox destination, inspect its receipt and reopen it from the origin. Later note edits affect the note, not that independent page.
+
+Ask the contributor to create privately, edit until server save is confirmed, predict audience and safe-leave state, then publish only to a sanctioned destination with explicit private/unpublished choices. Close and reopen the origin and find the created page without guessing by title/path; explain which object a later edit changes. Repeat controlled lost-response/rejection/permission-loss/unknown cases only in the authorized synthetic acceptance environment. An Agent-answer variant must preserve citations and private/unpublished defaults; it is not evidence that the note flow or Agent has already been exercised.
+
+**Synthetic job C — safely review a harmful edit.** Supply an authorized proposal against a synthetic page containing this block:
+
+> **Use this when:** deciding whether to approve a change to the fictional rehearsal stop rule.
+>
+> **Applies to:** synthetic editorial review only, never real safety guidance.
+>
+> **Responsible steward role (explicitly synthetic):** rehearsal safety-review steward; unassigned, with no authority asserted outside the fixture.
+>
+> **Last domain review:** explicitly unverified, even if a proposal is publication-approved.
+>
+> **Current rule:** if the fictional status light turns red, stop the rehearsal and do not restart it.
+>
+> **Exceptions:** a green light does not waive this stop rule once triggered; real equipment is outside scope.
+>
+> **Relevant next action:** compare the exact proposal diff against the stop rule, deny an unsafe change with an explicit reason, and deliberately prepare a corrected fresh proposal for separate review.
+
+The harmful proposal changes “stop … and do not restart” to “continue … and restart once.” Ask the reviewer to identify target, material wording and consequence before deciding; a quick approval is failure. Use existing denial with a decision note, and cancel/restate explicitly if the active objective is wrong. A corrected proposal must receive fresh approval, never inherit the denied proposal's authority. Repeat stale/expired/revoked/destructive cases with their existing fences. Rendered before/after is not a baseline capability and cannot be presented as observed or authorized by this fixture.
+
+Across all three examples, **edited** means canonical content/revision changed; **publication-approved** means the applicable publication decision authorized a bounded change under existing permissions, not that every page necessarily underwent approval; **domain-reviewed** means a real authorized subject-matter steward has explicitly checked stated scope, correctness, exceptions and review date under an agreed review practice. These are independent assertions. All three synthetic examples remain domain-review-unverified until such a practice and actual review exist; a recent edit, a citation, or Agent approval cannot promote them.
+
+**Unknown human/organizational inputs — intentionally not prerequisites:** real recurring jobs, steward assignments and commitments, domain-review meaning and authority, response expectations, audience comprehension, cost of a wrong decision, perceived effort, adoption and satisfaction. Do not invent them, substitute administrator intuition, or require them to complete the browser-provable engineering scope. The examples do not certify domain validity, compliance or universal accuracy; any later real-content program or human study is a separate voluntary decision.
 
 ## The user journeys to optimize
 
@@ -70,7 +200,9 @@ flowchart LR
 
 A useful answer can complete the task immediately. Do not force saving, commenting, Agent use, or another visit to count the experience as successful.
 
-## Eight insights the implementation should act on
+## Eight original insights — rationale, not superseding acceptance
+
+“Observed” in this section describes the investigation/baseline, not a fresh check of the changed implementation. Original human-oriented Acceptance paragraphs remain research aspirations only. Current delivery is limited to the concrete browser-provable table above; real-job/steward appointments, subjective/adoption measurements, invented owned escalation, new applicability metadata/badges/analytics, rendered before/after and new active-goal guidance are skipped with the stated evidence, not blockers.
 
 ### 1. Activation is a completed work task, not exposure to features
 
@@ -78,7 +210,7 @@ A useful answer can complete the task immediately. Do not force saving, commenti
 
 **Missing insight.** An organizational newcomer often lacks the vocabulary, context, and confidence to invent a useful query. The organization also has to supply useful starting content. A feature tour cannot compensate for an empty or poorly maintained knowledge base.
 
-**Prescription.** Select three actual recurring jobs with a knowledge steward. Start with an authored home section or existing empty-search surface linking to maintained, authorized task content. Use concrete labels such as “Find the procedure for [actual process]” only after that process and destination are confirmed. Show the reader what result to expect. Keep search syntax available as secondary help. Where Agent is available, test one first-use path: understand a relevant page, inspect its evidence if needed, and apply or keep the useful result. Model, skill, and goal selection should not be prerequisites for this path.
+**Current prescription.** Keep syntax help, maintained authorized browse navigation and the existing editable Ask handoff when enabled. Preserve the query across browse/return. **Real organizational task starters are skipped:** no actual recurring jobs, maintained task destinations or authorized steward appointments were established. Do not invent or seed them to satisfy this epic.
 
 Task starters must reflect live permissions and enabled capabilities. An Agent-disabled organization still needs a complete reader journey. A blocked destination should explain a legitimate next step without revealing restricted metadata. The observed anonymous Glossary denial is a useful role-test case, not a reason to weaken authorization.
 
@@ -108,11 +240,11 @@ Before a note becomes a page, summarize destination, captured revision, intended
 
 **Prescription.** Lead note creation with the thought and its private state; move custom addressing into optional details. Offer a few relevant, dismissible starting structures, such as a decision explanation or a question to resolve, while preserving blank capture. For Agent drafts, foreground title and understandable destination; preserve the citation-bearing preview and private-save contract.
 
-Make publication success a useful result: destination, audience, captured revision, and a clear way to continue on the page. Verify existing server provenance before adding storage. If returning to a note cannot recover its published destinations, add only the smallest authorized relationship necessary to do so. Preserve intentional multiple publications and handle deleted/inaccessible destinations without leaking names or paths. Do not introduce automatic two-way note/page synchronization.
+Make publication success a useful result: destination, audience, captured revision, and a clear way to continue on the page. The baseline investigation above resolves the provenance question: the response receipt exists, but a durable origin/request relationship does not. Add only the smallest private, atomic authorized receipt needed for reopening and read-only uncertainty recovery. Preserve intentional multiple publications and handle deleted/inaccessible destinations without leaking names or paths. Do not introduce automatic two-way note/page synchronization.
 
 **Acceptance.** After closing and reopening, contributors find the result from the originating workflow and can explain which object future edits affect. An updated note must not imply its published page also changed. Citations survive answer export. Reuse and appropriate publication are outcomes; orphaned or unused drafts are countermetrics.
 
-**Delivery:** `tsEpistle-hnz.3`. Persistent lineage is a conditional design decision, not a proven repository-wide absence.
+**Delivery:** `tsEpistle-hnz.3`. The baseline supports the bounded receipt decision above; it does not justify a general lineage framework.
 
 ### 4. Recovery should reduce uncertainty without replaying risky work
 
@@ -120,9 +252,9 @@ Make publication success a useful result: destination, audience, captured revisi
 
 **Missing insight.** Preserving data is necessary; making the person investigate whether their work exists is still costly. Likewise, a failed search may be a vocabulary problem, an access/scope limit, or a content gap. Those cases need different next actions.
 
-**Prescription.** For uncertain creation, offer an explicit read-only status check using compatible existing authoritative receipts or reconciliation facilities. Report confirmed creation, confirmed rejection, or still unknown. Preserve captured text. A page missing from search is not proof that creation failed, and an inaccessible destination must not become an information leak. Keep mutation retry semantics unchanged until the underlying contract supports a safe change.
+**Prescription.** For uncertain creation, offer an explicit read-only authoritative receipt check. Report committed or still unknown; only a definite rejecting mutation response establishes rejection, never missing receipt or search absence. Preserve captured text and avoid inaccessible-destination disclosure. Recovery must not replay the mutation.
 
-For failed discovery, offer a query-preserving browse escape and an owned “Request missing information” route where the organization supports one. Reuse an authorized discussion/content workflow first. A request should identify the task and intended outcome, preview any included context, and have a steward and response expectation. Do not automatically send query text to a person or model. Retain the current editable Ask handoff and stale-result protection.
+For failed discovery, offer query-preserving maintained browse and retain editable, unsent Ask with current authorization and stale-result protection. **An owned “Request missing information” route is skipped:** no organizational destination, steward or response contract was established. State unavailable supported actions honestly; do not invent an escalation or automatically send query text to a person or model.
 
 **Acceptance.** Exercise committed success with lost response, definite rejection, permission loss, and unresolved transport failure. No duplicates, false absence, or lost captured work. Separately test a wrong term, excessive filters, and a genuinely missing answer: each leads to a useful authorized recovery action rather than indefinite reformulation.
 
@@ -136,7 +268,7 @@ For failed discovery, offer a query-preserving browse escape and an owned “Req
 
 **Prescription.** Lead with established facts: what was found or changed, unresolved limitations, and the user's next necessary decision. Completion should link to the relevant answer or artifact and disclose remaining issues. Keep costs, resource use, deadlines, and renewal controls accessible, with salient limit warnings. Derive summaries from existing authoritative run/proposal/task facts. If reliable milestones are unavailable, show factual status rather than fabricate a percentage or a model-written checklist presented as verified progress.
 
-Open goals currently restrict ordinary submission ([inline-agent-chat.vue](../../client/components/agents/inline-agent-chat.vue#L860), lines 860–884). Test whether users can correct a misunderstanding using existing controls. An “Add guidance” control is conditional: define pause/queue/new-run behavior and preserve approval identity, concurrent-run rules, and accounting before implementation.
+Open goals restrict ordinary submission ([inline-agent-chat.vue](../../client/components/agents/inline-agent-chat.vue)), including when paused. Correction uses existing explicit cancel/restate; proposal-specific feedback uses denial with a decision note and a deliberate fresh draft/proposal. Preserve those fences in controlled browser scenarios. **New active-goal guidance is skipped:** existing contracts provide explicit cancellation, not defined pause/queue/guidance semantics; inventing them would expand run authority and accounting scope.
 
 **Acceptance.** Users correctly interpret active, blocked, partial, budget-limited, and completed scenarios and identify the next action. Resource consumption and objective achievement remain distinct. A completion assessment with unresolved issues cannot become an unconditional success claim. Measure interpretation and correct next action; retain cost per successful task as a separate diagnostic.
 
@@ -148,9 +280,9 @@ Open goals currently restrict ordinary submission ([inline-agent-chat.vue](../..
 
 **Missing insight.** Requiring approval does not ensure an informed decision. A nontechnical reviewer may understand whether an explanation is accurate more easily in rendered prose than in a diff. A nearly right proposal needs a revision path; binary acceptance alone can create either rubber-stamping or abandonment.
 
-**Prescription.** For page edits, test a safe rendered before/after alongside the exact diff and a concise, factual summary of material changes. Keep target and consequential audience/publication effects prominent. This is conditional on an authorized, revision-bound representation: the current [AgentProposalView](../../shared/agents/contracts.ts#L466), lines 466–483, exposes a diff, revision, and digests, not canonical before/after bodies. Keep the exact-diff fallback until that contract exists. Do not fetch the latest page or infer complete authoritative bodies from a possibly bounded diff. Reuse existing safe rendering; never execute proposal content or render a different revision from the one being approved. Explain partial/truncated views and preserve access to the complete supported review evidence.
+**Current prescription.** Keep the exact diff with target, consequence and supported evidence visible. **Rendered before/after is skipped**, because [AgentProposalView](../../shared/agents/contracts.ts) exposes diff, revision and digests, not authorized canonical before/after bodies. Do not add a new projection, fetch latest content or reconstruct authoritative bodies from a bounded diff for this epic.
 
-Add “Request changes” only through an explicit feedback draft and a fresh proposal. Show the former proposal's actual persisted state; there is no superseded state in the current contract. Preparing feedback must not imply that a pending approval was cancelled. If the workflow requires denying it, explain that consequence and use the existing decision path. Revised content must require fresh review. Define how feedback interacts with an open goal before exposing the action. Preserve expiry, base-revision checks, live authorization, destructive confirmation, and the exact approved operation. Simplifying the decision surface must not broaden the authority granted.
+Use an editable denial note through the existing decision path, then a deliberate fresh draft/proposal requiring fresh approval. Show the former proposal's actual persisted state; there is no new request-changes or superseded ledger state. Preparing feedback neither cancels a proposal nor sends a new request. Preserve expiry, base-revision checks, live authorization, destructive confirmation, run locks, accounting and the exact approved operation.
 
 **Acceptance.** Reviewers identify the page, material wording change, and consequence before deciding. Include a plausible but materially incorrect edit: rejecting it matters more than approving quickly. Test stale, denied, expired, revoked, and destructive cases, plus revision after feedback. Measure decision accuracy first, then time and successful revision; approval rate alone is not a success metric.
 
@@ -162,13 +294,13 @@ Add “Request changes” only through an explicit feedback draft and a fresh pr
 
 **Missing insight.** Modification time, publication approval, source support, and domain validity are distinct. An answer can accurately cite an outdated procedure. A recent digest can be accurate and irrelevant. A backlink can be correct without explaining why the reader should follow it.
 
-**Prescription.** Pilot an authored block on a small set of consequential pages: **Use this when; applies to; responsible steward; last domain review; known exceptions.** The organization must define who may assert a review and what that assertion means. Use existing descriptions/body content first. Do not derive “verified” from `updatedAt`, AI confidence, or approval existence. Do not add a certification badge without a real, bounded meaning.
+**Disposition.** Authored applicability blocks remain optional examples, not a required content pilot or production seeding. Skip real steward appointments, domain-review policy, new applicability metadata and certification badges: no organizational authority or validated domain-review meaning is established. Modification time, AI confidence and publication approval must not imply domain verification.
 
-Add one or two maintained next-step links with an explanation of relevance—such as a worked example or the next procedure—using ordinary content before a recommendation engine. For catch-up, first test a deliberately selected scope and truthful “recently updated” wording. “Changes since your last visit” requires a real baseline and comparison; do not imply it from recency.
+Suggested task links and catch-up comparison remain outside this bounded slice: no maintained organizational next-step content or last-visit comparison baseline was established. Existing links and recent-page navigation remain available under current permissions; recency must not imply domain review or “changes since your last visit.”
 
 **Acceptance.** Readers can judge whether guidance applies and identify who can resolve a problem. Test a recently edited but not domain-reviewed page and an old but still valid page. Participants can explain why a suggested next resource is useful before opening it. Track wrong decisions, unresolved applicability questions, and useful reuse; more link clicks or digest pages are not intrinsically better.
 
-**Delivery:** `tsEpistle-hnz.5`, with the content pilot begun in `tsEpistle-hnz.1`.
+**Delivery:** no new applicability implementation in this epic; `tsEpistle-hnz.5` retains only contextual feedback and consent below.
 
 ### 8. Make contribution rewarding by closing the human feedback loop
 
@@ -178,7 +310,7 @@ Add one or two maintained next-step links with an explanation of relevance—suc
 
 **Prescription.** After a contribution, offer a dismissible, explicit choice to follow replies or the page, explaining the exact category/channel affected. Keep existing preferences and off-by-default policies. A negative rating may offer an optional, previewable discussion draft asking what the person was trying to do and which passage blocked them. Casting the vote alone must not post text or subscribe the voter.
 
-Pilot a real stewardship practice: acknowledge the request, clarify or correct the page, resolve the thread, and provide an authorized route to the result. No new inbox, leaderboard, contribution quota, or forced daily streak is needed. For regulated or sensitive topics, a steward may record that a request cannot be satisfied; the UI must distinguish acknowledgment, resolution, and actual content change.
+Exercise existing acknowledgment and resolve/reopen with permitted synthetic replies and threads. A reply, resolution and actual content correction remain distinct facts. **Real stewardship practice and response commitments are skipped:** no organizational owner or responsiveness evidence exists, and a controlled browser flow cannot establish them. No new inbox, leaderboard, quota, analytics or forced streak is required.
 
 **Acceptance.** A contributor deliberately opts into an existing notification channel, receives a permitted reply, opens the relevant thread, and sees a useful resolution. Declining changes nothing. Permission loss must prevent disclosure. Measure actionable reports, acknowledgment/resolution time, contributor-rated usefulness, and steward workload. Keep the ability to ignore or turn off feedback.
 
@@ -200,9 +332,30 @@ Retain the editorial serif/gold direction, focus reading, stable keyboard intera
 
 ## Measurement before another feature wave
 
+**Optional future research, not a delivery gate.** The current clarification removes participant recruitment, organizational job selection and subjective measurements from this implementation's prerequisites. The manual policy below is retained for a separately opted-in future study; no study, analytics capture, participant count or outcome is claimed. Agent browser scenarios report exercised behavior and artifacts, not the human successful-governed-task rate.
+
 The administrator dashboard currently emphasizes inventory: pages, tags, users, groups, assets, storage, and comments ([admin-dashboard.vue](../../client/components/admin/admin-dashboard.vue#L188), lines 188–244). The inspected telemetry service's `sendEvent` is a reserved no-op; instance events concern installation/runtime metadata ([telemetry.ts](../../server/core/telemetry.ts#L74), lines 74–92 and 158–173). These facts do not establish that the entire installation has no analytics. They establish that these inspected surfaces do not answer the outcome questions in this report.
 
-Use **successful governed-task rate** as the initial product measure: among explicitly observed or voluntarily reported eligible task attempts, how many reach a useful, correct result with appropriate source/audience understanding and no avoidable intervention? Report numerator and denominator, role, and task type. A successful search click, saved page, model completion, or approval is not sufficient evidence by itself. Do not extrapolate an opt-in sample to all users without qualification.
+Use **successful governed-task rate** as the initial manual, opt-in product measure, not an application analytics feature. **Denominator:** every consented, eligible task attempt actually started in the declared pilot window, including incorrect, blocked, abandoned, or still-unknown outcomes. Eligibility is agreed before the attempt: declared role/job, sanctioned content, capability/access scenario, and a task-specific correct-result rubric. A deliberate restricted/disabled scenario is eligible when testing a safe explanation or recovery; do not exclude it after a failure. **Numerator:** denominator attempts with a confirmed useful and correct result (or the rubric's legitimate authorized escalation/safe refusal), correct source/applicability and audience understanding, correct next action, and no avoidable rescue, unauthorized disclosure, duplicate creation, or harmful approval. Required governance approval is not “avoidable intervention.” Incomplete/unassessed comprehension or unverified self-reported accuracy cannot enter the confirmed-success numerator. Report `successful attempts / eligible attempts`, not just a percentage; zero attempts means not measured, not zero percent.
+
+Keep directly observed and voluntary self-reported attempt counts separate, including their verification limitations, and separate synthetic engineering scenarios from human task attempts. A retry/recovery within one assigned job remains the same attempt, not a new success opportunity. Record pre-start exclusions with reasons and separately report consent withdrawals without retaining withdrawn records or quietly treating failures as ineligible. Compare like task/role/scenario categories before and after; no opt-in sample supports extrapolation to all users. A search click, page save, model completion, or approval alone does not demonstrate success.
+
+For each consented attempt, use a minimal manually recorded row; no rows for real participants have been collected in this handoff:
+
+| Field | Record and scoring rule |
+| --- | --- |
+| Context | Random pilot attempt code, baseline/changed revision, synthetic versus sanctioned-real task, declared role category (not account identity), job/scenario code, allowed capabilities and device/input category. No claim that a scenario is a real recurring job without organizational confirmation. |
+| Time | Elapsed time from accepting the task to confirmed outcome or explicit stop, with interruption flag and stop reason. Record “not measured” if unavailable; editor mount, HTTP latency, or waiting for a component is not task-success time. Establish any acceptable threshold only after the baseline. |
+| Result accuracy | Correct / incorrect / unverified against the predeclared rubric; useful result or legitimate escalation; harmful-edit decision correctness; next-action correctness; failure category and avoidable help/wrong-turn count. Preserve harmful approval and wrong-audience failures separately rather than average them away. |
+| Source comprehension | Participant explains applicability, evidence/review limits, exceptions and why the next resource helps; record correct / incorrect / unassessed, not an inferred score from a click or citation. |
+| Audience and save comprehension | Participant predicts who may access the object under current rules, draft/publication consequence, safe-leave state and note/page independence; correct / incorrect / unassessed. Administrator access must not be silently excluded. |
+| Recovery | None needed, or scenario and confirmed / rejected / unknown / blocked result; captured work retained, duplicate avoided, access respected, and whether the person found the receipt/result after reopening. “Not visible” never proves “not created.” |
+| Perceived effort | Optional participant-reported 1–5 response to “How much effort did this task take?” (1 very low, 5 very high), plus declined/not asked. Confidence, control and satisfaction may each be asked separately and optionally; they are not inferred from speed, completion, or facilitator opinion. |
+| Follow-through | Only if separately consented and actually observed: later useful reuse, actual steward reply/acknowledgment, thread resolution versus actual content change, response interval and steward effort. Otherwise record not observed; no invented reply or reuse outcome. |
+
+**Pilot privacy and retention policy (required before recruiting, not an assertion of deployed policy):** participation and any follow-up are explicit, voluntary opt-ins, with purpose, fields, access and deletion date explained first; declining changes no product access, settings or notifications. Collect no raw searches, prompts, article bodies, titles, private paths, account ids, emails, screenshots, audio/video, or employee productivity rankings in the measurement rows. Record coded failure categories rather than sensitive verbatim remarks. Use synthetic content by default; sanctioned real content stays under its existing ACLs and is not copied into the measurement record.
+
+Keep row-level notes encrypted in an organization-approved restricted location, outside this repository, application telemetry and issue attachments; access only for the explicitly designated pilot facilitator/evaluator. Before collection the organization must assign that real custodian and approve the location; none is appointed by this document. Delete row-level records and any separately consented contact/code mapping on withdrawal or at most 30 days after the session, whichever is earlier. Keep contact details separate and only for the requested follow-up. Retain de-identified aggregate results for at most 90 days after pilot close, then delete; a different period requires fresh explicit agreement before collection, not silent extension. Do not join records to account, provider or external telemetry logs or export them to an analytics vendor. Share only consented aggregates; suppress potentially identifying role/job breakdowns with fewer than three attempts and any revealing narrative. An overall small-sample numerator/denominator may be reported with consent and clear sampling limits, never individual performance attribution. These are pilot handling rules, not a compliance certification or implementation of an analytics system.
 
 | Dimension | Initial evidence | Countermetric / interpretation guard |
 | --- | --- | --- |
@@ -212,27 +365,28 @@ Use **successful governed-task rate** as the initial product measure: among expl
 | Governed | Audience comprehension, source applicability, reviewer decision accuracy | False “verified” signals, unauthorized metadata, mistaken approvals |
 | Sustainable | Steward review effort, unresolved requests, cost per useful Agent task | Growth in queue size or token spending without improved outcomes |
 
-Start manually. A proposed first round is 6–8 participants covering readers, contributors, reviewers, and an operator; this is formative work, not statistical proof. Use real recurring jobs with sanctioned or synthetic content. Observe the same task categories before and after each slice, and report failures rather than averaging away a wrong-audience or harmful-approval case. Establish acceptable task-specific times after the baseline; this report invents no conversion uplift or performance target.
+If a separate voluntary human study is later chosen, start manually; the original suggestion of 6–8 participants across readers, contributors, reviewers and an operator is only a formative-study idea, not a recruitment commitment or a condition of this implementation. Organizational jobs and authorized content would need to be agreed for that study alone. Compare the same task categories before and after, and report harmful approval/wrong-audience failures separately. Establish acceptable task-specific times only after an actual baseline; this report invents no uplift or performance target.
 
-If later instrumentation is justified, specify its purpose, fields, retention, access, and opt-in policy before implementation. Prefer local aggregate task/state outcomes. Do not record raw queries, prompts, page bodies, titles, private paths, or individual productivity rankings merely to build a funnel. Distinct users and later reuse require an explicit privacy design; manual consented follow-up is sufficient for the pilot. Do not repurpose external instance telemetry without review of its actual policy and destination.
+If later instrumentation is justified, separately authorize its purpose, fields, retention, access and opt-in policy before implementation. Prefer local aggregate task/state outcomes; the pilot policy above does not authorize production event capture. Distinct users and later reuse require an explicit privacy design; manual consented follow-up is sufficient for the pilot. Do not repurpose external instance telemetry without review of its actual policy and destination.
 
 This follows the general practice of deriving measurements from user goals, rather than selecting convenient activity counts. [Google Research: HEART and mapping product goals to metrics](https://research.google/pubs/measuring-the-user-experience-on-a-large-scale-user-centered-metrics-for-web-applications/).
 
 ## Implementation handoff and sequence
 
-The receiving agent owns bounded implementation and verification under the repository's active instructions. The current investigation authorizes this report and task filing; it does not authorize executing the proposed product changes during this turn. No application build or deployment is needed for this documentation change.
+The receiving agent owns bounded implementation and verification under the repository's active instructions. The original investigation authorized the report and task filing only; the current Development Sprint authorizes implementation of the validated bounded slices, not runtime-policy changes or Enterprise Release. The original investigation was document-only; implementation requires the changed-path checks, affected-service build/deployment and focused runtime exercises. Main owns integration and verification; no source claim or proposed script above substitutes for those results.
 
 | Bead | Priority / ownership | Concrete deliverable | Dependency and stop condition |
 | --- | --- | --- | --- |
-| `tsEpistle-hnz.1` | P1 · product/UX lead with an organizational steward | Role/task baseline, shared state vocabulary, content applicability pilot, privacy-conscious outcome definitions | Start here. Finish when observations support a bounded first slice and unresolved policy decisions are explicit. Do not claim impact from source review. |
-| `tsEpistle-hnz.2` | P1 · reader/frontend agent | One task-oriented entry and search-recovery path using existing content and navigation | Depends on `.1`. Finish on correct task completion and role/mobile/keyboard recovery, not a new home-screen mockup. |
-| `tsEpistle-hnz.3` | P1 · contributor/frontend agent; server owner only where required | Clear capture/save/audience/publication states, useful destination receipts, read-only uncertainty recovery | Depends on `.1`. Ship a bounded slice first. New lineage/receipt contracts require evidence and design; do not casually bundle them with copy. |
-| `tsEpistle-hnz.4` | P1 · Agent interface owner with authority-boundary review | Outcome-led goal state and an editorial review/revision flow | Depends on `.1`. Outcome display can precede request-changes. Finish only with preserved revision, approval, run, and accounting semantics. |
-| `tsEpistle-hnz.5` | P2 · knowledge steward and feedback/frontend agent | Applicable-content pilot plus deliberate contextual notification and report-resolution loop | Depends on `.1`. Content practice comes first; new structured metadata/digest models remain conditional. |
+| `tsEpistle-hnz.1` | P1 · engineering baseline/documentation owner | Source/native baseline proof and bounded acceptance disposition recorded above | Baseline proof done; Main retains final validation/closure. Human/org evidence is skipped, not a blocker. |
+| `tsEpistle-hnz.2` | P1 · reader/frontend agent | Query-preserving search/browse recovery using maintained authorized navigation | Use `.1` engineering evidence. Browser-demonstrate role/mobile/keyboard recovery; skip ungrounded task links and owned-help claims. |
+| `tsEpistle-hnz.3` | P1 · contributor/frontend agent; server owner only where required | Clear capture/save/audience/publication states, useful destination receipts, read-only uncertainty recovery | Use `.1` engineering evidence. Demonstrate reopening, loss/rejection/unknown and authorization fences; no human-comprehension dependency. |
+| `tsEpistle-hnz.4` | P1 · Agent interface owner with authority-boundary review | Outcome-led facts and explicit editorial feedback/fresh-review flow | Browser-demonstrate existing-contract states with preserved revision/approval/run/accounting fences. Skip rendered before/after and hidden guidance semantics. |
+| `tsEpistle-hnz.5` | P2 · feedback/frontend agent | Deliberate contextual report and notification consent using existing discussions/preferences | Browser-demonstrate draft/post/decline/reply/resolution and ACL behavior. Optional authored examples require no production seeding or new metadata; human stewardship/reuse metrics are not blockers. |
+| `tsEpistle-hnz.6` | P1 · inherited CI fixture owner | Repair offline browser startup fixture without weaker assertions, retries, skips or global deadline increases | Main verifies focused files, complete fast checks and pushed-revision CI; no pass asserted here. |
 
-After `.1`, choose the highest-cost observed failure and complete one end-to-end slice before starting the next. The dependency graph permits independent work; it does not require four simultaneous feature projects. A severe audience misunderstanding or failed recovery should outrank cosmetic improvements. Reprioritize based on observed failures and record the reason in Beads.
+The engineering baseline ranks receipt/recovery first, reader recovery second, Agent interpretation/revision third, and contextual feedback fourth, for the explicit reasons above. Complete or explicitly skip each candidate under the generally-helpful/browser-provable rule, preserving all applicable authority and data-safety fences. No `.1` human dependency remains. The dependency graph permits independent engineering work, not four mandatory simultaneous feature projects. A newly observed severe audience-state error or failed recovery outranks cosmetics; reprioritize from evidence and record the reason in Beads.
 
-Give baseline participants these tasks using today's controls. Observe attempts, uncertainty, and failure; do not coach them through proposed controls that do not exist. After implementation, repeat the relevant tasks against the acceptance criteria above:
+The original optional human baseline scripts below remain as rationale for future research, not as current delivery dependencies. Agent tests may use corresponding synthetic scenarios to demonstrate visible behavior, but must not claim they demonstrate human comprehension or perceived effort:
 
 1. A new reader finds the applicable procedure, explains its scope, and identifies the responsible steward; repeat with a restricted or missing answer.
 2. A contributor captures a private question, turns a useful answer into a deliberate page draft, and locates it after a later session.
@@ -251,6 +405,6 @@ Preserve canonical Markdown/revisions, live authorization, proposal-first Agent 
 
 Do not introduce a new recommendation engine, universal content schema, compliance badge, gamification system, analytics vendor, notes/page synchronization framework, or broad navigation redesign on the strength of this report. Their value is not established. The existing open MCP client-compatibility issue `tsEpistle-1lw` is separate and was not duplicated into this epic.
 
-The receiving agent still needs actual organizational evidence for: the three most valuable recurring jobs; the vocabulary users understand; who owns domain review and response expectations; the real effective audience rules; the cost of a wrong answer or approval; and which enabled capabilities the pilot uses. These are product/policy inputs, not reasons to stop source discovery or postpone harmless prototypes. Do not invent their answers or substitute an administrator's intuition for observation of readers and reviewers.
+Real organizational jobs, user vocabulary, review ownership and response expectations, human audience comprehension, and wrong-decision costs remain unknown. They are intentionally not prerequisites for generally useful, browser-provable changes; skip work that depends on inventing those facts. Actual authorization policy and enabled capability boundaries must still be respected and exercised through the available system state.
 
-The desired change is visible when people can complete a useful task, understand its consequences, recover confidently, and improve knowledge that someone actually uses. Keep that outcome as the acceptance boundary for every subsequent implementation choice.
+The original product aspiration remains useful work, understandable consequences, confident recovery and knowledge that helps someone. Current implementation acceptance is the narrower, explicitly authorized engineering rule above—not a claim that those human outcomes have been achieved and not an instruction to leave the epic open awaiting them.

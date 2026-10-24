@@ -405,6 +405,17 @@
       "rollback": "fix-forward-or-restore",
       "rehearsalPostconditions": ["native-live-notes-schema"],
       "runtimePostconditions": ["native-live-notes-schema"]
+    },
+    "tsepistle-000068-page-creation-receipts.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-page-creation-receipts-schema"],
+      "runtimePostconditions": ["native-page-creation-receipts-schema"]
     }
   }
 }
