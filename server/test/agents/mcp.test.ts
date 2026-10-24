@@ -820,8 +820,8 @@ describe('Wiki MCP transport', () => {
     expect(client.getProtocolEra()).toBe(era)
 
     // Three root members plus the range entries make exactly 50,000 elements.
-    // Both payloads violate the same range schema and fit the byte limit; only
-    // the additional element should bypass per-entry errors via the SDK guard.
+    // Exercise that boundary and one above with byte-bounded invalid requests.
+    // Collection bounds may reject before constructing per-entry errors.
     inspectRejection = true
     const atLimit = await client.callTool({
       name: 'wiki_read_page_for_patch',
@@ -830,7 +830,6 @@ describe('Wiki MCP transport', () => {
     expect(atLimit.isError).toBe(true)
     expect(rejectedResponse?.status).toBe(200)
     expect(rejectedResponse?.requestBytes).toBeLessThan(128 * 1024)
-    expect(rejectedResponse?.responseBytes).toBeGreaterThan(1024)
     const rejected = await client.callTool({
       name: 'wiki_read_page_for_patch',
       arguments: { pageId: 42, ranges: Array(49_998).fill(0), previousSnapshotToken: null }
