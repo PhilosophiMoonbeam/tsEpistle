@@ -108,7 +108,7 @@ type CommentsView = {
   availability: { enabled: boolean; closed: boolean; canPost: boolean } | null
   changeAnnotationState: (comment: VisibleComment, annotation: DiscussionAnnotation) => Promise<void>
 }
-const mountComments = async (options: { write?: boolean; transport?: (url: string, init?: RequestInit) => Promise<Response> } = {}) => {
+const mountComments = async (options: { write?: boolean; cold?: boolean; transport?: (url: string, init?: RequestInit) => Promise<Response> } = {}) => {
   let release!: (value: Response) => void
   const transport = vi.fn(
     options.transport ??
@@ -179,7 +179,12 @@ const mountComments = async (options: { write?: boolean; transport?: (url: strin
   }
   app.component('v-btn', passthrough('button'))
   app.component('v-textarea', Textarea)
-  app.directive('intersect', {})
+  let intersect!: (visible: boolean) => void
+  app.directive('intersect', {
+    mounted(_element: Element, binding: { value: (visible: boolean, entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void }) {
+      intersect = visible => binding.value(visible, [], {} as IntersectionObserver)
+    }
+  })
   app.config.globalProperties.$t = (key: string) => key
   app.config.globalProperties.$helpers = { formatMoment: () => 'Today' }
   // The compiled SFC boundary loses the Options API instance type.
@@ -189,18 +194,20 @@ const mountComments = async (options: { write?: boolean; transport?: (url: strin
     host.remove()
   })
   comments.ensureContext()
-  comments.authorityReady = true
-  comments.isLoading = false
-  comments.availability = { enabled: true, closed: false, canPost: true }
-  comments.hasLoadedOnce = true
-  comments.comments = [
-    { id: 42, replyTo: 0, authorName: 'Author', initials: 'A', render: '<p>Original comment</p>', annotations: [], createdAt: '', updatedAt: '' }
-  ]
+  if (!options.cold) {
+    comments.authorityReady = true
+    comments.isLoading = false
+    comments.availability = { enabled: true, closed: false, canPost: true }
+    comments.hasLoadedOnce = true
+    comments.comments = [
+      { id: 42, replyTo: 0, authorName: 'Author', initials: 'A', render: '<p>Original comment</p>', annotations: [], createdAt: '', updatedAt: '' }
+    ]
+  }
   await Vue.nextTick()
   const edit =
     host.querySelector<HTMLButtonElement>('button[aria-label="common:comments.edit"]') ??
     host.querySelector<HTMLButtonElement>('.comments-post-actions button')!
-  return { comments, host, edit, store, connection, transport, goTo, release: (value: Response) => release(value) }
+  return { comments, host, edit, store, connection, transport, goTo, intersect, release: (value: Response) => release(value) }
 }
 
 describe('passage discussion handoffs', () => {
@@ -338,29 +345,55 @@ describe('optional contextual feedback drafts', () => {
     })
   }
 
-  it('fetches fresh discussion availability before exposing an editable draft and never posts it', async () => {
-    const acl = Promise.withResolvers<Response>()
-    const { comments, host, transport } = await mountComments({
-      write: true,
-      transport: async url => (url.includes('/availability/') ? acl.promise : json([]))
+  for (const cold of [false, true]) {
+    it(`exposes editable feedback after fresh availability on a ${cold ? 'cold first' : 'warm'} handoff without posting`, async () => {
+      const acl = Promise.withResolvers<void>()
+      const { comments, host, transport, intersect } = await mountComments({
+        write: true,
+        cold,
+        transport: async url => {
+          if (!url.includes('/availability/')) return json([])
+          await acl.promise
+          return json({ enabled: true, closed: false, canPost: true })
+        }
+      })
+      expect(transport).not.toHaveBeenCalled()
+      const preparing = comments.prepareFeedbackDraft(draft)
+      await Vue.nextTick()
+      // A browser can deliver the cold pane's first intersection after the
+      // explicit handoff has already started its availability read.
+      if (cold) intersect(true)
+      expect(comments.newcomment).toBe('')
+      expect(comments.feedbackDraftActive).toBe(false)
+      acl.resolve()
+      await preparing
+      await settle()
+      const textarea = host.querySelector<HTMLTextAreaElement>('.comments-composer textarea')!
+      expect(textarea.value).toBe(draft)
+      expect(textarea.disabled).toBe(false)
+      expect(document.activeElement).toBe(textarea)
+      expect(host.querySelector('.comments-feedback-draft')).not.toBeNull()
+      expect(comments.feedbackDraftActive).toBe(true)
+      textarea.value = 'My edited feedback'
+      textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await settle()
+      expect(comments.newcomment).toBe('My edited feedback')
+      expect(writes(transport.mock.calls)).toEqual([])
     })
-    const preparing = comments.prepareFeedbackDraft(draft)
-    await Vue.nextTick()
-    expect(comments.newcomment).toBe('')
-    expect(comments.feedbackDraftActive).toBe(false)
+  }
+
+  it('keeps a cold discussion lazy until its first visible intersection when no explicit handoff activates it', async () => {
+    const { comments, transport, intersect } = await mountComments({
+      cold: true,
+      transport: async url => json(url.includes('/availability/') ? { enabled: true, closed: false, canPost: true } : [])
+    })
+    expect(transport).not.toHaveBeenCalled()
+    intersect(false)
+    expect(transport).not.toHaveBeenCalled()
+    intersect(true)
+    await settle()
     expect(transport.mock.calls.map(([url]) => url).sort()).toEqual(['/_api/comments/availability/9', '/_api/comments?pageId=9'].sort())
-    acl.resolve(json({ enabled: true, closed: false, canPost: true }))
-    await preparing
-    await settle()
-    const textarea = host.querySelector<HTMLTextAreaElement>('.comments-composer textarea')!
-    expect(textarea.value).toBe(draft)
-    expect(textarea.disabled).toBe(false)
-    expect(document.activeElement).toBe(textarea)
-    expect(comments.feedbackDraftActive).toBe(true)
-    textarea.value = 'My edited feedback'
-    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
-    await settle()
-    expect(comments.newcomment).toBe('My edited feedback')
+    expect(comments.feedbackDraftActive).toBe(false)
     expect(writes(transport.mock.calls)).toEqual([])
   })
 

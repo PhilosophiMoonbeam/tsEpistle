@@ -892,7 +892,9 @@ export default defineComponent({
       this.replyAuthor = ''
     },
     onIntersect (isIntersecting: boolean, _entries: IntersectionObserverEntry[], _observer: IntersectionObserver): void {
-      if (!isIntersecting) return
+      // Explicit composer/thread actions may activate the lazy read before the
+      // observer's first callback. Do not abort the read that action is awaiting.
+      if (!isIntersecting || this.hasIntersected) return
       this.ensureContext()
       this.hasIntersected = true
       void this.fetch(true)
