@@ -1,8 +1,11 @@
 import path from 'node:path'
 import { compileScript, parse } from '@vue/compiler-sfc'
+import createKnex from 'knex'
 import i18next from 'i18next'
 import type { Component } from 'vue'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { up as upNotificationPreferences } from '../../../server/db/migrations/tsepistle-000058-discussion-notifications.ts'
+import type * as NotificationPreferenceOperations from '../../../server/operations/page-watching.ts'
 import { browserWindow, document } from '../../test/browser-dom.mts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import type { NotificationPreferences } from '../../../shared/site-notifications.ts'
@@ -75,9 +78,9 @@ const previousIdentity = {
   authRefreshOutcome: wikiStore.authRefreshOutcome,
   offlineIdentityEpoch: wikiStore.offlineIdentityEpoch
 }
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  while (cleanups.length) cleanups.pop()!()
+const cleanups: Array<() => void | Promise<void>> = []
+afterEach(async () => {
+  while (cleanups.length) await cleanups.pop()!()
   browserWindow.fetch = previousFetch
   if (previousSiteConfig) Object.defineProperty(browserWindow, 'siteConfig', previousSiteConfig)
   else Reflect.deleteProperty(browserWindow, 'siteConfig')
@@ -171,29 +174,87 @@ describe('post-contribution reply notification consent', () => {
     expect(writes(view.fetch)).toHaveLength(0)
   })
 
-  it('rereads on explicit Save and changes only the latest commentReply.inApp channel', async () => {
-    const initial = preferences()
-    const latest = preferences()
-    latest.pageCreated.email = true
-    latest.mention.inApp = true
-    latest.commentReply.email = false
+  it('rereads on explicit Save and preserves profile changes committed after that snapshot', async () => {
+    const knex = createKnex({
+      client: 'better-sqlite3',
+      connection: { filename: ':memory:' },
+      pool: { min: 1, max: 1 },
+      useNullAsDefault: true
+    })
+    const previousWiki = Object.getOwnPropertyDescriptor(globalThis, 'WIKI')
+    cleanups.push(async () => {
+      if (previousWiki) Object.defineProperty(globalThis, 'WIKI', previousWiki)
+      else Reflect.deleteProperty(globalThis, 'WIKI')
+      await knex.destroy()
+    })
+    await knex.schema.createTable('users', table => {
+      table.integer('id').primary()
+      table.boolean('isActive').notNullable().defaultTo(true)
+      table.string('email').notNullable()
+    })
+    await knex.schema.createTable('pageWatchNotifications', table => {
+      table.string('id').primary()
+    })
+    await upNotificationPreferences(knex)
+    const owner = { id: 7, email: 'reader@example.test' } as Express.User
+    await knex('users').insert({ id: owner.id, email: owner.email })
+    Reflect.set(globalThis, 'WIKI', { models: { knex } })
+    const operations = await vi.importFresh<typeof NotificationPreferenceOperations>(
+      '../../../server/operations/page-watching.ts',
+      import.meta.url
+    )
+    await operations.updateNotificationPreferences(owner, { preferences: preferences() })
+    const snapshotReady = Promise.withResolvers<void>()
+    const releaseSnapshot = Promise.withResolvers<void>()
+    const patchCommitted = Promise.withResolvers<void>()
+    cleanups.push(() => releaseSnapshot.resolve())
     let reads = 0
     const view = await mount(async (_url, init) => {
-      if (init?.method === 'PATCH') return reply({ ...latest, commentReply: { ...latest.commentReply, inApp: true } })
-      return reply(++reads === 1 ? initial : latest)
+      if (init?.method === 'PATCH') {
+        const response = await operations.updateNotificationPreferences(owner, JSON.parse(init.body as string))
+        patchCommitted.resolve()
+        return json(response)
+      }
+      const snapshot = await operations.getNotificationPreferences(owner)
+      if (++reads === 2) {
+        snapshotReady.resolve()
+        await releaseSnapshot.promise
+      }
+      return json(snapshot)
+    })
+    await vi.waitFor(() => expect(view.host.querySelector('input[type="checkbox"]') !== null).toBe(true))
+    await operations.updateNotificationPreferences(owner, {
+      preferences: { pageCreated: { email: true }, mention: { inApp: true }, commentReply: { email: false } }
     })
     await view.select()
     view.save().click()
-    await settle()
+    await snapshotReady.promise
+    // A profile save commits after the widget's final GET, but before its PATCH.
+    await operations.updateNotificationPreferences(owner, {
+      preferences: {
+        pageDeleted: { inApp: true, email: false },
+        watchedPageComment: { email: false },
+        commentReply: { email: true },
+        mention: { inApp: false, email: false }
+      }
+    })
+    releaseSnapshot.resolve()
+    await patchCommitted.promise
+    expect((await operations.getNotificationPreferences(owner)).preferences).toEqual({
+      pageCreated: { inApp: true, email: true },
+      pageDeleted: { inApp: true, email: false },
+      watchedPageComment: { inApp: true, email: false },
+      commentReply: { inApp: true, email: true },
+      mention: { inApp: false, email: false }
+    })
+    await vi.waitFor(() => expect(view.host.querySelector('input[type="checkbox"]') === null).toBe(true))
     expect(reads).toBe(2)
     expect(writes(view.fetch)).toHaveLength(1)
     const [url, init] = writes(view.fetch)[0]!
     expect(url).toBe('/_api/pages/notifications/preferences')
     expect(new Headers(init!.headers).get('X-Notification-Owner')).toBe('7')
-    expect(JSON.parse(init!.body as string)).toEqual({ preferences: { ...latest, commentReply: { inApp: true, email: false } } })
-    expect(view.host.querySelector('input[type="checkbox"]')).toBeNull()
-    expect(view.host.querySelector('[role="status"]')).not.toBeNull()
-    expect(view.host.querySelector('[role="alert"]')).toBeNull()
+    expect(view.host.querySelector('[role="status"]') !== null).toBe(true)
+    expect(view.host.querySelector('[role="alert"]') === null).toBe(true)
   })
 
   for (const enabledAt of ['preview', 'save'] as const) {

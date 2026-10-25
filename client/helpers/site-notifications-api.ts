@@ -1,7 +1,7 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards.ts'
 import type {
-  NotificationPreferences,
+  NotificationPreferencesPatch,
   NotificationPreferencesResponse,
   PageApprovalInbox,
   PageApprovalInboxItem,
@@ -42,7 +42,7 @@ const requestJson = async <T>(
   valid: (value: unknown) => value is T,
   fallback: string,
   signal?: AbortSignal,
-  body?: NotificationPreferences
+  body?: NotificationPreferencesPatch
 ): Promise<T> => {
   const response = await sameOriginJsonFetch(window.fetch.bind(window), path, {
     credentials: 'same-origin',
@@ -176,7 +176,7 @@ export const fetchNotificationPreferences = (ownerId: number, signal?: AbortSign
 
 export const updateNotificationPreferences = (
   ownerId: number,
-  preferences: NotificationPreferences,
+  preferences: NotificationPreferencesPatch,
   signal?: AbortSignal
 ): Promise<NotificationPreferencesResponse> =>
   requestJson('/_api/pages/notifications/preferences', ownerId, isPreferencesResponse, 'Notification preferences could not be saved.', signal, preferences)

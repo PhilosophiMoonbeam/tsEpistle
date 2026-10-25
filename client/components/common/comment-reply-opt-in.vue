@@ -105,7 +105,7 @@ const save = async (): Promise<void> => {
   const current = (): boolean => !disposed && !invalidated && !request.signal.aborted &&
     generation === requestGeneration && currentAuthority.value && contextKey.value === key && wikiStore.user.id === owner
   try {
-    // Read immediately before the explicit save; never replay the earlier preview snapshot.
+    // Recheck reply delivery before explicit consent; never replay this snapshot in the patch.
     const latest = await fetchNotificationPreferences(owner, request.signal)
     if (!current()) return
     if (latest.preferences.commentReply.inApp) {
@@ -113,11 +113,7 @@ const save = async (): Promise<void> => {
       selected.value = false
       return
     }
-    const preferences = {
-      ...latest.preferences,
-      commentReply: { ...latest.preferences.commentReply, inApp: true }
-    }
-    const response = await updateNotificationPreferences(owner, preferences, request.signal)
+    const response = await updateNotificationPreferences(owner, { commentReply: { inApp: true } }, request.signal)
     if (!current()) return
     if (!response.preferences.commentReply.inApp) throw new Error('Reply notification change was not confirmed')
     selected.value = false
