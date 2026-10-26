@@ -831,15 +831,19 @@ test.describe('critical post-install workflows', () => {
     const consoleErrors: string[] = []
     const failedRequests: string[] = []
     const loginRequests: string[] = []
+    let changingIdentity = false
     page.on('console', message => {
       if (message.type() === 'error') consoleErrors.push(message.text())
     })
     page.on('requestfailed', request => {
       const failure = request.failure()?.errorText || 'unknown failure'
-      // Identity refresh and reader teardown intentionally cancel this read.
-      // Do not mistake that privacy fence for a failed logout or asset load.
-      if (failure === 'net::ERR_ABORTED' && request.method() === 'GET' &&
-        new URL(request.url()).pathname === '/_api/glossary/access') return
+      // Reader owners cancel their GETs when authentication retires the
+      // context. Keep asset/mutation failures and non-transition rating aborts.
+      if (failure === 'net::ERR_ABORTED' && request.method() === 'GET') {
+        const requestPath = new URL(request.url()).pathname
+        if (requestPath === '/_api/glossary/access' ||
+          (changingIdentity && /^\/_api\/page-ratings\/[1-9]\d*$/u.test(requestPath))) return
+      }
       failedRequests.push(`${request.method()} ${request.url()}: ${failure}`)
     })
     page.on('request', request => {
@@ -847,6 +851,7 @@ test.describe('critical post-install workflows', () => {
     })
 
     await openAuthenticatedHome(page)
+    changingIdentity = true
     await logoutFromAccountMenu(page)
     await expect(page).toHaveURL('/')
     await expect
@@ -880,6 +885,7 @@ test.describe('critical post-install workflows', () => {
         authenticated: true,
         user: { email: adminEmail }
       })
+    changingIdentity = false
     expect(consoleErrors).toEqual([])
     expect(failedRequests).toEqual([])
   })
