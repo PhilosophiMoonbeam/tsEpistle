@@ -318,6 +318,66 @@ test.describe('release accessibility profiles', () => {
     await expect(page.locator('.profile-main h1')).not.toBeFocused()
   })
 
+  test('keeps native authentication and storage credential fields opted out of autofill after replacement', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    const expectProtection = async (control: Locator, autocomplete: string) => {
+      await expect(control).toBeVisible()
+      await expect(control).toHaveAttribute('autocomplete', autocomplete)
+      for (const [name, value] of Object.entries({
+        'data-1p-ignore': 'true',
+        'data-lpignore': 'true',
+        'data-bwignore': 'true',
+        'data-form-type': 'other'
+      })) await expect(control).toHaveAttribute(name, value)
+    }
+    // Real installed definitions and SDK controls; drafts are never enabled or
+    // published, so no identity-provider or storage connection is attempted.
+    await openAuthenticatedPage(page, '/a/auth', '.identity-register')
+    await page.getByRole('button', { name: 'Add provider', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Add a sign-in provider', exact: true })
+      .getByRole('button', { name: /^SAML 2\.0\b/u }).click()
+    await expectProtection(page.getByRole('textbox', { name: 'Certificate', exact: true }), 'off')
+    await page.getByRole('button', { name: /^Advanced protocol settings\b/u }).click()
+    await expectProtection(page.getByRole('spinbutton', { name: 'Accepted Clock Skew Milleseconds', exact: true }), 'off')
+    const keyAction = page.getByRole('combobox', { name: 'Private Key action', exact: true })
+    const replacementKey = page.getByRole('textbox', { name: 'Replacement Private Key', exact: true })
+    await keyAction.click()
+    await page.getByRole('option', { name: 'Replace credential', exact: true }).click()
+    await expectProtection(replacementKey, 'off')
+    await keyAction.click()
+    await page.getByRole('option', { name: 'Keep current value', exact: true }).click()
+    await expect(replacementKey).toHaveCount(0)
+    await keyAction.click()
+    await page.getByRole('option', { name: 'Replace credential', exact: true }).click()
+    await expectProtection(replacementKey, 'off')
+    await page.getByRole('button', { name: 'Reset draft', exact: true }).click()
+    await expect(replacementKey).toHaveCount(0)
+
+    await page.goto('/a/storage', { waitUntil: 'networkidle' })
+    await page.getByRole('navigation', { name: 'Storage targets', exact: true })
+      .getByRole('button').filter({ has: page.getByText('Git', { exact: true }) }).click()
+    await page.getByRole('combobox', { name: 'Scheduled synchronization', exact: true }).click()
+    await page.getByRole('option', { name: 'Custom interval', exact: true }).click()
+    await expectProtection(page.getByRole('textbox', { name: 'Custom interval (ISO 8601)', exact: true }), 'off')
+    await page.getByRole('combobox', { name: 'Authentication Type', exact: true }).click()
+    await page.getByRole('option', { name: 'basic', exact: true }).click()
+    await expectProtection(page.getByRole('textbox', { name: 'Username', exact: true }), 'off')
+    const passwordAction = page.getByRole('combobox', { name: 'Password / PAT action', exact: true })
+    const replacementPassword = page.getByLabel('New Password / PAT', { exact: true })
+    await passwordAction.click()
+    await page.getByRole('option', { name: 'Replace value', exact: true }).click()
+    await expect(replacementPassword).toHaveAttribute('type', 'password')
+    await expectProtection(replacementPassword, 'new-password')
+    await passwordAction.click()
+    await page.getByRole('option', { name: 'Keep saved value', exact: true }).click()
+    await expect(replacementPassword).toHaveCount(0)
+    await passwordAction.click()
+    await page.getByRole('option', { name: 'Replace value', exact: true }).click()
+    await expectProtection(replacementPassword, 'new-password')
+    await page.getByRole('button', { name: 'Reset draft', exact: true }).click()
+    await expect(replacementPassword).toHaveCount(0)
+  })
+
   test('canceling a dirty administration Reload returns keyboard focus and retains the draft', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     await openAuthenticatedPage(page, '/a/general', '.general-workspace')

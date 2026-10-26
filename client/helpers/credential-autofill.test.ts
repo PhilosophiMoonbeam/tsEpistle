@@ -78,9 +78,13 @@ for (const node of babelParse(storage.scriptSetup!.content, { sourceType: 'modul
 }
 
 const nativeControl = (host: HTMLElement, label: string): HTMLInputElement | HTMLTextAreaElement => {
-  const control = [...host.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input,textarea')].find(candidate =>
-    [...host.querySelectorAll<HTMLLabelElement>('label')].some(element => element.htmlFor === candidate.id && element.textContent?.trim() === label))
-  if (!control) throw new Error(`No native control labeled ${label}`)
+  // Vuetify's inactive floating labels have no `for`, and VSelect's hidden
+  // form inputs have no id. Empty-string equality is not a label association.
+  const control = [...host.querySelectorAll<HTMLLabelElement>('label')]
+    .filter(element => element.textContent?.trim() === label)
+    .map(element => element.control)
+    .find(candidate => candidate instanceof HTMLInputElement || candidate instanceof HTMLTextAreaElement)
+  if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement)) throw new Error(`No native control labeled ${label}`)
   return control
 }
 
@@ -142,23 +146,38 @@ describe('credential autofill protection', () => {
     const model = Vue.ref({ config: { notes: '', attempts: 3, username: '' }, secrets: {
       certificate: { action: 'keep', value: '' }, password: { action: 'keep', value: '' }
     } })
+    const disabled = Vue.ref(true)
     const { app, host } = mountFields({
-      render: () => Vue.h(AuthFields, { fields, modelValue: model.value, 'onUpdate:modelValue': (value: typeof model.value) => { model.value = value } })
+      render: () => Vue.h(AuthFields, { fields, disabled: disabled.value, modelValue: model.value, 'onUpdate:modelValue': (value: typeof model.value) => { model.value = value } })
     })
     try {
-      expectProtection(nativeControl(host, 'Notes'), 'off')
-      expectProtection(nativeControl(host, 'Attempts'), 'off')
-      expectProtection(nativeControl(host, 'Username'), 'off')
+      expect(nativeControl(host, 'Notes').tagName).toBe('TEXTAREA')
+      for (const label of ['Notes', 'Attempts', 'Username']) {
+        const control = nativeControl(host, label)
+        expect(control.disabled).toBe(true)
+        expectProtection(control, 'off')
+      }
       expect(host.querySelector('input[type=password]')).toBeNull()
       model.value.secrets.certificate.action = 'replace'
       model.value.secrets.password.action = 'replace'
       await Vue.nextTick()
       expectProtection(nativeControl(host, 'Replacement Certificate'), 'off')
       expectProtection(nativeControl(host, 'Replacement Password'), 'new-password')
+      expect(nativeControl(host, 'Replacement Certificate').disabled).toBe(true)
+      const password = nativeControl(host, 'Replacement Password')
+      expect(password.disabled).toBe(true)
       fields[1]!.multiline = true
       await Vue.nextTick()
       expect(nativeControl(host, 'Replacement Password').tagName).toBe('TEXTAREA')
+      expect(nativeControl(host, 'Replacement Password')).not.toBe(password)
       expectProtection(nativeControl(host, 'Replacement Password'), 'off')
+      disabled.value = false
+      await Vue.nextTick()
+      for (const label of ['Notes', 'Attempts', 'Username', 'Replacement Certificate', 'Replacement Password']) {
+        const control = nativeControl(host, label)
+        expect(control.disabled).toBe(false)
+        expectProtection(control, 'off')
+      }
     } finally {
       app.unmount()
       host.remove()
@@ -178,20 +197,39 @@ describe('credential autofill protection', () => {
       selectedDraft: { mode: 'push', syncInterval: 'PT2H', config: {}, secrets: {
         certificate: { action: 'keep', value: '' }, password: { action: 'keep', value: '' }
       } },
-      locked: false, scheduleMode: 'custom', intervals: [], secretActions: [],
+      locked: true, scheduleMode: 'custom',
+      intervals: [{ value: 'custom', title: 'Custom interval' }],
+      secretActions: [
+        { value: 'keep', title: 'Keep saved value' },
+        { value: 'replace', title: 'Replace value' },
+        { value: 'clear', title: 'Clear saved value' }
+      ],
       fieldGroups: [{ title: 'Configuration', hint: '', fields }],
       setSchedule: () => {}, setSecretAction: () => {}, secretValue: () => '', setSecretValue: () => {}, setField: () => {}
     })
     const { app, host } = mountFields({ setup: () => ({ ...Vue.toRefs(state), ...storageImports }), render: renderStorageFields })
     try {
-      expectProtection(nativeControl(host, 'Custom interval (ISO 8601)'), 'off')
-      for (const label of ['Notes', 'Attempts', 'Username']) expectProtection(nativeControl(host, label), 'off')
+      expect((nativeControl(host, 'Custom interval (ISO 8601)') as HTMLInputElement).type).toBe('text')
+      for (const label of ['Custom interval (ISO 8601)', 'Notes', 'Attempts', 'Username']) {
+        const control = nativeControl(host, label)
+        expect(control.disabled).toBe(true)
+        expectProtection(control, 'off')
+      }
       expect(host.querySelector('input[type=password]')).toBeNull()
       state.selectedDraft.secrets.certificate.action = 'replace'
       state.selectedDraft.secrets.password.action = 'replace'
       await Vue.nextTick()
       expectProtection(nativeControl(host, 'New Certificate'), 'off')
       expectProtection(nativeControl(host, 'New Password'), 'new-password')
+      expect(nativeControl(host, 'New Certificate').disabled).toBe(true)
+      expect(nativeControl(host, 'New Password').disabled).toBe(true)
+      state.locked = false
+      await Vue.nextTick()
+      for (const label of ['Custom interval (ISO 8601)', 'Notes', 'Attempts', 'Username', 'New Certificate', 'New Password']) {
+        const control = nativeControl(host, label)
+        expect(control.disabled).toBe(false)
+        expectProtection(control, label === 'New Password' ? 'new-password' : 'off')
+      }
       const changing = nativeControl(host, 'Username')
       changing.removeAttribute('data-1p-ignore')
       fields[4]!.type = 'number'

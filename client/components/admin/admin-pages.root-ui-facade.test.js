@@ -8,7 +8,6 @@ import { applyPublication, inspectPublication, publicationState, PUBLICATION_STA
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const Vue = await import('vue')
-const { compile } = Vue
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
@@ -19,6 +18,20 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); await Vue.nextTick() }
+const field = (root, label) => {
+  const labels = [...root.querySelectorAll('label')].filter(node => node.htmlFor && node.textContent.trim() === label)
+  const control = [...root.querySelectorAll('input, textarea')].find(input => input.id && labels.some(node => node.htmlFor === input.id))
+  if (!control) throw new Error(`Missing field: ${label}`)
+  return control
+}
+const button = (root, label) => {
+  const control = [...root.querySelectorAll('button')].find(node => node.textContent.trim() === label)
+  if (!control) throw new Error(`Missing control: ${label}`)
+  return control
+}
+const namedSection = (root, label) => [...root.querySelectorAll('section[aria-label]')].find(section => section.getAttribute('aria-label') === label)
+const checkbox = (root, title) => [...root.querySelectorAll('input[type="checkbox"]')].find(input =>
+  input.getAttribute('aria-label') === translateEnglish('admin:pages.select', { value: title, interpolation: { escapeValue: false } }))
 
 const extractMethod = (script, name) => {
   const methodStart = script.search(new RegExp('async\\s+' + name + '\\s*\\('))
@@ -82,8 +95,6 @@ describe('admin-pages root UI facade migration guard', () => {
   const source = fs.readFileSync(componentPath, 'utf8')
   const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)[1]
   const loadPagesSource = extractMethod(script, 'loadPages')
-  const checkboxTemplate = source.match(/<input type="checkbox"[^\n]*\/>/)[0]
-  const renderCheckbox = compile(checkboxTemplate)
   const refreshSource = extractMethod(script, 'refresh')
   const windowStub = { fetch: () => {} }
 
@@ -184,78 +195,80 @@ describe('admin-pages root UI facade migration guard', () => {
   test('sorts and paginates records and reviews selections retained outside the active filter', async () => {
     const rows = [row(1, 'Zulu', 'a-first'), row(2, 'Alpha', 'z-last'),
       ...Array.from({ length: 14 }, (_, index) => row(index + 3, `Middle ${String(index).padStart(2, '0')}`, `middle-${index}`))]
-    const { vm, host, fetch } = await mountRegister(rows)
+    const { host, fetch } = await mountRegister(rows)
     const titles = () => [...host.querySelectorAll('.pages-record a')].map(link => link.textContent)
-    const selectSort = async value => {
-      const control = host.querySelector('.pages-search .v-select')
-      control.querySelector('[role="combobox"]').dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    const selectSort = async title => {
+      const control = field(host, translateEnglish('admin:pages.orderPages'))
+      control.focus()
+      control.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
       await settle()
-      const title = vm.sortOptions.find(option => option.value === value).title
-      const option = [...document.querySelectorAll('[role="option"]')].find(element => element.textContent.includes(title))
+      expect(control.getAttribute('aria-expanded')).toBe('true')
+      const popup = document.getElementById(control.getAttribute('aria-controls'))
+      const option = [...(popup?.querySelectorAll('[role="option"]') || [])].find(element => element.textContent.trim() === title)
       expect(option).toBeDefined()
       option.click()
       await settle()
     }
-    await selectSort('title')
+    await selectSort(translateEnglish('admin:pages.titleZ'))
     expect(titles()[0]).toBe('Alpha')
     expect(titles()).not.toContain('Zulu')
-    const pagination = host.querySelector('nav[aria-label]')
-    expect(pagination).not.toBeNull()
+    const pagination = [...host.querySelectorAll('nav[aria-label]')].find(nav => nav.getAttribute('aria-label') === translateEnglish('admin:pages.pagesPagination'))
+    expect(pagination).toBeDefined()
     const secondPage = pagination.querySelector('[aria-label="Go to page 2"]')
     expect(secondPage).not.toBeNull()
     secondPage.click()
     await settle()
     expect(titles()).toEqual(['Zulu'])
-    await selectSort('path')
+    await selectSort(translateEnglish('admin:pages.pathZ'))
     expect(titles()[0]).toBe('Zulu')
-    const checkbox = host.querySelector('.pages-record input[type="checkbox"]')
-    checkbox.click()
+    checkbox(host, 'Zulu').click()
     await settle()
-    const search = host.querySelector('.pages-search input:not([role="combobox"])')
+    const search = field(host, translateEnglish('admin:pages.findTitlePathTag'))
     search.value = 'Alpha'
     search.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
     await settle()
     expect(titles()).toEqual(['Alpha'])
-    expect(vm.hiddenSelected).toBe(1)
-    const selection = host.querySelector('[role="region"][aria-label]')
-    expect(selection).not.toBeNull()
-    const reviewButton = [...selection.querySelectorAll('button')].find(button => button.textContent.includes('Review'))
-    reviewButton.click()
+    const selection = namedSection(host, translateEnglish('admin:pages.selectedPages'))
+    expect(selection).toBeDefined()
+    expect(selection.textContent).toContain(translateEnglish('admin:pages.selected', { selectedIdsCount: 1, interpolation: { escapeValue: false } }))
+    expect(selection.textContent).toContain(translateEnglish('admin:pages.outsideTheseFilters', { hiddenSelected: 1, interpolation: { escapeValue: false } }))
+    button(selection, translateEnglish('admin:pages.reviewPublication')).click()
     await settle()
     const dialog = document.querySelector('[role="dialog"]')
     expect(dialog).not.toBeNull()
-    expect([...dialog.querySelectorAll('.publication-review-list article strong')].map(title => title.textContent)).toEqual(['Zulu'])
-    expect(vm.selectedPages).toEqual([rows[0]])
+    expect([...dialog.querySelectorAll('article strong')].map(title => title.textContent)).toEqual(['Zulu'])
     expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/_api/pages', '/_api/pages/1'])
   })
 
-  test('limits page selection to 25 pages and disables only unselected checkboxes at capacity', () => {
-    const options = createComponentOptions({ fetchPageList: async () => [], wikiStore: {} })
-    const pages = Array.from({ length: 27 }, (_, index) => ({ id: index + 1 }))
-    const viewModel = { ...options.data.call({ $t: translateEnglish }), $t: translateEnglish, visiblePages: pages }
-    const renderPageCheckbox = id =>
-      renderCheckbox(
-        {
-          page: pages[id - 1],
-          selectedIds: viewModel.selectedIds,
-          bulkOpen: false,
-          $t: translateEnglish,
-          toggleSelected: selectedId => options.methods.toggleSelected.call(viewModel, selectedId)
-        },
-        []
-      )
-
-    options.methods.selectVisible.call(viewModel)
-    expect(viewModel.selectedIds).toEqual(pages.slice(0, 25).map(page => page.id))
-    expect(renderPageCheckbox(26).props.disabled).toBe(true)
-
-    options.methods.toggleSelected.call(viewModel, 26)
-    expect(viewModel.selectedIds).toEqual(pages.slice(0, 25).map(page => page.id))
-
-    const selectedCheckbox = renderPageCheckbox(25)
-    expect(selectedCheckbox.props.disabled).toBe(false)
-    selectedCheckbox.props.onChange()
-    expect(viewModel.selectedIds).toEqual(pages.slice(0, 24).map(page => page.id))
+  test('limits page selection to 25 pages and leaves selected checkboxes available for deselection', async () => {
+    const rows = Array.from({ length: 27 }, (_, index) => row(index + 1, `Page ${String(index + 1).padStart(2, '0')}`, `page-${index + 1}`))
+    const { host } = await mountRegister(rows)
+    button(host, translateEnglish('admin:pages.selectPage')).click()
+    await settle()
+    expect([...host.querySelectorAll('input[type="checkbox"]')].filter(input => input.checked)).toHaveLength(15)
+    host.querySelector('[aria-label="Go to page 2"]').click()
+    await settle()
+    button(host, translateEnglish('admin:pages.selectPage')).click()
+    await settle()
+    const selection = namedSection(host, translateEnglish('admin:pages.selectedPages'))
+    expect(selection.textContent).toContain(translateEnglish('admin:pages.selected', { selectedIdsCount: 25, interpolation: { escapeValue: false } }))
+    const selected = [...host.querySelectorAll('input[type="checkbox"]')].filter(input => input.checked)
+    const unselected = [...host.querySelectorAll('input[type="checkbox"]')].filter(input => !input.checked)
+    expect(selected).toHaveLength(10)
+    expect(selected.every(input => !input.disabled)).toBe(true)
+    expect(unselected).toHaveLength(2)
+    expect(unselected.every(input => input.disabled)).toBe(true)
+    unselected[0].click()
+    await settle()
+    expect(unselected[0].checked).toBe(false)
+    selected[0].click()
+    await settle()
+    expect(unselected.every(input => !input.disabled)).toBe(true)
+    unselected[0].click()
+    await settle()
+    expect(unselected[0].checked).toBe(true)
+    expect(unselected[1].disabled).toBe(true)
+    expect(selection.textContent).toContain(translateEnglish('admin:pages.selected', { selectedIdsCount: 25, interpolation: { escapeValue: false } }))
   })
 
   test('applies only the latest page-list response and balances loading for superseded requests', async () => {

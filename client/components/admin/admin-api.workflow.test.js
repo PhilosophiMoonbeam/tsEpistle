@@ -76,28 +76,41 @@ function mount({ bootstrap = snapshot, load, create, revoke, revokePersonal, con
   return { app, host, store, config, transport, errors, route }
 }
 const button = (root, label) => {
-  const found = [...root.querySelectorAll('button, a.v-btn')].find(node => node.textContent.trim() === label)
+  const found = [...root.querySelectorAll('button, a[href]')].find(node => node.textContent.trim() === label)
   if (!found) throw new Error(`Missing control: ${label}`)
   return found
 }
 const field = (root, label) => {
-  const labels = [...root.querySelectorAll('label')].filter(node => node.textContent.trim() === label)
-  const found = [...root.querySelectorAll('input, textarea')].find(input => labels.some(node => node.htmlFor === input.id))
+  const labels = [...root.querySelectorAll('label')].filter(node => node.htmlFor && node.textContent.trim() === label)
+  const found = [...root.querySelectorAll('input, textarea')].find(input => input.id && labels.some(node => node.htmlFor === input.id))
   if (!found) throw new Error(`Missing field: ${label}`)
   return found
 }
 const fill = async (input, value) => { input.value = value; input.dispatchEvent(new browserWindow.Event('input', { bubbles: true })); await settle() }
 async function select(root, label, title) {
-  field(root, label).dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  const control = field(root, label)
+  control.focus()
+  control.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   await settle()
-  const option = [...document.querySelectorAll('[role="option"]')].find(node => node.textContent.includes(title))
+  expect(control.getAttribute('aria-expanded')).toBe('true')
+  const popup = document.getElementById(control.getAttribute('aria-controls'))
+  const option = [...(popup?.querySelectorAll('[role="option"]') || [])].find(node => node.textContent.trim() === title)
   if (!option) throw new Error(`Missing option: ${title}`)
   option.click()
   await settle()
 }
-const dialog = () => {
-  const active = document.querySelector('.v-dialog.v-overlay--active .v-card')
-  if (!active) throw new Error('No active dialog')
+const dialog = title => {
+  const available = label => {
+    for (let node = label; node; node = node.parentElement) {
+      if (node.inert || node.hidden || node.style.display === 'none') return false
+    }
+    return true
+  }
+  const active = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].find(node => {
+    const labels = (node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)).filter(Boolean)
+    return labels.length && labels.every(available) && (!title || labels.map(label => label.textContent.trim()).join(' ') === title)
+  })
+  if (!active) throw new Error(`No active dialog${title ? `: ${title}` : ''}`)
   return active
 }
 async function startCreate(mounted, name = 'Indexer') {
@@ -133,8 +146,9 @@ describe('mounted service API-key workspace', () => {
     mounted.transport.fetchAdminApiBootstrap.mockRejectedValueOnce(new Error('Inventory unavailable'))
     await issue()
     expect(mounted.transport.createAdminApiKey).toHaveBeenCalledWith(expect.any(Function), { name: 'Indexer', expiration: '90d', fullAccess: false, group: 3 })
-    expect(field(dialog(), t('admin:apiCreate.generatedApiKey')).value).toBe('one-time-fixture-key')
-    button(dialog(), t('admin:apiCreate.iveSavedKey')).click()
+    const secretDialog = dialog(t('admin:apiCreate.saveNewKey'))
+    expect(field(secretDialog, t('admin:apiCreate.generatedApiKey')).value).toBe('one-time-fixture-key')
+    button(secretDialog, t('admin:apiCreate.iveSavedKey')).click()
     await settle()
     expect([...document.querySelectorAll('textarea')].map(node => node.value)).not.toContain('one-time-fixture-key')
     expect(mounted.errors).toEqual([])
@@ -231,7 +245,7 @@ describe('mounted service API-key workspace', () => {
     mounted.transport.setAdminApiState.mockRejectedValueOnce(failure)
     button(mounted.host, t('admin:api.disableApiKeyAccess')).click()
     await settle()
-    button(dialog(), t('admin:api.disableAccess')).click()
+    button(dialog(t('admin:api.disableApiKeyAccess2')), t('admin:api.disableAccess')).click()
     await settle()
     expect(mounted.store.showError).toHaveBeenCalledWith(failure)
     expect(button(mounted.host, t('admin:api.disableApiKeyAccess')).disabled).toBe(false)
@@ -314,7 +328,7 @@ describe('mounted personal MCP oversight', () => {
     await settle()
     expect(mounted.transport.revokeAdminPersonalMcpKey).toHaveBeenCalledWith(expect.any(Function), 1, 'csrf-account-one', personal.id)
     expect(mounted.transport.revokeAdminApiKey).not.toHaveBeenCalled()
-    expect(panel.querySelector('.v-chip').textContent).toContain(t('admin:api.revoked2'))
+    expect(panel.querySelector('summary').textContent).toContain(t('admin:api.revoked2'))
     expect([...panel.querySelectorAll('button')].some(node => node.textContent.trim() === t('admin:api.revokeKey'))).toBe(false)
     expect(mounted.errors).toEqual([])
   })
@@ -327,7 +341,7 @@ describe('mounted personal MCP oversight', () => {
     button(panel, t('admin:api.revokeKey')).click()
     await settle()
     expect(mounted.store.showError).toHaveBeenCalledWith(failure)
-    expect(panel.querySelector('.v-chip').textContent).toContain(t('admin:api.active2'))
+    expect(panel.querySelector('summary').textContent).toContain(t('admin:api.active2'))
     expect(button(panel, t('admin:api.revokeKey')).disabled).toBe(false)
     expect(mounted.transport.revokeAdminApiKey).not.toHaveBeenCalled()
     expect(mounted.errors).toEqual([])
@@ -368,7 +382,7 @@ describe('mounted personal MCP oversight', () => {
     await settle()
     pending.resolve({ id: personal.id, isRevoked: true })
     await settle()
-    expect(mounted.host.querySelector('#api-panel-personal .v-chip').textContent).toContain(t('admin:api.active2'))
+    expect(mounted.host.querySelector('#api-panel-personal summary').textContent).toContain(t('admin:api.active2'))
     expect(button(mounted.host.querySelector('#api-panel-personal'), t('admin:api.revokeKey')).disabled).toBe(false)
     expect(mounted.store.showNotification).not.toHaveBeenCalled()
     expect(mounted.errors).toEqual([])
