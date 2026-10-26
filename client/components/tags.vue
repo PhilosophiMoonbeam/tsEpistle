@@ -359,7 +359,6 @@ export default {
   components: {
     AsyncState
   },
-  i18nOptions: { namespaces: 'tags' },
   setup () {
     return {
       offlineStorage: shallowRef<OfflineStorage | null>(null),

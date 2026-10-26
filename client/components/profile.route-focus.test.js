@@ -4,6 +4,7 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../test/browser-dom.mts'
+import { focusRouteHeading } from './common/route-heading-focus.ts'
 
 const filename = path.join(process.cwd(), 'client/components/profile.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
@@ -25,7 +26,7 @@ const compiled = compileTemplate({
 if (compiled.errors.length) throw new Error(`Cannot compile profile.vue: ${compiled.errors}`)
 const render = new Function('Vue', compiled.code)(Vue)
 const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const evaluate = new Function('defineComponent', 'ref', 'watch', 'useDisplay', 'wikiStore', 'ConfirmDialogHost', script)
+const evaluate = new Function('defineComponent', 'ref', 'watch', 'useDisplay', 'wikiStore', 'ConfirmDialogHost', 'focusRouteHeading', script)
 // Marks where the shell mounts the shared confirm dialog host.
 const ConfirmDialogHost = Vue.defineComponent({ setup: () => () => Vue.h('div', { 'data-confirm-host': '' }) })
 
@@ -43,14 +44,22 @@ const routePage = heading =>
   Vue.defineComponent({
     name: `RoutePage${heading ?? 'Loading'}`,
     setup() {
-      return () => Vue.h('section', heading ? Vue.h('h1', heading) : Vue.h('p', 'Loading account settings'))
+      return () => Vue.h('section', [
+        heading ? Vue.h('h1', heading) : Vue.h('p', 'Loading account settings'),
+        Vue.h('input', { 'aria-label': 'Incoming field' })
+      ])
     }
   })
 
 const offlinePage = Vue.defineComponent({
   setup: () => () => Vue.h('section', [
     Vue.h('h1', 'Offline access'),
-    Vue.h('h2', { id: 'downloaded-pages-title' }, 'Saved pages')
+    Vue.h('h2', { id: 'downloaded-pages-title' }, 'Saved pages'),
+    Vue.h('input', { 'aria-label': 'Incoming field' }),
+    Vue.h('details', [
+      Vue.h('summary', 'Storage details'),
+      Vue.h('h2', { id: 'storage-details' }, 'Storage location')
+    ])
   ])
 })
 
@@ -69,20 +78,46 @@ const settle = async () => {
     await new Promise(resolve => setTimeout(resolve, 25))
   }
 }
+// Keep the compiled shell's actual built-in Transition and slot ownership.
+// Only the enter clock is controlled; Vue still owns entry and after-enter.
+const heldEntry = () => {
+  let entered
+  let fail
+  const ready = new Promise((resolve, reject) => { entered = resolve; fail = reject })
+  // Errors can occur during mount, before the test awaits the entry hook.
+  void ready.catch(() => {})
+  const controlEntry = create => (type, props, ...children) => create(type,
+    type === Vue.Transition
+      ? { ...props, onEnter: (element, done) => entered({ element, finish: done }) }
+      : props,
+    ...children
+  )
+  return {
+    ready,
+    fail,
+    runtime: {
+      ...Vue,
+      createBlock: controlEntry(Vue.createBlock),
+      createVNode: controlEntry(Vue.createVNode)
+    }
+  }
+}
 
-const mountProfile = async (initialPath = '/profile') => {
+const mountProfile = async (initialPath = '/profile', { entry, extraRoutes = [] } = {}) => {
   const wikiStore = { page: { mode: 'view' } }
-  const options = evaluate(Vue.defineComponent, Vue.ref, Vue.watch, () => ({ mdAndUp: Vue.ref(true) }), wikiStore, ConfirmDialogHost)
+  const options = evaluate(Vue.defineComponent, Vue.ref, Vue.watch, () => ({ mdAndUp: Vue.ref(true) }), wikiStore, ConfirmDialogHost, focusRouteHeading)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/profile', component: routePage('Your profile') },
       { path: '/pages', component: routePage('Your pages') },
       { path: '/loading', component: routePage(null) },
-      { path: '/offline', component: () => Promise.resolve(offlinePage) }
+      { path: '/offline', component: () => Promise.resolve(offlinePage) },
+      ...extraRoutes
     ]
   })
-  app = Vue.createApp({ ...options, render })
+  const profileRender = entry ? new Function('Vue', compiled.code)(entry.runtime) : render
+  app = Vue.createApp({ ...options, render: profileRender })
   for (const name of [
     'v-app',
     'nav-header',
@@ -104,7 +139,10 @@ const mountProfile = async (initialPath = '/profile') => {
   app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
   app.config.globalProperties.$t = key => key
   const componentErrors = []
-  app.config.errorHandler = error => componentErrors.push(error)
+  app.config.errorHandler = error => {
+    componentErrors.push(error)
+    entry?.fail(error)
+  }
   app.use(router)
   await router.push(initialPath)
   await router.isReady()
@@ -159,6 +197,48 @@ describe('profile route accessibility', () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true })
   })
 
+  for (const destination of ['/pages', '/offline#downloaded-pages-title']) {
+    it(`preserves input claimed before entry completes for ${destination}`, async () => {
+      const entry = heldEntry()
+      const { host, router, componentErrors } = await mountProfile('/profile', { entry })
+      await router.push(destination)
+      const { element, finish } = await entry.ready
+      await Vue.nextTick()
+      const field = element.querySelector('input')
+      field.focus()
+      field.value = 'Draft before entry finishes'
+      const focus = vi.spyOn(browserWindow.HTMLElement.prototype, 'focus')
+      const scroll = vi.spyOn(browserWindow.Element.prototype, 'scrollIntoView')
+
+      finish()
+      await Vue.nextTick()
+
+      expect(document.activeElement).toBe(field)
+      expect(field.value).toBe('Draft before entry finishes')
+      expect(focus).not.toHaveBeenCalled()
+      expect(scroll).not.toHaveBeenCalled()
+      expect(host.querySelector('main h1').textContent).toBe(destination === '/pages' ? 'Your pages' : 'Offline access')
+      expect(componentErrors).toEqual([])
+    })
+  }
+
+  it('preserves a newly claimed teleported control instead of announcing the background', async () => {
+    const entry = heldEntry()
+    const { router } = await mountProfile('/profile', { entry })
+    await router.push('/pages')
+    const { finish } = await entry.ready
+    const field = document.createElement('input')
+    document.body.append(field)
+    field.focus()
+    const focus = vi.spyOn(browserWindow.HTMLElement.prototype, 'focus')
+
+    finish()
+    await Vue.nextTick()
+
+    expect(document.activeElement).toBe(field)
+    expect(focus).not.toHaveBeenCalled()
+  })
+
   it('resolves and focuses a direct lazy-route fragment instead of its first heading', async () => {
     const scroll = vi.spyOn(browserWindow.Element.prototype, 'scrollIntoView')
     const { host, componentErrors } = await mountProfile('/offline#downloaded-pages-title')
@@ -168,6 +248,29 @@ describe('profile route accessibility', () => {
     expect(target.getAttribute('tabindex')).toBe('-1')
     expect(host.querySelector('main h1').hasAttribute('tabindex')).toBe(false)
     expect(scroll).toHaveBeenCalledWith({ block: 'start' })
+    expect(componentErrors).toEqual([])
+  })
+
+  it('does not override a control claimed while a direct lazy fragment view mounts', async () => {
+    const claimedPage = Vue.defineComponent({
+      setup() {
+        const field = Vue.ref(null)
+        Vue.onMounted(() => field.value.focus())
+        return () => Vue.h('section', [
+          Vue.h('h1', 'Account details'),
+          Vue.h('h2', { id: 'account-fragment' }, 'Account fragment'),
+          Vue.h('input', { ref: field, 'aria-label': 'Claimed during mount' })
+        ])
+      }
+    })
+    const scroll = vi.spyOn(browserWindow.Element.prototype, 'scrollIntoView')
+    const { host, componentErrors } = await mountProfile('/claimed#account-fragment', {
+      extraRoutes: [{ path: '/claimed', component: () => Promise.resolve(claimedPage) }]
+    })
+
+    expect(document.activeElement).toBe(host.querySelector('main input'))
+    expect(host.querySelector('#account-fragment').hasAttribute('tabindex')).toBe(false)
+    expect(scroll).not.toHaveBeenCalled()
     expect(componentErrors).toEqual([])
   })
 
@@ -190,6 +293,55 @@ describe('profile route accessibility', () => {
     expect(document.activeElement).toBe(target)
     expect(componentErrors).toEqual([])
   })
+
+  it('treats a new same-view fragment as intentional navigation from the currently focused field', async () => {
+    const { host, router } = await mountProfile('/offline')
+    const field = host.querySelector('main input')
+    field.focus()
+
+    await router.push('/offline#storage-details')
+    await Vue.nextTick()
+
+    expect(document.activeElement).toBe(host.querySelector('#storage-details'))
+    expect(host.querySelector('details').open).toBe(true)
+  })
+
+  it('does not reclaim focus on a query-only update', async () => {
+    const { host, router } = await mountProfile()
+    const field = host.querySelector('main input')
+    field.focus()
+    const focus = vi.spyOn(browserWindow.HTMLElement.prototype, 'focus')
+
+    await router.push('/profile?tab=preferences')
+    await Vue.nextTick()
+
+    expect(document.activeElement).toBe(field)
+    expect(focus).not.toHaveBeenCalled()
+  })
+
+  for (const concealed of [{ hidden: '' }, { inert: '' }, { 'aria-hidden': 'true' }]) {
+    it(`never attempts background heading or fragment focus under ${Object.keys(concealed)[0]}`, async () => {
+      const hiddenPage = Vue.defineComponent({
+        setup: () => () => Vue.h('section', concealed, [
+          Vue.h('h1', 'Unavailable heading'),
+          Vue.h('h2', { id: 'unavailable-fragment' }, 'Unavailable fragment')
+        ])
+      })
+      const { host, router, componentErrors } = await mountProfile('/profile', {
+        extraRoutes: [{ path: '/unavailable', component: hiddenPage }]
+      })
+      const focus = vi.spyOn(browserWindow.HTMLElement.prototype, 'focus')
+      const scroll = vi.spyOn(browserWindow.Element.prototype, 'scrollIntoView')
+
+      await router.push('/unavailable#unavailable-fragment')
+      await settle()
+
+      expect(host.querySelector('main h1')).not.toBeNull()
+      expect(focus).not.toHaveBeenCalled()
+      expect(scroll).not.toHaveBeenCalled()
+      expect(componentErrors).toEqual([])
+    })
+  }
 
   it('falls back to the incoming heading for missing or malformed fragments', async () => {
     const { host, router, componentErrors } = await mountProfile()

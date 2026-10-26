@@ -1,3 +1,4 @@
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createPinia, setActivePinia, storeToRefs } from 'pinia'
@@ -11,7 +12,6 @@ import { clearAgentChatRecent } from '../../helpers/agent-chat-continuity.ts'
 import { useAgentsStore, type AgentRefreshResult } from '../../store/agents.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }
@@ -27,6 +27,8 @@ interface PanelAgents {
   removeSession?: (sessionId: string, onCommitted?: () => void) => Promise<boolean>
   deleteFolder?: (folderId: string, expectedVersion: number) => Promise<boolean>
 }
+
+type PanelEmit = (event: 'close' | 'clear') => void
 
 interface PanelHarness {
   activeDropTarget: Ref<string | null>
@@ -226,6 +228,7 @@ const loadPanel = (
     'window',
     'document',
     'HTMLElement',
+    'useTranslate',
     `${executableScript}\nreturn {
       activeDropTarget,
       beginCreateFolderForSession,
@@ -345,7 +348,8 @@ const loadPanel = (
       activeElement: focusControls.activeElement ?? null,
       querySelector: () => null
     },
-    HarnessElement
+    HarnessElement,
+    () => translateEnglish
   )
   return {
     ...panel,
@@ -451,6 +455,7 @@ const loadDeletionPanel = (active: AgentSessionSummary, sessions: AgentSessionSu
     agentConversationFolderNameKey,
     cleanAgentConversationFolderName,
     createModalFocusScope: () => ({ deactivate: () => {} }),
+    useTranslate: () => translateEnglish,
     window,
     document,
     HTMLElement
@@ -471,6 +476,7 @@ const loadDeletionPanel = (active: AgentSessionSummary, sessions: AgentSessionSu
 
 describe('Agent history deletion commit lifecycle', () => {
   const cleanups: Array<() => void> = []
+  const fetchHost: { fetch: BrowserFetch } = window
   afterEach(() => {
     for (const cleanup of cleanups.splice(0)) cleanup()
     vi.restoreAllMocks()
@@ -498,7 +504,7 @@ describe('Agent history deletion commit lifecycle', () => {
     { current: true, replacementFails: true }
   ])('acknowledges a committed delete once without disturbing archive selection (%j)', async ({ current, replacementFails }) => {
     const { store, panel, target, active, kept, replacement, folder } = setup(current)
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    const fetcher = vi.spyOn(fetchHost, 'fetch').mockImplementation(async (input, init) => {
       if (String(input) === `/_api/agents/sessions/${target.id}` && init?.method === 'DELETE') return new Response(null, { status: 204 })
       if (String(input) === '/_api/agents/sessions' && init?.method === 'POST')
         return replacementFails ? Response.json({ message: 'Create unavailable' }, { status: 503 }) : Response.json(makeThread(replacement), { status: 201 })
@@ -531,7 +537,7 @@ describe('Agent history deletion commit lifecycle', () => {
   it('keeps a failed delete retryable and acknowledges only the successful request', async () => {
     const { store, panel, target, kept, replacement } = setup()
     let deletes = 0
-    vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    vi.spyOn(fetchHost, 'fetch').mockImplementation(async (input, init) => {
       if (String(input) === `/_api/agents/sessions/${target.id}` && init?.method === 'DELETE')
         return ++deletes === 1 ? Response.json({ message: 'Request rejected' }, { status: 503 }) : new Response(null, { status: 204 })
       if (String(input) === '/_api/agents/sessions' && init?.method === 'POST') return Response.json(makeThread(replacement), { status: 201 })
@@ -560,7 +566,7 @@ describe('Agent history deletion commit lifecycle', () => {
     async boundary => {
       const { store, panel, target, kept, replacement, unmount } = setup()
       const { promise: pendingDelete, resolve: resolveDelete } = Promise.withResolvers<Response>()
-      const fetcher = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      const fetcher = vi.spyOn(fetchHost, 'fetch').mockImplementation(async (input, init) => {
         if (String(input) === `/_api/agents/sessions/${target.id}` && init?.method === 'DELETE') return pendingDelete
         if (String(input) === '/_api/agents/sessions' && init?.method === 'POST') return Response.json(makeThread(replacement), { status: 201 })
         if (String(input) === '/_api/agents/sessions') return Response.json({ sessions: [kept], nextCursor: null })

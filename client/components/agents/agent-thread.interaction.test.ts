@@ -30,7 +30,6 @@ if (!parsedSfc.descriptor.template || !parsedSfc.descriptor.scriptSetup) throw n
 import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 
-globalThis.useTranslate = () => translateEnglish
 setLocation('https://wiki.test/')
 
 resetBody()
@@ -480,7 +479,6 @@ describe('AgentThread live status and interaction behavior', () => {
       })
     )
     const recovery = (): HTMLElement => mounted.host.querySelector('.agent-message__recovery') as HTMLElement
-    expect(recovery().getAttribute('role')).toBe('region')
     expect(recovery().hasAttribute('aria-live')).toBe(false)
     mounted.thread.value = {
       ...mounted.thread.value,
@@ -527,7 +525,6 @@ describe('AgentThread live status and interaction behavior', () => {
     const articles = mounted.host.querySelectorAll<HTMLElement>('.agent-message')
     const recovery = articles[2].querySelector<HTMLElement>('.agent-message__recovery')!
     expect(mounted.host.querySelectorAll('.agent-message__recovery')).toHaveLength(1)
-    expect(recovery.getAttribute('role')).toBe('region')
     expect(recovery.hasAttribute('aria-live')).toBe(false)
     expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
     for (const article of [articles[0], articles[1]]) {

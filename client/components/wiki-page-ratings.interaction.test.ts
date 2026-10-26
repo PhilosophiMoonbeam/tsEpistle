@@ -121,7 +121,7 @@ const mount = async (transport: (url: string, init?: RequestInit) => Promise<Res
   wikiStore.page.id = 9
   Object.assign(wikiStore.page.effectivePermissions.comments, { read: true, write: true })
   const fetch = vi.fn(transport)
-  browserWindow.fetch = fetch as typeof browserWindow.fetch
+  browserWindow.fetch = (input, init) => fetch(String(input), init)
   const props = Vue.reactive({ pageId: 9, discussionEnabled: true })
   const prepare = vi.fn()
   const host = document.createElement('div')
@@ -179,7 +179,7 @@ describe('rating-only and optional contextual discussion interactions', () => {
     expect(view.prepare).not.toHaveBeenCalled()
     action(view.host, 'useDiscussionDraft').click()
     await Vue.nextTick()
-    expect(view.prepare).toHaveBeenCalledOnce()
+    expect(view.prepare).toHaveBeenCalledTimes(1)
     expect(view.prepare).toHaveBeenCalledWith(textarea.value)
     expect(writes(view.fetch)).toHaveLength(1)
     expect(voteDown(view.host).getAttribute('aria-pressed')).toBe('true')

@@ -24,7 +24,7 @@ const definitionByKey = Object.fromEntries(BUILTIN_CONTENT_EXTENSIONS.map(defini
   ContentExtensionDefinition
 >
 
-const rendererByKey: Record<string, ContentExtensionRegistration['render']> = {
+const rendererByKey: Partial<Record<string, ContentExtensionRegistration['render']>> = {
   diagram: renderDiagramContentExtension,
   gallery: renderGalleryContentExtension,
   index: renderIndexContentExtension,

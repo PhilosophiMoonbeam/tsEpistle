@@ -5,6 +5,8 @@ import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { ComponentOptions, PropType, RenderFunction } from 'vue'
 import type { PageListRow } from '../../helpers/pages-api.ts'
+import { helpers } from '../../helpers/index.ts'
+import { installVuetifyFixture } from '../../test/vuetify-fixture.mts'
 
 const filename = join(process.cwd(), 'client/components/profile/pages.vue')
 const { descriptor, errors } = parse(readFileSync(filename, 'utf8'), { filename })
@@ -124,8 +126,8 @@ const mount = async (rows: PageListRow[], mobile = false) => {
   app.component('v-text-field', TextField)
   app.component('v-data-table', DataTable)
   app.component('v-pagination', Pagination)
-  app.config.globalProperties.$vuetify = { display: { smAndDown: mobile, mdAndUp: !mobile } }
-  app.config.globalProperties.$helpers = { formatMoment: (date: string) => date }
+  installVuetifyFixture(app, { ssr: { clientWidth: mobile ? 600 : 1280, clientHeight: 768 } })
+  app.config.globalProperties.$helpers = { ...helpers, formatMoment: date => date }
   app.config.globalProperties.$t = (key: string, params: Record<string, unknown> = {}) =>
     String(params.defaultValue ?? key).replace(/\{\{(\w+)\}\}/g, (_match, name) => String(params[name] ?? ''))
   const host = document.createElement('div')

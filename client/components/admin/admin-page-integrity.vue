@@ -113,7 +113,9 @@
         </div>
         <v-chip v-if="omittedChecks" color="warning" variant="tonal" size="small">{{ $t('admin:pageIntegrity.additionalObservationsNotDisplayed', { omittedChecks: omittedChecks.toLocaleString(), interpolation: { escapeValue: false } }) }}</v-chip>
       </header>
+      <!-- biome-ignore lint/a11y/useSemanticElements: This observation list retains article cards and its established layout. -->
       <div class="integrity-check-list" role="list" :aria-label="$t('admin:pageIntegrity.pageIntegrityObservations')">
+        <!-- biome-ignore lint/a11y/useSemanticElements: Each observation is an article card in the labeled observation list. -->
         <article v-for="(item, index) in checks" :key="`${item.pageId}-${item.checkCode}-${index}`" class="integrity-check" role="listitem">
           <div class="integrity-check-identity">
             <span>{{ $t('admin:pageIntegrity.page', { pageId: item.pageId, interpolation: { escapeValue: false } }) }}</span>

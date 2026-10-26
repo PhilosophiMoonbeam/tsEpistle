@@ -6,6 +6,8 @@ import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import type { StoreGeneric } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentMediaCapabilities } from '../../../shared/agents/contracts.ts'
+import type { Component } from 'vue'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import { type AgentDraft, emptyAgentDraft } from '../../helpers/agent-draft.ts'
@@ -198,6 +200,7 @@ interface LockState {
   scheduleTranscriptReconcile: () => void
   jumpToApproval: () => Promise<void>
   approvalJumpVisible: ValueRef<boolean>
+  followJumpVisible: ValueRef<boolean | undefined>
   transcriptFollowing: ValueRef<boolean>
   transcriptBottomDistance: ValueRef<number>
   reconcileTranscriptGrowth: (shouldFollow: boolean) => Promise<void>
@@ -352,7 +355,8 @@ const loadGoalLockState = (
   runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null,
   workspaceClosed = false,
   page: TestPageHint | null = null,
-  realStore?: StoreGeneric
+  realStore?: StoreGeneric,
+  translate = translateEnglish
 ): LockState => {
   const ref = <T>(value: T): ValueRef<T> => Vue.ref(value) as ValueRef<T>
   const thread = ref({
@@ -493,7 +497,7 @@ const loadGoalLockState = (
       emptyAgentDraft,
       agentToolAcceptsImages,
       // This effect scope is evaluated before mounting, outside a component context.
-      useTranslate: () => translateEnglish
+      useTranslate: () => translate
     })
   ) as LockState
   let disposed = false
@@ -653,7 +657,16 @@ const profileResolutionToken = (id: string, version: number): string => {
   ).toString('base64url')
   return `${kid}.${payload}.${createHmac('sha256', 'inline-agent-interaction-fixture-key').update(payload).digest('base64url')}`
 }
-const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved'): AgentThreadState => ({
+const resolvedMediaCapabilities = (capabilities: AgentMediaCapabilities): Required<AgentMediaCapabilities> => ({
+  ...capabilities,
+  videoGeneration: capabilities.videoGeneration ?? false,
+  musicGeneration: capabilities.musicGeneration ?? false,
+  inputModalities: capabilities.inputModalities ?? { images: capabilities.attachments, documents: capabilities.attachments, audio: false, video: false },
+  inputMimeTypes: capabilities.inputMimeTypes ?? (capabilities.attachments ? ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'] : []),
+  mediaToolInputs: capabilities.mediaToolInputs ?? (capabilities.attachments && capabilities.imageGeneration ? { image: { images: true, documents: false, audio: false, video: false } } : {})
+})
+
+const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved', capabilities: AgentMediaCapabilities | null = null): AgentThreadState => ({
   session: {
     id,
     title: 'Release planning',
@@ -664,7 +677,7 @@ const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved
     version: 1,
     providerProfileId: null,
     profileResolutionToken: profileResolutionToken(id, 1),
-    mediaCapabilities: null,
+    mediaCapabilities: capabilities ? resolvedMediaCapabilities(capabilities) : null,
     skills: [],
     currentRun: null,
     createdAt: timestamp,
@@ -953,7 +966,7 @@ const mountInlineAgent = (
     readonly followJumpVisible?: boolean
     readonly realThread?: boolean
     readonly realGoal?: boolean
-    readonly mediaComponent?: Vue.Component
+    readonly mediaComponent?: Component
   } = {}
 ): MountedInlineAgent => {
   installBrowserSurface()
@@ -1107,14 +1120,12 @@ const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: 
   const primary = actions.querySelector<HTMLElement>('.agent-composer__primary-actions')
   const status = mounted.root.querySelector<HTMLElement>('.agent-composer__live-status')
   if (!context || !primary || !status) throw new Error('Agent composer accessible status or controls did not render')
-  expect(context.getAttribute('role')).toBe('group')
   expect(context.getAttribute('aria-label')).toBe('Message tools')
   expect(status.id).not.toBe('')
   expect(status.matches('.sr-only')).toBe(true)
   expect(status.getAttribute('role')).toBe('status')
   expect(status.getAttribute('aria-live')).toBe('polite')
   expect(status.getAttribute('aria-atomic')).toBe('true')
-  expect(primary.getAttribute('role')).toBe('group')
   expect(primary.getAttribute('aria-label')).toBe('Message actions')
 
   const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
@@ -1890,7 +1901,7 @@ describe('Inline Agent workspace actions', () => {
         ...initial,
         session: {
           ...initial.session,
-          mediaCapabilities: { attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false }
+          mediaCapabilities: resolvedMediaCapabilities({ attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false })
         }
       }
       let completeUpload: (response: Response) => void = () => {
@@ -1995,7 +2006,7 @@ describe('Inline Agent workspace actions', () => {
       ...initial,
       session: {
         ...initial.session,
-        mediaCapabilities: { attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false }
+        mediaCapabilities: resolvedMediaCapabilities({ attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false })
       }
     }
     const state = workspace.state()
@@ -2113,8 +2124,7 @@ describe('Inline Agent workspace actions', () => {
   })
 
   it('protects voice-only input after transcription while admission refresh is pending, and retains it after a failed admission', async () => {
-    const initial = threadFixture()
-    initial.session.mediaCapabilities = { attachments: false, imageGeneration: false, transcription: true }
+    const initial = threadFixture(sessionId, 'saved', { attachments: false, imageGeneration: false, transcription: true })
     const workspace = realWorkspace('saved', null, initial)
     let finishTranscript!: (text: string) => void
     const transcript = new Promise<string>(resolve => {
@@ -2188,8 +2198,7 @@ describe('Inline Agent workspace actions', () => {
 
   for (const outcome of ['accepted', 'rejected', 'ambiguous'] as const) {
     it(`guards attachment-only input until admission, with ${outcome} POST and delayed final refresh`, async () => {
-      const initial = threadFixture()
-      initial.session.mediaCapabilities = { attachments: true, imageGeneration: false, transcription: false }
+      const initial = threadFixture(sessionId, 'saved', { attachments: true, imageGeneration: false, transcription: false })
       const workspace = realWorkspace('saved', null, initial)
       const mounted = mountInlineAgent(workspace.state())
       await settle()
@@ -2340,7 +2349,7 @@ describe('Inline Agent workspace actions', () => {
   it('offers labelled no-page starters and admits a Wiki-wide run', async () => {
     const workspace = realWorkspace()
     const mounted = mountInlineAgent(workspace.state())
-    const group = mounted.root.querySelector('[role="group"][aria-label="Suggested prompts"]')
+    const group = mounted.root.querySelector('[aria-label="Suggested prompts"]')
     expect(group).not.toBeNull()
     const starter = Array.from(group?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(button => button.textContent?.includes('Explore the Wiki'))
     if (!starter) throw new Error('No-page exploration starter missing')
@@ -2554,9 +2563,9 @@ describe('Inline Agent workspace actions', () => {
       Array.from(mounted.root.querySelectorAll<HTMLButtonElement>('.agent-message__media button')).find(
         button => button.textContent?.trim() === translateEnglish('common:agentThread.editImage')
       )
-    const setCapabilities = async (capabilities: AgentThreadState['session']['mediaCapabilities']): Promise<void> => {
+    const setCapabilities = async (capabilities: AgentMediaCapabilities | null): Promise<void> => {
       const thread = workspace.store.thread!
-      workspace.store.thread = { ...thread, session: { ...thread.session, mediaCapabilities: capabilities } }
+      workspace.store.thread = { ...thread, session: { ...thread.session, mediaCapabilities: capabilities ? resolvedMediaCapabilities(capabilities) : null } }
       await settle()
     }
     expect(attach()).toBeNull()
@@ -2779,8 +2788,8 @@ describe('Inline Agent workspace actions', () => {
     installBrowserSurface()
     const frames = controlTranscriptFrames()
     resizeViewport?.(390)
-    const translator = vi.spyOn(globalThis, 'useTranslate').mockReturnValue(fallbackLocalizationLabel)
-    const state = loadGoalLockState(null)
+    const translator = vi.fn<typeof translateEnglish>(fallbackLocalizationLabel)
+    const state = loadGoalLockState(null, false, null, false, null, undefined, translator)
     const transcript = document.createElement('div')
     document.body.append(transcript)
     // Model a keyboard-reduced scrollport; native delayed-media anchoring is
@@ -2795,7 +2804,7 @@ describe('Inline Agent workspace actions', () => {
     await frames.flush()
     expect(transcript.scrollTop).toBe(560)
 
-    translator.mockReturnValue(translateEnglish)
+    translator.mockImplementation(translateEnglish)
     transcript.scrollTo({ top: 0 })
     await state.reconcileTranscriptGrowth(false)
     await frames.flush()
@@ -3138,7 +3147,7 @@ describe('Inline Agent conversation starters', () => {
     const welcome = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome')
     expect(welcome?.getAttribute('aria-label')).toBe('Start a conversation')
     expect(welcome?.querySelector('.inline-agent__welcome-subtitle')?.textContent?.trim()).toBeTruthy()
-    const group = mounted.root.querySelector<HTMLElement>('[role="group"][aria-label="Suggested prompts"]')
+    const group = mounted.root.querySelector<HTMLElement>('[aria-label="Suggested prompts"]')
     const starters = Array.from(group?.querySelectorAll<HTMLButtonElement>('.inline-agent__starter') ?? [])
     expect(starters.map(starter => starter.querySelector('strong')?.textContent?.trim())).toEqual(['Explore the Wiki', 'Connect the dots', 'Catch up'])
     expect(starters.map(starter => starter.querySelector('.inline-agent__starter-copy')?.textContent?.trim())).toEqual([
@@ -3154,7 +3163,7 @@ describe('Inline Agent conversation starters', () => {
     const lockState = loadGoalLockState(null, true)
     const mounted = mountInlineAgent(lockState)
     await settle()
-    const group = mounted.root.querySelector<HTMLElement>('[role="group"][aria-label="Suggested prompts"]')
+    const group = mounted.root.querySelector<HTMLElement>('[aria-label="Suggested prompts"]')
     const starters = Array.from(group?.querySelectorAll<HTMLButtonElement>('.inline-agent__starter') ?? [])
     expect(starters).toHaveLength(3)
     expect(starters.every(starter => !starter.disabled && starter.getAttribute('aria-disabled') === 'true')).toBe(true)

@@ -9,8 +9,7 @@
   "files": {
     "includes": [
       "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}",
-      "client/themes/default/**/*.vue",
-      "client/components/editor/editor-asciidoc.vue",
+      "client/**/*.vue",
       "!**/*.min.js",
       "!!assets",
       "!!client/libs",
@@ -47,7 +46,9 @@
         "noUnusedFunctionParameters": "off",
         "noUnusedImports": "off",
         "noUnusedVariables": "off",
-        "noVoidTypeReturn": "off"
+        "noVoidTypeReturn": "off",
+        "useVueValidVElse": "error",
+        "useVueValidVIf": "error"
       },
       "performance": {
         "noDynamicNamespaceImportAccess": "off"

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import type { App, ComponentOptions, EffectScope, RenderFunction } from 'vue'
 import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, setLocation } from '../../test/browser-dom.mts'
@@ -12,7 +12,10 @@ import type { Profile } from '../../helpers/users-api.ts'
 import { fetchLocales } from '../../helpers/locales-api.ts'
 import { resolveThemeName } from '../../helpers/theme.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store.ts'
+import type { AuthRefreshOutcome } from '../../store/index.ts'
 import * as draftModel from './profile-draft.ts'
+import { helpers } from '../../helpers/index.ts'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 // Vue/Vuetify capture the document when loaded; the shared test DOM must exist first.
 const Vue = await import('vue')
@@ -86,7 +89,24 @@ const PasswordVisibilityToggle = {
   render: new Function('Vue', toggleTemplate.code)(Vue) as RenderFunction
 }
 
+// Render the shared loading/error/retry boundary, not a placeholder that hides a stuck spinner.
+const asyncStateFile = join(process.cwd(), 'client/components/common/async-state.vue')
+const asyncStateSfc = parse(readFileSync(asyncStateFile, 'utf8'), { filename: asyncStateFile }).descriptor
+const asyncStateScript = compileScript(asyncStateSfc, {
+  id: 'profile-async-state',
+  genDefaultAs: '__asyncState__',
+  inlineTemplate: true
+})
+// Bun cannot statically import the SFC's runtime-generated JavaScript module.
+const { default: AsyncState } = await import(
+  'data:text/javascript;base64,' +
+    Buffer.from(
+      new Bun.Transpiler({ loader: 'ts' }).transformSync(`${asyncStateScript.content}\nexport default __asyncState__`)
+    ).toString('base64')
+)
+
 const translations: Record<string, string> = {
+  'common:page.tryAgain': 'Réessayer',
   'common:password.show': 'Afficher : {{field}}',
   'common:password.fields.currentPassword': 'le mot de passe actuel',
   'common:password.fields.newPassword': 'le nouveau mot de passe',
@@ -206,6 +226,7 @@ class AvatarIntersectionObserver implements IntersectionObserver {
   readonly root = null
   readonly rootMargin = '0px'
   readonly thresholds = [0]
+  readonly scrollMargin = '0px'
   readonly targets = new Set<Element>()
   constructor(private readonly callback: IntersectionObserverCallback) {
     observers.add(this)
@@ -274,7 +295,7 @@ afterEach(() => {
   }
   expect(componentErrors).toEqual([])
 })
-const mount = async (initialProfile = profile()) => {
+const mount = async (initialProfile = profile(), initial: { authenticated?: boolean; profileResponse?: Promise<Response> } = {}) => {
   const previousLocation = browserWindow.location.href
   restorers.push(() => setLocation(previousLocation))
   setLocation('/p/profile')
@@ -287,17 +308,34 @@ const mount = async (initialProfile = profile()) => {
   themeStyleContent = themeStyle?.textContent ?? null
   ownProperty(globalThis, 'siteConfig', { lang: 'fr', darkMode: false })
   const activeLoading = new Set<string>()
+  const loadingCounts = new Map<string, number>()
   const store = Vue.reactive({
-    user: { authenticated: true, id: initialProfile.id, name: 'Example Reader', email: 'reader@example.test', pictureUrl: '', appearance: 'light' },
-    startLoading: vi.fn((key: string) => activeLoading.add(key)),
-    stopLoading: vi.fn((key: string) => activeLoading.delete(key)),
-    refreshAuth: vi.fn(async () => undefined),
+    user: { authenticated: initial.authenticated ?? true, id: initialProfile.id, name: 'Example Reader', email: 'reader@example.test', pictureUrl: '', appearance: 'light' },
+    startLoading: vi.fn((key: string) => {
+      loadingCounts.set(key, (loadingCounts.get(key) ?? 0) + 1)
+      activeLoading.add(key)
+    }),
+    stopLoading: vi.fn((key: string) => {
+      const count = loadingCounts.get(key)
+      if (count === undefined) return
+      if (count > 1) loadingCounts.set(key, count - 1)
+      else {
+        loadingCounts.delete(key)
+        activeLoading.delete(key)
+      }
+    }),
+    refreshAuth: vi.fn(async (): Promise<AuthRefreshOutcome> => 'authenticated'),
     showNotification: vi.fn(),
     showError: vi.fn()
   })
+  let firstProfileResponse = initial.profileResponse
   const fetch = vi.fn(async (url: string, _init?: RequestInit): Promise<Response> => {
     if (url === '/_api/auth/password-policy') return response({ minimum: 12 })
-    if (url === '/_api/users/profile') return response(initialProfile)
+    if (url === '/_api/users/profile') {
+      const pending = firstProfileResponse
+      firstProfileResponse = undefined
+      return pending ?? response(initialProfile)
+    }
     if (url === '/_api/locales') return response([])
     throw new Error(`Unexpected profile request: ${url}`)
   })
@@ -309,7 +347,7 @@ const mount = async (initialProfile = profile()) => {
   const options = evaluate(
     passwordPolicyMixin,
     newPasswordIssue,
-    placeholder,
+    AsyncState,
     placeholder,
     placeholder,
     placeholder,
@@ -355,10 +393,11 @@ const mount = async (initialProfile = profile()) => {
     return installed
   })!
   app.component('admin-hero', AdminHero)
-  const router = { push: vi.fn(async (_target: string) => undefined) }
+  const router = createRouter({ history: createMemoryHistory(), routes: [] })
+  vi.spyOn(router, 'push').mockResolvedValue(undefined)
   app.config.globalProperties.$router = router
   app.config.globalProperties.$t = translate
-  app.config.globalProperties.$helpers = { formatMoment: (date: string) => date }
+  app.config.globalProperties.$helpers = { ...helpers, formatMoment: date => date }
   componentErrors = []
   app.config.errorHandler = error => componentErrors.push(error)
   const host = document.createElement('div')
@@ -412,15 +451,7 @@ const fillPasswords = async (host: HTMLElement) => {
   await fill(inputs[1]!, 'Replacement password 73!')
   await fill(inputs[2]!, 'Replacement password 73!')
 }
-const deferred = () => {
-  let resolve!: (value: Response) => void
-  let reject!: (reason: Error) => void
-  const promise = new Promise<Response>((yes, no) => {
-    resolve = yes
-    reject = no
-  })
-  return { promise, resolve, reject }
-}
+const deferred = <T = Response>() => Promise.withResolvers<T>()
 const requestsTo = (fetch: { mock: { calls: Array<[string, RequestInit?]> } }, url: string) =>
   fetch.mock.calls.filter(([target, init]) => target === url && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(init?.method ?? ''))
 
@@ -562,6 +593,195 @@ describe('profile workspace contracts', () => {
     saveButton(host).click()
     await settle()
     expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(0)
+  })
+
+  test('settles anonymous identity during the initial read and refresh, then recovers on verified sign-in', async () => {
+    const initialRead = deferred()
+    const { host, vm, fetch, store, activeLoading, applyUserPresentation } = await mount(profile(), { profileResponse: initialRead.promise })
+    expect(host.querySelector('.async-state--loading')).not.toBeNull()
+    expect(activeLoading.has('profile-refresh')).toBe(true)
+
+    store.user.authenticated = false
+    await settle()
+    expect(Boolean(host.querySelector('.async-state--loading'))).toBe(false)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Sign in again')
+    expect(host.querySelector('.profile-save-dock, input')).toBeNull()
+    // Retiring the editor does not release a request's loading reference early.
+    expect(activeLoading.has('profile-refresh')).toBe(true)
+    initialRead.resolve(response(profile({ name: 'Late initial account A' })))
+    await settle()
+    expect(activeLoading.has('profile-refresh')).toBe(false)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Sign in again')
+    expect(applyUserPresentation).not.toHaveBeenCalled()
+
+    store.user.authenticated = true
+    await settle()
+    expect(field(host, translations['profile:displayName']!).value).toBe('Example Reader')
+    await fill(field(host, translations['profile:displayName']!), 'Unsaved private draft')
+    await fill(passwordInputs(host)[0]!, 'Private current password')
+    const refresh = deferred()
+    fetch.mockImplementationOnce(() => refresh.promise)
+    const accepted = vm.loadProfile()
+    store.user.authenticated = false
+    await settle()
+    expect(Boolean(host.querySelector('.async-state--loading, .profile-save-dock, input'))).toBe(false)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Sign in again')
+    refresh.resolve(response(profile({ name: 'Late refresh account A' })))
+    expect(await accepted).toBe(false)
+    await settle()
+    expect(activeLoading.has('profile-refresh')).toBe(false)
+    expect(store.showError).not.toHaveBeenCalled()
+    expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(0)
+
+    store.user.authenticated = true
+    await settle()
+    expect(field(host, translations['profile:displayName']!).value).toBe('Example Reader')
+    expect(passwordInputs(host)[0]!.value).toBe('')
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+  })
+
+  test('fences late A reads across anonymous, B and A-again while balancing overlapping loading references', async () => {
+    const { host, vm, fetch, store, activeLoading } = await mount()
+    const staleForB = deferred()
+    const staleForAAgain = deferred()
+    fetch.mockImplementationOnce(() => staleForB.promise)
+    const firstA = vm.loadProfile()
+    await settle()
+    fetch.mockImplementationOnce(() => staleForAAgain.promise)
+    const secondA = vm.loadProfile()
+    await settle()
+
+    store.user.authenticated = false
+    await settle()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Sign in again')
+    const accountB = profile({ id: 74, name: 'Account B', handle: 'account_b' })
+    fetch.mockImplementation(async (url: string) => {
+      if (url === '/_api/users/profile') return response(accountB)
+      if (url === '/_api/locales') return response([])
+      throw new Error(`Unexpected identity-fence request: ${url}`)
+    })
+    store.user.id = accountB.id
+    store.user.authenticated = true
+    await settle()
+    expect(field(host, translations['profile:displayName']!).value).toBe('Account B')
+    expect(activeLoading.has('profile-refresh')).toBe(true)
+    staleForB.resolve(response(profile({ name: 'Late A while B is active' })))
+    expect(await firstA).toBe(false)
+    await settle()
+    expect(field(host, translations['profile:displayName']!).value).toBe('Account B')
+    expect(activeLoading.has('profile-refresh')).toBe(true)
+
+    const currentA = deferred()
+    fetch.mockImplementationOnce(() => currentA.promise)
+    store.user.id = 73
+    await settle()
+    staleForAAgain.resolve(response(profile({ name: 'Late A from the previous session' })))
+    expect(await secondA).toBe(false)
+    await settle()
+    expect(host.querySelector('.async-state--loading')).not.toBeNull()
+    expect(host.querySelector('.profile-save-dock, input')).toBeNull()
+    expect(activeLoading.has('profile-refresh')).toBe(true)
+    currentA.resolve(response(profile({ name: 'Fresh account A' })))
+    await settle()
+    expect(field(host, translations['profile:displayName']!).value).toBe('Fresh account A')
+    expect(activeLoading.has('profile-refresh')).toBe(false)
+    expect(store.showError).not.toHaveBeenCalled()
+  })
+
+  test('settles anonymous mismatch reauthentication and keeps a verified anonymous retry recoverable', async () => {
+    const { host, vm, fetch, store, activeLoading } = await mount()
+    const verification = deferred<AuthRefreshOutcome>()
+    fetch.mockResolvedValueOnce(response(profile({ id: 74, name: 'Mismatching account B' })))
+    store.refreshAuth.mockImplementationOnce(() => verification.promise)
+    const accepted = vm.loadProfile()
+    await settle()
+    expect(store.refreshAuth).toHaveBeenCalledTimes(1)
+    expect(activeLoading.has('profile-refresh')).toBe(true)
+
+    store.user.authenticated = false
+    await settle()
+    expect(host.querySelector('.async-state--loading, .profile-save-dock, input')).toBeNull()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Sign in again')
+    verification.resolve('anonymous')
+    expect(await accepted).toBe(false)
+    await settle()
+    expect(activeLoading.has('profile-refresh')).toBe(false)
+    expect(store.showError).not.toHaveBeenCalled()
+
+    // A verified anonymous retry has no identity transition to trigger the watcher.
+    store.refreshAuth.mockResolvedValueOnce('anonymous')
+    button(host, translations['common:page.tryAgain']!).click()
+    await settle()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Sign in again')
+    expect(host.textContent).not.toContain('Your signed-in account changed.')
+    expect(activeLoading.has('profile-refresh')).toBe(false)
+  })
+
+  test('suppresses the retired mismatch error when cold authentication starts a fresh verified read', async () => {
+    const initialRead = deferred()
+    const { host, fetch, store, activeLoading } = await mount(profile(), { authenticated: false, profileResponse: initialRead.promise })
+    const verifiedRead = deferred()
+    fetch.mockImplementationOnce(() => verifiedRead.promise)
+    store.refreshAuth.mockImplementationOnce(async () => {
+      store.user.authenticated = true
+      return 'authenticated'
+    })
+    initialRead.resolve(response(profile()))
+    await settle()
+    expect(store.refreshAuth).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('.async-state--loading')).not.toBeNull()
+    expect(host.querySelector('.profile-save-dock, input')).toBeNull()
+    expect(store.showError).not.toHaveBeenCalled()
+    expect(activeLoading.has('profile-refresh')).toBe(true)
+
+    verifiedRead.resolve(response(profile()))
+    await settle()
+    expect(field(host, translations['profile:displayName']!).value).toBe('Example Reader')
+    // Vuetify input-detail live regions also have role="alert", even without errors.
+    expect(host.querySelector('.async-state')).toBeNull()
+    expect(host.textContent).not.toContain('Your signed-in account changed.')
+    expect(store.showError).not.toHaveBeenCalled()
+    expect(activeLoading.has('profile-refresh')).toBe(false)
+  })
+
+  test('reports unavailable verification truthfully and still refuses a genuinely mismatching profile', async () => {
+    const { host, vm, fetch, store, activeLoading } = await mount()
+    fetch.mockResolvedValueOnce(response(profile({ id: 74, name: 'Unverified account B' })))
+    store.refreshAuth.mockResolvedValueOnce('unavailable')
+    expect(await vm.loadProfile()).toBe(false)
+    await settle()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Your session could not be verified.')
+    expect(host.textContent).not.toContain('Your signed-in account changed.')
+    expect(host.querySelector('.profile-save-dock, input')).toBeNull()
+    expect(store.user.id).toBe(73)
+
+    fetch.mockResolvedValueOnce(response(profile({ id: 74, name: 'Still not account A' })))
+    button(host, translations['common:page.tryAgain']!).click()
+    await settle()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Your signed-in account changed.')
+    expect(host.querySelector('.profile-save-dock, input')).toBeNull()
+    expect(store.showError).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringContaining('Your signed-in account changed.') }))
+    expect(activeLoading.has('profile-refresh')).toBe(false)
+  })
+
+  test('retires an in-flight profile read on unmount without publishing data and releases its loading reference', async () => {
+    const { host, vm, fetch, store, activeLoading, applyUserPresentation } = await mount()
+    const pending = deferred()
+    fetch.mockImplementationOnce(() => pending.promise)
+    const accepted = vm.loadProfile()
+    await settle()
+    const pictureBefore = store.user.pictureUrl
+    applyUserPresentation.mockClear()
+    app!.unmount()
+    app = undefined
+    pending.resolve(response(profile({ name: 'Unmounted account A', pictureUrl: 'internal', appearance: 'dark' })))
+    expect(await accepted).toBe(false)
+    await settle()
+    expect(host.childElementCount).toBe(0)
+    expect(store.user.pictureUrl).toBe(pictureBefore)
+    expect(applyUserPresentation).not.toHaveBeenCalled()
+    expect(store.showError).not.toHaveBeenCalled()
+    expect(activeLoading.has('profile-refresh')).toBe(false)
   })
 
   test('ignores an old account save completion instead of applying it or submitting its preferences to the new account', async () => {

@@ -17,7 +17,7 @@
         <p v-else class="profile-muted text-body-small">{{ t('pageAccess', { defaultValue: 'Page reads follow your current permissions and page rules, including private-page restrictions. Choosing Read only limits tools, not a separate set of pages.' }) }}</p>
         <v-alert v-if="!catalog.enabled" type="info" variant="tonal">MCP access is disabled by the administrator. Existing keys can still be revoked.</v-alert>
         <v-alert v-else-if="!catalog.canIssue" type="info" variant="tonal">Your account cannot issue MCP keys with its current permissions. You can still revoke existing keys.</v-alert>
-        <div v-if="issuedKey" class="profile-mcp__secret" role="region" aria-labelledby="profile-mcp-secret-title">
+        <section v-if="issuedKey" class="profile-mcp__secret" aria-labelledby="profile-mcp-secret-title">
           <h3 id="profile-mcp-secret-title" class="text-title-small">Save your new key now</h3>
           <p class="text-body-small">This is the only time the key is shown. Store it in your MCP client's secret configuration and send it as a Bearer token. Do not paste it into a chat prompt.</p>
           <v-text-field :model-value="issuedKey" :type="showKey ? 'text' : 'password'" label="New MCP key (shown once)" readonly autocomplete="off" spellcheck="false" variant="outlined" hide-details />
@@ -26,7 +26,7 @@
             <v-btn variant="tonal" prepend-icon="mdi-content-copy" @click="copyKey">Copy key</v-btn>
             <v-btn color="primary" @click="forgetSecret">Done</v-btn>
           </div>
-        </div>
+        </section>
         <form v-else-if="catalog.enabled && catalog.canIssue" class="profile-mcp__form" :aria-busy="busy" @submit.prevent="issue">
           <v-text-field v-model="name" label="Key name" hint="Identify this client or device, for example Desktop assistant." persistent-hint minlength="2" maxlength="255" autocomplete="off" variant="outlined" density="comfortable" :disabled="busy" />
           <v-select v-model="access" :items="accessOptions" label="Key access" variant="outlined" density="comfortable" :disabled="busy" hide-details />
@@ -39,6 +39,7 @@
           <p class="profile-muted text-body-small">{{ t('setupSafety', { defaultValue: 'These snippets always contain a token placeholder, never your issued key. Copy the key separately into the indicated secret input or the environment that launches your client, outside chat. Keep secrets out of shared files, source control, shell history, and screenshots.' }) }}</p>
           <v-select v-model="setupClient" class="profile-mcp__setup-client" :items="setupClients" :label="t('setupClient', { defaultValue: 'MCP client' })" variant="outlined" density="comfortable" hide-details />
           <p class="text-body-small">{{ setupInstructions }}</p>
+          <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The overflow-x setup snippet needs keyboard focus for horizontal scrolling. -->
           <pre class="profile-mcp__snippet" tabindex="0" :aria-label="t('setupJson', { defaultValue: 'MCP setup JSON with token placeholder' })"><code>{{ setupSnippet }}</code></pre>
           <div class="profile-mcp__actions"><v-btn variant="tonal" prepend-icon="mdi-content-copy" @click="copySetup">{{ t('copySetup', { defaultValue: 'Copy setup snippet' }) }}</v-btn></div>
           <p class="profile-muted text-body-small">{{ t('setupApproval', { defaultValue: 'These clients support remote HTTP with Bearer keys; no Wiki OAuth sign-in is configured here. Start with a permitted read. Read and propose edits also requires compatible client approval support, your current Wiki permissions, and human approval for every proposed change.' }) }}</p>

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.client.json",
+  "references": [],
+  "files": [],
+  "include": [],
+  "exclude": [],
+  "vueCompilerOptions": {
+    "extensions": [".vue", ".qualification"],
+    "strictTemplates": true,
+    "fallthroughAttributes": true,
+    "htmlAttributes": ["aria-hidden", "aria-label", "aria-describedby"],
+    "dataAttributes": ["data-*"]
+  }
+}

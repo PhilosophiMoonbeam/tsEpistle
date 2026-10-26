@@ -65,8 +65,9 @@
                 v-icon.mr-3(color='white') mdi-alpha-r-box
                 span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}
               v-card-text.pa-4#editor-conflict-overwrite-description
-                i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
-                  strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
+                localized-rich-text.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
+                  template(#refEditsLost)
+                    strong {{$t('editor:conflict.overwrite.editsLost')}}
               v-card-chin
                 v-spacer
                 v-btn(variant="outlined", @click='isRemoteConfirmDiagShown = false')
@@ -105,12 +106,14 @@ import { markdown } from '@codemirror/lang-markdown'
 import { unifiedMergeView } from '@codemirror/merge'
 import type { Extension } from '@codemirror/state'
 import { TextEditor, type TextEditorHandle } from './common/text-editor'
+import LocalizedRichText from '../common/localized-rich-text'
 
 /* global siteConfig */
 
 
 type ConflictLatest = Pick<PageConflictLatest, 'title' | 'description' | 'updatedAt' | 'authorName' | 'content' | 'sourceRevision'>
 export default defineComponent({
+  components: { LocalizedRichText },
   data() {
     return {
       cm: null as TextEditorHandle | null,

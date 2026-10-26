@@ -1,3 +1,4 @@
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { browserWindow } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
@@ -28,7 +29,7 @@ const asset = (id: number, ext = '.png', size = 40) => ({
 const settle = async () => {
   for (let i = 0; i < 8; i++) await new Promise(resolve => setTimeout(resolve, 0))
 }
-const mount = (fetcher: typeof fetch, translate: typeof translateEnglish = translateEnglish) => {
+const mount = (fetcher: BrowserFetch, translate: typeof translateEnglish = translateEnglish) => {
   const props = reactive({ imageOnly: false, busy: false, disabled: false, attachmentError: '' })
   const events: [string, unknown][] = []
   const cleanup: (() => void)[] = []

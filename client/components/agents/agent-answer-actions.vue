@@ -37,7 +37,7 @@
             <v-btn v-if="attempt?.state === 'committed'" class="mb-3" variant="tonal" :disabled="!canRead || saving || checking || inventoryLoading" @click="prepareAnotherDraft">{{ tx('prepareAnother', 'Prepare another private draft') }}</v-btn>
             <v-text-field v-model="title" :label="$t('common:agentAnswerActions.pageTitle')" variant="outlined" :disabled="saving" maxlength="255" />
             <div class="agent-answer-draft__location"><v-text-field v-model="locale" :label="$t('common:agentAnswerActions.languageCode')" variant="outlined" :disabled="saving" /><v-text-field v-model="path" :label="$t('common:agentAnswerActions.pagePath')" :hint="$t('common:agentAnswerActions.newPageExistingPages')" persistent-hint variant="outlined" :disabled="saving" /></div>
-            <div class="agent-answer-draft__tabs" role="group" :aria-label="$t('common:agentAnswerActions.draftView')"><v-btn size="small" :variant="preview ? 'tonal' : 'text'" :aria-pressed="preview" @click="preview = true">{{ $t('common:actions.preview') }}</v-btn><v-btn size="small" :variant="!preview ? 'tonal' : 'text'" :aria-pressed="!preview" @click="preview = false">{{ $t('common:agentAnswerActions.editMarkdown') }}</v-btn></div>
+            <fieldset class="agent-answer-draft__tabs" :aria-label="$t('common:agentAnswerActions.draftView')"><v-btn size="small" :variant="preview ? 'tonal' : 'text'" :aria-pressed="preview" @click="preview = true">{{ $t('common:actions.preview') }}</v-btn><v-btn size="small" :variant="!preview ? 'tonal' : 'text'" :aria-pressed="!preview" @click="preview = false">{{ $t('common:agentAnswerActions.editMarkdown') }}</v-btn></fieldset>
             <div v-if="preview" class="agent-answer-draft__preview"><AgentMarkdown :content="markdown" /></div>
             <v-textarea v-else v-model="markdown" :label="$t('common:agentAnswerActions.draftMarkdown')" variant="outlined" rows="12" :disabled="saving" />
             <v-btn size="small" variant="text" :disabled="!markdown" @click="copyDraft">{{ tx('copyReviewedMarkdown', 'Copy reviewed Markdown') }}</v-btn>
@@ -65,12 +65,13 @@ import { copyTextToClipboard } from '../../helpers/clipboard.ts'
 import { createAgentCitationResolver, formatAgentCitationMarkers } from './agent-citations.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 
 const t = useTranslate()
 const { smAndDown } = useDisplay()
 const props = defineProps<{ sessionId: string; messageId: string; content: string; citations: readonly AgentCitation[]; googleSearchGrounding?: AgentGoogleSearchGrounding; defaultLocale?: string }>()
 const tx = (key: string, defaultValue: string, values: Record<string, unknown> = {}): string => t(`common:agentAnswerActions.${key}`, { defaultValue, ...values })
-const fetcher: typeof fetch = (...args) => window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 const sourceOwner = ref(wikiStore.user.id)
 let sourceOrigin = `${props.sessionId}:${props.messageId}`
 const currentOwner = computed(() => wikiStore.user.authenticated && wikiStore.user.id > 0 && sourceOwner.value === wikiStore.user.id ? wikiStore.user.id : null)
@@ -331,7 +332,7 @@ onBeforeUnmount(() => { disposed = true; generation++; clearProjection(true); cl
 .agent-answer-draft h2 { margin: 0; line-height: 1.15; font-family: var(--wiki-font-display, 'Newsreader', serif); font-size: 2rem; font-weight: 500; }
 .agent-answer-draft__intro { font-size: .88rem; opacity: .75; margin-bottom: 1.5rem; line-height: 1.6; }
 .agent-answer-draft__location { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: 1rem; }
-.agent-answer-draft__tabs { display: flex; gap: .5rem; margin: .75rem 0; }
+.agent-answer-draft__tabs { display: flex; min-width: 0; border: 0; padding: 0; gap: .5rem; margin: .75rem 0; }
 .agent-answer-draft__preview { padding: 1.2rem; border: 1px solid rgba(var(--v-theme-on-surface), .14); border-radius: 1rem; }
 .agent-answer-draft__receipts { margin-bottom: 1.5rem; font-size: .88rem; line-height: 1.6; }
 .agent-answer-draft__receipts h3 { font-size: 1rem; }

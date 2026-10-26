@@ -125,7 +125,8 @@ describe('Native AsciiDoc preview security', () => {
       const denyFetch = () => {
         throw new Error('Preview attempted an automatic include request')
       }
-      const requests = vi.spyOn(globalThis, 'fetch').mockImplementation(denyFetch)
+      const requests = vi.fn(denyFetch)
+      vi.stubGlobal('fetch', requests)
       const windowRequests = vi.spyOn(browserWindow, 'fetch').mockImplementation(denyFetch)
 
       await component.methods.processContent.call(context, editor.getValue())
@@ -153,6 +154,7 @@ describe('Native AsciiDoc preview security', () => {
       expect(wikiStore.editor.content).toBe(source)
     } finally {
       vi.restoreAllMocks()
+      vi.unstubAllGlobals()
       editor?.destroy()
       host.remove()
       resetBody()

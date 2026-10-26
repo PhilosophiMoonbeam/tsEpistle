@@ -156,7 +156,7 @@ describe('Utilities reviewed operation recovery', () => {
       onRecorded: recorded
     })
     expect(transport.startUtilitiesOperation).toHaveBeenCalledWith(expect.objectContaining({ payload: { password: 'fixture-private-token', mode: 'git' } }))
-    expect(transport.startUtilitiesOperation).toHaveBeenCalledOnce()
+    expect(transport.startUtilitiesOperation).toHaveBeenCalledTimes(1)
     expect(window.sessionStorage.setItem).toHaveBeenCalledWith('utilities.pending-operation.v1', expect.any(String))
     const serializedPending = window.sessionStorage.setItem.mock.calls[0]![1] as string
     expect(JSON.parse(serializedPending)).toEqual({ id: receipt.id, kind: 'import-v1-content', createdAt: expect.any(String) })
@@ -194,7 +194,7 @@ describe('Utilities reviewed operation recovery', () => {
       payload: draft,
       onRejected: rejected
     })
-    expect(transport.startUtilitiesOperation).toHaveBeenCalledOnce()
+    expect(transport.startUtilitiesOperation).toHaveBeenCalledTimes(1)
     expect(transport.fetchUtilitiesReceipt).not.toHaveBeenCalled()
     expect(rejected).toHaveBeenCalledWith('Settings changed; review again.')
     expect(draft.password).toBe('fixture-private-token')

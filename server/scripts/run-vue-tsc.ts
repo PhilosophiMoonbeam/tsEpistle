@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import Module, { createRequire } from 'node:module'
+import path from 'node:path'
 import type * as TypeScript from 'typescript'
 import type * as VueLanguageCore from '@vue/language-core'
 
@@ -31,8 +32,15 @@ runTsc.getLanguagePlugins = (typescript, options) => {
   }
 }
 
-const clientConfig = vueLanguageCore.createParsedCommandLine(typescript, typescript.sys, 'tsconfig.client.json')
-const extensions = vueLanguageCore.getAllExtensions(clientConfig.vueOptions)
+const commandLine = typescript.parseCommandLine(process.argv.slice(2))
+const project = commandLine.options.project
+const selectedPath = project
+  ? path.resolve(project)
+  : typescript.findConfigFile(process.cwd(), typescript.sys.fileExists)
+if (!selectedPath) throw new Error('Vue typechecking requires a TypeScript project config')
+const configFilePath = fs.statSync(selectedPath).isDirectory() ? path.join(selectedPath, 'tsconfig.json') : selectedPath
+const selectedConfig = vueLanguageCore.createParsedCommandLine(typescript, typescript.sys, configFilePath)
+const extensions = vueLanguageCore.getAllExtensions(selectedConfig.vueOptions)
 const transformedTsc = runTsc.transformTscContent(
   fs.readFileSync(tscPath, 'utf8'),
   proxyCreateProgramPath,

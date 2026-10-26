@@ -33,7 +33,7 @@ import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-conte
 import { AgentMediaInputsSchema } from '../../shared/agents/media-providers.ts'
 import { SpecialistInvocationViewSchema } from '../../shared/agents/specialists.ts'
 import { translate } from '../modules/localization.ts'
-import { sameOriginJsonFetch } from './json-transport.ts'
+import { sameOriginJsonFetch, type BrowserFetch } from './json-transport.ts'
 
 const Iso = z.iso.datetime()
 const Uuid = z.uuid()
@@ -476,7 +476,7 @@ const responseError = async (response: Response): Promise<AgentApiError> => {
   }
 }
 
-export const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> => {
+export const requestJson = async <T>(fetcher: BrowserFetch, csrfToken: string, path: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> => {
   const response = await sameOriginJsonFetch(fetcher, path, {
     credentials: 'same-origin',
     ...init,
@@ -496,7 +496,7 @@ export const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, p
   }
 }
 
-export const listAgentSessions = async (fetcher: typeof fetch, csrfToken: string, options: ListAgentSessionsOptions = {}): Promise<AgentSessionPage> => {
+export const listAgentSessions = async (fetcher: BrowserFetch, csrfToken: string, options: ListAgentSessionsOptions = {}): Promise<AgentSessionPage> => {
   const query = new URLSearchParams()
   if (options.limit !== undefined) {
     if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100)
@@ -519,10 +519,9 @@ export const listAgentSessions = async (fetcher: typeof fetch, csrfToken: string
   )
 }
 
-export const listAgentConversationFolders = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentConversationFolderView[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folders: z.array(ConversationFolder) }), { signal })).folders
+export const listAgentConversationFolders = async (fetcher: BrowserFetch, csrfToken: string, signal?: AbortSignal): Promise<AgentConversationFolderView[]> => (await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folders: z.array(ConversationFolder) }), { signal })).folders
 
-export const createAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, name: string): Promise<AgentConversationFolderView> => {
+export const createAgentConversationFolder = async (fetcher: BrowserFetch, csrfToken: string, name: string): Promise<AgentConversationFolderView> => {
   const normalizedName = assertFolderName(name)
   return (
     await requestJson(fetcher, csrfToken, '/_api/agents/conversation-folders', z.object({ folder: ConversationFolder }), {
@@ -532,13 +531,10 @@ export const createAgentConversationFolder = async (fetcher: typeof fetch, csrfT
   ).folder
 }
 
-export const renameAgentConversationFolder = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  folderId: string,
-  expectedVersion: number,
-  name: string
-): Promise<AgentConversationFolderView> => {
+export const renameAgentConversationFolder = async (fetcher: BrowserFetch, csrfToken: string,
+folderId: string,
+expectedVersion: number,
+name: string): Promise<AgentConversationFolderView> => {
   assertUuid(folderId, 'Folder ID')
   assertPositiveVersion(expectedVersion)
   const normalizedName = assertFolderName(name)
@@ -550,7 +546,7 @@ export const renameAgentConversationFolder = async (
   ).folder
 }
 
-export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfToken: string, folderId: string, expectedVersion: number): Promise<number> => {
+export const deleteAgentConversationFolder = async (fetcher: BrowserFetch, csrfToken: string, folderId: string, expectedVersion: number): Promise<number> => {
   assertUuid(folderId, 'Folder ID')
   assertPositiveVersion(expectedVersion)
   return (
@@ -564,23 +560,20 @@ export const deleteAgentConversationFolder = async (fetcher: typeof fetch, csrfT
   ).movedSessions
 }
 
-export const createAgentThread = (fetcher: typeof fetch, csrfToken: string, input: CreateAgentSessionRequest): Promise<CreatedAgentThread> => {
+export const createAgentThread = (fetcher: BrowserFetch, csrfToken: string, input: CreateAgentSessionRequest): Promise<CreatedAgentThread> => {
   return requestJson(fetcher, csrfToken, '/_api/agents/sessions', CreatedThread, {
     method: 'POST',
     body: JSON.stringify({ retention: input.retention })
   }) as Promise<CreatedAgentThread>
 }
 
-export const getAgentThread = (fetcher: typeof fetch, csrfToken: string, sessionId: string, signal?: AbortSignal): Promise<AgentThreadState> => {
+export const getAgentThread = (fetcher: BrowserFetch, csrfToken: string, sessionId: string, signal?: AbortSignal): Promise<AgentThreadState> => {
   assertUuid(sessionId, 'Session ID')
   return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, { signal }) as Promise<AgentThreadState>
 }
-export const moveAgentSessionToFolder = (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  sessionId: string,
-  input: UpdateAgentSessionFolderRequest
-): Promise<AgentThreadState> => {
+export const moveAgentSessionToFolder = (fetcher: BrowserFetch, csrfToken: string,
+sessionId: string,
+input: UpdateAgentSessionFolderRequest): Promise<AgentThreadState> => {
   assertUuid(sessionId, 'Session ID')
   assertPositiveVersion(input.expectedSessionVersion)
   if (input.folderId !== null) assertUuid(input.folderId, 'Folder ID')
@@ -590,12 +583,9 @@ export const moveAgentSessionToFolder = (
   }) as Promise<AgentThreadState>
 }
 
-export const updateAgentSession = (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  sessionId: string,
-  input: UpdateAgentSessionRequest
-): Promise<AgentThreadState> => {
+export const updateAgentSession = (fetcher: BrowserFetch, csrfToken: string,
+sessionId: string,
+input: UpdateAgentSessionRequest): Promise<AgentThreadState> => {
   assertUuid(sessionId, 'Session ID')
   assertPositiveVersion(input.expectedSessionVersion)
   return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, {
@@ -604,7 +594,7 @@ export const updateAgentSession = (
   }) as Promise<AgentThreadState>
 }
 
-export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: string, sessionId: string): Promise<void> => {
+export const deleteAgentSession = async (fetcher: BrowserFetch, csrfToken: string, sessionId: string): Promise<void> => {
   assertUuid(sessionId, 'Session ID')
   const response = await sameOriginJsonFetch(fetcher, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
@@ -613,7 +603,7 @@ export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: strin
   })
   if (!response.ok) throw await responseError(response)
 }
-export const clearUnfiledAgentHistory = async (fetcher: typeof fetch, csrfToken: string): Promise<void> => {
+export const clearUnfiledAgentHistory = async (fetcher: BrowserFetch, csrfToken: string): Promise<void> => {
   const response = await sameOriginJsonFetch(fetcher, '/_api/agents/sessions', {
     method: 'DELETE',
     credentials: 'same-origin',
@@ -622,73 +612,61 @@ export const clearUnfiledAgentHistory = async (fetcher: typeof fetch, csrfToken:
   if (!response.ok) throw await responseError(response)
 }
 
-export const getAgentMemories = (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<AgentMemoryView> =>
-  requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryView, { signal })
+export const getAgentMemories = (fetcher: BrowserFetch, csrfToken: string, signal?: AbortSignal): Promise<AgentMemoryView> => requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryView, { signal })
 
-export const createAgentMemory = (fetcher: typeof fetch, csrfToken: string, input: { readonly target: AgentMemoryTarget; readonly content: string }) =>
-  requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryMutation, { method: 'POST', body: JSON.stringify(input) })
+export const createAgentMemory = (fetcher: BrowserFetch, csrfToken: string, input: { readonly target: AgentMemoryTarget; readonly content: string }) => requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryMutation, { method: 'POST', body: JSON.stringify(input) })
 
-export const updateAgentMemory = (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  memoryId: string,
-  input: { readonly expectedVersion: number; readonly target: AgentMemoryTarget; readonly content: string }
-) => requestJson(fetcher, csrfToken, `/_api/agents/memories/${encodeURIComponent(memoryId)}`, MemoryMutation, { method: 'PUT', body: JSON.stringify(input) })
+export const updateAgentMemory = (fetcher: BrowserFetch, csrfToken: string,
+memoryId: string,
+input: { readonly expectedVersion: number; readonly target: AgentMemoryTarget; readonly content: string }) => requestJson(fetcher, csrfToken, `/_api/agents/memories/${encodeURIComponent(memoryId)}`, MemoryMutation, { method: 'PUT', body: JSON.stringify(input) })
 
-export const removeAgentMemory = (fetcher: typeof fetch, csrfToken: string, memoryId: string, expectedVersion: number) =>
-  requestJson(
-    fetcher,
-    csrfToken,
-    `/_api/agents/memories/${encodeURIComponent(memoryId)}?expectedVersion=${encodeURIComponent(String(expectedVersion))}`,
-    MemoryMutation,
-    { method: 'DELETE' }
-  )
+export const removeAgentMemory = (fetcher: BrowserFetch, csrfToken: string, memoryId: string, expectedVersion: number) => requestJson(
+  fetcher,
+  csrfToken,
+  `/_api/agents/memories/${encodeURIComponent(memoryId)}?expectedVersion=${encodeURIComponent(String(expectedVersion))}`,
+  MemoryMutation,
+  { method: 'DELETE' }
+)
 
-export const clearAgentMemories = async (fetcher: typeof fetch, csrfToken: string): Promise<number> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/memories', z.object({ removed: z.number().int().nonnegative() }), { method: 'DELETE' })).removed
+export const clearAgentMemories = async (fetcher: BrowserFetch, csrfToken: string): Promise<number> => (await requestJson(fetcher, csrfToken, '/_api/agents/memories', z.object({ removed: z.number().int().nonnegative() }), { method: 'DELETE' })).removed
 
-export const submitAgentMessage = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: SubmitAgentMessageRequest) =>
-  (
-    await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/messages`, z.object({ run: Run, replayed: z.boolean() }), {
-      method: 'POST',
-      body: JSON.stringify(input)
-    })
-  ).run
-
-export const cancelAgentRun = async (fetcher: typeof fetch, csrfToken: string, runId: string) =>
-  (
-    await requestJson(
-      fetcher,
-      csrfToken,
-      `/_api/agents/runs/${encodeURIComponent(runId)}/cancel`,
-      z.object({ run: z.object({ id: Uuid, status: RunStatus }).passthrough() }),
-      { method: 'POST' }
-    )
-  ).run
-export const createAgentGoal = async (fetcher: typeof fetch, csrfToken: string, sessionId: string, input: CreateAgentGoalRequest) =>
-  requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/goals`, z.object({ goal: Goal, run: Run, replayed: z.boolean() }), {
+export const submitAgentMessage = async (fetcher: BrowserFetch, csrfToken: string, sessionId: string, input: SubmitAgentMessageRequest) => (
+  await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/messages`, z.object({ run: Run, replayed: z.boolean() }), {
     method: 'POST',
     body: JSON.stringify(input)
   })
+).run
 
-export const pauseAgentGoal = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: PauseAgentGoalRequest) =>
-  (
-    await requestJson(fetcher, csrfToken, `/_api/agents/goals/${encodeURIComponent(goalId)}/pause`, z.object({ goal: Goal }), {
-      method: 'POST',
-      body: JSON.stringify(input)
-    })
-  ).goal
-
-export const resumeAgentGoal = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: ResumeAgentGoalRequest) =>
-  requestJson(
+export const cancelAgentRun = async (fetcher: BrowserFetch, csrfToken: string, runId: string) => (
+  await requestJson(
     fetcher,
     csrfToken,
-    `/_api/agents/goals/${encodeURIComponent(goalId)}/resume`,
-    z.object({ goal: Goal, run: Run.nullable(), replayed: z.boolean() }),
-    { method: 'POST', body: JSON.stringify(input) }
+    `/_api/agents/runs/${encodeURIComponent(runId)}/cancel`,
+    z.object({ run: z.object({ id: Uuid, status: RunStatus }).passthrough() }),
+    { method: 'POST' }
   )
+).run
+export const createAgentGoal = async (fetcher: BrowserFetch, csrfToken: string, sessionId: string, input: CreateAgentGoalRequest) => requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/goals`, z.object({ goal: Goal, run: Run, replayed: z.boolean() }), {
+  method: 'POST',
+  body: JSON.stringify(input)
+})
 
-export const renewAgentGoalBudget = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: RenewAgentGoalBudgetRequest) => {
+export const pauseAgentGoal = async (fetcher: BrowserFetch, csrfToken: string, goalId: string, input: PauseAgentGoalRequest) => (
+  await requestJson(fetcher, csrfToken, `/_api/agents/goals/${encodeURIComponent(goalId)}/pause`, z.object({ goal: Goal }), {
+    method: 'POST',
+    body: JSON.stringify(input)
+  })
+).goal
+
+export const resumeAgentGoal = async (fetcher: BrowserFetch, csrfToken: string, goalId: string, input: ResumeAgentGoalRequest) => requestJson(
+  fetcher,
+  csrfToken,
+  `/_api/agents/goals/${encodeURIComponent(goalId)}/resume`,
+  z.object({ goal: Goal, run: Run.nullable(), replayed: z.boolean() }),
+  { method: 'POST', body: JSON.stringify(input) }
+)
+
+export const renewAgentGoalBudget = async (fetcher: BrowserFetch, csrfToken: string, goalId: string, input: RenewAgentGoalBudgetRequest) => {
   assertUuid(goalId, 'Goal ID')
   assertPositiveVersion(input.expectedVersion)
   assertUuid(input.runId, 'Run ID')
@@ -703,82 +681,62 @@ export const renewAgentGoalBudget = async (fetcher: typeof fetch, csrfToken: str
   )
 }
 
-export const cancelAgentGoal = async (fetcher: typeof fetch, csrfToken: string, goalId: string, input: CancelAgentGoalRequest) =>
-  (
-    await requestJson(fetcher, csrfToken, `/_api/agents/goals/${encodeURIComponent(goalId)}/cancel`, z.object({ goal: Goal }), {
-      method: 'POST',
-      body: JSON.stringify(input)
-    })
-  ).goal
+export const cancelAgentGoal = async (fetcher: BrowserFetch, csrfToken: string, goalId: string, input: CancelAgentGoalRequest) => (
+  await requestJson(fetcher, csrfToken, `/_api/agents/goals/${encodeURIComponent(goalId)}/cancel`, z.object({ goal: Goal }), {
+    method: 'POST',
+    body: JSON.stringify(input)
+  })
+).goal
 
-export const decideAgentProposal = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  proposalId: string,
-  approvalId: string,
-  input: DecideAgentApprovalRequest
-) =>
-  requestJson(
-    fetcher,
-    csrfToken,
-    `/_api/agents/proposals/${encodeURIComponent(proposalId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
-    z.object({
-      proposalId: Uuid,
-      approvalId: Uuid,
-      status: z.enum(['approved', 'denied']),
-      decidedAt: Iso
-    }),
-    { method: 'POST', body: JSON.stringify(input) }
-  )
+export const decideAgentProposal = async (fetcher: BrowserFetch, csrfToken: string,
+proposalId: string,
+approvalId: string,
+input: DecideAgentApprovalRequest) => requestJson(
+  fetcher,
+  csrfToken,
+  `/_api/agents/proposals/${encodeURIComponent(proposalId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+  z.object({
+    proposalId: Uuid,
+    approvalId: Uuid,
+    status: z.enum(['approved', 'denied']),
+    decidedAt: Iso
+  }),
+  { method: 'POST', body: JSON.stringify(input) }
+)
 
-export const getMcpAgentProposal = async (fetcher: typeof fetch, csrfToken: string, proposalId: string, signal?: AbortSignal): Promise<McpAgentProposal> =>
-  (await requestJson(fetcher, csrfToken, `/_api/agents/mcp-proposals/${encodeURIComponent(proposalId)}`, z.object({ proposal: McpProposal }), { signal }))
-    .proposal
+export const getMcpAgentProposal = async (fetcher: BrowserFetch, csrfToken: string, proposalId: string, signal?: AbortSignal): Promise<McpAgentProposal> => (await requestJson(fetcher, csrfToken, `/_api/agents/mcp-proposals/${encodeURIComponent(proposalId)}`, z.object({ proposal: McpProposal }), { signal }))
+  .proposal
 
-export const listAgentSkills = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<VisibleAgentSkill[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/skills', z.object({ skills: z.array(VisibleSkill) }), { signal })).skills
+export const listAgentSkills = async (fetcher: BrowserFetch, csrfToken: string, signal?: AbortSignal): Promise<VisibleAgentSkill[]> => (await requestJson(fetcher, csrfToken, '/_api/agents/skills', z.object({ skills: z.array(VisibleSkill) }), { signal })).skills
 
-export const listPersonalAgentSkills = async (fetcher: typeof fetch, csrfToken: string, signal?: AbortSignal): Promise<PersonalAgentSkill[]> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/personal-skills', z.object({ skills: z.array(PersonalSkill) }), { signal })).skills
+export const listPersonalAgentSkills = async (fetcher: BrowserFetch, csrfToken: string, signal?: AbortSignal): Promise<PersonalAgentSkill[]> => (await requestJson(fetcher, csrfToken, '/_api/agents/personal-skills', z.object({ skills: z.array(PersonalSkill) }), { signal })).skills
 
-export const createPersonalAgentSkill = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  input: { readonly name: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }
-): Promise<PersonalAgentSkill> =>
-  (await requestJson(fetcher, csrfToken, '/_api/agents/personal-skills', z.object({ skill: PersonalSkill }), { method: 'POST', body: JSON.stringify(input) }))
-    .skill
+export const createPersonalAgentSkill = async (fetcher: BrowserFetch, csrfToken: string,
+input: { readonly name: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }): Promise<PersonalAgentSkill> => (await requestJson(fetcher, csrfToken, '/_api/agents/personal-skills', z.object({ skill: PersonalSkill }), { method: 'POST', body: JSON.stringify(input) }))
+  .skill
 
-export const updatePersonalAgentSkill = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  skillId: string,
-  input: { readonly expectedVersionId: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }
-): Promise<PersonalAgentSkill> =>
-  (
-    await requestJson(fetcher, csrfToken, `/_api/agents/personal-skills/${encodeURIComponent(skillId)}`, z.object({ skill: PersonalSkill }), {
-      method: 'PUT',
-      body: JSON.stringify(input)
-    })
-  ).skill
+export const updatePersonalAgentSkill = async (fetcher: BrowserFetch, csrfToken: string,
+skillId: string,
+input: { readonly expectedVersionId: string; readonly skillMarkdown: string; readonly isAgentDiscoverable: boolean }): Promise<PersonalAgentSkill> => (
+  await requestJson(fetcher, csrfToken, `/_api/agents/personal-skills/${encodeURIComponent(skillId)}`, z.object({ skill: PersonalSkill }), {
+    method: 'PUT',
+    body: JSON.stringify(input)
+  })
+).skill
 
-export const removePersonalAgentSkill = async (fetcher: typeof fetch, csrfToken: string, skillId: string, expectedVersionId: string): Promise<void> => {
+export const removePersonalAgentSkill = async (fetcher: BrowserFetch, csrfToken: string, skillId: string, expectedVersionId: string): Promise<void> => {
   await requestJson(fetcher, csrfToken, `/_api/agents/personal-skills/${encodeURIComponent(skillId)}`, z.object({ deleted: z.literal(true) }), {
     method: 'DELETE',
     body: JSON.stringify({ expectedVersionId })
   })
 }
-export const updateAgentSkillPreferences = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  input: UpdateAgentSkillPreferencesRequest
-): Promise<readonly string[]> =>
-  (
-    await requestJson(fetcher, csrfToken, '/_api/agents/skill-preferences', z.object({ skillIds: z.array(Uuid).max(8) }), {
-      method: 'PUT',
-      body: JSON.stringify({ ...input, transportRequestId: crypto.randomUUID() })
-    })
-  ).skillIds
+export const updateAgentSkillPreferences = async (fetcher: BrowserFetch, csrfToken: string,
+input: UpdateAgentSkillPreferencesRequest): Promise<readonly string[]> => (
+  await requestJson(fetcher, csrfToken, '/_api/agents/skill-preferences', z.object({ skillIds: z.array(Uuid).max(8) }), {
+    method: 'PUT',
+    body: JSON.stringify({ ...input, transportRequestId: crypto.randomUUID() })
+  })
+).skillIds
 
 export const subscribeAgentRun = (
   runId: string,
@@ -802,14 +760,11 @@ export const subscribeAgentRun = (
 
 export const agentMediaContentUrl = (id: string): string => `/_api/agents/media/${encodeURIComponent(id)}/content`
 
-export const uploadAgentMedia = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  sessionId: string,
-  file: File,
-  signal?: AbortSignal,
-  purpose: 'attachment' | 'transcription' = 'attachment'
-): Promise<AgentMediaView> => {
+export const uploadAgentMedia = async (fetcher: BrowserFetch, csrfToken: string,
+sessionId: string,
+file: File,
+signal?: AbortSignal,
+purpose: 'attachment' | 'transcription' = 'attachment'): Promise<AgentMediaView> => {
   assertUuid(sessionId, 'Session ID')
   const body = new FormData()
   body.append('file', file)
@@ -827,13 +782,10 @@ export const uploadAgentMedia = async (
     )
   ).media
 }
-export const attachAgentAsset = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  sessionId: string,
-  assetId: number,
-  signal?: AbortSignal
-): Promise<AgentMediaView> => {
+export const attachAgentAsset = async (fetcher: BrowserFetch, csrfToken: string,
+sessionId: string,
+assetId: number,
+signal?: AbortSignal): Promise<AgentMediaView> => {
   assertUuid(sessionId, 'Session ID')
   if (!Number.isSafeInteger(assetId) || assetId < 1) throw new Error('Asset ID must be a positive integer')
   return (
@@ -844,7 +796,7 @@ export const attachAgentAsset = async (
     })
   ).media
 }
-export const deleteAgentMedia = async (fetcher: typeof fetch, csrfToken: string, id: string): Promise<void> => {
+export const deleteAgentMedia = async (fetcher: BrowserFetch, csrfToken: string, id: string): Promise<void> => {
   assertUuid(id, 'Media ID')
   const response = await fetcher(`/_api/agents/media/${encodeURIComponent(id)}`, {
     method: 'DELETE',
@@ -853,25 +805,20 @@ export const deleteAgentMedia = async (fetcher: typeof fetch, csrfToken: string,
   })
   if (!response.ok) throw await responseError(response)
 }
-export const startAgentTranscription = async (
-  fetcher: typeof fetch,
-  csrfToken: string,
-  sessionId: string,
-  input: { clientRequestId: string; expectedSessionVersion: number; profileResolutionToken: string; attachmentId: string },
-  signal?: AbortSignal
-): Promise<string> =>
-  (
-    await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/transcriptions`, z.object({ runId: Uuid }), {
-      method: 'POST',
-      body: JSON.stringify(input),
-      signal
-    })
-  ).runId
-export const getAgentTranscription = (fetcher: typeof fetch, csrfToken: string, runId: string, signal?: AbortSignal) =>
-  requestJson(
-    fetcher,
-    csrfToken,
-    `/_api/agents/runs/${encodeURIComponent(runId)}/transcription`,
-    z.object({ status: RunStatus, text: z.string().optional() }),
-    { signal }
-  )
+export const startAgentTranscription = async (fetcher: BrowserFetch, csrfToken: string,
+sessionId: string,
+input: { clientRequestId: string; expectedSessionVersion: number; profileResolutionToken: string; attachmentId: string },
+signal?: AbortSignal): Promise<string> => (
+  await requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/transcriptions`, z.object({ runId: Uuid }), {
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal
+  })
+).runId
+export const getAgentTranscription = (fetcher: BrowserFetch, csrfToken: string, runId: string, signal?: AbortSignal) => requestJson(
+  fetcher,
+  csrfToken,
+  `/_api/agents/runs/${encodeURIComponent(runId)}/transcription`,
+  z.object({ status: RunStatus, text: z.string().optional() }),
+  { signal }
+)

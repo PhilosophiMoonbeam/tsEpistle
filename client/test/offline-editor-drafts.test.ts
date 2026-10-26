@@ -545,6 +545,7 @@ describe('offline editor draft coordinator', () => {
       .map(write => write.envelope)
       .pop()
     expect(expectedFork).toBeDefined()
+    if (!expectedFork) throw new Error('Expected a surviving ordinary draft fork')
     expect(storage.deletes).toHaveLength(0)
     expect(storage.finalizations).toHaveLength(1)
     const finalization = storage.finalizations[0]!

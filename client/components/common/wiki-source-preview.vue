@@ -1,12 +1,14 @@
 <template>
   <Teleport to="body">
+    <!-- biome-ignore lint/a11y/noStaticElementInteractions: Backdrop-only pointer dismissal supplements the named Close button and focus-scope Escape handling. -->
     <div ref="backdrop" class="wiki-source-preview" :class="themeClasses" @mousedown.self="emit('close')">
       <section ref="panel" class="wiki-source-preview__panel" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1" :aria-busy="loading">
         <header class="wiki-source-preview__header">
           <div><p class="wiki-source-preview__eyebrow">{{ $t('common:wikiSourcePreview.sourceNotebook') }}</p><h2 :id="titleId">{{ source?.title || $t('common:wikiSourcePreview.readLittleCloser') }}</h2></div>
           <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:wikiSourcePreview.closeSourcePreview')" @click="emit('close')" />
         </header>
-        <div class="wiki-source-preview__body" tabindex="0" role="region" :aria-label="$t('common:wikiSourcePreview.sourceExcerpt')">
+        <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This named overflow-y scroll region must remain keyboard-focusable to scroll the excerpt. -->
+        <section class="wiki-source-preview__body" tabindex="0" :aria-label="$t('common:wikiSourcePreview.sourceExcerpt')">
           <div v-if="loading" class="wiki-source-preview__state" role="status"><v-progress-circular indeterminate size="24" width="2" /><p>{{ $t('common:wikiSourcePreview.openingSource') }}</p></div>
           <div v-else-if="error" class="wiki-source-preview__state" role="alert"><v-icon icon="mdi-file-hidden" size="30" /><p>{{ error }}</p><v-btn variant="tonal" @click="loadSource">{{ $t('common:wikiSourcePreview.tryAgain') }}</v-btn></div>
           <template v-else-if="source">
@@ -18,7 +20,7 @@
             <p v-else class="wiki-source-preview__empty">{{ $t('common:wikiSourcePreview.pageHasNoPreview') }}</p>
             <p v-if="source.excerptTruncated" class="wiki-source-preview__footnote">{{ $t('common:wikiSourcePreview.excerptCurrentPageOpen') }}</p>
           </template>
-        </div>
+        </section>
         <footer v-if="source && !loading && !error" class="wiki-source-preview__actions">
           <div class="wiki-source-preview__action-buttons">
             <v-btn :href="wikiSourceHref(source)" target="_blank" rel="noopener noreferrer" variant="text" append-icon="mdi-open-in-new">{{ $t('common:wikiSourcePreview.openPage') }}<span class="sr-only"> {{ $t('common:wikiSourcePreview.newTab') }}</span></v-btn>

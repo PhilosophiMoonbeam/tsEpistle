@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.client.json",
+  "compilerOptions": {
+    "types": ["vite/client", "bun", "node"],
+    "allowJs": false,
+    "checkJs": false,
+    "noEmit": true
+  },
+  "include": [
+    "client/**/*.test.ts",
+    "client/test/**/*.mts",
+    "client/**/*.d.ts",
+    "server/global.d.ts"
+  ],
+  "exclude": [
+    "client/**/*.js",
+    "node_modules",
+    "assets"
+  ]
+}

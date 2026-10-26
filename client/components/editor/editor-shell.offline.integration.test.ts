@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
-import { markRaw, reactive, toRaw, watch } from 'vue'
+import { markRaw, reactive, toRaw, watch, type Raw } from 'vue'
 import _ from 'lodash'
 import * as ts from 'typescript'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
@@ -27,6 +27,8 @@ import type {
   OfflineSubmissionFinalizationResult
 } from '../../helpers/offline-storage.ts'
 import { isPageRenderPending, type PageWriteInput, updatePage, waitForPageRender } from '../../helpers/pages-api.ts'
+import type { EditorAdapterController, EditorAdapterSafety as AdapterSafety } from './common/editor-adapter.ts'
+import type { BrowserFetch as Fetch } from '../../helpers/json-transport.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const ORIGIN = 'https://wiki.example.test'
@@ -115,7 +117,7 @@ type EditorStore = {
 }
 
 type TestWindow = {
-  fetch: typeof fetch
+  fetch: Fetch
   location: {
     origin: string
     assigned: string[]
@@ -128,22 +130,14 @@ type TestWindow = {
   setTimeout: (handler: () => void, delay?: number) => number
 }
 
-type AdapterSafety = {
-  ready: boolean
-  editVersion: number
-  nonPersisted: boolean
-  mergeDirty: boolean
-  collaborationBacklog: number
-  revision: string
-}
+type Adapter = Pick<EditorAdapterController, 'capture' | 'snapshot' | 'onState' | 'markPersisted' | 'noteTextChange' | 'clear'>
 
-type Adapter = {
-  capture: () => { text: string; editVersion: number }
-  snapshot: () => AdapterSafety
-  onState: (listener: (safety: AdapterSafety) => void) => () => void
-  markPersisted: (editVersion?: number) => void
-  noteTextChange: () => void
-  clear: () => void
+type SavedState = Omit<EditorStore['page'], 'id' | 'sourceRevision' | 'okfLoading' | 'okfError'> & { content: string }
+type SaveCapture = SavedState & {
+  readonly pageInput: PageWriteInput
+  readonly changeReason: string
+  readonly editVersion: number
+  readonly identity: OfflineEditorDraftIdentity
 }
 
 type ShellBehavior = {
@@ -159,10 +153,10 @@ type ShellBehavior = {
 
 type ShellContext = {
   [key: string]: unknown
-  savedState: Record<string, unknown>
+  savedState: SavedState
   editorAdapter: Adapter
   editorAdapterSafety: AdapterSafety
-  offlineDraftCoordinator: OfflineEditorDraftCoordinator | null
+  offlineDraftCoordinator: Raw<OfflineEditorDraftCoordinator> | null
   offlineDraftStatus: string | null
   offlineDraftError: string
   offlineSubmissionCandidates: unknown[]
@@ -184,7 +178,7 @@ type ShellContext = {
   offlineDraftMutationBlocked: boolean
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
   saveAndClose: () => Promise<boolean>
-  navigateToSavedPage: (capture: { content: string; editVersion: number }, requireReloadSafety?: boolean) => Promise<boolean>
+  navigateToSavedPage: (capture: SaveCapture, requireReloadSafety?: boolean) => Promise<boolean>
   setupOfflineDraftCoordinator: () => void
   initializeOfflineDrafts: () => Promise<void>
   resolveOfflineSubmission: (resolution: 'discard' | 'continue') => Promise<void>
@@ -195,7 +189,7 @@ type ShellContext = {
 const evaluateShellBehavior = (
   store: EditorStore,
   testWindow: TestWindow,
-  fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>,
+  fetchPage: (fetcher: Fetch, id: number, fallback: string) => Promise<unknown>,
   coordinatorClass: typeof OfflineEditorDraftCoordinator = OfflineEditorDraftCoordinator
 ): ShellBehavior => {
   const freezePageInput = (input: PageWriteInput): PageWriteInput => {
@@ -401,11 +395,11 @@ const keyContext: DraftKeyContext = {
   keyVersion: OFFLINE_KEY_VERSION
 }
 const keyFetch = async (): Promise<Response> =>
-  new Response(encodeKeyFrame(keyContext) as unknown as BodyInit, {
+  new Response(new Uint8Array(encodeKeyFrame(keyContext)).buffer, {
     status: 200,
     headers: { 'content-type': 'application/octet-stream' }
   })
-const keyFetchImpl = keyFetch as unknown as typeof fetch
+const keyFetchImpl: Fetch = keyFetch
 const identity = (baseSourceRevision = '1', baseUpdatedAt = '2026-09-03T11:00:00.000Z'): OfflineEditorDraftIdentity => ({
   editorKey: 'markdown',
   pageId: 12,
@@ -469,7 +463,7 @@ const createStore = (): EditorStore => ({
   }
 })
 
-const createTestWindow = (fetchImpl: typeof fetch): TestWindow => {
+const createTestWindow = (fetchImpl: Fetch): TestWindow => {
   const location = {
     origin: ORIGIN,
     assigned: [] as string[],
@@ -496,7 +490,7 @@ const createShellContext = (
   store: EditorStore,
   testWindow: TestWindow,
   coordinator: OfflineEditorDraftCoordinator | null,
-  fetchPage: (fetcher: typeof fetch, id: number, fallback: string) => Promise<unknown>,
+  fetchPage: (fetcher: Fetch, id: number, fallback: string) => Promise<unknown>,
   options: { reactiveHost?: boolean; coordinatorClass?: typeof OfflineEditorDraftCoordinator } = {}
 ): ShellContext => {
   const behavior = evaluateShellBehavior(store, testWindow, fetchPage, options.coordinatorClass)
@@ -592,7 +586,7 @@ const createShellContext = (
     offlineSubmissionCandidates: [],
     offlineDraftCandidate: null,
     offlineReconcilePrompt: null,
-    offlineDraftCoordinator: coordinator,
+    offlineDraftCoordinator: coordinator === null ? null : markRaw(coordinator),
     submissionCaptureValues: null,
     submissionCaptureIdentity: null,
     safetyRevision: 0,
@@ -727,7 +721,7 @@ describe('composed editor offline submission boundary', () => {
           if (url.href === `${ORIGIN}/_api/offline/draft-key` && method === 'POST') return keyFetch()
           if (url.href === `${ORIGIN}/_api/pages/12` && method === 'PUT') {
             updateCalls += 1
-            const submittedPage = JSON.parse(String(init.body))
+            const submittedPage = JSON.parse(String(init?.body))
             submittedContent = submittedPage.content
             submittedPageFeatures = submittedPage.pageFeatures
             events.push('source-write')
@@ -758,7 +752,7 @@ describe('composed editor offline submission boundary', () => {
           }
           throw new Error(`Unexpected request: ${url}`)
         }
-        const testWindow = createTestWindow(fetchImpl as typeof fetch)
+        const testWindow = createTestWindow(fetchImpl)
         const assign = testWindow.location.assign.bind(testWindow.location)
         testWindow.location.assign = url => {
           events.push('reader-navigation')
@@ -1035,8 +1029,12 @@ describe('composed editor offline submission boundary', () => {
     expect(sameEnvelope(storage.records.get(receipt.recordId)!, receipt)).toBe(true)
 
     await shell.initializeOfflineDrafts()
-    expect(shell.offlineDraftStatus).toBe('outcome-unknown')
-    expect(toRaw(shell.offlineSubmissionCandidates)).toMatchObject([
+    const reinitialized: Pick<ShellContext, 'offlineDraftStatus' | 'offlineSubmissionCandidates'> = {
+      offlineDraftStatus: shell.offlineDraftStatus,
+      offlineSubmissionCandidates: toRaw(shell.offlineSubmissionCandidates)
+    }
+    expect(reinitialized.offlineDraftStatus).toBe('outcome-unknown')
+    expect(reinitialized.offlineSubmissionCandidates).toMatchObject([
       {
         submission: { recordId: receipt.recordId },
         payload: { content: 'A', state: 'outcome-unknown' }
@@ -1184,7 +1182,7 @@ describe('composed editor offline submission boundary', () => {
       }
       throw new Error(`Unexpected page request: ${url}`)
     }
-    const testWindow = createTestWindow(pageFetch as typeof fetch)
+    const testWindow = createTestWindow(pageFetch)
     installWindow(testWindow)
     const store = createStore()
     const identityForCoordinator = (): OfflineEditorDraftIdentity => identity(store.page.sourceRevision, store.editor.checkoutDateActive)
@@ -1270,7 +1268,7 @@ describe('composed editor offline submission boundary', () => {
       }
       throw new Error(`Unexpected page request: ${url}`)
     }
-    const testWindow = createTestWindow(pageFetch as typeof fetch)
+    const testWindow = createTestWindow(pageFetch)
     installWindow(testWindow)
     const store = createStore()
     let context: ShellContext | null = null

@@ -144,14 +144,16 @@ async function mount(canEdit = true, transport: PublicationTransport = {}) {
     errors: unknown[] = []
   const initial = note(canEdit)
   const api = {
-    read: vi.fn(async () => initial),
-    session: vi.fn(async () => ({ key: initial.key, token: 'token', websocketPath: '/_api/live-notes/_socket', expiresAt: '2099-01-01T00:00:00.000Z' })),
-    history: vi.fn(async () => ({ items: [], hasMore: false, nextCursor: null })),
-    revision: vi.fn(),
-    restore: vi.fn(),
-    access: vi.fn(),
-    remove: vi.fn()
-  } as unknown as LiveNotesApi
+    list: vi.fn<LiveNotesApi['list']>(async () => { throw new Error('Unexpected note inventory request') }),
+    create: vi.fn<LiveNotesApi['create']>(async () => { throw new Error('Unexpected note creation request') }),
+    read: vi.fn<LiveNotesApi['read']>(async () => initial),
+    session: vi.fn<LiveNotesApi['session']>(async () => ({ key: initial.key, token: 'token', websocketPath: '/_api/live-notes/_socket', expiresAt: '2099-01-01T00:00:00.000Z' })),
+    history: vi.fn<LiveNotesApi['history']>(async () => ({ items: [], hasMore: false, nextCursor: null })),
+    revision: vi.fn<LiveNotesApi['revision']>(async () => { throw new Error('Unexpected note revision request') }),
+    restore: vi.fn<LiveNotesApi['restore']>(async () => { throw new Error('Unexpected note restoration request') }),
+    access: vi.fn<LiveNotesApi['access']>(async () => { throw new Error('Unexpected note access mutation') }),
+    remove: vi.fn<LiveNotesApi['remove']>(async () => { throw new Error('Unexpected note deletion request') })
+  } satisfies LiveNotesApi
   const store = Vue.reactive({
     authRefreshOutcome: 'authenticated' as string | null,
     offlineIdentityEpoch: 1,
@@ -513,7 +515,7 @@ for (const boundary of ['identity', 'permission', 'source'] as const) {
     await settle()
     if (boundary === 'identity') mounted.store.user.id = 2
     else if (boundary === 'permission') {
-      vi.mocked(mounted.api.read).mockRejectedValue(new LiveNotesApiError(403, 'NOTE_FORBIDDEN', 'Access revoked'))
+      mounted.api.read.mockRejectedValue(new LiveNotesApiError(403, 'NOTE_FORBIDDEN', 'Access revoked'))
       mounted.store.user.permissions = []
     } else mounted.sockets[0].message({ type: 'error', code: 'NOTE_FORBIDDEN', error: 'Source no longer accessible' })
     await settle()
@@ -557,13 +559,13 @@ it('previews history separately and restores into the same live document using t
   server.getText('content').insert(server.getText('content').length, '\nNewer text')
   mounted.sockets[0].message({ type: 'sync', note: note(true, 1) })
   await settle()
-  vi.mocked(mounted.api.history).mockResolvedValue({
+  mounted.api.history.mockResolvedValue({
     items: [{ revision: 0, title: 'Original', actorId: 1, createdAt: '2026-10-22T00:00:00.000Z' }],
     hasMore: false,
     nextCursor: null
   })
-  vi.mocked(mounted.api.revision).mockResolvedValue(historical)
-  vi.mocked(mounted.api.restore).mockImplementation(async () => {
+  mounted.api.revision.mockResolvedValue(historical)
+  mounted.api.restore.mockImplementation(async () => {
     server.transact(() => {
       const text = server.getText('content')
       text.delete(0, text.length)
@@ -588,7 +590,7 @@ it('previews history separately and restores into the same live document using t
 
 it('blocks repeated stale metadata mutations until current access has been refreshed and reviewed', async () => {
   const mounted = await mount()
-  vi.mocked(mounted.api.access).mockRejectedValue(new LiveNotesApiError(409, 'NOTE_CONFLICT', 'Changed elsewhere'))
+  mounted.api.access.mockRejectedValue(new LiveNotesApiError(409, 'NOTE_CONFLICT', 'Changed elsewhere'))
   const select = mounted.host.querySelector<HTMLSelectElement>('.live-note__management select')!
   select.value = 'read'
   select.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
@@ -652,7 +654,7 @@ for (const boundary of ['identity', 'permission', 'source'] as const) {
     expect(mounted.writes).toHaveLength(1)
     if (boundary === 'identity') mounted.store.user.id = 2
     else if (boundary === 'permission') {
-      vi.mocked(mounted.api.read).mockRejectedValue(new LiveNotesApiError(403, 'NOTE_FORBIDDEN', 'Access revoked'))
+      mounted.api.read.mockRejectedValue(new LiveNotesApiError(403, 'NOTE_FORBIDDEN', 'Access revoked'))
       mounted.store.user.permissions = []
     } else mounted.sockets[0].message({ type: 'error', code: 'NOTE_FORBIDDEN', error: 'Source access revoked' })
     await settle()

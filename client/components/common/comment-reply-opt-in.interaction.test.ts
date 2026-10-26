@@ -123,7 +123,7 @@ const mount = async (transport: (url: string, init?: RequestInit) => Promise<Res
   wikiStore.page.id = 9
   Object.assign(wikiStore.page.effectivePermissions.comments, { read: true, write: true })
   const fetch = vi.fn(transport)
-  browserWindow.fetch = fetch as typeof browserWindow.fetch
+  browserWindow.fetch = (input, init) => fetch(String(input), init)
   const props = Vue.reactive({ pageId: 9, contributionId: 42, authorized: true })
   const dismiss = vi.fn()
   const host = document.createElement('div')
@@ -169,7 +169,7 @@ describe('post-contribution reply notification consent', () => {
     expect(writes(view.fetch)).toHaveLength(0)
     const buttons = view.host.querySelectorAll<HTMLButtonElement>('button')
     buttons[buttons.length - 1]!.click()
-    expect(view.dismiss).toHaveBeenCalledOnce()
+    expect(view.dismiss).toHaveBeenCalledTimes(1)
     view.unmount()
     expect(writes(view.fetch)).toHaveLength(0)
   })
@@ -196,7 +196,7 @@ describe('post-contribution reply notification consent', () => {
       table.string('id').primary()
     })
     await upNotificationPreferences(knex)
-    const owner = { id: 7, email: 'reader@example.test' } as Express.User
+    const owner = { id: 7, email: 'reader@example.test' }
     await knex('users').insert({ id: owner.id, email: owner.email })
     Reflect.set(globalThis, 'WIKI', { models: { knex } })
     const operations = await vi.importFresh<typeof NotificationPreferenceOperations>(

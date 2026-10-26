@@ -4,7 +4,7 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it } from '../../server/test/bun-test.mts'
 import { document, resetBody, setLocation } from '../test/browser-dom.mts'
-import type { ComponentOptions, RenderFunction } from 'vue'
+import type { App, ComponentOptions, RenderFunction } from 'vue'
 
 const filename = path.join(process.cwd(), 'client/components/page-unlock.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
@@ -52,7 +52,7 @@ const passthrough = (tag = 'div') =>
     }
   })
 
-let app: { unmount: () => void } | undefined
+let app: App | undefined
 afterEach(() => {
   app?.unmount()
   app = undefined

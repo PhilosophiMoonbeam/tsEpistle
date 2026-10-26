@@ -468,9 +468,6 @@ function focusComponent (ref: unknown): void {
 
 export default {
   mixins: [passwordPolicyMixin],
-  i18nOptions: {
-    namespaces: ['profile', 'auth']
-  },
   components: {
     AsyncState,
     ProfileMcpKeys,
@@ -654,7 +651,14 @@ export default {
         this.avatarError = ''
         this.avatarSuccess = ''
         this.cancelAvatarCrop()
-        if (this.accountId !== null && !this.disposed) void this.loadProfile()
+        if (this.disposed) return
+        if (this.accountId !== null) {
+          void this.loadProfile()
+        } else {
+          // Retired requests still release their own store loading reference in finally.
+          this.profileLoading = false
+          this.profileError = this.$t('profile:sessionRequired', { defaultValue: 'A current signed-in account is required. Sign in again, then retry loading your profile.' })
+        }
       }
     },
     // Theme and date/time changes preview at once; Reset, discard and unmount restore the saved values.
@@ -703,7 +707,14 @@ export default {
         const [profile, locales] = await Promise.all([fetchProfile(fetchImpl), fetchLocales(fetchImpl).catch((): LocaleRow[] => [])])
         if (this.disposed || generation !== this.profileGeneration) return false
         if (accountId === null || profile.id !== accountId || accountId !== this.accountId) {
-          await wikiStore.refreshAuth()
+          const outcome = await wikiStore.refreshAuth()
+          if (this.disposed || generation !== this.profileGeneration) return false
+          if (outcome === 'unavailable') {
+            throw new Error(this.$t('profile:sessionUnavailable', { defaultValue: 'Your session could not be verified. Retry loading your profile.' }))
+          }
+          if (this.accountId === null) {
+            throw new Error(this.$t('profile:sessionRequired', { defaultValue: 'A current signed-in account is required. Sign in again, then retry loading your profile.' }))
+          }
           throw new Error(this.$t('profile:accountChanged', { defaultValue: 'Your signed-in account changed. Reload your profile before saving.' }))
         }
         this.installedCommunicationLocales = locales.filter(locale => locale.isInstalled)

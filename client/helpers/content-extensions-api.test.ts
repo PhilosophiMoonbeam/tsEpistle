@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
-import { fetchContentExtensions } from './content-extensions-api.ts'
+import { fetchContentExtensions, type ContentExtensionStatus } from './content-extensions-api.ts'
 
 function jsonResponse (payload: unknown, ok = true) {
   return {
@@ -11,7 +11,7 @@ function jsonResponse (payload: unknown, ok = true) {
   }
 }
 
-const qrStatus = {
+const qrStatus: ContentExtensionStatus = {
   key: 'qr',
   version: 1,
   title: 'QR code',

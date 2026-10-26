@@ -35,7 +35,7 @@
         <template #append><v-btn variant="text" size="small" :loading="sourcesLoading" @click="loadSources">{{ t('retrySourceSearch') }}</v-btn></template>
       </v-alert>
 
-      <div class="skill-inventory-toolbar" role="search" :aria-label="t('searchOrganizationSkills')">
+      <search class="skill-inventory-toolbar" :aria-label="t('searchOrganizationSkills')">
         <v-text-field
           v-model="search"
           class="skill-inventory-toolbar__search"
@@ -55,7 +55,7 @@
           hide-details
           density="comfortable"
         />
-      </div>
+      </search>
 
       <div v-if="loaded" class="skill-inventory-summary" aria-live="polite">
         <span><strong>{{ filteredSkills.length }}</strong> {{ t('organizationSkills', { skillsCount: skills.length, interpolation: { escapeValue: false } }) }}</span>
@@ -209,16 +209,22 @@
         <v-alert v-if="preview.previousSkillMarkdown !== null && reviewLinesTruncated" class="skill-boundary review-diff-notice" type="info" variant="tonal" density="compact">
           {{ t('showingFirstLinesRead', { MAX_REVIEW_LINES, reviewLineCount, interpolation: { escapeValue: false } }) }}
         </v-alert>
-        <div v-if="preview.previousSkillMarkdown !== null" class="review-diff" role="table" :aria-label="t('skillRevisionChanges')">
-          <div class="review-diff__header" role="row"><span role="columnheader">{{ t('candidateRevision') }}</span><span role="columnheader">{{ t('previouslyApproved') }}</span></div>
-          <div v-for="line in reviewLines" :key="line.key" class="review-diff__row" :class="`review-diff__row--${line.kind}`" role="row">
-            <code role="cell">{{ line.candidate }}</code><code role="cell">{{ line.previous }}</code>
-          </div>
+        <div v-if="preview.previousSkillMarkdown !== null" class="review-diff">
+          <table class="review-diff__table" :aria-label="t('skillRevisionChanges')">
+            <thead><tr class="review-diff__header"><th scope="col">{{ t('candidateRevision') }}</th><th scope="col">{{ t('previouslyApproved') }}</th></tr></thead>
+            <tbody>
+              <tr v-for="line in reviewLines" :key="line.key" class="review-diff__row" :class="`review-diff__row--${line.kind}`">
+                <td><code>{{ line.candidate }}</code></td><td><code>{{ line.previous }}</code></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
         <div class="source-heading"><div><span>{{ t('candidate') }}</span><h3>{{ t('skillMd') }}</h3></div><v-chip size="x-small" variant="tonal" color="primary">{{ t('exactSource') }}</v-chip></div>
+        <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Source text has bounded overflow:auto and requires keyboard scrolling. -->
         <pre class="source-view" tabindex="0">{{ preview.skillMarkdown }}</pre>
         <template v-if="preview.previousSkillMarkdown !== null">
           <div class="source-heading"><div><span>{{ t('previouslyApproved') }}</span><h3>{{ t('skillMd') }}</h3></div></div>
+          <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Source text has bounded overflow:auto and requires keyboard scrolling. -->
           <pre class="source-view" tabindex="0">{{ preview.previousSkillMarkdown }}</pre>
         </template>
       </v-card-text>
@@ -1041,14 +1047,18 @@ onBeforeUnmount(() => {
   background: var(--wiki-surface-sunken);
 }
 
+.review-diff__table {
+  width: 100%;
+  min-width: 42rem;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
 .review-diff-notice {
   margin-bottom: var(--wiki-space-2);
 }
 
 .review-diff__header {
-  display: grid;
-  min-width: 42rem;
-  grid-template-columns: 1fr 1fr;
   border-bottom: 1px solid var(--wiki-surface-border-strong);
   color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
@@ -1057,41 +1067,41 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-.review-diff__header span {
+.review-diff__header th {
   padding: var(--wiki-space-2) var(--wiki-space-3);
+  text-align: start;
+  font-weight: inherit;
 }
 
-.review-diff__header span + span {
+.review-diff__header th + th {
   border-inline-start: 1px solid var(--wiki-surface-border);
 }
-.review-diff__row {
-  display: grid;
-  min-width: 42rem;
-  grid-template-columns: 1fr 1fr;
-}
 
-.review-diff__row code {
+.review-diff__row td {
   overflow-wrap: anywhere;
   padding: var(--wiki-space-2) var(--wiki-space-3);
   border-bottom: 1px solid var(--wiki-surface-border);
   font-family: var(--wiki-font-mono);
   font-size: .75rem;
   white-space: pre-wrap;
+  vertical-align: top;
 }
 
-.review-diff__row code + code {
+.review-diff__row code { font: inherit; color: inherit; }
+
+.review-diff__row td + td {
   border-inline-start: 1px solid var(--wiki-surface-border);
 }
 
-.review-diff__row--added code:first-child {
+.review-diff__row--added td:first-child {
   background: color-mix(in srgb, rgb(var(--v-theme-success)) 10%, transparent);
 }
 
-.review-diff__row--removed code:last-child {
+.review-diff__row--removed td:last-child {
   background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, transparent);
 }
 
-.review-diff__row--changed code {
+.review-diff__row--changed td {
   background: color-mix(in srgb, rgb(var(--v-theme-warning)) 9%, transparent);
 }
 

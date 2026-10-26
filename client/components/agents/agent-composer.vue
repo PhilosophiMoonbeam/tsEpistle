@@ -97,6 +97,7 @@
     </div>
 
     <div class="agent-composer__editor">
+      <!-- biome-ignore lint/a11y/useAriaActivedescendantWithTabindex: Vuetify forwards this ARIA attribute to its natively tabbable textarea. -->
       <v-textarea
         v-if="!mediaRecording || draft.trim().length > 0"
         ref="messageInput"
@@ -173,7 +174,7 @@
       </template>
     </AgentComposerMedia>
 
-    <div v-if="selectedSkills.length > 0" class="agent-composer__attachments" role="group" :aria-label="$t('common:agentComposer.skillsAttachedContextNext')">
+    <fieldset v-if="selectedSkills.length > 0" class="agent-composer__attachments" :aria-label="$t('common:agentComposer.skillsAttachedContextNext')">
       <span class="agent-composer__attachments-label">
         <v-icon icon="mdi-paperclip" size="15" aria-hidden="true" />
         {{ $t('common:agentComposer.attachedContext') }}
@@ -193,15 +194,14 @@
           {{ skill.name }}
         </v-chip>
       </div>
-    </div>
+    </fieldset>
 
     <div class="agent-composer__actions">
       <!-- Recording replaces the unrelated message tools: discard sits at the
            opposite end from the completion controls to prevent mis-clicks. -->
-      <div
+      <fieldset
         v-if="dictationAvailable && mediaRecording"
         class="agent-composer__context-controls agent-composer__dictation-actions-left"
-        role="group"
         :aria-label="$t('common:agentComposer.recordingActions')"
       >
         <span v-if="mediaRequesting" class="agent-composer__dictation-requesting">{{ $t('common:agentComposer.microphoneAccess') }}</span>
@@ -216,8 +216,8 @@
           :disabled="disabled || sendInProgress"
           @click="cancelDictation"
         />
-      </div>
-      <div v-else ref="controlsGroup" class="agent-composer__context-controls" role="group" :aria-label="$t('common:agentComposer.messageTools')">
+      </fieldset>
+      <fieldset v-else ref="controlsGroup" class="agent-composer__context-controls" :aria-label="$t('common:agentComposer.messageTools')">
         <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
           <template #activator="{ props: activatorProps }">
             <v-tooltip location="top" :text="attachmentAdmissionReason || $t('common:agentComposer.attachFiles')">
@@ -373,9 +373,9 @@
             </v-menu>
           </v-list>
         </v-menu>
-      </div>
+      </fieldset>
 
-      <div class="agent-composer__primary-actions" role="group" :aria-label="$t('common:agentComposer.messageActions')">
+      <fieldset class="agent-composer__primary-actions" :aria-label="$t('common:agentComposer.messageActions')">
         <v-btn
           v-if="canStop"
           class="agent-composer__stop"
@@ -426,7 +426,7 @@
             :title="mediaRecording ? $t('common:agentComposer.sendWithoutReviewing') : undefined"
           >{{ submitLabel }}</v-btn>
         </template>
-      </div>
+      </fieldset>
 
     </div>
 
@@ -1572,6 +1572,7 @@ onBeforeUnmount(() => {
 
 .agent-composer__attachments {
   display: flex;
+  border: 0;
   min-width: 0;
   min-height: 0;
   flex: 0 1 auto;
@@ -1637,6 +1638,9 @@ onBeforeUnmount(() => {
 .agent-composer__context-controls,
 .agent-composer__primary-actions {
   display: flex;
+  border: 0;
+  margin: 0;
+  padding: 0;
   min-width: 0;
   align-items: center;
   gap: var(--agent-composer-control-gap);

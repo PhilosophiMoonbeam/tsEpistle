@@ -13,7 +13,7 @@ describe('External MCP OAuth client boundary', () => {
       'https://accounts.example.com/oauth2/authorize?state=opaque'
     ]) {
       fetcher.mockImplementation(async () => Response.json({ authorizationUrl }))
-      await expect(connectExternalMcpOAuth(fetcher as typeof fetch, 'csrf', endpointId)).resolves.toBe(authorizationUrl)
+      await expect(connectExternalMcpOAuth(fetcher, 'csrf', endpointId)).resolves.toBe(authorizationUrl)
     }
     for (const authorizationUrl of [
       'http://identity.example.net/authorize',
@@ -28,7 +28,7 @@ describe('External MCP OAuth client boundary', () => {
       'https://identity.example.net/authorize?state=' + 'x'.repeat(16_384)
     ]) {
       fetcher.mockImplementation(async () => Response.json({ authorizationUrl }))
-      await expect(connectExternalMcpOAuth(fetcher as typeof fetch, 'csrf', endpointId)).rejects.toMatchObject({ status: 502 })
+      await expect(connectExternalMcpOAuth(fetcher, 'csrf', endpointId)).rejects.toMatchObject({ status: 502 })
     }
   })
 
@@ -40,7 +40,7 @@ describe('External MCP OAuth client boundary', () => {
         secretValue: 'bearer-secret', secretReference: 'private-keyring-reference',
         oauth: { ...(preset ? { preset } : {}), issuer: 'https://identity.example.net', registrationMode: 'preregistered', clientId: 'public-client-id', tokenEndpointAuthMethod: 'client_secret_basic', clientSecretConfigured: true, clientSecretValue: 'oauth-secret', clientSecretReference: 'private-client-reference' }
       }] }))
-      const [server] = await listAvailableExternalMcp(fetcher as typeof fetch, 'csrf')
+      const [server] = await listAvailableExternalMcp(fetcher, 'csrf')
       expect(server?.oauth?.clientSecretConfigured).toBe(true)
       expect(server?.oauth?.issuer).toBe('https://identity.example.net')
       expect(server).not.toHaveProperty('secretValue')

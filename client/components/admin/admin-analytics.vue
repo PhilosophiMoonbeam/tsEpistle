@@ -103,6 +103,7 @@
                 @pointermove="handleChartPointer"
                 @pointerleave="clearChartPointer"
               >
+                <title>{{ $t('admin:analytics.dailyRecordedReaderResponses') }}</title>
                 <defs>
                   <linearGradient :id="barGradId" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stop-color="rgb(var(--v-theme-primary))" stop-opacity="1" />
@@ -157,23 +158,22 @@
             </figure>
             <details v-if="saved.insights.daily.length" class="analytics-detail-table">
               <summary>{{ $t('admin:analytics.viewExactDailyCounts') }}</summary>
-              <div class="analytics-table-scroll" tabindex="0" role="region" :aria-label="$t('admin:analytics.dailyResponseCounts')">
-                <table>
-                  <caption class="sr-only">{{ $t('admin:analytics.recordedResponsesUtcDay') }}</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{{ $t('admin:analytics.day') }}</th>
-                      <th scope="col">{{ $t('admin:analytics.responses3') }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="row in saved.insights.daily" :key="row.day">
-                      <th scope="row">{{ row.day }}</th>
-                      <td>{{ number(row.responses) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded overflow region needs a tab stop for keyboard scrolling. -->
+              <section class="analytics-table-scroll" tabindex="0" :aria-label="$t('admin:analytics.dailyResponseCounts')"><table>
+                <caption class="sr-only">{{ $t('admin:analytics.recordedResponsesUtcDay') }}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">{{ $t('admin:analytics.day') }}</th>
+                    <th scope="col">{{ $t('admin:analytics.responses3') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in saved.insights.daily" :key="row.day">
+                    <th scope="row">{{ row.day }}</th>
+                    <td>{{ number(row.responses) }}</td>
+                  </tr>
+                </tbody>
+              </table></section>
             </details>
             <div class="analytics-section-head">
               <div>

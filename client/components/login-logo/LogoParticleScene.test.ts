@@ -3,13 +3,12 @@ import { setImmediate } from 'node:timers/promises'
 
 import { compileScript, parse } from '@vue/compiler-sfc'
 import type { TresContext, TresRendererSetupContext } from '@tresjs/core'
-import type { WebGPURenderer } from 'three/webgpu'
-import { beforeEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mts'
 import type { Component } from 'vue'
 import type { ParticleSceneEventFence as ParticleSceneEventFenceClass, ParticleSceneFrame, ParticleSceneResources } from './LogoParticleScene.vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles, ParticleContentRect } from './particle-logo.ts'
-import type { LogoParticleRenderer, ParticleBackendLease } from './particle-renderer.ts'
+import { LogoParticleRenderer, type ParticleBackendLease } from './particle-renderer.ts'
 import type { LogoPointerState } from './useLogoPointer.ts'
 
 resetBody()
@@ -35,7 +34,7 @@ const [Vue, Tres, ThreeWebgpu, ThreeTsl, Three] = await Promise.all([
 
 interface LoopContext {
   readonly elapsed: number
-  readonly renderer: WebGPURenderer
+  readonly renderer: LogoParticleRenderer
   readonly sizes: {
     readonly height: { readonly value: number }
     readonly width: { readonly value: number }
@@ -229,24 +228,18 @@ const makePointerState = (): LogoPointerState => ({
 })
 const pointerState = makePointerState()
 
-interface FakeRenderer {
+interface RendererHarness {
   readonly canvas: HTMLCanvasElement
-  readonly renderer: WebGPURenderer
+  readonly renderer: LogoParticleRenderer
 }
-const makeRenderer = (): FakeRenderer => {
+const rendererSpies: Array<{ mockRestore: () => void }> = []
+const makeRenderer = (): RendererHarness => {
   const canvas = document.createElement('canvas')
   canvas.width = 640
   canvas.height = 320
-  const renderer = {
-    debug: { checkShaderErrors: false, onShaderError: null },
-    domElement: canvas,
-    info: { render: { drawCalls: 0, triangles: 0 } },
-    getPixelRatio: () => 1,
-    setClearAlpha: () => {},
-    coordinateSystem: Three.WebGLCoordinateSystem,
-    toneMapping: Three.NoToneMapping,
-    outputColorSpace: Three.SRGBColorSpace
-  } as unknown as WebGPURenderer
+  // Construction owns the real public renderer surface; GPU initialization is
+  // intentionally left at the lease boundary controlled by each scenario.
+  const renderer = new LogoParticleRenderer({ canvas, forceWebGL: true })
   return { canvas, renderer }
 }
 
@@ -278,14 +271,14 @@ const makeBenchmark = () => {
   return benchmark
 }
 
-const makeFrameContext = (renderer: WebGPURenderer, elapsed = 1): LoopContext => ({
+const makeFrameContext = (renderer: LogoParticleRenderer, elapsed = 1): LoopContext => ({
   elapsed,
   renderer,
   sizes: { height: { value: 320 }, width: { value: 640 } },
   contentRect
 })
 
-interface PrewarmingBackend extends FakeRenderer {
+interface PrewarmingBackend extends RendererHarness {
   readonly compileLoopStates: boolean[]
   readonly draws: number
   readonly lease: ParticleBackendLease
@@ -304,20 +297,21 @@ const makePrewarmingBackend = (generation = 1): PrewarmingBackend => {
   })
   const compileLoopStates: boolean[] = []
   let draws = 0
-  renderer.compileAsync = () => {
+  const compileSpy = vi.spyOn(renderer, 'compileAsync').mockImplementation(() => {
     compileLoopStates.push(loopHarness.isActive.value)
     return compilation
-  }
-  renderer.render = () => {
+  })
+  const renderSpy = vi.spyOn(renderer, 'render').mockImplementation(() => {
     draws += 1
     renderer.info.render.drawCalls = 1
     renderer.info.render.triangles = effect.count * 2
-  }
+  })
+  rendererSpies.push(compileSpy, renderSpy)
   const lease: ParticleBackendLease = {
     generation,
     requestedBackend: 'webgpu',
     effectiveBackend: 'webgpu',
-    renderer: renderer as LogoParticleRenderer,
+    renderer,
     get status() {
       return status
     },
@@ -349,15 +343,27 @@ const makePrewarmingBackend = (generation = 1): PrewarmingBackend => {
   }
 }
 
+// The compiled SFC consumes these public Tres fields. Keep the fixture
+// structural rather than asserting that it owns an entire running Tres canvas.
+type SceneRendererSetup = Pick<TresRendererSetupContext, 'canvas'>
+interface SceneReadyContext {
+  camera: Pick<TresContext['camera'], 'activeCamera'>
+  renderer: {
+    instance: LogoParticleRenderer
+    invalidate: TresContext['renderer']['invalidate']
+    loop: Pick<TresContext['renderer']['loop'], 'isActive' | 'start' | 'stop'>
+  }
+  scene: { readonly value: Parameters<LogoParticleRenderer['compileAsync']>[0] }
+}
 interface ReadySceneState {
   canvasMounted: boolean
   contentRect: ParticleContentRect
   fence: ParticleSceneEventFenceClass
-  handleRendererReady: (context: TresContext) => Promise<void>
+  handleRendererReady: (context: SceneReadyContext) => Promise<void>
   loopControl: { ready: boolean; start: (() => void) | null; stop: (() => void) | null }
   pointerController: unknown
   renderEnabled: boolean
-  rendererFactory: (context: TresRendererSetupContext) => unknown
+  rendererFactory: (context: SceneRendererSetup) => unknown
   resources: ParticleSceneResources | null
 }
 
@@ -404,7 +410,9 @@ const mountPrewarmingScene = () => {
   const teardown = instance.value?.teardown
   const beforeRender = loopHarness.beforeRender
   const afterRender = loopHarness.render
-  if (!resources || !teardown || !beforeRender || !afterRender || !state.loopControl.start || !state.loopControl.stop) {
+  const start = state.loopControl.start
+  const stop = state.loopControl.stop
+  if (!resources || !teardown || !beforeRender || !afterRender || !start || !stop) {
     throw new Error('Scene readiness harness did not mount')
   }
   const scene = new Three.Scene()
@@ -419,22 +427,22 @@ const mountPrewarmingScene = () => {
     teardown,
     ready: (backend: PrewarmingBackend): Promise<void> => {
       sceneBackendLease = backend.lease
-      state.rendererFactory({ canvas: Vue.shallowRef(backend.canvas) } as TresRendererSetupContext)
+      state.rendererFactory({ canvas: Vue.shallowRef(backend.canvas) })
       // Tres starts the root loop synchronously before mounting contents and emitting ready.
       loopHarness.isActive.value = true
       return state.handleRendererReady({
-        camera: { activeCamera: Vue.shallowRef(resources.camera) },
+        camera: { activeCamera: Vue.computed(() => resources.camera) },
         renderer: {
           instance: backend.renderer,
           invalidate: tresTestModule.useTres().invalidate,
           loop: {
             isActive: loopHarness.isActive,
-            start: state.loopControl.start,
-            stop: state.loopControl.stop
+            start,
+            stop
           }
         },
         scene: Vue.shallowRef(scene)
-      } as unknown as TresContext)
+      })
     },
     callbacks: (backend: PrewarmingBackend, elapsed = 1): void => {
       const context = makeFrameContext(backend.renderer, elapsed)
@@ -464,15 +472,20 @@ beforeEach(() => {
   Reflect.deleteProperty(window, '__logoParticlePerformance')
   document.body.replaceChildren()
 })
+afterEach(() => {
+  for (const spy of rendererSpies.splice(0)) spy.mockRestore()
+})
 
 describe('LogoParticleScene resource path', () => {
   it('builds one indexed particle mesh with shared motion storage', () => {
     const particles = makeParticles()
     const resources = createParticleSceneResources(particles, effect)
     try {
+      const motionData = resources.cloudMotionTexture.image.data
+      if (motionData === null) throw new Error('Particle motion texture has no storage')
       expect(resources.geometry.index?.count).toBe(particles.count * 6)
-      expect(resources.cloud.motion.buffer).toBe(resources.cloudMotionTexture.image.data.buffer)
-      expect(resources.cloud.motion.byteOffset).toBe(resources.cloudMotionTexture.image.data.byteOffset)
+      expect(resources.cloud.motion.buffer).toBe(motionData.buffer)
+      expect(resources.cloud.motion.byteOffset).toBe(motionData.byteOffset)
       expect(resources.mesh.geometry).toBe(resources.geometry)
       expect(resources.mesh.material).toBe(resources.material)
       expect(resources.mesh.frustumCulled).toBe(false)
@@ -502,7 +515,11 @@ describe('LogoParticleScene resource path', () => {
         return pointer
       }
     }
-    const sourceAttributes = ['logoXY', 'logoParameters', 'particleColor'].map(name => resources.geometry.getAttribute(name))
+    const sourceAttributes = ['logoXY', 'logoParameters', 'particleColor'].map(name => {
+      const attribute = resources.geometry.getAttribute(name)
+      if (!(attribute instanceof Three.BufferAttribute)) throw new Error(`${name} is not a standalone particle buffer`)
+      return attribute
+    })
     const sourceVersions = sourceAttributes.map(attribute => attribute.version)
     const motionVersion = resources.cloudMotionTexture.version
 
@@ -608,7 +625,7 @@ describe('LogoParticleScene asynchronous teardown', () => {
         generation: 1,
         requestedBackend: 'webgl2',
         effectiveBackend: 'webgl2',
-        renderer: harness.renderer as LogoParticleRenderer,
+        renderer: harness.renderer,
         get status() {
           return status
         },
@@ -632,7 +649,7 @@ describe('LogoParticleScene asynchronous teardown', () => {
         canvasMounted: boolean
         loopControl: { ready: boolean; stop: (() => void) | null }
         renderEnabled: boolean
-        rendererFactory: (context: TresRendererSetupContext) => unknown
+        rendererFactory: (context: SceneRendererSetup) => unknown
         resources: ParticleSceneResources | null
       }
       let sceneState!: SceneState
@@ -666,10 +683,10 @@ describe('LogoParticleScene asynchronous teardown', () => {
           generation: 0,
           retire: () => priorCleanup
         }
-        sceneState.rendererFactory({ canvas: Vue.shallowRef(document.createElement('canvas')) } as TresRendererSetupContext)
+        sceneState.rendererFactory({ canvas: Vue.shallowRef(document.createElement('canvas')) })
         sceneBackendLease = currentLease
       }
-      sceneState.rendererFactory({ canvas: Vue.shallowRef(harness.canvas) } as TresRendererSetupContext)
+      sceneState.rendererFactory({ canvas: Vue.shallowRef(harness.canvas) })
       let completed = false
       const teardown = instance.teardown()
       void teardown.then(
@@ -683,7 +700,7 @@ describe('LogoParticleScene asynchronous teardown', () => {
 
       try {
         expect(instance.teardown()).toBe(teardown)
-        expect(status).toBe('retired')
+        expect(sceneBackendLease.status).toBe('retired')
         expect(retireRequests).toBe(1)
         expect(loopStops).toBeGreaterThan(0)
         expect(sceneState.renderEnabled).toBe(false)

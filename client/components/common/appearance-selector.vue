@@ -47,7 +47,9 @@ const t = useTranslate()
 type Appearance = Extract<WikiThemeName, 'system' | 'light' | 'dark'>
 
 const props = defineProps<{
+  // biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup label computes a reactive fallback from props.label; it is not a duplicate Options API key.
   label?: string
+  // biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup description computes a reactive fallback from props.description; it is not a duplicate Options API key.
   description?: string
 }>()
 const label = computed(() => props.label ?? t('common:appearanceSelector.appearance'))

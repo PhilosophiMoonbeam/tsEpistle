@@ -33,9 +33,11 @@
             @click='loadLatestVersion'
             ) {{ $t(`editor:conflict.retry`) }}
         template(v-else-if='loadState === `success`')
-          i18next.text-body-medium(tag='div', path='editor:conflict.infoGeneric')
-            strong(place='authorName') {{latest.authorName}}
-            span(place='date', :title='String($helpers.formatMoment(latest.updatedAt, `LLL`))') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
+          localized-rich-text.text-body-medium(tag='div', path='editor:conflict.infoGeneric')
+            template(#authorName)
+              strong {{latest.authorName}}
+            template(#date)
+              span(:title='String($helpers.formatMoment(latest.updatedAt, `LLL`))') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
           v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='`/` + latest.locale + `/` + latest.path', target='_blank', rel='noopener', :disabled='!hasLatestVersion')
             v-icon(start) mdi-open-in-new
             span {{$t('editor:conflict.viewLatestVersion')}}
@@ -63,8 +65,9 @@
                 v-icon.mr-3(color='white') mdi-alpha-r-box
                 span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}
               v-card-text.pa-4
-                i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
-                  strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
+                localized-rich-text.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
+                  template(#refEditsLost)
+                    strong {{$t('editor:conflict.overwrite.editsLost')}}
               v-card-chin
                 v-spacer
                 v-btn(variant="outlined", color='indigo', @click='isRemoteConfirmDiagShown = false')
@@ -81,8 +84,10 @@ import { wikiStore } from '@/store/index.ts'
 
 import { emitEditorConflictReset, emitEditorConflictResolved } from '../../../helpers/editor-conflict-events'
 import { fetchPageConflictLatest, type PageConflictLatest } from '../../../helpers/pages-api'
+import LocalizedRichText from '../../common/localized-rich-text'
 
 export default defineComponent({
+  components: { LocalizedRichText },
   emits: ['update:modelValue'],
   props: {
     modelValue: {

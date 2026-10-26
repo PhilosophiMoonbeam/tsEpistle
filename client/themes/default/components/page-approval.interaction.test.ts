@@ -6,6 +6,8 @@ import { computed, effectScope, nextTick, reactive, watch } from 'vue'
 import type { EffectScope } from 'vue'
 
 type FetchCall = [input: RequestInfo | URL, init?: RequestInit]
+type ApprovalFetch = (...args: FetchCall) => Promise<Response>
+let approvalFetch: ApprovalFetch = (...args) => globalThis.fetch(...args)
 type ApprovalAction = 'approve' | 'request-changes' | 'reject' | 'cancel' | 'resubmit' | 'publish' | 'reassign'
 type PageApprovalVm = {
   pageId: number
@@ -80,6 +82,7 @@ const componentOptions = new Function(
   'useSiteNotificationsStore',
   'pushGraphError',
   'showNotification',
+  'fetch',
   executableScript
 )(
   (options: unknown) => options,
@@ -100,7 +103,8 @@ const componentOptions = new Function(
   wikiStore,
   useSiteNotificationsStore,
   pushGraphError,
-  showNotification
+  showNotification,
+  (...args: FetchCall) => approvalFetch(...args)
 ) as {
   computed: {
     approvalResourceKey: (this: PageApprovalVm) => string
@@ -164,7 +168,8 @@ const makeVm = (overrides: Partial<PageApprovalVm> = {}): PageApprovalVm => {
   scopes.push(scope)
   scope.run(() => {
     for (const key of ['approvalResourceKey', 'approvalAuthorityContextKey', 'approvalActionReady'] as const) {
-      const value = computed(() => componentOptions.computed[key].call(vm))
+      const getter: (this: PageApprovalVm) => string | boolean = componentOptions.computed[key]
+      const value = computed(() => getter.call(vm))
       Object.defineProperty(vm, key, { get: () => value.value })
     }
     if (vm.approvalAuthorityReady && !Object.hasOwn(overrides, 'approvalAuthorityReadyKey')) {
@@ -194,8 +199,8 @@ describe('reader page approval submission', () => {
       calls.push([input, init])
       return request.promise
     })
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = fetchSpy as typeof fetch
+    const previousFetch = approvalFetch
+    approvalFetch = fetchSpy
     try {
       const vm = makeVm()
       const submission = vm.submitPageApproval()
@@ -217,7 +222,7 @@ describe('reader page approval submission', () => {
       expect(successNotifications).toHaveLength(0)
       expect(notificationsRefresh).not.toHaveBeenCalled()
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
 
@@ -229,8 +234,8 @@ describe('reader page approval submission', () => {
       status: 409,
       headers: { 'Content-Type': 'application/json' }
     })
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = vi.fn(async () => staleError) as typeof fetch
+    const previousFetch = approvalFetch
+    approvalFetch = vi.fn(async () => staleError)
     try {
       const vm = makeVm()
       vm.approvalError = 'Existing approval error'
@@ -247,7 +252,7 @@ describe('reader page approval submission', () => {
       expect(successNotifications).toHaveLength(0)
       expect(notificationsRefresh).not.toHaveBeenCalled()
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
   it.each([false, true])('preserves a resubmit draft when a conflict arrives (resource changed: %s)', async resourceChanged => {
@@ -260,8 +265,8 @@ describe('reader page approval submission', () => {
       calls.push([input, init])
       return request.promise
     })
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = fetchSpy as typeof fetch
+    const previousFetch = approvalFetch
+    approvalFetch = fetchSpy
     try {
       const vm = makeVm()
       vm.approvalError = 'Existing approval error'
@@ -299,15 +304,15 @@ describe('reader page approval submission', () => {
       expect(successNotifications).toHaveLength(0)
       expect(notificationsRefresh).not.toHaveBeenCalled()
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
   it('dispatches only after a fresh current approval read is accepted', async () => {
     successNotifications.length = 0
     const calls: FetchCall[] = []
     let attempt = 0
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const previousFetch = approvalFetch
+    approvalFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       calls.push([input, init])
       attempt += 1
       if (attempt === 2) return Promise.resolve(new Response('{}', { status: 200 }))
@@ -317,7 +322,7 @@ describe('reader page approval submission', () => {
           headers: { 'Content-Type': 'application/json' }
         })
       )
-    }) as typeof fetch
+    })
     try {
       const vm = makeVm({
         approvalAuthorityReady: false,
@@ -341,17 +346,17 @@ describe('reader page approval submission', () => {
       ])
       expect(successNotifications).toHaveLength(1)
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
 
   it('does not dispatch cached approval state after transport loss or a context-key change', async () => {
     const calls: FetchCall[] = []
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const previousFetch = approvalFetch
+    approvalFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       calls.push([input, init])
       return Promise.resolve(new Response('{}', { status: 200 }))
-    }) as typeof fetch
+    })
     try {
       const offlineVm = makeVm({ pageOnlineActionReady: false })
       await offlineVm.submitPageApproval()
@@ -365,18 +370,18 @@ describe('reader page approval submission', () => {
 
       expect(calls).toHaveLength(0)
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
 
   it('does not let a late approval read re-enable another page or actor', async () => {
     const request = deferred<Response>()
     const calls: FetchCall[] = []
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const previousFetch = approvalFetch
+    approvalFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       calls.push([input, init])
       return request.promise
-    }) as typeof fetch
+    })
     try {
       const vm = makeVm({
         approvalAuthorityReady: false,
@@ -403,14 +408,14 @@ describe('reader page approval submission', () => {
       expect(vm.pageApproval).toEqual({ id: 'approval-43', assigneeId: 19 })
       expect(vm.approvalAssigneeId).toBe(19)
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
 
   it.each(['actor', 'page'] as const)('rejects a pending read after only the %s changes', async change => {
     const request = deferred<Response>()
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = vi.fn(() => request.promise) as typeof fetch
+    const previousFetch = approvalFetch
+    approvalFetch = vi.fn(() => request.promise)
     try {
       const vm = makeVm({
         pageApproval: { id: 'current-approval', assigneeId: 19 },
@@ -444,7 +449,7 @@ describe('reader page approval submission', () => {
       expect(vm.pageApproval).toEqual({ id: 'current-approval', assigneeId: 19 })
       expect(vm.approvalAssigneeId).toBe(19)
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
 
@@ -452,8 +457,8 @@ describe('reader page approval submission', () => {
     graphErrors.length = 0
     const calls: FetchCall[] = []
     let attempt = 0
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const previousFetch = approvalFetch
+    approvalFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       calls.push([input, init])
       attempt += 1
       if (attempt === 1) {
@@ -470,7 +475,7 @@ describe('reader page approval submission', () => {
           headers: { 'Content-Type': 'application/json' }
         })
       )
-    }) as typeof fetch
+    })
     try {
       const vm = makeVm()
       vm.loadPageApproval = componentOptions.methods.loadPageApproval.bind(vm)
@@ -488,15 +493,15 @@ describe('reader page approval submission', () => {
       expect(vm.approvalAuthorityReady).toBe(true)
       expect(graphErrors).toHaveLength(1)
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
   it('retries by reading approval state and never replays a failed submit', async () => {
     graphErrors.length = 0
     const calls: FetchCall[] = []
     let attempt = 0
-    const previousFetch = globalThis.fetch
-    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const previousFetch = approvalFetch
+    approvalFetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       calls.push([input, init])
       attempt += 1
       if (attempt === 1) {
@@ -513,7 +518,7 @@ describe('reader page approval submission', () => {
           headers: { 'Content-Type': 'application/json' }
         })
       )
-    }) as typeof fetch
+    })
     try {
       const vm = makeVm()
       vm.loadPageApproval = componentOptions.methods.loadPageApproval.bind(vm)
@@ -530,7 +535,7 @@ describe('reader page approval submission', () => {
       expect(vm.approvalAuthorityReady).toBe(true)
       expect(graphErrors).toHaveLength(1)
     } finally {
-      globalThis.fetch = previousFetch
+      approvalFetch = previousFetch
     }
   })
 })

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.
 import '../test/browser-dom.mts'
 import * as Y from 'yjs'
 import { LiveNoteCollaboration, encodeNoteUpdate, decodeNoteState } from './live-note-collaboration.ts'
-import type { LiveNotesApi } from './live-notes-api.ts'
+import { createLiveNotesApi, type LiveNotesApi } from './live-notes-api.ts'
 import { parseLiveNoteClientMessage, type LiveNoteView } from '../../shared/live-notes.ts'
 
 class Socket {
@@ -60,8 +60,9 @@ function view(doc: Y.Doc, revision = 0, canEdit = true): LiveNoteView {
 function fixture(note: LiveNoteView, identity: () => string = () => 'account-one') {
   const sockets: Socket[] = []
   const api = {
-    session: vi.fn(async () => ({ key: note.key, token: 'session', websocketPath: '/_api/live-notes/_socket' as const, expiresAt: '2099-01-01T00:00:00.000Z' }))
-  } as unknown as LiveNotesApi
+    ...createLiveNotesApi(async () => { throw new Error('Unexpected live note API request') }, () => 'csrf'),
+    session: vi.fn<LiveNotesApi['session']>(async () => ({ key: note.key, token: 'session', websocketPath: '/_api/live-notes/_socket', expiresAt: '2099-01-01T00:00:00.000Z' }))
+  } satisfies LiveNotesApi
   const client = new LiveNoteCollaboration({
     note,
     api,
@@ -170,7 +171,7 @@ describe('live note durable lifecycle', () => {
     let actor = 'one'
     const peer = fixture(view(server), () => actor)
     const admission = Promise.withResolvers<{ key: string; token: string; websocketPath: '/_api/live-notes/_socket'; expiresAt: string }>()
-    vi.mocked(peer.api.session).mockImplementationOnce(() => admission.promise)
+    peer.api.session.mockImplementationOnce(() => admission.promise)
     const connecting = peer.client.connect()
     actor = 'two'
     peer.client.invalidateIdentity()

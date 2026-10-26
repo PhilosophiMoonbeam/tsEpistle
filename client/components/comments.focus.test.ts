@@ -24,9 +24,11 @@ import { changeDiscussionAnnotation, isDiscussionAnchor } from '../helpers/discu
 import { renderSafeMarkdown } from '../helpers/safe-markdown.ts'
 import type { DiscussionAnnotation, DiscussionAnnotationInput } from '../../shared/discussion-annotations.ts'
 import validateValues from '../../shared/validation.ts'
+import { helpers } from '../helpers/index.ts'
 
 // Vue runtime-dom must capture the browser document installed by browser-dom.
 const Vue = await import('vue')
+const { default: LocalizedRichText } = await import('./common/localized-rich-text')
 const filename = new URL('./comments.vue', import.meta.url).pathname
 const descriptor = parse(readFileSync(filename, 'utf8')).descriptor
 const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script!.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
@@ -137,6 +139,7 @@ const mountComments = async (options: { write?: boolean; cold?: boolean; transpo
     wikiStore: store,
     pwaState: connection,
     AsyncState: passthrough(),
+    LocalizedRichText,
     CommentReplyOptIn: passthrough(),
     CommentApiError,
     fetchComment,
@@ -186,7 +189,7 @@ const mountComments = async (options: { write?: boolean; cold?: boolean; transpo
     }
   })
   app.config.globalProperties.$t = (key: string) => key
-  app.config.globalProperties.$helpers = { formatMoment: () => 'Today' }
+  app.config.globalProperties.$helpers = { ...helpers, formatMoment: () => 'Today' }
   // The compiled SFC boundary loses the Options API instance type.
   const comments = app.mount(host) as unknown as CommentsView
   cleanups.push(() => {
@@ -299,7 +302,7 @@ describe('passage discussion handoffs', () => {
         init?.method === 'PATCH' ? 409 : 200
       )
     const previous = browserWindow.fetch
-    browserWindow.fetch = transport as typeof fetch
+    browserWindow.fetch = (input, init) => transport(String(input), init)
     cleanups.push(() => {
       browserWindow.fetch = previous
     })

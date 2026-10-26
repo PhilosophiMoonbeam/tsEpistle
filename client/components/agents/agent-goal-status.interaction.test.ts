@@ -17,7 +17,6 @@ import type { AgentCompletionIssue, AgentGoalView } from '../../../shared/agents
 import type { Translate } from '../../helpers/use-translate.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }
@@ -35,11 +34,10 @@ await goalLocale.init({
 })
 const localeCleanups: Array<() => void> = []
 
-type GoalEmit = (event: 'update:expanded', value: boolean) => void
+type GoalEmit = (...args: ['update:expanded', boolean] | ['pause' | 'resume' | 'cancel' | 'renew-budget']) => void
 
 interface GoalHarness {
-  [key: string]: unknown
-  goal: AgentGoalView
+  goal: { -readonly [K in keyof AgentGoalView]: AgentGoalView[K] }
   statusLabel: Ref<string>
   statusColor: Ref<string>
   budgetPercent: Ref<number>
@@ -183,7 +181,7 @@ const loadGoal = (
       cancelGoalTitleId,
       goalBudgetTitleId
     }`
-  ) as (...dependencies: unknown[]) => Omit<GoalHarness, 'emit'>
+  ) as (...dependencies: unknown[]) => Omit<GoalHarness, 'emit' | 'goal'>
   const harness = evaluate(
     Vue.computed,
     Vue.ref,

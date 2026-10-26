@@ -154,7 +154,7 @@ describe('Knowledge / OKF editor panel', () => {
   it('deletes cleared optional fields without changing required metadata', () => {
     const methods = loadPanel().panel.methods
     const projection = { state: 'pending', value: { summary: 'derived data' } }
-    const store = {
+    const store: { page: { okf: PanelStore['page']['okf'] } } = {
       page: {
         okf: {
           authority: {
@@ -243,7 +243,7 @@ describe('Knowledge / OKF editor panel', () => {
     for (const state of ['invalid', 'missing']) {
       const projection = { state: 'current', value: { summary: 'derived data' } }
       const trust = { preserved: true }
-      const store = {
+      const store: { page: { okf: PanelStore['page']['okf'] } } = {
         page: {
           okf: {
             authority: { state, metadata: null, trust },

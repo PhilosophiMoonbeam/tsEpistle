@@ -541,7 +541,6 @@ const freezePageInput = (input: PageWriteInput): PageWriteInput => {
 
 
 export default defineComponent({
-  i18nOptions: { namespaces: 'editor' },
   components: {
     StatusIndicator,
     editorImageProperties: createAsyncComponent(() => import('./editor/editor-image-properties.vue')),

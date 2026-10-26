@@ -1,3 +1,4 @@
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import fs from 'node:fs'
 import path from 'node:path'
 import { setImmediate as yieldEventLoop } from 'node:timers/promises'
@@ -9,7 +10,6 @@ import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } fro
 import { agentAttachmentMimeTypes } from '../../helpers/agent-media.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
 import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
 
 interface Ref<T> {
@@ -79,7 +79,7 @@ for (const statement of compiledScript.scriptSetupAst) {
 scriptParts.push(script.slice(previousImportEnd))
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptParts.join(''))
 const evaluateComposer = new Function(
-  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, unref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, agentAttachmentMimeTypes, filterSkillsForCommand, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
+  '{ computed, nextTick, onBeforeUnmount, onMounted, ref, unref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, agentAttachmentMimeTypes, filterSkillsForCommand, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement, useTranslate }',
   `${executableScript}
 return { ${setupNames.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
@@ -182,7 +182,7 @@ const mountRealComposers = (options: readonly RealComposerOptions[]) => {
   const sent: Array<Pick<SentMessage, 'content' | 'invokedSkillVersionIds' | 'mode' | 'media'>> = []
   const drafts: Array<{ sessionId: string; text: string }> = []
   const previousFetch = Object.getOwnPropertyDescriptor(browserWindow, 'fetch')
-  const fetcher: typeof fetch = async (input, init) => {
+  const fetcher: BrowserFetch = async (input, init) => {
     const requestPath = new URL(String(input), browserWindow.location.href).pathname
     const method = init?.method ?? 'GET'
     requests.push({ path: requestPath, method, credentials: init?.credentials, csrf: new Headers(init?.headers).get('x-wiki-csrf') })
@@ -444,6 +444,7 @@ const loadComposer = (
       },
     defineExpose: () => {},
     agentAttachmentMimeTypes,
+    useTranslate: () => translateEnglish,
     filterSkillsForCommand,
     caretBoundsFromMirror,
     calculateComposerSizing,
@@ -548,6 +549,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
         defineEmits: () => emit,
         defineExpose: expose,
         agentAttachmentMimeTypes,
+        useTranslate: () => translateEnglish,
         filterSkillsForCommand,
         caretBoundsFromMirror,
         calculateComposerSizing,
@@ -581,7 +583,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     props: ['csrfToken', 'session', 'capabilities', 'generationToolsEnabled', 'disabled', 'networkBlocked'],
     emits: ['change', 'busy', 'dictation', 'settled'],
     template: '<div class="agent-media-composer-harness" />',
-    setup(_props, { emit, expose }: { emit: (event: string, value: unknown) => void; expose: (value: unknown) => void }) {
+    setup(_props, { emit, expose }) {
       Vue.watch([recording, transcribing], ([capturing, processing]) => emit('busy', capturing || processing), { flush: 'sync' })
       expose({
         clear: () => undefined,
@@ -984,8 +986,9 @@ describe('Agent composer media and menu interactions', () => {
       { path: `/_api/agents/sessions/${realSessionId}/media`, method: 'POST', credentials: 'same-origin', csrf: 'csrf' }
     ])
     await chooseRealAttachmentSource(await openRealAttachmentMenu(root, true), 'Browse Wiki assets')
-    await waitForRealSurface(() => document.querySelector('[aria-label="Search filenames in this folder"]') !== null, 'real Wiki asset picker')
-    const pickerInput = document.querySelector<HTMLInputElement>('[aria-label="Search filenames in this folder"]')
+    await waitForRealSurface(() => document.querySelector('.agent-asset-picker__search input') !== null, 'real Wiki asset picker')
+    const pickerInput = document.querySelector<HTMLInputElement>('.agent-asset-picker__search input')
+    expect(Array.from(pickerInput?.labels ?? []).map(label => label.textContent?.trim())).toContain('Search filenames in this folder')
     const picker = pickerInput?.closest('[role="dialog"]')
     expect(picker?.getAttribute('aria-label')).toBe('Browse Wiki assets')
     expect(picker?.getAttribute('aria-modal')).toBe('true')
@@ -1537,13 +1540,8 @@ describe('Agent composer dictation controls', () => {
   })
 
   it('blocks duplicate submissions while a dictation submit is pending', async () => {
-    let resolveTranscript: ((value: string | null) => void) | null = null
-    setDictationTranscriptHook(
-      () =>
-        new Promise(resolve => {
-          resolveTranscript = resolve
-        })
-    )
+    const transcript = Promise.withResolvers<string | null>()
+    setDictationTranscriptHook(() => transcript.promise)
     const mounted = mountComposer({ initialDraft: 'typed words', mediaCapabilities: { transcription: true } })
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
     await Vue.nextTick()
@@ -1557,7 +1555,7 @@ describe('Agent composer dictation controls', () => {
     mounted.root.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
     await Vue.nextTick()
     expect(sentRecorder).toEqual([])
-    if (resolveTranscript) resolveTranscript('voice words')
+    transcript.resolve('voice words')
     await settleAsync()
     expect(sentRecorder).toHaveLength(1)
   })

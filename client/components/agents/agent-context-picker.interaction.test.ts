@@ -17,7 +17,6 @@ import { browserWindow, setLocation, resetBody } from '../../test/browser-dom.mt
 import { translateEnglish } from '../../test/english-translate.mts'
 const translateWithDefaultEscaping = (key: string, options: Record<string, unknown> = {}): string =>
   translateEnglish(key, { interpolation: { escapeValue: true }, ...options })
-globalThis.useTranslate = () => translateWithDefaultEscaping
 
 setLocation('/wiki/en/home')
 
@@ -119,6 +118,7 @@ const evaluatePicker = new Function(
   'searchPages',
   'fetchWikiSource',
   'AgentKnowledgeContextSchema',
+  'useTranslate',
   `${setupScript}\nreturn { mergeProps, ${bindingNames.join(', ')} }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 const settle = async (): Promise<void> => {
@@ -222,7 +222,8 @@ const mountPicker = (
         },
         searchPagesImpl,
         fetchWikiSourceImpl,
-        AgentKnowledgeContextSchema
+        AgentKnowledgeContextSchema,
+        () => translateWithDefaultEscaping
       )
     },
     render: renderPicker
@@ -338,7 +339,9 @@ describe('Agent context source transaction', () => {
     await settle()
 
     expect(mounted.changes).toHaveLength(0)
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Topic 22')
+    const alerts = Array.from(document.body.querySelectorAll('[role="alert"]')).filter(alert => alert.textContent?.trim())
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]?.textContent).toContain('Topic 22')
     expect(resultCheckboxes()).toHaveLength(2)
     expect(Array.from(resultCheckboxes()).every(checkbox => checkbox.checked)).toBe(true)
   })
@@ -543,7 +546,7 @@ describe('Agent context source search recovery', () => {
         await selectResult()
         await search(mounted, 'failed')
 
-        const alerts = document.body.querySelectorAll('.agent-context__dialog [role="alert"]')
+        const alerts = Array.from(document.body.querySelectorAll('.agent-context__dialog [role="alert"]')).filter(alert => alert.textContent?.trim())
         expect(alerts).toHaveLength(1)
         expect(alerts[0]?.textContent).toContain(translateEnglish('common:agentContextPicker.pageSearchCouldNot'))
         expect(alerts[0]?.textContent).not.toContain('sensitive server detail')
@@ -561,7 +564,7 @@ describe('Agent context source search recovery', () => {
         expect(document.body.querySelector('.agent-context__search-error')).toBeNull()
         retryResult.resolve(result(recoveredRows))
         await settle()
-        expect(document.body.querySelector('.agent-context__dialog [role="alert"]')).toBeNull()
+        expect(Array.from(document.body.querySelectorAll('.agent-context__dialog [role="alert"]')).filter(alert => alert.textContent?.trim())).toHaveLength(0)
         expect(resultCheckboxes()).toHaveLength(recoveredRows.length)
         if (recoveredRows.length) expect(resultCheckboxes()[0]?.disabled).toBe(true)
         else

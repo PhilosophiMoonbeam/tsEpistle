@@ -76,7 +76,6 @@
               persistent-hint
               rows="3"
               auto-grow
-              autofocus
               :disabled="saving"
               @keydown.enter="saveShortcut"
             />
@@ -116,10 +115,10 @@
                 <div class="agent-memory__entry-meta">{{ memoryDateLabel(entry) }}</div>
                 <p>{{ entry.content }}</p>
               </div>
-              <div class="agent-memory__entry-actions" role="group" :aria-label="$t('common:agentMemoryManager.actionsMemory', { value: index + 1, interpolation: { escapeValue: false } })">
+              <fieldset class="agent-memory__entry-actions" :aria-label="$t('common:agentMemoryManager.actionsMemory', { value: index + 1, interpolation: { escapeValue: false } })">
                 <v-btn prepend-icon="mdi-pencil-outline" size="small" variant="text" :aria-label="$t('common:agentMemoryManager.editMemory', { content: entry.content, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading" @click="beginEdit(entry)">{{ $t('common:actions.edit') }}</v-btn>
                 <v-btn prepend-icon="mdi-delete-outline" size="small" variant="text" color="error" :aria-label="$t('common:agentMemoryManager.removeMemory', { content: entry.content, interpolation: { escapeValue: false } })" :disabled="Boolean(editing) || Boolean(actionBusy) || stale || loading" @click="beginRemove(entry, $event)">{{ $t('common:agentMemoryManager.remove') }}</v-btn>
-              </div>
+              </fieldset>
             </article>
           </div>
           <div v-else class="agent-memory__empty">
@@ -210,6 +209,7 @@ import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
 
+// biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup prop aliases and the normalized computed binding are not duplicate Options API keys.
 const props = defineProps<{ csrfToken: string; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
 const { csrfToken, headingId, descriptionId } = props
 const open = defineModel<boolean>({ required: true })
@@ -919,6 +919,10 @@ onBeforeUnmount(() => {
 
 .agent-memory__entry-actions {
   display: flex;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
   flex: 0 0 auto;
   gap: var(--wiki-space-1);
   grid-column: 2;

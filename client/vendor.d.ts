@@ -12,21 +12,6 @@ declare module 'epic-spinners' {
 
 
 
-declare module 'velocity-animate' {
-  type VelocityTarget = Element | Element[] | NodeListOf<Element> | null | undefined
-  type VelocityOptions = {
-    complete?: () => void
-    container?: Element
-    duration?: number
-    offset?: string | number
-  }
-
-  export default function velocity (
-    target: VelocityTarget,
-    action: 'scroll' | 'stop',
-    options?: VelocityOptions | boolean
-  ): void
-}
 
 type MarkdownItPlugin = (md: import('markdown-it'), options?: unknown) => void
 

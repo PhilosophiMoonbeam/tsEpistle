@@ -234,7 +234,7 @@
               </v-expansion-panel-text>
             </v-expansion-panel>
           </v-expansion-panels>
-          <div
+          <section
             v-else-if="folders.length === 0"
             class="agent-history__empty agent-history__empty--folders"
             :class="{
@@ -242,7 +242,6 @@
               'agent-history__drop-target--active': isActiveDropTarget(newFolderDropTarget)
             }"
             data-drop-target="new-folder"
-            role="region"
             :aria-label="$t('common:agentHistoryPanel.createFolderConversationsWorth')"
             :aria-describedby="dragInstructionsId"
             @dragenter="setDropTarget($event, newFolderDropTarget)"
@@ -255,7 +254,7 @@
               <strong>{{ $t('common:agentHistoryPanel.createFolderConversationsWorth') }}</strong>
               <span>{{ $t('common:agentHistoryPanel.dropConversationHereStart') }}</span>
             </div>
-          </div>
+          </section>
           <div v-else class="agent-history__empty agent-history__empty--folders">
             <v-icon icon="mdi-folder-heart-outline" size="22" />
             <span>{{ $t('common:agentHistoryPanel.createFolderConversationsWorth2') }}</span>
@@ -300,11 +299,11 @@
       </v-card-title>
       <v-card-text class="px-5 pt-4">
         <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
-        <v-text-field
+        <!-- biome-ignore lint/a11y/noAutofocus: Initial focus belongs to the user-opened folder editor VDialog. -->
+        <v-text-field autofocus
           ref="folderInput"
           v-model="folderName"
           class="agent-history__folder-input wiki-notched-field"
-          autofocus
           counter="64"
           :label="$t('common:agentHistoryPanel.folderName')"
           maxlength="64"
@@ -338,6 +337,7 @@
       </v-card-title>
       <v-card-text class="px-5 pt-4">
         <v-alert v-if="sessionDialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ sessionDialogError }}</v-alert>
+        <!-- biome-ignore lint/a11y/noAutofocus: Initial focus belongs to the user-opened conversation rename VDialog. -->
         <v-text-field v-model="sessionRenameTitle" autofocus counter="255" :label="$t('common:agentHistoryPanel.conversationTitle')" maxlength="255" variant="outlined" :disabled="savingSessionTitle || sessionMutationBusy" @keydown.enter.prevent="saveSessionTitle" />
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
@@ -409,6 +409,7 @@ const folderEditorTitleId = `${historyId}-folder-editor-title`
 const sessionEditorTitleId = `${historyId}-session-editor-title`
 const deleteTitleId = `${historyId}-delete-title`
 const removeFolderTitleId = `${historyId}-remove-folder-title`
+// biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup prop aliases and the normalized computed binding are not duplicate Options API keys.
 const props = defineProps<{ headingId: string; descriptionId: string; networkBlocked?: boolean }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
 const { headingId, descriptionId } = props

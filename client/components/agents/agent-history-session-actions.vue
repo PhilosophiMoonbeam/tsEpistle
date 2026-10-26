@@ -1,4 +1,5 @@
 <template>
+  <!-- biome-ignore lint/a11y/noStaticElementInteractions: This wrapper only stops native child-control events from activating the enclosing conversation row. -->
   <div class="agent-history-session-actions" @click.stop @keydown.stop>
     <v-menu content-class="agent-owned-overlay" location="bottom end">
       <template #activator="{ props: menuProps }">

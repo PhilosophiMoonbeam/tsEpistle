@@ -114,8 +114,9 @@
           .text-body-small.text-medium-emphasis {{$t('common:comments.markdownFormat')}}
         v-spacer
         .comments-posting-as.text-body-small(v-if='isAuthenticated')
-          i18next(tag='span', path='common:comments.postingAs')
-            strong(place='name') {{userDisplayName}}
+          localized-rich-text(tag='span', path='common:comments.postingAs')
+            template(#name)
+              strong {{userDisplayName}}
         v-btn.comments-submit(
           color="primary"
           type='submit'
@@ -286,6 +287,7 @@ import { changeDiscussionAnnotation, isDiscussionAnchor } from '../helpers/discu
 import { discussionAnnotationsChanged, jumpDiscussionAnnotation, onComposeDiscussionAnnotation, onFocusDiscussionThread } from '../helpers/discussion-annotation-events.ts'
 import { renderSafeMarkdown } from '../helpers/safe-markdown.ts'
 import CommentReplyOptIn from './common/comment-reply-opt-in.vue'
+import LocalizedRichText from './common/localized-rich-text'
 
 type CommentWithInitials = CommentRow & {
   initials: string
@@ -349,6 +351,7 @@ type ComposerSnapshot = {
 export default defineComponent({
   components: {
     AsyncState,
+    LocalizedRichText,
     CommentReplyOptIn
   },
   setup () {

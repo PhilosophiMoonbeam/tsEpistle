@@ -7,7 +7,7 @@ import {
 } from '../../shared/agents/media-providers.ts'
 import { translate } from '../modules/localization.ts'
 import { AgentApiError, requestJson } from './agents-api.ts'
-import { sameOriginJsonFetch } from './json-transport.ts'
+import { sameOriginJsonFetch, type BrowserFetch } from './json-transport.ts'
 
 export type { AgentMediaProviderView, AgentMediaProviderWrite }
 
@@ -96,12 +96,10 @@ const body = (method: string, input: unknown): RequestInit => ({ method, body: J
 const root = '/_api/agents'
 const key = (id: string) => encodeURIComponent(z.string().uuid().parse(id))
 const revision = (value: number) => z.number().int().nonnegative().parse(value)
-export const listDecisionProviders = async (f: typeof fetch, c: string, signal?: AbortSignal) =>
-  (await requestJson(f, c, `${root}/admin/decision-providers`, z.object({ providers: z.array(Provider) }), { signal })).providers
-export const createDecisionProvider = async (f: typeof fetch, c: string, input: DecisionProviderWrite) =>
-  (await requestJson(f, c, `${root}/admin/decision-providers`, z.object({ provider: Provider }), body('POST', DecisionProviderWriteSchema.parse(input))))
-    .provider
-export const updateDecisionProvider = async (f: typeof fetch, c: string, id: string, input: DecisionProviderWrite & { expectedRevision: number }) => {
+export const listDecisionProviders = async (f: BrowserFetch, c: string, signal?: AbortSignal) => (await requestJson(f, c, `${root}/admin/decision-providers`, z.object({ providers: z.array(Provider) }), { signal })).providers
+export const createDecisionProvider = async (f: BrowserFetch, c: string, input: DecisionProviderWrite) => (await requestJson(f, c, `${root}/admin/decision-providers`, z.object({ provider: Provider }), body('POST', DecisionProviderWriteSchema.parse(input))))
+  .provider
+export const updateDecisionProvider = async (f: BrowserFetch, c: string, id: string, input: DecisionProviderWrite & { expectedRevision: number }) => {
   const { expectedRevision, ...write } = input
   return (
     await requestJson(
@@ -113,29 +111,27 @@ export const updateDecisionProvider = async (f: typeof fetch, c: string, id: str
     )
   ).provider
 }
-export const deleteDecisionProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number): Promise<void> => {
+export const deleteDecisionProvider = async (f: BrowserFetch, c: string, id: string, expectedRevision: number): Promise<void> => {
   await requestJson(f, c, `${root}/admin/decision-providers/${key(id)}`, deleted, body('DELETE', { expectedRevision: revision(expectedRevision) }))
 }
-export const enableDecisionProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number, enabled: boolean) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${root}/admin/decision-providers/${key(id)}/enabled`,
-      z.object({ provider: Provider }),
-      body('POST', { expectedRevision: revision(expectedRevision), enabled })
-    )
-  ).provider
-export const defaultDecisionProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${root}/admin/decision-providers/${key(id)}/default`,
-      z.object({ provider: Provider }),
-      body('POST', { expectedRevision: revision(expectedRevision) })
-    )
-  ).provider
+export const enableDecisionProvider = async (f: BrowserFetch, c: string, id: string, expectedRevision: number, enabled: boolean) => (
+  await requestJson(
+    f,
+    c,
+    `${root}/admin/decision-providers/${key(id)}/enabled`,
+    z.object({ provider: Provider }),
+    body('POST', { expectedRevision: revision(expectedRevision), enabled })
+  )
+).provider
+export const defaultDecisionProvider = async (f: BrowserFetch, c: string, id: string, expectedRevision: number) => (
+  await requestJson(
+    f,
+    c,
+    `${root}/admin/decision-providers/${key(id)}/default`,
+    z.object({ provider: Provider }),
+    body('POST', { expectedRevision: revision(expectedRevision) })
+  )
+).provider
 const Check: z.ZodType<DecisionProviderCheck> = z.object({
   availableModels: z.array(z.string()),
   configuredModelAvailable: z.boolean(),
@@ -147,21 +143,19 @@ const Check: z.ZodType<DecisionProviderCheck> = z.object({
     .object({ currency: z.literal('USD'), amount: z.number(), pricingRevision: z.string(), source: z.string(), verifiedAt: z.string() })
     .nullable()
 })
-export const checkDecisionProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${root}/admin/decision-providers/${key(id)}/check`,
-      z.object({ check: Check }),
-      body('POST', { expectedRevision: revision(expectedRevision) })
-    )
-  ).check
-const listServers = async (f: typeof fetch, c: string, path: string, signal?: AbortSignal) =>
-  (await requestJson(f, c, root + path, z.object({ servers: z.array(Server) }), { signal })).servers
-export const listAdminExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/admin/external-mcp', signal)
-export const listPersonalExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/personal-mcp', signal)
-export const listAvailableExternalMcp = (f: typeof fetch, c: string, signal?: AbortSignal) => listServers(f, c, '/external-mcp', signal)
+export const checkDecisionProvider = async (f: BrowserFetch, c: string, id: string, expectedRevision: number) => (
+  await requestJson(
+    f,
+    c,
+    `${root}/admin/decision-providers/${key(id)}/check`,
+    z.object({ check: Check }),
+    body('POST', { expectedRevision: revision(expectedRevision) })
+  )
+).check
+const listServers = async (f: BrowserFetch, c: string, path: string, signal?: AbortSignal) => (await requestJson(f, c, root + path, z.object({ servers: z.array(Server) }), { signal })).servers
+export const listAdminExternalMcp = (f: BrowserFetch, c: string, signal?: AbortSignal) => listServers(f, c, '/admin/external-mcp', signal)
+export const listPersonalExternalMcp = (f: BrowserFetch, c: string, signal?: AbortSignal) => listServers(f, c, '/personal-mcp', signal)
+export const listAvailableExternalMcp = (f: BrowserFetch, c: string, signal?: AbortSignal) => listServers(f, c, '/external-mcp', signal)
 const ExternalMcpOAuth = z.object({
   configured: z.boolean(),
   connected: z.boolean(),
@@ -182,11 +176,9 @@ const AuthorizationUrl = z.string().max(16_384).refine(value => {
     return url.protocol === 'https:' && !url.username && !url.password && !url.hash
   } catch { return false }
 })
-export const getExternalMcpOAuth = async (f: typeof fetch, c: string, id: string, signal?: AbortSignal): Promise<ExternalMcpOAuthStatus> =>
-  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ oauth: ExternalMcpOAuth }), { signal })).oauth
-export const connectExternalMcpOAuth = async (f: typeof fetch, c: string, id: string): Promise<string> =>
-  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth/connect`, z.object({ authorizationUrl: AuthorizationUrl }), body('POST', {}))).authorizationUrl
-export const disconnectExternalMcpOAuth = async (f: typeof fetch, c: string, id: string): Promise<void> => {
+export const getExternalMcpOAuth = async (f: BrowserFetch, c: string, id: string, signal?: AbortSignal): Promise<ExternalMcpOAuthStatus> => (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ oauth: ExternalMcpOAuth }), { signal })).oauth
+export const connectExternalMcpOAuth = async (f: BrowserFetch, c: string, id: string): Promise<string> => (await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth/connect`, z.object({ authorizationUrl: AuthorizationUrl }), body('POST', {}))).authorizationUrl
+export const disconnectExternalMcpOAuth = async (f: BrowserFetch, c: string, id: string): Promise<void> => {
   await requestJson(f, c, `${root}/external-mcp/${key(id)}/oauth`, z.object({ disconnected: z.literal(true) }), body('DELETE', {}))
 }
 export const externalMcpOAuthErrorKey = (error: unknown): string => {
@@ -203,11 +195,9 @@ export const externalMcpOAuthErrorKey = (error: unknown): string => {
   }
   return 'operationFailed'
 }
-export const createAdminExternalMcp = async (f: typeof fetch, c: string, input: CreateAdminExternalMcpServerInput) =>
-  (await requestJson(f, c, `${root}/admin/external-mcp`, z.object({ server: Server }), body('POST', CreateAdminExternalMcpServerSchema.parse(input)))).server
-export const createPersonalExternalMcp = async (f: typeof fetch, c: string, input: ExternalMcpServerInput) =>
-  (await requestJson(f, c, `${root}/personal-mcp`, z.object({ server: Server }), body('POST', ExternalMcpServerInputSchema.parse(input)))).server
-const updateServer = async (f: typeof fetch, c: string, path: string, id: string, input: ExternalMcpServerInput & { expectedRevision: number }) => {
+export const createAdminExternalMcp = async (f: BrowserFetch, c: string, input: CreateAdminExternalMcpServerInput) => (await requestJson(f, c, `${root}/admin/external-mcp`, z.object({ server: Server }), body('POST', CreateAdminExternalMcpServerSchema.parse(input)))).server
+export const createPersonalExternalMcp = async (f: BrowserFetch, c: string, input: ExternalMcpServerInput) => (await requestJson(f, c, `${root}/personal-mcp`, z.object({ server: Server }), body('POST', ExternalMcpServerInputSchema.parse(input)))).server
+const updateServer = async (f: BrowserFetch, c: string, path: string, id: string, input: ExternalMcpServerInput & { expectedRevision: number }) => {
   const { expectedRevision, ...write } = input
   return (
     await requestJson(
@@ -219,39 +209,32 @@ const updateServer = async (f: typeof fetch, c: string, path: string, id: string
     )
   ).server
 }
-export const updateAdminExternalMcp = (f: typeof fetch, c: string, id: string, input: ExternalMcpServerInput & { expectedRevision: number }) =>
-  updateServer(f, c, '/admin/external-mcp', id, input)
-export const updatePersonalExternalMcp = (f: typeof fetch, c: string, id: string, input: ExternalMcpServerInput & { expectedRevision: number }) =>
-  updateServer(f, c, '/personal-mcp', id, input)
-const removeServer = async (f: typeof fetch, c: string, path: string, id: string, expectedRevision: number): Promise<void> => {
+export const updateAdminExternalMcp = (f: BrowserFetch, c: string, id: string, input: ExternalMcpServerInput & { expectedRevision: number }) => updateServer(f, c, '/admin/external-mcp', id, input)
+export const updatePersonalExternalMcp = (f: BrowserFetch, c: string, id: string, input: ExternalMcpServerInput & { expectedRevision: number }) => updateServer(f, c, '/personal-mcp', id, input)
+const removeServer = async (f: BrowserFetch, c: string, path: string, id: string, expectedRevision: number): Promise<void> => {
   await requestJson(f, c, `${root}${path}/${key(id)}`, deleted, body('DELETE', { expectedRevision: revision(expectedRevision) }))
 }
-export const deleteAdminExternalMcp = (f: typeof fetch, c: string, id: string, expectedRevision: number) =>
-  removeServer(f, c, '/admin/external-mcp', id, expectedRevision)
-export const deletePersonalExternalMcp = (f: typeof fetch, c: string, id: string, expectedRevision: number) =>
-  removeServer(f, c, '/personal-mcp', id, expectedRevision)
-export const setExternalMcpGrants = async (f: typeof fetch, c: string, id: string, expectedRevision: number, groupIds: number[]) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${root}/admin/external-mcp/${key(id)}/grants`,
-      z.object({ server: Server }),
-      body('PUT', { expectedRevision: revision(expectedRevision), groupIds: z.array(z.number().int().positive()).parse(groupIds) })
-    )
-  ).server
-export const listExternalMcpGroupPolicies = async (f: typeof fetch, c: string, signal?: AbortSignal) =>
-  (await requestJson(f, c, `${root}/admin/external-mcp/group-policies`, z.object({ policies: z.array(Policy) }), { signal })).policies
-export const setExternalMcpGroupPolicy = async (f: typeof fetch, c: string, groupId: number, expectedRevision: number, allowPersonalEndpoints: boolean) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${root}/admin/external-mcp/group-policies/${z.number().int().positive().parse(groupId)}`,
-      z.object({ policy: Policy }),
-      body('PUT', { expectedRevision: revision(expectedRevision), allowPersonalEndpoints })
-    )
-  ).policy
+export const deleteAdminExternalMcp = (f: BrowserFetch, c: string, id: string, expectedRevision: number) => removeServer(f, c, '/admin/external-mcp', id, expectedRevision)
+export const deletePersonalExternalMcp = (f: BrowserFetch, c: string, id: string, expectedRevision: number) => removeServer(f, c, '/personal-mcp', id, expectedRevision)
+export const setExternalMcpGrants = async (f: BrowserFetch, c: string, id: string, expectedRevision: number, groupIds: number[]) => (
+  await requestJson(
+    f,
+    c,
+    `${root}/admin/external-mcp/${key(id)}/grants`,
+    z.object({ server: Server }),
+    body('PUT', { expectedRevision: revision(expectedRevision), groupIds: z.array(z.number().int().positive()).parse(groupIds) })
+  )
+).server
+export const listExternalMcpGroupPolicies = async (f: BrowserFetch, c: string, signal?: AbortSignal) => (await requestJson(f, c, `${root}/admin/external-mcp/group-policies`, z.object({ policies: z.array(Policy) }), { signal })).policies
+export const setExternalMcpGroupPolicy = async (f: BrowserFetch, c: string, groupId: number, expectedRevision: number, allowPersonalEndpoints: boolean) => (
+  await requestJson(
+    f,
+    c,
+    `${root}/admin/external-mcp/group-policies/${z.number().int().positive().parse(groupId)}`,
+    z.object({ policy: Policy }),
+    body('PUT', { expectedRevision: revision(expectedRevision), allowPersonalEndpoints })
+  )
+).policy
 const Discovery = z.object({
   attribution: z.object({
     serverId: z.string(),
@@ -273,12 +256,10 @@ const Discovery = z.object({
     .passthrough()
 })
 export type ExternalMcpDiscovery = z.infer<typeof Discovery>
-export const discoverExternalMcp = async (f: typeof fetch, c: string, id: string, signal?: AbortSignal): Promise<ExternalMcpDiscovery> =>
-  (await requestJson(f, c, `${root}/external-mcp/${key(id)}/discover`, z.object({ discovery: Discovery }), { method: 'POST', signal })).discovery
+export const discoverExternalMcp = async (f: BrowserFetch, c: string, id: string, signal?: AbortSignal): Promise<ExternalMcpDiscovery> => (await requestJson(f, c, `${root}/external-mcp/${key(id)}/discover`, z.object({ discovery: Discovery }), { method: 'POST', signal })).discovery
 export type { RoutingAdminView, RoutingModelPolicyInput, RoutingModelPolicyView, RoutingPolicyInput, RoutingPolicyView } from '../../shared/agents/routing.ts'
-export const getAgentRouting = (f: typeof fetch, c: string, signal?: AbortSignal) =>
-  requestJson(f, c, `${root}/admin/routing`, RoutingAdminViewSchema, { signal })
-export const updateAgentRouting = async (f: typeof fetch, c: string, input: RoutingPolicyInput & { expectedRevision: number }) => {
+export const getAgentRouting = (f: BrowserFetch, c: string, signal?: AbortSignal) => requestJson(f, c, `${root}/admin/routing`, RoutingAdminViewSchema, { signal })
+export const updateAgentRouting = async (f: BrowserFetch, c: string, input: RoutingPolicyInput & { expectedRevision: number }) => {
   const { expectedRevision, ...write } = input
   return (
     await requestJson(
@@ -290,7 +271,7 @@ export const updateAgentRouting = async (f: typeof fetch, c: string, input: Rout
     )
   ).policy
 }
-export const setAgentRoutingModel = async (f: typeof fetch, c: string, profileId: string, input: RoutingModelPolicyInput & { expectedRevision: number }) => {
+export const setAgentRoutingModel = async (f: BrowserFetch, c: string, profileId: string, input: RoutingModelPolicyInput & { expectedRevision: number }) => {
   const { expectedRevision, ...write } = input
   return (
     await requestJson(
@@ -302,7 +283,7 @@ export const setAgentRoutingModel = async (f: typeof fetch, c: string, profileId
     )
   ).model
 }
-export const deleteAgentRoutingModel = async (f: typeof fetch, c: string, profileId: string, expectedRevision: number): Promise<void> => {
+export const deleteAgentRoutingModel = async (f: BrowserFetch, c: string, profileId: string, expectedRevision: number): Promise<void> => {
   await requestJson(f, c, `${root}/admin/routing/models/${key(profileId)}`, deleted, body('DELETE', { expectedRevision: revision(expectedRevision) }))
 }
 
@@ -321,41 +302,36 @@ const MediaProvider: z.ZodType<AgentMediaProviderView> = z.object({
   updatedAt: z.string()
 })
 const mediaRoot = `${root}/admin/media-providers`
-export const listMediaProviders = async (f: typeof fetch, c: string, signal?: AbortSignal) =>
-  (await requestJson(f, c, mediaRoot, z.object({ providers: z.array(MediaProvider) }), { signal })).providers
-export const createMediaProvider = async (f: typeof fetch, c: string, input: AgentMediaProviderWrite) =>
-  (await requestJson(f, c, mediaRoot, z.object({ provider: MediaProvider }), body('POST', AgentMediaProviderWriteSchema.parse(input)))).provider
-export const updateMediaProvider = async (f: typeof fetch, c: string, id: string, input: AgentMediaProviderWrite, expectedRevision: number) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${mediaRoot}/${key(id)}`,
-      z.object({ provider: MediaProvider }),
-      body('PATCH', { ...AgentMediaProviderWriteSchema.parse(input), expectedRevision: revision(expectedRevision) })
-    )
-  ).provider
-export const enableMediaProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number, enabled: boolean) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${mediaRoot}/${key(id)}/enabled`,
-      z.object({ provider: MediaProvider }),
-      body('POST', { enabled, expectedRevision: revision(expectedRevision) })
-    )
-  ).provider
-export const defaultMediaProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number) =>
-  (
-    await requestJson(
-      f,
-      c,
-      `${mediaRoot}/${key(id)}/default`,
-      z.object({ provider: MediaProvider }),
-      body('POST', { expectedRevision: revision(expectedRevision) })
-    )
-  ).provider
-export const deleteMediaProvider = async (f: typeof fetch, c: string, id: string, expectedRevision: number): Promise<void> => {
+export const listMediaProviders = async (f: BrowserFetch, c: string, signal?: AbortSignal) => (await requestJson(f, c, mediaRoot, z.object({ providers: z.array(MediaProvider) }), { signal })).providers
+export const createMediaProvider = async (f: BrowserFetch, c: string, input: AgentMediaProviderWrite) => (await requestJson(f, c, mediaRoot, z.object({ provider: MediaProvider }), body('POST', AgentMediaProviderWriteSchema.parse(input)))).provider
+export const updateMediaProvider = async (f: BrowserFetch, c: string, id: string, input: AgentMediaProviderWrite, expectedRevision: number) => (
+  await requestJson(
+    f,
+    c,
+    `${mediaRoot}/${key(id)}`,
+    z.object({ provider: MediaProvider }),
+    body('PATCH', { ...AgentMediaProviderWriteSchema.parse(input), expectedRevision: revision(expectedRevision) })
+  )
+).provider
+export const enableMediaProvider = async (f: BrowserFetch, c: string, id: string, expectedRevision: number, enabled: boolean) => (
+  await requestJson(
+    f,
+    c,
+    `${mediaRoot}/${key(id)}/enabled`,
+    z.object({ provider: MediaProvider }),
+    body('POST', { enabled, expectedRevision: revision(expectedRevision) })
+  )
+).provider
+export const defaultMediaProvider = async (f: BrowserFetch, c: string, id: string, expectedRevision: number) => (
+  await requestJson(
+    f,
+    c,
+    `${mediaRoot}/${key(id)}/default`,
+    z.object({ provider: MediaProvider }),
+    body('POST', { expectedRevision: revision(expectedRevision) })
+  )
+).provider
+export const deleteMediaProvider = async (f: BrowserFetch, c: string, id: string, expectedRevision: number): Promise<void> => {
   const response = await sameOriginJsonFetch(f, `${mediaRoot}/${key(id)}`, {
     ...body('DELETE', { expectedRevision: revision(expectedRevision) }),
     credentials: 'same-origin',

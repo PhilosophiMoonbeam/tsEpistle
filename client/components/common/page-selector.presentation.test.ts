@@ -4,11 +4,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody, setLocation } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.translate = translateEnglish
-globalThis.useTranslate = () => translateEnglish
 import type { App, ComponentOptions, PropType, RenderFunction } from 'vue'
 import { fetchPageTree as fetchNativePageTree } from '../../helpers/pages-api.ts'
 import type { MoveLinkReviewInput, MoveLinkReviewResponse, PageTreeRow } from '../../helpers/pages-api.ts'
+import { installVuetifyFixture } from '../../test/vuetify-fixture.mts'
 
 const filename = join(process.cwd(), 'client/components/common/page-selector.vue')
 const parsed = parse(readFileSync(filename, 'utf8'), { filename })
@@ -149,8 +148,9 @@ const mountSelector = async (
     'fetchMoveLinkReview',
     'getErrorMessage',
     'AsyncState',
+    'translate',
     executableScript
-  )(Vue.defineComponent, Vue.markRaw, Vue.useId, fetchPageTree, fetchMoveLinkReview, getErrorMessage, AsyncState) as ComponentOptions
+  )(Vue.defineComponent, Vue.markRaw, Vue.useId, fetchPageTree, fetchMoveLinkReview, getErrorMessage, AsyncState, translateEnglish) as ComponentOptions
   mountedSelector.render = render
   const host = document.createElement('div')
   document.body.append(host)
@@ -176,7 +176,7 @@ const mountSelector = async (
   app.component('v-tooltip', passthrough())
   if (!options.realTree) app.component('v-treeview', passthrough())
   app.config.globalProperties.$t = translateEnglish
-  if (!options.realTree) app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
+  if (!options.realTree) installVuetifyFixture(app)
   const instance = app.mount(host) as unknown as {
     currentLocale: string
     currentPath: string | null
@@ -441,13 +441,13 @@ describe('Browse page selector presentation', () => {
       ],
       projections: 'pending' as const
     }
-    let submittedMove: {
+    const submittedMove: { value: {
       locale: string
       path: string
       sourcePageId?: number
       expectedSourceRevision?: string
       reviewToken?: string
-    } | null = null
+    } | null } = { value: null }
     let acknowledgement: unknown
     const { host, instance } = await mountSelector([page(22, 'docs/other', 'Another page')], {
       mode: 'move',
@@ -458,7 +458,7 @@ describe('Browse page selector presentation', () => {
       sourceSourceRevision: '5',
       sourceVisibility: 'public',
       openHandler: (selection: { locale: string; path: string; sourcePageId?: number; expectedSourceRevision?: string; reviewToken?: string }) => {
-        submittedMove = {
+        submittedMove.value = {
           locale: selection.locale,
           path: selection.path,
           sourcePageId: selection.sourcePageId,
@@ -538,7 +538,7 @@ describe('Browse page selector presentation', () => {
     ])
 
     await clickButton('Move and update selected links')
-    expect(submittedMove).toEqual({
+    expect(submittedMove.value).toEqual({
       locale: 'en',
       path: 'docs/archive',
       sourcePageId: 10,

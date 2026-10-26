@@ -87,7 +87,7 @@ describe('Security workspace review and recovery', () => {
       await expect(state.canLeave()).resolves.toBe(false)
       const event = { preventDefault: vi.fn(), returnValue: undefined as unknown }
       state.beforeUnload(event)
-      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(event.preventDefault).toHaveBeenCalledTimes(1)
       state.reset()
       expect(state.dirty).toBe(false)
       expect(state.draft.uploadMaxFileSize).toBe(savedCapacity)
@@ -134,7 +134,7 @@ describe('Security workspace review and recovery', () => {
     transport.saveSecurityWorkspace.mockRejectedValue(Object.assign(new Error('Policy changed'), { status: 409 }))
     await state.confirm()
     await state.confirm()
-    expect(transport.saveSecurityWorkspace).toHaveBeenCalledOnce()
+    expect(transport.saveSecurityWorkspace).toHaveBeenCalledTimes(1)
     expect(state.reason).toBe('Review upload handling')
     expect(state.stale).toBe(true)
     window.confirm.mockReturnValue(false)

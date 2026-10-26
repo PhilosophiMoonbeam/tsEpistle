@@ -6,6 +6,7 @@
     :open="detailsOpen"
     @toggle="handleToggle"
   >
+    <!-- biome-ignore lint/a11y/noStaticElementInteractions: Native summary already supports keyboard activation; this records the user's disclosure preference. -->
     <summary class="agent-tasks__header" @click="handleSummaryActivation">
       <span class="agent-tasks__mark" aria-hidden="true">
         <v-icon :icon="planIcon" size="19" />

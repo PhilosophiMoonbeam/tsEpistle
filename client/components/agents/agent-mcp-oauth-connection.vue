@@ -24,13 +24,14 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { connectExternalMcpOAuth, disconnectExternalMcpOAuth, getExternalMcpOAuth, externalMcpOAuthErrorKey, type ExternalMcpServerView, type ExternalMcpOAuthStatus } from '../../helpers/agent-control-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { wikiStore } from '../../store/index.ts'
 import { requestConfirmation } from '../common/confirm-dialog.ts'
 
 const props = defineProps<{ server: ExternalMcpServerView; csrfToken: string; ownerId: number; disabled?: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const t = useTranslate('profile:externalMcpOAuth')
-const fetcher: typeof fetch = (...args) => window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 const oauth = shallowRef<ExternalMcpOAuthStatus | null>(null)
 const loading = ref(false), connecting = ref(false), disconnecting = ref(false)
 const error = ref(''), notice = ref('')

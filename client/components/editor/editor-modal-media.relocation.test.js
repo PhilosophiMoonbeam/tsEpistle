@@ -14,6 +14,17 @@ import { translateEnglish } from '../../test/english-translate.mts'
 const componentPath = path.join(process.cwd(), 'client/components/editor/editor-modal-media.vue')
 
 const Vue = await import('vue')
+// Rich-text imports runtime-dom too; defer until the shared browser-dom document is installed.
+const { default: LocalizedRichText } = await import('../common/localized-rich-text')
+const { localizationPlugin } = await import('../../modules/localization')
+const localizationApp = Vue.createApp({})
+localizationApp.use(localizationPlugin)
+await localizationApp.config.globalProperties.$i18n.init({
+  lng: 'en',
+  fallbackLng: 'en',
+  resources: { en: JSON.parse(fs.readFileSync('server/locales/en.json', 'utf8')) },
+  initAsync: false
+})
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
@@ -34,6 +45,7 @@ const loadMediaComponent = ({ relocateAssetRequest, wikiStore, window, fetchAsse
     PageBrandingAssignmentSchema: { safeParse: () => ({ success: false }) },
     PageBrandingViewSchema: { safeParse: () => ({ success: false }) },
     _: lodash,
+    LocalizedRichText,
     createAssetFolder: async () => undefined,
     createModalFocusScope: () => ({ deactivate: () => undefined }),
     defineComponent: value => value,
@@ -324,11 +336,7 @@ describe('standalone shared asset workspace', () => {
     app.component('VCardChin', Vue.defineComponent({
       render: compileComponentRender(path.join(process.cwd(), 'client/components/common/v-card-chin.vue'))
     }))
-    app.component('i18next', Vue.defineComponent({
-      props: { tag: { type: String, default: 'div' } },
-      setup: (props, { slots }) => () => Vue.h(props.tag, slots.default?.())
-    }))
-    app.config.globalProperties.$t = translateEnglish
+    app.use(localizationPlugin)
     app.config.globalProperties.$helpers = { formatMoment: () => 'recently' }
     const root = document.body.appendChild(document.createElement('div'))
     const model = app.mount(root)

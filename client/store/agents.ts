@@ -1,4 +1,5 @@
 import type { AgentMediaSubmission } from '../helpers/agent-media.ts'
+import type { BrowserFetch } from '../helpers/json-transport.ts'
 import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { emptyAgentDraft, type AgentDraft } from '../helpers/agent-draft.ts'
 import {
@@ -122,7 +123,7 @@ const sameAdmissionPins = (previous: AgentAdmissionPins | null, next: AgentAdmis
   previous.executionMode === next.executionMode
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.partial', 'run.failed', 'run.cancelled', 'run.recovery_required'])
-const fetchFromWindow: typeof fetch = (input, init) => window.fetch(input, init)
+const fetchFromWindow: BrowserFetch = (input, init) => window.fetch(input, init)
 const SSE_INACTIVITY_MS = 15_000
 const SSE_RETRY_BASE_MS = 1_000
 const SSE_RETRY_MAX_MS = 30_000

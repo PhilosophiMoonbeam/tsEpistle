@@ -5,7 +5,6 @@ import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
 interface Ref<T> {
   value: T
 }
@@ -165,6 +164,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     'caretBoundsFromMirror',
     'calculateComposerSizing',
     'scrollTopForCaret',
+    'useTranslate',
     `${executableScript}\nreturn { draft, goalMode, selectedSkillIds, sendFailed, submit, resizeInput, messageInput }`
   ) as (...dependencies: unknown[]) => {
     draft: Ref<string>
@@ -208,7 +208,8 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     () => [],
     caretBoundsFromMirror,
     calculateComposerSizing,
-    scrollTopForCaret
+    scrollTopForCaret,
+    () => translateEnglish
   )
   const inputRoot = new FakeElement()
   inputRoot.querySelector = () => textarea

@@ -36,25 +36,14 @@
         limitMessage || $t('admin:loggingConsole.connectionReachedEventSafety', { maxConnectionEvents: limits.maxConnectionEvents.toLocaleString(), interpolation: { escapeValue: false } })
       }}
     </p>
-    <div
-      v-if="visibleLines.length"
-      ref="terminal"
-      class="logging-trail-output"
-      role="log"
-      tabindex="0"
-      :aria-live="paused ? 'off' : 'polite'"
-      aria-atomic="false"
-      aria-relevant="additions text"
-      @scroll="trackScroll"
-    >
-      <ol>
-        <li v-for="line in visibleLines" :key="line.id" :class="`level-${line.level}`">
-          <time :datetime="line.timestamp">{{ line.displayTime }}</time>
-          <strong>{{ line.level }}</strong>
-          <span>{{ line.output }}</span>
-        </li>
-      </ol>
-    </div>
+    <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded live log needs a tab stop for keyboard scrolling. -->
+    <div v-if="visibleLines.length" ref="terminal" class="logging-trail-output" role="log" tabindex="0" :aria-live="paused ? 'off' : 'polite'" aria-atomic="false" aria-relevant="additions text" @scroll="trackScroll"><ol>
+      <li v-for="line in visibleLines" :key="line.id" :class="`level-${line.level}`">
+        <time :datetime="line.timestamp">{{ line.displayTime }}</time>
+        <strong>{{ line.level }}</strong>
+        <span>{{ line.output }}</span>
+      </li>
+    </ol></div>
     <div v-else class="logging-trail-empty">
       <v-icon>mdi-pulse</v-icon>
       <h4>{{ active ? $t('admin:loggingConsole.waitingRecord') : $t('admin:loggingConsole.liveTrailPaused') }}</h4>

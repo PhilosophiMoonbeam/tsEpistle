@@ -9,7 +9,7 @@ it('sends current same-origin CSRF admission without caching note data', async (
       })
   )
   let csrf = 'current'
-  const api = createLiveNotesApi(fetcher as typeof fetch, () => csrf)
+  const api = createLiveNotesApi(fetcher, () => csrf)
   await api.session('my-note')
   expect(fetcher.mock.calls[0]).toEqual([
     '/_api/live-notes/my-note/session',
@@ -30,7 +30,7 @@ it('preserves stale-revision rejection and does not retry a note mutation', asyn
   const fetcher = vi.fn(
     async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ code: 'NOTE_CONFLICT', error: 'The note changed.' }), { status: 409 })
   )
-  const api = createLiveNotesApi(fetcher as typeof fetch, () => 'csrf')
+  const api = createLiveNotesApi(fetcher, () => 'csrf')
   await expect(api.restore('my-note', 2, 8)).rejects.toMatchObject({ status: 409, code: 'NOTE_CONFLICT', message: 'The note changed.' })
   expect(fetcher).toHaveBeenCalledTimes(1)
   expect(fetcher.mock.calls[0][1]?.body).toBe('{"expectedRevision":8}')
@@ -38,13 +38,13 @@ it('preserves stale-revision rejection and does not retry a note mutation', asyn
 
 it('validates owner inventory responses and never treats a malformed response as a successful empty list', async () => {
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], hasMore: true, nextCursor: null }), { status: 200 }))
-  const api = createLiveNotesApi(fetcher as typeof fetch, () => 'csrf')
+  const api = createLiveNotesApi(fetcher, () => 'csrf')
   await expect(api.list()).rejects.toThrow()
 })
 
 it('retains a forbidden HTTP status when the server denies current authority', async () => {
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 'FORBIDDEN', error: 'Access denied.' }), { status: 403 }))
-  const api = createLiveNotesApi(fetcher as typeof fetch, () => 'csrf')
+  const api = createLiveNotesApi(fetcher, () => 'csrf')
   try {
     await api.access('my-note', 3, 'edit')
     throw new Error('Expected denial')

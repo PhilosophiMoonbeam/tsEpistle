@@ -1,9 +1,17 @@
+import assert from 'node:assert/strict'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
 import type { AgentConversationFolderView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { AGENT_CHAT_RECENT_STORAGE_KEY, clearAgentChatRecent, readAgentChatRecent, writeAgentChatRecent } from '../helpers/agent-chat-continuity.ts'
+import type { AgentSessionSummary } from '../helpers/agents-api.ts'
+import type { BrowserFetch } from '../helpers/json-transport.ts'
 import { isAgentSessionId, useAgentsStore } from './agents.ts'
+
+const spyOnFetch = () => {
+  const host: { fetch: BrowserFetch } = window
+  return vi.spyOn(host, 'fetch')
+}
 
 afterEach(() => {
   clearAgentChatRecent()
@@ -85,20 +93,24 @@ const threadForSession = (sessionId: string, runId: string, ownerId = 1): AgentT
   }
 }
 
-const summaryForThread = (thread: AgentThreadState) => ({
-  id: thread.session.id,
-  title: thread.session.title,
-  retention: thread.session.retention,
-  folderId: thread.session.folderId,
-  executionMode: thread.session.executionMode,
-  version: thread.session.version,
-  providerProfileId: thread.session.providerProfileId,
-  createdAt: thread.session.createdAt,
-  updatedAt: thread.session.updatedAt,
-  lastActivityAt: thread.session.lastActivityAt,
-  expiresAt: thread.session.expiresAt,
-  deletedAt: null
-})
+const summaryForThread = (thread: AgentThreadState): AgentSessionSummary => {
+  const { executionMode } = thread.session
+  assert(executionMode === 'agent', 'Persisted conversation summaries require agent execution mode')
+  return {
+    id: thread.session.id,
+    title: thread.session.title,
+    retention: thread.session.retention,
+    folderId: thread.session.folderId,
+    executionMode,
+    version: thread.session.version,
+    providerProfileId: thread.session.providerProfileId,
+    createdAt: thread.session.createdAt,
+    updatedAt: thread.session.updatedAt,
+    lastActivityAt: thread.session.lastActivityAt,
+    expiresAt: thread.session.expiresAt,
+    deletedAt: null
+  }
+}
 type ReadyAgentStoreFixture = {
   loading: boolean
   networkPaused: boolean
@@ -201,7 +213,7 @@ describe('Agent chat refresh fallback', () => {
       },
       suggestions: [{ id: 'review', label: 'Review the evidence', prompt: 'Review the evidence behind this answer.' }]
     }
-    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(Response.json(refreshed))
+    const fetcher = spyOnFetch().mockResolvedValue(Response.json(refreshed))
 
     store.connect(thread.session.currentRun!.id, 999)
     expect(FakeEventSource.instances[0]?.url).toContain('after=1')
@@ -222,22 +234,21 @@ describe('Agent chat refresh fallback', () => {
     const thread = activeThread()
     store.thread = thread
     store.connection = 'connected'
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockResolvedValueOnce(Response.json({ message: 'Temporarily unavailable' }, { status: 503 }))
       .mockResolvedValueOnce(Response.json({ message: 'Permission revoked' }, { status: 403 }))
 
     store.scheduleRefresh(false, 1, thread.session.currentRun!.id)
     await vi.advanceTimersByTimeAsync(1)
     expect(fetcher).toHaveBeenCalledTimes(1)
-    expect(store.connection).toBe('reconnecting')
+    expect(store.$state.connection).toBe('reconnecting')
 
     await vi.advanceTimersByTimeAsync(999)
     expect(fetcher).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(store.error).toBeTruthy()
-    expect(store.connection).toBe('closed')
+    expect(store.$state.connection).toBe('closed')
     expect(store.refreshTimer).toBeNull()
   })
 
@@ -300,8 +311,7 @@ describe('Agent chat refresh fallback', () => {
       goal: { ...goal, currentRunId: successorRunId, continuationCount: 1 }
     }
     store.thread = thread
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockResolvedValueOnce(Response.json(terminalThread))
       .mockResolvedValueOnce(Response.json({ sessions: [summaryForThread(terminalThread)], nextCursor: null }))
       .mockResolvedValueOnce(Response.json(successorThread))
@@ -345,8 +355,7 @@ describe('Agent chat refresh fallback', () => {
     }
     store.thread = thread
     markWorkspaceReady(store)
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockResolvedValueOnce(Response.json(terminalThread))
       .mockResolvedValueOnce(Response.json({ sessions: [summaryForThread(terminalThread)], nextCursor: null }))
 
@@ -363,7 +372,7 @@ describe('Agent chat refresh fallback', () => {
     const store = createStore()
     const thread = activeThread()
     store.thread = thread
-    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(Response.json(thread))
+    const fetcher = spyOnFetch().mockResolvedValue(Response.json(thread))
 
     store.connectCurrentRun()
     setVisibility('hidden')
@@ -387,7 +396,7 @@ describe('Agent chat refresh fallback', () => {
     const refreshed = { ...thread, session: { ...thread.session, currentRun: { ...thread.session.currentRun!, eventSequence: 8 } } }
     store.thread = thread
     store.setDraft(thread.session.id, 'Keep my next question')
-    const fetcher = vi.spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockResolvedValueOnce(Response.json({ message: 'Temporary disconnect' }, { status: 503 }))
       .mockResolvedValueOnce(Response.json(refreshed))
 
@@ -417,7 +426,7 @@ describe('Agent chat refresh fallback', () => {
     store.thread = thread
     const response = deferred<Response>()
     const strandedResponse = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockImplementationOnce(() => strandedResponse.promise)
       .mockImplementation(() => response.promise)
     store.connectCurrentRun()
@@ -448,7 +457,7 @@ describe('Agent chat refresh fallback', () => {
     const store = createStore()
     store.thread = activeThread()
     const response = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation(() => response.promise)
+    const fetcher = spyOnFetch().mockImplementation(() => response.promise)
     const refreshing = store.refreshThread()
     await vi.advanceTimersByTimeAsync(15_000)
     await expect(refreshing).resolves.toMatchObject({ accepted: false, current: true, error: { status: 408, retryable: true } })
@@ -464,7 +473,7 @@ describe('Agent chat refresh fallback', () => {
     let now = 1_000_000
     vi.spyOn(Date, 'now').mockImplementation(() => now)
     const response = deferred<Response>()
-    vi.spyOn(window, 'fetch').mockImplementation(() => response.promise)
+    spyOnFetch().mockImplementation(() => response.promise)
     const refreshing = store.refreshThread()
     now += 15_000
     response.resolve(Response.json({ ...thread, session: { ...thread.session, title: 'Expired authority response' } }))
@@ -502,7 +511,7 @@ describe('Agent store initialization', () => {
     const created = threadForSession('00000000-0000-4000-8000-000000000060', '00000000-0000-4000-8000-000000000061')
     let sessionListRequest = 0
     const json = { headers: { 'content-type': 'application/json' } }
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') {
@@ -541,7 +550,7 @@ describe('Agent store initialization', () => {
     const existing = folderForTest('00000000-0000-4000-8000-000000000062', 'Existing')
     const baseline = deferred<Response>()
     const deleteResponse = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
@@ -572,6 +581,7 @@ describe('Agent store initialization', () => {
     expect(store.folders).toEqual([existing])
 
     const busyToken = store.beginSessionMutation()
+    assert(busyToken !== null, 'The ready workspace must acquire a mutation lease')
     expect(busyToken).toBeGreaterThan(0)
     const requestCountBeforeBusyDelete = fetcher.mock.calls.length
     await expect(store.deleteFolder(existing.id, existing.version)).resolves.toBe(false)
@@ -598,7 +608,7 @@ describe('Agent store initialization', () => {
       session: { ...activeThread().session, id: recentId, currentRun: null }
     }
     writeAgentChatRecent(1, recentId, Date.now())
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
@@ -628,7 +638,7 @@ describe('Agent store initialization', () => {
       session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000124', currentRun: null }
     }
     writeAgentChatRecent(1, missingId, Date.now())
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
@@ -655,7 +665,7 @@ describe('Agent store initialization', () => {
       const resumeId = status === 503 ? '00000000-0000-4000-8000-000000000126' : '00000000-0000-4000-8000-000000000127'
       const recentId = status === 503 ? '00000000-0000-4000-8000-000000000128' : '00000000-0000-4000-8000-000000000129'
       writeAgentChatRecent(1, recentId, Date.now())
-      const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const fetcher = spyOnFetch().mockImplementation((input, init) => {
         const path = String(input)
         const method = init?.method ?? 'GET'
         if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
@@ -689,7 +699,7 @@ describe('Agent store initialization', () => {
     }
     writeAgentChatRecent(1, recentId, Date.now())
     const malformedResume = '00000000-0000-0000-0000-000000000133'
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
@@ -715,7 +725,7 @@ describe('Agent store initialization', () => {
       session: { ...activeThread().session, id: '00000000-0000-4000-8000-000000000134', currentRun: null }
     }
     window.sessionStorage.setItem(AGENT_CHAT_RECENT_STORAGE_KEY, JSON.stringify({ version: 1, ownerId: 1, sessionId: 'not-a-session', closedAt: Date.now() }))
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'GET') return Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
@@ -745,7 +755,7 @@ describe('Agent store initialization', () => {
     store.sessions = [{ ...summaryForThread(current), version: 3 }]
     const pendingMove = deferred<Response>()
     const requestBodies: unknown[] = []
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${current.session.id}/folder` && method === 'PUT') {
@@ -775,7 +785,7 @@ describe('Agent store initialization', () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
-    vi.spyOn(window, 'fetch').mockResolvedValue(Response.json({ sessions: [], nextCursor: 'next-keyset-page' }))
+    spyOnFetch().mockResolvedValue(Response.json({ sessions: [], nextCursor: 'next-keyset-page' }))
 
     await store.reloadSessions()
 
@@ -795,8 +805,7 @@ describe('Agent store initialization', () => {
     store.sessionsNextCursor = 'opaque-page-2'
     const secondPage = deferred<Response>()
     const thirdPage = deferred<Response>()
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockImplementationOnce(() => secondPage.promise)
       .mockImplementationOnce(() => thirdPage.promise)
 
@@ -825,7 +834,7 @@ describe('Agent store initialization', () => {
     const older = summaryForThread(threadForSession('00000000-0000-4000-8000-000000000086', '00000000-0000-4000-8000-000000000087'))
     store.sessions = [current]
     store.sessionsNextCursor = 'retryable-cursor'
-    vi.spyOn(window, 'fetch')
+    spyOnFetch()
       .mockRejectedValueOnce(new TypeError('Network unavailable'))
       .mockResolvedValueOnce(Response.json({ sessions: [older], nextCursor: null }))
 
@@ -852,7 +861,7 @@ describe('Agent store initialization', () => {
     const stalePage = deferred<Response>()
     const authoritativePage = deferred<Response>()
     const signals: AbortSignal[] = []
-    vi.spyOn(window, 'fetch')
+    spyOnFetch()
       .mockImplementationOnce((_input, init) => {
         signals.push(init?.signal as AbortSignal)
         return stalePage.promise
@@ -905,7 +914,7 @@ describe('Agent session mutations', () => {
     store.thread = current
     store.sessions = [summaryForThread(current)]
     markWorkspaceReady(store)
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${current.session.id}` && method === 'GET') {
@@ -970,7 +979,7 @@ describe('Agent session mutations', () => {
     const patchBodies: unknown[] = []
     let patchCount = 0
     let listCount = 0
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${initial.session.id}` && method === 'PATCH') {
@@ -1030,7 +1039,7 @@ describe('Agent session mutations', () => {
     store.sessions = [summaryForThread(current)]
     markWorkspaceReady(store)
     const refresh = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${current.session.id}` && method === 'PATCH') return Promise.resolve(Response.json(renamed))
@@ -1073,7 +1082,7 @@ describe('Agent session mutations', () => {
     store.sessions = [summaryForThread(current)]
     markWorkspaceReady(store)
     const refresh = deferred<Response>()
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${current.session.id}` && method === 'PATCH') return Promise.resolve(Response.json(retained))
@@ -1121,7 +1130,7 @@ describe('Agent session mutations', () => {
       store.thread = current
       store.sessions = [summaryForThread(current)]
       markWorkspaceReady(store)
-      const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const fetcher = spyOnFetch().mockImplementation((input, init) => {
         const path = String(input)
         const method = init?.method ?? 'GET'
         if (path === `/_api/agents/sessions/${current.session.id}` && method === 'PATCH') {
@@ -1197,7 +1206,7 @@ describe('Agent session mutations', () => {
     markWorkspaceReady(store)
     const pendingSend = deferred<Response>()
     const postStarted = deferred<void>()
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${accountA.session.id}` && method === 'GET') return Promise.resolve(Response.json(accountA))
@@ -1247,12 +1256,12 @@ describe('Agent session mutations', () => {
     store.source = { close: sourceClose } as unknown as EventSource
     const reconnect = vi.fn()
     store.connectCurrentRun = reconnect
-    vi.spyOn(window, 'fetch').mockRejectedValue(new TypeError('History offline'))
+    spyOnFetch().mockRejectedValue(new TypeError('History offline'))
 
     await expect(store.clearUnfiledHistory()).rejects.toThrow('History offline')
 
-    expect(sourceClose).toHaveBeenCalledOnce()
-    expect(reconnect).toHaveBeenCalledOnce()
+    expect(sourceClose).toHaveBeenCalledTimes(1)
+    expect(reconnect).toHaveBeenCalledTimes(1)
     expect(store.thread).toEqual(current)
     expect(store.sessions).toEqual(previousSessions)
     expect(store.sessionsNextCursor).toBe('older')
@@ -1284,7 +1293,7 @@ describe('Agent session mutations', () => {
     markWorkspaceReady(store)
     const deleteResponse = deferred<Response>()
     const reloadResponse = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const method = init?.method ?? 'GET'
       if (input === '/_api/agents/sessions' && method === 'DELETE') return deleteResponse.promise
       if (input === '/_api/agents/sessions' && method === 'GET') return reloadResponse.promise
@@ -1339,7 +1348,7 @@ describe('Agent session mutations', () => {
     markWorkspaceReady(store)
     store.connectCurrentRun = vi.fn()
     const requestBodies: unknown[] = []
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const method = init?.method ?? 'GET'
       if (input === '/_api/agents/sessions' && method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }))
       if (input === '/_api/agents/sessions' && method === 'POST') {
@@ -1393,7 +1402,7 @@ describe('Agent session mutations', () => {
               : `/_api/agents/conversation-folders/${folderId}?expectedVersion=1`
         const expectedMethod = actionName === 'newSession' ? 'POST' : 'DELETE'
         let requestIssued = false
-        const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+        const fetcher = spyOnFetch().mockImplementation((input, init) => {
           const path = String(input)
           const method = init?.method ?? 'GET'
           if (!requestIssued && path === expectedPath && method === expectedMethod) {
@@ -1435,10 +1444,11 @@ describe('Agent session mutations', () => {
 
         expect(store.sessionMutationBusy).toBe(false)
         const token = store.beginSessionMutation()
+        assert(token !== null, 'The completed mutation must release its lease for the next owner')
         expect(token).toBeGreaterThan(0)
         expect(store.sessionMutationBusy).toBe(true)
-        expect(token).toBe(store.sessionMutationToken)
-        await expect(store.newSession('temporary', token! + 1)).resolves.toBe(false)
+        expect(store.sessionMutationToken).toBe(token)
+        await expect(store.newSession('temporary', token + 1)).resolves.toBe(false)
         expect(store.sessionMutationBusy).toBe(true)
         expect(store.endSessionMutation(token)).toBe(true)
         expect(store.sessionMutationBusy).toBe(false)
@@ -1471,7 +1481,7 @@ describe('Agent folder refresh ordering', () => {
     const first = deferred<Response>()
     const second = deferred<Response>()
     const signals: AbortSignal[] = []
-    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+    spyOnFetch().mockImplementation((_input, init) => {
       signals.push(init?.signal as AbortSignal)
       return signals.length === 1 ? first.promise : second.promise
     })
@@ -1492,7 +1502,7 @@ describe('Agent folder refresh ordering', () => {
     const fresh = folderForTest('00000000-0000-4000-8000-000000000092', 'Fresh')
     const first = deferred<Response>()
     const second = deferred<Response>()
-    vi.spyOn(window, 'fetch')
+    spyOnFetch()
       .mockImplementationOnce(() => first.promise)
       .mockImplementationOnce(() => second.promise)
 
@@ -1515,7 +1525,7 @@ describe('Agent folder refresh ordering', () => {
     const pendingCreate = deferred<Response>()
     const signals: AbortSignal[] = []
     let folderReadIndex = 0
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/conversation-folders' && method === 'GET') {
@@ -1559,9 +1569,9 @@ describe('Agent folder refresh ordering', () => {
     const current = folderForTest('00000000-0000-4000-8000-000000000094', 'Current')
     const late = folderForTest('00000000-0000-4000-8000-000000000095', 'Late')
     const pending = deferred<Response>()
-    let signal: AbortSignal | undefined
+    let signal: RequestInit['signal']
     store.folders = [current]
-    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+    spyOnFetch().mockImplementation((_input, init) => {
       signal = init?.signal
       return pending.promise
     })
@@ -1593,7 +1603,7 @@ describe('Agent session selection', () => {
     const first = deferred<Response>()
     const second = deferred<Response>()
     const signals: AbortSignal[] = []
-    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+    spyOnFetch().mockImplementation((_input, init) => {
       signals.push(init?.signal as AbortSignal)
       return signals.length === 1 ? first.promise : second.promise
     })
@@ -1641,7 +1651,7 @@ describe('Agent session selection', () => {
     const displayedThread = store.thread
     const activeSource = store.source
     store.connection = 'connected'
-    vi.spyOn(window, 'fetch').mockResolvedValue(
+    spyOnFetch().mockResolvedValue(
       new Response(JSON.stringify({ message: 'Unavailable' }), {
         status: 503,
         headers: { 'content-type': 'application/json' }
@@ -1669,7 +1679,7 @@ describe('Agent session selection', () => {
     store.connection = 'connected'
     const pending = deferred<Response>()
     const signals: AbortSignal[] = []
-    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+    spyOnFetch().mockImplementation((_input, init) => {
       signals.push(init?.signal as AbortSignal)
       return pending.promise
     })
@@ -1705,7 +1715,7 @@ describe('Agent session selection', () => {
     const first = deferred<Response>()
     const second = deferred<Response>()
     const signals: AbortSignal[] = []
-    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+    spyOnFetch().mockImplementation((_input, init) => {
       signals.push(init?.signal as AbortSignal)
       return signals.length === 1 ? first.promise : second.promise
     })
@@ -1728,9 +1738,9 @@ describe('Agent session selection', () => {
     store.csrfToken = 'csrf-token'
     const displayed = activeThread()
     const pending = deferred<Response>()
-    let signal: AbortSignal | undefined
+    let signal: RequestInit['signal']
     store.thread = displayed
-    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+    spyOnFetch().mockImplementation((_input, init) => {
       signal = init?.signal
       return pending.promise
     })
@@ -1782,7 +1792,7 @@ describe('Automatic agent send admission', () => {
     let posted = false
     const freshness = deferred<Response>()
     store.listenForVisibility()
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${sessionId}` && method === 'GET') return posted ? Promise.resolve(Response.json(accepted)) : freshness.promise
@@ -1834,7 +1844,7 @@ describe('Automatic agent send admission', () => {
     let now = 1_000_000
     vi.spyOn(Date, 'now').mockImplementation(() => now)
     const stranded = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockImplementationOnce(() => stranded.promise)
       .mockImplementation(() => Promise.resolve(Response.json(origin)))
 
@@ -1891,7 +1901,7 @@ describe('Automatic agent send admission', () => {
     markWorkspaceReady(store)
     store.connectCurrentRun = vi.fn()
     store.setDraft(origin.session.id, 'Keep this unsent draft')
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       if (String(input) === `/_api/agents/sessions/${origin.session.id}` && (init?.method ?? 'GET') === 'GET') return Promise.resolve(Response.json(fresh))
       if (String(input) === `/_api/agents/sessions/${origin.session.id}/messages` && init?.method === 'POST')
         return Promise.resolve(Response.json({ run: active.session.currentRun, replayed: false }, { status: 202 }))
@@ -1926,7 +1936,7 @@ describe('Agent session mutation transitions', () => {
     const selected = threadForSession('00000000-0000-4000-8000-000000000050', '00000000-0000-4000-8000-000000000051')
     const pendingCreation = deferred<Response>()
     const json = { headers: { 'content-type': 'application/json' } }
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === '/_api/agents/sessions' && method === 'POST') return pendingCreation.promise
@@ -1970,7 +1980,7 @@ describe('Agent session mutation transitions', () => {
     markWorkspaceReady(store)
     const pendingDeletion = deferred<Response>()
     const json = { headers: { 'content-type': 'application/json' } }
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const fetcher = spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${deleted.session.id}` && method === 'DELETE') return pendingDeletion.promise
@@ -2009,7 +2019,7 @@ describe('Agent session mutation transitions', () => {
     store.setDraft(origin.session.id, 'Keep this in the original conversation')
     store.setDraft(selected.session.id, 'Another draft')
     markWorkspaceReady(store)
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${origin.session.id}` && method === 'GET') return Promise.resolve(Response.json(origin))
@@ -2050,7 +2060,7 @@ describe('Agent session mutation transitions', () => {
     const pending = deferred<Response>()
     const postStarted = deferred<void>()
     let accepted = false
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${active.session.id}/messages` && method === 'POST') {
@@ -2111,7 +2121,7 @@ describe('Agent session mutation transitions', () => {
     const pending = deferred<Response>()
     const postStarted = deferred<void>()
     let posted = false
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') {
@@ -2146,7 +2156,7 @@ describe('Agent session mutation transitions', () => {
     store.thread = origin
     markWorkspaceReady(store)
     let committed = false
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') {
@@ -2180,7 +2190,7 @@ describe('Agent session mutation transitions', () => {
     const postStarted = deferred<void>()
     let refuseNextPost = true
     let posted = false
-    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    spyOnFetch().mockImplementation((input, init) => {
       const path = String(input)
       const method = init?.method ?? 'GET'
       if (path === `/_api/agents/sessions/${active.session.id}` && method === 'GET') {
@@ -2219,8 +2229,7 @@ describe('Agent session mutation transitions', () => {
     store.thread = active
     markWorkspaceReady(store)
     store.connection = 'reconnecting'
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockImplementationOnce(() => cancellation.promise)
       .mockResolvedValueOnce(Response.json(terminal))
 
@@ -2260,8 +2269,7 @@ describe('Agent empty conversation lifecycle', () => {
       launchPage: null
     }
     const json = { headers: { 'content-type': 'application/json' } }
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockResolvedValueOnce(new Response(JSON.stringify(replacement), { status: 201, ...json }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [], nextCursor: null }), { status: 200, ...json }))
@@ -2286,7 +2294,7 @@ describe('Agent empty conversation lifecycle', () => {
     store.thread = { ...active, session: { ...active.session, currentRun: null } }
     store.setDraft(active.session.id, 'Do not lose this question')
     markWorkspaceReady(store)
-    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValueOnce(Response.json({ message: 'Temporarily unavailable' }, { status: 503 }))
+    const fetcher = spyOnFetch().mockResolvedValueOnce(Response.json({ message: 'Temporarily unavailable' }, { status: 503 }))
 
     await expect(store.newSession('temporary')).rejects.toThrow('Temporarily unavailable')
 
@@ -2395,8 +2403,7 @@ describe('Agent proposal decisions', () => {
       session: { ...store.thread.session, currentRun: null },
       proposals: []
     }
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockResolvedValueOnce(
         Response.json({
           proposalId,
@@ -2434,7 +2441,7 @@ describe('Agent proposal decisions', () => {
       }
     }
     store.thread = { ...store.thread, proposals: [replacement] }
-    const fetcher = vi.spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
     await store.decideProposal(old.id, old.approval!.id, 'approved')
     await store.decideProposal(replacement.id, old.approval!.id, 'approved')
     expect(fetcher).not.toHaveBeenCalled()
@@ -2449,7 +2456,7 @@ describe('Agent proposal decisions', () => {
     store.thread = pendingDecisionThread()
     markWorkspaceReady(store)
     const proposal = store.thread.proposals[0]!
-    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(Response.json({ error: 'The reviewed base revision has changed.' }, { status: 409 }))
+    const fetcher = spyOnFetch().mockResolvedValue(Response.json({ error: 'The reviewed base revision has changed.' }, { status: 409 }))
     await store.decideProposal(proposal.id, proposal.approval!.id, 'approved')
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(store.thread.proposals[0]?.approval?.status).toBe('pending')
@@ -2468,7 +2475,7 @@ describe('Agent proposal decisions', () => {
       markWorkspaceReady(store)
       const proposal = store.thread.proposals[0]!
       const pending = deferred<Response>()
-      const fetcher = vi.spyOn(window, 'fetch').mockReturnValue(pending.promise)
+      const fetcher = spyOnFetch().mockReturnValue(pending.promise)
       const deciding = store.decideProposal(proposal.id, proposal.approval!.id, 'denied', undefined, 'Keep the rollback procedure.')
       expect(store.decidingApprovalId).toBe(proposal.approval!.id)
       const next = threadForSession('00000000-0000-4000-8000-000000000007', '00000000-0000-4000-8000-000000000008')
@@ -2501,8 +2508,7 @@ describe('Agent unfiled history clearing', () => {
     store.setDraft(listed.session.id, 'Discard this cleared draft')
     markWorkspaceReady(store)
     store.error = 'History temporarily unavailable'
-    const fetcher = vi
-      .spyOn(window, 'fetch')
+    const fetcher = spyOnFetch()
       .mockImplementation((_input, init) =>
         init?.method === 'DELETE' ? Promise.resolve(new Response(null, { status: 204 })) : Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
       )
@@ -2524,7 +2530,7 @@ describe('Agent unfiled history clearing', () => {
     const thread = activeThread()
     store.thread = thread
     markWorkspaceReady(store)
-    vi.spyOn(window, 'fetch').mockResolvedValue(Response.json({ message: 'Clear unavailable' }, { status: 503 }))
+    spyOnFetch().mockResolvedValue(Response.json({ message: 'Clear unavailable' }, { status: 503 }))
 
     await expect(store.clearUnfiledHistory()).rejects.toThrow('Clear unavailable')
 

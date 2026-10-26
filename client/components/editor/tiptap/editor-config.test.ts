@@ -572,7 +572,7 @@ graph TD
     expect(pressEnter(editor)).toBe(true)
     expect(editor.state.selection.$from.parent.type.name).toBe('paragraph')
     expect(selectionHasAncestor(editor, 'definitionList')).toBe(false)
-    expect(editor.getJSON().content?.[0]?.content?.[0]?.content?.[0]?.text).toBe('Term')
+    expect(editor.state.doc.firstChild?.firstChild?.firstChild?.text).toBe('Term')
     expect(editor.getJSON().content?.[0]?.content).toHaveLength(2)
   })
 
@@ -676,7 +676,9 @@ graph TD
       const editor = createEditor(fixture.format, fixture.source)
       const serialized = serializeVisualEditorData(fixture.format, editor)
 
-      editor.options.element.classList.add('contents', 'editor-page-canvas')
+      const element = editor.options.element
+      if (!(element instanceof HTMLElement)) throw new Error('The editor fixture must use an HTML mount element')
+      element.classList.add('contents', 'editor-page-canvas')
 
       expect(serializeVisualEditorData(fixture.format, editor)).toBe(serialized)
     }

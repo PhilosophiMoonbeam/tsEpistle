@@ -5,6 +5,7 @@ import { groupPermissions, normalizeGroupRulePath } from '../../../shared/group-
 import type { wikiStore as AppWikiStore } from '../../store/index.ts'
 import { browserWindow, document } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+import { installVuetifyFixture } from '../../test/vuetify-fixture.mts'
 
 const originalSiteConfig = Object.getOwnPropertyDescriptor(browserWindow, 'siteConfig')
 Object.defineProperty(browserWindow, 'siteConfig', {
@@ -121,7 +122,7 @@ function renderedSnapshot(name: string, state: Record<string, unknown>) {
     })
   )
   app.config.globalProperties.$t = translateEnglish
-  app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
+  installVuetifyFixture(app)
   const host = document.createElement('div')
   document.body.append(host)
   try {
@@ -232,7 +233,7 @@ describe('group directory and creation', () => {
     state.preset = 'empty'
     await state.create()
     await state.create()
-    expect(createReviewedGroup).toHaveBeenCalledOnce()
+    expect(createReviewedGroup).toHaveBeenCalledTimes(1)
     expect(state.name).toBe('Research')
     expect(state.conflict).toBe(true)
     fetchGroupCreationOptions.mockRejectedValue(new Error('Offline'))
@@ -258,7 +259,7 @@ describe('group directory and creation', () => {
     reject(new Error('Connection lost'))
     await pending
     await state.create()
-    expect(createReviewedGroup).toHaveBeenCalledOnce()
+    expect(createReviewedGroup).toHaveBeenCalledTimes(1)
     expect(state.saveError).toContain('outcome is unconfirmed')
     window.confirm.mockReturnValue(false)
     state.close(false)
@@ -410,7 +411,7 @@ describe('group page-rule and membership drafts', () => {
     expect(state.dialog).toBe(false)
     state.disabled = true
     state.remove('r')
-    expect(state.$emit).toHaveBeenCalledOnce()
+    expect(state.$emit).toHaveBeenCalledTimes(1)
   })
   it('rejects invalid expressions and language codes and explains missing global permissions', () => {
     const { state } = arrange('admin-groups-edit-rules', {}, { modelValue: { permissions: [], pageRules: [] }, disabled: false })

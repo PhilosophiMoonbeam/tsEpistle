@@ -1,6 +1,6 @@
 <template>
   <div class="agent-context" :aria-label="$t('common:agentContextPicker.sourcesSearchScope')">
-    <div class="agent-context__scope" role="group" :aria-label="$t('common:agentContextPicker.conversationSourceControls')">
+    <fieldset class="agent-context__scope" :aria-label="$t('common:agentContextPicker.conversationSourceControls')">
       <v-menu content-class="agent-owned-overlay" location="top start">
         <template #activator="{ props: menuProps }">
           <v-tooltip location="top" :text="$t('common:agentContextPicker.searchScopeHelp')">
@@ -27,7 +27,7 @@
         :aria-label="$t('common:agentContextPicker.addSources')"
         @click="openSources"
       ><span aria-hidden="true">{{ $t('common:agentContextPicker.sources') }}</span></v-btn>
-    </div>
+    </fieldset>
     <!-- One compact source chip for the current page. The chip itself means the
          page is included, so no separate Included badge is rendered. -->
     <v-tooltip v-if="currentPage" location="top" :text="connectionBlocked
@@ -57,7 +57,9 @@
         </button>
       </template>
     </v-tooltip>
-    <div v-if="draft.sources.length" class="agent-context__sources" role="region" tabindex="0" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
+    <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded overflow-y scroll region must remain keyboard-scrollable. -->
+    <section v-if="draft.sources.length" class="agent-context__sources" tabindex="0" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
+      <!-- biome-ignore lint/a11y/useSemanticElements: VChip owns Enter/Space activation and contains a separate native close button; a button root would nest buttons. -->
       <v-chip
         v-for="source in draft.sources"
         :key="source.id"
@@ -76,7 +78,7 @@
         <span class="agent-context__source-label">{{ source.title }}</span>
         <v-icon class="agent-context__preview-icon" icon="mdi-eye-outline" size="14" aria-hidden="true" />
       </v-chip>
-    </div>
+    </section>
     <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">{{ $t('common:agentContextPicker.eightSourcesAttachedRemove') }}</p>
     <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" @close="previewSelector = null" />
 
@@ -625,6 +627,9 @@ onBeforeUnmount(() => {
 }
 .agent-context__scope {
   display: flex;
+  border: 0;
+  margin: 0;
+  padding: 0;
   min-width: 0;
   max-width: 100%;
   flex: 0 1 auto;

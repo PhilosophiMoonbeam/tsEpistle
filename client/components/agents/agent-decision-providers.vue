@@ -20,6 +20,7 @@
       <v-form @submit.prevent="save">
       <template v-for="field in decisionFields" :key="field.key">
         <template v-if="field.scope === 'custom' ? draft.kind === 'openai-compatible' : field.scope === 'pricing' ? draft.knownPricing : true">
+          <!-- biome-ignore lint/a11y/noAutofocus: The configured initial field is inside the user-opened provider VDialog. -->
           <v-text-field v-if="field.control === 'text'" v-model="draft[field.key]" :label="field.label" :type="field.type" :error-messages="fieldErrors[field.key]" :autofocus="field.autofocus" :autocomplete="field.key === 'secret' ? 'new-password' : undefined" :disabled="busy || denied || (field.key === 'secret' && draft.clearSecret)" />
           <v-text-field v-else-if="field.control === 'number'" v-model.number="draft[field.key]" type="number" step="any" :label="field.label" :error-messages="fieldErrors[field.key]" :disabled="busy || denied" />
           <v-checkbox v-else-if="field.control === 'checkbox'" v-model="draft[field.key]" :label="field.label" :disabled="busy || denied" />
@@ -35,6 +36,7 @@
 </template>
 <script setup lang="ts">
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AgentApiError } from '../../helpers/agents-api.ts'
 import { DecisionProviderWriteSchema } from '../../../shared/agents/decision-providers.ts'
@@ -42,7 +44,7 @@ import { listDecisionProviders,createDecisionProvider,updateDecisionProvider,del
 const {csrfToken,refreshKey=0}=defineProps<{csrfToken:string;refreshKey?:number}>()
 const emit=defineEmits<{state:[providers:DecisionProviderView[]|null]}>()
 const t = useTranslate('admin:decisionProviders')
-const fetcher:typeof fetch=(...args)=>window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 const providers=ref<DecisionProviderView[]>([]),loading=ref(false),loaded=ref(false),busy=ref(false),denied=ref(false),error=ref(''),formError=ref(''),dialog=ref(false),discard=ref(false),editing=ref<DecisionProviderView|null>(null),remove=ref<DecisionProviderView|null>(null),baseline=ref('')
 const checks=reactive<Record<string,string>>({})
 const editingStale=computed(()=>Boolean(editing.value)&&providers.value.find(p=>p.id===editing.value?.id)?.revision!==editing.value?.revision)

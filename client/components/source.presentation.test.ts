@@ -4,8 +4,10 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { document, resetBody, setLocation } from '../test/browser-dom.mts'
-import type { ComponentOptions, RenderFunction } from 'vue'
+import type { App, ComponentOptions, RenderFunction } from 'vue'
 import { decodeBase64Json, decodeBase64Text } from '../helpers/base64'
+import { helpers } from '../helpers/index.ts'
+import { installVuetifyFixture } from '../test/vuetify-fixture.mts'
 
 const filename = path.join(process.cwd(), 'client/components/source.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
@@ -39,7 +41,7 @@ const passthrough = (tag = 'div') =>
     }
   })
 
-let app: { unmount: () => void } | undefined
+let app: App | undefined
 let clipboardDescriptor: PropertyDescriptor | undefined
 afterEach(() => {
   app?.unmount()
@@ -109,8 +111,8 @@ describe('View Source presentation', () => {
       app.component(name, passthrough())
     }
     app.component('v-btn', passthrough('button'))
-    app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
-    app.config.globalProperties.$helpers = { formatMoment: (value: string) => value }
+    installVuetifyFixture(app)
+    app.config.globalProperties.$helpers = { ...helpers, formatMoment: value => value }
     app.config.globalProperties.$t = (key: string) => key
 
     const host = document.createElement('div')

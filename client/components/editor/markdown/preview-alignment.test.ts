@@ -41,6 +41,6 @@ describe('Markdown preview alignment', () => {
     document.body.innerHTML = '<details><p id="target">Hidden source line</p></details>'
     const target = document.querySelector<HTMLElement>('#target')!
 
-    expect(resolveVisiblePreviewTarget(target)).toBe(target.parentElement)
+    expect(resolveVisiblePreviewTarget(target)).toBe(target.parentElement!)
   })
 })

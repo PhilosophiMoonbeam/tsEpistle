@@ -90,7 +90,7 @@ describe('root authentication and loading ownership', () => {
     const store = useWikiStore(pinia)
 
     await expect(store.refreshAuth()).resolves.toBe('anonymous')
-    expect(storage.getReadingVault).toHaveBeenCalledOnce()
+    expect(storage.getReadingVault).toHaveBeenCalledTimes(1)
     expect(storage.bumpSessionGeneration).toHaveBeenCalledWith(undefined, { expectedSessionGeneration: 3 })
     expect(store.user.authenticated).toBe(false)
     expect(store.offlineIdentityReady).toBe(false)
@@ -704,7 +704,7 @@ describe('root authentication and loading ownership', () => {
       online = true
     }
     await expect(store.refreshAuth()).resolves.toBe('authenticated')
-    expect(storage.getReadingVault).toHaveBeenCalledOnce()
+    expect(storage.getReadingVault).toHaveBeenCalledTimes(1)
     expect(storage.bumpSessionGeneration).not.toHaveBeenCalled()
     expect(store.offlineIdentityEpoch).toBe(epoch)
     expect(store.user.id).toBe(42)
@@ -794,7 +794,7 @@ describe('root authentication and loading ownership', () => {
     store.authRefreshOutcome = 'authenticated'
 
     await expect(store.refreshAuth()).resolves.toBe('authenticated')
-    expect(storage.getReadingVault).toHaveBeenCalledOnce()
+    expect(storage.getReadingVault).toHaveBeenCalledTimes(1)
     expect(storage.bumpSessionGeneration).not.toHaveBeenCalled()
     expect(store.offlineIdentityReady).toBe(true)
   })
@@ -845,7 +845,7 @@ describe('root authentication and loading ownership', () => {
     store.authRefreshOutcome = 'authenticated'
 
     await expect(store.refreshAuth()).resolves.toBe('authenticated')
-    expect(storage.getReadingVault).toHaveBeenCalledOnce()
+    expect(storage.getReadingVault).toHaveBeenCalledTimes(1)
     expect(storage.bumpSessionGeneration).toHaveBeenCalledWith(undefined, { expectedSessionGeneration: 4 })
     expect(storage.invalidateAccountSession).not.toHaveBeenCalled()
     expect(store.user.id).toBe(42)
@@ -923,14 +923,14 @@ describe('root authentication and loading ownership', () => {
   })
 
   it('stores only a durable non-secret logout marker until explicit sign-in resolves it', async () => {
-    let marker: string | null = null
+    const persisted: { marker: string | null } = { marker: null }
     const localStorage: StorageStub = {
-      getItem: vi.fn((_key: string) => marker),
+      getItem: vi.fn((_key: string) => persisted.marker),
       setItem: vi.fn((_key: string, value: string) => {
-        marker = value
+        persisted.marker = value
       }),
       removeItem: vi.fn((_key: string) => {
-        marker = null
+        persisted.marker = null
       })
     }
     installWindow(vi.fn(), localStorage)
@@ -940,10 +940,10 @@ describe('root authentication and loading ownership', () => {
     )
 
     expect(markOfflineLogoutPending(42)).toBe(true)
-    expect(marker).toBe('42')
+    expect(persisted.marker).toBe('42')
     expect(hasOfflineLogoutPending()).toBe(true)
     resolvePendingOfflineLogoutAfterExplicitSignIn()
-    expect(marker).toBeNull()
+    expect(persisted.marker).toBeNull()
     expect(hasOfflineLogoutPending()).toBe(false)
   })
 

@@ -533,7 +533,7 @@ describe('LogoPointerController input and lifecycle', () => {
     time += 10
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 160, clientY: 100, pointerType: 'mouse', pointerId: 1 }))
     expect(controller.state.activeImpulseCount).toBe(6)
-    expect(controller.state.impulses).toEqual(impulsesBeforeSuppressedMoves)
+    expect([...controller.state.impulses]).toEqual(impulsesBeforeSuppressedMoves)
     controller.dispose()
   })
 

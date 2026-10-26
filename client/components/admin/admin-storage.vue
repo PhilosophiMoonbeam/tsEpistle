@@ -322,9 +322,10 @@
                     v-if="field.sensitive"
                     class="storage-secret"
                     :class="{'storage-full':field.multiline}"
-                  ><label>{{ field.title }}</label>
+                  ><label :for="`storage-secret-${selectedTarget.key}-${field.key}`">{{ field.title }}</label>
                     <p>{{ selectedTarget.secrets[field.key] ? $t('admin:storage.valueSavedNeverReturned') : $t('admin:storage.noValueCurrentlySaved') }}
                     </p><v-select
+                      :id="`storage-secret-${selectedTarget.key}-${field.key}`"
                       :model-value="selectedDraft.secrets[field.key]?.action"
                       :items="secretActions"
                       :label="$t('admin:storage.action', { title: field.title, interpolation: { escapeValue: false } })"

@@ -11,6 +11,7 @@ import {
   type OfflineDraftKeyHandle
 } from './offline-crypto.ts'
 import { requestOfflineIdentityBoundary } from './offline-session.ts'
+import type { BrowserFetch } from './json-transport.ts'
 
 export type OfflineActorEpoch = string | number
 type ActorEpoch = OfflineActorEpoch
@@ -121,7 +122,7 @@ export type OfflineEditorReloadSafetyFacts = {
 }
 
 export type OfflineEditorDraftCoordinatorOptions = {
-  readonly fetchImpl: typeof window.fetch
+  readonly fetchImpl: BrowserFetch
   readonly isAuthenticated: () => boolean
   readonly accountId: () => number
   readonly isOfflineBoundaryReady?: () => boolean

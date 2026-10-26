@@ -15,15 +15,15 @@ import { JSDOM } from 'jsdom'
 // Per-file overrides (matchMedia, visualViewport, fetch, ...) keep working: they
 // simply redefine the properties on the shared window.
 
-function ownWindow(): { dom: JSDOM; browserWindow: Window } {
+function ownWindow(): { dom: JSDOM; browserWindow: JSDOM['window'] } {
   const shared = (globalThis as { __wikiTestJsdom?: JSDOM }).__wikiTestJsdom
-  if (shared) return { dom: shared, browserWindow: shared.window as unknown as Window }
+  if (shared) return { dom: shared, browserWindow: shared.window }
   const created = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
     pretendToBeVisual: true,
     url: 'http://localhost/'
   })
   Reflect.set(globalThis, '__wikiTestJsdom', created)
-  return { dom: created, browserWindow: created.window as unknown as Window }
+  return { dom: created, browserWindow: created.window }
 }
 
 const singleton = ownWindow()
@@ -49,6 +49,15 @@ const visualViewportStub = {
   removeEventListener: () => undefined
 }
 
+// Vuetify 4.3 reads width queries through matchMedia. Use this fixed JSDOM
+// viewport rather than reporting every desktop breakpoint as false.
+function matchesViewportWidth(query: string): boolean {
+  const bound = /^\s*\((min|max)-width:\s*(\d+(?:\.\d+)?)px\)\s*$/.exec(query)
+  if (!bound) return false
+  const width = Number(bound[2])
+  return bound[1] === 'min' ? browserWindow.innerWidth >= width : browserWindow.innerWidth <= width
+}
+
 Object.defineProperty(browserWindow, 'fetch', { configurable: true, writable: true, value: () => Promise.resolve() })
 Object.defineProperty(browserWindow.Element.prototype, 'scrollIntoView', { configurable: true, value(): void {} })
 Object.defineProperties(browserWindow, {
@@ -59,7 +68,7 @@ Object.defineProperties(browserWindow, {
   matchMedia: {
     configurable: true,
     value: (query: string) => ({
-      matches: query.includes('max-width: 639.98px'),
+      matches: matchesViewportWidth(query),
       media: query,
       onchange: null,
       addEventListener: () => undefined,

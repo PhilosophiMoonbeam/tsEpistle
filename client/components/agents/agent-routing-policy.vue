@@ -37,6 +37,7 @@
 </template>
 <script setup lang="ts">
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AgentApiError } from '../../helpers/agents-api.ts'
 import { DEFAULT_ROUTING_POLICY, ROUTING_TASK_CLASSES, ROUTING_COMPLEXITIES, RoutingPolicyInputSchema, RoutingModelPolicyInputSchema, type RoutingTaskClass, type RoutingComplexity } from '../../../shared/agents/routing.ts'
@@ -49,7 +50,7 @@ interface ModelProfile {
 const { csrfToken, profiles, refreshKey = 0, profilesError = '' } = defineProps<{ csrfToken: string; profiles: readonly ModelProfile[]; refreshKey?: number; profilesError?: string }>()
 const emit = defineEmits<{ 'refresh-profiles': []; changed: []; state: [value: { policy: RoutingPolicyView; models: RoutingModelPolicyView[] } | null]; navigate: [section: 'profiles' | 'decision'] }>()
 const t = useTranslate('admin:routingPolicy')
-const fetcher: typeof fetch = (...args) => window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 const loading = ref(false), busy = ref(false), denied = ref(false), error = ref(''), formError = ref(''), policy = ref<RoutingPolicyView | null>(null), declarations = ref<RoutingModelPolicyView[]>([]), providers = ref<DecisionProviderView[]>([]), selected = ref<ModelProfile | null>(null), remove = ref<RoutingModelPolicyView | null>(null), dialog = ref(false), discard = ref(false), baseline = ref(''), latency = ref(''), expectedRevision = ref(0)
 const policyBaseline = ref(''), editRevision = ref(0), policyDiscard = ref(false)
 const draft = reactive({ ...DEFAULT_ROUTING_POLICY })

@@ -173,6 +173,7 @@
               <span class="proposal-output__deletion">{{ $t('common:agentMcpApproval.removed') }}</span>
               <span>{{ $t('common:agentMcpApproval.linesCount', { count: diffLines.length }) }}</span>
             </div>
+            <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded overflow:auto diff must remain keyboard-scrollable. -->
             <pre :id="proposalDiffId" class="proposal-diff" tabindex="0" :aria-label="$t('common:agentMcpApproval.proposedOutputDiff')"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
             <v-btn
               v-if="diffLines.length > collapsedLineCount"
@@ -308,6 +309,7 @@ const t: typeof translate = (key, options) => {
   return translate(key, options)
 }
 
+// biome-ignore lint/correctness/noVueDuplicateKeys: The normalized script-setup computed binding does not duplicate an Options API key.
 const props = defineProps<{ csrfToken: string; proposalId: string; networkBlocked?: boolean }>()
 const instanceId = useId()
 const approvalTitleId = `${instanceId}-approval-title`

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import * as ts from 'typescript'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import type { AuthenticationField, AuthenticationProvider, AuthenticationProviderDraft, AuthenticationWorkspace } from '../../../shared/authentication-policy.ts'
 import { authenticationDraft, authenticationSignature } from '../../helpers/authentication-workspace-api.ts'
 import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
@@ -53,7 +54,7 @@ const compileComponentOptions = (path: string): string => {
 }
 
 const compiled = compileComponentOptions('client/components/admin/admin-auth.vue')
-const provider = {
+const provider: AuthenticationProvider = {
   key: 'org',
   strategyKey: 'oidc',
   displayName: 'Organization',
@@ -69,7 +70,7 @@ const provider = {
   activeAccountCount: 2,
   runtime: { state: 'ready', checkedAt: null, revision: 'v1' }
 }
-const snapshot = {
+const snapshot: AuthenticationWorkspace = {
   fingerprint: 'review-one',
   host: 'https://wiki.example.invalid',
   providers: [provider],
@@ -79,9 +80,11 @@ const snapshot = {
       title: 'OpenID Connect',
       description: 'Identity',
       available: true,
+      useForm: false,
+      website: '',
       fields: [
-        { key: 'clientSecret', title: 'Client secret', sensitive: true, default: '' },
-        { key: 'issuer', title: 'Issuer', sensitive: false, default: '' }
+        { key: 'clientSecret', title: 'Client secret', type: 'string', hint: '', sensitive: true, multiline: false, default: '', choices: [], order: 0 },
+        { key: 'issuer', title: 'Issuer', type: 'string', hint: '', sensitive: false, multiline: false, default: '', choices: [], order: 1 }
       ]
     }
   ],
@@ -120,14 +123,14 @@ describe('reviewed authentication workspace', () => {
     if (template.errors.length) throw template.errors[0]
     const child = new Function('vCredentialAutofill', compileComponentOptions(filename) + ';return component')(vCredentialAutofill)
     const AuthFields = { ...child, render: new Function('Vue', template.code)(Vue) }
-    const fields = [
+    const fields: AuthenticationField[] = [
       { key: 'credential', title: 'Credential', sensitive: true },
       { key: 'certificate', title: 'Certificate', sensitive: true, multiline: true },
       { key: 'notes', title: 'Notes', multiline: true },
-      { key: 'timeout', title: 'Timeout', type: 'number' },
+      { key: 'timeout', title: 'Timeout', type: 'number' as const },
       { key: 'issuer', title: 'Issuer' }
-    ].map(field => ({ choices: [], ...field }))
-    const draft = Vue.ref({
+    ].map((field, order): AuthenticationField => ({ type: 'string', hint: '', default: '', sensitive: false, multiline: false, choices: [], order, ...field }))
+    const draft = Vue.ref<AuthenticationProviderDraft>({
       ...authenticationDraft(provider),
       config: { timeout: 30, notes: 'Before', issuer: 'https://identity.example.invalid' },
       secrets: { credential: { action: 'replace', value: 'secret' }, certificate: { action: 'replace', value: 'certificate' } }
@@ -163,7 +166,7 @@ describe('reviewed authentication workspace', () => {
         ['Notes', 'textarea', 'off'],
         ['Timeout', 'number', 'off'],
         ['Issuer', 'text', 'off']
-      ]) {
+      ] as const) {
         const control = fieldControl(label)
         expect(control.type).toBe(type)
         expect(control.autocomplete).toBe(autocomplete)
@@ -231,7 +234,7 @@ describe('reviewed authentication workspace', () => {
     transport.saveAuthenticationWorkspace.mockRejectedValue(Object.assign(new Error('Changed'), { status: 409 }))
     await state.confirm()
     await state.confirm()
-    expect(transport.saveAuthenticationWorkspace).toHaveBeenCalledOnce()
+    expect(transport.saveAuthenticationWorkspace).toHaveBeenCalledTimes(1)
     expect(state.drafts[0].description).toBe('Draft')
     expect(state.reason).toBe('Reviewed change')
     window.confirm.mockReturnValue(false)
@@ -252,7 +255,7 @@ describe('reviewed authentication workspace', () => {
     expect(state.stale).toBe(true)
     expect(state.locked).toBe(true)
     await state.confirm()
-    expect(transport.saveAuthenticationWorkspace).toHaveBeenCalledOnce()
+    expect(transport.saveAuthenticationWorkspace).toHaveBeenCalledTimes(1)
   })
   it('keeps committed creation and cleared credential inputs coherent if the follow-up read fails', async () => {
     const { state, transport } = arrange()
@@ -266,12 +269,13 @@ describe('reviewed authentication workspace', () => {
     state.reason = 'Create a provider'
     transport.fetchAuthenticationWorkspace.mockRejectedValue(new Error('Read unavailable'))
     await state.confirm()
-    expect(state.saved.providers.find(row => row.key === provider.key)).toMatchObject({
+    const saved: AuthenticationWorkspace = state.saved
+    expect(saved.providers.find(row => row.key === provider.key)).toMatchObject({
       key: provider.key,
       description: 'Saved purpose',
       isEnabled: true
     })
-    const created = state.saved.providers.find(row => row.key === createdKey)
+    const created = saved.providers.find(row => row.key === createdKey)
     expect(created).toMatchObject({
       key: createdKey,
       strategyKey: 'oidc',
@@ -279,6 +283,7 @@ describe('reviewed authentication workspace', () => {
       isEnabled: false,
       secrets: { clientSecret: { action: 'keep' } }
     })
+    if (!created) throw new Error('The committed provider was not retained in the saved workspace')
     expect(created.configuredSecrets).toContain('clientSecret')
     expect(state.dirty).toBe(false)
     expect(state.stale).toBe(true)

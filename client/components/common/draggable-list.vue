@@ -1,4 +1,6 @@
 <template>
+  <!-- biome-ignore lint/a11y/useSemanticElements: The dynamic root preserves caller-provided div rows, which refreshChildren exposes as listitems. -->
+  <!-- biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: The dynamic root defaults to a noninteractive div; the sortable handles own keyboard interaction. -->
   <component
     :is="tag"
     v-bind="$attrs"

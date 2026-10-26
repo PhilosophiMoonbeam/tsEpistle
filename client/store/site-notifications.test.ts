@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../shared/site-notifications.ts'
+import type { BrowserFetch } from '../helpers/json-transport.ts'
 import { useSiteNotificationsStore } from './site-notifications.ts'
 
 const WATCH_PATH = '/_api/pages/watches/notifications'
@@ -82,7 +83,7 @@ const requestPath = (url: string): string => new URL(url, 'http://localhost').pa
 const requestCursor = (url: string): string | null => new URL(url, 'http://localhost').searchParams.get('cursor')
 const ownerHeader = (init: RequestInit | undefined): string | null => new Headers(init?.headers).get(OWNER_HEADER)
 
-const installWindow = (fetch: typeof window.fetch): void => {
+const installWindow = (fetch: BrowserFetch): void => {
   vi.stubGlobal('window', { fetch })
 }
 
@@ -112,7 +113,7 @@ describe('site notifications store', () => {
       }
       if (path.endsWith('/read')) return new Response(null, { status: 204 })
       throw new Error(`Unexpected request: ${url}`)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -149,7 +150,7 @@ describe('site notifications store', () => {
         return watchAttempt === 1 ? watchEnvelope(7, [watchItem('watch-1', 'Current owner')]) : watchEnvelope(8, [watchItem('watch-foreign', 'Foreign owner')])
       }
       return approvalEnvelope(7, [approvalItem('approval-1', 'Current approval')])
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -179,7 +180,7 @@ describe('site notifications store', () => {
       }
       if (phase === 'initial') return approvalEnvelope(7, [approvalItem('approval-1', 'Current approval')])
       return lateApproval.promise
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -213,7 +214,7 @@ describe('site notifications store', () => {
           : errorResponse(401, 'Authentication required')
       }
       return approvalEnvelope(7, [approvalItem('private-approval', 'Private approval')], FIRST_CURSOR)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -241,7 +242,7 @@ describe('site notifications store', () => {
           : errorResponse(401, 'Authentication required')
       }
       return approvalEnvelope(7, [approvalItem('private-approval', 'Private approval')], FIRST_CURSOR)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -270,7 +271,7 @@ describe('site notifications store', () => {
           : errorResponse(401, 'Authentication required')
       }
       return watchEnvelope(7, [watchItem('private-watch', 'Private watch')], 1, FIRST_CURSOR, false)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -298,7 +299,7 @@ describe('site notifications store', () => {
           : errorResponse(401, 'Authentication required')
       }
       return watchEnvelope(7, [watchItem('private-watch', 'Private watch')], 1, FIRST_CURSOR, false)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -322,7 +323,7 @@ describe('site notifications store', () => {
       if (path.endsWith('/read')) return errorResponse(401, 'Authentication required')
       if (path === WATCH_PATH) return watchEnvelope(7, [watchItem('private-watch', 'Private watch')], 1, FIRST_CURSOR, false)
       return approvalEnvelope(7, [approvalItem('private-approval', 'Private approval')], FIRST_CURSOR)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -355,7 +356,7 @@ describe('site notifications store', () => {
           : errorResponse(500, 'Notification service unavailable')
       }
       return Promise.reject(new Error('Network unavailable'))
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -388,7 +389,7 @@ describe('site notifications store', () => {
       const response = deferred<Response>()
       requests.push({ owner: ownerHeader(init), url: String(input), response })
       return response.promise
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -438,7 +439,7 @@ describe('site notifications store', () => {
         return path === WATCH_PATH ? watchEnvelope(7, [watchItem('old-watch', 'Old owner')]) : approvalEnvelope(7)
       }
       return path === WATCH_PATH ? watchEnvelope(8, [watchItem('new-watch', 'New owner')]) : approvalEnvelope(8)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -465,7 +466,7 @@ describe('site notifications store', () => {
     const approvalResponse = deferred<Response>()
     const fetch = vi.fn((input: RequestInfo | URL) => {
       return requestPath(String(input)) === WATCH_PATH ? watchResponse.promise : approvalResponse.promise
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -494,7 +495,7 @@ describe('site notifications store', () => {
       return requestPath(String(input)) === WATCH_PATH
         ? errorResponse(503, 'watch source unavailable')
         : approvalEnvelope(7, [approvalItem('approval-1', 'Needs review')])
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -512,7 +513,7 @@ describe('site notifications store', () => {
   it('does not auto-drain an empty approval continuation and reports unknown state', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       return requestPath(String(input)) === WATCH_PATH ? watchEnvelope(7) : approvalEnvelope(7, [], FIRST_CURSOR)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -548,7 +549,7 @@ describe('site notifications store', () => {
         default:
           throw new Error(`Unexpected cursor in ${url}`)
       }
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -586,7 +587,7 @@ describe('site notifications store', () => {
         return approvalEnvelope(7, [current], FIRST_CURSOR)
       }
       return approvalEnvelope(7, [current, refreshed])
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -616,7 +617,7 @@ describe('site notifications store', () => {
         return requestCursor(url) === null ? watchEnvelope(7, [], 0, FIRST_CURSOR, false) : watchEnvelope(7, [watchItem('watch-late', 'Beyond first window')])
       }
       return approvalEnvelope(7)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -650,7 +651,7 @@ describe('site notifications store', () => {
           : watchEnvelope(7, [older])
       }
       return approvalEnvelope(7)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -677,7 +678,7 @@ describe('site notifications store', () => {
         if (requestCursor(url) === null) return Promise.resolve(watchEnvelope(7, [watchItem('watch-1', 'Original')], 1, FIRST_CURSOR, false))
       }
       return Promise.resolve(approvalEnvelope(7))
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -716,7 +717,7 @@ describe('site notifications store', () => {
         return watchEnvelope(7, [refreshed], 0, null, true)
       }
       return approvalEnvelope(7)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -754,7 +755,7 @@ describe('site notifications store', () => {
         return watchEnvelope(ownerId, [watchItem(`watch-${ownerId}`, `Owner ${ownerId}`)], 1, ownerId === 7 ? FIRST_CURSOR : null, ownerId !== 7)
       }
       return approvalEnvelope(ownerId)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -787,7 +788,7 @@ describe('site notifications store', () => {
       }
       if (path.endsWith('/read')) return Promise.resolve(new Response(null, { status: 204 }))
       return Promise.resolve(approvalEnvelope(7))
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()
@@ -813,7 +814,7 @@ describe('site notifications store', () => {
       return requestPath(String(input)) === WATCH_PATH
         ? watchEnvelope(ownerId, [watchItem(`watch-${ownerId}`, `Owner ${ownerId}`)])
         : approvalEnvelope(ownerId, [approvalItem(`approval-${ownerId}`, `Owner ${ownerId}`)], FIRST_CURSOR)
-    }) as unknown as typeof window.fetch
+    })
     installWindow(fetch)
     setActivePinia(createPinia())
     const store = useSiteNotificationsStore()

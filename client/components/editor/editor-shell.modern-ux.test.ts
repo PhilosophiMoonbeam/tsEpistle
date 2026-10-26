@@ -10,7 +10,7 @@ import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-
 import '../../test/browser-dom.mts'
 import { OfflineSnapshotSelectorSchema } from '../../../shared/offline.ts'
 import { normalizeAvailableEditors } from '../../../shared/page-editors.ts'
-import { normalizePageFeatures } from '../../../shared/page-features.ts'
+import { normalizePageFeatures, type PageFeatures } from '../../../shared/page-features.ts'
 import { MAX_PAGE_CHANGE_REASON_LENGTH, PageChangeReasonSchema } from '../../../shared/page-change-reason.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
@@ -19,8 +19,10 @@ import { EditorView } from '@codemirror/view'
 import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 import * as imagePropertiesHelpers from '../../helpers/editor-image-properties'
-import { isPageRenderPending, waitForPageRender, type PageRenderTarget } from '../../helpers/pages-api.ts'
-import { EditorAdapterController } from './common/editor-adapter.ts'
+import { isPageRenderPending, waitForPageRender, type PageRenderTarget, type PageWriteInput } from '../../helpers/pages-api.ts'
+import { EditorAdapterController, type EditorAdapterSafety as PublicAdapterSafety } from './common/editor-adapter.ts'
+import type { OfflineEditorDraftIdentity } from '../../helpers/offline-editor-drafts.ts'
+import type { BrowserFetch as Fetch } from '../../helpers/json-transport.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
@@ -100,26 +102,13 @@ type OkfState = {
     value: unknown
   }
 }
-type EditorAdapterSafety = {
-  ready: boolean
-  editVersion: number
-  nonPersisted: boolean
-  mergeDirty: boolean
-  collaborationBacklog: number
-  revision: string
-}
+type HydratedPage = { okf: OkfState; sourceRevision: string; isSearchable?: boolean }
+type EditorAdapterSafety = { -readonly [Key in keyof PublicAdapterSafety]: PublicAdapterSafety[Key] }
 
-type EditorAdapterHarness = {
-  capture: () => { text: string; editVersion: number }
-  snapshot: () => EditorAdapterSafety
-  replaceText: (text: string, options?: { detached?: boolean }) => void
-  clear: () => void
-  destroy: () => void
-  flushEligibleText: () => void
-  markPersisted: (editVersion?: number) => void
-  onState: (listener: (safety: EditorAdapterSafety) => void) => () => void
-  notifyState: () => void
-}
+type EditorAdapterHarness = Pick<
+  EditorAdapterController,
+  'capture' | 'snapshot' | 'replaceText' | 'clear' | 'destroy' | 'flushEligibleText' | 'markPersisted' | 'onState' | 'notifyState'
+>
 
 type OfflineCoordinatorHarness = {
   isAuthenticatedUser: () => boolean
@@ -185,6 +174,7 @@ type EditorStore = {
     sourceRevision: string
     brandingAssignment: PageBrandingAssignment | null
     brandingView: PageBrandingView | null
+    pageFeatures: PageFeatures
     okf: OkfState
     okfLoading: boolean
     okfError: string | null
@@ -218,26 +208,17 @@ type SavedState = {
   scriptJs: string
   brandingAssignment: PageBrandingAssignment | null
   brandingView: PageBrandingView | null
+  pageFeatures: PageFeatures
   okf: OkfState
 }
 
-type PageInput = {
-  content: string
-  description: string
-  locale: string
-  visibility: 'public' | 'private'
-  isPublished: boolean
-  isSearchable: boolean
-  path: string
-  publishEndDate: string
-  publishStartDate: string
-  scriptCss: string
-  scriptJs: string
-  tags: string[]
-  title: string
-  changeReason?: string
-  okfMetadata?: Record<string, unknown>
-  branding?: PageBrandingAssignment | null
+type PageInput = PageWriteInput
+
+type SaveCapture = SavedState & {
+  readonly pageInput: PageInput
+  readonly changeReason: string
+  readonly editVersion: number
+  readonly identity: OfflineEditorDraftIdentity
 }
 
 type ShellContext = {
@@ -303,6 +284,14 @@ type ShellContext = {
   saveUnsavedAndClose: () => Promise<void>
   beginSaveFeedback: () => void
   endSaveFeedback: (outcome: 'saved' | 'device' | 'failed' | 'idle') => void
+  setCurrentSavedState: () => void
+  restoreCurrentSavedState: () => void
+  discardAndExit: () => Promise<void>
+  handleCollaborationState: (state: { active: boolean; discarded: boolean; generation: number | null }) => void
+  refreshConflict: () => Promise<void>
+  hydratePage: () => Promise<void>
+  captureSaveSnapshot: () => SaveCapture
+  refreshOkfAfterSave: (capture: SaveCapture) => Promise<HydratedPage | undefined>
 }
 type ShellBehavior = {
   computed: {
@@ -329,24 +318,24 @@ type ApiDependencies = {
   buildOkfMetadataPayload: (metadata: Record<string, unknown> | null) => Record<string, unknown> | undefined
   freezePageInput: (input: PageInput) => PageInput
   changePageVisibility: (
-    fetcher: typeof fetch,
+    fetcher: Fetch,
     id: number,
     visibility: 'public' | 'private',
     sourceRevision: string,
     isPublic: boolean
   ) => Promise<{ sourceRevision: string }>
-  checkPageConflict: (fetcher: typeof fetch, id: number, checkoutDate: string) => Promise<boolean>
-  createPage: (fetcher: typeof fetch, input: PageInput) => Promise<{ id: number; updatedAt: string; sourceRevision: string }>
-  discardCollaborationDraft: (fetcher: typeof fetch, pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string) => Promise<void>
-  fetchPage: (fetcher: typeof fetch, id: number, errorMessage: string) => Promise<{ okf: OkfState; sourceRevision: string; isSearchable?: boolean }>
+  checkPageConflict: (fetcher: Fetch, id: number, checkoutDate: string) => Promise<boolean>
+  createPage: (fetcher: Fetch, input: PageInput) => Promise<{ id: number; updatedAt: string; sourceRevision: string }>
+  discardCollaborationDraft: (fetcher: Fetch, pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string) => Promise<void>
+  fetchPage: (fetcher: Fetch, id: number, errorMessage: string) => Promise<HydratedPage>
   updatePage: (
-    fetcher: typeof fetch,
+    fetcher: Fetch,
     id: number,
     input: PageInput,
     sourceRevision: string,
     expectedCollaborationGeneration?: number
   ) => Promise<{ sourceRevision: string; updatedAt: string }>
-  waitForPageRender: (fetcher: typeof fetch, expected: PageRenderTarget, signal: AbortSignal, fallbackMessage: string) => Promise<void>
+  waitForPageRender: (fetcher: Fetch, expected: PageRenderTarget, signal: AbortSignal, fallbackMessage: string) => Promise<void>
   openOfflineStorage: () => Promise<OfflineStorageHarness>
   siteConfig: { availableEditors: unknown }
   notifyReloadSafetyChanged: () => void
@@ -365,7 +354,7 @@ type TestWindow = {
   scheduledTimers: Array<{ id: number; delay: number | undefined }>
   clearTimeout: (id: number | null | undefined) => void
   setTimeout: (handler: () => void, delay?: number) => number
-  fetch: typeof fetch
+  fetch: Fetch
 }
 
 const shellAst = ts.createSourceFile(shellPath, shellScript, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
@@ -424,6 +413,7 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
       sourceRevision: '1',
       brandingAssignment: null as PageBrandingAssignment | null,
       brandingView: null as PageBrandingView | null,
+      pageFeatures: normalizePageFeatures(undefined),
       okf: {
         authority: {
           state: 'valid',
@@ -485,22 +475,22 @@ const createTestWindow = (): TestWindow => {
       this.scheduledTimers.push({ id, delay })
       return id
     },
-    fetch: (() =>
+    fetch: () =>
       Promise.resolve(
         new Response(JSON.stringify({ protected: false }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
         })
-      )) as unknown as typeof fetch
+      )
   }
 }
 
-const mockRenderPreviews = (testWindow: TestWindow, fetchPreview: typeof fetch): void => {
+const mockRenderPreviews = (testWindow: TestWindow, fetchPreview: Fetch): void => {
   const fetchMetadata = testWindow.fetch
-  testWindow.fetch = ((input, init) => {
+  testWindow.fetch = (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, testWindow.location.origin)
     return url.pathname === '/_api/pages/preview' ? fetchPreview(input, init) : fetchMetadata(input, init)
-  }) as typeof fetch
+  }
 }
 const createOfflineStorage = (
   automaticSavingEnabled = false,
@@ -836,7 +826,8 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
   const context = createShellHarness(store, testWindow, overrides)
   const behavior = loadShellBehavior(store, testWindow, overrides)
   for (const name of ['saveStatusText', 'saveStatusIcon', 'saveActionLabel', 'renderWaitOwnerKey', 'changeReasonErrors'] as const) {
-    Object.defineProperty(context, name, { get: () => behavior.computed[name].call(context) })
+    const compute: (this: ShellContext) => string | string[] = behavior.computed[name]
+    Object.defineProperty(context, name, { get: () => compute.call(context) })
   }
   let action: Promise<boolean> | undefined
   const save = context.save
@@ -1066,7 +1057,7 @@ describe('modern editor shell interaction contract', () => {
       const url = new URL(input instanceof Request ? input.url : input, testWindow.location.origin)
       previews.push({ url: `${url.pathname}${url.search}`, credentials: init?.credentials })
       return Response.json(createRenderPreview(store))
-    }) as typeof fetch)
+    }))
     const mounted = mountSaveActions(store, testWindow, {
       updatePage: async () => {
         writes++
@@ -1120,7 +1111,7 @@ describe('modern editor shell interaction contract', () => {
       mockRenderPreviews(testWindow, (async () => {
         previews++
         return Response.json(createRenderPreview(store))
-      }) as typeof fetch)
+      }))
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => {
           writes++
@@ -1195,7 +1186,7 @@ describe('modern editor shell interaction contract', () => {
     mockRenderPreviews(testWindow, (async () => {
       previews++
       return Response.json(createRenderPreview(store))
-    }) as typeof fetch)
+    }))
     const mounted = mountSaveActions(store, testWindow, {
       updatePage: async () => {
         writes++
@@ -1230,7 +1221,7 @@ describe('modern editor shell interaction contract', () => {
       mockRenderPreviews(testWindow, (async () => {
         previews++
         return Response.json(createRenderPreview(store))
-      }) as typeof fetch)
+      }))
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => {
           writes++
@@ -1282,7 +1273,7 @@ describe('modern editor shell interaction contract', () => {
       mockRenderPreviews(testWindow, (async () => {
         previews++
         return Response.json(ready ? createRenderPreview(store) : { error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: ready ? 200 : 503 })
-      }) as typeof fetch)
+      }))
       const written = async () => {
         writes++
         expect(mounted.context.editorAdapter.snapshot().collaborationBacklog).toBe(backlog)
@@ -1367,7 +1358,7 @@ describe('modern editor shell interaction contract', () => {
         if (failure === 'forbidden') return Response.json({ error: 'Page access was revoked.' }, { status: 403 })
         if (failure === 'untyped service failure') return Response.json({ error: 'Rendering service failed.' }, { status: 503 })
         return Response.json(createRenderPreview(store, '3'))
-      }) as typeof fetch)
+      }))
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => {
           writes++
@@ -1434,7 +1425,7 @@ describe('modern editor shell interaction contract', () => {
         return new Promise<Response>(resolve => {
           release = resolve
         })
-      }) as typeof fetch)
+      }))
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => ({ sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }),
         fetchPage: async () => {
@@ -1500,7 +1491,7 @@ describe('modern editor shell interaction contract', () => {
     mockRenderPreviews(testWindow, (async () =>
       ready
         ? Response.json(createRenderPreview(store))
-        : Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })) as typeof fetch)
+        : Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })))
     const mounted = mountSaveActions(store, testWindow, {
       createPage: async () => {
         creates++
@@ -1540,7 +1531,7 @@ describe('modern editor shell interaction contract', () => {
       return new Promise<Response>(resolve => {
         release = resolve
       })
-    }) as typeof fetch)
+    }))
     const mounted = mountSaveActions(store, testWindow, {
       updatePage: async () => {
         writes++
@@ -1740,7 +1731,7 @@ describe('modern editor shell interaction contract', () => {
         return await new Promise<Response>(resolve => {
           release = resolve
         })
-      }) as typeof fetch)
+      }))
       const context = createShellHarness(store, testWindow, {
         waitForPageRender,
         updatePage: async () => {
@@ -1804,7 +1795,7 @@ describe('modern editor shell interaction contract', () => {
         },
         createPage: async () => {
           persistenceCalls++
-          return { id: 0, updatedAt: '' }
+          return { id: 0, sourceRevision: 'unexpected', updatedAt: '' }
         },
         updatePage: async () => {
           persistenceCalls++
@@ -2237,8 +2228,6 @@ describe('modern editor shell interaction contract', () => {
     expect(context.isSaving).toBe(false)
     expect(context.saveFeedback).toBe('saved')
     expect(context.lastSavedAt).toBeGreaterThan(0)
-    expect(shellSfc.descriptor.template?.content ?? '').not.toContain('login-success-animation')
-    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/v-btn\.editor-save-action\([\s\S]*:loading='isSaving'/)
   })
 
   test('records a successful create before Save and close navigates', async () => {
@@ -2277,16 +2266,16 @@ describe('modern editor shell interaction contract', () => {
         store.page.isPublished = false
       },
       (_store, testWindow) => {
-        testWindow.fetch = (() =>
+        testWindow.fetch = () =>
           Promise.resolve(
             new Response(JSON.stringify({ protected: true }), {
               status: 200,
               headers: { 'Content-Type': 'application/json' }
             })
-          )) as unknown as typeof fetch
+          )
       },
       (_store, testWindow) => {
-        testWindow.fetch = (() => Promise.resolve(new Response(JSON.stringify({})))) as unknown as typeof fetch
+        testWindow.fetch = () => Promise.resolve(new Response(JSON.stringify({})))
       },
       store => {
         store.editor.editorKey = 'unsupported'
@@ -2647,7 +2636,7 @@ describe('modern editor shell interaction contract', () => {
         expect(testWindow.location.replaced).toEqual([])
 
         expect(await context.save()).toBe(true)
-        expect(inputs[1]?.okfMetadata).toEqual(changesKnowledge ? originalOkf.authority.metadata : submittedOkf.authority.metadata)
+        expect(inputs[1]?.okfMetadata).toEqual((changesKnowledge ? originalOkf.authority.metadata : submittedOkf.authority.metadata) ?? undefined)
         expect(inputs[1]?.isSearchable).toBe(changesSearchability)
         expect(context.isDirty).toBe(false)
       })
@@ -3153,11 +3142,33 @@ describe('modern editor shell interaction contract', () => {
     expect(store.notifications[0]).toMatchObject({ style: 'warning', icon: 'warning' })
     expect(String(store.notifications[0]?.message)).not.toContain('Saved on this device')
   })
-  test('declares an optional historical bootstrap alert with text interpolation', () => {
-    const template = shellSfc.descriptor.template?.content ?? ''
-    expect(shellScript).toMatch(/bootstrapNotice:\s*\{\s*type:\s*String/)
-    expect(template).toMatch(/v-alert\.editor-bootstrap-notice[\s\S]*v-if='bootstrapNotice'/)
-    expect(template).toContain('{{ bootstrapNotice }}')
+  test('shows historical bootstrap notices only when present and keeps their markup as text', async () => {
+    const compiled = compileTemplate({
+      source: shellMarkup('.editor-bootstrap-notice').toString(),
+      filename: shellPath,
+      id: 'historical-bootstrap-notice',
+      compilerOptions: { mode: 'function' }
+    })
+    if (compiled.errors.length) throw compiled.errors[0]
+    const notice = Vue.ref('')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const app = Vue.createApp({
+      setup: () => ({ bootstrapNotice: notice }),
+      render: new Function('Vue', compiled.code)(Vue)
+    })
+    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+    app.mount(host)
+    modalUnmounts.push(() => { app.unmount(); host.remove() })
+    expect(Boolean(host.querySelector('.editor-bootstrap-notice'))).toBe(false)
+    const message = 'Historical CSS <img id="bootstrap-notice-probe" src="missing"> was not copied.'
+    notice.value = message
+    await Vue.nextTick()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(message)
+    expect(Boolean(host.querySelector('#bootstrap-notice-probe'))).toBe(false)
+    notice.value = ''
+    await Vue.nextTick()
+    expect(Boolean(host.querySelector('.editor-bootstrap-notice'))).toBe(false)
   })
 })
 

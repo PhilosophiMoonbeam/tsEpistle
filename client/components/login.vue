@@ -404,7 +404,6 @@ function focusComponent (ref: unknown): void {
 
 export default defineComponent({
   mixins: [passwordPolicyMixin],
-  i18nOptions: { namespaces: 'auth' },
   components: {
     AuthShell,
     LoginParticleLogo,

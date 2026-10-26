@@ -4,16 +4,8 @@
       "args": ["--stdio"]
     },
     "vue-language-server": {
-      "args": ["--stdio"],
-      "initOptions": {
-        "typescript": {
-          "tsdk": "node_modules/typescript/lib",
-          "disableAutoImportCache": true
-        },
-        "vue": {
-          "hybridMode": false
-        }
-      }
+      "command": "npm",
+      "args": ["exec", "--offline", "--yes", "--package=bun@1.4.3", "--", "bun", "--no-env-file", "server/scripts/vue-language-server.ts", "--stdio"]
     }
   }
 }

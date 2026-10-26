@@ -20,14 +20,14 @@ describe('approval reviewer search', () => {
   })
 
   it('searches the account directory for administrators', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse([{ id: 3, name: 'Grace Hopper', email: 'g@example.test', providerKey: 'local' }]))
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse([{ id: 3, name: 'Grace Hopper', email: 'g@example.test', providerKey: 'local' }]))
     const options = await searchApprovalReviewers({ fetchImpl, pageId: 9, query: 'Grace', directory: true })
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('/_api/users/search?query=Grace')
     expect(options).toEqual([{ id: 3, label: 'Grace Hopper', source: 'directory' }])
   })
 
   it('falls back to people in this page discussion by handle', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse([{ id: 5, handle: 'ada', name: 'Ada' }]))
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse([{ id: 5, handle: 'ada', name: 'Ada' }]))
     const options = await searchApprovalReviewers({ fetchImpl, pageId: 9, query: '@Ada', directory: false })
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('/_api/comments/mentions?pageId=9&q=ada')
     expect(options).toEqual([{ id: 5, label: 'Ada (@ada)', source: 'discussion' }])

@@ -30,6 +30,7 @@
         </div>
         <v-alert v-if="revealedSecret" type="warning" variant="tonal" class="mb-5">
           <strong>{{ $t('admin:webhooks.saveSigningSecret') }}</strong><p>{{ $t('admin:webhooks.onlyDisplayStoreReceiver') }}</p>
+          <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Focusing this one-time secret selects its text for keyboard copying via selectSecretText. -->
           <code class="webhook-secret" tabindex="0" :aria-label="$t('admin:webhooks.webhookSigningSecret')" @focus="selectSecretText">{{ revealedSecret }}</code>
           <div class="webhook-actions mt-3"><v-btn ref="copySecretButton" variant="outlined" @click="copySecret">{{ secretCopied ? $t('admin:webhooks.copied') : $t('admin:webhooks.copySecret') }}</v-btn><v-btn variant="flat" color="warning" :disabled="webhookBusy" @click="finishSecret">{{ $t('admin:webhooks.iveSavedSecret') }}</v-btn></div>
         </v-alert>

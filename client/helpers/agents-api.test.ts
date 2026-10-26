@@ -42,7 +42,7 @@ describe('agents client boundary', () => {
     const fetcher = vi.fn(
       async () =>
         new Response(JSON.stringify({ session: { id: 'not-a-uuid' }, messages: '<script>' }), { status: 201, headers: { 'content-type': 'application/json' } })
-    ) as unknown as typeof fetch
+    )
     await expect(Promise.resolve(createAgentThread(fetcher, 'csrf', { retention: 'saved' }))).rejects.toThrow()
   })
 
@@ -89,7 +89,7 @@ describe('agents client boundary', () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(thread))
 
     fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: null } }))
-    expect((await getAgentThread(fetcher as typeof fetch, 'csrf', sessionId)).session.mediaCapabilities).toBeNull()
+    expect((await getAgentThread(fetcher, 'csrf', sessionId)).session.mediaCapabilities).toBeNull()
 
     const invalidCapabilities: unknown[] = [undefined, [], true, { ...mediaCapabilities, unknownGeneration: true }]
     for (const flag of Object.keys(mediaCapabilities)) {
@@ -98,7 +98,7 @@ describe('agents client boundary', () => {
     }
     for (const invalid of invalidCapabilities) {
       fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: invalid } }))
-      await expect(getAgentThread(fetcher as typeof fetch, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
+      await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
     }
   })
   it('accepts projected discovery and action activity for every terminal outcome', async () => {
@@ -212,7 +212,7 @@ describe('agents client boundary', () => {
       historyWindow: { messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false },
       suggestions: []
     }
-    const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json(thread))
 
     expect(AGENT_ACTION_NAMES).not.toContain(TOOL_DISCOVERY_CONTROL_NAME)
     expect(Object.keys(AGENT_TOOL_NAMES)).not.toContain(TOOL_DISCOVERY_CONTROL_NAME)
@@ -300,12 +300,12 @@ describe('agents client boundary', () => {
       historyWindow: { messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false },
       suggestions: []
     }
-    const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json(thread))
     await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toThrow()
   })
 
   it('sends mutating requests with same-origin credentials and the session CSRF token', async () => {
-    const fetcher = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => new Response(null, { status: 204 }))
     await deleteAgentSession(fetcher, 'csrf-token', '00000000-0000-4000-8000-000000000001')
     expect(fetcher).toHaveBeenCalledWith(
       '/_api/agents/sessions/00000000-0000-4000-8000-000000000001',
@@ -315,7 +315,7 @@ describe('agents client boundary', () => {
 
   it('deletes a conversation folder with its expected version and returns the committed move count', async () => {
     const folderId = '00000000-0000-4000-8000-000000000003'
-    const fetcher = vi.fn(async () => Response.json({ deleted: true, movedSessions: 3 })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ deleted: true, movedSessions: 3 }))
 
     await expect(deleteAgentConversationFolder(fetcher, 'csrf-token', folderId, 7)).resolves.toBe(3)
     expect(fetcher).toHaveBeenCalledWith(
@@ -335,7 +335,7 @@ describe('agents client boundary', () => {
     }
     const renamedFolder = { ...folder, version: 2 }
     const responses = [Response.json({ folder }, { status: 201 }), Response.json({ folder: renamedFolder })]
-    const fetcher = vi.fn(async () => responses.shift()!) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => responses.shift()!)
 
     await expect(createAgentConversationFolder(fetcher, 'csrf-token', '  Ｒｅｌｅａｓｅ\u00a0\t  archive  ')).resolves.toEqual(folder)
     await expect(renameAgentConversationFolder(fetcher, 'csrf-token', folderId, 1, '\u00a0Ｒｅｌｅａｓｅ\u00a0\u00a0archive\u00a0')).resolves.toEqual(
@@ -361,7 +361,7 @@ describe('agents client boundary', () => {
       createdAt: '2026-09-11T00:00:00.000Z',
       updatedAt: '2026-09-11T00:00:00.000Z'
     }
-    const fetcher = vi.fn(async () => Response.json({ folder }, { status: 201 })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ folder }, { status: 201 }))
 
     await expect(createAgentConversationFolder(fetcher, 'csrf-token', `  Ａ${'Ａ'.repeat(63)}\u00a0`)).resolves.toEqual(folder)
     expect(fetcher).toHaveBeenCalledWith(
@@ -374,7 +374,7 @@ describe('agents client boundary', () => {
 
   it('rejects an invalid conversation folder version before sending a delete request', async () => {
     const folderId = '00000000-0000-4000-8000-000000000003'
-    const fetcher = vi.fn(async () => Response.json({ deleted: true, movedSessions: 0 })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ deleted: true, movedSessions: 0 }))
 
     for (const expectedVersion of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
       await expect(deleteAgentConversationFolder(fetcher, 'csrf-token', folderId, expectedVersion)).rejects.toMatchObject({ status: 400 })
@@ -383,7 +383,7 @@ describe('agents client boundary', () => {
   })
 
   it('clears unfiled history through the CSRF-protected collection endpoint', async () => {
-    const fetcher = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => new Response(null, { status: 204 }))
     await clearUnfiledAgentHistory(fetcher, 'csrf-token')
     expect(fetcher).toHaveBeenCalledWith(
       '/_api/agents/sessions',
@@ -404,7 +404,7 @@ describe('agents client boundary', () => {
       Response.json({ user: { entries: [entry], characters: 24, limit: 1_375 }, agent: { entries: [], characters: 0, limit: 2_200 } }),
       Response.json({ changed: true, message: 'Saved', target: 'user', entries: [entry.content], characters: 24, limit: 1_375 }, { status: 201 })
     ]
-    const fetcher = vi.fn(async () => responses.shift()!) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => responses.shift()!)
 
     expect(await getAgentMemories(fetcher, 'csrf')).toMatchObject({ user: { entries: [entry] } })
     expect(await createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content })).toMatchObject({ changed: true, target: 'user' })
@@ -416,8 +416,8 @@ describe('agents client boundary', () => {
   })
 
   it('trims empty error strings and exposes bounded status and retryability metadata', async () => {
-    const forbidden = vi.fn(async () => Response.json({ message: '   ' }, { status: 403 })) as unknown as typeof fetch
-    const unavailable = vi.fn(async () => Response.json({ error: 'x'.repeat(1_000) }, { status: 503 })) as unknown as typeof fetch
+    const forbidden = vi.fn(async () => Response.json({ message: '   ' }, { status: 403 }))
+    const unavailable = vi.fn(async () => Response.json({ error: 'x'.repeat(1_000) }, { status: 503 }))
 
     const forbiddenError = await getAgentThread(forbidden, 'csrf', '00000000-0000-4000-8000-000000000001').catch(error => error)
     const unavailableError = await getAgentThread(unavailable, 'csrf', '00000000-0000-4000-8000-000000000001').catch(error => error)
@@ -430,7 +430,7 @@ describe('agents client boundary', () => {
 
   it('forwards read cancellation and URL-encodes opaque session pagination metadata', async () => {
     const controller = new AbortController()
-    const fetcher = vi.fn(async () => Response.json({ sessions: [], nextCursor: 'opaque-keyset-cursor' })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ sessions: [], nextCursor: 'opaque-keyset-cursor' }))
 
     await expect(listAgentSessions(fetcher, 'csrf', { limit: 25, cursor: 'previous/cursor?part=1', signal: controller.signal })).resolves.toEqual({
       sessions: [],
@@ -443,7 +443,7 @@ describe('agents client boundary', () => {
   })
 
   it('turns a malformed successful history response into a bounded gateway error', async () => {
-    const fetcher = vi.fn(async () => Response.json({ sessions: [{ id: 'invalid' }], nextCursor: null })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ sessions: [{ id: 'invalid' }], nextCursor: null }))
 
     const error = await listAgentSessions(fetcher, 'csrf').catch(reason => reason)
 
@@ -453,7 +453,7 @@ describe('agents client boundary', () => {
   })
 
   it('rejects invalid history cursors before fetching', async () => {
-    const fetcher = vi.fn(async () => Response.json({ sessions: [], nextCursor: null })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ sessions: [], nextCursor: null }))
 
     for (const cursor of ['', 'x'.repeat(513)]) {
       const error = await listAgentSessions(fetcher, 'csrf', { cursor }).catch(reason => reason)
@@ -467,7 +467,7 @@ describe('agents client boundary', () => {
     const run = {
       id: '00000000-0000-4000-8000-000000000001',
       sessionId: '00000000-0000-4000-8000-000000000002',
-      status: 'running',
+      status: 'running' as const,
       attempt: 1,
       eventSequence: 4,
       canCancel: true,
@@ -477,7 +477,7 @@ describe('agents client boundary', () => {
       errorCode: null,
       errorMessage: null
     }
-    const fetcher = vi.fn(async () => Response.json({ run }, { status: 202 })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ run }, { status: 202 }))
 
     await expect(cancelAgentRun(fetcher, 'csrf', run.id)).resolves.toEqual(run)
     expect(fetcher).toHaveBeenCalledWith(
@@ -530,7 +530,7 @@ describe('agents client boundary', () => {
       Response.json({ skill: { ...skill, versionId: '00000000-0000-4000-8000-000000000013' } }),
       Response.json({ deleted: true })
     ]
-    const fetcher = vi.fn(async () => responses.shift() ?? Response.json({})) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => responses.shift() ?? Response.json({}))
 
     expect(await createPersonalAgentSkill(fetcher, 'csrf', { name: skill.name, skillMarkdown: skill.skillMarkdown, isAgentDiscoverable: false })).toEqual(skill)
     expect(await listPersonalAgentSkills(fetcher, 'csrf')).toEqual([skill])
@@ -568,8 +568,8 @@ describe('agents client boundary', () => {
   })
   it('stores cross-conversation skill preferences by stable skill identity', async () => {
     const skillId = '00000000-0000-4000-8000-000000000020'
-    const fetchMock = vi.fn(async () => Response.json({ skillIds: [skillId] }))
-    const fetcher = fetchMock as unknown as typeof fetch
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ skillIds: [skillId] }))
+    const fetcher = fetchMock
 
     expect(await updateAgentSkillPreferences(fetcher, 'csrf', { skillIds: [skillId] })).toEqual([skillId])
     expect(fetcher).toHaveBeenCalledWith(
@@ -607,7 +607,7 @@ describe('agents client boundary', () => {
         },
         { status: 202 }
       )
-    ) as unknown as typeof fetch
+    )
     const input = {
       clientRequestId: '00000000-0000-4000-8000-000000000024',
       expectedSessionVersion: 1,
@@ -627,7 +627,7 @@ describe('agents client boundary', () => {
       id: goalId,
       sessionId,
       objective: 'Finish the incident review.',
-      status: 'active',
+      status: 'active' as const,
       version: 1,
       currentRunId: '00000000-0000-4000-8000-000000000022',
       continuationCount: 0,
@@ -637,7 +637,7 @@ describe('agents client boundary', () => {
       consumedToolCalls: 0,
       maxToolCalls: 96,
       budgetPolicyVersion: 1,
-      budgetSelection: 'pending',
+      budgetSelection: 'pending' as const,
       tokenTier: null,
       tokenAllowance: null,
       budgetCycle: 0,
@@ -653,7 +653,7 @@ describe('agents client boundary', () => {
     const run = {
       id: goal.currentRunId,
       sessionId,
-      status: 'queued',
+      status: 'queued' as const,
       attempt: 0,
       eventSequence: 2,
       canCancel: true,
@@ -663,7 +663,7 @@ describe('agents client boundary', () => {
       errorCode: null,
       errorMessage: null
     }
-    const fetcher = vi.fn(async () => Response.json({ goal, run, replayed: false }, { status: 202 })) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json({ goal, run, replayed: false }, { status: 202 }))
     const input = {
       goalId,
       clientRequestId: '00000000-0000-4000-8000-000000000026',
@@ -774,7 +774,7 @@ describe('agents client boundary', () => {
       historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
       suggestions: []
     }
-    const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
+    const fetcher = vi.fn(async () => Response.json(thread))
     expect(await getAgentThread(fetcher, 'csrf', sessionId)).toMatchObject({
       messages: [historicalMessage],
       tools: [externalTool],
@@ -787,7 +787,7 @@ describe('agents client boundary', () => {
       { ...externalTool, actionName: 'pages.get' },
       { ...externalTool, actionName: 'mcp.unscoped.tools.lookup' }
     ]) {
-      const invalidFetcher = vi.fn(async () => Response.json({ ...thread, tools: [invalidTool] })) as unknown as typeof fetch
+      const invalidFetcher = vi.fn(async () => Response.json({ ...thread, tools: [invalidTool] }))
       await expect(getAgentThread(invalidFetcher, 'csrf', sessionId)).rejects.toThrow()
     }
   })
@@ -801,7 +801,7 @@ describe('agents client boundary', () => {
         status: JSON.parse(String(init?.body)).decision,
         decidedAt: '2026-08-30T00:00:00.000Z'
       })
-    ) as unknown as typeof fetch
+    )
     const approved: DecideAgentApprovalRequest = {
       decision: 'approved',
       confirmationPath: '/docs/obsolete'
@@ -866,7 +866,7 @@ describe('agents client boundary', () => {
     }
     const fetcher = vi.fn(
       async () => new Response(JSON.stringify(threadResponse), { status: 200, headers: { 'content-type': 'application/json' } })
-    ) as unknown as typeof fetch
+    )
     const updated = await updateAgentSession(fetcher, 'csrf-token', sessionId, {
       expectedSessionVersion: 2,
       title: 'Renamed topic',
@@ -890,7 +890,7 @@ describe('Wiki asset attachment client boundary', () => {
     const sessionId = '00000000-0000-4000-8000-000000000081'
     const media = {
       id: '00000000-0000-4000-8000-000000000082',
-      kind: 'attachment',
+      kind: 'attachment' as const,
       filename: 'report.pdf',
       mimeType: 'application/pdf',
       byteLength: 25,
@@ -901,18 +901,18 @@ describe('Wiki asset attachment client boundary', () => {
     const fetcher = vi.fn(
       async (_input: unknown, _init?: RequestInit) => new Response(JSON.stringify({ media }), { headers: { 'content-type': 'application/json' } })
     )
-    expect(await attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, 42, signal)).toEqual(media)
+    expect(await attachAgentAsset(fetcher, 'token', sessionId, 42, signal)).toEqual(media)
     const [url, init] = fetcher.mock.calls[0]!
     expect(url).toBe(`/_api/agents/sessions/${sessionId}/media/assets`)
     expect(init).toMatchObject({ method: 'POST', credentials: 'same-origin', signal })
     expect(new Headers(init?.headers).get('x-wiki-csrf')).toBe('token')
     expect(JSON.parse(String(init?.body))).toEqual({ assetId: 42 })
-    await expect(attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, -1)).rejects.toThrow('Asset ID')
-    await expect(attachAgentAsset(fetcher as typeof fetch, 'token', 'invalid', 42)).rejects.toThrow()
+    await expect(attachAgentAsset(fetcher, 'token', sessionId, -1)).rejects.toThrow('Asset ID')
+    await expect(attachAgentAsset(fetcher, 'token', 'invalid', 42)).rejects.toThrow()
     expect(fetcher).toHaveBeenCalledTimes(1)
     fetcher.mockImplementation(
       async () => new Response(JSON.stringify({ media: { ...media, id: 'not-valid' } }), { headers: { 'content-type': 'application/json' } })
     )
-    await expect(attachAgentAsset(fetcher as typeof fetch, 'token', sessionId, 42)).rejects.toThrow()
+    await expect(attachAgentAsset(fetcher, 'token', sessionId, 42)).rejects.toThrow()
   })
 })

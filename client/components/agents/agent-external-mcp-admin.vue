@@ -48,6 +48,7 @@
           <v-alert v-if="formError" type="error" variant="tonal" role="alert">{{ formError }}</v-alert>
           <v-alert v-if="editingStale" type="warning" variant="tonal">{{ t('editingStale') }}</v-alert>
           <v-form id="mcp-endpoint-form" @submit.prevent="save">
+            <!-- biome-ignore lint/a11y/noAutofocus: Initial focus belongs to the user-opened endpoint editor VDialog. -->
             <v-text-field v-model="draft.displayName" :label="t('displayName')" autofocus :disabled="busy || denied" :error-messages="fieldError('displayName')" />
             <v-text-field v-model="draft.endpointUrl" :label="t('endpointUrl')" :disabled="busy || denied" :error-messages="fieldError('endpointUrl')" />
             <v-select v-model="draft.status" :label="t('status')" :items="statusOptions" :disabled="busy || denied" :error-messages="fieldError('status')" />
@@ -128,6 +129,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ZodError } from 'zod'
 import { AgentApiError } from '../../helpers/agents-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { ExternalMcpServerInputSchema } from '../../../shared/agents/external-mcp.ts'
 import { listAdminExternalMcp,createAdminExternalMcp,updateAdminExternalMcp,deleteAdminExternalMcp,setExternalMcpGrants,listExternalMcpGroupPolicies,setExternalMcpGroupPolicy,discoverExternalMcp,externalMcpOAuthErrorKey,type ExternalMcpServerView,type ExternalMcpGroupPolicyView,type ExternalMcpDiscovery } from '../../helpers/agent-control-api.ts'
 import { wikiStore } from '../../store/index.ts'
@@ -138,7 +140,7 @@ import { createExternalMcpOAuthDraft, externalMcpOAuthInput } from '../../helper
 const { csrfToken, groups, refreshKey = 0, groupsLoading = false, groupsError = '' } = defineProps<{ csrfToken: string; groups: readonly { id: number; name: string }[]; refreshKey?: number; groupsLoading?: boolean; groupsError?: string }>()
 const emit = defineEmits<{ 'refresh-groups': []; state: [value: { servers: ExternalMcpServerView[]; policies: ExternalMcpGroupPolicyView[] } | null] }>()
 const t = useTranslate('admin:agentMcpAdmin')
-const fetcher: typeof fetch = (...args) => window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 const servers=ref<ExternalMcpServerView[]>([]),policies=ref<ExternalMcpGroupPolicyView[]>([]),loading=ref(false),loaded=ref(false),busy=ref(false),denied=ref(false),error=ref(''),formError=ref(''),dialog=ref(false),discard=ref(false),baseline=ref(''),editing=ref<ExternalMcpServerView|null>(null),remove=ref<ExternalMcpServerView|null>(null),grants=ref<ExternalMcpServerView|null>(null),grantIds=ref<number[]>([]),policyConfirm=ref<ExternalMcpGroupPolicyView|null>(null),discovery=ref<ExternalMcpDiscovery|null>(null)
 const draft = reactive({ displayName: '', endpointUrl: '', status: 'disabled' as 'enabled' | 'disabled', authMode: 'none' as 'none' | 'bearer' | 'oauth', secret: '', clearSecret: false, oauth: createExternalMcpOAuthDraft(), groupIds: [] as number[] })
 const submitted = ref(false)

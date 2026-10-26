@@ -9,6 +9,7 @@
     class="navigation-outline"
     @update:model-value="reorder"
   >
+    <!-- biome-ignore lint/a11y/useSemanticElements: The dynamic draggable host owns this row's list position and keyboard reordering. -->
     <div
       v-for="(item, index) in items"
       :key="item.id"

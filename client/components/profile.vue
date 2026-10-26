@@ -63,7 +63,7 @@
             span {{ $t('profile:nav.backToWiki', { defaultValue: 'Back to wiki' }) }}
     v-main.profile-main(ref='profileMain' tabindex='-1')
       router-view(v-slot='{ Component }')
-        transition(name='profile-router' mode='out-in' @after-enter='focusRouteHeading')
+        transition(name='profile-router' mode='out-in' @after-enter='focusPendingRoute')
           component(:is='Component' @vue:mounted='focusMountedRoute')
 
     nav-footer
@@ -77,9 +77,9 @@ import { defineComponent, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import ConfirmDialogHost from './common/confirm-dialog-host.vue'
+import { focusRouteHeading } from './common/route-heading-focus.ts'
 
 export default defineComponent({
-  i18nOptions: { namespaces: 'profile' },
   components: { ConfirmDialogHost },
   setup() {
     const { mdAndUp } = useDisplay()
@@ -89,16 +89,42 @@ export default defineComponent({
     })
     return { profileDrawerShown }
   },
+  data() {
+    return {
+      pendingFocusRoute: null as string | null,
+      focusAtNavigation: null as Element | null,
+      removeAfterEach: null as (() => void) | null
+    }
+  },
   created() {
     wikiStore.page.mode = 'profile'
+    // Only an explicit fragment moves focus on first load, including lazy views.
+    this.focusAtNavigation = document.activeElement
+    if (this.$route.hash) this.pendingFocusRoute = this.$route.fullPath
+  },
+  mounted() {
+    this.removeAfterEach = this.$router.afterEach((to, from, failure) => {
+      if (failure || to.fullPath === from.fullPath) return
+      this.pendingFocusRoute = null
+      if (to.path === from.path && (!to.hash || to.hash === from.hash)) return
+      this.focusAtNavigation = document.activeElement
+      this.pendingFocusRoute = to.fullPath
+      const incoming = to.matched[to.matched.length - 1]?.components?.default
+      const outgoing = from.matched[from.matched.length - 1]?.components?.default
+      if (incoming && incoming === outgoing) {
+        // Explicit same-view fragments/reused views do not run an enter transition.
+        void this.$nextTick(() => this.focusPendingRoute())
+      }
+    })
+  },
+  beforeUnmount() {
+    this.removeAfterEach?.()
+    this.removeAfterEach = null
   },
   watch: {
-    '$route.fullPath' (nextPath: string, previousPath: string) {
+    '$route.fullPath' () {
       if (this.$vuetify.display.smAndDown) {
         this.profileDrawerShown = false
-      }
-      if (this.$route.hash && nextPath.split(/[?#]/u)[0] === previousPath.split(/[?#]/u)[0]) {
-        void this.$nextTick(() => this.focusRouteHeading())
       }
     }
   },
@@ -106,11 +132,24 @@ export default defineComponent({
     async focusMountedRoute () {
       const route = this.$route.fullPath
       await this.$nextTick()
-      if (this.$route.fullPath === route && this.$route.hash) this.focusRouteHeading()
+      // A direct lazy fragment has no initial enter transition. Consume it once,
+      // so a later after-enter cannot reclaim focus from an already usable view.
+      if (this.$route.fullPath === route && this.$route.hash) this.focusPendingRoute()
     },
-    focusRenderedFragment (): boolean {
+    focusPendingRoute () {
+      if (this.pendingFocusRoute !== this.$route.fullPath) return
+      this.pendingFocusRoute = null
       const main = ((this.$refs.profileMain as { $el?: HTMLElement })?.$el || this.$refs.profileMain) as HTMLElement | undefined
-      if (!main || !this.$route.hash) return false
+      if (!main) return
+      const active = main.ownerDocument.activeElement
+      // Entry completion is automatic, not another request to leave a control
+      // claimed since navigation (including controls in teleported overlays).
+      if (active && active !== this.focusAtNavigation && active !== main.ownerDocument.body && active !== main.ownerDocument.documentElement) return
+      if (this.focusRenderedFragment(main)) return
+      focusRouteHeading(main, this.focusAtNavigation)
+    },
+    focusRenderedFragment (main: HTMLElement): boolean {
+      if (!this.$route.hash) return false
       let id: string
       try {
         id = decodeURIComponent(this.$route.hash.slice(1))
@@ -118,7 +157,7 @@ export default defineComponent({
         return false
       }
       const target = document.getElementById(id)
-      if (!target || !main.contains(target) || target.closest('[hidden], [inert]')) return false
+      if (!target || !main.contains(target) || target.closest('[hidden], [inert], [aria-hidden="true"]')) return false
       for (let ancestor = target.parentElement; ancestor && main.contains(ancestor); ancestor = ancestor.parentElement) {
         if (ancestor instanceof HTMLDetailsElement) ancestor.open = true
       }
@@ -126,14 +165,6 @@ export default defineComponent({
       target.scrollIntoView({ block: 'start' })
       target.focus({ preventScroll: true })
       return true
-    },
-    focusRouteHeading () {
-      if (this.focusRenderedFragment()) return
-      const main = ((this.$refs.profileMain as { $el?: HTMLElement })?.$el || this.$refs.profileMain) as HTMLElement | undefined
-      const heading = main?.querySelector('h1') as HTMLElement | null
-      if (!heading) return
-      heading.setAttribute('tabindex', '-1')
-      heading.focus({ preventScroll: true })
     }
   }
 })

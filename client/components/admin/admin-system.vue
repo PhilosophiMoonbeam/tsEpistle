@@ -166,6 +166,7 @@
               <p v-if="metricsPreviewLoading" role="status">{{ $t('admin:system.requestingSameOriginPlain') }}</p>
               <div v-if="metricsPreview !== null">
                 <h4>{{ $t('admin:system.scrapeOutputPlainText') }}</h4>
+                <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
                 <pre class="system-report" tabindex="0" :aria-label="$t('admin:system.prometheusMetricsPreviewPlain')">{{ metricsPreview }}</pre>
               </div>
             </section>
@@ -180,31 +181,30 @@
               <h4>{{ $t('admin:system.noTaggedOpenConnections') }}</h4>
               <p>{{ $t('admin:system.noOpenPostgresqlConnections') }}</p>
             </div>
-            <div v-else class="system-table-wrap" role="region" :aria-label="$t('admin:system.connectedProcessObservations')" tabindex="0">
-              <table>
-                <caption class="sr-only">{{ $t('admin:system.currentlyOpenPostgresqlConnections') }}</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">{{ $t('admin:system.opaqueIdentity') }}</th>
-                    <th scope="col">{{ $t('admin:system.pool') }}</th>
-                    <th scope="col">{{ $t('admin:system.listener') }}</th>
-                    <th scope="col">{{ $t('admin:system.worker') }}</th>
-                    <th scope="col">{{ $t('admin:system.unclassified') }}</th>
-                    <th scope="col">{{ $t('admin:system.earliestOpenBackend') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="process in snapshot.database.connectedProcesses.processes" :key="process.identity">
-                    <th scope="row"><code>{{ process.identity }}</code></th>
-                    <td>{{ number(process.connections.pool) }}</td>
-                    <td>{{ number(process.connections.listener) }}</td>
-                    <td>{{ number(process.connections.worker) }}</td>
-                    <td>{{ number(process.connections.unclassified) }}</td>
-                    <td>{{ process.earliestBackendStart ? dateTime(process.earliestBackendStart) : '—' }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded overflow region needs a tab stop for keyboard scrolling. -->
+            <section v-else class="system-table-wrap" :aria-label="$t('admin:system.connectedProcessObservations')" tabindex="0" ><table>
+              <caption class="sr-only">{{ $t('admin:system.currentlyOpenPostgresqlConnections') }}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{{ $t('admin:system.opaqueIdentity') }}</th>
+                  <th scope="col">{{ $t('admin:system.pool') }}</th>
+                  <th scope="col">{{ $t('admin:system.listener') }}</th>
+                  <th scope="col">{{ $t('admin:system.worker') }}</th>
+                  <th scope="col">{{ $t('admin:system.unclassified') }}</th>
+                  <th scope="col">{{ $t('admin:system.earliestOpenBackend') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="process in snapshot.database.connectedProcesses.processes" :key="process.identity">
+                  <th scope="row"><code>{{ process.identity }}</code></th>
+                  <td>{{ number(process.connections.pool) }}</td>
+                  <td>{{ number(process.connections.listener) }}</td>
+                  <td>{{ number(process.connections.worker) }}</td>
+                  <td>{{ number(process.connections.unclassified) }}</td>
+                  <td>{{ process.earliestBackendStart ? dateTime(process.earliestBackendStart) : '—' }}</td>
+                </tr>
+              </tbody>
+            </table></section>
             <p class="system-note">
               {{ $t('admin:system.pointTimeConnectedProcess') }}
             </p>
@@ -227,53 +227,52 @@
                 }}
               </p>
             </div>
-            <div v-else class="system-table-wrap" role="region" :aria-label="$t('admin:system.scheduledTaskObservations')" tabindex="0">
-              <table>
-                <caption class="sr-only">
-                  {{ $t('admin:system.activeTasksTasksSkipped') }}
-                </caption>
-                <thead>
-                  <tr>
-                    <th scope="col">{{ $t('admin:system.task') }}</th>
-                    <th scope="col">{{ $t('admin:system.now') }}</th>
-                    <th scope="col">{{ $t('admin:system.lastResult') }}</th>
-                    <th scope="col">{{ $t('admin:system.nextLastRun') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="job in snapshot.scheduler.jobs" :key="job.id">
-                    <th scope="row">
-                      <span>{{ job.name }}</span>
-                      <small>{{ job.worker ? $t('admin:system.childProcess') : $t('admin:system.process') }} · {{ job.repeat ? $t('admin:system.repeating') : $t('admin:system.once') }}</small>
-                    </th>
-                    <td>
-                      <span class="system-state">{{ job.state }}</span>
-                    </td>
-                    <td>
-                      <span :class="{ 'system-warning': job.lastOutcome === 'failed' }">{{ job.lastOutcome || $t('admin:system.notObserved') }}</span>
-                      <small>
-                        {{ $t('admin:system.runsFailures', { runs: job.runs, failures: job.failures, interpolation: { escapeValue: false } }) }}
-                        <span v-if="job.lastDurationMs !== null">{{ $t('admin:system.msLastRun', { lastDurationMs: job.lastDurationMs, interpolation: { escapeValue: false } }) }}</span>
-                      </small>
-                    </td>
-                    <td>
-                      {{ job.nextRunAt ? dateTime(job.nextRunAt) : job.lastStartedAt ? dateTime(job.lastStartedAt) : '—' }}
-                      <small>
-                        {{
-                          job.nextRunAt
-                            ? $t('admin:system.nextInvocation')
-                            : job.lastStartedAt
-                              ? $t('admin:system.lastStarted')
-                              : job.state === 'skipped'
-                                ? $t('admin:system.skippedOfflineMode')
-                                : $t('admin:system.noInvocationRecorded')
-                        }}
-                      </small>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded overflow region needs a tab stop for keyboard scrolling. -->
+            <section v-else class="system-table-wrap" :aria-label="$t('admin:system.scheduledTaskObservations')" tabindex="0" ><table>
+              <caption class="sr-only">
+                {{ $t('admin:system.activeTasksTasksSkipped') }}
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">{{ $t('admin:system.task') }}</th>
+                  <th scope="col">{{ $t('admin:system.now') }}</th>
+                  <th scope="col">{{ $t('admin:system.lastResult') }}</th>
+                  <th scope="col">{{ $t('admin:system.nextLastRun') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="job in snapshot.scheduler.jobs" :key="job.id">
+                  <th scope="row">
+                    <span>{{ job.name }}</span>
+                    <small>{{ job.worker ? $t('admin:system.childProcess') : $t('admin:system.process') }} · {{ job.repeat ? $t('admin:system.repeating') : $t('admin:system.once') }}</small>
+                  </th>
+                  <td>
+                    <span class="system-state">{{ job.state }}</span>
+                  </td>
+                  <td>
+                    <span :class="{ 'system-warning': job.lastOutcome === 'failed' }">{{ job.lastOutcome || $t('admin:system.notObserved') }}</span>
+                    <small>
+                      {{ $t('admin:system.runsFailures', { runs: job.runs, failures: job.failures, interpolation: { escapeValue: false } }) }}
+                      <span v-if="job.lastDurationMs !== null">{{ $t('admin:system.msLastRun', { lastDurationMs: job.lastDurationMs, interpolation: { escapeValue: false } }) }}</span>
+                    </small>
+                  </td>
+                  <td>
+                    {{ job.nextRunAt ? dateTime(job.nextRunAt) : job.lastStartedAt ? dateTime(job.lastStartedAt) : '—' }}
+                    <small>
+                      {{
+                        job.nextRunAt
+                          ? $t('admin:system.nextInvocation')
+                          : job.lastStartedAt
+                            ? $t('admin:system.lastStarted')
+                            : job.state === 'skipped'
+                              ? $t('admin:system.skippedOfflineMode')
+                              : $t('admin:system.noInvocationRecorded')
+                      }}
+                    </small>
+                  </td>
+                </tr>
+              </tbody>
+            </table></section>
             <p class="system-note">
               {{ $t('admin:system.processObservationsResetRestart') }}
             </p>
@@ -386,6 +385,7 @@
             </div>
             <details class="system-details" :open="includeDeployment">
               <summary>{{ $t('admin:system.inspectExactReport') }}</summary>
+              <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
               <pre class="system-report" tabindex="0" :aria-label="$t('admin:system.exactSupportReport')">{{ reportText }}</pre>
             </details>
             <p class="system-note">

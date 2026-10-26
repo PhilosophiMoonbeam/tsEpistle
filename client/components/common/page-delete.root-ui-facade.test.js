@@ -17,11 +17,13 @@ if (!script) {
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
 
 const Vue = await import('vue')
+// Rich-text imports runtime-dom too; defer until the shared browser-dom document is installed.
+const { default: LocalizedRichText } = await import('./localized-rich-text')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
 const translations = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8')).common
-const translator = i18next.createInstance()
+const translator = i18next
 await translator.init({ lng: 'en', fallbackLng: 'en', resources: { en: { common: translations } }, defaultNS: 'common' })
 const compileRender = filename => {
   const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
@@ -52,8 +54,9 @@ afterEach(() => {
 })
 
 const createComponentOptions = (wikiStore, window, document) =>
-  new Function('defineComponent', 'wikiStore', 'deletePageById', 'window', 'document', executableScript)(
+  new Function('defineComponent', 'LocalizedRichText', 'wikiStore', 'deletePageById', 'window', 'document', executableScript)(
     component => component,
+    LocalizedRichText,
     wikiStore,
     deletePageById,
     window,

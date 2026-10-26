@@ -23,6 +23,7 @@ import AgentAssetPicker from './agent-asset-picker.vue'
 import type { Asset } from '../../helpers/assets-api.ts'
 import { agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 
 const t = useTranslate()
 const props = defineProps<{
@@ -77,7 +78,7 @@ const dictationIntent = ref<'insert' | 'send'>('insert')
 const dictationSendText = ref<string | null>(null)
 let dictationSendResolve: ((text: string | null) => void) | null = null
 const locked = computed(() => props.disabled || props.networkBlocked || uploading.value || recording.value || transcribing.value)
-const fetcher: typeof fetch = (...args) => window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 let disposed = false
 let generation = 0
 let uploadController: AbortController | null = null
@@ -160,7 +161,7 @@ const releaseMicrophone = () => {
   speechDetected.value = false
   speechVotes = 0
   lastVoiceAt = 0
-  stream?.getTracks().forEach(track => track.stop())
+  stream?.getTracks().forEach(track => { track.stop() })
   stream = null
   levelSource?.disconnect()
   levelSource = null
@@ -520,7 +521,7 @@ const startRecording = async () => {
   try {
     const microphone = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true, channelCount: { ideal: 1 } }, video: false })
     if (disposed || current !== generation || props.networkBlocked || props.session?.id !== session.id || props.csrfToken !== csrfToken) {
-      microphone.getTracks().forEach(track => track.stop())
+      microphone.getTracks().forEach(track => { track.stop() })
       if (current === generation) {
         recording.value = false
         requesting.value = false

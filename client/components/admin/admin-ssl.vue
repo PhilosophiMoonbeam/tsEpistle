@@ -37,10 +37,8 @@
           </div>
         </div>
         <nav class="tls-nav" :aria-label="$t('admin:ssl.httpsWorkspaceSections')">
-          <button v-for="item in sections" :key="item.id" :aria-current="section === item.id ? 'page' : undefined" @click="selectSection(item.id)">
-            <span>{{ item.number }}</span>
-            {{ item.label }}
-          </button>
+          <button type="button" v-for="item in sections" :key="item.id" :aria-current="section === item.id ? 'page' : undefined" @click="selectSection(item.id)"><span>{{ item.number }}</span>
+          {{ item.label }}</button>
         </nav>
         <section v-if="section === 'connections'" aria-labelledby="tls-connections">
           <div class="tls-section-heading">
@@ -348,19 +346,15 @@
           <div class="tls-register">
             <div>
               <p v-if="!workspace.operations.length" class="tls-empty">{{ $t('admin:ssl.noHttpsOperationsRecorded') }}</p>
-              <button
-                v-for="operation in workspace.operations"
-                :key="operation.id"
-                class="tls-operation"
-                :aria-pressed="selectedId === operation.id"
-                @click="openReceipt(operation)"
-              >
-                <div>
-                  <strong>{{ kindLabel(operation.kind) }}</strong>
-                  <span>{{ operation.state }} · {{ date(operation.createdAt) }}</span>
-                </div>
-                <p>{{ operation.summary }}</p>
-              </button>
+              <button type="button" v-for="operation in workspace.operations"
+              :key="operation.id"
+              class="tls-operation"
+              :aria-pressed="selectedId === operation.id"
+              @click="openReceipt(operation)"><div>
+                <strong>{{ kindLabel(operation.kind) }}</strong>
+                <span>{{ operation.state }} · {{ date(operation.createdAt) }}</span>
+              </div>
+              <p>{{ operation.summary }}</p></button>
             </div>
             <article class="tls-panel tls-receipt">
               <template v-if="selected">

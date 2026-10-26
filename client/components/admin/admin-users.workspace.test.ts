@@ -162,11 +162,11 @@ describe('account creation cancellation', () => {
       if (field === 'forced-password') state.mustChangePassword = false
       if (field === 'provider') state.providerKey = 'organization'
       await state.close()
-      expect(window.confirm).toHaveBeenCalledOnce()
+      expect(window.confirm).toHaveBeenCalledTimes(1)
       expect(state.$emit).not.toHaveBeenCalled()
       const event = { preventDefault: vi.fn(), returnValue: undefined as unknown }
       state.beforeUnload(event)
-      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(event.preventDefault).toHaveBeenCalledTimes(1)
       expect(event.returnValue).toBe('')
       window.confirm.mockReturnValue(true)
       await state.close()
@@ -246,7 +246,7 @@ describe('account workspace review and recovery', () => {
       expect(confirmButton().disabled).toBe(true)
       confirmButton().click()
       await settle()
-      expect(transport.saveAccountProfile).toHaveBeenCalledOnce()
+      expect(transport.saveAccountProfile).toHaveBeenCalledTimes(1)
       const reloadButton = document.querySelector<HTMLButtonElement>('.account-review-dialog .v-alert button')
       if (!reloadButton) throw new Error('The conflict recovery reload button did not render')
       reloadButton.click()
@@ -392,7 +392,7 @@ describe('account workspace review and recovery', () => {
     await state.confirm()
     expect(state.actionError).toContain('outcome is unconfirmed')
     expect(state.dialog).toBe(true)
-    expect(transport.actOnAccount).toHaveBeenCalledOnce()
+    expect(transport.actOnAccount).toHaveBeenCalledTimes(1)
     expect(state.saved.fingerprint).toBe('version-one')
   })
   it('clears password entry after successful replacement and keeps credentials out of notices', async () => {

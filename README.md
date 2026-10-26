@@ -106,7 +106,7 @@ Set `WIKI_IMAGE` to an immutable tag or digest when overriding the example image
 
 ### Source development
 
-Install dependencies and start development (long-running):
+Use the exact `packageManager` Bun pin (`1.4.3`). Install dependencies and start development (long-running):
 
 ```console
 bun install --frozen-lockfile
@@ -116,19 +116,34 @@ bun run dev
 Run the independent quality gate:
 
 ```console
-bun run ci
+bun run ci:fast
 ```
 
-`bun run dev` starts the watched server and Vite client together. `bun run ci` is the repository's local quality contract, including checks, tests, and the production build.
+`bun run dev` starts the watched server and Vite client together. `bun run ci:fast` runs the complete ordinary contract with a clean child environment: static checks, the production build and bundle budgets, then isolated tests. Build identity requires committed inputs; native checks remain risk-selected.
+
+### Frontend contracts
+
+The application remains Vue 3.5.44 and Vuetify-first 4.3.0, with TresJS 5.10.0 / Three.js 0.186.1. Pinia, Router, the Express/Pug/Vite host, Options API interoperability and specialized editors retain their existing ownership.
+
+Biome checks production SFC scripts; the Vue compiler adjunct checks HTML/Pug template syntax and directives rather than pretending Biome parses Pug. `lint:vue:qualify` proves script admission. `typecheck:strict-qualification` checks the bounded strict-template/native-attribute/global-registration contract with positive and negative HTML/Pug consumers. `typecheck:client` is the application gate. Authored `*.test.ts` files and `.mts` harnesses use the separate `tsconfig.client-tests.json` gate and public-fixture negative control; JavaScript tests remain runtime-covered, not type-checked.
+
 ### OMP language intelligence
 
-OMP uses a standalone language-server path for editor features. The project pins `@vue/language-server` to `2.2.12` because `3.3.9` requires a custom tsserver bridge that OMP does not provide. This editor pin remains separate from the production `vue` `3.5.44`, `vue-tsc` `3.3.9`, and `typescript` `6.0.2` versions.
+OMP's `.vue` owner runs `server/scripts/vue-language-server.ts`: Vue language server 3.3.9 plus a genuine TypeScript language server 5.3.0 / Vue TypeScript plugin 3.3.9 semantic backend. Node hosts the upstream services; the stdio bridge uses the repository's exact Bun pin. It preserves semantic navigation, Vue/Pug/style features, merged diagnostics and command/item ownership, and retires its owned processes on shutdown or client EOF.
 
-`client/tsconfig.json`, `server/tsconfig.json`, and `shared/tsconfig.json` are editor-discovery entry points only. They inherit the authoritative root `tsconfig.client.json`, `tsconfig.server.json`, and `tsconfig.shared.json`, respectively. The root client config activates Pug template checking for both the CLI and editor through `@vue/language-plugin-pug`. Its `2.2.12` pin uses plugin API 2.1, accepted by the editor's `2.2.12` core and the CLI's `3.3.9` core; do not upgrade the plugin alone. The Vue language server owns `.vue`; the TypeScript language server owns `.ts` and `.js`.
+`client/tsconfig.json`, `server/tsconfig.json`, and `shared/tsconfig.json` are editor-discovery entry points only. They inherit the authoritative root projects. The root Pug language plugin, Vue language core, `vue-tsc` and Vue editor packages use 3.3.9 together; do not upgrade one independently. The external Vue server owns `.vue`; the external TypeScript server continues to own `.ts` and `.js`.
 
 After changing the Vue language-server dependency or its initialization options, restart the supervised `omp.lsp.mux` before reloading workspace LSP. The shared mux can retain a child or cache keyed by command, arguments, and working directory, so a workspace reload alone can leave stale state.
 
-Before upgrading the Vue language server, require semantic symbols, definition, and diagnostics to pass within 30 seconds.
+The repository launcher uses an isolated, offline npm cache instead of changing the shared host Bun. Seed the exact tool once, then qualify both the direct bridge and actual `.omp/lsp.json` launcher:
+
+```console
+npm exec --yes --ignore-scripts=false --package=bun@1.4.3 -- bun --version
+bun run editor:vue:qualify
+bun run editor:vue:qualify --editor-launcher
+```
+
+Qualification exercises real HTML/Pug symbols, imported definitions, references, hover, rename, public-type diagnostics/correction, template completions, formatting, asset links, client commands and process retirement, including interrupted initialization. Semantic admission retains its 30-second bound. The exact `volar-service-pug@0.0.71` patch preserves source URI/version on its projected documents; without it, sibling asset links resolve from the synthetic `foo.html` base to the filesystem root.
 
 ### Scheduler worker troubleshooting
 

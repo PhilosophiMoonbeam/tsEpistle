@@ -56,10 +56,11 @@ import { AgentMediaProviderConfigSchema, AgentMediaProviderWriteSchema, type Age
 import { listMediaProviders, createMediaProvider, updateMediaProvider, enableMediaProvider, defaultMediaProvider, deleteMediaProvider } from '../../helpers/agent-control-api.ts'
 import { AgentApiError } from '../../helpers/agents-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 const { csrfToken, groups, groupsLoading = false, groupsError = '' } = defineProps<{ csrfToken: string; groups: readonly { id: number; name: string }[]; groupsLoading?: boolean; groupsError?: string }>()
 defineEmits<{ 'refresh-groups': [] }>()
 const t = useTranslate('admin:agentAdmin')
-const fetcher: typeof fetch = (...args) => window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 const providers = shallowRef<AgentMediaProviderView[]>([]), editing = shallowRef<AgentMediaProviderView | null>(null), removing = shallowRef<AgentMediaProviderView | null>(null)
 const loading = ref(false), loaded = ref(false), busy = ref(false), dialog = ref(false), submitted = ref(false), conflict = ref(false), discardDialog = ref(false)
 const error = ref(''), editorError = ref(''), notice = ref(''), baseline = ref('')

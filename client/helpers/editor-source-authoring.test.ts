@@ -42,7 +42,7 @@ function completionContext(marked: string): CompletionContext {
   const source = marked.replace('CURSOR', '')
   return new CompletionContext(EditorState.create({ doc: source, extensions: [markdown()] }), position, true)
 }
-const extensionsResponse: typeof fetch = async () =>
+const extensionsResponse: Parameters<typeof completeSourceAuthoring>[2] = async () =>
   Response.json({
     hostVersion: 1,
     extensions: BUILTIN_CONTENT_EXTENSIONS.map(extension => ({ ...extension, isEnabled: extension.key === 'qr', compatible: true, diagnostic: null }))

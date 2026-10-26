@@ -39,11 +39,10 @@
     </div>
 
     <v-expand-transition>
-      <div
+      <section
         v-if="expanded"
         :id="goalDetailsId"
         class="agent-goal__details"
-        role="region"
         :aria-labelledby="goalTitleId"
       >
         <div class="agent-goal__body">
@@ -78,6 +77,7 @@
           </ul>
         </aside>
 
+        <!-- biome-ignore lint/a11y/useSemanticElements: This named group contains related continuity text, not form controls suitable for a fieldset. -->
         <div class="agent-goal__continuity" role="group" :aria-label="$t('common:agentGoalStatus.goalContinuity')">
           <span><v-icon icon="mdi-source-branch" size="15" /> {{ $t('common:agentGoalStatus.run2', { continuationCount: formatBudgetValue(goal.continuationCount + 1), maxContinuations: formatBudgetValue(goal.maxContinuations + 1), interpolation: { escapeValue: false } }) }}</span>
           <span><v-icon icon="mdi-calendar-clock-outline" size="15" /> {{ timelinePrefix }} <time :datetime="timelineAt">{{ timelineLabel }}</time></span>
@@ -181,7 +181,7 @@
           {{ pendingActionLabel }}
         </p>
 
-        <div v-if="canPause || canResume || canCancel" class="agent-goal__actions" role="group" :aria-label="$t('common:agentGoalStatus.goalActions')">
+        <fieldset v-if="canPause || canResume || canCancel" class="agent-goal__actions" :aria-label="$t('common:agentGoalStatus.goalActions')">
           <v-btn
             v-if="canPause"
             size="small"
@@ -211,9 +211,9 @@
             :loading="pendingAction === 'cancel' && busy"
             @click="cancelDialogOpen = true"
           >{{ $t('common:agentGoalStatus.cancelGoal') }}</v-btn>
-        </div>
+        </fieldset>
       </div>
-      </div>
+      </section>
     </v-expand-transition>
 
     <v-dialog content-class="agent-owned-overlay" v-model="cancelDialogOpen" max-width="30rem" :aria-labelledby="cancelGoalTitleId">
@@ -818,7 +818,7 @@ const progressLabel = computed(() => {
   gap: var(--wiki-space-2);
   margin: var(--wiki-space-3) 0 0;
 }
-.agent-goal__actions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); margin-top: var(--wiki-space-3); }
+.agent-goal__actions { display: flex; min-width: 0; border: 0; padding: 0; margin: 0; flex-wrap: wrap; gap: var(--wiki-space-2); margin-top: var(--wiki-space-3); }
 .agent-goal__dialog-title { align-items: center; display: flex; gap: var(--wiki-space-3); overflow-wrap: anywhere; padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); }
 .agent-goal__dialog-actions { flex-wrap: wrap; padding: 0 var(--wiki-space-5) var(--wiki-space-4); }
 .agent-goal__dialog-actions :deep(.v-spacer) { min-width: 0; }

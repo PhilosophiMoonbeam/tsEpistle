@@ -6,6 +6,7 @@ import type { App } from 'vue'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import { document, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
+import { installVuetifyFixture } from '../../test/vuetify-fixture.mts'
 
 resetBody()
 // Vue must initialize its DOM renderer after browser-dom has installed document.
@@ -72,7 +73,7 @@ const mountInventory = async (permissions = ['manage:system']) => {
     }
   }))
   app.config.globalProperties.$t = translateEnglish
-  app.config.globalProperties.$vuetify = { display: { smAndDown: false }, locale: { isRtl: false } }
+  installVuetifyFixture(app)
   const host = document.createElement('div')
   document.body.append(host)
   app.mount(host)

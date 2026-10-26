@@ -465,7 +465,9 @@
               {{ codePreviewError }}
               <v-btn variant="text" @click="loadCodePreview">Retry preview</v-btn>
             </p>
-            <pre class="prismjs language-javascript" tabindex="0" aria-label="JavaScript example"><code v-if="codePreviewHtml" class="language-javascript" v-html="codePreviewHtml"></code><code v-else class="language-javascript">{{ codePreviewSource }}</code></pre>
+            <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
+            <!-- biome-ignore lint/a11y/useSemanticElements: This named scroll region must remain preformatted source with syntax-highlighted code. -->
+            <pre class="prismjs language-javascript" tabindex="0" aria-label="JavaScript example"  role="region"><code v-if="codePreviewHtml" class="language-javascript" v-html="codePreviewHtml"></code><code v-else class="language-javascript">{{ codePreviewSource }}</code></pre>
           </section>
           <div class="theme-preview-options">
             <v-select
@@ -588,11 +590,13 @@
             <div>
               <section>
                 <strong>{{ $t('admin:theme.saved') }}</strong>
-                <pre tabindex="0">{{ displayValue(saved.policy[field]) }}</pre>
+                <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
+                <pre  tabindex="0" >{{ displayValue(saved.policy[field]) }}</pre>
               </section>
               <section>
                 <strong>{{ $t('admin:theme.publishing') }}</strong>
-                <pre tabindex="0">{{ displayValue(reviewed[field]) }}</pre>
+                <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
+                <pre  tabindex="0" >{{ displayValue(reviewed[field]) }}</pre>
               </section>
             </div>
           </details>

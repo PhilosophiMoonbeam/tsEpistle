@@ -1,0 +1,20 @@
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -4,6 +4,7 @@
+ const language_service_1 = require("@volar/language-service");
+ const featureWorkers_1 = require("@volar/language-service/lib/utils/featureWorkers");
+ const volar_service_html_1 = require("volar-service-html");
++const vscode_languageserver_textdocument_1 = require("vscode-languageserver-textdocument");
+ const pug = require("./lib/languageService");
+ function create({ documentSelector = ['jade'], configurationSections = {
+     autoCreateQuotes: 'html.autoCreateQuotes',
+@@ -148,6 +149,8 @@
+                     }
+                 }
+                 const doc = pugLs.parsePugDocument(document.getText());
++                doc.docs[0] = document;
++                doc.docs[1] = vscode_languageserver_textdocument_1.TextDocument.create(document.uri, 'html', document.version, doc.docs[1].getText());
+                 pugDocuments.set(document, [document.version, doc]);
+                 return doc;
+             }

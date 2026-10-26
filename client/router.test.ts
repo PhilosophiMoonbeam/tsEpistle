@@ -115,6 +115,6 @@ describe('profile route loading ownership', () => {
     await Promise.resolve()
     const stubbedWindow = globalThis.window as unknown as { confirm: ReturnType<typeof vi.fn>; location: { reload: ReturnType<typeof vi.fn> } }
     expect(stubbedWindow.confirm).toHaveBeenCalledWith('Dieser Bereich wurde nicht geladen.\n\nLaden Sie die Seite neu.')
-    expect(stubbedWindow.location.reload).toHaveBeenCalledOnce()
+    expect(stubbedWindow.location.reload).toHaveBeenCalledTimes(1)
   })
 })

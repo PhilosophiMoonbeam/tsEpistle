@@ -122,7 +122,7 @@ it('discards a late key-creation secret when the signed-in account changes', asy
   const mounted = mount(() => pending.promise)
   await settle()
   await startIssue(mounted.host)
-  expect(mounted.create).toHaveBeenCalledOnce()
+  expect(mounted.create).toHaveBeenCalledTimes(1)
   mounted.store.user.id = 2
   mounted.props.ownerId = 2
   mounted.props.csrfToken = 'csrf-session-two'
@@ -147,7 +147,7 @@ it('keeps a newly issued secret masked and forgets it after acknowledgement with
   expect(mounted.host.querySelector('.profile-mcp__keys')?.textContent).toContain('Desktop')
   button(mounted.host, 'Reload access keys').click()
   await settle()
-  expect(mounted.create).toHaveBeenCalledOnce()
+  expect(mounted.create).toHaveBeenCalledTimes(1)
   expect([...mounted.host.querySelectorAll('input')].map(input => input.value)).not.toContain('one-time-private-key')
   expect(mounted.errors).toEqual([])
 })
@@ -158,11 +158,11 @@ it('blocks another issuance after an uncertain response until a successful inven
   })
   await settle()
   await startIssue(mounted.host)
-  expect(mounted.create).toHaveBeenCalledOnce()
+  expect(mounted.create).toHaveBeenCalledTimes(1)
   expect(button(mounted.host, 'Create MCP key').disabled).toBe(true)
   button(mounted.host, 'Create MCP key').click()
   await settle()
-  expect(mounted.create).toHaveBeenCalledOnce()
+  expect(mounted.create).toHaveBeenCalledTimes(1)
   mounted.load.mockRejectedValueOnce(new Error('Still offline'))
   button(mounted.host, 'Reload access keys').click()
   await settle()
@@ -172,7 +172,7 @@ it('blocks another issuance after an uncertain response until a successful inven
   await settle()
   expect(mounted.host.querySelector('.profile-mcp__keys')?.textContent).toContain('Desktop')
   expect(button(mounted.host, 'Create MCP key').disabled).toBe(false)
-  expect(mounted.create).toHaveBeenCalledOnce()
+  expect(mounted.create).toHaveBeenCalledTimes(1)
   expect(mounted.errors).toEqual([])
 })
 

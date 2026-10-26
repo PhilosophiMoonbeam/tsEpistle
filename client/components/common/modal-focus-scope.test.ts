@@ -286,7 +286,7 @@ describe('modal focus scope', () => {
     for (const element of [root, back, other, iframe]) {
       element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList
     }
-    const scope = createModalFocusScope({ root, onEscape: () => {} })
+    const scope = createModalFocusScope({ root, restoreTarget: null, onEscape: () => {} })
     const reverseTab = () => back.dispatchEvent(
       new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
     )

@@ -21,6 +21,7 @@ import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { externalMcpOAuthErrorKey, listAvailableExternalMcp, type ExternalMcpServerView } from '../../helpers/agent-control-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { wikiStore } from '../../store/index.ts'
 import AgentMcpOauthConnection from '../agents/agent-mcp-oauth-connection.vue'
 
@@ -32,7 +33,7 @@ const returnMessage = computed(() => returnStatus.value ? t(returnStatus.value =
 const servers = shallowRef<ExternalMcpServerView[]>([])
 const loading = ref(false), loaded = ref(false), error = ref('')
 const isCurrent = computed(() => props.ownerId > 0 && props.ownerId === wikiStore.user.id)
-const fetcher: typeof fetch = (...args) => window.fetch(...args)
+const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 let generation = 0
 let disposed = false
 let controller: AbortController | null = null

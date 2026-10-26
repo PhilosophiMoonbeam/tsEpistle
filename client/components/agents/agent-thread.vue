@@ -139,10 +139,9 @@
                 </figcaption>
               </figure>
             </div>
-            <aside
+            <section
               v-if="entry.recovery"
               class="agent-message__recovery"
-              role="region"
               :aria-label="$t('common:agentThread.recoveryRegion')"
             >
               <v-icon
@@ -164,7 +163,7 @@
               >
                 {{ $t('common:agentThread.reviewRequest') }}
               </v-btn>
-            </aside>
+            </section>
             <div v-if="entry.message.role === 'user' && entry.message.knowledgeContext" class="agent-message__source-context" :aria-label="$t('common:agentThread.sourceContextUsedMessage')">
               <span>{{ $t('common:agentThread.search', { value: entry.message.knowledgeContext.scope.kind === 'selected' ? $t('common:agentThread.selectedPages') : entry.message.knowledgeContext.scope.kind === 'section' ? entry.message.knowledgeContext.scope.path : entry.message.knowledgeContext.scope.kind === 'locale' ? entry.message.knowledgeContext.scope.locale.toUpperCase() : $t('common:agentThread.allWiki'), interpolation: { escapeValue: false } }) }}</span>
               <v-btn v-for="source in entry.message.knowledgeContext.sources" :key="source.id" size="x-small" variant="text" prepend-icon="mdi-file-document-outline" :aria-label="$t('common:agentThread.preview', { pageLabel: source.title, interpolation: { escapeValue: false } })" @click="previewSelector = { id: source.id }">{{ $t('common:agentThread.revision', { title: source.title, sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } }) }}</v-btn>
@@ -205,6 +204,7 @@
                   :key="group.key"
                   class="agent-sources__group"
                 >
+                  <!-- biome-ignore lint/a11y/noStaticElementInteractions: Only safe native anchors activate previews; the non-link fallback has no preview action. -->
                   <component
                     :is="group.safeHref ? 'a' : 'div'"
                     class="agent-sources__page"
@@ -225,6 +225,7 @@
                       v-for="citationEntry in group.sections"
                       :key="citationEntry.citation.evidenceId"
                     >
+                      <!-- biome-ignore lint/a11y/noStaticElementInteractions: Only safe native anchors activate previews; the non-link fallback has no preview action. -->
                       <component
                         :is="citationEntry.safeHref ? 'a' : 'span'"
                         :href="citationEntry.safeHref"
@@ -264,6 +265,7 @@
               :open="activityOpen(entry)"
               @toggle="handleActivityToggle($event, entry)"
             >
+              <!-- biome-ignore lint/a11y/noStaticElementInteractions: Native summary owns keyboard activation; this records the user's disclosure preference. -->
               <summary @click="markActivityToggle(entry)">
                 <v-icon icon="mdi-format-list-checks" size="18" aria-hidden="true" />
                 <span>{{ entry.run?.activityLabel }}</span>
@@ -319,7 +321,7 @@
       :label="$t('common:agentThread.browserScreenshots')"
       :format-time="artifactTimeLabel"
     />
-    <div v-if="thread.suggestions.length" class="agent-suggestions" role="group" :aria-label="$t('common:agentThread.followUpSuggestions')">
+    <fieldset v-if="thread.suggestions.length" class="agent-suggestions" :aria-label="$t('common:agentThread.followUpSuggestions')">
       <v-btn
         v-for="suggestion in thread.suggestions"
         :key="suggestion.id"
@@ -329,7 +331,7 @@
         :disabled="canSubmit === false || networkBlocked"
         @click="emit('suggest', suggestion.prompt)"
       >{{ suggestion.label }}</v-btn>
-    </div>
+    </fieldset>
     <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" :can-ask="canSubmit !== false && !networkBlocked" @close="previewSelector = null" @ask="source => { previewSelector = null; emit('askSource', source) }" />
   </section>
 </template>
@@ -1345,6 +1347,10 @@ watch(
 
 .agent-suggestions {
   display: flex;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
   flex-wrap: wrap;
   gap: var(--wiki-space-2);
   margin-block-start: var(--wiki-space-5);

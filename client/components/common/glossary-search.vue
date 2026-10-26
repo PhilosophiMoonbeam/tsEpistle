@@ -214,7 +214,7 @@ async function loadCatalog (): Promise<void> {
       cursor = result.nextCursor ?? undefined
       if (!cursor || seen.has(cursor)) throw new Error('The catalog continuation did not advance. Please retry.')
       seen.add(cursor)
-    } while (true)
+    } while (cursor !== undefined)
   } catch (failure) { if (!signal.aborted && request === catalogGeneration && alive) { catalog.value = []; error.value = message(failure) } }
   finally { if (alive && request === catalogGeneration) catalogLoading.value = false }
 }

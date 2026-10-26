@@ -18,11 +18,11 @@
         <a href="/p/profile">{{ $t('admin:agentAdminTools.openPersonalMcpKeys') }} <v-icon size="16">mdi-arrow-right</v-icon></a>
       </div>
     </div>
-    <div class="tool-toolbar" role="search" :aria-label="$t('admin:agentAdminTools.findAgentTools')">
+    <search class="tool-toolbar" :aria-label="$t('admin:agentAdminTools.findAgentTools')">
       <v-text-field v-model="query" :label="$t('admin:agentAdminTools.findTool')" prepend-inner-icon="mdi-magnify" clearable hide-details />
       <v-select v-model="transport" :label="$t('admin:agentAdminTools.available')" :items="transports" hide-details />
       <v-select v-model="state" :label="$t('admin:agentAdminTools.deploymentState')" :items="states" hide-details />
-    </div>
+    </search>
     <p class="tool-explanation">{{ $t('admin:agentAdminTools.deploymentEligibilityOnlyFirst') }}</p>
     <p class="tool-explanation">{{ $t('admin:agentAdminTools.eligibilityFilterScope') }}</p>
     <v-skeleton-loader v-if="!loaded && loading" type="list-item-three-line, list-item-three-line" />

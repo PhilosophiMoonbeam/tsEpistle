@@ -12,8 +12,18 @@ import { markdown } from '@codemirror/lang-markdown'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 globalThis.useTranslate = () => translateEnglish
-// Vuetify snapshots browser capabilities; load it only after the shared DOM harness.
+// Vue, rich-text and Vuetify capture browser state; load them after the shared DOM harness.
 const Vue = await import('vue')
+const { default: LocalizedRichText } = await import('../common/localized-rich-text')
+const { localizationPlugin } = await import('../../modules/localization')
+const localizationApp = Vue.createApp({})
+localizationApp.use(localizationPlugin)
+await localizationApp.config.globalProperties.$i18n.init({
+  lng: 'en',
+  fallbackLng: 'en',
+  resources: { en: JSON.parse(fs.readFileSync('server/locales/en.json', 'utf8')) },
+  initAsync: false
+})
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
@@ -35,7 +45,7 @@ const loadConflictComponent = dependencies => {
     .replace(/^import[^\n]*(?:\n|$)/gm, '')
     .replace('export default defineComponent(', 'const component = defineComponent(')
   const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script)
-  return new Function(...Object.keys(dependencies), `${executable}\nreturn component`)(...Object.values(dependencies))
+  return new Function('LocalizedRichText', ...Object.keys(dependencies), `${executable}\nreturn component`)(LocalizedRichText, ...Object.values(dependencies))
 }
 
 const createConflictHarness = ({
@@ -130,7 +140,7 @@ const loadTiptapConflictComponent = dependencies => {
     .replace(/^import[^\n]*(?:\n|$)/gm, '')
     .replace('export default defineComponent(', 'const component = defineComponent(')
   const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script)
-  return new Function(...Object.keys(dependencies), `${executable}\nreturn component`)(...Object.values(dependencies))
+  return new Function('LocalizedRichText', ...Object.keys(dependencies), `${executable}\nreturn component`)(LocalizedRichText, ...Object.values(dependencies))
 }
 
 const createDeferred = () => {
@@ -219,6 +229,7 @@ const compileRender = relativePath => {
     filename,
     id: relativePath,
     preprocessLang: parsed.descriptor.template.lang,
+    preprocessOptions: { doctype: 'html' },
     compilerOptions: { mode: 'function' }
   })
   if (compiled.errors.length > 0) throw compiled.errors[0]
@@ -252,20 +263,9 @@ const mountTiptapConflict = fetchImplementation => {
   const host = document.body.appendChild(document.createElement('div'))
   const app = Vue.createApp(component, { modelValue: true })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.use(localizationPlugin)
   app.config.globalProperties.$t = translateEnglish
   app.component('VCardChin', CardChin)
-  // Translation contents are irrelevant here; preserve named slots and real dialog/button behavior.
-  app.component(
-    'i18next',
-    Vue.defineComponent({
-      props: { tag: { type: String, default: 'div' } },
-      setup:
-        (props, { slots }) =>
-        () =>
-          Vue.h(props.tag, slots.default?.())
-    })
-  )
-  app.config.globalProperties.$t = translateEnglish
   app.config.globalProperties.$helpers = { formatMoment: value => value }
   const context = app.mount(host)
   mountedApps.push(() => {

@@ -12,7 +12,6 @@ import type { Translate } from '../../helpers/use-translate.ts'
 import { browserWindow, resetBody } from '../../test/browser-dom.mts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
 resetBody()
 
 const taskLocale = i18next.createInstance()

@@ -15,6 +15,7 @@ import {
   type OfflineReadingContextV1,
   type OfflineReadingVaultV1
 } from '../../shared/offline.ts'
+import type { BrowserFetch } from './json-transport.ts'
 
 const MAX_FRAME_BYTES = 16 * 1024
 const MAX_CANONICAL_ORIGIN_BYTES = 8 * 1024
@@ -516,7 +517,7 @@ const readBoundedFrame = async (response: Response, signal: AbortSignal, assertC
   }
 }
 const acquireDraftKey = async (
-  fetchImpl: typeof window.fetch,
+  fetchImpl: BrowserFetch,
   options: DraftKeyRequestOptions,
   origin: string,
   controller: AbortController,
@@ -582,7 +583,7 @@ const acquireDraftKey = async (
   }
 }
 
-const createPendingKeyRequest = (fetchImpl: typeof window.fetch, options: DraftKeyRequestOptions, origin: string): PendingKeyRequest => {
+const createPendingKeyRequest = (fetchImpl: BrowserFetch, options: DraftKeyRequestOptions, origin: string): PendingKeyRequest => {
   const key = identity(options.expectedAccountId, options.expectedSessionGeneration)
   const controller = new AbortController()
   const epoch = registryEpoch
@@ -641,7 +642,7 @@ const waitForPendingKey = async (acquisition: PendingKeyRequest, signal: AbortSi
 }
 
 /** Requests and imports one server-authoritative draft key for the captured owner/generation. */
-export const requestDraftKey = async (fetchImpl: typeof window.fetch, rawOptions: DraftKeyRequestOptions): Promise<OfflineDraftKeyHandle> => {
+export const requestDraftKey = async (fetchImpl: BrowserFetch, rawOptions: DraftKeyRequestOptions): Promise<OfflineDraftKeyHandle> => {
   const options = validRequestOptions(rawOptions)
   if (options.signal?.aborted) throw callerAbortError()
   const origin = currentOrigin()
@@ -1175,7 +1176,7 @@ const normalizeReadingEnrollmentOptions = (
 }
 
 export const enrollOfflineReading = async (
-  fetchImpl: typeof window.fetch,
+  fetchImpl: BrowserFetch,
   storage: OfflineReadingVaultStorage,
   rawOptions: OfflineReadingEnrollmentOptions | number,
   generation?: number,

@@ -9,7 +9,7 @@
         <button type="button" :disabled="busy || !trail.length" @click="navigate(-1)">{{ $t('common:agentAssetPicker.wikiAssets') }}</button>
         <template v-for="(folder, index) in trail" :key="folder.id"><span aria-hidden="true">/</span><button type="button" :disabled="busy || index === trail.length - 1" :aria-current="index === trail.length - 1 ? 'page' : undefined" @click="navigate(index)">{{ folder.name }}</button></template>
       </nav>
-      <label class="agent-asset-picker__search"><v-icon icon="mdi-magnify" size="20" aria-hidden="true" /><input ref="searchInput" v-model="query" type="search" :aria-label="$t('common:agentAssetPicker.searchFilenamesFolder')" :placeholder="$t('common:agentAssetPicker.searchFolder')" :disabled="busy" /></label>
+      <label class="agent-asset-picker__search"><span class="agent-asset-picker__search-label">{{ $t('common:agentAssetPicker.searchFilenamesFolder') }}</span><v-icon icon="mdi-magnify" size="20" aria-hidden="true" /><input ref="searchInput" v-model="query" type="search" :placeholder="$t('common:agentAssetPicker.searchFolder')" :disabled="busy" /></label>
       <div class="agent-asset-picker__body" :aria-busy="loading || busy">
         <div v-if="attachmentError" class="agent-asset-picker__error" role="alert"><p>{{ attachmentError }}</p><p>{{ $t('common:agentAssetPicker.attachmentFailureHelp') }}</p></div>
         <p v-if="loading" class="agent-asset-picker__state" role="status">{{ $t('common:agentAssetPicker.loadingWikiAssets') }}</p>
@@ -128,6 +128,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort() })
 .agent-asset-picker__breadcrumbs button { white-space: nowrap; color: var(--wiki-primary-ink); }
 .agent-asset-picker__breadcrumbs button:disabled { color: inherit; opacity: .65; }
 .agent-asset-picker__search { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; border: 1px solid var(--wiki-surface-border); border-radius: 10px; padding: 9px 12px; }
+.agent-asset-picker__search-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .agent-asset-picker__search input { appearance: none; border: 0; border-radius: 0; box-shadow: none; background: transparent; color: inherit; width: 100%; min-width: 0; outline: none; font-size: .875rem; }
 .agent-asset-picker__search:focus-within { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
 .agent-asset-picker__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 12px; }

@@ -160,7 +160,7 @@ describe('group workspace review, recovery and navigation', () => {
     await state.confirm()
     expect(state.actionError).toContain('outcome is unconfirmed')
     expect(state.conflict).toBe(true)
-    expect(transport.saveGroupPolicy).toHaveBeenCalledOnce()
+    expect(transport.saveGroupPolicy).toHaveBeenCalledTimes(1)
     expect(state.saved.description).toBe('Before')
   })
   it('suppresses a late response for a previously selected group', async () => {

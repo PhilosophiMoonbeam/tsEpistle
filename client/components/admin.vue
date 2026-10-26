@@ -147,7 +147,6 @@ import VueScroll from './common/vue-scroll.vue'
 import { focusRouteHeading } from './common/route-heading-focus.ts'
 
 export default defineComponent({
-  i18nOptions: { namespaces: 'admin' },
   components: { ConfirmDialogHost, NavHeader, VueScroll },
   setup() {
     const t = useTranslate()

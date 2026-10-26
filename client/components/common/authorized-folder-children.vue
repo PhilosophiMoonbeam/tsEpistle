@@ -16,6 +16,7 @@ import { fetchPageTree, type PageTreeRow } from '../../helpers/pages-api'
 import { pwaState } from '../../helpers/pwa.ts'
 import { wikiStore } from '../../store/index.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 
 const props = defineProps<{ locale: string; path: string }>()
 const t = useTranslate()
@@ -38,7 +39,7 @@ const loadChildren = async (): Promise<void> => {
   const path = props.path
   const currentController = new AbortController()
   controller = currentController
-  const fetchImpl: typeof fetch = (input, init) => window.fetch(input, { ...init, signal: currentController.signal })
+  const fetchImpl: BrowserFetch = (input, init) => window.fetch(input, { ...init, signal: currentController.signal })
   loading.value = true
   try {
     const siblings = await fetchPageTree(fetchImpl, { locale, path, visibility: 'public', includeAncestors: false })

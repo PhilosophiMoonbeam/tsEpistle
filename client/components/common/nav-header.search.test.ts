@@ -134,12 +134,13 @@ describe('header search keyboard entry', () => {
       for (const modifier of ['ctrlKey', 'metaKey']) {
         const { state, document, key } = fixture(mobile)
         state.searchIsFocused = false
+        const currentMode = (): HeaderState['searchMode'] => state.searchMode
         state.searchMode = 'ask'
         const event = key('k', { [modifier]: true })
         state.handleSearchShortcut(event)
         await state.$nextTick()
         expect(event.defaultPrevented).toBe(true)
-        expect(state.searchMode).toBe('search')
+        expect(currentMode()).toBe('search')
         expect(state.searchIsFocused).toBe(true)
         expect(state.searchIsShown).toBe(true)
         expect(state.search).toBe('pizza')

@@ -12,7 +12,6 @@ import type { AgentMessageView, AgentThreadState } from '../../../shared/agents/
 import { buildAgentThreadPresentation } from './agent-thread-presentation.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
 resetBody()
 
 const componentPath = join(process.cwd(), 'client/components/agents/agent-thread.vue')

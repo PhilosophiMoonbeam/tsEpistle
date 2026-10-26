@@ -1,4 +1,6 @@
 <template>
+  <!-- biome-ignore lint/a11y/useKeyWithClickEvents: Delegated native buttons and anchors already synthesize keyboard clicks; another key handler would double-activate them. -->
+  <!-- biome-ignore lint/a11y/noStaticElementInteractions: This noninteractive root delegates clicks only from rendered native copy buttons and source links. -->
   <div ref="markdownRoot" class="agent-markdown" v-html="rendered" @click="copyCode" />
 </template>
 

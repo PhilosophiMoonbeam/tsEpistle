@@ -7,6 +7,7 @@ import * as Y from 'yjs'
 
 import { fetchCollaborationSession } from '../../helpers/pages-api'
 import { pwaState } from '../../helpers/pwa'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import {
   COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE,
   COLLABORATION_MAX_UPDATE_BYTES,
@@ -54,7 +55,7 @@ export interface CollaborationStatus {
 interface MarkdownCollaborationOptions {
   pageId: number
   expectedUpdatedAt: () => string
-  fetchImpl: typeof window.fetch
+  fetchImpl: BrowserFetch
   onStatus: (status: CollaborationStatus) => void
   onBaseline: (baseline: { updatedAt: string; sourceRevision: string }) => void
   onHistoryChange?: () => void

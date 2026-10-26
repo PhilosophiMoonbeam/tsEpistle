@@ -8,6 +8,8 @@ import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mt
 import { translateEnglish } from '../../test/english-translate.mts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
+import type { Component } from 'vue'
+import { installVuetifyFixture } from '../../test/vuetify-fixture.mts'
 resetBody()
 setLocation('/wiki/page')
 
@@ -423,7 +425,7 @@ const bundleCode = await bundle.outputs[0]!.text()
 const moduleStart = bundleCode.indexOf('(function(')
 if (moduleStart < 0) throw new Error('Compiled nav-header.vue did not produce a CommonJS module')
 interface CompiledModule {
-  exports: { default?: VueRuntime.Component }
+  exports: { default?: Component }
 }
 const moduleFactory = new Function(`return ${bundleCode.slice(moduleStart)}`)() as (
   exports: CompiledModule['exports'],
@@ -493,10 +495,7 @@ const mountHeader = async ({ hideSearch = true, xs = false, smAndDown = xs, dens
   app.component('v-menu', menuSlotForwardingStub)
   app.component('v-tooltip', slotForwardingStub)
   app.config.globalProperties.$t = translate
-  app.config.globalProperties.$vuetify = {
-    display: { xs, smAndDown, mdAndUp: !smAndDown },
-    locale: { isRtl: false }
-  }
+  installVuetifyFixture(app, { ssr: { clientWidth: xs ? 375 : smAndDown ? 700 : 1280, clientHeight: 768 } })
   app.mount(host)
   await settle()
   mountedApps.push(() => {
@@ -533,6 +532,7 @@ describe('search header affordances', () => {
   it.each([false, true])('retains a dismissed search and allows explicit clear and replacement (small screen: %s)', async smAndDown => {
     const mounted = await mountHeader({ hideSearch: false, smAndDown })
     const vm = mounted.vm as unknown as { search: string | null, searchIsFocused: boolean, searchClose: () => void }
+    const currentSearch = (): string | null => vm.search
     vm.search = 'initial query'
     vm.searchIsFocused = true
     vm.searchClose()
@@ -542,7 +542,7 @@ describe('search header affordances', () => {
     vm.search = null
     await settle()
     expect(wikiStore.site.search).toBe('')
-    expect(vm.search).toBe('')
+    expect(currentSearch()).toBe('')
     vm.search = 'replacement query'
     await settle()
     expect(wikiStore.site.search).toBe('replacement query')

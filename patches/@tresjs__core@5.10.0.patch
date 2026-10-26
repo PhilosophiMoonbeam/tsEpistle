@@ -1,7 +1,7 @@
-diff --git a/dist/tres.js b/dist/tres.js
---- a/dist/tres.js
-+++ b/dist/tres.js
-@@ -792,12 +792,14 @@
+diff --git a/dist/src-DL__Foe9.js b/dist/src-DL__Foe9.js
+--- a/dist/src-DL__Foe9.js
++++ b/dist/src-DL__Foe9.js
+@@ -409,12 +409,14 @@
  		fpsLimit
  	});
  	const start = () => {
@@ -10,14 +10,14 @@ diff --git a/dist/tres.js b/dist/tres.js
  		resume();
  	};
  	const stop = () => {
+-		timer.stop();
 +		if (!isActive.value) return;
-+		pause();
- 		timer.stop();
--		pause();
+ 		pause();
++		timer.stop();
  	};
  	return {
  		start,
-@@ -967,8 +969,9 @@
+@@ -587,8 +589,9 @@
  		renderer.shadowMap.type = options.shadowMapType ?? fallback;
  		forceMaterialUpdate();
  	});

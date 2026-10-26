@@ -16,8 +16,9 @@
         v-icon.me-2(color='white') mdi-file-document-remove-outline
         span#page-delete-dialog-title {{$t('common:page.delete')}}
       v-card-text#page-delete-dialog-description.pt-5
-        i18next.text-body-large(path='common:page.deleteTitle', tag='div')
-          span.text-red-darken-2(place='title') {{pageTitle}}
+        localized-rich-text.text-body-large(path='common:page.deleteTitle', tag='div')
+          template(#title)
+            span.text-red-darken-2 {{pageTitle}}
         .text-body-small {{$t('common:page.deleteSubtitle')}}
         .page-delete__metadata
           v-chip.page-delete__locale(label, color="red-lighten-4", size="small")
@@ -35,8 +36,10 @@ import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 
 import { deletePage as deletePageById } from '../../helpers/pages-api'
+import LocalizedRichText from './localized-rich-text'
 
 export default defineComponent({
+  components: { LocalizedRichText },
   emits: ['update:modelValue'],
   props: {
     modelValue: {

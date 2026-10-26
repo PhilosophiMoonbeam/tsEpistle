@@ -1,4 +1,5 @@
 import { describe, expect, test } from '../../server/test/bun-test.mts'
+import type { OfflineSearchDocumentV1 } from '../../shared/offline.ts'
 import { OFFLINE_SAVED_PAGE_OPEN_EVENT, requestOfflineSavedPageOpen } from '../helpers/offline-routes.ts'
 import {
   OFFLINE_SEARCH_DOCUMENT_CHARACTER_LIMIT,
@@ -138,7 +139,7 @@ describe('offline search', () => {
         [OFFLINE_SAVED_PAGE_OPEN_EVENT, '/en/x']
       ])
     } finally {
-      if (originalWindow === undefined) delete (globalThis as typeof globalThis & { window?: unknown }).window
+      if (originalWindow === undefined) Reflect.deleteProperty(globalThis, 'window')
       else Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: originalWindow })
     }
   })

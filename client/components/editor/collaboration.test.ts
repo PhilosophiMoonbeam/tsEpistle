@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import * as Y from 'yjs'
 
-import { createMarkdownCollaboration, type CollaborationStatus } from './collaboration.ts'
+import { createMarkdownCollaboration, type CollaborationStatus, type MarkdownCollaboration } from './collaboration.ts'
 import { EditorAdapterController } from './common/editor-adapter.ts'
 import { TextEditor } from './common/text-editor.ts'
 import {
@@ -81,12 +81,7 @@ const sessionPayload = (generation = 1) => {
   }
 }
 
-const response = () => Promise.resolve({
-  ok: true,
-  status: 200,
-  headers: { get: () => 'application/json' },
-  json: async () => sessionPayload()
-})
+const response = async () => Response.json(sessionPayload())
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -102,17 +97,17 @@ afterEach(() => {
 const createPeerEditors = async () => {
   const session = sessionPayload()
   const notifications: Array<Array<{ undo: number; redo: number }>> = [[], []]
-  const peers = []
+  const peers: Array<{
+    collaboration: MarkdownCollaboration
+    editor: TextEditor
+    socket: FakeWebSocket
+    parent: HTMLDivElement
+  }> = []
   for (let index = 0; index < 2; index++) {
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,
       expectedUpdatedAt: () => session.baseUpdatedAt,
-      fetchImpl: vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'application/json' },
-        json: async () => session
-      })) as unknown as typeof window.fetch,
+      fetchImpl: vi.fn(async () => Response.json(session)),
       onBaseline: vi.fn(),
       onStatus: vi.fn(),
       onHistoryChange: () => notifications[index].push(collaboration.historyDepth())
@@ -296,7 +291,7 @@ describe('Markdown collaboration connection', () => {
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,
       expectedUpdatedAt: () => '2026-08-15T12:00:00.000Z',
-      fetchImpl: vi.fn(response) as unknown as typeof window.fetch,
+      fetchImpl: vi.fn(response),
       onBaseline,
       onStatus: status => statuses.push(status)
     })
@@ -327,12 +322,7 @@ describe('Markdown collaboration connection', () => {
   it('fetches a fresh token and reconnects after an unexpected disconnect', async () => {
     const tokens = ['initial.session.token', 'refreshed.session.token']
     const session = sessionPayload()
-    const fetchImpl = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      headers: { get: () => 'application/json' },
-      json: async () => ({ ...session, token: tokens.shift() })
-    })) as unknown as typeof window.fetch
+    const fetchImpl = vi.fn(async () => Response.json({ ...session, token: tokens.shift() }))
     const statuses: CollaborationStatus[] = []
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,
@@ -373,7 +363,7 @@ describe('Markdown collaboration connection', () => {
   })
 
   it('keeps updates queued until acknowledged and resends an interrupted update', async () => {
-    const fetchImpl = vi.fn(response) as unknown as typeof window.fetch
+    const fetchImpl = vi.fn(response)
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,
       expectedUpdatedAt: () => '2026-08-15T12:00:00.000Z',
@@ -410,7 +400,7 @@ describe('Markdown collaboration connection', () => {
   })
 
   it('reports a discarded terminal state and never reconnects or resends stale local updates', async () => {
-    const fetchImpl = vi.fn(response) as unknown as typeof window.fetch
+    const fetchImpl = vi.fn(response)
     const statuses: CollaborationStatus[] = []
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,
@@ -442,14 +432,9 @@ describe('Markdown collaboration connection', () => {
   })
 
   it('stops instead of merging a reset generation into a stale document on re-entry', async () => {
-    const fetchImpl = vi.fn()
+    const fetchImpl = vi.fn(response)
       .mockImplementationOnce(response)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'application/json' },
-        json: async () => sessionPayload(2)
-      }) as unknown as typeof window.fetch
+      .mockResolvedValueOnce(Response.json(sessionPayload(2)))
     const statuses: CollaborationStatus[] = []
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,

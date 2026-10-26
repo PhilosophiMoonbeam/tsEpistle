@@ -348,7 +348,7 @@ const cloneEnvelope = (envelope: OfflineDraftEnvelopeV1): OfflineDraftEnvelopeV1
   ciphertext: new Uint8Array(envelope.ciphertext)
 })
 
-const bytesFromHex = (hex: string): Uint8Array => {
+const bytesFromHex = (hex: string): Uint8Array<ArrayBuffer> => {
   if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/iu.test(hex)) throw new Error('Invalid hex fixture')
   return Uint8Array.from({ length: hex.length / 2 }, (_, index) => Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16))
 }
@@ -565,8 +565,8 @@ describe('offline draft crypto', () => {
       )
       expect(Array.from(directCiphertext)).toEqual(Array.from(expectedCiphertext))
 
-      const randomValuesSpy = vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation(array => {
-        const target = new Uint8Array(array.buffer as ArrayBuffer, array.byteOffset, array.byteLength)
+      const randomValuesSpy = vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation(<T extends Exclude<BufferSource, ArrayBuffer>>(array: T): T => {
+        const target = new Uint8Array(array.buffer, array.byteOffset, array.byteLength)
         if (target.byteLength !== nonce.byteLength) throw new Error('Unexpected random-value fixture length')
         target.set(nonce)
         return array

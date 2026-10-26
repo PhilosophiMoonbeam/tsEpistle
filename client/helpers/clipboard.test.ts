@@ -74,7 +74,9 @@ describe('Clipboard copy boundary', () => {
     expect(copiedText).toBe('Legacy answer')
     expect(document.activeElement).toBe(answer)
     expect(selection.toString()).toBe('answer')
-    expect(selection.getRangeAt(0).startContainer).toBe(answer.firstChild)
+    const answerText = answer.firstChild
+    if (!answerText) throw new Error('Selected answer text was removed')
+    expect(selection.getRangeAt(0).startContainer).toBe(answerText)
     expect(selection.anchorOffset).toBe(15)
     expect(selection.focusOffset).toBe(9)
     expect(document.querySelector('textarea')).toBeNull()

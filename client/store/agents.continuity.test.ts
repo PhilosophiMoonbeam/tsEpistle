@@ -9,6 +9,7 @@ import {
   readAgentChatRecent,
   writeAgentChatRecent
 } from '../helpers/agent-chat-continuity.ts'
+import type { BrowserFetch } from '../helpers/json-transport.ts'
 import { useAgentsStore } from './agents.ts'
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
@@ -69,7 +70,8 @@ const fixture = () => {
   const sourceStatus = new Map<number, number>()
   let preview: ((n: number) => Promise<Response>) | undefined
   let sessionList: (() => Promise<Response>) | undefined
-  const fetcher = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+  const fetchHost: { fetch: BrowserFetch } = window
+  const fetcher = vi.spyOn(fetchHost, 'fetch').mockImplementation(async (input, init) => {
     const path = String(input)
     const method = init?.method ?? 'GET'
     if (path === '/_api/agents/sessions') {

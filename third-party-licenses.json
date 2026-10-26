@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "8200a87d7434da9a71c776f4b5e0cf10a488847c32fd8223e9e19bbe05b67bb3",
+    "sha256": "def46ffc2d823bce163ee0c2b6ee6ebea20dd6286bf741dbb249d30e404cfe58",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -2091,7 +2091,7 @@
     {
       "name": "@tresjs/core",
       "versions": [
-        "5.9.2"
+        "5.10.0"
       ],
       "license": "MIT",
       "author": "Alvaro Saburido <hola@alvarosaburido.dev> (https://github.com/alvarosabu/)"

@@ -7,7 +7,7 @@ import {
   type PageCreationStatus,
   type PageCreationInventory
 } from '../../shared/page-creation.ts'
-import { sameOriginJsonFetch } from './json-transport.ts'
+import { sameOriginJsonFetch, type BrowserFetch } from './json-transport.ts'
 import { isRecord } from './type-guards.ts'
 
 export class PageCreationApiError extends Error {
@@ -21,7 +21,7 @@ export class PageCreationApiError extends Error {
 }
 
 const key = (value: string): string => encodeURIComponent(PageCreationRequestIdSchema.parse(value))
-async function read<T>(fetchImpl: typeof fetch, ownerId: number, path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+async function read<T>(fetchImpl: BrowserFetch, ownerId: number, path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   if (!Number.isSafeInteger(ownerId) || ownerId < 1) throw new Error('A current creation owner is required.')
   const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/${path}`, {
     method: 'GET',
@@ -47,7 +47,7 @@ async function read<T>(fetchImpl: typeof fetch, ownerId: number, path: string, s
   return result.data
 }
 
-export function readPageCreationStatus(fetchImpl: typeof fetch, ownerId: number, requestId: string, signal?: AbortSignal): Promise<PageCreationStatus> {
+export function readPageCreationStatus(fetchImpl: BrowserFetch, ownerId: number, requestId: string, signal?: AbortSignal): Promise<PageCreationStatus> {
   const normalized = PageCreationRequestIdSchema.parse(requestId)
   return read(fetchImpl, ownerId, `creation-requests/${key(normalized)}`, PageCreationStatusSchema, signal).then(result => {
     if (result.requestId !== normalized) throw new PageCreationApiError(200, 'INVALID_RESPONSE', 'Creation status did not match this request.')
@@ -55,7 +55,7 @@ export function readPageCreationStatus(fetchImpl: typeof fetch, ownerId: number,
   })
 }
 export function listLiveNoteCreations(
-  fetchImpl: typeof fetch,
+  fetchImpl: BrowserFetch,
   ownerId: number,
   noteId: string,
   cursor?: string | null,
@@ -64,7 +64,7 @@ export function listLiveNoteCreations(
   return read(fetchImpl, ownerId, `creation-origins/live-notes/${key(noteId)}${cursor ? `?cursor=${key(cursor)}` : ''}`, PageCreationInventorySchema, signal)
 }
 export function listAgentAnswerCreations(
-  fetchImpl: typeof fetch,
+  fetchImpl: BrowserFetch,
   ownerId: number,
   sessionId: string,
   messageId: string,

@@ -285,6 +285,39 @@ test.describe('release accessibility profiles', () => {
     }
   })
 
+  test('keeps typing in an incoming profile field when route entry completes', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await openAuthenticatedPage(page, '/p/profile', '.profile-main')
+    await expect(page.locator('.profile-main h1')).not.toBeFocused()
+    // Hold the real CSS entry open until the native input has been claimed.
+    // Finish its actual transitions below, rather than sleeping past the race.
+    await page.addStyleTag({
+      content: '.profile-router-enter-active { transition-duration: 60s !important; }'
+    })
+    await page.locator('#profile-navigation a[href="/p/pages"]').click()
+    await expect(page).toHaveURL('/p/pages')
+    const incoming = page.locator('.profile-pages')
+    await expect(incoming).toHaveClass(/profile-router-enter-active/u)
+    const field = incoming.getByRole('textbox', { name: 'Find your pages', exact: true })
+    await expect(field).toBeEnabled()
+    await field.fill('Claimed before completion')
+    await expect(field).toBeFocused()
+    const completed = await incoming.evaluate(element => {
+      const transitions = element.getAnimations().filter(animation => animation instanceof CSSTransition)
+      for (const transition of transitions) transition.finish()
+      return transitions.length
+    })
+    expect(completed, 'The claim occurs during a real pending route entry').toBeGreaterThan(0)
+    await expect(incoming).not.toHaveClass(/profile-router-enter-active/u)
+    await expect(field).toBeFocused()
+    // Use the keyboard's current target; locator.fill/type would reclaim focus
+    // and could hide a heading steal at completion.
+    await page.keyboard.type(' and still typing')
+    await expect(field).toHaveValue('Claimed before completion and still typing')
+    await expect(page.locator('.profile-main h1')).not.toBeFocused()
+  })
+
   test('canceling a dirty administration Reload returns keyboard focus and retains the draft', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     await openAuthenticatedPage(page, '/a/general', '.general-workspace')

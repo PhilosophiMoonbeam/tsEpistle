@@ -526,12 +526,12 @@ describe('PWA pre-mount release gate', () => {
       harness.registration.active = null
       harness.registration.installing = installing
       const onNeedReload = vi.fn(() => harness.reloadCalls())
-      let result: 'continue' | 'reloading' | null = null
+      const result: { value: 'continue' | 'reloading' | null } = { value: null }
       void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => {
-        result = value
+        result.value = value
       })
       await vi.advanceTimersByTimeAsync(1)
-      expect(result).toBe('continue')
+      expect(result.value).toBe('continue')
       expect(harness.module.startupRefreshDeferred.value).toBe(false)
       expect(harness.updateCalls).toHaveLength(0)
 
@@ -662,12 +662,12 @@ describe('PWA pre-mount release gate', () => {
         }
         const previouslyRegistering = stalled === 'register' ? harness.module.registerPwa() : null
         const onNeedReload = vi.fn(() => harness.reloadCalls())
-        let result: 'continue' | 'reloading' | null = null
+        const result: { value: 'continue' | 'reloading' | null } = { value: null }
         void harness.module.preparePwaStartup(RELEASE_B, { onNeedReload }).then(value => {
-          result = value
+          result.value = value
         })
         await vi.advanceTimersByTimeAsync(1)
-        expect(result).toBe('continue')
+        expect(result.value).toBe('continue')
         expect(harness.module.startupRefreshDeferred.value).toBe(false)
         expect(harness.updateCalls).toHaveLength(0)
         expect(onNeedReload).not.toHaveBeenCalled()

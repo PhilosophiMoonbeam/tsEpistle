@@ -114,7 +114,11 @@ const makeBranding = (assetId: number, digest: string): PageBrandingView => ({
   accent: '#0C2238'
 })
 
-const identityOf = (branding: PageBrandingView | null): string | null => (branding === null ? null : `${branding.assetId}:${branding.sourceSha256}`)
+function identityOf(branding: PageBrandingView): string
+function identityOf(branding: PageBrandingView | null): string | null
+function identityOf(branding: PageBrandingView | null): string | null {
+  return branding === null ? null : `${branding.assetId}:${branding.sourceSha256}`
+}
 
 interface MountedMark {
   host: HTMLElement

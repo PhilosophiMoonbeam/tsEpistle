@@ -282,7 +282,6 @@ export default {
   components: {
     AsyncState
   },
-  i18nOptions: { namespaces: 'history' },
   props: {
     pageId: {
       type: Number,
@@ -440,7 +439,7 @@ export default {
     },
     trailIndexById (): Map<number, number> {
       const indexes = new Map<number, number>()
-      this.fullTrail.forEach((item, index) => indexes.set(item.versionId, index))
+      this.fullTrail.forEach((item, index) => { indexes.set(item.versionId, index) })
       return indexes
     },
     trailRows (): HistoryRow[] {

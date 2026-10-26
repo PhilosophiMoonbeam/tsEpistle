@@ -1,3 +1,4 @@
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { browserWindow } from '../../test/browser-dom.mts'
 import * as Vue from 'vue'
@@ -16,7 +17,9 @@ import {
   uploadAgentMedia
 } from '../../helpers/agents-api.ts'
 import { agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment } from '../../helpers/agent-media.ts'
-import type { AgentMediaCapabilities } from '../../../shared/agents/contracts.ts'
+import type { AgentMediaCapabilities, AgentMediaView } from '../../../shared/agents/contracts.ts'
+import type { Asset } from '../../helpers/assets-api.ts'
+import type { AgentGenerationTool } from '../../helpers/agent-media.ts'
 import { translateEnglish } from '../../test/english-translate.mts'
 const source = fs.readFileSync(new URL('./agent-composer-media.vue', import.meta.url), 'utf8')
 const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1]
@@ -25,7 +28,41 @@ const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.rep
 const evaluate = new Function(
   'dependencies',
   `const { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch, defineProps, defineEmits, defineExpose, useTranslate, AgentApiError, agentMediaContentUrl, attachAgentAsset, cancelAgentRun, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia, agentAttachmentMimeTypes, agentToolAcceptsImages, validateAgentAttachment, navigator, MediaRecorder, window, document } = dependencies; ${executable}; return { browseAssets, closeAssetPicker, attachAsset, assetPickerOpen, uploading, locked, removeAttachment, chooseFiles, chooseUpload, addFiles, editImage, reattachMedia, clear, cancelDictation, startRecording, stopRecording, beginDictationSubmit, waitForDictationTranscript, attachments, selectedGenerationTools, generationOptions, toggleGenerationTool, attachmentMimeTypes, attachmentsAvailable, recording, transcribing, error, dictationError, dictationIntent, seconds, speechDetected, getAudioLevel }`
-)
+) as (dependencies: Record<string, unknown>) => MediaHarness
+interface MediaHarness {
+  browseAssets: () => void
+  closeAssetPicker: () => void
+  attachAsset: (asset: Asset) => Promise<void>
+  assetPickerOpen: Vue.Ref<boolean>
+  uploading: Vue.Ref<boolean>
+  locked: Vue.Ref<boolean>
+  removeAttachment: (media: AgentMediaView) => Promise<void>
+  chooseFiles: (event: Event) => void
+  chooseUpload: () => void
+  addFiles: (files: readonly File[]) => Promise<boolean>
+  editImage: (media: AgentMediaView) => Promise<boolean>
+  reattachMedia: (media: AgentMediaView) => Promise<boolean>
+  clear: () => void
+  cancelDictation: () => void
+  startRecording: () => Promise<void>
+  stopRecording: () => void
+  beginDictationSubmit: () => boolean
+  waitForDictationTranscript: () => Promise<string | null>
+  attachments: Vue.Ref<AgentMediaView[]>
+  selectedGenerationTools: Vue.Ref<AgentGenerationTool[]>
+  generationOptions: Vue.Ref<readonly { title: string; value: AgentGenerationTool }[]>
+  toggleGenerationTool: (tool: AgentGenerationTool) => void
+  attachmentMimeTypes: Vue.Ref<readonly string[]>
+  attachmentsAvailable: Vue.Ref<boolean>
+  recording: Vue.Ref<boolean>
+  transcribing: Vue.Ref<boolean>
+  error: Vue.Ref<string>
+  dictationError: Vue.Ref<string>
+  dictationIntent: Vue.Ref<'insert' | 'send'>
+  seconds: Vue.Ref<number>
+  speechDetected: Vue.Ref<boolean>
+  getAudioLevel: () => number
+}
 interface WakeLockSentinelStub {
   release: () => Promise<void>
   addEventListener?: (type: 'release', listener: () => void) => void
@@ -65,7 +102,7 @@ const makeFakeWakeLock = () => {
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
 const runId = '00000000-0000-4000-8000-000000000083'
-const media = { id: mediaId, kind: 'attachment', filename: 'image.png', mimeType: 'image/png', byteLength: 5, available: true, detached: false }
+const media: AgentMediaView = { id: mediaId, kind: 'attachment', filename: 'image.png', mimeType: 'image/png', byteLength: 5, available: true, detached: false }
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
 const settle = async () => {
   for (let step = 0; step < 12; step++) await new Promise(resolve => setTimeout(resolve, 0))
@@ -144,7 +181,7 @@ const makeDocumentStub = () => {
 const mount = (
   options: {
     media?: AgentMediaCapabilities
-    fetch?: typeof fetch
+    fetch?: BrowserFetch
     microphone?: (constraints: MediaStreamConstraints) => Promise<unknown>
     recorder?: typeof Recorder | false
     focus?: () => void
@@ -157,7 +194,7 @@ const mount = (
   const props = reactive({
     csrfToken: 'csrf',
     session: { id: sessionId, version: 3, profileResolutionToken: 'resolved' },
-    capabilities: options.media,
+    capabilities: options.media ? { ...options.media } : undefined,
     generationToolsEnabled: options.generationToolsEnabled,
     disabled: false,
     networkBlocked: false
@@ -219,7 +256,7 @@ const mount = (
         AudioContext: options.level ? mountAudio(options.level) : undefined
       }
     })
-  )
+  )!
   return {
     api,
     props,
@@ -246,7 +283,7 @@ const compiledTemplate = compileTemplate({
 })
 if (compiledTemplate.errors.length) throw compiledTemplate.errors[0]
 const renderMedia = new Function('Vue', compiledTemplate.code)(Vue)
-const renderHarness = (api: Record<string, unknown>, props: object, translate: typeof translateEnglish = translateEnglish) => {
+const renderHarness = (api: MediaHarness, props: object, translate: typeof translateEnglish = translateEnglish) => {
   const host = browserWindow.document.createElement('div')
   browserWindow.document.body.append(host)
   const app = Vue.createApp(
@@ -1135,7 +1172,7 @@ describe('Agent media composer lifecycle', () => {
   })
 })
 
-const asset = { id: 42, filename: 'wiki-image.png', description: '', ext: '.png', fileSize: 5, kind: 'image', createdAt: '2026-09-18T00:00:00Z' }
+const asset: Asset = { id: 42, filename: 'wiki-image.png', description: '', ext: '.png', fileSize: 5, kind: 'image', createdAt: '2026-09-18T00:00:00Z' }
 describe('Agent Wiki asset attachments', () => {
   it('attaches an authorized asset as a private copy and closes the picker', async () => {
     let copied = false
@@ -1292,7 +1329,7 @@ describe('re-attaching a detached attachment', () => {
   it('downloads the stored copy and re-uploads it as a new pending attachment', async () => {
     const paths: string[] = []
     const storedBytes = '%PDF-1.4\nstored report\n%%EOF\n'
-    let uploadedFile: { name: string; type: string; bytes: string } | null = null
+    const uploadedFiles: Array<{ name: string; type: string; bytes: string }> = []
     const uploaded = { ...detachedMedia, id: '00000000-0000-4000-8000-000000000085', byteLength: storedBytes.length, detached: false }
     const harness = mount({
       media: { attachments: true, imageGeneration: false, transcription: false },
@@ -1303,7 +1340,7 @@ describe('re-attaching a detached attachment', () => {
         if (path.endsWith('/media') && init?.method === 'POST') {
           const file = (init.body as FormData).get('file')
           if (!(file instanceof File)) throw new Error('Missing re-attached File')
-          uploadedFile = { name: file.name, type: file.type, bytes: await file.text() }
+          uploadedFiles.push({ name: file.name, type: file.type, bytes: await file.text() })
           return response({ media: uploaded })
         }
         throw new Error(`Unexpected request ${path}`)
@@ -1315,7 +1352,7 @@ describe('re-attaching a detached attachment', () => {
       '/_api/agents/media/00000000-0000-4000-8000-000000000084/content',
       '/_api/agents/sessions/00000000-0000-4000-8000-000000000081/media'
     ])
-    expect(uploadedFile).toEqual({ name: 'report.pdf', type: 'application/pdf', bytes: storedBytes })
+    expect(uploadedFiles).toEqual([{ name: 'report.pdf', type: 'application/pdf', bytes: storedBytes }])
     expect(harness.api.attachments.value.map(item => item.id)).toEqual(['00000000-0000-4000-8000-000000000085'])
     expect(harness.api.error.value).toBe('')
     harness.unmount()

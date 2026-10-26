@@ -1165,7 +1165,13 @@ describe('real IndexedDB offline storage adapter', () => {
     const name = freshDatabase('private-foreign-removal')
     const foreignName = freshDatabase('private-foreign-key')
     await succeeded('open', { id: 'storage', name })
-    expect(await succeeded('removePrivateWithForeignRows', { id: 'storage', name, foreignName, snapshot: makeSnapshot() })).toEqual({
+    expect(await succeeded<{
+      foreignPreserved: boolean
+      opaquePreserved: boolean
+      activeSnapshots: number
+      accountingComplete: boolean
+      snapshotCount: number
+    }>('removePrivateWithForeignRows', { id: 'storage', name, foreignName, snapshot: makeSnapshot() })).toEqual({
       foreignPreserved: true,
       opaquePreserved: true,
       activeSnapshots: 0,

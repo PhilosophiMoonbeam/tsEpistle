@@ -1,4 +1,4 @@
-import { sameOriginJsonFetch } from './json-transport.ts'
+import { sameOriginJsonFetch, type BrowserFetch } from './json-transport.ts'
 import {
   parseLiveNoteView,
   parseLiveNoteList,
@@ -33,7 +33,7 @@ export interface LiveNotesApi {
   session(key: string, signal?: AbortSignal): Promise<LiveNoteSession>
 }
 
-export function createLiveNotesApi(fetcher: typeof fetch, csrfToken: () => string): LiveNotesApi {
+export function createLiveNotesApi(fetcher: BrowserFetch, csrfToken: () => string): LiveNotesApi {
   async function request<T>(path: string, parse: (value: unknown) => T, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
     const response = await sameOriginJsonFetch(fetcher, `/_api/live-notes${path}`, {
       method,

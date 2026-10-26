@@ -104,7 +104,7 @@ if (!rootWorkspace) throw new Error('bun.lock does not define the root workspace
 // this reviewed allowlist exact rather than traversing all development tooling.
 const reviewedRendererRootDevDependencies = {
   '@graphql-yoga/graphiql': '4.4.4',
-  '@tresjs/core': '5.9.2',
+  '@tresjs/core': '5.10.0',
   '@types/three': '0.186.0',
   three: '0.186.1'
 } as const

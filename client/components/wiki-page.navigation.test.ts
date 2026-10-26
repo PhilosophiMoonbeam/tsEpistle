@@ -282,7 +282,7 @@ describe('contextual feedback discussion handoff', () => {
       expect(vm.activePageView).toBe('talk')
       expect(new URL(vm.currentUrl).hash).toBe('#discussion')
       expect(receiveDraft).toHaveBeenCalledWith(draft)
-      expect(receiveDraft).toHaveBeenCalledOnce()
+      expect(receiveDraft).toHaveBeenCalledTimes(1)
       expect(vm.restoreScroll).toHaveBeenCalledWith(new URL(vm.currentUrl))
     } finally {
       window.history.replaceState(null, '', previousUrl)
@@ -337,7 +337,7 @@ describe('wiki page navigation response boundary', () => {
     const navigation = component.methods.navigate.call(vm, destination, { popState: true })
     expect(vm.navigationPending).toBe(true)
     await Promise.resolve()
-    expect(readBody).toHaveBeenCalledOnce()
+    expect(readBody).toHaveBeenCalledTimes(1)
     expect(vm.navigationPending).toBe(true)
     expect(vm.navigationKey).toBe(0)
     body.resolve(pageDocument())
@@ -379,7 +379,7 @@ describe('wiki page navigation response boundary', () => {
     await navigation
     expect(vm.navigationPending).toBe(false)
     expect(vm.navigationKey).toBe(0)
-    expect(vm.hardNavigate).toHaveBeenCalledOnce()
+    expect(vm.hardNavigate).toHaveBeenCalledTimes(1)
   })
 
   test('keeps a marked same-origin HTML page in SPA navigation', async () => {
@@ -395,7 +395,7 @@ describe('wiki page navigation response boundary', () => {
 
     const vm = await navigate(value)
 
-    expect(readBody).toHaveBeenCalledOnce()
+    expect(readBody).toHaveBeenCalledTimes(1)
     expect(vm.hardNavigate).not.toHaveBeenCalled()
     expect(vm.contentHtml).toContain('data-forged-content')
     expect(vm.commentsHtml).toContain('data-forged-comments')
@@ -498,7 +498,7 @@ describe('wiki page navigation response boundary', () => {
     const vm = await navigate(value)
 
     expect(readBody).not.toHaveBeenCalled()
-    expect(vm.hardNavigate).toHaveBeenCalledOnce()
+    expect(vm.hardNavigate).toHaveBeenCalledTimes(1)
     expect(vm.contentHtml).toBe('')
     expect(vm.commentsHtml).toBe('')
     expect(vm.navigationKey).toBe(0)

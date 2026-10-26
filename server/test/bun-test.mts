@@ -1,6 +1,7 @@
 /// <reference types="bun" />
 
 import { mock, setSystemTime, vi as bunVi } from 'bun:test'
+import type { Mock } from 'bun:test'
 import { fileURLToPath } from 'node:url'
 
 
@@ -8,6 +9,7 @@ export * from 'bun:test'
 
 const stubbedGlobals = new Map<PropertyKey, PropertyDescriptor | undefined>()
 type ModuleMockFactory = () => object | Promise<object>
+type MockedValue<Value> = Value extends (...args: never[]) => unknown ? Mock<Value> : Value
 
 const resolveModuleMock = (specifier: string, parentUrl: string): string =>
   specifier.startsWith('.') ? new URL(specifier, parentUrl).href : specifier
@@ -77,7 +79,7 @@ export const vi = Object.assign(bunVi, {
   mockModule: registerModuleMock,
   unmockModule: removeModuleMock,
   hoisted: <Result,>(factory: () => Result): Result => factory(),
-  mocked: <Value,>(value: Value): Value => value,
+  mocked: <Value,>(value: Value): MockedValue<Value> => value as MockedValue<Value>,
   importFresh,
   resetModules: (): undefined => undefined,
   setSystemTime,

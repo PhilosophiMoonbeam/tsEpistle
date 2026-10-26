@@ -655,11 +655,13 @@
             <div>
               <section>
                 <strong>{{ $t('admin:navigation.saved') }}</strong>
-                <pre tabindex="0">{{ reviewValue(saved.policy, field) }}</pre>
+                <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
+                <pre  tabindex="0" >{{ reviewValue(saved.policy, field) }}</pre>
               </section>
               <section>
                 <strong>{{ $t('admin:navigation.publishing') }}</strong>
-                <pre tabindex="0">{{ reviewValue(reviewed, field) }}</pre>
+                <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
+                <pre  tabindex="0" >{{ reviewValue(reviewed, field) }}</pre>
               </section>
             </div>
           </details>

@@ -687,8 +687,8 @@ onBeforeUnmount(() => {
         </v-card>
       </aside>
     </div>
-    <div v-if="clearDialogOpen" class="offline-settings__backdrop" role="presentation" @keydown.esc.prevent="cancelClearDeviceData">
-      <section ref="clearDialog" class="offline-settings__dialog" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="clear-device-title" aria-describedby="clear-device-description">
+    <div v-if="clearDialogOpen" class="offline-settings__backdrop" role="presentation">
+      <section ref="clearDialog" class="offline-settings__dialog" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="clear-device-title" aria-describedby="clear-device-description" @keydown.esc.prevent="cancelClearDeviceData">
         <h2 id="clear-device-title" class="text-title-large">{{ $t('common:offlineSettings.clearOfflineDataDevice2') }}</h2>
         <p id="clear-device-description">{{ $t('common:offlineSettings.removesSavedPagesLocal') }}</p>
         <div class="offline-settings__actions">

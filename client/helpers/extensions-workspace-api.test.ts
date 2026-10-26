@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { fetchExtensionsWorkspace } from './extensions-workspace-api.ts'
+import type { ExtensionWorkspaceExtension } from '../../shared/extensions-workspace.ts'
 
 const response = (payload: unknown, ok = true) => ({
   ok,
@@ -8,7 +9,7 @@ const response = (payload: unknown, ok = true) => ({
   json: async () => payload
 })
 
-const extension = {
+const extension: ExtensionWorkspaceExtension = {
   key: 'git',
   title: 'Git',
   description: 'Git storage client.',

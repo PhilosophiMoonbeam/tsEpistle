@@ -6,7 +6,7 @@
  */
 export const focusRouteHeading = (container: Element | null | undefined, focusAtNavigation: Element | null = null): boolean => {
   const heading = container?.querySelector<HTMLElement>('h1')
-  if (!heading || heading.closest('[inert], [aria-hidden="true"]')) return false
+  if (!heading || heading.closest('[hidden], [inert], [aria-hidden="true"]')) return false
   const active = heading.ownerDocument.activeElement
   // An entering view can already accept input before its transition finishes.
   // Keep that newly claimed focus, but still announce a reused view whose old

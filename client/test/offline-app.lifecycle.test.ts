@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { babelParse, compileScript, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { browserWindow, document, setLocation } from './browser-dom.mts'
+import { installVuetifyFixture } from './vuetify-fixture.mts'
 import * as Vue from 'vue'
 import moment from 'moment-timezone'
 import * as presentation from '../helpers/index.ts'
@@ -141,7 +142,7 @@ describe('offline bootstrap navigation recovery', () => {
       app = Vue.createApp(component)
       for (const name of ['v-app', 'v-navigation-drawer', 'v-main', 'v-icon', 'v-btn', 'v-alert', 'nav-header', 'search-results', 'notify'])
         app.component(name, passthrough)
-      app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
+      installVuetifyFixture(app)
       app.config.globalProperties.$t = (key: string) => key
       const host = document.createElement('div')
       document.body.append(host)
@@ -208,7 +209,7 @@ describe('offline bootstrap navigation recovery', () => {
     app.component('v-btn', Vue.defineComponent({
       setup: (_, { slots, attrs }) => () => Vue.h('button', attrs, slots.default?.())
     }))
-    app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
+    installVuetifyFixture(app)
     app.config.globalProperties.$t = (key: string) => key
     const host = document.createElement('div')
     document.body.append(host)
@@ -285,7 +286,7 @@ describe('offline shell reader-date authentication lifecycle', () => {
     app = Vue.createApp(component)
     for (const name of ['v-app', 'v-navigation-drawer', 'v-main', 'v-icon', 'v-btn', 'v-alert', 'nav-header', 'search-results', 'notify'])
       app.component(name, passthrough)
-    app.config.globalProperties.$vuetify = { display: { mdAndUp: true, smAndDown: false } }
+    installVuetifyFixture(app)
     app.config.globalProperties.$t = (key: string) => key
     const host = document.createElement('div')
     document.body.append(host)
@@ -914,7 +915,7 @@ describe('saved-page reader and library settings lifecycle', () => {
     body.scrollTop = 123
     let windowScrollY = 456
     Object.defineProperty(browserWindow, 'scrollY', { configurable: true, get: () => windowScrollY })
-    vi.spyOn(browserWindow, 'scrollTo').mockImplementation((leftOrOptions: ScrollToOptions | number, top?: number) => {
+    vi.spyOn(browserWindow, 'scrollTo').mockImplementation((leftOrOptions?: ScrollToOptions | number, top?: number) => {
       windowScrollY = typeof leftOrOptions === 'object' ? (leftOrOptions.top ?? windowScrollY) : (top ?? windowScrollY)
     })
 

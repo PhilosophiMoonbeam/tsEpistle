@@ -8,7 +8,6 @@ import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { isRecord } from '../../helpers/type-guards.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
-globalThis.useTranslate = () => translateEnglish
 const componentPath = join(process.cwd(), 'client/components/editor/editor-modal-drawio.vue')
 const source = readFileSync(componentPath, 'utf8')
 const { descriptor } = parse(source, { filename: componentPath })
@@ -129,6 +128,7 @@ describe('Draw.io editor modal contract', () => {
       $nextTick: (callback: () => void) => Promise.resolve().then(callback)
     } as unknown as DrawioContext
     for (const [name, method] of Object.entries(component.methods!)) {
+      if (typeof method !== 'function') throw new Error(`Draw.io method ${name} must be callable`)
       Reflect.set(context, name, method.bind(context))
     }
     context.startLoadTimer()
@@ -172,14 +172,12 @@ describe('Draw.io editor modal contract', () => {
     expect(postMessage).toHaveBeenCalledWith(JSON.stringify(exportMessage), embedUrl.origin)
 
     const exportData = JSON.stringify({ event: 'export', data: 'data:image/svg+xml;base64,ZGlhZ3JhbQ==' })
-    const receive = (origin: string, source: Window) =>
-      context.receive(
-        new document.defaultView!.MessageEvent('message', {
-          origin,
-          source,
-          data: exportData
-        })
-      )
+    const receive = (origin: string, source: Window | typeof browserWindow) => {
+      const event = new document.defaultView!.MessageEvent('message', { origin, data: exportData })
+      // JSDOM windows are real message sources but omit browser-only Window members in their declarations.
+      Object.defineProperty(event, 'source', { value: source })
+      context.receive(event)
+    }
     receive('https://attacker.example', frameWindow)
     expect(insert).not.toHaveBeenCalled()
     expect(wikiStore.editor.activeModal).toBe('editorModalDrawio')

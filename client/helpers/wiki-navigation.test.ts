@@ -198,7 +198,7 @@ describe('wiki navigation routing', () => {
       })
 
       navigateToWikiPage('/en/next-page')
-      expect(handler).toHaveBeenCalledOnce()
+      expect(handler).toHaveBeenCalledTimes(1)
       expect(handler.mock.calls[0]?.[0]).toBeInstanceOf(URL)
       expect(handler.mock.calls[0]?.[0].pathname).toBe('/en/next-page')
 
@@ -211,7 +211,7 @@ describe('wiki navigation routing', () => {
       remove()
       navigateToWikiPage('/en/after-disposal')
       expect(handler).toHaveBeenCalledTimes(2)
-      expect(assign).toHaveBeenCalledOnce()
+      expect(assign).toHaveBeenCalledTimes(1)
       expect(assign).toHaveBeenCalledWith('https://wiki.example.test/en/after-disposal')
     } finally {
       remove()

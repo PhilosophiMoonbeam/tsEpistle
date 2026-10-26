@@ -210,6 +210,7 @@ const t = useTranslate()
 const props = defineProps<{
   csrfToken: string
   ownerId?: number
+  // biome-ignore lint/correctness/noVueDuplicateKeys: The normalized script-setup computed binding does not duplicate an Options API key.
   networkBlocked?: boolean
   connectionRetrying?: boolean
 }>()

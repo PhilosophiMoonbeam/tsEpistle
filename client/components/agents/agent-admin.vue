@@ -35,7 +35,7 @@
 
 
     <div class="agent-workspace">
-      <nav class="agent-sections" :aria-label="t('agentAdministrationSections')" role="tablist" aria-orientation="horizontal">
+      <div class="agent-sections" :aria-label="t('agentAdministrationSections')" role="tablist" aria-orientation="horizontal">
         <button
           v-for="(section, index) in sectionItems"
           :id="`agent-tab-${section.value}`"
@@ -57,7 +57,7 @@
           <span class="agent-section__copy"><strong>{{ section.title }}</strong><small>{{ section.description }}</small></span>
           <v-chip v-if="section.badge" class="agent-section__badge" size="x-small" variant="tonal">{{ section.badge }}</v-chip>
         </button>
-      </nav>
+      </div>
 
       <v-window v-model="tab" class="agent-content">
         <v-window-item id="agent-panel-overview" value="overview" role="tabpanel" aria-labelledby="agent-tab-overview">
@@ -230,10 +230,10 @@
               <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">{{ t('providerAdministrationUnavailableWhile') }} <code>agents.provider.enabled</code>{{ t('configureProviderRuntimeKeys') }}</v-alert>
               <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">{{ t('providerCredentialUnavailableEdit') }}</v-alert>
               <v-alert v-if="profiles.some(profile => profile.status === 'enabled' && profile.conformed && profile.exposureMode === 'all_agent_users') && !profiles.some(profile => profile.isGlobalDefault)" type="warning" variant="tonal" class="mb-4">{{ t('noGlobalDefaultProvider') }} <strong>{{ t('setGlobalDefault') }}</strong> {{ t('beforeStartingConversation') }}</v-alert>
-              <div v-if="profiles.length" class="provider-inventory-toolbar" role="search" :aria-label="t('findProviderProfiles')">
+              <search v-if="profiles.length" class="provider-inventory-toolbar" :aria-label="t('findProviderProfiles')">
                 <v-text-field v-model="providerQuery" :label="t('findProvider')" prepend-inner-icon="mdi-magnify" clearable hide-details />
                 <v-select v-model="providerState" :items="providerStates" :label="t('providerState')" hide-details />
-              </div>
+              </search>
               <p v-if="profiles.length" class="provider-inventory-count" role="status">{{ t('providers2', { filteredProfilesCount: filteredProfiles.length, profilesCount: profiles.length, interpolation: { escapeValue: false } }) }}</p>
               <div v-if="filteredProfiles.length" class="provider-grid">
                 <article v-for="profile in filteredProfiles" :key="profile.id" class="provider-card">
@@ -322,10 +322,10 @@
                 <v-icon icon="mdi-shield-key-outline" size="19" aria-hidden="true" />
                 <span><strong>{{ t('exactDestinationsOnly') }}</strong> {{ t('eachHttpsUrlCanonicalized') }}</span>
               </aside>
-              <div v-if="browserTargets.length" class="provider-inventory-toolbar" role="search" :aria-label="t('findBrowserDestinations')">
+              <search v-if="browserTargets.length" class="provider-inventory-toolbar" :aria-label="t('findBrowserDestinations')">
                 <v-text-field v-model="browserQuery" :label="t('findDestination')" prepend-inner-icon="mdi-magnify" clearable hide-details />
                 <v-select v-model="browserState" :label="t('destinationState')" :items="[{ title: t('allDestinations'), value: 'all' }, { title: t('allowed'), value: 'allowed' }, { title: t('paused'), value: 'paused' }]" hide-details />
-              </div>
+              </search>
               <p v-if="browserTargets.length" class="provider-inventory-count" role="status">{{ t('destinations', { filteredBrowserTargetsCount: filteredBrowserTargets.length, browserTargetsCount: browserTargets.length, interpolation: { escapeValue: false } }) }}</p>
               <div v-if="filteredBrowserTargets.length" class="target-list">
                 <article v-for="target in filteredBrowserTargets" :key="target.id" class="target-row">
@@ -403,6 +403,7 @@
             <section v-if="profileStep === 'identity'" class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon icon="mdi-card-account-details-outline" size="21" aria-hidden="true" /></span><div><h3>{{ t('nameConnection') }}</h3><p>{{ t('chooseApiContractFirst') }}</p></div></div>
               <div class="form-grid">
+                <!-- biome-ignore lint/a11y/noAutofocus: Initial focus belongs to the user-opened provider editor VDialog. -->
                 <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" :label="t('displayName')" maxlength="255" counter="255" required autofocus />
                 <div class="protocol-field">
                   <v-select :model-value="profileDraft.transportKind" :items="protocolOptions" :label="t('apiProtocol')" required @update:model-value="selectProtocol">
@@ -576,6 +577,7 @@
           <v-card-text>
             <v-alert v-if="browserError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ browserError }}</v-alert>
             <v-alert class="mb-4" type="warning" variant="tonal" density="compact">{{ t('approvalExactPathsOrigins') }}</v-alert>
+            <!-- biome-ignore lint/a11y/noAutofocus: Initial focus belongs to the user-opened browser target VDialog. -->
             <v-text-field v-model="browserUrl" :rules="browserUrlRules" :label="t('exactCanonicalHttpsUrl')" :hint="t('httpsExampleComPath')" persistent-hint autofocus prepend-inner-icon="mdi-lock-outline" autocomplete="url" spellcheck="false" required />
             <v-checkbox v-model="browserEnabled" :label="t('enableImmediately')" :hint="t('leaveOffStageTarget')" persistent-hint />
           </v-card-text>

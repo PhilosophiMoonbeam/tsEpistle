@@ -17,6 +17,7 @@
       @click="closePanels"
     />
 
+    <!-- biome-ignore lint/a11y/noStaticElementInteractions: The responsive named dialog/complementary panel handles bubbled Escape, with modal focus owned by panelFocusScope. -->
     <div
       v-if="historyOpen"
       id="agent-history-panel"
@@ -98,7 +99,7 @@
           </div>
         </div>
 
-        <div class="inline-agent__panel-actions" role="group" :aria-label="$t('common:agentWorkspace.actionsLabel')">
+        <fieldset class="inline-agent__panel-actions" :aria-label="$t('common:agentWorkspace.actionsLabel')">
           <v-tooltip location="bottom" :text="$t('common:agentWorkspace.search')">
             <template #activator="{ props: tooltipProps }">
               <v-btn
@@ -188,7 +189,7 @@
               />
             </template>
           </v-tooltip>
-        </div>
+        </fieldset>
       </v-toolbar>
 
 
@@ -288,12 +289,11 @@
           >{{ error }}</v-alert>
 
           <div class="inline-agent__transcript-wrap">
-            <div
+            <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The transcript is a bounded overflow scroll region and must remain keyboard-scrollable. -->
+            <section tabindex="0"
               ref="transcript"
               class="inline-agent__transcript"
               :class="{ 'inline-agent__transcript--following': transcriptFollowing }"
-              tabindex="0"
-              role="region"
               :aria-label="$t('common:inlineAgentChat.conversationTranscript')"
               @scroll.passive="handleTranscriptScroll"
               @wheel.passive="handleTranscriptEngagement"
@@ -318,9 +318,8 @@
                   </p>
                   <p class="inline-agent__welcome-subtitle">{{ $t('common:agentWorkspace.welcomeSources') }}</p>
                 </div>
-                <div
+                <fieldset
                   class="inline-agent__starters"
-                  role="group"
                   :aria-label="$t('common:agentWorkspace.starters')"
                   :aria-describedby="starterUnavailableReason ? starterReasonId : undefined"
                   :aria-busy="promptSubmissionPending"
@@ -346,7 +345,7 @@
                     <span class="inline-agent__starter-copy"><small>{{ $t(starter.description) }}</small></span>
                   </v-btn>
                   <p v-if="starterUnavailableReason" :id="starterReasonId" class="inline-agent__starter-reason" role="status">{{ starterUnavailableReason }}</p>
-                </div>
+                </fieldset>
               </section>
 
               <AgentThread
@@ -418,6 +417,7 @@
                   </v-btn>
                 </nav>
 
+                <!-- biome-ignore lint/a11y/noStaticElementInteractions: This wrapper tracks bubbled child-control engagement, not a separate actionable surface. -->
                 <footer
                   class="inline-agent__composer"
                   :class="{ 'inline-agent__composer--scrolled': !transcriptFollowing, 'inline-agent__composer--focused': composerFocused }"
@@ -455,7 +455,7 @@
                       :initial-skill-version-ids="thread ? agents.drafts[thread.session.id]?.skillVersionIds : []"
                       :has-messages="hasConversation"
                       @draft-change="handleDraftChange"
-                      @composition-change="agents.updateDraft"
+                      @composition-change="handleCompositionChange"
                       :sending="sending"
                       :network-blocked="connectionBlocked"
                       :can-stop="Boolean(activeRun?.canCancel)"
@@ -497,7 +497,7 @@
                   </div>
                 </footer>
               </div>
-            </div>
+            </section>
 
           </div>
 
@@ -505,6 +505,7 @@
       </template>
     </v-card>
 
+    <!-- biome-ignore lint/a11y/noStaticElementInteractions: The responsive named dialog/complementary panel handles bubbled Escape, with modal focus owned by panelFocusScope. -->
     <div
       v-if="!admissionBlocked"
       v-show="memoryOpen"
@@ -994,6 +995,9 @@ const handleDraftChange = (sessionId: string, text: string): void => {
     agents.setDraft(sessionId, text)
     if (!text) offlineComposerDraft.value = ''
   }
+}
+const handleCompositionChange = (sessionId: string, patch: Pick<AgentDraft, 'mode' | 'skillVersionIds'>): void => {
+  if (thread.value?.session.id === sessionId) agents.updateDraft(sessionId, patch)
 }
 
 const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentSearchScope): Promise<void> => {
@@ -1867,7 +1871,7 @@ onMounted(() => {
     window.matchMedia('(min-width: 1760px)'),
     window.matchMedia('(min-width: 1024px) and (max-width: 1759.98px)')
   ]
-  panelModeMedia.forEach(media => media.addEventListener('change', reconcilePanelMode))
+  panelModeMedia.forEach(media => { media.addEventListener('change', reconcilePanelMode) })
   reconcilePanelMode()
   transcriptObserver = new MutationObserver(records => {
     // Navigation fades must never trigger following or change a reader's position.
@@ -1905,7 +1909,7 @@ onBeforeUnmount(() => {
   panelFocusScope?.deactivate({ restoreFocus: false })
   if (sessionNoticeTimer !== null) { clearTimeout(sessionNoticeTimer); sessionNoticeTimer = null }
   if (mutationLockMessageTimer !== null) { clearTimeout(mutationLockMessageTimer); mutationLockMessageTimer = null }
-  panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
+  panelModeMedia.forEach(media => { media.removeEventListener('change', reconcilePanelMode) })
   window.removeEventListener('resize', scheduleTranscriptReconcile)
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('beforeunload', handleBeforeUnload)
@@ -2079,6 +2083,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__panel-actions {
   display: flex;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
   flex: 0 0 auto;
   align-items: center;
   gap: var(--wiki-space-1);
@@ -2665,6 +2673,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__starters {
   grid-row: 4;
   display: grid;
+  min-width: 0;
+  border: 0;
+  padding: 0;
   width: min(84%, calc(var(--agent-conversation-width) - var(--wiki-space-8)));
   margin: var(--agent-starters-gap) auto 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));

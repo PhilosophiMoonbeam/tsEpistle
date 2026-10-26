@@ -20,6 +20,7 @@ import type { SourceImageMode } from './editor-image-source'
 import { isAsciiDocLiteralPosition } from './editor-source-context'
 import { sourceTableNavigation } from './editor-source-tables'
 import { searchPages } from './pages-api'
+import type { BrowserFetch } from './json-transport'
 
 // Completion hints are checked against the native discriminated schema; validation remains authoritative.
 const parameters: { [Key in ContentExtensionKey]: readonly (keyof Extract<ContentExtensionEnvelope, { key: Key }>['props'])[] } = {
@@ -189,7 +190,7 @@ export async function completeSourcePageLink(
 export async function completeSourceAuthoring(
   context: CompletionContext,
   mode: SourceImageMode,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: BrowserFetch = fetch,
   active: () => boolean = () => true
 ): Promise<CompletionResult | null> {
   if (context.state.readOnly || !active()) return null

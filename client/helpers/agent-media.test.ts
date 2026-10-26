@@ -3,7 +3,7 @@ import { validateAgentAttachment } from './agent-media.ts'
 import { AgentApiError, agentMediaContentUrl, deleteAgentMedia, getAgentTranscription, startAgentTranscription, uploadAgentMedia } from './agents-api.ts'
 const sessionId = '00000000-0000-4000-8000-000000000081'
 const mediaId = '00000000-0000-4000-8000-000000000082'
-const media = { id: mediaId, kind: 'attachment', filename: 'diagram.png', mimeType: 'image/png', byteLength: 3, available: true, detached: false }
+const media = { id: mediaId, kind: 'attachment' as const, filename: 'diagram.png', mimeType: 'image/png', byteLength: 3, available: true, detached: false }
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 describe('Agent private media boundary', () => {
   it('accepts bounded raster images and PDFs but rejects active or empty content', () => {
@@ -18,7 +18,7 @@ describe('Agent private media boundary', () => {
   })
   it('uploads multipart bytes with CSRF and browser-generated boundaries, never a JSON content type', async () => {
     let seen = false
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher: Parameters<typeof uploadAgentMedia>[0] = async (input, init) => {
       expect(input).toBe(`/_api/agents/sessions/${sessionId}/media`)
       expect(init?.method).toBe('POST')
       expect(init?.credentials).toBe('same-origin')
@@ -81,7 +81,7 @@ describe('Agent private media boundary', () => {
     expect(runId).toBe(mediaId)
     const requests: { input: RequestInfo | URL; credentials: RequestCredentials | undefined }[] = []
     const transcriptFetcher =
-      (value: unknown): typeof fetch =>
+      (value: unknown): Parameters<typeof getAgentTranscription>[0] =>
       async (input, init) => {
         requests.push({ input, credentials: init?.credentials })
         return response(value)

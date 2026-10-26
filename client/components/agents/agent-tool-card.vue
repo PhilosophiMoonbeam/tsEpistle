@@ -90,6 +90,7 @@
       </summary>
       <p class="agent-operation__review-context">{{ t('common:agentToolCard.exactDiffContext', { defaultValue: 'This is the exact stored proposal diff, not a full before-and-after page comparison. Canonical full page bodies are not provided. Approval is bound to this proposal and its recorded base revision; it cannot authorize a newer revision.' }) }}</p>
       <div class="proposal-diff">
+        <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded overflow:auto diff must remain keyboard-scrollable. -->
         <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="$t('common:agentToolCard.proposedOutputRecord', { path: proposal.target?.path || actionLabel, interpolation: { escapeValue: false } })"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
         <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" :aria-controls="`agent-approval-diff-${proposal.id}`" :aria-expanded="expanded" @click="expanded = !expanded">
           {{ expanded ? $t('common:agentToolCard.showLess') : $t('common:agentToolCard.showAllLines', { diffLinesCount: diffLines.length, interpolation: { escapeValue: false } }) }}
@@ -250,6 +251,7 @@
           <small>{{ $t('common:agentToolCard.diffLinesCount', { count: diffLines.length }) }}</small>
         </summary>
         <div class="proposal-diff">
+          <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded overflow:auto diff must remain keyboard-scrollable. -->
           <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="$t('common:agentToolCard.proposedOutput', { path: proposal.target?.path || actionLabel, interpolation: { escapeValue: false } })"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
           <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" :aria-controls="`agent-approval-diff-${proposal.id}`" :aria-expanded="expanded" @click="expanded = !expanded">
             {{ expanded ? $t('common:agentToolCard.showLess') : $t('common:agentToolCard.showAllLines', { diffLinesCount: diffLines.length, interpolation: { escapeValue: false } }) }}
