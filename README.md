@@ -85,7 +85,7 @@ The versions below are the repository's declared runtime and package metadata; d
 | --- | --- |
 | Runtime and package manager | Bun 1.4.3 (`packageManager`; engines `>=1.4.3 <2`) |
 | Server | Express 5.2.1, Pug 3.0.4 |
-| Client | Vue 3.5.44, Vuetify 4.1.9, Vite 8.3.5 |
+| Client | Vue 3.5.44, Vuetify 4.3.0, Vite 8.3.5 |
 | Language | TypeScript 6.0.2 |
 | Data and projections | PostgreSQL 15–18 via `pg` 8.23.0 |
 | Agent transport | Model Context Protocol packages 2.0.0 |
@@ -126,6 +126,8 @@ bun run ci:fast
 The application remains Vue 3.5.44 and Vuetify-first 4.3.0, with TresJS 5.10.0 / Three.js 0.186.1. Pinia, Router, the Express/Pug/Vite host, Options API interoperability and specialized editors retain their existing ownership.
 
 Biome checks production SFC scripts; the Vue compiler adjunct checks HTML/Pug template syntax and directives rather than pretending Biome parses Pug. `lint:vue:qualify` proves script admission. `typecheck:strict-qualification` checks the bounded strict-template/native-attribute/global-registration contract with positive and negative HTML/Pug consumers. `typecheck:client` is the application gate. Authored `*.test.ts` files and `.mts` harnesses use the separate `tsconfig.client-tests.json` gate and public-fixture negative control; JavaScript tests remain runtime-covered, not type-checked.
+
+Global `NavHeader` and `SearchResults` remain lazy. Their contextual fixed loading/error/retry surfaces must not insert blocks above the main view; ordinary asynchronous content retains its in-flow status. Preserve the initial-chunk and layout-shift budgets rather than making heavy chrome eager.
 
 ### OMP language intelligence
 

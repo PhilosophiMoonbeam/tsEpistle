@@ -3749,6 +3749,11 @@ test.describe('reader metadata rendering', () => {
         await expect(pageActions).toHaveAttribute('aria-expanded', 'false')
         await expect(pageActions).toBeFocused()
       }
+      // Focus restoration precedes the navigation drawer's opening transition.
+      // Measure its settled layout rather than its intentionally off-canvas start.
+      await page.locator('.v-navigation-drawer').evaluateAll(async drawers => {
+        await Promise.all(drawers.flatMap(drawer => drawer.getAnimations().map(animation => animation.finished)))
+      })
       await expectResponsiveLayout(page, `Reader utilities and metadata at ${width}px`)
     }
 
