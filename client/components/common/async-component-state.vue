@@ -79,6 +79,20 @@ export default AsyncComponentState
   text-align: start;
 }
 
+.async-component-state--floating {
+  position: fixed;
+  z-index: 1000;
+  inset-inline: 1rem;
+  inset-block-end: 1rem;
+  width: auto;
+  max-width: 40rem;
+  max-height: calc(100dvh - 2rem);
+  margin-inline: auto;
+  overflow: auto;
+  border-color: rgba(var(--v-border-color), var(--v-border-opacity));
+  background: rgb(var(--v-theme-surface));
+}
+
 .async-component-state--error {
   border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
   background: color-mix(in srgb, rgb(var(--v-theme-error)) 6%, rgb(var(--v-theme-surface)));

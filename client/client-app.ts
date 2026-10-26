@@ -14,7 +14,6 @@ import { preparePwaStartup, setReloadSafetyProvider, pwaState } from './helpers/
 import { installThemeSwitchGuard, resolveThemeName } from './helpers/theme.ts'
 import { createAsyncComponent } from './components/common/async-component.ts'
 import NavHeader from './components/common/nav-header.vue'
-import SearchResults from './components/common/search-results.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
 import { currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from './helpers/offline-session.ts'
 import {
@@ -242,7 +241,8 @@ const offlineSyncService: OfflineSyncService = {
   }
 }
 
-const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, createAsyncComponent(loader)] as const
+const asyncComponent = (name: string, loader: AsyncComponentLoader, placement: Parameters<typeof createAsyncComponent>[1] = 'flow') =>
+  [name, createAsyncComponent(loader, placement)] as const
 
 // Critical chrome cannot insert in-flow loading placeholders above the main surface.
 const registrations = [
@@ -263,7 +263,7 @@ const registrations = [
   asyncComponent('PageSource', () => import('./components/source.vue')),
   asyncComponent('Profile', () => import('./components/profile.vue')),
   asyncComponent('Register', () => import('./components/register.vue')),
-  ['SearchResults', SearchResults] as const,
+  asyncComponent('SearchResults', () => import('./components/common/search-results.vue'), 'floating'),
   asyncComponent('SocialSharing', () => import('./components/common/social-sharing.vue')),
   asyncComponent('Tags', () => import('./components/tags.vue')),
   asyncComponent('Unauthorized', () => import('./components/unauthorized.vue')),
