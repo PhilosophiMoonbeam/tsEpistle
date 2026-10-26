@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test'
 import tfa from 'node-2fa'
 import { adminEmail, adminPassword, authenticateAsAdmin, openSearch, sameOriginHeaders } from './helpers.ts'
 import { waitForPageRender } from '../../client/helpers/pages-api.ts'
+import { serializeContentExtensionFence, type ContentExtensionEnvelope } from '../../shared/content-extensions.ts'
 
 type BrowserVisualEditor = {
   commands: {
@@ -503,7 +504,7 @@ test.describe('critical post-install workflows', () => {
 
     await expect.poll(() => getMarkdownSourceData(page)).toContain('"key":"gallery"')
     const galleryFence = await getMarkdownSourceData(page)
-    const additionalFences = [
+    const additionalFences = ([
       { key: 'index', version: 1, props: { path: '', locale: 'en', depth: 1, columns: 2, showIcons: true, order: 'title', limit: 20 } },
       {
         key: 'tabs',
@@ -548,8 +549,8 @@ test.describe('critical post-install workflows', () => {
         props: { source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated PlantUML', align: 'left' }
       },
       { key: 'map', version: 1, props: { latitude: 40.7128, longitude: -74.006, zoom: 12, height: 320, label: 'New York City' } }
-    ]
-      .map(envelope => ['```wiki-extension', JSON.stringify(envelope), '```'].join('\n'))
+    ] satisfies ContentExtensionEnvelope[])
+      .map(serializeContentExtensionFence)
       .join('\n\n')
     const remoteRequests: string[] = []
     page.on('request', request => {
