@@ -91,21 +91,8 @@ const createHarness = ({
   const emitted = []
   const redirects = []
   const timers = new Map()
-  const classes = new Set()
   let nextTimerId = 0
-  const document = {
-    body: {
-      classList: {
-        add: (...names) => {
-          for (const name of names) classes.add(name)
-        },
-        remove: (...names) => {
-          for (const name of names) classes.delete(name)
-        },
-        contains: name => classes.has(name)
-      }
-    }
-  }
+  const document = globalThis.document.implementation.createHTMLDocument()
   const window = {
     fetch: (url, init) => {
       requests.push({ url, init })
@@ -117,7 +104,7 @@ const createHarness = ({
       return id
     },
     clearTimeout: id => timers.delete(id),
-    location: { assign: url => redirects.push(url) }
+    location: { href: `https://wiki.test/${page.locale}/${page.path}`, assign: url => redirects.push(url) }
   }
   const wikiStore = {
     page,
