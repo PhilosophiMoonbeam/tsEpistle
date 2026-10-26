@@ -5,7 +5,7 @@
     },
     "vue-language-server": {
       "command": "npm",
-      "args": ["exec", "--offline", "--yes", "--package=bun@1.4.3", "--", "bun", "--no-env-file", "server/scripts/vue-language-server.ts", "--stdio"]
+      "args": ["exec", "--offline", "--yes", "--package=bun@1.4.4", "--", "bun", "--no-env-file", "server/scripts/vue-language-server.ts", "--stdio"]
     }
   }
 }

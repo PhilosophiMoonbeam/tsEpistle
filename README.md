@@ -7,7 +7,7 @@
 [![Package alpha metadata](https://img.shields.io/badge/package%20alpha%20metadata-0.1.0--alpha.1-E4A24B)](https://github.com/PhilosophiMoonbeam/tsEpistle/blob/main/package.json)
 [![Build workflow](https://github.com/PhilosophiMoonbeam/tsEpistle/actions/workflows/build.yml/badge.svg)](https://github.com/PhilosophiMoonbeam/tsEpistle/actions/workflows/build.yml)
 [![License: AGPLv3](https://img.shields.io/badge/license-AGPLv3-181A1C.svg)](LICENSE)
-[![Bun](https://img.shields.io/badge/runtime-Bun%201.4.3-F9A134?logo=bun&logoColor=white)](https://bun.com/)
+[![Bun](https://img.shields.io/badge/runtime-Bun%201.4.4-F9A134?logo=bun&logoColor=white)](https://bun.com/)
 [![PostgreSQL](https://img.shields.io/badge/database-PostgreSQL%2015%E2%80%9318-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
 </div>
@@ -83,7 +83,7 @@ The versions below are the repository's declared runtime and package metadata; d
 
 | Layer | Current choice |
 | --- | --- |
-| Runtime and package manager | Bun 1.4.3 (`packageManager`; engines `>=1.4.3 <2`) |
+| Runtime and package manager | Bun 1.4.4 (`packageManager`; engines `>=1.4.4 <2`) |
 | Server | Express 5.2.1, Pug 3.0.4 |
 | Client | Vue 3.5.44, Vuetify 4.3.0, Vite 8.3.5 |
 | Language | TypeScript 6.0.2 |
@@ -106,7 +106,7 @@ Set `WIKI_IMAGE` to an immutable tag or digest when overriding the example image
 
 ### Source development
 
-Use the exact `packageManager` Bun pin (`1.4.3`). Install dependencies and start development (long-running):
+Use the exact `packageManager` Bun pin (`1.4.4`). Install dependencies and start development (long-running):
 
 ```console
 bun install --frozen-lockfile
@@ -142,7 +142,7 @@ After changing the Vue language-server dependency or its initialization options,
 The repository launcher uses an isolated, offline npm cache instead of changing the shared host Bun. Seed the exact tool once, then qualify both the direct bridge and actual `.omp/lsp.json` launcher:
 
 ```console
-npm exec --yes --ignore-scripts=false --package=bun@1.4.3 -- bun --version
+npm exec --yes --ignore-scripts=false --package=bun@1.4.4 -- bun --version
 bun run editor:vue:qualify
 bun run editor:vue:qualify --editor-launcher
 ```

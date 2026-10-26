@@ -63,8 +63,8 @@ else {
 
 const browserDockerfile = await readFile('dev/build/Dockerfile.agent-browser', 'utf8')
 const browserRuntime = await readFile('server/agents/browser/runtime.ts', 'utf8')
-if (!browserDockerfile.includes('oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598')) {
-  failures.push('browser worker base image must retain the reviewed Bun 1.4.3 multi-arch digest')
+if (!browserDockerfile.includes('oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d')) {
+  failures.push('browser worker base image must retain the reviewed Bun 1.4.4 multi-arch digest')
 }
 if (!browserDockerfile.includes('USER bun')) failures.push('browser worker image must run as bun')
 if (!browserRuntime.includes('chromiumSandbox: true')) failures.push('browser worker must launch Chromium with its sandbox enabled')

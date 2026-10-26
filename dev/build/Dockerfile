@@ -8,7 +8,7 @@ ARG WIKI_PRODUCT_VERSION
 ARG WIKI_SOURCE_REPOSITORY
 ARG WIKI_UPSTREAM_BASE
 
-FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS build
+FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS build
 ENV CI=true
 
 RUN apk add --no-cache g++ make cmake python3
@@ -31,7 +31,7 @@ ENV WIKI_BUILD_DATE=$WIKI_BUILD_DATE \
 
 RUN bun run build
 
-FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS dependencies
+FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS dependencies
 ARG TARGETARCH
 ENV NODE_ENV=production
 WORKDIR /wiki
@@ -45,7 +45,7 @@ RUN --mount=type=cache,id=wiki-bun-production,target=/root/.bun/install/cache \
     esac && \
     bun install --production --frozen-lockfile --os=linux --cpu="$BUN_CPU"
 
-FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS runtime
+FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS runtime
 ENV NODE_ENV=production
 
 RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg 'qpdf>=11.9.1-r0' ffmpeg tini && \
