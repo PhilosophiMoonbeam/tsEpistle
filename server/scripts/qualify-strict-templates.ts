@@ -43,22 +43,50 @@ assert.equal(pugPackage.version, '3.3.9', 'Requalify Pug source mappings when it
 function checkGlobalOwners(): void {
   const runtime = ts.createSourceFile('client/client-app.ts', fs.readFileSync(path.join(root, 'client/client-app.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
   const environment = ts.createSourceFile('client/env.d.ts', fs.readFileSync(path.join(root, 'client/env.d.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
-  const owners = new Map<string, string>()
-  const visitRuntime = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'asyncComponent' && ts.isStringLiteral(node.arguments[0]!)) {
-      const [name, loader] = node.arguments
-      assert(name && ts.isStringLiteral(name))
-      assert(loader && ts.isArrowFunction(loader) && ts.isCallExpression(loader.body))
-      assert.equal(loader.body.expression.kind, ts.SyntaxKind.ImportKeyword)
-      const module = loader.body.arguments[0]
-      assert(module && ts.isStringLiteral(module))
-      assert(!owners.has(name.text), `Duplicate runtime registration ${name.text}`)
-      owners.set(name.text, module.text)
+  const runtimeImports = new Map<string, string>()
+  for (const statement of runtime.statements) {
+    if (ts.isImportDeclaration(statement) && statement.importClause?.name && !statement.importClause.isTypeOnly && ts.isStringLiteral(statement.moduleSpecifier)) {
+      runtimeImports.set(statement.importClause.name.text, statement.moduleSpecifier.text)
     }
-    ts.forEachChild(node, visitRuntime)
   }
-  visitRuntime(runtime)
-  assert(owners.size > 0, 'Runtime registration inventory must not be empty')
+  const owners = new Map<string, string>()
+  let foundRegistry = false
+  for (const statement of runtime.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'registrations') continue
+      assert(!foundRegistry, 'Runtime registration inventory must have one owner')
+      foundRegistry = true
+      assert(declaration.initializer && ts.isArrayLiteralExpression(declaration.initializer))
+      for (const registration of declaration.initializer.elements) {
+        const entry = ts.isAsExpression(registration) ? registration.expression : registration
+        let name: string
+        let module: string
+        if (ts.isArrayLiteralExpression(entry)) {
+          assert.equal(entry.elements.length, 2)
+          const [key, component] = entry.elements
+          assert(key && ts.isStringLiteral(key) && component && ts.isIdentifier(component))
+          const owner = runtimeImports.get(component.text)
+          assert(owner, `${key.text} must retain its actual runtime component import`)
+          name = key.text
+          module = owner
+        } else {
+          assert(ts.isCallExpression(entry) && ts.isIdentifier(entry.expression) && entry.expression.text === 'asyncComponent')
+          const [key, loader] = entry.arguments
+          assert(key && ts.isStringLiteral(key))
+          assert(loader && ts.isArrowFunction(loader) && ts.isCallExpression(loader.body))
+          assert.equal(loader.body.expression.kind, ts.SyntaxKind.ImportKeyword)
+          const owner = loader.body.arguments[0]
+          assert(owner && ts.isStringLiteral(owner))
+          name = key.text
+          module = owner.text
+        }
+        assert(!owners.has(name), `Duplicate runtime registration ${name}`)
+        owners.set(name, module)
+      }
+    }
+  }
+  assert(foundRegistry && owners.size > 0, 'Runtime registration inventory must not be empty')
   const imports = new Map<string, string>()
   for (const statement of environment.statements) {
     if (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly && statement.importClause.name && ts.isStringLiteral(statement.moduleSpecifier)) {

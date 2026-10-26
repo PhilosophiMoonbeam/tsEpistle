@@ -3655,31 +3655,41 @@ test.describe('reader metadata rendering', () => {
     await expectReaderMetadata(page, { authorName, historyHref })
     const historyLink = page.locator('.page-tools-history-link')
     await expect(historyLink).toHaveAccessibleName('View history')
-    const assertHistoryLayout = async (width: number): Promise<void> => {
+    const assertReaderUtilities = async (width: number): Promise<void> => {
       await page.setViewportSize({ width, height: initialViewport.height })
       // Native viewport resize can hide the old host before Vue moves the tools card.
       await expect(page.locator('.page-tools-card'), `Reader tools finish moving after resizing to ${width}px`).toBeVisible()
       const geometry = await page.evaluate(() => {
         const card = document.querySelector<HTMLElement>('.page-tools-card')
+        const utilities = card?.querySelector<HTMLElement>('.page-tools-card__utilities')
         const date = card?.querySelector<HTMLElement>('.page-document-row--date')
         const provenance = card?.querySelector<HTMLElement>('.page-tools-card__provenance')
         const history = card?.querySelector<HTMLElement>('.page-tools-history-link')
         const focus = card?.querySelector<HTMLElement>('.page-focus-control')
-        if (!date || !provenance || !history || !focus) throw new Error('Reader tools are missing the date, history link, or Focus utility.')
+        if (!card || !utilities || !date || !provenance || !history || !focus) throw new Error('Reader tools are missing the date, history link, or Focus utility.')
         const historyIcon = history.querySelector<HTMLElement>('.v-icon')
         const focusIcon = focus.querySelector<HTMLElement>('.v-icon')
         const dateBounds = date.getBoundingClientRect()
         const provenanceBounds = provenance.getBoundingClientRect()
         const historyBounds = history.getBoundingClientRect()
-        const focusBounds = focus.getBoundingClientRect()
+        const cardBounds = card.getBoundingClientRect()
+        const utilityBounds = utilities.getBoundingClientRect()
+        const uncontainedActions = Array.from(utilities.querySelectorAll<HTMLElement>('.v-btn')).filter(action => {
+          const bounds = action.getBoundingClientRect()
+          return bounds.width <= 0 || bounds.height <= 0 ||
+            bounds.left < Math.max(cardBounds.left, utilityBounds.left) ||
+            bounds.right > Math.min(cardBounds.right, utilityBounds.right) ||
+            bounds.top < Math.max(cardBounds.top, utilityBounds.top) ||
+            bounds.bottom > Math.min(cardBounds.bottom, utilityBounds.bottom)
+        }).map(action => action.getAttribute('aria-label') ?? action.innerText)
         return {
           historyInUtilities: history.closest('.page-tools-card__utilities') !== null,
-          historyBottom: historyBounds.bottom,
+          utilitiesBottom: utilityBounds.bottom,
+          utilitiesOverflow: utilities.scrollWidth - utilities.clientWidth,
+          uncontainedActions,
           dateTop: dateBounds.top,
           dateCenter: dateBounds.left + dateBounds.width / 2,
           provenanceCenter: provenanceBounds.left + provenanceBounds.width / 2,
-          historyTop: historyBounds.top,
-          focusTop: focusBounds.top,
           historyWidth: historyBounds.width,
           historyHeight: historyBounds.height,
           historyText: history.innerText.trim(),
@@ -3692,8 +3702,11 @@ test.describe('reader metadata rendering', () => {
         }
       })
       expect(geometry.historyInUtilities, `History is a page utility at ${width}px`).toBe(true)
-      expect(Math.abs(geometry.historyTop - geometry.focusTop), `History shares the utilities row with Focus at ${width}px`).toBeLessThanOrEqual(1)
-      expect(geometry.dateTop, `The update date sits below the utilities at ${width}px`).toBeGreaterThanOrEqual(geometry.historyBottom)
+      // Real administrator permissions expose eight fixed-size utilities. They may
+      // wrap at phone widths; containment and keyboard access, not one row, matter.
+      expect(geometry.uncontainedActions, `Every real utility fits its card at ${width}px`).toEqual([])
+      expect(geometry.utilitiesOverflow, `The utilities do not scroll horizontally at ${width}px`).toBeLessThanOrEqual(1)
+      expect(geometry.dateTop, `The update date sits below every utility at ${width}px`).toBeGreaterThanOrEqual(geometry.utilitiesBottom)
       expect(Math.abs(geometry.dateCenter - geometry.provenanceCenter), `The update date is centered at ${width}px`).toBeLessThanOrEqual(2)
       expect(geometry.historyText, `The history utility is icon-only at ${width}px`).toBe('')
       expect(geometry.hasIcon, `The history utility exposes its icon at ${width}px`).toBe(true)
@@ -3705,9 +3718,41 @@ test.describe('reader metadata rendering', () => {
         expect(Math.abs(geometry.historyWidth - 36), `The fine-pointer history target is 36px wide at ${width}px`).toBeLessThanOrEqual(1)
         expect(Math.abs(geometry.historyHeight - 36), `The fine-pointer history target is 36px tall at ${width}px`).toBeLessThanOrEqual(1)
       }
+
+      const focus = page.getByRole('button', { name: 'Focus', exact: true })
+      await focus.focus()
+      await focus.press('Tab')
+      await expect(historyLink, `History follows Focus in keyboard order at ${width}px`).toBeFocused()
+      await expectLocatorWithinViewport(historyLink, `Keyboard history target at ${width}px`)
+      await historyLink.press('Shift+Tab')
+      await expect(focus).toBeFocused()
+      await focus.press('Enter')
+      const dock = page.getByRole('region', { name: 'Focus', exact: true })
+      const exit = dock.getByRole('button', { name: 'Exit focus', exact: true })
+      await expect(exit, `Keyboard Focus opens the reading controls at ${width}px`).toBeFocused()
+      await expectLocatorWithinViewport(dock, `Reading controls at ${width}px`)
+      await exit.press('Enter')
+      await expect(dock).toHaveCount(0)
+      await expect(focus, `Leaving Focus restores its keyboard target at ${width}px`).toBeFocused()
+
+      // Edit remains a separate real affordance, not another metadata utility.
+      if (width < 600) {
+        const pageActions = page.locator('.page-edit-fab')
+        await expectLocatorWithinViewport(pageActions, `Page actions at ${width}px`)
+        await pageActions.focus()
+        await pageActions.press('ArrowDown')
+        await expect(pageActions).toHaveAttribute('aria-expanded', 'true')
+        const edit = page.locator('.v-overlay--active .v-list-item').filter({ hasText: /^Edit Page$/ })
+        await expect(edit, `Real Edit is keyboard reachable at ${width}px`).toBeFocused()
+        await expectLocatorWithinViewport(edit, `Edit action at ${width}px`)
+        await edit.press('Escape')
+        await expect(pageActions).toHaveAttribute('aria-expanded', 'false')
+        await expect(pageActions).toBeFocused()
+      }
+      await expectResponsiveLayout(page, `Reader utilities and metadata at ${width}px`)
     }
 
-    for (const width of [1440, 320, 375]) await assertHistoryLayout(width)
+    for (const width of [1440, 320, 375, 390]) await assertReaderUtilities(width)
 
     await historyLink.hover()
     const historyTooltip = page.getByRole('tooltip').filter({ hasText: /^View history$/ })
@@ -3759,8 +3804,19 @@ test.describe('reader metadata rendering', () => {
     const spaHistoryHref = historyHrefFor(spaPage)
     await expectReaderMetadata(page, { authorName: spaAuthorName, historyHref: spaHistoryHref, updatedAt: spaUpdatedAt })
     await expect(page.getByRole('alert'), 'Real reader actions do not report fixture-induced errors.').toHaveCount(0)
-    await historyLink.click()
-    await expect.poll(() => new URL(page.url()).pathname).toBe(spaHistoryHref)
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: initialViewport.height })
+      await expect(historyLink).toBeVisible()
+      await expect(historyLink).toHaveAttribute('href', spaHistoryHref)
+      await historyLink.focus()
+      await expect(historyLink, `The real history link is keyboard reachable at ${width}px`).toBeFocused()
+      await historyLink.press('Enter')
+      await expect.poll(() => new URL(page.url()).pathname).toBe(spaHistoryHref)
+      if (width === 320) {
+        await page.goBack({ waitUntil: 'domcontentloaded' })
+        await expect(page).toHaveURL(destination.href)
+      }
+    }
   })
 
   for (const featureCase of [

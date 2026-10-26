@@ -166,7 +166,7 @@
             v-alert.mb-3(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
               v-btn.ml-2(type='button', size='small', variant='text', @click='retryPreview') {{$t('editor:retryPreview')}}
-            div(
+            .editor-markdown-preview-document(
               ref='editorPreview'
               v-html='previewHTML'
               :spellcheck='false'
@@ -1462,13 +1462,11 @@ export default defineComponent({
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    padding: 1rem;
     position: relative;
 
     @include until($tablet) {
       flex: 1 1 0;
       max-width: 100%;
-      padding: 12px;
       width: 100%;
     }
 
@@ -1523,6 +1521,16 @@ export default defineComponent({
           border-left: 5px solid rgba(var(--v-theme-primary), .7);
           background: rgba(var(--v-theme-primary), .06);
         }
+      }
+    }
+
+    &-document {
+      // Keep insets inside the scrollable document: outer padding would impose
+      // a minimum pane height when landscape notices leave less than 24px.
+      padding: 1rem;
+
+      @include until($tablet) {
+        padding: 12px;
       }
     }
   }

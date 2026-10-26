@@ -13,6 +13,8 @@ import { router } from './router'
 import { preparePwaStartup, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
 import { installThemeSwitchGuard, resolveThemeName } from './helpers/theme.ts'
 import { createAsyncComponent } from './components/common/async-component.ts'
+import NavHeader from './components/common/nav-header.vue'
+import SearchResults from './components/common/search-results.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
 import { currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from './helpers/offline-session.ts'
 import {
@@ -242,6 +244,7 @@ const offlineSyncService: OfflineSyncService = {
 
 const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, createAsyncComponent(loader)] as const
 
+// Critical chrome cannot insert in-flow loading placeholders above the main surface.
 const registrations = [
   asyncComponent('Admin', () => import('./components/admin.vue')),
   asyncComponent('AdminHero', () => import('./components/common/admin-hero.vue')),
@@ -251,7 +254,7 @@ const registrations = [
   asyncComponent('History', () => import('./components/history.vue')),
   asyncComponent('Loader', () => import('./components/common/loader.vue')),
   asyncComponent('Login', () => import('./components/login.vue')),
-  asyncComponent('NavHeader', () => import('./components/common/nav-header.vue')),
+  ['NavHeader', NavHeader] as const,
   asyncComponent('NewPage', () => import('./components/new-page.vue')),
   asyncComponent('Notify', () => import('./components/common/notify.vue')),
   asyncComponent('NotFound', () => import('./components/not-found.vue')),
@@ -260,7 +263,7 @@ const registrations = [
   asyncComponent('PageSource', () => import('./components/source.vue')),
   asyncComponent('Profile', () => import('./components/profile.vue')),
   asyncComponent('Register', () => import('./components/register.vue')),
-  asyncComponent('SearchResults', () => import('./components/common/search-results.vue')),
+  ['SearchResults', SearchResults] as const,
   asyncComponent('SocialSharing', () => import('./components/common/social-sharing.vue')),
   asyncComponent('Tags', () => import('./components/tags.vue')),
   asyncComponent('Unauthorized', () => import('./components/unauthorized.vue')),

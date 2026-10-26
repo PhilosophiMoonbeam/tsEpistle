@@ -288,10 +288,23 @@ async function selectLine(page: Page, line: number) {
           const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
           const activeLine = root.querySelector('.cm-activeLine')
           const scroller = root.querySelector('.cm-scroller')
-          if (!activeLine || !scroller || editor.cursor().line !== target || activeLine.textContent !== editor.getLine(target)) return false
-          const lineBox = activeLine.getBoundingClientRect()
+          const cursor = editor.cursor()
+          if (!activeLine || !scroller || cursor.line !== target || cursor.ch === 0 || activeLine.textContent !== editor.getLine(target)) return false
+          const selection = root.ownerDocument.getSelection()
+          if (!selection?.isCollapsed || !selection.rangeCount || !selection.focusNode || !activeLine.contains(selection.focusNode)) return false
+          // End may reveal only the last visual row of a wrapped logical line.
+          // Prove the actual native caret is visible, not the whole line box.
+          const caret = selection.getRangeAt(0).getBoundingClientRect()
           const viewport = scroller.getBoundingClientRect()
-          return lineBox.height > 0 && lineBox.top >= viewport.top - 1 && lineBox.bottom <= viewport.bottom + 1
+          return (
+            viewport.width > 0 &&
+            viewport.height > 0 &&
+            caret.height > 0 &&
+            caret.left >= viewport.left - 1 &&
+            caret.right <= viewport.right + 1 &&
+            caret.top >= viewport.top - 1 &&
+            caret.bottom <= viewport.bottom + 1
+          )
         }, line)
       )
       .toBe(true)
@@ -594,6 +607,24 @@ routedEditorTest('preview follows the cursor by default and stops when toggled o
   } finally {
     await page.context().setOffline(false)
   }
+  // Keep the mounted canvas bounded through a real breakpoint and media changes.
+  const viewport = page.viewportSize()
+  if (!viewport) throw new Error('The preview canvas test requires a configured viewport.')
+  await page.setViewportSize({ ...viewport, width: viewport.width >= 960 ? 750 : 1024 })
+  await assertBoundedCanvas()
+  const application = page.locator('.v-application')
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await expect(application).toHaveClass(/v-theme--dark/u)
+  await assertBoundedCanvas()
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await expect(application).toHaveClass(/v-theme--light/u)
+  await paneToggle.click()
+  await expect(preview).not.toBeVisible()
+  await paneToggle.click()
+  await expect(preview).toBeVisible()
+  await assertBoundedCanvas()
+  await page.setViewportSize(viewport)
+  await assertBoundedCanvas()
 })
 
 routedEditorTest('applies formatting from the toolbar or its mobile overflow', async ({ page }) => {

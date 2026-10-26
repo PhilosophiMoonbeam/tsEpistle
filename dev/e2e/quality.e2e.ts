@@ -318,6 +318,58 @@ test.describe('release accessibility profiles', () => {
     await expect(page.locator('.profile-main h1')).not.toBeFocused()
   })
 
+  test('settles a pending Profile read when reconnect verifies anonymous identity', async ({ page, context }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    await authenticateAsAdmin(page)
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const delivered = Promise.withResolvers<void>()
+    let held = false
+    await page.route('**/_api/users/profile', async route => {
+      const response = await route.fetch()
+      expect(response.ok(), 'The delayed response belongs to the signed-in fixture account').toBe(true)
+      held = true
+      started.resolve()
+      try {
+        await release.promise
+        await route.fulfill({ response })
+      } finally {
+        delivered.resolve()
+      }
+    }, { times: 1 })
+    try {
+      await page.goto('/p/profile', { waitUntil: 'domcontentloaded' })
+      await started.promise
+      const workspace = page.locator('.profile-workspace')
+      await expect(workspace.getByRole('status')).toBeVisible()
+      await context.clearCookies()
+      const anonymous = page.waitForResponse(response => new URL(response.url()).pathname === '/_api/users/whoami')
+      await context.setOffline(true)
+      await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false)
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+      await context.setOffline(false)
+      const verification = await anonymous
+      expect((await verification.json() as { authenticated: unknown }).authenticated).toBe(false)
+      await expect(workspace.getByRole('alert')).toBeVisible()
+      await expect(workspace.getByRole('button', { name: /try again|retry/iu })).toBeVisible()
+      await expect(workspace.getByRole('status')).toHaveCount(0)
+      await expect(workspace.getByRole('textbox')).toHaveCount(0)
+
+      const late = page.waitForResponse(response => new URL(response.url()).pathname === '/_api/users/profile')
+      release.resolve()
+      await (await late).finished()
+      await delivered.promise
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      await expect(workspace.getByRole('alert')).toBeVisible()
+      await expect(workspace.getByRole('status')).toHaveCount(0)
+      await expect(workspace.getByRole('textbox')).toHaveCount(0)
+    } finally {
+      release.resolve()
+      if (held) await delivered.promise
+      await context.setOffline(false)
+    }
+  })
+
   test('keeps native authentication and storage credential fields opted out of autofill after replacement', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     const expectProtection = async (control: Locator, autocomplete: string) => {
@@ -354,6 +406,8 @@ test.describe('release accessibility profiles', () => {
     await expect(replacementKey).toHaveCount(0)
 
     await page.goto('/a/storage', { waitUntil: 'networkidle' })
+    await page.getByRole('navigation', { name: 'Storage sections', exact: true })
+      .getByRole('button', { name: 'Targets', exact: true }).click()
     await page.getByRole('navigation', { name: 'Storage targets', exact: true })
       .getByRole('button').filter({ has: page.getByText('Git', { exact: true }) }).click()
     await page.getByRole('combobox', { name: 'Scheduled synchronization', exact: true }).press('ArrowDown')
@@ -374,8 +428,32 @@ test.describe('release accessibility profiles', () => {
     await passwordAction.press('ArrowDown')
     await page.getByRole('option', { name: 'Replace value', exact: true }).click()
     await expectProtection(replacementPassword, 'new-password')
-    await page.getByRole('button', { name: 'Reset draft', exact: true }).click()
+    // Use the primary toolbar; the review bar exposes the same reset action.
+    await page.getByRole('button', { name: 'Reset draft', exact: true }).first().click()
     await expect(replacementPassword).toHaveCount(0)
+  })
+
+  test('renders complete localized deletion meaning and safely cancels the native dialog', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    await openAuthenticatedPage(page, '/en/home', '.page-header-section')
+    const title = (await page.locator('.page-title').first().innerText()).trim()
+    const titlePattern = title.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+    let deletions = 0
+    page.on('request', request => {
+      if (request.method() === 'DELETE' && new URL(request.url()).pathname.startsWith('/_api/pages/')) deletions += 1
+    })
+    const actions = page.getByRole('banner').getByRole('button', { name: 'Page Actions', exact: true })
+    await actions.click()
+    await page.locator('.page-actions-menu').getByRole('button', { name: /^delete(?: page)?$/iu }).click()
+    const dialog = page.getByRole('dialog', { name: 'Delete Page', exact: true })
+    await expect(dialog).toHaveAccessibleDescription(new RegExp(`delete[\\s\\S]*${titlePattern}`, 'iu'))
+    const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true })
+    await expect(cancel).toBeFocused()
+    await testInfo.attach('localized-page-deletion-warning', { body: await page.screenshot(), contentType: 'image/png' })
+    await cancel.press('Escape')
+    await expect(dialog).not.toBeVisible()
+    await expect(actions).toBeFocused()
+    expect(deletions, 'Cancel never sends the destructive operation').toBe(0)
   })
 
   test('canceling a dirty administration Reload returns keyboard focus and retains the draft', async ({ page }, testInfo) => {
@@ -794,7 +872,10 @@ test.describe('release accessibility profiles', () => {
     await page.keyboard.type('unavailable-query')
     await expect(page.getByRole('alert')).toContainText('Search service is unavailable.')
     await page.getByRole('button', { name: 'Try again' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'try a different term or scope.' })).toBeVisible()
+    const dialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
+    await expect.poll(() => requests).toBe(2)
+    await expect(dialog.getByRole('alert')).toHaveCount(0)
+    await expect(dialog.locator('.search-results-none').getByRole('status')).toBeVisible()
   })
 
   test('keeps the inline agent keyboard-accessible at desktop and mobile widths', async ({ page }, testInfo) => {

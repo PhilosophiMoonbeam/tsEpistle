@@ -748,7 +748,7 @@ routedTagTest('tag following saves device offline preferences independently of b
   await expect(follow).toBeEnabled({ timeout: 30_000 })
   await expect(page).toHaveURL('/t/beta')
 
-  await page.getByRole('button', { name: /^clear selection$/i }).click()
+  await page.getByLabel('Clear Selection', { exact: true }).click()
   await expect(page).toHaveURL('/t')
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
   await expect(beta).toHaveAttribute('aria-pressed', 'false')
