@@ -477,10 +477,12 @@ test.describe('integrated offline access', () => {
     let unlockSecret = ''
     try {
       const path = `offline-private-history-${randomUUID()}`
+      const privateHeading = 'Private offline history'
+      const privateParagraph = 'This encrypted saved page retains its unlock through browser history.'
       const created = await page.request.post('/_api/pages', {
         headers: sameOriginHeaders(),
         data: {
-          content: '# Private offline history\n\nThis encrypted saved page retains its unlock through browser history.',
+          content: `# ${privateHeading}\n\n${privateParagraph}`,
           description: 'Private offline browser history fixture',
           editor: 'markdown',
           visibility: 'private',
@@ -492,7 +494,7 @@ test.describe('integrated offline access', () => {
           scriptCss: '',
           scriptJs: '',
           tags: [],
-          title: 'Private offline history'
+          title: privateHeading
         }
       })
       expect(created.ok(), `Private offline history fixture creation failed: HTTP ${created.status()}`).toBe(true)
@@ -553,6 +555,9 @@ test.describe('integrated offline access', () => {
       await privateCard.getByRole('button', { name: /^Open saved page /u }).click()
       await expect(page.locator('#offline-reader-title')).toHaveText(privateSnapshot.title)
       await expect(page.getByRole('heading', { name: privateSnapshot.title, level: 1, exact: true })).toBeFocused()
+      const privateBody = page.locator('.offline-page-body')
+      await expect(privateBody.getByRole('heading', { level: 1 })).toContainText(privateHeading)
+      await expect(privateBody.locator('p')).toHaveText([privateParagraph])
       expect(new URL(page.url()).pathname).toBe(privateSnapshot.canonicalPath)
       expect(new URL(page.url()).search).toBe('')
 
@@ -598,15 +603,28 @@ test.describe('integrated offline access', () => {
       const wrongSecret = `${unlockSecret[0] === 'A' ? 'B' : 'A'}${unlockSecret.slice(1)}`
       await privateUnlockInput.fill(wrongSecret)
       await reading.getByRole('button', { name: 'Unlock private pages', exact: true }).click()
-      await expect(reading).toContainText('The private offline vault could not be unlocked.')
+      const unlockFailureMessage = 'The private offline vault could not be unlocked.'
+      const unlockFailure = reading.getByRole('alert').filter({ hasText: unlockFailureMessage })
+      await expect(unlockFailure).toBeVisible()
+      await expect(privateUnlockInput).toHaveAttribute('aria-invalid', 'true')
+      await expect(privateUnlockInput).toHaveAccessibleDescription(unlockFailureMessage)
+      await expect(privateUnlockInput).toBeEnabled()
+      await expect(reading.getByRole('button', { name: 'Lock private pages', exact: true })).toHaveCount(0)
       await search.fill(privateSnapshot.title)
       await expect(privateCard).toHaveCount(0)
+      const rejectedPrivate = await inspectOfflineDatabase(page)
+      expect(rejectedPrivate.readingVaultDigest).toBe(originalPrivate.readingVaultDigest)
+      expect(rejectedPrivate.privateSnapshotDigests).toEqual(originalPrivate.privateSnapshotDigests)
       await privateUnlockInput.fill(unlockSecret)
       await reading.getByRole('button', { name: 'Unlock private pages', exact: true }).click()
+      await expect(reading.getByRole('button', { name: 'Lock private pages', exact: true })).toBeVisible()
+      await expect(unlockFailure).toHaveCount(0)
       await expect(privateCard).toHaveCount(1)
       await privateCard.getByRole('button', { name: /^Open saved page /u }).click()
       await expect(page.locator('#offline-reader-title')).toHaveText(privateSnapshot.title)
-      await expect(page.locator('.offline-page-body')).toHaveText('Private offline history\nThis encrypted saved page retains its unlock through browser history.')
+      // Preserve authored content and structure, not decorative heading permalinks or block whitespace.
+      await expect(privateBody.getByRole('heading', { level: 1 })).toContainText(privateHeading)
+      await expect(privateBody.locator('p')).toHaveText([privateParagraph])
       expect((await inspectOfflineDatabase(page)).privateSnapshotDigests).toEqual(originalPrivate.privateSnapshotDigests)
 
       // A same-account reconnect is not a new login after unavailable cold

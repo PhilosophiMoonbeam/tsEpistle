@@ -555,16 +555,26 @@ test('Agent combines selected creation tools in a normal conversation', async ({
     await expect.poll(() => player.evaluate(element => (element as HTMLMediaElement).currentTime)).toBeGreaterThan(0)
     await player.evaluate(element => (element as HTMLMediaElement).pause())
     await expect(player).not.toHaveAttribute('autoplay')
+    // Enter the transcript's native reading mode before moving to each output.
+    // Programmatic media playback leaves focus in the composer; scrolling alone
+    // can then be restored to the latest message by the transcript's live follow.
+    const transcript = agent.getByRole('region', { name: 'Conversation transcript', exact: true })
+    await transcript.focus()
+    await transcript.press('Home')
     await player.scrollIntoViewIfNeeded()
-    if (kind === 'video' && await player.evaluate(element => {
-      const transcript = element.closest('.inline-agent__transcript')
-      return transcript !== null && element.getBoundingClientRect().top < transcript.getBoundingClientRect().top
-    })) {
-      // Read the earlier video output without fighting the transcript's live following.
-      await agent.getByRole('region', { name: 'Conversation transcript', exact: true }).focus()
-      for (let step = 0; step < 4; step += 1) await page.keyboard.press('PageUp')
-    }
     await expectLocatorWithinViewport(player, `${kind} player`)
+    await expect.poll(() => player.evaluate(element => {
+      const transcript = element.closest('.inline-agent__transcript')
+      const dock = transcript?.querySelector('.inline-agent__conversation-dock')
+      if (!transcript || !dock) return false
+      const playerBounds = element.getBoundingClientRect()
+      const transcriptBounds = transcript.getBoundingClientRect()
+      const dockBounds = dock.getBoundingClientRect()
+      return playerBounds.left >= transcriptBounds.left - 1
+        && playerBounds.right <= transcriptBounds.right + 1
+        && playerBounds.top >= transcriptBounds.top - 1
+        && playerBounds.bottom <= Math.min(transcriptBounds.bottom, dockBounds.top) + 1
+    }), `${kind} controls must remain in the transcript reading area above the composer`).toBe(true)
   }
   expect(sent[0]?.generationTools).toEqual(['video', 'music'])
   expect(sent[0]?.responseMode).toBeUndefined()

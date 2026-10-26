@@ -3,7 +3,7 @@ import { expect, type Page } from '@playwright/test'
 import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { expectResponsiveLayout, responsiveTest as test } from './helpers'
 
-// The controlled tag API must own this story's responses; real offline stories keep workers enabled.
+// Controlled tag API stories own their responses across reloads; real offline stories keep workers enabled.
 const routedTagTest = test.extend({ serviceWorkers: 'block' })
 
 type PageApiRow = {
@@ -146,6 +146,10 @@ function escapeRegExp(value: string): string {
 
 function tagButton(page: Page, label: string) {
   return page.getByRole('button', { name: new RegExp(`^${escapeRegExp(label)}(?:\\b|\\s|$)`, 'i') }).first()
+}
+
+function followTagButton(page: Page, label: string) {
+  return page.getByRole('button', { name: new RegExp(`^(?:Save|Saved) offline: ${escapeRegExp(label)}$`) })
 }
 
 async function revealTagButton(page: Page, label: string) {
@@ -497,7 +501,7 @@ routedTagTest('public tag library supports local filtering, AND selection, and m
   await expectResponsiveLayout(page, 'public tag library')
 })
 
-test('public tag index keeps selected desktop labels readable and contained', async ({ page }) => {
+routedTagTest('public tag index keeps selected desktop labels readable and contained', async ({ page }) => {
   await openTags(page)
 
   await page.setViewportSize({ width: 1024, height: 900 })
@@ -701,39 +705,61 @@ test('public tag results keep the latest selection when responses resolve out of
 })
 
 
-test('tag following saves device offline preferences independently of browse selection', async ({ page }) => {
+routedTagTest('tag following saves device offline preferences independently of browse selection', async ({ page }) => {
   await openTags(page)
   const alpha = await revealTagButton(page, 'Alpha')
-  const follow = alpha.locator('..').locator('.tags-follow-item')
-  await expect(page.locator('#tags-follow-help')).toContainText('Save a tag offline to keep its public pages on this device.')
+  const follow = followTagButton(page, 'Alpha (alpha)')
   await expect(page.locator('#tags-follow-help')).toContainText('Save a tag offline to keep its public pages on this device.')
   await expect(page.locator('#tags-follow-help').getByRole('link', { name: 'Offline preferences', exact: true })).toHaveAttribute('href', '/p/offline')
-  // One toggle: the visible text stays "Save offline"; aria-pressed tells the saved state.
+  // The native toggle exposes both its visible saved state and its pressed state.
   await expect(follow).toHaveAccessibleName(/^Save offline: Alpha \(alpha\)$/)
   await expect(follow).toBeEnabled({ timeout: 30_000 })
-  await follow.click()
+  await follow.focus()
+  await expect(follow).toBeFocused()
+  await follow.press('Space')
   await expect(follow).toHaveAttribute('aria-pressed', 'true')
   await expect(follow).toHaveAccessibleName(/^Saved offline: Alpha \(alpha\)$/)
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
   await expect(page).toHaveURL('/t')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
 
+  const beta = await revealTagButton(page, 'Beta')
+  await beta.click()
+  await expect(beta).toHaveAttribute('aria-pressed', 'true')
+  await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(follow).toHaveAttribute('aria-pressed', 'true')
+  await expect(page).toHaveURL('/t/beta')
+
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.locator('.tags-index')).toBeVisible({ timeout: 30_000 })
+  await revealTagButton(page, 'Alpha')
   await expect(follow).toHaveAttribute('aria-pressed', 'true')
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(beta).toHaveAttribute('aria-pressed', 'true')
+  await expect(follow).toHaveAccessibleName(/^Saved offline: Alpha \(alpha\)$/)
   await expect(follow).toBeEnabled({ timeout: 30_000 })
-  await follow.click()
+  await follow.focus()
+  await expect(follow).toBeFocused()
+  await follow.press('Enter')
   await expect(follow).toHaveAttribute('aria-pressed', 'false')
+  await expect(follow).toHaveAccessibleName(/^Save offline: Alpha \(alpha\)$/)
+  await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(beta).toHaveAttribute('aria-pressed', 'true')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
+  await expect(page).toHaveURL('/t/beta')
+
+  await page.getByRole('button', { name: /^clear selection$/i }).click()
   await expect(page).toHaveURL('/t')
+  await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(beta).toHaveAttribute('aria-pressed', 'false')
+  await expect(follow).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('tag follow feedback finishes cleanly and respects reduced motion', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await openTags(page)
-  const alpha = await revealTagButton(page, 'Alpha')
-  const follow = alpha.locator('..').locator('.tags-follow-item')
+  await revealTagButton(page, 'Alpha')
+  const follow = followTagButton(page, 'Alpha (alpha)')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
   const followIcon = follow.locator('.tags-follow-item-icon')
   await followIcon.evaluate(element => {

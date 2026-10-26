@@ -382,6 +382,7 @@ function createEditorMarkdownRenderer (wikiLinks: WikiLinkOptions) {
 
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
 const previewSyncs = new WeakMap<object, SourcePreviewSync>()
+const sourceViewportLines = new WeakMap<object, number>()
 
 function stopPreviewAlignment (editor: object) {
   previewSyncs.get(editor)?.cancel()
@@ -527,6 +528,14 @@ export default defineComponent({
     '$vuetify.theme.current.dark' (newValue: boolean) {
       this.cm?.setDark(newValue)
     },
+    '$vuetify.display.smAndDown' () {
+      this.captureSourceViewport()
+      this.$nextTick(() => {
+        if (this.editorDisposed) return
+        this.cm?.requestMeasure()
+        this.refreshPreviewSync()
+      })
+    },
     wikiLinkOptions: {
       deep: true,
       handler () {
@@ -539,6 +548,7 @@ export default defineComponent({
     },
     previewShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
+        this.captureSourceViewport()
         this.debouncedProcessContent?.cancel()
         if (this.previewDirty) {
           this.processContent(requireEditor(this.cm).getValue())
@@ -682,6 +692,16 @@ export default defineComponent({
     },
     focusEditor () {
       this.cm?.focus()
+    },
+    captureSourceViewport () {
+      const container = this.$refs.cm
+      if (
+        this.editorDisposed ||
+        !this.cm ||
+        !(container instanceof HTMLElement) ||
+        container.getClientRects().length === 0
+      ) return
+      sourceViewportLines.set(this, this.cm.viewportLine())
     },
     togglePreview () {
       this.previewShown = !this.previewShown
@@ -1234,8 +1254,19 @@ export default defineComponent({
       onMeasure: () => previewSyncs.get(this)?.request()
     })
     this.cm = markRaw(cm)
+    sourceViewportLines.set(this, 0)
+    // A hidden mobile source has no measurable geometry. Keep its last real
+    // visible viewport, not its cursor, for the existing scroll synchronizer.
+    const syncSource = {
+      viewportLine: () => {
+        this.captureSourceViewport()
+        return sourceViewportLines.get(this) ?? 0
+      },
+      scrollToLine: (line: number) => cm.scrollToLine(line),
+      get lineCount () { return cm.lineCount }
+    }
     previewSyncs.set(this, new SourcePreviewSync(
-      () => this.cm,
+      () => !this.editorDisposed && this.cm === cm ? syncSource : null,
       () => !this.editorDisposed && this.previewAlignmentEnabled && this.previewShown && !this.previewDirty,
       line => { this.currentSectionLine = line }
     ))
@@ -1295,6 +1326,7 @@ export default defineComponent({
     stopPreviewAlignment(this)
     previewSyncs.get(this)?.detach()
     previewSyncs.delete(this)
+    sourceViewportLines.delete(this)
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)

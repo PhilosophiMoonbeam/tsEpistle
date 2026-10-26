@@ -456,6 +456,7 @@
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType } from 'vue'
 import { useDate } from 'vuetify'
+import type { VCombobox } from 'vuetify/components/VCombobox'
 import * as _ from 'lodash-es'
 import { wikiStore } from '@/store/index.ts'
 import {
@@ -1110,7 +1111,9 @@ export default defineComponent({
     retryTagSearch () {
       const query = _.trim(this.tagSearchFailedQuery)
       if (!query || this.editorDisposed || !this.modelValue) return
-      focusInput(this.$refs.tagInput)
+      // The exposed focus targets the text field, not a selected-value hidden input.
+      const tagInput = this.$refs.tagInput as InstanceType<typeof VCombobox> | undefined
+      tagInput?.focus()
       this.tagMenuOpen = true
       if (this.tagSearchTimer !== null) {
         window.clearTimeout(this.tagSearchTimer)

@@ -3467,7 +3467,6 @@ test.describe('reader metadata rendering', () => {
   test.use({ locale: 'en-US', timezoneId: 'UTC' })
 
   const updatedAt = '2000-02-03T12:00:00.000Z'
-  const historyHref = '/h/en/reader-metadata-fixture'
   const encoded = (value: unknown): string => Buffer.from(JSON.stringify(value), 'utf8').toString('base64')
   const authenticateReaderMetadataAdmin = async (page: Page): Promise<void> => {
     const username = process.env.READER_METADATA_ADMIN_USER
@@ -3497,15 +3496,14 @@ test.describe('reader metadata rendering', () => {
   }
 
   type ReaderMetadataFixturePayload = {
-    version: 1
-    spaNavigation: true
     pageFeatures?: {
       schemaVersion: 1
       linksVisible: false
       ratingsAllowed: true
       lastEditorVisible: boolean
     }
-    props: Record<string, unknown>
+    props: Pick<WikiPagePayload['props'], 'updatedAt' | 'authorName' | 'authorId'>
+    historyRead: boolean
   }
 
   const makeFixturePayload = (options: {
@@ -3513,9 +3511,8 @@ test.describe('reader metadata rendering', () => {
     authorId: number
     lastEditorVisible: boolean | undefined
     historyRead: boolean
+    updatedAt?: string
   }): ReaderMetadataFixturePayload => ({
-    version: 1,
-    spaNavigation: true,
     ...(options.lastEditorVisible === undefined
       ? {}
       : {
@@ -3527,48 +3524,19 @@ test.describe('reader metadata rendering', () => {
           }
         }),
     props: {
-      pageId: 9001,
-      locale: 'en',
-      path: 'reader-metadata-fixture',
-      title: 'Reader metadata fixture',
-      description: 'A deterministic reader metadata fixture.',
-      createdAt: updatedAt,
-      updatedAt,
-      sourceRevision: 'reader-metadata-fixture',
-      tags: [],
+      updatedAt: options.updatedAt ?? updatedAt,
       authorName: options.authorName,
-      authorId: options.authorId,
-      editor: 'markdown',
-      isPublished: true,
-      visibility: 'public',
-      toc: encoded([]),
-      sidebar: encoded([]),
-      navMode: 'NONE',
-      navExpandParent: true,
-      commentsEnabled: false,
-      effectivePermissions: encoded({
-        comments: { read: false, write: false, manage: false },
-        history: { read: options.historyRead },
-        source: { read: false },
-        pages: { write: false, manage: false, delete: false, script: false, style: false },
-        system: { manage: false }
-      }),
-      commentsExternal: false,
-      editShortcuts: encoded({
-        editFab: false,
-        editMenuBar: false,
-        editMenuBtn: false,
-        editMenuExternalBtn: false,
-        editMenuExternalName: '',
-        editMenuExternalIcon: '',
-        editMenuExternalUrl: ''
-      }),
-      filename: 'en/reader-metadata-fixture.md',
-      branding: null
-    }
+      authorId: options.authorId
+    },
+    historyRead: options.historyRead
   })
 
-  const installReaderMetadataFixture = async (page: Page, fixturePayload: ReaderMetadataFixturePayload): Promise<void> => {
+  const installReaderMetadataFixture = async (
+    page: Page,
+    fixturePayload: ReaderMetadataFixturePayload,
+    spaFixturePayload = fixturePayload
+  ): Promise<{ documents: WikiPagePayload[]; spaNavigations: WikiPagePayload[] }> => {
+    const loads = { documents: [] as WikiPagePayload[], spaNavigations: [] as WikiPagePayload[] }
     await page.route('**/*', async route => {
       const request = route.request()
       const isDocumentNavigation = request.resourceType() === 'document' && request.isNavigationRequest()
@@ -3587,20 +3555,50 @@ test.describe('reader metadata rendering', () => {
         return
       }
 
-      const fixture = Buffer.from(JSON.stringify(fixturePayload), 'utf8').toString('base64')
+      // Metadata fixtures must retain the live page identity: reader actions still
+      // call the real watch, approval, protection, and history endpoints.
+      const original = decodeWikiPagePayloadForTest(match[3]!)
+      const selectedFixture = isSpaNavigation ? spaFixturePayload : fixturePayload
+      const permissions: unknown = JSON.parse(Buffer.from(original.props.effectivePermissions, 'base64').toString('utf8'))
+      if (typeof permissions !== 'object' || permissions === null || Array.isArray(permissions) || !('history' in permissions)) {
+        throw new Error('Reader metadata fixture is missing the server history permission.')
+      }
+      const history = permissions.history
+      if (typeof history !== 'object' || history === null || Array.isArray(history) || !('read' in history) || typeof history.read !== 'boolean') {
+        throw new Error('Reader metadata fixture has an invalid server history permission.')
+      }
+      if (selectedFixture.historyRead && !history.read) throw new Error('The reader metadata administrator must have real history access.')
+      const patchedPayload = {
+        ...original,
+        // Undefined stays omitted in JSON, exercising the decoder's privacy default.
+        pageFeatures: selectedFixture.pageFeatures,
+        props: {
+          ...original.props,
+          ...selectedFixture.props,
+          effectivePermissions: encoded({
+            ...permissions,
+            history: { ...history, read: selectedFixture.historyRead && history.read }
+          })
+        }
+      }
+      const fixture = encoded(patchedPayload)
       const patchedDocument = document.slice(0, match.index) + `${match[1]}${match[2]}${fixture}${match[2]}` + document.slice(match.index + match[0].length)
+      const decodedFixture = decodeWikiPagePayloadForTest(fixture)
+      const appliedLoads = isSpaNavigation ? loads.spaNavigations : loads.documents
+      appliedLoads.push(decodedFixture)
       await route.fulfill({ response, body: patchedDocument })
     })
+    return loads
   }
 
-  const expectReaderMetadata = async (page: Page, expected: { authorName?: string; historyHref?: string }): Promise<void> => {
+  const expectReaderMetadata = async (page: Page, expected: { authorName?: string; historyHref?: string; updatedAt?: string }): Promise<void> => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'en')
 
     const provenance = page.locator('.page-tools-card__provenance')
     await expect(provenance).toHaveCount(1)
     await expect(provenance).toBeVisible()
     const date = provenance.locator('.page-document-row--date time')
-    await expect(date).toHaveAttribute('datetime', updatedAt)
+    await expect(date).toHaveAttribute('datetime', expected.updatedAt ?? updatedAt)
 
     const author = provenance.locator('.page-provenance-author')
     if (expected.authorName === undefined) {
@@ -3621,23 +3619,39 @@ test.describe('reader metadata rendering', () => {
     }
   }
 
-  test('renders enabled page author metadata on initial and SPA reader loads', async ({ page }) => {
+  routedReaderTest('renders enabled page author metadata on initial and SPA reader loads', async ({ page }) => {
     test.setTimeout(60_000)
     const initialViewport = page.viewportSize()
     if (!initialViewport) throw new Error('The reader metadata test requires a configured viewport.')
     const authorName = '<strong data-e2e-author-markup="true">Ada</strong> & "quoted"'
+    const spaAuthorName = '<em data-e2e-author-markup="true">Grace</em> & "next"'
+    const spaUpdatedAt = '2001-04-05T09:30:00.000Z'
+    const historyHrefFor = ({ props }: WikiPagePayload): string =>
+      `${props.visibility === 'private' ? '/h/_private' : '/h'}/${props.locale}/${props.path}`
     await authenticateReaderMetadataAdmin(page)
-    await installReaderMetadataFixture(
+    const readerLoads = await installReaderMetadataFixture(
       page,
       makeFixturePayload({
         authorName,
         authorId: 42,
         lastEditorVisible: true,
         historyRead: true
+      }),
+      makeFixturePayload({
+        authorName: spaAuthorName,
+        authorId: 43,
+        lastEditorVisible: true,
+        historyRead: true,
+        updatedAt: spaUpdatedAt
       })
     )
 
     await page.goto('/home', { waitUntil: 'domcontentloaded' })
+    expect(readerLoads.documents, 'The metadata fixture owns the initial reader document.').toHaveLength(1)
+    const initialPage = readerLoads.documents[0]
+    if (!initialPage) throw new Error('The initial metadata fixture was not applied.')
+    expect(initialPage.spaNavigation, 'The live reader contract supports SPA navigation.').toBe(true)
+    const historyHref = historyHrefFor(initialPage)
     await expectReaderMetadata(page, { authorName, historyHref })
     const historyLink = page.locator('.page-tools-history-link')
     await expect(historyLink).toHaveAccessibleName('View history')
@@ -3739,9 +3753,14 @@ test.describe('reader metadata rendering', () => {
     const navigationUrl = await navigationEvent
     expect(navigationUrl).toBe(destination.href)
     await expect(page).toHaveURL(destination.href)
-    await expectReaderMetadata(page, { authorName, historyHref })
+    expect(readerLoads.spaNavigations, 'The metadata fixture owns the SPA reader response.').toHaveLength(1)
+    const spaPage = readerLoads.spaNavigations[0]
+    if (!spaPage) throw new Error('The SPA metadata fixture was not applied.')
+    const spaHistoryHref = historyHrefFor(spaPage)
+    await expectReaderMetadata(page, { authorName: spaAuthorName, historyHref: spaHistoryHref, updatedAt: spaUpdatedAt })
+    await expect(page.getByRole('alert'), 'Real reader actions do not report fixture-induced errors.').toHaveCount(0)
     await historyLink.click()
-    await expect.poll(() => new URL(page.url()).pathname).toBe(historyHref)
+    await expect.poll(() => new URL(page.url()).pathname).toBe(spaHistoryHref)
   })
 
   for (const featureCase of [

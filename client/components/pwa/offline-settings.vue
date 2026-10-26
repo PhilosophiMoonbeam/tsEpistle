@@ -36,6 +36,7 @@ const readingState = ref<ReadingState>('unavailable')
 const readingMessage = ref('')
 const readingBusy = ref(false)
 const unlockSecret = ref('')
+const unlockError = ref('')
 const enrollmentSecret = ref('')
 const enrollmentConfirmation = ref('')
 const enrollmentNotice = ref('')
@@ -247,6 +248,7 @@ async function unlockReading(): Promise<void> {
   unlockSecret.value = ''
   readingBusy.value = true
   readingMessage.value = ''
+  unlockError.value = ''
   let secret: Uint8Array | null = null
   const controller = new AbortController()
   unlockController = controller
@@ -257,8 +259,10 @@ async function unlockReading(): Promise<void> {
     readingMessage.value = t('common:offlineSettings.privateOfflineReadingUnlocked')
   } catch {
     if (!controller.signal.aborted) {
-      readingMessage.value = t('common:offlineSettings.privateOfflineVaultCould')
       await refreshReadingState()
+      if (!controller.signal.aborted && offlineStorage.value === storage && readingState.value === 'locked') {
+        unlockError.value = t('common:offlineSettings.privateOfflineVaultCould')
+      }
     }
   } finally {
     secret?.fill(0)
@@ -527,6 +531,10 @@ function handleReadingStateEvent(): void {
   void refreshReadingState()
 }
 
+watch(readingState, state => {
+  if (state !== 'locked') unlockError.value = ''
+}, { flush: 'sync' })
+
 watch(clearDialogOpen, async isOpen => {
   if (!isOpen) return
   await nextTick()
@@ -611,6 +619,9 @@ onBeforeUnmount(() => {
           </div>
           <p>{{ readingStateDescription }}</p>
           <p v-if="readingMessage" class="offline-settings__notice" role="status">{{ readingMessage }}</p>
+          <div id="offline-private-reading-error" role="alert" aria-atomic="true">
+            <p v-if="unlockError" class="offline-settings__notice">{{ unlockError }}</p>
+          </div>
           <template v-if="readingState === 'setup-required' && !enrollmentConfirming">
             <p v-if="!verifiedAccount" class="text-medium-emphasis">{{ $t('common:offlineSettings.signReconnectOnceEnable') }}</p>
             <div class="offline-settings__actions">
@@ -628,6 +639,9 @@ onBeforeUnmount(() => {
               autocomplete="off"
               spellcheck="false"
               :disabled="readingBusy"
+              :error="!!unlockError"
+              :aria-invalid="unlockError ? 'true' : undefined"
+              :aria-describedby="unlockError ? 'offline-private-reading-error' : undefined"
               @keyup.enter="unlockReading"
             />
             <div class="offline-settings__actions">

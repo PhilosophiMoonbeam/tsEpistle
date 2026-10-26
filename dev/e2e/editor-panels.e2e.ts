@@ -1,4 +1,4 @@
-import { expect, type Page, type Request, type Response, type Route } from '@playwright/test'
+import { expect, type Locator, type Page, type Request, type Response, type Route } from '@playwright/test'
 import { authenticateAsAdmin, openAuthenticatedPage, responsiveTest as test } from './helpers'
 import type { TextEditorHandle } from '../../client/components/editor/common/text-editor'
 
@@ -258,11 +258,44 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
   }
 }
 
+async function withVisibleSource(page: Page, interaction: (source: Locator) => Promise<void>) {
+  const source = page.getByRole('textbox', { name: 'Markdown source', exact: true })
+  const reopenPreview = !(await source.isVisible())
+  if (reopenPreview) await page.getByRole('button', { name: 'Show editor', exact: true }).click()
+  await expect(source).toBeVisible()
+  await source.focus()
+  await expect(source).toBeFocused()
+  await interaction(source)
+  if (reopenPreview) {
+    await page.getByRole('button', { name: 'Show preview', exact: true }).click()
+    await expect(page.getByRole('region', { name: 'Page preview', exact: true })).toBeVisible()
+  }
+  return reopenPreview
+}
+
 async function selectLine(page: Page, line: number) {
-  await page.locator('.editor-markdown').evaluate((root, target) => {
-    const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
-    editor.setSelection({ line: target, ch: 0 })
-  }, line)
+  return withVisibleSource(page, async source => {
+    // Seed the target, then let the shipped native cursor command reveal it.
+    // setSelection alone deliberately does not scroll the source viewport.
+    await page.locator('.editor-markdown').evaluate((root, target) => {
+      const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
+      editor.setSelection({ line: target, ch: 0 })
+    }, line)
+    await source.press('End')
+    await expect
+      .poll(() =>
+        page.locator('.editor-markdown').evaluate((root, target) => {
+          const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
+          const activeLine = root.querySelector('.cm-activeLine')
+          const scroller = root.querySelector('.cm-scroller')
+          if (!activeLine || !scroller || editor.cursor().line !== target || activeLine.textContent !== editor.getLine(target)) return false
+          const lineBox = activeLine.getBoundingClientRect()
+          const viewport = scroller.getBoundingClientRect()
+          return lineBox.height > 0 && lineBox.top >= viewport.top - 1 && lineBox.bottom <= viewport.bottom + 1
+        }, line)
+      )
+      .toBe(true)
+  })
 }
 async function selectText(page: Page, line: number, from: number, to: number) {
   await page.locator('.editor-markdown').evaluate(
@@ -488,7 +521,7 @@ routedEditorTest('preview follows the cursor by default and stops when toggled o
       .toEqual([])
   }
   await assertBoundedCanvas()
-  const toggle = page.getByRole('button', { name: 'Align preview to cursor', exact: true })
+  const toggle = page.getByRole('button', { name: 'Synchronize source and preview scrolling', exact: true })
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   await selectLine(page, 80)
   await expect.poll(() => preview.evaluate(element => element.scrollTop)).toBeGreaterThan(500)
@@ -497,22 +530,28 @@ routedEditorTest('preview follows the cursor by default and stops when toggled o
   await preview.evaluate(element => {
     element.scrollTop = 300
   })
-  await selectLine(page, 140)
+  await expect.poll(() => preview.evaluate(element => element.scrollTop)).toBe(300)
+  const previewReopened = await selectLine(page, 140)
+  // Mobile switches panes: its old preview node is destroyed, not retained.
+  // A fresh disabled preview must stay at zero rather than align to line 140.
+  const disabledScrollTop = previewReopened ? 0 : 300
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
   await page.waitForTimeout(400)
-  expect(await preview.evaluate(element => element.scrollTop)).toBe(300)
-  await page.locator('.editor-markdown').evaluate(root => {
-    const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
-    editor.replaceSelection('Edited while following is disabled. ')
+  expect(await preview.evaluate(element => element.scrollTop)).toBe(disabledScrollTop)
+  await withVisibleSource(page, async source => {
+    await page.keyboard.insertText('Edited while following is disabled. ')
+    await expect(source).toContainText('Edited while following is disabled.')
   })
   await page.waitForTimeout(900)
-  expect(await preview.evaluate(element => element.scrollTop)).toBe(300)
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  expect(await preview.evaluate(element => element.scrollTop)).toBe(disabledScrollTop)
   const otherScrollPositions = await page.locator('.editor-markdown').evaluate(root => ({
     source: root.querySelector('.cm-scroller')?.scrollTop ?? 0,
     document: window.scrollY
   }))
   // Mobile WebKit has no wheel injection; the real scroll API still dispatches browser scroll events.
   await preview.evaluate(element => element.scrollBy(0, 200))
-  await expect.poll(() => preview.evaluate(element => element.scrollTop), 'Browser scrolling moves the preview locally').toBeGreaterThan(300)
+  await expect.poll(() => preview.evaluate(element => element.scrollTop), 'Browser scrolling moves the preview locally').toBeGreaterThan(disabledScrollTop)
   expect(
     await page.locator('.editor-markdown').evaluate(root => ({
       source: root.querySelector('.cm-scroller')?.scrollTop ?? 0,
@@ -531,7 +570,9 @@ routedEditorTest('preview follows the cursor by default and stops when toggled o
   await selectLine(page, 140)
   await page.waitForTimeout(400)
   expect(await preview.evaluate(element => element.scrollTop)).toBe(reopenedScrollTop)
-  await toggle.click()
+  await toggle.focus()
+  await expect(toggle).toBeFocused()
+  await page.keyboard.press('Space')
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   await expect.poll(() => preview.evaluate(element => element.scrollTop)).toBeGreaterThan(1000)
   await paneToggle.click()
