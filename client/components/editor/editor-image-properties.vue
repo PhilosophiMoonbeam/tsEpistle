@@ -12,11 +12,11 @@ v-form.overflow-y-auto(@submit.prevent='save')
     v-select.mt-4(v-model='draft.align', label='Alignment', :items='alignments', :error-messages='errors.align')
     fieldset.pa-3.rounded
       legend.px-2 Framing
-      v-checkbox(v-for='style in styleOptions', :key='style.value', v-model='draft.styles', :value='style.value', :label='style.title', hide-details, density='compact')
+      v-checkbox(v-for='style in styleOptions', :key='style.value', :model-value='draft.styles', @update:model-value='draft.styles = $event ?? []', :value='style.value', :label='style.title', hide-details, density='compact')
     .mt-5(role='region', aria-label='Local image preview')
       .text-label-large.mb-2 Preview
       .d-flex(:class='previewAlignment')
-        v-img(v-if='previewSource', :key='previewSource', :src='previewSource', :alt='draft.alt', :class='previewClasses', :width='previewWidth', :height='previewHeight', max-width='100%', max-height='240', contain, @error='previewFailed = true')
+        v-img(v-if='previewSource', :key='previewSource', :src='previewSource', :alt='draft.alt', :class='previewClasses', :width='previewWidth', :height='previewHeight', max-width='100%', max-height='240', :cover='false', @error='previewFailed = true')
       p.text-body-small.text-medium-emphasis(v-if='!previewSource') {{ previewFailed ? 'The local image could not be loaded. Your changes are still available.' : 'Preview is available for safe local images only. External sources are never loaded here.' }}
     v-alert.mt-5(v-if='conflict', type='warning', variant='tonal', role='alert') The image or document changed while this dialog was open. Your edits have been kept. Cancel and reopen the current image to apply them safely.
     v-alert.mt-5(v-if='saveError', type='error', variant='tonal', role='alert') {{ saveError }}

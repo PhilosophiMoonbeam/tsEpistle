@@ -272,7 +272,8 @@
             <div class="theme-setting-group">
               <h3>{{ $t('admin:theme.navigationFeedback', { defaultValue: 'Navigation feedback' }) }}</h3>
               <v-switch
-                v-model="draft.pageTransitions"
+                :model-value="draft.pageTransitions"
+                @update:model-value="$event !== null && (draft.pageTransitions = $event)"
                 :label="$t('admin:theme.pageTransitions', { defaultValue: 'Animate page transitions' })"
                 :hint="$t('admin:theme.pageTransitionsHint', { defaultValue: 'Use a brief entrance when navigating between pages. The reader’s reduced-motion preference always takes priority.' })"
                 :disabled="locked"
@@ -280,7 +281,8 @@
                 persistent-hint
               />
               <v-switch
-                v-model="draft.showPageProgress"
+                :model-value="draft.showPageProgress"
+                @update:model-value="$event !== null && (draft.showPageProgress = $event)"
                 :label="$t('admin:theme.showPageProgress', { defaultValue: 'Show navigation loading cue' })"
                 :hint="$t('admin:theme.showPageProgressHint', { defaultValue: 'Show a decorative top-edge cue while the next page loads. Reading-position progress and the accessible loading indicator remain unchanged.' })"
                 :disabled="locked"
@@ -703,8 +705,11 @@ const errorMessage = (error: unknown) =>
 const route = useRoute(),
   router = useRouter(),
   theme = useTheme();
+type ThemeDraft = Omit<ThemePolicy, "reading"> & {
+  reading: { [Field in keyof ThemePolicy["reading"]]: number | string };
+};
 const saved = ref<ThemeWorkspace | null>(null),
-  draft = ref<ThemePolicy | null>(null),
+  draft = ref<ThemeDraft | null>(null),
   reviewed = ref<ThemePolicy | null>(null);
 const loading = ref(false),
   busy = ref(false),
@@ -768,11 +773,22 @@ const palette = computed(
 const savedPalette = computed(() =>
   saved.value?.policy.palettes.find((item) => item.id === palette.value?.id),
 );
-const changedFields = computed(() =>
-  saved.value && draft.value
-    ? themeChangedFields(saved.value.policy, draft.value)
-    : [],
-);
+const changedFields = computed(() => {
+  if (!saved.value || !draft.value) return [];
+  const fields = themeChangedFields(saved.value.policy, {
+    ...draft.value,
+    reading: saved.value.policy.reading,
+  });
+  if (
+    JSON.stringify(saved.value.policy.reading) !==
+    JSON.stringify(draft.value.reading)
+  ) {
+    fields.push("reading");
+    const order = Object.keys(themeFieldLabels);
+    fields.sort((left, right) => order.indexOf(left) - order.indexOf(right));
+  }
+  return fields;
+});
 const dirty = computed(() => changedFields.value.length > 0);
 const locked = computed(
   () =>

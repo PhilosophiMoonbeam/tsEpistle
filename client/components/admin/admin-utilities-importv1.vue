@@ -10,7 +10,7 @@ v-card
       v-list-item(:prepend-icon='importTargets.git.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.git.available ? $t(`admin:utilitiesImportv1.gitImportAvailable`) : $t(`admin:utilitiesImportv1.gitImportUnavailable`)' :subtitle='targetAvailability(importTargets.git)')
       v-list-item(:prepend-icon='importTargets.disk.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.disk.available ? $t(`admin:utilitiesImportv1.localFolderImportAvailable`) : $t(`admin:utilitiesImportv1.localFolderImportUnavailable`)' :subtitle='targetAvailability(importTargets.disk)')
     p.text-body-medium.mt-2 {{ $t(`admin:utilitiesImportv1.contentImportSavesReviewed`) }}
-    v-radio-group(v-model='contentMode' inline :label='$t(`admin:utilitiesImportv1.source`)' :disabled='busy')
+    v-radio-group(:model-value='contentMode' @update:model-value='$event !== null && (contentMode = $event)' inline :label='$t(`admin:utilitiesImportv1.source`)' :disabled='busy')
       v-radio(value='git' :label='$t(`admin:utilitiesImportv1.gitRepository`)' :disabled='!importTargets.git.available')
       v-radio(value='disk' :label='$t(`admin:utilitiesImportv1.localFolder`)' :disabled='!importTargets.disk.available')
     v-alert.mb-4(v-if='!selectedTarget.available' color='warning' variant='tonal' density='compact') {{ selectedTargetMessage }}
@@ -25,7 +25,7 @@ v-card
         v-col(cols='12' md='4')
           v-select(v-model='git.authType' :items='authTypes' item-title='title' item-value='value' :label='$t(`admin:utilitiesImportv1.authentication`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12' md='8')
-          v-switch(v-model='git.verifySSL' :label='$t(`admin:utilitiesImportv1.verifyHttpsCertificate`)' color='primary' hide-details :disabled='busy || !importTargets.git.available')
+          v-switch(:model-value='git.verifySSL' @update:model-value='$event !== null && (git.verifySSL = $event)' :label='$t(`admin:utilitiesImportv1.verifyHttpsCertificate`)' color='primary' hide-details :disabled='busy || !importTargets.git.available')
         v-col(v-if='git.authType === `ssh`' cols='12')
           v-textarea(v-model='git.privateKey' :label='$t(`admin:utilitiesImportv1.sshPrivateKeyContents`)' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='privateKeyError' @blur='touched.key = true')
         template(v-else)

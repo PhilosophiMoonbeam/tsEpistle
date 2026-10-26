@@ -5,7 +5,7 @@ v-card
   v-card-text
     v-alert(color='info' variant='tonal' icon='mdi-information-outline')
       .text-body-medium {{ $t(`admin:utilitiesTelemetry.whenEnabledTelemetrySends`) }}
-    v-switch.mt-6(v-model='enabled' :label='$t(`admin:utilitiesTelemetry.enableTelemetry`)' color='primary' :disabled='busy' persistent-hint :hint='$t(`admin:utilitiesTelemetry.changingPreferenceRecordedPersisted`)')
+    v-switch.mt-6(:model-value='enabled' @update:model-value='$event !== null && (enabled = $event)' :label='$t(`admin:utilitiesTelemetry.enableTelemetry`)' color='primary' :disabled='busy' persistent-hint :hint='$t(`admin:utilitiesTelemetry.changingPreferenceRecordedPersisted`)')
     v-btn.mt-4(color='primary' variant='flat' :disabled='busy || !preferenceChanged' @click='openSaveReview') {{ $t(`admin:utilitiesTelemetry.reviewTelemetryPreference`) }}
     v-divider.my-6
     h2.text-title-medium {{ $t(`admin:utilitiesTelemetry.anonymousClientId`) }}

@@ -24,7 +24,18 @@
     { "path": "./tsconfig.shared.json" }
   ],
   "vueCompilerOptions": {
-    "plugins": ["@vue/language-plugin-pug"]
+    "plugins": ["@vue/language-plugin-pug", "./server/scripts/vue-search-element.cjs"],
+    "strictTemplates": true,
+    "fallthroughAttributes": true,
+    "htmlAttributes": [
+      "aria-activedescendant", "aria-atomic", "aria-autocomplete", "aria-busy", "aria-checked", "aria-controls",
+      "aria-current", "aria-describedby", "aria-description", "aria-disabled", "aria-expanded",
+      "aria-haspopup", "aria-hidden", "aria-invalid", "aria-keyshortcuts",
+      "aria-label", "aria-labelledby", "aria-live", "aria-modal",
+      "aria-multiselectable", "aria-pressed", "aria-roledescription",
+      "aria-selected", "aria-valuetext"
+    ],
+    "dataAttributes": ["data-*"]
   },
   "include": [
     "client/**/*.ts",

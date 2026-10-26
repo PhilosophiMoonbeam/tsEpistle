@@ -73,7 +73,6 @@
                 item-title='title'
                 activatable
                 mandatory
-                hoverable
               )
                 template(v-slot:prepend='{ isOpen }')
                   v-icon(aria-hidden='true') {{ $t(`common:pageSelector.mdi`, { value: isOpen ? 'folder-open' : 'folder', interpolation: { escapeValue: false } }) }}

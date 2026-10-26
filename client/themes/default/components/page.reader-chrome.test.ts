@@ -208,6 +208,30 @@ describe('page reader chrome template', () => {
     expect(watching.querySelector('.page-watch-settings .page-watch-stop')?.textContent).toContain('common:page.stopWatchingPage')
   })
 
+  it('exposes both offline toggle states and omits pressed state for non-toggle actions', async () => {
+    for (const { pressed, attribute } of [
+      { pressed: false, attribute: 'false' },
+      { pressed: true, attribute: 'true' },
+      { pressed: undefined, attribute: null }
+    ]) {
+      const { document } = await renderTemplate(PAGE, baseState({
+        offlineControl: {
+          state: 'off',
+          tone: 'neutral',
+          icon: 'mdi-cloud-download-outline',
+          blocked: false,
+          label: 'Save offline',
+          title: 'Save offline',
+          detail: 'Keep a copy on this device.',
+          pressed
+        }
+      }))
+      const control = document.querySelector('.page-offline-control')
+      expect(control).not.toBeNull()
+      expect(control?.getAttribute('aria-pressed')).toBe(attribute)
+    }
+  })
+
   it('shows one unpublished indicator and its explanation', async () => {
     const { document } = await renderTemplate(PAGE, baseState({ isPublished: false }))
     const html = document.body.innerHTML

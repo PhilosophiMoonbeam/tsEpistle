@@ -191,7 +191,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                     v-col(cols='12', sm='6')
                       v-select(v-model='index.order', :items='indexOrders', :label='$t(`editor:editorModalBlocks.order`)')
                     v-col.d-flex.align-center(cols='12', sm='6')
-                      v-switch(v-model='index.showIcons', :label='$t(`editor:editorModalBlocks.showPageIcons`)', hide-details)
+                      v-switch(:model-value='index.showIcons', @update:model-value='index.showIcons = $event ?? index.showIcons', :label='$t(`editor:editorModalBlocks.showPageIcons`)', hide-details)
                   v-text-field.mt-2(
                     v-model='index.emptyLabel'
                     :label='$t(`editor:editorModalBlocks.emptyStateLabelOptional`)'
@@ -348,7 +348,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         @update:model-value='youtube.start = parseNumber($event)'
                       )
                     v-col.d-flex.align-center(cols='12', sm='6')
-                      v-switch(v-model='youtube.controls', :label='$t(`editor:editorModalBlocks.showPlayerControls`)', hide-details)
+                      v-switch(:model-value='youtube.controls', @update:model-value='youtube.controls = $event ?? youtube.controls', :label='$t(`editor:editorModalBlocks.showPlayerControls`)', hide-details)
                 template(v-else-if='selectedKey === `diagram`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | {{ $t(`editor:editorModalBlocks.mermaidRendersLocallyStrict`) }}

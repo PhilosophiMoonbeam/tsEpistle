@@ -16,9 +16,9 @@
             </div>
             <v-alert v-if="pageFeatureConflict" type="warning" variant="tonal" class="mb-4">{{ $t('admin:pagesEdit.pageFeaturesChangedServer') }}</v-alert>
             <v-alert v-else-if="pageFeatureError" type="error" variant="tonal" class="mb-4">{{ pageFeatureError }}</v-alert>
-            <v-switch v-model="pageFeaturesDraft.linksVisible" color="primary" :label="$t('admin:pagesEdit.showLinks')" :hint="$t('admin:pagesEdit.showPagesLinkSection')" persistent-hint inset :disabled="pageFeatureControlsDisabled" />
-            <v-switch v-model="pageFeaturesDraft.ratingsAllowed" color="primary" :label="$t('admin:pagesEdit.allowRatings')" :hint="$t('admin:pagesEdit.offHidesRatingsPanel')" persistent-hint inset :disabled="pageFeatureControlsDisabled" />
-            <v-switch v-model="pageFeaturesDraft.lastEditorVisible" color="primary" :label="$t('admin:pagesEdit.showLastEditor')" :hint="$t('admin:pagesEdit.showWhoLastEdited')" persistent-hint inset :disabled="pageFeatureControlsDisabled" />
+            <v-switch :model-value="pageFeaturesDraft.linksVisible" @update:model-value="$event !== null && (pageFeaturesDraft.linksVisible = $event)" color="primary" :label="$t('admin:pagesEdit.showLinks')" :hint="$t('admin:pagesEdit.showPagesLinkSection')" persistent-hint inset :disabled="pageFeatureControlsDisabled" />
+            <v-switch :model-value="pageFeaturesDraft.ratingsAllowed" @update:model-value="$event !== null && (pageFeaturesDraft.ratingsAllowed = $event)" color="primary" :label="$t('admin:pagesEdit.allowRatings')" :hint="$t('admin:pagesEdit.offHidesRatingsPanel')" persistent-hint inset :disabled="pageFeatureControlsDisabled" />
+            <v-switch :model-value="pageFeaturesDraft.lastEditorVisible" @update:model-value="$event !== null && (pageFeaturesDraft.lastEditorVisible = $event)" color="primary" :label="$t('admin:pagesEdit.showLastEditor')" :hint="$t('admin:pagesEdit.showWhoLastEdited')" persistent-hint inset :disabled="pageFeatureControlsDisabled" />
             <div class="page-feature-settings-actions">
               <span role="status">{{ pageFeatureConflict ? $t('admin:pagesEdit.savedSettingsChangedReset') : pageFeatureDirty ? $t('admin:pagesEdit.unsavedChanges') : $t('admin:pagesEdit.matchesSavedPage') }}</span>
               <v-spacer />

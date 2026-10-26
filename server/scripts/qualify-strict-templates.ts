@@ -93,9 +93,9 @@ checkGlobalOwners()
 
 const control = `<script setup lang="ts">
 defineOptions({ inheritAttrs: false })
-defineProps<{ label: string; count?: number }>()
+withDefaults(defineProps<{ label: string; count?: number; title?: number }>(), { count: 0 })
 const model = defineModel<string>({ required: true })
-const emit = defineEmits<{ commit: [count: number] }>()
+const emit = defineEmits<{ commit: [count: number]; select: [value: string]; submit: [count: number]; toggle: [expanded: boolean]; change: [value: string] }>()
 defineSlots<{ help(props: { count: number }): unknown }>()
 </script>
 <template>
@@ -107,10 +107,18 @@ defineSlots<{ help(props: { count: number }): unknown }>()
   </div>
 </template>
 `
-const automaticControl = `<script setup lang="ts">
-defineProps<{ label: string }>()
+const automaticControl = `<script lang="ts">
+import { defineComponent } from 'vue'
+export default defineComponent({
+  props: { label: { type: String, required: true }, title: { type: Number, required: true } }
+})
 </script>
 <template><button type="button">{{ label }}</button></template>
+`
+const genericControl = `<script setup lang="ts" generic="T">
+defineProps<{ entry: T; title: number }>()
+</script>
+<template><input v-bind="$attrs" /></template>
 `
 
 type NegativeCase = { codes: number[]; message: RegExp; html: string; pug: string }
@@ -123,6 +131,15 @@ const negatives: Record<string, NegativeCase> = {
   'invalid-slot-payload': { codes: [2339, 2551], message: /toUpperCase/, html: '{{ count.toUpperCase() }}', pug: '{{ count.toUpperCase() }}' },
   'invalid-native': { codes: [2322], message: /wrong|Booleanish|boolean/, html: ':disabled="\'wrong\'"', pug: ':disabled="\'wrong\'"' },
   'invalid-aria': { codes: [2322], message: /wrong|Booleanish|boolean/, html: ':aria-hidden="\'wrong\'"', pug: ':aria-hidden="\'wrong\'"' },
+  'invalid-custom-select': { codes: [2322], message: /number|string/, html: '@select="acceptCount"', pug: '@select="acceptCount"' },
+  'invalid-native-click': { codes: [2322], message: /string|PointerEvent|MouseEvent/, html: '@click="acceptText"', pug: '@click="acceptText"' },
+  'invalid-vuetify-native': { codes: [2322], message: /string|number|Numberish/, html: ':maxlength="{}"', pug: ':maxlength="{}"' },
+  'invalid-vuetify-aria': { codes: [2322], message: /wrong|Booleanish|boolean/, html: ':aria-expanded="\'wrong\'"', pug: ':aria-expanded="\'wrong\'"' },
+  'invalid-declared-native-prop': { codes: [2322], message: /string|number/, html: ':title="\'wrong\'"', pug: ':title="\'wrong\'"' },
+  'invalid-custom-native-event': { codes: [2322], message: /string|Event/, html: '@select="acceptNative"', pug: '@select="acceptNative"' },
+  'invalid-generic-native-prop': { codes: [2322], message: /string|number/, html: ':title="\'wrong\'"', pug: ':title="\'wrong\'"' },
+  'invalid-options-native-prop': { codes: [2322], message: /string|number/, html: ':title="\'wrong\'"', pug: ':title="\'wrong\'"' },
+  'invalid-search-aria': { codes: [2322], message: /wrong|Booleanish|boolean/, html: ':aria-busy="\'wrong\'"', pug: ':aria-busy="\'wrong\'"' },
   'invalid-data-expression': { codes: [2339, 2551], message: /missingData/, html: ':data-qualification="missingData"', pug: ':data-qualification="missingData"' }
 }
 const selected = process.argv.slice(2)
@@ -131,7 +148,12 @@ const caseName = selected[1]
 assert(!caseName || caseName === 'valid' || caseName === 'admission' || Object.hasOwn(negatives, caseName), `Unknown case ${caseName}; choose valid, admission, ${Object.keys(negatives).join(', ')}`)
 
 function consumer(language: 'html' | 'pug', negative?: string): { source: string; diagnosticLine?: number } {
-  const attrs = ['label="Title"', ':count="2"', 'v-model="model"', '@commit="acceptCount"', 'id="title"', 'name="title"', 'autocomplete="off"', ':disabled="false"', ':aria-hidden="false"', ':data-qualification="model"', 'aria-label="Title"', 'aria-describedby="help"']
+  const attrs = ['label="Title"', ':count="2"', 'v-model="model"', '@commit="acceptCount"', 'id="title"', 'name="title"', 'autocomplete="off"', ':disabled="false"', ':aria-hidden="false"', ':data-qualification="model"', 'aria-label="Title"', 'aria-describedby="help"', '@select="acceptText"', '@submit="acceptCount"', '@toggle="acceptFlag"', '@change="acceptText"', '@click="acceptMouse"', ':title="2"']
+  const inputAttrs = [':maxlength="20"', ':min="0"', ':step="1"', 'form="native-form"', 'type="text"']
+  const buttonAttrs = ['id="vuetify-button"', 'target="_blank"', ':aria-expanded="false"', '@click="acceptMouse"']
+  const searchAttrs = ['aria-label="Find"', ':aria-busy="false"']
+  let genericTitle = ':title="2"'
+  let automaticTitle = ':title="2"'
   const slot = '#help="{ count }"'
   let content = '{{ count.toFixed(0) }}'
   let extra = ''
@@ -141,6 +163,15 @@ function consumer(language: 'html' | 'pug', negative?: string): { source: string
   if (negative === 'invalid-event' || negative === 'unknown-event') attrs[3] = mutation
   if (negative === 'invalid-native') attrs[7] = mutation
   if (negative === 'invalid-aria') attrs[8] = mutation
+  if (negative === 'invalid-custom-select') attrs[12] = mutation
+  if (negative === 'invalid-native-click') attrs[16] = mutation
+  if (negative === 'invalid-vuetify-native') inputAttrs[0] = mutation
+  if (negative === 'invalid-vuetify-aria') buttonAttrs[2] = mutation
+  if (negative === 'invalid-declared-native-prop') attrs[17] = mutation
+  if (negative === 'invalid-custom-native-event') attrs[12] = mutation
+  if (negative === 'invalid-generic-native-prop') genericTitle = mutation
+  if (negative === 'invalid-options-native-prop') automaticTitle = mutation
+  if (negative === 'invalid-search-aria') searchAttrs[1] = mutation
   if (negative === 'invalid-data-expression') attrs[9] = mutation
   if (negative === 'invalid-slot-payload') content = mutation
   if (negative === 'unknown-component') extra = mutation
@@ -148,15 +179,20 @@ function consumer(language: 'html' | 'pug', negative?: string): { source: string
 import { ref } from 'vue'
 import Control from './Control.vue'
 import AutomaticControl from './AutomaticControl.vue'
+import GenericControl from './GenericControl.vue'
+import { VBtn, VTextField } from 'vuetify/components'
 const model = ref('Title')
 const numericModel = ref(1)
+const numericDraft = ref<number | string>(1)
 function acceptCount(count: number): void { console.log(count) }
 function acceptText(text: string): void { console.log(text) }
 function acceptMouse(event: MouseEvent): void { console.log(event.clientX) }
+function acceptNative(event: Event): void { console.log(event.type) }
+function acceptFlag(expanded: boolean): void { console.log(expanded) }
 </script>`
   const template = language === 'html'
-    ? `<template>\n  <section>\n    <Control ${attrs.join(' ')}>\n      <template ${slot}>${content}</template>\n    </Control>\n    <AutomaticControl label="Native root" id="automatic" :disabled="false" :aria-hidden="false" data-kind="root" />\n    <input id="native" name="native" :disabled="false" :aria-hidden="false" :data-qualification="model" @click="acceptMouse" />\n    ${extra}\n  </section>\n</template>`
-    : `<template lang="pug">\nsection\n  Control(${attrs.join(' ')})\n    template(${slot}) ${content}\n  AutomaticControl(label="Native root" id="automatic" :disabled="false" :aria-hidden="false" data-kind="root")\n  input(id="native" name="native" :disabled="false" :aria-hidden="false" :data-qualification="model" @click="acceptMouse")\n  ${extra}\n</template>`
+    ? `<template>\n  <section>\n    <Control ${attrs.join(' ')}>\n      <template ${slot}>${content}</template>\n    </Control>\n    <AutomaticControl label="Native root" ${automaticTitle} id="automatic" :disabled="false" :aria-hidden="false" data-kind="root" />\n    <GenericControl :entry="2" ${genericTitle} />\n    <VTextField v-model.number="numericDraft" ${inputAttrs.join(' ')} />\n    <VBtn ${buttonAttrs.join(' ')}>Native button</VBtn>\n    <search ${searchAttrs.join(' ')}><input aria-label="Search" /></search>\n    <input id="native" name="native" :disabled="false" :aria-hidden="false" :data-qualification="model" @click="acceptMouse" />\n    ${extra}\n  </section>\n</template>`
+    : `<template lang="pug">\nsection\n  Control(${attrs.join(' ')})\n    template(${slot}) ${content}\n  AutomaticControl(label="Native root" ${automaticTitle} id="automatic" :disabled="false" :aria-hidden="false" data-kind="root")\n  GenericControl(:entry="2" ${genericTitle})\n  VTextField(v-model.number="numericDraft" ${inputAttrs.join(' ')})\n  VBtn(${buttonAttrs.join(' ')}) Native button\n  search(${searchAttrs.join(' ')})\n    input(aria-label="Search")\n  input(id="native" name="native" :disabled="false" :aria-hidden="false" :data-qualification="model" @click="acceptMouse")\n  ${extra}\n</template>`
   const source = `${script}\n${template}\n`
   return negative
     ? { source, diagnosticLine: source.split('\n').findIndex(line => line.includes(mutation)) + 1 }
@@ -172,17 +208,19 @@ const consumers = [
   // accidentally derives its extension inventory from tsconfig.client.json.
   { file: 'Extension.qualification', language: 'pug' as const }
 ]
-const allFiles = ['Control.vue', 'AutomaticControl.vue', ...consumers.map(item => item.file)]
+const allFiles = ['Control.vue', 'AutomaticControl.vue', 'GenericControl.vue', ...consumers.map(item => item.file)]
+const nativeComponentProps = path.join(root, 'client/native-component-props.d.ts')
 try {
   fs.writeFileSync(path.join(directory, 'Control.vue'), control)
   fs.writeFileSync(path.join(directory, 'AutomaticControl.vue'), automaticControl)
-  fs.writeFileSync(project, JSON.stringify({ extends: path.join(root, 'tsconfig.strict-qualification.json'), files: allFiles, include: [], references: [] }, null, 2))
+  fs.writeFileSync(path.join(directory, 'GenericControl.vue'), genericControl)
+  fs.writeFileSync(project, JSON.stringify({ extends: path.join(root, 'tsconfig.strict-qualification.json'), files: [...allFiles, nativeComponentProps], include: [], references: [] }, null, 2))
   const parsed = createParsedCommandLine(ts, ts.sys, project)
   assert.deepEqual(parsed.errors, [], 'Qualification project must parse')
   for (const option of ['strictVModel', 'checkUnknownProps', 'checkUnknownEvents', 'checkUnknownDirectives', 'checkUnknownComponents', 'fallthroughAttributes'] as const) {
     assert.equal(parsed.vueOptions[option], true, `${option} must remain enabled`)
   }
-  assert.deepEqual(parsed.vueOptions.htmlAttributes, ['aria-hidden', 'aria-label', 'aria-describedby'])
+  assert(parsed.vueOptions.htmlAttributes.every(attribute => !attribute.includes('*')), 'Native spelling exemptions must remain finite')
   assert.equal(parsed.vueOptions.skipTemplateCodegen, false)
   assert.deepEqual(parsed.vueOptions.dataAttributes, ['data-*'])
   assert(parsed.vueOptions.plugins.length > 0, 'Pug plugin must resolve from the selected project')
@@ -198,6 +236,7 @@ try {
     assert.equal(result.signal, null, 'Checker must exit normally')
     const output = `${result.stdout}\n${result.stderr}`
     for (const file of allFiles) assert(output.split(/\r?\n/).includes(path.join(directory, file)), `${file} was not admitted by ${args.join(' ')}\n${output}`)
+    assert(output.split(/\r?\n/).includes(nativeComponentProps), 'The actual finite native attribute contract must be admitted')
     return { status: result.status, output }
   }
   const writeConsumers = (negative?: string) => new Map(consumers.map(item => {

@@ -17,7 +17,7 @@
         <div v-else-if="enginesLoaded" class="search-configuration">
           <section class="search-panel" aria-labelledby="search-engine-title">
             <header><div class="search-kicker">{{ $t('admin:search.retrievalFoundation') }}</div><h2 id="search-engine-title">{{ $t('admin:search.searchEngine2') }}</h2><p>{{ $t('admin:search.savedEngineServesReader') }}</p></header>
-            <v-radio-group v-model="selectedEngine" :label="$t('admin:search.chooseEngine')" :disabled="saving || rebuilding">
+            <v-radio-group :model-value="selectedEngine" @update:model-value="$event !== null && (selectedEngine = $event)" :label="$t('admin:search.chooseEngine')" :disabled="saving || rebuilding">
               <v-radio v-for="eng in engines" :key="eng.key" :value="eng.key" :disabled="saving || rebuilding || !eng.isAvailable" class="engine-choice">
                 <template #label><span><strong>{{ eng.title }}</strong><small>{{ eng.description }}{{ !eng.isAvailable ? ` ${$t('admin:search.unavailableDeployment')}` : '' }}</small><v-chip v-if="eng.isEnabled" size="x-small" variant="tonal" class="mt-1">{{ $t('admin:search.savedEngine') }}</v-chip></span></template>
               </v-radio>

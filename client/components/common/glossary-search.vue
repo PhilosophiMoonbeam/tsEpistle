@@ -68,10 +68,10 @@
               <v-text-field v-model="draft.category" label="Category" maxlength="255" @update:model-value="touch" />
               <v-textarea v-model="draft.aliasesText" label="Aliases (one per line, up to 50)" rows="3" @update:model-value="touch" />
               <v-textarea v-model="draft.definition" label="Definition (Markdown)" maxlength="10000" rows="8" @update:model-value="touch" />
-              <v-checkbox v-model="preview" label="Show Markdown preview" />
+              <v-checkbox :model-value="preview" label="Show Markdown preview" @update:model-value="setPreview" />
               <section v-if="preview" aria-label="Definition preview" class="contents mb-4" v-html="previewHtml" />
-              <v-checkbox v-model="draft.caseSensitive" label="Case-sensitive automatic linking" @update:model-value="touch" />
-              <v-checkbox v-model="draft.autoLink" label="Automatically link this term in reader content" @update:model-value="touch" />
+              <v-checkbox :model-value="draft.caseSensitive" label="Case-sensitive automatic linking" @update:model-value="setLinkingPreference('caseSensitive', $event)" />
+              <v-checkbox :model-value="draft.autoLink" label="Automatically link this term in reader content" @update:model-value="setLinkingPreference('autoLink', $event)" />
               <h3>Related terms</h3>
               <p v-if="!draft.relatedIds.length">No related terms selected.</p>
               <ul><li v-for="id in draft.relatedIds" :key="id">{{ relatedName(id) }} <v-btn size="small" variant="text" :aria-label="`Remove related term ${relatedName(id)}`" @click="draft.relatedIds = draft.relatedIds.filter(value => value !== id); touch()">Remove</v-btn></li></ul>
@@ -157,6 +157,14 @@ function message (failure: unknown): string {
   return failure instanceof Error ? failure.message : 'Glossary request failed.'
 }
 function touch (): void { dirty.value = true }
+function setPreview (value: boolean | null): void {
+  if (value !== null) preview.value = value
+}
+function setLinkingPreference (field: 'caseSensitive' | 'autoLink', value: boolean | null): void {
+  if (value === null) return
+  draft.value[field] = value
+  touch()
+}
 function canLeave (): boolean {
   if (saving.value) return false
   if (!dirty.value) return true

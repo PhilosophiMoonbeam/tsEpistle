@@ -1,11 +1,30 @@
 import fs from 'node:fs'
-import { parse } from '@vue/compiler-sfc'
+import { compileScript, parse } from '@vue/compiler-sfc'
 import * as ts from 'typescript'
 import { reactive, toRaw } from 'vue'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { UtilitiesWorkspace } from '../../../shared/utilities-workspace.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
+
+// Keep the actual locally registered state component in the stripped-import options seam.
+Bun.plugin({
+  name: 'utilities-workflow-state-sfc',
+  setup(builder) {
+    builder.onLoad({ filter: /\/common\/async-state\.vue$/ }, async ({ path: filename }) => {
+      const parsed = parse(await Bun.file(filename).text(), { filename })
+      if (parsed.errors.length) throw parsed.errors[0]
+      const script = compileScript(parsed.descriptor, {
+        id: 'utilities-workflow-state',
+        genDefaultAs: 'component',
+        inlineTemplate: true
+      })
+      return { loader: 'ts', contents: `${script.content}\nexport default component;` }
+    })
+  }
+})
+// Static SFC imports run before the test-only compiler plugin is registered.
+const { default: AsyncState } = await import('../common/async-state.vue')
 
 const compileComponentOptions = (path: string): string => {
   const parsed = parse(fs.readFileSync(path, 'utf8'), { filename: path })
@@ -98,6 +117,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
     location: { pathname: '/a/utilities', protocol: 'https:', assign: vi.fn() }
   }
   const bindings = {
+    AsyncState,
     Cookies: { set: vi.fn() },
     defineAsyncComponent: (value: unknown) => value,
     defineComponent: (value: unknown) => value,

@@ -365,7 +365,8 @@
     "markdown-it-multimd-table@4.2.3": "patches/markdown-it-multimd-table@4.2.3.patch",
     "better-sqlite3@13.0.3": "patches/better-sqlite3@13.0.3.patch",
     "@tresjs/core@5.10.0": "patches/@tresjs__core@5.10.0.patch",
-    "volar-service-pug@0.0.71": "patches/volar-service-pug@0.0.71.patch"
+    "volar-service-pug@0.0.71": "patches/volar-service-pug@0.0.71.patch",
+    "@vue/language-core@3.3.9": "patches/@vue__language-core@3.3.9.patch"
   },
   "trustedDependencies": [
     "@apollo/protobufjs",

@@ -148,7 +148,7 @@
                         <h4>{{ $t('admin:logging.deliveryPolicy') }}</h4>
                         <p>{{ $t('admin:logging.enableOnlyAfterRequired') }}</p>
                       </div>
-                      <v-switch v-model="selectedDraft.isEnabled" :label="$t('admin:logging.destinationEnabled')" color="primary" inset hide-details :disabled="locked" />
+                      <v-switch :model-value="selectedDraft.isEnabled" @update:model-value="$event !== null && (selectedDraft.isEnabled = $event)" :label="$t('admin:logging.destinationEnabled')" color="primary" inset hide-details :disabled="locked" />
                     </div>
                     <v-select
                       v-model="selectedDraft.level"

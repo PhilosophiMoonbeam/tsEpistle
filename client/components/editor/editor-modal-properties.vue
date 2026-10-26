@@ -105,7 +105,8 @@
               v-switch(
                 ref='privatePageSwitch'
                 :label='$t(`editor:props.privatePage`)'
-                v-model='privatePage'
+                :model-value='privatePage'
+                @update:model-value='privatePage = $event ?? privatePage'
                 color='primary'
                 :hint='$t(`editor:props.privatePageHint`)'
                 persistent-hint
@@ -113,7 +114,8 @@
               )
               v-switch(
                 :label='$t(`editor:props.publishToggle`)'
-                v-model='isPublished'
+                :model-value='isPublished'
+                @update:model-value='isPublished = $event ?? isPublished'
                 color='primary'
                 :hint='$t(`editor:props.publishToggleHint`)'
                 persistent-hint
@@ -122,7 +124,8 @@
             v-switch(
               ref='searchablePageSwitch'
               :label='$t(`editor:props.searchable`)'
-              v-model='isSearchable'
+              :model-value='isSearchable'
+              @update:model-value='isSearchable = $event ?? isSearchable'
               color='primary'
               :hint='$t(`editor:props.searchableHint`)'
               persistent-hint
@@ -132,7 +135,8 @@
               .text-label-small#editor-properties-page-features-title {{ $t(`editor:editorModalProperties.readerFeatures`) }}
               v-switch(
                 :label='$t(`editor:editorModalProperties.showLinks`)'
-                v-model='draft.pageFeatures.linksVisible'
+                :model-value='draft.pageFeatures.linksVisible'
+                @update:model-value='draft.pageFeatures.linksVisible = $event ?? draft.pageFeatures.linksVisible'
                 color='primary'
                 :hint='$t(`editor:editorModalProperties.showPagesLinkSection`)'
                 persistent-hint
@@ -140,7 +144,8 @@
               )
               v-switch(
                 :label='$t(`editor:editorModalProperties.allowRatings`)'
-                v-model='draft.pageFeatures.ratingsAllowed'
+                :model-value='draft.pageFeatures.ratingsAllowed'
+                @update:model-value='draft.pageFeatures.ratingsAllowed = $event ?? draft.pageFeatures.ratingsAllowed'
                 color='primary'
                 :hint='$t(`editor:editorModalProperties.allowReadersRatePage`)'
                 persistent-hint
@@ -148,7 +153,8 @@
               )
               v-switch(
                 :label='$t(`editor:editorModalProperties.showLastEditor`)'
-                v-model='draft.pageFeatures.lastEditorVisible'
+                :model-value='draft.pageFeatures.lastEditorVisible'
+                @update:model-value='draft.pageFeatures.lastEditorVisible = $event ?? draft.pageFeatures.lastEditorVisible'
                 color='primary'
                 :hint='$t(`editor:editorModalProperties.showWhoLastEdited`)'
                 persistent-hint
@@ -189,7 +195,7 @@
               :label='$t(`editor:props.tags`)'
               variant="outlined"
               v-model='tags'
-              v-model:search='newTagSearch'
+              @update:search='newTagSearch = $event'
               v-model:menu='tagMenuOpen'
               :hint='$t(`editor:props.tagsHint`)'
               :items='tagItems'

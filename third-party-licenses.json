@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "def46ffc2d823bce163ee0c2b6ee6ebea20dd6286bf741dbb249d30e404cfe58",
+    "sha256": "bcea0b6384da32702b90102d42284ce35217beb308bf9aed23cbb84585e182ca",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",

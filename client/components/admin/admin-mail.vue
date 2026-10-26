@@ -59,7 +59,7 @@
                     <h3>{{ $t('admin:mail.senderIdentity') }}</h3>
                     <p>{{ $t('admin:mail.usedAccountNotificationMessages') }}</p>
                   </div>
-                  <v-switch v-model="policy.enabled" :label="$t('admin:mail.deliveryEnabled')" color="primary" hide-details inset :disabled="locked" />
+                  <v-switch :model-value="policy.enabled" @update:model-value="$event !== null && (policy.enabled = $event)" :label="$t('admin:mail.deliveryEnabled')" color="primary" hide-details inset :disabled="locked" />
                 </div>
                 <div class="mail-fields">
                   <v-text-field v-model="policy.senderName" :label="$t('admin:mail.senderName2')" variant="outlined" maxlength="255" :disabled="locked" />
@@ -160,7 +160,8 @@
                     />
                   </div>
                   <v-switch
-                    v-model="policy.verifySSL"
+                    :model-value="policy.verifySSL"
+                    @update:model-value="$event !== null && (policy.verifySSL = $event)"
                     :label="$t('admin:mail.verifyServersTlsCertificate')"
                     color="primary"
                     inset
@@ -211,7 +212,7 @@
                     <h3>{{ $t('admin:mail.signingIdentity') }}</h3>
                     <p>{{ $t('admin:mail.dkimAddsDomainSignature') }}</p>
                   </div>
-                  <v-switch v-model="policy.useDKIM" :label="$t('admin:mail.signingEnabled')" color="primary" hide-details inset :disabled="locked" />
+                  <v-switch :model-value="policy.useDKIM" @update:model-value="$event !== null && (policy.useDKIM = $event)" :label="$t('admin:mail.signingEnabled')" color="primary" hide-details inset :disabled="locked" />
                 </div>
                 <div class="mail-fields">
                   <v-text-field
@@ -536,12 +537,13 @@
           </v-alert>
           <v-checkbox
             v-if="lastUncertain"
-            v-model="acknowledgeUncertain"
+            :model-value="acknowledgeUncertain"
+            @update:model-value="acknowledgeUncertain = $event === true"
             :label="$t('admin:mail.iReviewedPreviousUncertain')"
             hide-details
             :disabled="busy"
           />
-          <v-checkbox v-model="confirmSend" :label="$t('admin:mail.sendOneTestEmail')" hide-details :disabled="busy" />
+          <v-checkbox :model-value="confirmSend" @update:model-value="confirmSend = $event === true" :label="$t('admin:mail.sendOneTestEmail')" hide-details :disabled="busy" />
           <v-alert v-if="testError" type="error" variant="tonal" class="mt-4">{{ testError }}</v-alert>
         </v-card-text>
         <v-card-actions>

@@ -18,6 +18,7 @@ setLocation('/en/source')
 
 // Vue's runtime-dom captures the document during module evaluation.
 const Vue = await import('vue')
+const { default: LocalizedRichText } = await import('./common/localized-rich-text')
 const compiled = compileTemplate({
   filename,
   id: 'source-presentation-test',
@@ -29,7 +30,7 @@ const compiled = compileTemplate({
 if (compiled.errors.length) throw new Error(`Cannot compile source.vue: ${compiled.errors}`)
 const render = new Function('Vue', compiled.code)(Vue) as RenderFunction
 const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const evaluate = new Function('defineComponent', 'getPageDownloadPath', 'wikiStore', 'decodeBase64Json', 'decodeBase64Text', script) as (
+const evaluate = new Function('defineComponent', 'getPageDownloadPath', 'wikiStore', 'decodeBase64Json', 'decodeBase64Text', 'LocalizedRichText', script) as (
   ...dependencies: unknown[]
 ) => ComponentOptions
 
@@ -77,7 +78,8 @@ describe('View Source presentation', () => {
       vi.fn(() => '/download'),
       wikiStore,
       decodeBase64Json,
-      decodeBase64Text
+      decodeBase64Text,
+      LocalizedRichText
     )
     app = Vue.createApp(
       {
@@ -105,8 +107,7 @@ describe('View Source presentation', () => {
       'v-container',
       'nav-footer',
       'notify',
-      'search-results',
-      'i18next'
+      'search-results'
     ]) {
       app.component(name, passthrough())
     }

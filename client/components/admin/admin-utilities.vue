@@ -111,6 +111,7 @@ v-container.admin-utilities(fluid)
 
 <script lang="ts">
 import { confirmDiscard } from '../common/confirm-dialog.ts'
+import AsyncState from '../common/async-state.vue'
 import Cookies from 'js-cookie'
 import { defineAsyncComponent, defineComponent, markRaw, toRaw } from 'vue'
 import type { LocationQueryRaw } from 'vue-router'
@@ -191,6 +192,7 @@ const persistedRequest = (value: unknown): PendingRequest | null => {
 
 export default defineComponent({
   components: {
+    AsyncState,
     UtilityAuth: defineAsyncComponent(() => import('./admin-utilities-auth.vue')),
     UtilityContent: defineAsyncComponent(() => import('./admin-utilities-content.vue')),
     UtilityExport: defineAsyncComponent(() => import('./admin-utilities-export.vue')),

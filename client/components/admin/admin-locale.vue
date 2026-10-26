@@ -145,7 +145,8 @@
                 <p>{{ $t('admin:locale.offerSelectedReadingLanguages') }}</p>
               </div>
               <v-switch
-                v-model="draft.namespacing"
+                :model-value="draft.namespacing"
+                @update:model-value="$event !== null && (draft.namespacing = $event)"
                 :disabled="locked"
                 :aria-label="$t('admin:locale.multilingualWorkspace')"
                 hide-details
@@ -172,7 +173,8 @@
                 <p v-if="saved.catalog.offline" class="locale-muted">{{ $t('admin:locale.updatesPausedWhileOffline') }}</p>
               </div>
               <v-switch
-                v-model="draft.autoUpdate"
+                :model-value="draft.autoUpdate"
+                @update:model-value="$event !== null && (draft.autoUpdate = $event)"
                 :disabled="locked"
                 :aria-label="$t('admin:locale.automaticInterfaceUpdates')"
                 hide-details

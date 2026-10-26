@@ -31,7 +31,7 @@
             <v-form id="personal-mcp-form" @submit.prevent="save">
               <v-text-field v-model="displayName" label="Server name" maxlength="100" :disabled="busy || networkBlocked" autocomplete="off" />
               <v-text-field v-model="endpointUrl" label="Public HTTPS MCP endpoint" maxlength="2048" hint="Public HTTPS only. Local/private networks, URL credentials and fragments are not allowed. The server validates the destination." persistent-hint :disabled="busy || networkBlocked" autocomplete="off" />
-              <v-switch v-model="enabled" label="Enabled for my agent" color="primary" inset :disabled="busy || networkBlocked" />
+              <v-switch :model-value="enabled" label="Enabled for my agent" color="primary" inset :disabled="busy || networkBlocked" @update:model-value="value => { if (typeof value === 'boolean') enabled = value }" />
               <v-select v-model="authMode" :items="authModes" item-title="title" item-value="value" label="Authentication" :disabled="busy || networkBlocked" />
               <v-alert v-if="editingId && !selected" type="warning" variant="tonal" class="mb-4">This server is no longer available. Select another server or create a new configuration.</v-alert>
               <v-text-field v-if="authMode === 'bearer'" v-model="secretValue" type="password" label="Bearer token (write only)" :hint="selected?.secretConfigured ? 'A token is configured. Leave blank to keep it, or enter a replacement.' : 'Enter a token for this server. It will never be returned.'" persistent-hint maxlength="8192" autocomplete="new-password" :disabled="busy || networkBlocked" />

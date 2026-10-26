@@ -332,24 +332,24 @@
                     v-card-title.text-body-large {{$t('common:page.watchSettings')}}
                     v-card-text
                       v-switch(
-                        v-model='pageWatchEmailEnabled'
+                        :model-value='pageWatchEmailEnabled'
                         :label='$t(`common:page.emailNotifications`)'
                         color='primary'
                         density='compact'
                         hide-details
                         :disabled='pageWatchLoading || !pageWatchActionReady'
                         :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
-                        @update:model-value='savePageWatchSettings'
+                        @update:model-value='setPageWatchDelivery(`pageWatchEmailEnabled`, $event)'
                       )
                       v-switch(
-                        v-model='pageWatchInAppEnabled'
+                        :model-value='pageWatchInAppEnabled'
                         :label='$t(`common:page.inAppNotifications`)'
                         color='primary'
                         density='compact'
                         hide-details
                         :disabled='pageWatchLoading || !pageWatchActionReady'
                         :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
-                        @update:model-value='savePageWatchSettings'
+                        @update:model-value='setPageWatchDelivery(`pageWatchInAppEnabled`, $event)'
                       )
                       p.page-tool-helper#page-watch-settings-reason(v-if='pageWatchBlockedReason', role='status') {{ pageWatchBlockedReason }}
                     v-card-actions
@@ -419,7 +419,7 @@
                       :loading='offlineActionLoading'
                       :aria-disabled='offlineControl.blocked ? `true` : undefined'
                       :aria-label='offlineControl.label'
-                      :aria-pressed='offlineControl.pressed === undefined ? undefined : String(offlineControl.pressed)'
+                      :aria-pressed='offlineControl.pressed'
                       :aria-describedby='[props["aria-describedby"], offlineStatusId].filter(Boolean).join(" ")'
                       :data-offline-state='offlineControl.state'
                       @click='toggleOfflinePage'
@@ -4046,6 +4046,11 @@ export default defineComponent({
         if (pageId === this.pageId && generation === this.pageActionGeneration && requestId === this.pageWatchRequestId)
           this.pageWatchLoading = false
       }
+    },
+    async setPageWatchDelivery (field: 'pageWatchEmailEnabled' | 'pageWatchInAppEnabled', value: boolean | null): Promise<void> {
+      if (value === null) return
+      this[field] = value
+      await this.savePageWatchSettings()
     },
     async savePageWatchSettings (): Promise<void> {
       if (!this.pageWatched || this.pageWatchLoading || !this.pageWatchActionReady) return

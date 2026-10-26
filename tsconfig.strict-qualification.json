@@ -5,10 +5,6 @@
   "include": [],
   "exclude": [],
   "vueCompilerOptions": {
-    "extensions": [".vue", ".qualification"],
-    "strictTemplates": true,
-    "fallthroughAttributes": true,
-    "htmlAttributes": ["aria-hidden", "aria-label", "aria-describedby"],
-    "dataAttributes": ["data-*"]
+    "extensions": [".vue", ".qualification"]
   }
 }

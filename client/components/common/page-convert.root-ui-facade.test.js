@@ -3,6 +3,10 @@ import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { convertPage } from '../../helpers/pages-api.ts'
+import '../../test/browser-dom.mts'
+
+// LocalizedRichText imports runtime-dom after the shared browser document is installed.
+const { default: LocalizedRichText } = await import('./localized-rich-text')
 
 const componentPath = join(process.cwd(), 'client/components/common/page-convert.vue')
 const source = readFileSync(componentPath, 'utf8')
@@ -17,11 +21,12 @@ const wikiStore = {
   stopLoading: vi.fn(),
   showError: vi.fn()
 }
-const component = new Function('defineComponent', 'markRaw', 'wikiStore', 'convertPage', executable)(
+const component = new Function('defineComponent', 'markRaw', 'wikiStore', 'convertPage', 'LocalizedRichText', executable)(
   options => options,
   value => value,
   wikiStore,
-  convertPage
+  convertPage,
+  LocalizedRichText
 )
 
 const makeContext = () => {

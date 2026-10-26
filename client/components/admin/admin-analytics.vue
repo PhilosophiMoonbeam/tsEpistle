@@ -210,7 +210,7 @@
                   {{ $t('admin:analytics.storeDailyCountPer') }}
                 </p>
               </div>
-              <v-switch v-model="policy.localEnabled" :label="$t('admin:analytics.recordLocalReaderCounts')" color="primary" hide-details :disabled="locked" />
+              <v-switch :model-value="policy.localEnabled" @update:model-value="$event !== null && (policy.localEnabled = $event)" :label="$t('admin:analytics.recordLocalReaderCounts')" color="primary" hide-details :disabled="locked" />
             </div>
             <div class="analytics-setting">
               <div>
@@ -219,7 +219,7 @@
                   {{ $t('admin:analytics.allowEnabledProvidersEmbed') }}
                 </p>
               </div>
-              <v-switch v-model="policy.externalEnabled" :label="$t('admin:analytics.allowExternalIntegrations')" color="primary" hide-details :disabled="locked" />
+              <v-switch :model-value="policy.externalEnabled" @update:model-value="$event !== null && (policy.externalEnabled = $event)" :label="$t('admin:analytics.allowExternalIntegrations')" color="primary" hide-details :disabled="locked" />
             </div>
             <v-alert v-if="saved.offline" type="info" variant="tonal" class="mb-5">
               {{ $t('admin:analytics.offlineModeSuspendsExternal') }}
@@ -246,7 +246,8 @@
                 <p>{{ $t('admin:analytics.excludeReaderRequestsMade') }}</p>
               </div>
               <v-switch
-                v-model="policy.excludeAdministrators"
+                :model-value="policy.excludeAdministrators"
+                @update:model-value="$event !== null && (policy.excludeAdministrators = $event)"
                 :label="$t('admin:analytics.excludeSystemAdministrators')"
                 color="primary"
                 hide-details
@@ -258,7 +259,7 @@
                 <h3>{{ $t('admin:analytics.respectRequestPrivacySignals') }}</h3>
                 <p>{{ $t('admin:analytics.skipBothLocalExternal') }}</p>
               </div>
-              <v-switch v-model="policy.respectPrivacySignals" :label="$t('admin:analytics.honorDntGpcHeaders')" color="primary" hide-details :disabled="locked" />
+              <v-switch :model-value="policy.respectPrivacySignals" @update:model-value="$event !== null && (policy.respectPrivacySignals = $event)" :label="$t('admin:analytics.honorDntGpcHeaders')" color="primary" hide-details :disabled="locked" />
             </div>
             <div class="analytics-setting analytics-setting-wide">
               <div>
@@ -316,7 +317,7 @@
                 variant="outlined"
                 hide-details
               />
-              <v-checkbox v-model="simulation.privacySignal" :label="$t('admin:analytics.requestSendsDntGpc')" hide-details />
+              <v-checkbox :model-value="simulation.privacySignal" @update:model-value="$event !== null && (simulation.privacySignal = $event)" :label="$t('admin:analytics.requestSendsDntGpc')" hide-details />
               <div role="status" class="analytics-simulation-result">
                 <strong>
                   {{ $t(simulationResult.local ? 'admin:analytics.simulationLocalEligible' : 'admin:analytics.simulationLocalExcluded') }}
@@ -367,7 +368,8 @@
                 <h3>{{ provider.title }}</h3>
                 <p>{{ provider.description }}</p>
                 <v-switch
-                  v-model="providerDraft.isEnabled"
+                  :model-value="providerDraft.isEnabled"
+                  @update:model-value="$event !== null && (providerDraft.isEnabled = $event)"
                   :label="$t('admin:analytics.enable', { title: provider.title, interpolation: { escapeValue: false } })"
                   color="primary"
                   hide-details

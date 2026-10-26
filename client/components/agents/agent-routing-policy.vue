@@ -9,7 +9,7 @@
       <h3>{{ t('routingPolicyCurrentRevision', { revision: policy.revision }) }}</h3>
       <p role="status">{{ policyDirty ? t('unsavedRevision', { revision: editRevision }) : t('noUnsavedPolicyChanges') }}</p>
       <v-alert v-if="policyConflict" type="warning" variant="tonal">{{ t('thePolicyChangedElsewhereYourDraftIs') }}</v-alert>
-      <v-checkbox v-model="draft.enabled" :label="t('enableAutomaticRouting')" :disabled="busy || loading || denied" />
+      <v-checkbox :model-value="draft.enabled" :label="t('enableAutomaticRouting')" :disabled="busy || loading || denied" @update:model-value="value => { if (typeof value === 'boolean') draft.enabled = value }" />
       <v-select v-model="draft.decisionProviderId" :items="providerOptions" item-title="title" item-value="value" item-props="props" clearable :label="t('agentDecisionProviderBlankUsesDecisionDefault')" :disabled="busy || loading || denied" />
       <p v-if="selectedDecision">{{ t('classifierRevisionCredentialChecked', { displayName: selectedDecision.displayName, dialect: selectedDecision.config.kind === 'typesafe' ? t('nativeTypeSafeJev') : t('customDialect', { dialect: selectedDecision.config.dialect, interpolation: { escapeValue: false } }), model: selectedDecision.config.model, revision: selectedDecision.revision, disabled: selectedDecision.enabled ? t('enabled') : t('disabled'), missing: selectedDecision.secretConfigured ? t('configured') : t('missing'), value: selectedDecision.checkedAt || t('never'), default: selectedDecision.isDefault ? t('decisionDefaultSuffix') : '', interpolation: { escapeValue: false } }) }}</p>
       <v-alert v-if="decisionProblem" type="warning" variant="tonal">{{ decisionProblem }} <v-btn variant="text" @click="emit('navigate', 'decision')">{{ t('configureDecisionProviders') }}</v-btn></v-alert>
@@ -40,7 +40,7 @@ import { useTranslate } from '../../helpers/use-translate.ts'
 import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AgentApiError } from '../../helpers/agents-api.ts'
-import { DEFAULT_ROUTING_POLICY, ROUTING_TASK_CLASSES, ROUTING_COMPLEXITIES, RoutingPolicyInputSchema, RoutingModelPolicyInputSchema, type RoutingTaskClass, type RoutingComplexity } from '../../../shared/agents/routing.ts'
+import { DEFAULT_ROUTING_POLICY, ROUTING_TASK_CLASSES, ROUTING_COMPLEXITIES, RoutingPolicyInputSchema, RoutingModelPolicyInputSchema, type RoutingTaskClass, type RoutingComplexity, type RoutingPolicyInput } from '../../../shared/agents/routing.ts'
 import { getAgentRouting, updateAgentRouting, setAgentRoutingModel, deleteAgentRoutingModel, listDecisionProviders, type RoutingPolicyView, type RoutingModelPolicyView, type DecisionProviderView } from '../../helpers/agent-control-api.ts'
 interface ModelProfile {
   id: string; displayName: string; model: string; profileVersionId?: string
@@ -53,7 +53,8 @@ const t = useTranslate('admin:routingPolicy')
 const fetcher: BrowserFetch = (...args) => window.fetch(...args)
 const loading = ref(false), busy = ref(false), denied = ref(false), error = ref(''), formError = ref(''), policy = ref<RoutingPolicyView | null>(null), declarations = ref<RoutingModelPolicyView[]>([]), providers = ref<DecisionProviderView[]>([]), selected = ref<ModelProfile | null>(null), remove = ref<RoutingModelPolicyView | null>(null), dialog = ref(false), discard = ref(false), baseline = ref(''), latency = ref(''), expectedRevision = ref(0)
 const policyBaseline = ref(''), editRevision = ref(0), policyDiscard = ref(false)
-const draft = reactive({ ...DEFAULT_ROUTING_POLICY })
+type PolicyNumberField = 'minimumConfidence' | 'minimumSavingsRatio' | 'minimumSavingsMicros' | 'switchCostMicros' | 'classifierMaxStateBytes'
+const draft = reactive<Omit<RoutingPolicyInput, PolicyNumberField> & Record<PolicyNumberField, number | string>>({ ...DEFAULT_ROUTING_POLICY })
 const policyDirty = computed(() => Boolean(policyBaseline.value) && JSON.stringify(draft) !== policyBaseline.value)
 const policyConflict = computed(() => policyDirty.value && policy.value?.revision !== editRevision.value)
 const providerOptions = computed(() => providers.value.map(p => ({
@@ -75,7 +76,7 @@ const decisionProblem = computed(() => {
   if (!p.secretConfigured || !p.enabled || !p.checkedAt) return t('theSelectedAgentDecisionProviderNeedsAn')
   return ''
 })
-const policyFields: readonly { key: 'minimumConfidence' | 'minimumSavingsRatio' | 'minimumSavingsMicros' | 'switchCostMicros' | 'classifierMaxStateBytes'; label: string; step?: string }[] = [
+const policyFields: readonly { key: PolicyNumberField; label: string; step?: string }[] = [
   { key: 'minimumConfidence', label: t('minimumClassifierConfidence081'), step: '0.01' },
   { key: 'minimumSavingsRatio', label: t('minimumSavingsRatio0051'), step: '0.01' },
   { key: 'minimumSavingsMicros', label: t('minimumSavingsUSDEstimate') },

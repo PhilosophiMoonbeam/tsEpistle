@@ -103,6 +103,28 @@ describe('Security workspace review and recovery', () => {
     await state.confirm()
     expect(transport.saveSecurityWorkspace.mock.calls[0]?.[0].uploadMaxFileSize).toBe(0)
   })
+  it('converts password minimum edits to numbers without accepting empty or fractional values', async () => {
+    const { state, transport } = arrange()
+    await state.load()
+    const savedMinimum = state.saved.policy.authPasswordMinLength
+    for (const invalid of ['', null, '11', '12.5', '65']) {
+      state.updatePasswordMinimum(invalid)
+      expect(state.saved.policy.authPasswordMinLength).toBe(savedMinimum)
+      expect(state.dirty).toBe(true)
+      state.review()
+      expect(state.reviewing).toBe(false)
+      expect(transport.saveSecurityWorkspace).not.toHaveBeenCalled()
+      state.reset()
+      expect(state.dirty).toBe(false)
+    }
+    state.updatePasswordMinimum('16')
+    state.review()
+    expect(state.reviewing).toBe(true)
+    expect(state.reviewed.authPasswordMinLength).toBe(16)
+    state.reason = 'Require longer new passwords'
+    await state.confirm()
+    expect(transport.saveSecurityWorkspace.mock.calls[0]?.[0].authPasswordMinLength).toBe(16)
+  })
   it('sends a fixed review and locks navigation throughout persistence', async () => {
     let release: (value: unknown) => void = () => {}
     const { state, transport, component } = arrange({

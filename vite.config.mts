@@ -283,6 +283,10 @@ export default defineConfig(({ command }) => ({
     vue({
       template: {
         ...templateCompilerOptions.template,
+        compilerOptions: {
+          ...templateCompilerOptions.template.compilerOptions,
+          isCustomElement: tag => tag === 'search' || templateCompilerOptions.template.compilerOptions.isCustomElement(tag)
+        },
         transformAssetUrls: false
       }
     }),

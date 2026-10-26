@@ -142,7 +142,7 @@
                   </v-chip>
                 </div>
                 <p class="mt-3">{{ $t('admin:devFlags.writesLdapAdAuthentication') }}</p>
-                <v-switch v-model="draft.ldapdebug" color="warning" :label="$t('admin:devFlags.enableLdapDebug')" hide-details :disabled="locked" />
+                <v-switch :model-value="draft.ldapdebug" @update:model-value="$event !== null && (draft.ldapdebug = $event)" color="warning" :label="$t('admin:devFlags.enableLdapDebug')" hide-details :disabled="locked" />
                 <dl class="flags-facts">
                   <div>
                     <dt>{{ $t('admin:devFlags.prerequisite') }}</dt>
@@ -180,7 +180,7 @@
                 <p class="mt-3">
                   {{ $t('admin:devFlags.setsProcesssKnexDebug') }}
                 </p>
-                <v-switch v-model="draft.sqllog" color="warning" :label="$t('admin:devFlags.enableSqlQueryLogging')" hide-details :disabled="locked" />
+                <v-switch :model-value="draft.sqllog" @update:model-value="$event !== null && (draft.sqllog = $event)" color="warning" :label="$t('admin:devFlags.enableSqlQueryLogging')" hide-details :disabled="locked" />
                 <dl class="flags-facts">
                   <div>
                     <dt>{{ $t('admin:devFlags.prerequisite') }}</dt>
@@ -283,7 +283,8 @@
           </dl>
           <v-checkbox
             v-if="enablesDiagnosticOutput"
-            v-model="riskAcknowledged"
+            :model-value="riskAcknowledged"
+            @update:model-value="riskAcknowledged = $event === true"
             :label="$t('admin:devFlags.iUnderstandTheseDiagnostics')"
             hide-details
             :disabled="busy"
@@ -304,7 +305,8 @@
             </div>
           </dl>
           <v-checkbox
-            v-model="riskAcknowledged"
+            :model-value="riskAcknowledged"
+            @update:model-value="riskAcknowledged = $event === true"
             :label="$t('admin:devFlags.iReviewedPolicyWant')"
             hide-details
             :disabled="busy"

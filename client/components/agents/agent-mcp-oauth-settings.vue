@@ -15,7 +15,7 @@
         <v-text-field v-model="draft.clientId" :label="t('clientId')" autocomplete="off" :disabled="disabled" />
         <v-select v-model="draft.tokenEndpointAuthMethod" :items="authMethods" :label="t('tokenEndpointAuthMethod')" :disabled="disabled" @update:model-value="changeAuthMethod" />
         <v-text-field v-if="draft.tokenEndpointAuthMethod !== 'none'" v-model="draft.clientSecret" type="password" autocomplete="new-password" :label="t('clientSecret')" :hint="t(clientSecretConfigured ? 'retainClientSecret' : 'newClientSecret')" persistent-hint :disabled="disabled || draft.clearClientSecret" />
-        <v-checkbox v-if="clientSecretConfigured || draft.tokenEndpointAuthMethod !== 'none'" v-model="draft.clearClientSecret" :label="t('clearClientSecret')" :disabled="disabled" @update:model-value="value => { if (value) draft.clientSecret = '' }" />
+        <v-checkbox v-if="clientSecretConfigured || draft.tokenEndpointAuthMethod !== 'none'" :model-value="draft.clearClientSecret" :label="t('clearClientSecret')" :disabled="disabled" @update:model-value="value => { if (typeof value === 'boolean') { draft.clearClientSecret = value; if (value) draft.clientSecret = '' } }" />
       </template>
     </template>
     <v-textarea v-model="draft.scopes" :label="t('requestedScopes')" :hint="t('scopesHelp')" persistent-hint rows="3" auto-grow :disabled="disabled || draft.preset === 'google-workspace'" />

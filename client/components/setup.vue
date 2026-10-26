@@ -131,7 +131,8 @@
           v-switch(
             inset
             color='primary'
-            v-model='conf.telemetry'
+            :model-value='conf.telemetry'
+            @update:model-value='setTelemetry'
             :label='$t(`common:setup.allowAnonymousTelemetry`, { defaultValue: "Allow anonymous telemetry" })'
             :disabled='loading'
             aria-describedby='setup-telemetry-details'
@@ -323,6 +324,9 @@ export default {
     }
   },
   methods: {
+    setTelemetry (value: boolean | null): void {
+      if (value !== null) this.conf.telemetry = value
+    },
     async install () {
       if (this.loading || this.success) return
       this.fieldErrors = {

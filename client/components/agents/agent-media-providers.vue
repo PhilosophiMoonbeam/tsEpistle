@@ -52,7 +52,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
-import { AgentMediaProviderConfigSchema, AgentMediaProviderWriteSchema, type AgentMediaApi, type AgentMediaKind, type AgentMediaProviderView, type AgentMediaProviderWrite } from '../../../shared/agents/media-providers.ts'
+import { AgentMediaProviderConfigSchema, AgentMediaProviderWriteSchema, type AgentMediaApi, type AgentMediaKind, type AgentMediaProviderView } from '../../../shared/agents/media-providers.ts'
 import { listMediaProviders, createMediaProvider, updateMediaProvider, enableMediaProvider, defaultMediaProvider, deleteMediaProvider } from '../../helpers/agent-control-api.ts'
 import { AgentApiError } from '../../helpers/agents-api.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -70,14 +70,15 @@ let editorFocusPending = false, editorHasLeft = false
 let controller: AbortController | undefined
 let disposed = false
 const defaults = () => ({ displayName: '', kind: 'image' as AgentMediaKind, api: 'gemini-generate-content' as AgentMediaApi, model: '', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', timeoutMs: 120000, maxInputTokens: 32000, maxOutputTokens: 8192, pricingKind: 'tokens' as 'tokens' | 'fixed', pricingRevision: 'media-v1', inputRate: 0, outputRate: 0, textRate: 0, costMicros: 0, secretMode: 'retain', secretValue: '', secretReference: '', exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups', groupIds: [] as number[] })
-const draft = reactive(defaults())
+type MediaNumberField = 'timeoutMs' | 'maxInputTokens' | 'maxOutputTokens' | 'inputRate' | 'outputRate' | 'textRate' | 'costMicros'
+const draft = reactive<Omit<ReturnType<typeof defaults>, MediaNumberField> & Record<MediaNumberField, number | string>>(defaults())
 const kindOptions = computed(() => (['image', 'video', 'music', 'transcription'] as const).map(value => ({ value, title: t(`mediaKind${value}`) })))
 const supportedApis: Record<AgentMediaKind, readonly AgentMediaApi[]> = { image: ['gemini-generate-content', 'openai-images', 'stability-images'], video: ['gemini-interactions'], music: ['gemini-interactions'], transcription: ['gemini-generate-content'] }
 const apiOptions = computed(() => supportedApis[draft.kind].map(value => ({ value, title: t(`mediaApi${value}`) })))
 const pricingOptions = computed(() => (draft.kind === 'video' ? ['tokens'] : draft.kind === 'music' || draft.api === 'stability-images' ? ['fixed'] : ['tokens', 'fixed']).map(value => ({ value, title: t(`mediaPricing${value}`) })))
 const secretOptions = computed(() => ['retain', 'replace', 'environment', 'clear'].map(value => ({ value, title: t(`mediaSecret${value}`) })))
 const exposureOptions = computed(() => [{ value: 'all_agent_users', title: t('everyone') }, { value: 'groups', title: t('selectedWikiGroups') }])
-const payload = (): AgentMediaProviderWrite => ({ displayName: draft.displayName, config: { kind: draft.kind, api: draft.api, model: draft.model, baseUrl: draft.baseUrl, timeoutMs: draft.timeoutMs, maxInputTokens: draft.maxInputTokens, maxOutputTokens: draft.maxOutputTokens, pricing: draft.pricingKind === 'fixed' ? { kind: 'fixed', pricingRevision: draft.pricingRevision, costMicros: draft.costMicros } : { kind: 'tokens', pricingRevision: `${draft.pricingRevision}|${draft.inputRate}|${draft.outputRate}`, ...(draft.kind === 'video' ? { textOutputMicrosPerMillionTokens: draft.textRate } : {}) } }, exposureMode: draft.exposureMode, groupIds: draft.exposureMode === 'groups' ? draft.groupIds : [], ...(draft.secretMode === 'replace' ? { secretValue: draft.secretValue } : draft.secretMode === 'environment' ? { secretReference: draft.secretReference } : draft.secretMode === 'clear' ? { secretReference: null, secretValue: null } : {}) })
+const payload = () => ({ displayName: draft.displayName, config: { kind: draft.kind, api: draft.api, model: draft.model, baseUrl: draft.baseUrl, timeoutMs: draft.timeoutMs, maxInputTokens: draft.maxInputTokens, maxOutputTokens: draft.maxOutputTokens, pricing: draft.pricingKind === 'fixed' ? { kind: 'fixed', pricingRevision: draft.pricingRevision, costMicros: draft.costMicros } : { kind: 'tokens', pricingRevision: `${draft.pricingRevision}|${draft.inputRate}|${draft.outputRate}`, ...(draft.kind === 'video' ? { textOutputMicrosPerMillionTokens: draft.textRate } : {}) } }, exposureMode: draft.exposureMode, groupIds: draft.exposureMode === 'groups' ? draft.groupIds : [], ...(draft.secretMode === 'replace' ? { secretValue: draft.secretValue } : draft.secretMode === 'environment' ? { secretReference: draft.secretReference } : draft.secretMode === 'clear' ? { secretReference: null, secretValue: null } : {}) })
 const parsed = computed(() => AgentMediaProviderWriteSchema.safeParse(payload()))
 const credentialOriginChanged = computed(() => {
   const previous = editing.value

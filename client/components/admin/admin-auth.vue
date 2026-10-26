@@ -346,7 +346,8 @@
                   :hint="$t('admin:auth.helpAdministratorsUnderstandWho')"
                   persistent-hint
                 /><v-switch
-                  v-model="selected.isEnabled"
+                  :model-value="selected.isEnabled"
+                  @update:model-value="$event !== null && (selected.isEnabled = $event)"
                   :label="$t('admin:auth.enableSignMethod')"
                   color="primary"
                   inset
@@ -413,7 +414,8 @@
                 </div>
               </div>
               <v-switch
-                v-model="selected.selfRegistration"
+                :model-value="selected.selfRegistration"
+                @update:model-value="$event !== null && (selected.selfRegistration = $event)"
                 :label="$t('admin:auth.allowNewAccountsThrough')"
                 color="primary"
                 inset

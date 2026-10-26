@@ -46,7 +46,7 @@
               <p>{{ $t('admin:webhooks.nameSystemReceivingThese') }}</p>
               <v-text-field ref="webhookNameInput" v-model="draft.name" :label="$t('admin:webhooks.endpointName')" maxlength="128" variant="outlined" :rules="[requiredRule]" :disabled="webhookBusy || Boolean(revealedSecret)" />
               <v-text-field ref="webhookUrlInput" v-model="draft.url" :label="$t('admin:webhooks.httpsEndpointUrl')" maxlength="2048" :placeholder="$t('admin:webhooks.httpsHooksExampleCom')" type="url" variant="outlined" :rules="[httpsRule]" :disabled="webhookBusy || Boolean(revealedSecret)" />
-              <v-switch v-model="draft.isEnabled" color="primary" :label="$t('admin:webhooks.enableEventDelivery')" hide-details :disabled="webhookBusy || Boolean(revealedSecret)" />
+              <v-switch :model-value="draft.isEnabled" @update:model-value="$event !== null && (draft.isEnabled = $event)" color="primary" :label="$t('admin:webhooks.enableEventDelivery')" hide-details :disabled="webhookBusy || Boolean(revealedSecret)" />
               <p v-if="!draft.id" class="field-note">{{ $t('admin:webhooks.newEndpointsStartDisabled') }}</p>
               <p class="field-note">{{ $t('admin:webhooks.disablingStopsNewDeliveries') }}</p>
             </div>

@@ -56,7 +56,7 @@
             <agent-mcp-oauth-settings v-if="draft.authMode === 'oauth'" v-model="draft.oauth" v-model:endpoint-url="draft.endpointUrl" :client-secret-configured="editing?.oauth?.clientSecretConfigured" :disabled="busy || denied" />
             <v-alert v-if="draft.authMode === 'oauth' && fieldError('oauth').length" type="error" variant="tonal">{{ t('invalidOAuth') }}</v-alert>
             <v-text-field v-if="draft.authMode === 'bearer'" v-model="draft.secret" type="password" autocomplete="new-password" :label="t('newCredential')" :disabled="busy || denied || draft.clearSecret" :error-messages="fieldError('secretValue')" />
-            <v-checkbox v-if="draft.authMode === 'bearer'" v-model="draft.clearSecret" :label="t('clearCredential')" :disabled="busy || denied" />
+            <v-checkbox v-if="draft.authMode === 'bearer'" :model-value="draft.clearSecret" :label="t('clearCredential')" :disabled="busy || denied" @update:model-value="value => { if (typeof value === 'boolean') draft.clearSecret = value }" />
             <template v-if="!editing">
               <v-select v-model="draft.groupIds" :items="groups" item-title="name" item-value="id" multiple chips :label="t('creationGrants')" :disabled="busy || denied || groupsLocked" />
               <v-alert v-if="groupsLoading" type="info" variant="tonal" role="status">{{ t('groupsLoading') }}</v-alert>

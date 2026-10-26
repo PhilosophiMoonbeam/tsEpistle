@@ -115,7 +115,8 @@
                 </p>
               </div>
               <v-text-field
-                v-model.number="draft.authPasswordMinLength"
+                :model-value="passwordMinimumEdit ?? draft.authPasswordMinLength"
+                @update:model-value="updatePasswordMinimum"
                 :label="$t('admin:security.fieldLabels.authPasswordMinLength')"
                 type="number"
                 min="12"
@@ -135,7 +136,8 @@
                 </p>
               </div>
               <v-switch
-                v-model="draft.authEnforce2FA"
+                :model-value="draft.authEnforce2FA"
+                @update:model-value="$event !== null && (draft.authEnforce2FA = $event)"
                 :label="$t('admin:security.fieldLabels.authEnforce2FA')"
                 color="primary"
                 inset
@@ -185,7 +187,8 @@
                 </p>
               </div>
               <v-checkbox
-                v-model="endSessions"
+                :model-value="endSessions"
+                @update:model-value="$event !== null && (endSessions = $event)"
                 :label="$t('admin:security.endAccountSessionsWhen')"
                 :disabled="locked"
                 color="primary"
@@ -212,7 +215,8 @@
                 </p>
               </div>
               <v-switch
-                v-model="draft.securityIframe"
+                :model-value="draft.securityIframe"
+                @update:model-value="$event !== null && (draft.securityIframe = $event)"
                 :label="$t('admin:security.fieldLabels.securityIframe')"
                 color="primary"
                 inset
@@ -220,7 +224,8 @@
                 :hint="$t('admin:security.sendXFrameOptions')"
                 persistent-hint
               /><v-switch
-                v-model="draft.securityReferrerPolicy"
+                :model-value="draft.securityReferrerPolicy"
+                @update:model-value="$event !== null && (draft.securityReferrerPolicy = $event)"
                 :label="$t('admin:security.keepReferrersSameOrigin')"
                 color="primary"
                 inset
@@ -228,7 +233,8 @@
                 :hint="$t('admin:security.sendReferrerPolicySame')"
                 persistent-hint
               /><v-switch
-                v-model="draft.securityOpenRedirect"
+                :model-value="draft.securityOpenRedirect"
+                @update:model-value="$event !== null && (draft.securityOpenRedirect = $event)"
                 :label="$t('admin:security.fieldLabels.securityOpenRedirect')"
                 color="primary"
                 inset
@@ -245,7 +251,8 @@
                 </p>
               </div>
               <v-switch
-                v-model="draft.securityTrustProxy"
+                :model-value="draft.securityTrustProxy"
+                @update:model-value="$event !== null && (draft.securityTrustProxy = $event)"
                 :label="$t('admin:security.trustOneReverseProxy')"
                 color="primary"
                 inset
@@ -253,7 +260,8 @@
                 :hint="$t('admin:security.useOnlyWhenRequests')"
                 persistent-hint
               /><v-switch
-                v-model="draft.securityHSTS"
+                :model-value="draft.securityHSTS"
+                @update:model-value="$event !== null && (draft.securityHSTS = $event)"
                 :label="$t('admin:security.rememberHttpsBrowsers')"
                 color="primary"
                 inset
@@ -267,7 +275,8 @@
                   :label="$t('admin:security.fieldLabels.securityHSTSDuration')"
                   :hint="$t('admin:security.startShortDurationBrowsers')"
                   :disabled="locked" /><v-checkbox
-                  v-model="draft.securityHSTSIncludeSubDomains"
+                  :model-value="draft.securityHSTSIncludeSubDomains"
+                  @update:model-value="$event !== null && (draft.securityHSTSIncludeSubDomains = $event)"
                   :label="$t('admin:security.applyHttpsMemoryEvery')"
                   :disabled="locked"
                   :hint="$t('admin:security.everyAffectedSubdomainMust')"
@@ -372,7 +381,8 @@
                 </p>
               </div>
               <v-switch
-                v-model="draft.uploadScanSVG"
+                :model-value="draft.uploadScanSVG"
+                @update:model-value="$event !== null && (draft.uploadScanSVG = $event)"
                 :label="$t('admin:security.fieldLabels.uploadScanSVG')"
                 color="primary"
                 inset
@@ -387,7 +397,8 @@
                 <p>{{ $t('admin:security.chooseHowBrowserOpens') }}</p>
               </div>
               <v-switch
-                v-model="draft.uploadForceDownload"
+                :model-value="draft.uploadForceDownload"
+                @update:model-value="$event !== null && (draft.uploadForceDownload = $event)"
                 :label="$t('admin:security.fieldLabels.uploadForceDownload')"
                 color="primary"
                 inset
@@ -413,7 +424,8 @@
                 </p>
               </div>
               <v-switch
-                v-model="draft.authAutoLogin"
+                :model-value="draft.authAutoLogin"
+                @update:model-value="$event !== null && (draft.authAutoLogin = $event)"
                 :label="$t('admin:security.routeDirectlyFirstEnabled')"
                 color="primary"
                 inset
@@ -421,7 +433,8 @@
                 :hint="$t('admin:security.redirectProvidersOpenAutomatically')"
                 persistent-hint
               /><v-switch
-                v-model="draft.authHideLocal"
+                :model-value="draft.authHideLocal"
+                @update:model-value="$event !== null && (draft.authHideLocal = $event)"
                 :label="$t('admin:security.hideLocalDefaultSign')"
                 color="primary"
                 inset
@@ -669,6 +682,7 @@ export default {
     return {
       saved: null as SecurityInspection | null,
       draft: null as SecurityPolicy | null,
+      passwordMinimumEdit: null as string | number | null,
       uploadSizeEmpty: false,
       reviewed: null as SecurityPolicy | null,
       changes: [] as Array<keyof SecurityPolicy>,
@@ -707,7 +721,9 @@ export default {
       return Boolean(
         this.saved &&
         this.draft &&
-        (this.uploadSizeEmpty || securityChangedFields(this.saved.policy, this.draft).length)
+        (this.uploadSizeEmpty ||
+          (this.passwordMinimumEdit !== null && this.passwordMinimumEdit !== this.saved.policy.authPasswordMinLength) ||
+          securityChangedFields(this.saved.policy, this.draft).length)
       )
     },
     locked(): boolean {
@@ -772,6 +788,7 @@ export default {
         if (this.disposed || seq !== this.sequence) return
         this.saved = result
         this.draft = copy(result.policy)
+        this.passwordMinimumEdit = null
         this.uploadSizeEmpty = false
         this.endSessions = false
         this.stale = false
@@ -797,10 +814,19 @@ export default {
     reset() {
       if (this.locked || !this.saved) return
       this.draft = copy(this.saved.policy)
+      this.passwordMinimumEdit = null
       this.uploadSizeEmpty = false
       this.endSessions = false
       this.backgroundPreview = ''
       this.loadedVersion++
+    },
+    updatePasswordMinimum(value: string | number | null) {
+      if (!this.draft || this.locked) return
+      const text = value ?? ''
+      const numeric = Number.parseFloat(String(text))
+      this.passwordMinimumEdit = Number.isNaN(numeric) ? text : numeric
+      if (typeof this.passwordMinimumEdit === 'number')
+        this.draft.authPasswordMinLength = this.passwordMinimumEdit
     },
     updateUploadCapacity(value: string | number | null) {
       if (!this.draft || this.locked) return
@@ -862,7 +888,11 @@ export default {
         (!this.dirty && !this.endSessions)
       )
         return
-      const validated = validateSecurityPolicy(this.draft)
+      const validated = validateSecurityPolicy(
+        this.passwordMinimumEdit === null
+          ? this.draft
+          : { ...this.draft, authPasswordMinLength: this.passwordMinimumEdit }
+      )
       if (!validated.ok) {
         this.notice = validated.issues.map((i) => i.message).join(' ')
         this.attention = true

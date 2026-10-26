@@ -155,7 +155,8 @@
             .profile-section__body
               .profile-toggle-row(@keydown.esc.capture='revertField(`reduceMotion`, $event)')
                 v-switch(
-                  v-model='user.reduceMotion'
+                  :model-value='user.reduceMotion'
+                  @update:model-value='setReadingPreference(`reduceMotion`, $event)'
                   :label='$t(`profile:reduceMotion`, { defaultValue: `Reduce motion` })'
                   :hint='$t(`profile:reduceMotionHint`, { defaultValue: `Reduce decorative motion; device accessibility settings are always respected.` })'
                   :readonly='saving'
@@ -166,7 +167,8 @@
               v-divider
               .profile-toggle-row(@keydown.esc.capture='revertField(`underlineLinks`, $event)')
                 v-switch(
-                  v-model='user.underlineLinks'
+                  :model-value='user.underlineLinks'
+                  @update:model-value='setReadingPreference(`underlineLinks`, $event)'
                   :label='$t(`profile:underlineLinks`, { defaultValue: `Underline article links` })'
                   :hint='$t(`profile:underlineLinksHint`, { defaultValue: `Keep article links underlined for easier recognition.` })'
                   :readonly='saving'
@@ -692,6 +694,9 @@ export default {
     if (this.dirty && this.savedDraft && this.user?.id === this.accountId) this.applySavedPresentation(this.savedDraft)
   },
   methods: {
+    setReadingPreference (field: 'reduceMotion' | 'underlineLinks', value: boolean | null): void {
+      if (value !== null && this.user) this.user[field] = value
+    },
     isProfileCurrent (profile: Profile, generation: number): boolean {
       return !this.disposed && generation === this.profileGeneration && profile === this.user && profile.id === this.accountId
     },

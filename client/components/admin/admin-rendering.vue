@@ -38,7 +38,7 @@
         <article v-if="current" class="rendering-module-detail">
           <header class="rendering-module-heading">
             <div><span class="rendering-eyebrow">{{ current.dependsOn ? $t('admin:rendering.extension', { current: familyTitle(current), interpolation: { escapeValue: false } }) : $t('admin:rendering.sourceParser') }}</span><h3><v-icon :icon="current.icon" size="28" />{{ title(current) }}</h3><p>{{ current.description }}</p></div>
-            <v-switch v-model="current.isEnabled" :label="$t('admin:rendering.enabled2', { current: title(current), interpolation: { escapeValue: false } })" color="primary" hide-details density="compact" :disabled="busy || reviewOpen" />
+            <v-switch :model-value="current.isEnabled" @update:model-value="$event !== null && (current.isEnabled = $event)" :label="$t('admin:rendering.enabled2', { current: title(current), interpolation: { escapeValue: false } })" color="primary" hide-details density="compact" :disabled="busy || reviewOpen" />
           </header>
           <div class="rendering-module-context">
             <div><span>{{ $t('admin:rendering.effectiveDraft') }}</span><strong>{{ state(current) }}</strong></div>
@@ -113,7 +113,7 @@
     <v-dialog v-model="reviewOpen" max-width="760" :persistent="saving" aria-labelledby="rendering-review-title">
       <v-card class="rendering-review"><div class="rendering-review-heading"><span class="rendering-eyebrow">{{ $t('admin:rendering.reviewConfiguration') }}</span><h3 id="rendering-review-title">{{ $t('admin:rendering.modulesWillChange', { changesCount: changes.length, interpolation: { escapeValue: false } }) }}</h3><p>{{ $t('admin:rendering.savedConfigurationAppliesFuture') }}</p></div><v-card-text>
         <div class="rendering-change-list"><article v-for="change in changes" :key="change.key"><h4>{{ change.title }}</h4><ul><li v-for="line in change.lines" :key="line">{{ line }}</li></ul></article></div>
-        <div v-if="issues.length" class="rendering-review-checks"><h4>{{ $t('admin:rendering.reviewResultingConfiguration') }}</h4><p v-for="issue in issues" :key="issue.key + issue.message">{{ issue.message }}</p><v-checkbox v-model="acknowledged" :label="$t('admin:rendering.iHaveReviewedThese')" hide-details :disabled="saving" /></div>
+        <div v-if="issues.length" class="rendering-review-checks"><h4>{{ $t('admin:rendering.reviewResultingConfiguration') }}</h4><p v-for="issue in issues" :key="issue.key + issue.message">{{ issue.message }}</p><v-checkbox :model-value="acknowledged" @update:model-value="acknowledged = $event === true" :label="$t('admin:rendering.iHaveReviewedThese')" hide-details :disabled="saving" /></div>
         <v-alert v-if="saveError" type="error" variant="tonal" class="mt-4">{{ saveError }}<div><v-btn variant="text" size="small" :disabled="saving" @click="reloadReview">{{ $t('admin:rendering.reloadSavedConfiguration') }}</v-btn></div></v-alert>
       </v-card-text><v-card-actions><v-btn variant="text" :disabled="saving" @click="reviewOpen = false">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn variant="flat" color="primary" :loading="saving" :disabled="saving || errors.length > 0 || (issues.length > 0 && !acknowledged)" @click="save">{{ $t('admin:rendering.saveConfiguration') }}</v-btn></v-card-actions></v-card>
     </v-dialog>

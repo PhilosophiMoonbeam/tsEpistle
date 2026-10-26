@@ -14,8 +14,9 @@
         v-icon.me-2(color='white') mdi-lightning-bolt
         span#page-convert-dialog-title {{$t('common:page.convert')}}
       v-card-text.pt-5
-        i18next#page-convert-dialog-description.text-body-medium(path='common:page.convertTitle', tag='div')
-          strong(place='title') {{pageTitle}}
+        localized-rich-text#page-convert-dialog-description.text-body-medium(path='common:page.convertTitle', tag='div')
+          template(#title)
+            strong {{pageTitle}}
         v-select.mt-5(
           ref='editorSelect'
           :items='editorOptions'
@@ -46,8 +47,10 @@
 import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { convertPage } from '../../helpers/pages-api'
+import LocalizedRichText from './localized-rich-text'
 
 export default defineComponent({
+  components: { LocalizedRichText },
   emits: ['update:modelValue'],
   props: {
     modelValue: {

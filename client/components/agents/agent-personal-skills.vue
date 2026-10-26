@@ -135,7 +135,7 @@
                 <div class="personal-editor-section__fields">
                   <v-text-field ref="nameInput" v-model.trim="name" :rules="nameRules" :label="$t('common:agentPersonalSkills.skillName')" :disabled="Boolean(editingId) || saving || loading" :hint="$t('common:agentPersonalSkills.lowercaseLettersNumbersSingle')" persistent-hint maxlength="64" autocomplete="off" />
                   <div class="personal-discovery">
-                    <v-switch v-model="isAgentDiscoverable" :label="$t('common:agentPersonalSkills.loadAutomaticallyWhenRelevant')" color="primary" inset hide-details :disabled="saving || loading" :aria-describedby="discoveryHelpId" />
+                    <v-switch :model-value="isAgentDiscoverable" :label="$t('common:agentPersonalSkills.loadAutomaticallyWhenRelevant')" color="primary" inset hide-details :disabled="saving || loading" :aria-describedby="discoveryHelpId" @update:model-value="value => { if (typeof value === 'boolean') isAgentDiscoverable = value }" />
                     <p :id="discoveryHelpId">{{ isAgentDiscoverable ? $t('common:agentPersonalSkills.agentMaySelectSkill') : $t('common:agentPersonalSkills.availableOnlyWhenYou') }}</p>
                   </div>
                 </div>

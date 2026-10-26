@@ -1,0 +1,111 @@
+diff --git a/lib/codegen/script/component.js b/lib/codegen/script/component.js
+index 962f8e0b21d540ae3e79c6520bc849c92b420c59..411dbe164f6dfcaa26511cf7d2d0baeed7d1a3d2 100644
+--- a/lib/codegen/script/component.js
++++ b/lib/codegen/script/component.js
+@@ -82,9 +82,12 @@ function* generatePropsOption(options, ctx, scriptSetup, scriptSetupRanges, hasE
+ }
+ function* generateTypePropsOption(options, ctx, hasEmitsOption) {
+     if (options.templateAndStyleTypes.has(names_1.names.InheritedAttrs)) {
+-        const attrsType = hasEmitsOption
++        let attrsType = hasEmitsOption
+             ? `Omit<${names_1.names.InheritedAttrs}, keyof ${names_1.names.EmitProps}>`
+             : names_1.names.InheritedAttrs;
++        if (ctx.generatedTypes.has(names_1.names.PublicProps)) {
++            attrsType = `Omit<${attrsType}, keyof ${names_1.names.PublicProps}>`;
++        }
+         yield `{} as ${attrsType}`;
+     }
+     if (ctx.generatedTypes.has(names_1.names.PublicProps)) {
+@@ -93,9 +96,12 @@ function* generateTypePropsOption(options, ctx, hasEmitsOption) {
+ }
+ function* generateRuntimePropsOption(options, ctx, scriptSetup, scriptSetupRanges, hasEmitsOption) {
+     if (options.templateAndStyleTypes.has(names_1.names.InheritedAttrs)) {
+-        const attrsType = hasEmitsOption
++        let attrsType = hasEmitsOption
+             ? `Omit<${names_1.names.InheritedAttrs}, keyof ${names_1.names.EmitProps}>`
+             : names_1.names.InheritedAttrs;
++        if (ctx.generatedTypes.has(names_1.names.PublicProps)) {
++            attrsType = `Omit<${attrsType}, keyof ${names_1.names.PublicProps}>`;
++        }
+         const propsType = `${ctx.localTypes.TypePropsToOption}<${names_1.names.PickNotAny}<${ctx.localTypes.OmitIndexSignature}<${attrsType}>, {}>>`;
+         yield `{} as ${propsType}`;
+     }
+diff --git a/lib/codegen/script/scriptSetup.js b/lib/codegen/script/scriptSetup.js
+index e2a4bd4a4ed08ef3fac56427fa073854a36d7e4e..738568da67c2b7975cab17638e6e8f98e71393f5 100644
+--- a/lib/codegen/script/scriptSetup.js
++++ b/lib/codegen/script/scriptSetup.js
+@@ -53,7 +53,9 @@ function* generateGeneric(options, ctx, scriptSetup, scriptSetupRanges, generic,
+         propTypes.push(names_1.names.EmitProps);
+     }
+     if (options.templateAndStyleTypes.has(names_1.names.InheritedAttrs)) {
+-        propTypes.push(names_1.names.InheritedAttrs);
++        propTypes.push(propTypes.length
++            ? `Omit<${names_1.names.InheritedAttrs}, keyof (${propTypes.join(' & ')})>`
++            : names_1.names.InheritedAttrs);
+     }
+     if (scriptSetupRanges.defineEmits) {
+         emitTypes.push(`typeof ${scriptSetupRanges.defineEmits.name ?? names_1.names.emit}`);
+diff --git a/lib/codegen/template/element.js b/lib/codegen/template/element.js
+index fa0c94f31f62952d95c3d2ac8c48ee152f9ba1b4..3198a64fc5365438b89dc7e524483c0d32b64b34 100644
+--- a/lib/codegen/template/element.js
++++ b/lib/codegen/template/element.js
+@@ -171,7 +171,11 @@ function* generateComponent(options, ctx, node) {
+     yield `// @ts-ignore${utils_1.newLine}`;
+     yield `const ${functionalVar} = ${options.vueCompilerOptions.checkUnknownProps ? names_1.names.asFunctionalComponent0 : names_1.names.asFunctionalComponent1}(${componentVar}, new ${componentVar}({${utils_1.newLine}`;
+     yield propsStr;
+-    yield `}))${utils_1.endOfLine}`;
++    yield `})`;
++    if (options.vueCompilerOptions.checkUnknownProps && options.vueCompilerOptions.fallthroughAttributes) {
++        yield `, {} as import('${options.vueCompilerOptions.lib}').AllowedAttrs`;
++    }
++    yield `)${utils_1.endOfLine}`;
+     yield `const `;
+     const boundary = yield* boundary_1.Boundary.start('template', node.loc.start.offset, node.loc.end.offset, codeFeatures_1.codeFeatures.doNotReportTs6133);
+     yield vnodeVar;
+@@ -220,13 +224,17 @@ function* generateComponent(options, ctx, node) {
+         }
+     }
+     if (shouldInheritAttrs) {
++        // Native fallback validates callers; it is not a declaration of the
++        // wrapped component's own public props or a new fallthrough union.
++        const inheritedPropsVar = ctx.getInternalVariable();
++        yield `var ${inheritedPropsVar}!: typeof ${componentVar} extends new (...args: never[]) => { $props: infer Props } ? Props : typeof ${getPropsVar()}${utils_1.endOfLine}`;
+         if (options.vueCompilerOptions.checkRequiredFallthroughAttributes) {
+             const restsVar = ctx.getInternalVariable();
+-            yield `var ${restsVar} = ${names_1.names.omit}(${getPropsVar()}, {\n${propsStr}})${utils_1.endOfLine}`;
++            yield `var ${restsVar} = ${names_1.names.omit}(${inheritedPropsVar}, {\n${propsStr}})${utils_1.endOfLine}`;
+             ctx.inheritedAttrVars.add(restsVar);
+         }
+         else {
+-            ctx.inheritedAttrVars.add(getPropsVar());
++            ctx.inheritedAttrVars.add(inheritedPropsVar);
+         }
+     }
+     yield* (0, styleScopedClasses_1.generateStyleScopedClassReferences)(options, node);
+diff --git a/types/template-helpers.d.ts b/types/template-helpers.d.ts
+index fceb931b56da71b4a9d465951ed9f7914d346b0c..e8db09f11ae60ad28b16efb798d8e392a980a8d3 100644
+--- a/types/template-helpers.d.ts
++++ b/types/template-helpers.d.ts
+@@ -30,7 +30,7 @@ declare global {
+ 		: T extends (props: infer P, ...args: any) => any ? P
+ 		: {};
+ 	type __VLS_FunctionalComponent<T, P = {}> = (
+-		props: (T extends { $props: infer Props } ? Props : {}) & P,
++		props: __VLS_SpreadMerge<P, T extends { $props: infer Props } ? Props : {}>,
+ 		ctx?: any,
+ 	) => {
+ 		__ctx?: {
+@@ -113,10 +113,11 @@ declare global {
+ 		>
+ 		: T extends (...args: any) => any ? T
+ 		: (arg1: unknown, arg2: unknown, arg3: unknown, arg4: unknown) => void;
+-	function __VLS_asFunctionalComponent0<T, K>(
++	function __VLS_asFunctionalComponent0<T, K, A = {}>(
+ 		t: T,
+ 		instance: K,
+-	): T extends new(...args: any) => any ? __VLS_FunctionalComponent<K>
++		attrs?: A,
++	): T extends new(...args: any) => any ? __VLS_FunctionalComponent<K, A>
+ 		: T extends () => any ? (props: {}, ctx?: any) => ReturnType<T>
+ 		: T extends (...args: any) => any ? T
+ 		: __VLS_FunctionalComponent<{}>;

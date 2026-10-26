@@ -12,7 +12,7 @@ v-dialog(:model-value='open' max-width='620' :fullscreen='$vuetify.display.smAnd
         .text-body-medium {{ $t(`admin:utilitiesReview.previousOutcomeUncertain`) }}
         .text-body-small.mt-1 {{ uncertainReceipt.summary }}
         .text-body-small.mt-1 {{ $t(`admin:utilitiesReview.receiptId`) }} #[code {{ uncertainReceipt.id }}]
-        v-checkbox.mt-2(v-model='acknowledged' :label='$t(`admin:utilitiesReview.iInspectedReceiptUnderstand`)' hide-details :disabled='busy')
+        v-checkbox.mt-2(:model-value='acknowledged' @update:model-value='$event !== null && (acknowledged = $event)' :label='$t(`admin:utilitiesReview.iInspectedReceiptUnderstand`)' hide-details :disabled='busy')
       v-alert.mt-4(v-if='submissionError' color='error' variant='tonal' role='alert') {{ submissionError }}
       v-textarea.mt-5(
         ref='reasonInput'

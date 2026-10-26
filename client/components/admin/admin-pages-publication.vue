@@ -3,7 +3,7 @@
     <v-card class="publication-review">
       <header><span class="pages-kicker">{{ $t('admin:pagesPublication.selectedPagesPublication') }}</span><h2 id="publication-review-title">{{ $t('admin:pagesPublication.reviewChange') }}</h2><p>{{ $t('admin:pagesPublication.changePublicationUp25') }}</p></header>
       <v-card-text>
-        <v-radio-group v-model="enabled" inline :label="$t('admin:pagesPublication.publicationAction')" :disabled="busy || completed">
+        <v-radio-group :model-value="enabled" @update:model-value="$event !== null && (enabled = $event)" inline :label="$t('admin:pagesPublication.publicationAction')" :disabled="busy || completed">
           <v-radio :value="true" :label="$t('admin:pagesPublication.enablePublication')" /><v-radio :value="false" :label="$t('admin:pagesPublication.returnDraft')" />
         </v-radio-group>
         <p class="publication-context">{{ enabled ? $t('admin:pagesPublication.enabledPageAvailableOnly') : $t('admin:pagesPublication.draftPagesHiddenOrdinary') }}</p>

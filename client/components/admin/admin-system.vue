@@ -371,7 +371,8 @@
                 {{ $t('admin:system.includesBuildIdentityProcess') }}
               </p>
               <v-checkbox
-                v-model="includeDeployment"
+                :model-value="includeDeployment"
+                @update:model-value="includeDeployment = $event === true"
                 :label="$t('admin:system.includeDeploymentIdentifiers')"
                 :hint="$t('admin:system.addsInstanceIdHostname')"
                 persistent-hint

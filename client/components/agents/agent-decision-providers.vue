@@ -23,7 +23,7 @@
           <!-- biome-ignore lint/a11y/noAutofocus: The configured initial field is inside the user-opened provider VDialog. -->
           <v-text-field v-if="field.control === 'text'" v-model="draft[field.key]" :label="field.label" :type="field.type" :error-messages="fieldErrors[field.key]" :autofocus="field.autofocus" :autocomplete="field.key === 'secret' ? 'new-password' : undefined" :disabled="busy || denied || (field.key === 'secret' && draft.clearSecret)" />
           <v-text-field v-else-if="field.control === 'number'" v-model.number="draft[field.key]" type="number" step="any" :label="field.label" :error-messages="fieldErrors[field.key]" :disabled="busy || denied" />
-          <v-checkbox v-else-if="field.control === 'checkbox'" v-model="draft[field.key]" :label="field.label" :disabled="busy || denied" />
+          <v-checkbox v-else-if="field.control === 'checkbox'" :model-value="draft[field.key]" :label="field.label" :disabled="busy || denied" @update:model-value="value => { if (typeof value === 'boolean') draft[field.key] = value }" />
           <v-select v-else-if="field.control === 'kind'" v-model="draft.kind" :label="field.label" :items="providerKinds" :disabled="busy || denied" />
           <v-select v-else v-model="draft.dialect" :label="field.label" :items="['chat-completions','completions']" :disabled="busy || denied" />
         </template>
@@ -49,7 +49,25 @@ const providers=ref<DecisionProviderView[]>([]),loading=ref(false),loaded=ref(fa
 const checks=reactive<Record<string,string>>({})
 const editingStale=computed(()=>Boolean(editing.value)&&providers.value.find(p=>p.id===editing.value?.id)?.revision!==editing.value?.revision)
 let controller:AbortController|null=null
-const draft=reactive({displayName:'',kind:'typesafe' as 'typesafe'|'openai-compatible',model:'jev-latest',baseUrl:'',dialect:'chat-completions' as 'chat-completions'|'completions',timeoutMs:5000,maxOutputTokens:1024,secret:'',clearSecret:false,knownPricing:false,inputPerMillion:0,outputPerMillion:0,perRequest:0,pricingRevision:'',source:'',verifiedAt:''})
+interface DecisionProviderDraft {
+  displayName: string
+  kind: 'typesafe' | 'openai-compatible'
+  model: string
+  baseUrl: string
+  dialect: 'chat-completions' | 'completions'
+  timeoutMs: number | string
+  maxOutputTokens: number | string
+  secret: string
+  clearSecret: boolean
+  knownPricing: boolean
+  inputPerMillion: number | string
+  outputPerMillion: number | string
+  perRequest: number | string
+  pricingRevision: string
+  source: string
+  verifiedAt: string
+}
+const draft=reactive<DecisionProviderDraft>({displayName:'',kind:'typesafe',model:'jev-latest',baseUrl:'',dialect:'chat-completions',timeoutMs:5000,maxOutputTokens:1024,secret:'',clearSecret:false,knownPricing:false,inputPerMillion:0,outputPerMillion:0,perRequest:0,pricingRevision:'',source:'',verifiedAt:''})
 const validationAttempted = ref(false)
 const providerValidation = computed(() => {
   const pricing=draft.knownPricing?{currency:'USD' as const,inputPerMillion:draft.inputPerMillion,outputPerMillion:draft.outputPerMillion,perRequest:draft.perRequest,revision:draft.pricingRevision,source:draft.source,verifiedAt:draft.verifiedAt}:null;const config=draft.kind==='typesafe'?{kind:'typesafe' as const,model:draft.model,timeoutMs:draft.timeoutMs,pricing}:{kind:'openai-compatible' as const,model:draft.model,baseUrl:draft.baseUrl,dialect:draft.dialect,timeoutMs:draft.timeoutMs,maxOutputTokens:draft.maxOutputTokens,pricing}

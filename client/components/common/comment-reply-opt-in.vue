@@ -6,7 +6,7 @@
     <p v-else-if="success" class="text-body-small mt-2" role="status">{{ success }}</p>
     <p v-else-if="alreadyEnabled" class="text-body-small mt-2" role="status">{{ t('alreadyEnabled', 'In-app replies in your discussions are already enabled. No settings were changed.') }}</p>
     <template v-else-if="loaded && !blocked">
-      <v-checkbox v-model="selected" :label="t('choice', 'Enable In-app: Replies in your discussions')" :disabled="saving" hide-details density="compact" />
+      <v-checkbox :model-value="selected" :label="t('choice', 'Enable In-app: Replies in your discussions')" :disabled="saving" hide-details density="compact" @update:model-value="setSelected" />
       <p class="text-body-small">{{ t('consent', 'This choice starts unchecked. Checking it only prepares a change; Save explicitly enables this category and channel. Not now leaves all preferences unchanged.') }}</p>
       <v-btn class="mt-2" type="button" size="small" variant="outlined" :disabled="!selected || saving || !currentAuthority" :loading="saving" @click="save">{{ t('save', 'Save reply notification choice') }}</v-btn>
     </template>
@@ -30,6 +30,9 @@ const props = defineProps<{ pageId: number; contributionId: number; authorized: 
 const emit = defineEmits<{ dismiss: [] }>()
 const t = (key: string, defaultValue: string): string => i18next.t(`common:comments.replyOptIn.${key}`, { defaultValue })
 const selected = ref(false)
+const setSelected = (value: boolean | null): void => {
+  if (value !== null) selected.value = value
+}
 const loaded = ref(false)
 const loading = ref(false)
 const saving = ref(false)

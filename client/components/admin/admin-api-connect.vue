@@ -3,7 +3,7 @@
     <div class="connect-heading"><span class="connect-kicker">{{ $t('admin:apiConnect.integrationWorkbench') }}</span><h2>{{ $t('admin:apiConnect.chooseConnection') }}</h2><p>{{ $t('admin:apiConnect.restStraightforwardResourceAccess') }}</p></div>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4">{{ $t('admin:apiConnect.connectionSettingsCouldNot') }} <v-btn variant="text" @click="$emit('retry')">{{ $t('admin:apiConnect.retry') }}</v-btn></v-alert>
     <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="$t('admin:apiConnect.loadingConnectionSettings')" />
-    <v-radio-group v-model="protocol" inline :label="$t('admin:apiConnect.clientProtocol')" color="primary"><v-radio :label="$t('admin:apiConnect.restV1')" value="rest" /><v-radio :label="$t('admin:apiConnect.graphql')" value="graphql" /></v-radio-group>
+    <v-radio-group :model-value="protocol" @update:model-value="$event !== null && (protocol = $event)" inline :label="$t('admin:apiConnect.clientProtocol')" color="primary"><v-radio :label="$t('admin:apiConnect.restV1')" value="rest" /><v-radio :label="$t('admin:apiConnect.graphql')" value="graphql" /></v-radio-group>
     <div class="connect-grid">
       <section class="connect-panel"><span class="connect-kicker">{{ $t('admin:apiConnect.n01Endpoint') }}</span><h3>{{ protocolTitle }}</h3><code class="endpoint-value">{{ endpoint }}</code>
         <p>{{ $t('admin:apiConnect.authenticateEachRequest') }} <code>Authorization: Bearer &lt;API_KEY&gt;</code>{{ $t('admin:apiConnect.keepCredentialClientsSecret') }}</p>

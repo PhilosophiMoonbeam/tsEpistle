@@ -5,11 +5,14 @@
       v-toolbar.source-toolbar(color='surface', flat)
         .source-toolbar-copy
           .source-eyebrow {{$t('common:header.viewSource')}}
-          i18next#source-title.source-toolbar-title(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='h1')
-            strong(place='date', :title='String($helpers.formatMoment(versionDate, `LLL`))') {{ $helpers.formatMoment(versionDate, 'lll') }}
-            strong(place='path') /{{path}}
-          i18next#source-title.source-toolbar-title(v-else, path='common:page.viewingSource', tag='h1')
-            strong(place='path') /{{path}}
+          localized-rich-text#source-title.source-toolbar-title(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='h1')
+            template(#date)
+              strong(:title='String($helpers.formatMoment(versionDate, `LLL`))') {{ $helpers.formatMoment(versionDate, 'lll') }}
+            template(#path)
+              strong /{{path}}
+          localized-rich-text#source-title.source-toolbar-title(v-else, path='common:page.viewingSource', tag='h1')
+            template(#path)
+              strong /{{path}}
           .source-toolbar-meta(v-if='$vuetify.display.mdAndUp')
             span {{$t('common:page.id', { id: pageId })}}
             span(v-if='versionId > 0') {{$t('common:page.versionId', { id: versionId })}}
@@ -65,6 +68,7 @@ import { defineComponent } from 'vue'
 import { getPageDownloadPath } from '../helpers/page-actions'
 import { wikiStore } from '@/store/index.ts'
 import { decodeBase64Json, decodeBase64Text } from '../helpers/base64'
+import LocalizedRichText from './common/localized-rich-text'
 
 const WRAP_PREFERENCE_KEY = 'wiki.source.wrapLines'
 
@@ -77,6 +81,7 @@ function readWrapPreference (): boolean {
 }
 
 export default defineComponent({
+  components: { LocalizedRichText },
   props: {
     pageId: {
       type: Number,

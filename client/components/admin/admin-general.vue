@@ -173,7 +173,8 @@
             </div>
             <div class="general-setting-group">
               <v-switch
-                v-model="draft.banner.isEnabled"
+                :model-value="draft.banner.isEnabled"
+                @update:model-value="$event !== null && (draft.banner.isEnabled = $event)"
                 :label="$t('admin:general.publishAnnouncement')"
                 color="primary"
                 inset
@@ -337,7 +338,8 @@
             <div class="general-setting-group">
               <h3>{{ labels.featureGlossary }}</h3>
               <v-switch
-                v-model="draft.featureGlossary"
+                :model-value="draft.featureGlossary"
+                @update:model-value="$event !== null && (draft.featureGlossary = $event)"
                 :label="$t('admin:general.enableGlossary', { defaultValue: 'Enable glossary' })"
                 color="primary"
                 inset
@@ -352,28 +354,32 @@
                 {{ $t('admin:general.chooseHowAuthorsReach') }}
               </p>
               <v-switch
-                v-model="draft.editFab"
+                :model-value="draft.editFab"
+                @update:model-value="$event !== null && (draft.editFab = $event)"
                 :label="$t('admin:general.showFloatingEditButton')"
                 color="primary"
                 inset
                 :disabled="locked"
               />
               <v-switch
-                v-model="draft.editMenuBar"
+                :model-value="draft.editMenuBar"
+                @update:model-value="$event !== null && (draft.editMenuBar = $event)"
                 :label="$t('admin:general.showPageActionBar')"
                 color="primary"
                 inset
                 :disabled="locked"
               />
               <v-switch
-                v-model="draft.editMenuBtn"
+                :model-value="draft.editMenuBtn"
+                @update:model-value="$event !== null && (draft.editMenuBtn = $event)"
                 :label="$t('admin:general.includeEditAction')"
                 color="primary"
                 inset
                 :disabled="locked || !draft.editMenuBar"
               />
               <v-switch
-                v-model="draft.editMenuExternalBtn"
+                :model-value="draft.editMenuExternalBtn"
+                @update:model-value="$event !== null && (draft.editMenuExternalBtn = $event)"
                 :label="$t('admin:general.includeExternalSourceAction')"
                 color="primary"
                 inset

@@ -18,8 +18,8 @@ v-container.profile-notification-preferences(fluid)
           h2.text-title-small {{ category.label }}
           p.text-body-small.text-medium-emphasis {{ category.description }}
         .profile-notification-preferences__channels
-          v-checkbox(v-model='draft[category.key].inApp', :label='`In-app: ${category.label}`', :disabled='saving', hide-details, density='comfortable')
-          v-checkbox(v-model='draft[category.key].email', :label='`Email: ${category.label}`', :disabled='saving', hide-details, density='comfortable')
+          v-checkbox(:model-value='draft[category.key].inApp', :label='`In-app: ${category.label}`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `inApp`, $event)')
+          v-checkbox(:model-value='draft[category.key].email', :label='`Email: ${category.label}`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `email`, $event)')
     .d-flex.flex-wrap.ga-3.mt-6
       v-btn(type='submit', color='primary', :disabled='!dirty || saving', :loading='saving') Save preferences
       v-btn(variant='text', :disabled='!dirty || saving', @click='cancel') Cancel changes
@@ -55,6 +55,9 @@ const copy = (preferences: NotificationPreferences): NotificationPreferences => 
 }
 const ownerId = computed(() => wikiStore.user.authenticated && Number.isSafeInteger(wikiStore.user.id) && wikiStore.user.id > 0 ? wikiStore.user.id : null)
 const draft = ref<NotificationPreferences>(defaults())
+const setDeliveryPreference = (category: NotificationCategory, channel: 'inApp' | 'email', value: boolean | null): void => {
+  if (value !== null) draft.value[category][channel] = value
+}
 const saved = ref<NotificationPreferences | null>(null)
 const draftOwner = ref<number | null>(null)
 const loading = ref(false)

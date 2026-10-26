@@ -251,7 +251,8 @@
             <article class="tls-panel">
               <h3>{{ $t('admin:ssl.httpHttps') }}</h3>
               <v-switch
-                v-model="draftEnabled"
+                :model-value="draftEnabled"
+                @update:model-value="$event !== null && (draftEnabled = $event)"
                 :label="$t('admin:ssl.redirectHttpRequestsPublic')"
                 color="primary"
                 hide-details
@@ -453,21 +454,24 @@
         />
         <v-checkbox
           v-if="action === 'apply-certificate' && workspace?.listeners.replacementMode === 'listener-restart'"
-          v-model="restartAck"
+          :model-value="restartAck"
+          @update:model-value="restartAck = $event === true"
           :label="$t('admin:ssl.iUnderstandActiveHttps')"
           :disabled="busy"
           hide-details
         />
         <v-checkbox
           v-if="action === 'renew-certificate'"
-          v-model="issuanceAck"
+          :model-value="issuanceAck"
+          @update:model-value="issuanceAck = $event === true"
           :label="$t('admin:ssl.requestCertificateLetsEncrypt')"
           :disabled="busy"
           hide-details
         />
         <v-checkbox
           v-if="certificateMutation && uncertainMutation"
-          v-model="uncertainAck"
+          :model-value="uncertainAck"
+          @update:model-value="uncertainAck = $event === true"
           :label="$t('admin:ssl.iReviewedUncertainReceipt', { kindLabel: kindLabel(uncertainMutation.kind).toLowerCase(), interpolation: { escapeValue: false } })"
           :disabled="busy"
           hide-details

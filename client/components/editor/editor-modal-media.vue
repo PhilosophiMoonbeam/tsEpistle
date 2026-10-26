@@ -239,9 +239,9 @@
             v-text-field.mt-3(v-model='imageHeight', label='Display height', hint='Empty, auto, pixels up to 16384, or up to 100%.', persistent-hint, :error-messages='imageHeightValid ? [] : [`Enter a supported height.`]')
             fieldset.mt-3.pa-3.rounded
               legend.px-2 Framing
-              v-checkbox(v-model='imageStyles', value='border', label='Border', hide-details, density='compact')
-              v-checkbox(v-model='imageStyles', value='rounded', label='Rounded corners', hide-details, density='compact')
-              v-checkbox(v-model='imageStyles', value='shadow', label='Shadow', hide-details, density='compact')
+              v-checkbox(:model-value='imageStyles', @update:model-value='imageStyles = $event ?? []', value='border', label='Border', hide-details, density='compact')
+              v-checkbox(:model-value='imageStyles', @update:model-value='imageStyles = $event ?? []', value='rounded', label='Rounded corners', hide-details, density='compact')
+              v-checkbox(:model-value='imageStyles', @update:model-value='imageStyles = $event ?? []', value='shadow', label='Shadow', hide-details, density='compact')
             v-alert.mt-3(v-if='imageInsertError', type='error', variant='tonal', role='alert') {{ imageInsertError }}
             v-btn.mt-2(
               v-if='isResizableAsset(currentAsset)'
@@ -368,7 +368,8 @@
               :disabled='resizeLoading'
             )
           v-checkbox(
-            v-model='resizeDistortionUnlocked'
+            :model-value='resizeDistortionUnlocked'
+            @update:model-value='resizeDistortionUnlocked = $event ?? resizeDistortionUnlocked'
             :label='$t(`editor:editorModalMedia.unlockAspectRatioStretch`)'
             color='primary'
             density='compact'
@@ -675,6 +676,10 @@ export default defineComponent({
     FilePond
   },
   data() {
+    const resizeDimensions: { resizeWidth: number | string; resizeHeight: number | string } = {
+      resizeWidth: 1200,
+      resizeHeight: 900
+    }
     return {
       folders: markRaw([] as AssetFolder[]),
       files: [] as FilePondFile[],
@@ -716,8 +721,7 @@ export default defineComponent({
       resizeSourceName: '',
       resizeDestinationName: '',
       resizeDestinationFolderId: 0,
-      resizeWidth: 1200,
-      resizeHeight: 900,
+      ...resizeDimensions,
       resizeDistortionUnlocked: false,
       resizeFormat: 'webp' as ResizeImageFormat,
       resizeQuality: 85,

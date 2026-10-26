@@ -351,13 +351,13 @@ const policy = reactive({
   exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups',
   groupIds: [] as number[]
 })
-const create = reactive({
+const create = reactive<{ name: string; rootPageId: number | string; rootPath: string; assetFolderId: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[] }>({
   name: '',
   rootPageId: 0,
   rootPath: '',
   assetFolderId: '',
-  exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups',
-  groupIds: [] as number[]
+  exposureMode: 'all_agent_users',
+  groupIds: []
 })
 const MAX_REVIEW_LINES = 500
 const reviewSourceLines = computed(() => ({
@@ -387,7 +387,7 @@ const stateFilters = [
   { title: t('needsReview'), value: 'review' }
 ]
 const createNameValid = computed(() => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(create.name.trim()))
-const createRootPageValid = computed(() => Number.isInteger(create.rootPageId) && create.rootPageId > 0)
+const createRootPageValid = computed(() => typeof create.rootPageId === 'number' && Number.isInteger(create.rootPageId) && create.rootPageId > 0)
 const createAssetFolderValid = computed(() => create.assetFolderId === '' || (Number.isInteger(Number(create.assetFolderId)) && Number(create.assetFolderId) > 0))
 const createNameRules = [(): true | string => createNameValid.value || t('useLowercaseLettersNumbers')]
 const createRootPageRules = [(): true | string => createRootPageValid.value || t('enterPositiveWholeNumber')]

@@ -283,7 +283,8 @@
                   <div class="navigation-setting-group">
                     <h3>{{ $t('admin:navigation.audience') }}</h3>
                     <v-radio-group
-                      v-model="selected.visibilityMode"
+                      :model-value="selected.visibilityMode"
+                      @update:model-value="$event !== null && (selected.visibilityMode = $event)"
                       :disabled="locked"
                       hide-details
                       :label="$t('admin:navigation.whoSeesItem')"
@@ -375,7 +376,8 @@
             <div class="navigation-setting-group">
               <h3>{{ $t('admin:navigation.whereBrowseBegins') }}</h3>
               <v-switch
-                v-model="draft.expandParent"
+                :model-value="draft.expandParent"
+                @update:model-value="$event !== null && (draft.expandParent = $event)"
                 inset
                 :disabled="locked"
                 :label="$t('admin:navigation.openCurrentPagesParent')"
@@ -561,7 +563,8 @@
             <v-checkbox
               v-for="item in moveReview.items"
               :key="navigationRepairItemKey(item)"
-              v-model="repairSelected"
+              :model-value="repairSelected"
+              @update:model-value="repairSelected = $event ?? []"
               :value="navigationRepairItemKey(item)"
               :disabled="busy || repairStale"
               hide-details
@@ -613,7 +616,7 @@
             item-value="code"
             :label="$t('admin:navigation.sourceLocale2')"
             variant="outlined"
-          /><v-radio-group v-model="copyMode" :label="$t('admin:navigation.howCopy')"
+          /><v-radio-group :model-value="copyMode" @update:model-value="$event !== null && (copyMode = $event)" :label="$t('admin:navigation.howCopy')"
             ><v-radio :label="$t('admin:navigation.appendMenu')" value="append" /><v-radio
               :label="$t('admin:navigation.replaceMenu')"
               value="replace"
