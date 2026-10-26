@@ -100,25 +100,29 @@ describe('TLS evidence from an actual handshake', () => {
     }
   })
   it('checks IP subject alternative names without using an IP as SNI', async () => {
-    const server = tls.createServer({ key: fixture.first.key, cert: fixture.first.cert })
+    const serverNames: string[] = []
+    const server = tls.createServer({
+      key: fixture.first.key,
+      cert: fixture.first.cert,
+      SNICallback(servername, callback) {
+        serverNames.push(servername)
+        callback(null)
+      }
+    })
     const live = await listen(server)
     try {
-      const ipSni = Promise.withResolvers<tls.TLSSocket['servername']>()
-      server.once('secureConnection', socket => ipSni.resolve(socket.servername))
       expect(await inspectTlsEndpoint({ host: '127.0.0.1', port: live.port, servername: '127.0.0.1' }, { ca: fixture.first.cert })).toMatchObject({
         connected: true,
         trusted: true,
         hostnameMatches: true
       })
-      expect(await bounded(ipSni.promise, 'IP handshake SNI observation')).toBeFalsy()
-      const dnsSni = Promise.withResolvers<tls.TLSSocket['servername']>()
-      server.once('secureConnection', socket => dnsSni.resolve(socket.servername))
+      expect(serverNames).toEqual([])
       expect(await inspectTlsEndpoint({ host: '127.0.0.1', port: live.port, servername: 'wiki.example.test' }, { ca: fixture.first.cert })).toMatchObject({
         connected: true,
         trusted: true,
         hostnameMatches: true
       })
-      expect(await bounded(dnsSni.promise, 'DNS handshake SNI observation')).toBe('wiki.example.test')
+      expect(serverNames).toEqual(['wiki.example.test'])
     } finally {
       await live.close()
     }
