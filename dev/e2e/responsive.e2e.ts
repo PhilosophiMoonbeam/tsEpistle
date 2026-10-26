@@ -2818,20 +2818,21 @@ test.describe('responsive UI quality matrix', () => {
         await expect(markdown.locator('h2 a, h3 a, li a, td a, th a')).toHaveCount(0)
         const paragraphs = markdown.locator('p').filter({ hasText: /^The (release is ready|verification sequence is documented)/ })
         await expect(paragraphs).toHaveCount(2)
-        await expect(paragraphs.nth(0)).toHaveText('The release is ready for a deliberate review. [3]')
-        await expect(paragraphs.nth(1)).toHaveText('The verification sequence is documented in the release guide. [3]')
+        await expect(paragraphs.nth(0)).toContainText('The release is ready for a deliberate review.')
+        await expect(paragraphs.nth(1)).toContainText('The verification sequence is documented in the release guide.')
         for (const paragraph of await paragraphs.all()) {
           await expect(paragraph.locator('a[data-agent-citation]')).toHaveCount(1)
+          await expect(paragraph.locator('a[data-agent-citation]')).toHaveAttribute('data-citation-number', '3')
           await expect(paragraph.locator('a[data-agent-citation]')).toHaveAttribute('href', /#verification-sequence$/)
         }
         await expect(markdown.getByRole('listitem')).toHaveText(['Review sources.', 'Confirm the evidence is complete.'])
-        await expect(markdown.locator('ul + p > a[data-agent-citation]')).toHaveText('[3]')
+        await expect(markdown.locator('ul + p > a[data-agent-citation]')).toHaveAttribute('data-citation-number', '3')
         const table = markdown.getByRole('table')
         await expect(table.getByRole('columnheader')).toHaveText(['Review checkpoint', 'Source record', 'Required evidence', 'Release decision'])
         await expect(table.getByRole('cell')).toHaveText([
           'Source verification', 'Release guide overview', 'Completed verification sequence', 'Deliberate publication review'
         ])
-        await expect(markdown.locator('.agent-markdown__table-shell + p > a[data-agent-citation]')).toHaveText('[2]')
+        await expect(markdown.locator('.agent-markdown__table-shell + p > a[data-agent-citation]')).toHaveAttribute('data-citation-number', '2')
         await expect(markdown.locator('a[data-agent-citation]')).toHaveCount(4)
         const tableShell = markdown.locator('.agent-markdown__table-shell')
         await tableShell.scrollIntoViewIfNeeded()
