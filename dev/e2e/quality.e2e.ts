@@ -576,6 +576,18 @@ test.describe('release accessibility profiles', () => {
       const inlineStarts: number[] = []
       Object.defineProperty(window, '__nativeToolbarSweepStarts', { value: starts })
       Object.defineProperty(window, '__nativeInlineSweepStarts', { value: inlineStarts })
+      let executedTimerOrigin = Number.NaN
+      const setTimeout = window.setTimeout.bind(window)
+      Object.defineProperty(window, 'setTimeout', {
+        value: (handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+          if (typeof handler !== 'function') return setTimeout(handler, delay, ...args)
+          const scheduledAt = performance.now()
+          return setTimeout((...values: unknown[]) => {
+            executedTimerOrigin = scheduledAt
+            Reflect.apply(handler, window, values)
+          }, delay, ...args)
+        }
+      })
       const observed = new WeakSet<Animation>()
       let mounted = false
       new MutationObserver(() => {
@@ -588,6 +600,9 @@ test.describe('release accessibility profiles', () => {
         const animation = button.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === 'wiki-code-copy-shimmer-sweep')
         if (animation && !observed.has(animation)) {
           observed.add(animation)
+          // Mutation delivery follows the whole mounting task. Measure the
+          // real timer's registration origin, not that later DOM observation.
+          if (starts.length === 0) Object.defineProperty(window, '__nativeToolbarCadenceStartedAt', { value: executedTimerOrigin })
           starts.push(performance.now())
           animation.pause()
         }
@@ -614,8 +629,9 @@ test.describe('release accessibility profiles', () => {
     const ambientStarts = await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)
     expect(ambientStarts).toHaveLength(1)
     const ambient = ambientStarts[0]!
-    expect(ambient - mountedAt, 'An unhovered toolbar first animates after 9–18 seconds').toBeGreaterThanOrEqual(9000)
-    expect(ambient - mountedAt).toBeLessThanOrEqual(18_000)
+    const cadenceStartedAt = await page.evaluate(() => (window as typeof window & { __nativeToolbarCadenceStartedAt: number }).__nativeToolbarCadenceStartedAt)
+    expect(ambient - cadenceStartedAt, 'An unhovered toolbar first animates after 9–18 seconds').toBeGreaterThanOrEqual(9000)
+    expect(ambient - cadenceStartedAt).toBeLessThanOrEqual(18_000)
     await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
     await expect(copy).not.toHaveClass(/wiki-copy-shimmer-run/u)
     const firstHoverTime = await page.evaluate(() => performance.now())
