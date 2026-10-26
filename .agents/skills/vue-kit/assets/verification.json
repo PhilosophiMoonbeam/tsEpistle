@@ -1,0 +1,1825 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "vue": "3.5.44",
+    "vuetify": "4.3.0"
+  },
+  "recorded_at": "2026-10-22T21:09:01.754241Z",
+  "scope": "Historical verification register through the recorded OpenVue hardening batch: six observations appended to54 prior checks. Before profiles use committedb0bd8c5; corrected consumers used that batch's exact working-tree fences. In retained records, current, fresh, unchanged and delivery refer to their original observation or authoring context, not subsequent working-tree revisions. recorded_at is evidence-packaging time, not an invented execution timestamp. Commands name historical procedures and may require unavailable throwaway consumers. No check was rerun by the subsequent source audit; snapshots describe their last packaged footprint until explicitly refreshed and do not authenticate execution.",
+  "environment": {
+    "node": "24.15.0",
+    "bun": "1.4.3",
+    "python": "3.14.4",
+    "vue": "3.5.44",
+    "openvue": "1.0.0",
+    "openvue_themes": "1.0.0",
+    "pinia_private_fixture": "4.1.0",
+    "colada": "1.4.8",
+    "typescript": "5.9.3",
+    "vue_tsc": "3.3.13",
+    "vite": "8.3.4",
+    "browser": "Chrome/156.0.8078.47",
+    "profile_scope": "Historical shared cutover baseline, not a probe of the current host or installed graph; per-check versions and runtime provenance override this summary."
+  },
+  "fifth_pass": {
+    "audit": "assets/fifth-pass-audit.json",
+    "recorded_at": "2026-10-22T03:38:23.042291Z",
+    "time_boundary": "Evidence packaging time, not an invented timestamp for each execution.",
+    "historical_record": {
+      "recorded_at": "2026-10-21T20:00:21.425259Z",
+      "scope": "Targeted fourth-pass runtime acceptance. Retained cutover checks identify source90c3eb4 and are not relabeled as reruns. New generated-Nuxt, transport, HTTP, router and graphics observations have explicit profiles. Experimental graphics fault observations are not normal-path passes.",
+      "unchanged_check_count": 22
+    },
+    "appended_check_count": 12,
+    "source_provenance": {
+      "kind": "fifth-pass working-tree consumers",
+      "base_commit": "e52888b",
+      "boundary": "Base commit identifies authoring lineage only. Changed recipes and their extracted before/after consumers are not falsely attributed to that commit. Individual checks retain supplied versions, source hashes and fixture limits; the environment summary above is historical unless overridden by a check.",
+      "observation_owner": "Parent orchestrator; the evidence integrator ran no checks."
+    },
+    "evidence_boundary": "Only the 12 supplied observed-checks records are appended. Authored dispositions, proposed smoke scenarios and initial strict diagnostics are separate audit lineage, not additional passed checks.",
+    "final_install_boundary": "No final isolated or public installation, final integrated structural gate, snapshot refresh, commit or push is claimed here."
+  },
+  "unresolved": [],
+  "checks": [
+    {
+      "id": "reference-syntax",
+      "scope": "Master and all40 references; syntax and template compilation only.",
+      "result": "passed",
+      "command": "bun run reference-syntax.mjs (isolated throwaway consumer)",
+      "details": {
+        "documents": 41,
+        "fences": 318,
+        "vue_fences": 120,
+        "script_fences": 148,
+        "contextual_property_fragments": 3,
+        "json_fences": 8,
+        "errors": 0,
+        "boundary": "Bare template fragments were wrapped in a template; three explicitly contextual object-property fragments were wrapped in an object. Script parsing and Vue template compilation do not establish imported type or runtime correctness."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "strict-consumer-and-production-build",
+      "scope": "Exact OpenVue Select/Dialog and Carousel, three private-cache SFCs, three streaming SFCs, application-endpoint reader, three session modules and shared identity types.",
+      "result": "passed",
+      "command": "bun run typecheck && bun run build (isolated consumer)",
+      "details": {
+        "strict": true,
+        "strictTemplates": true,
+        "source_sfcs": 9,
+        "source_modules": 4,
+        "production_modules": 286,
+        "production_entries": [
+          "office",
+          "carousel",
+          "cache"
+        ],
+        "initial_failure": "Native root attributes were absent from component prop declarations; the source examples now use declared pt.root. Fixture-only adapter typing and contextual parser errors were corrected without weakening source checks.",
+        "boundary": "Streaming and reader SFCs are typechecked consumers, not exercised inference/backend flows. Private components were checked with equivalent aliases, not a fresh generated Nuxt context or SSR build."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "openvue-built-browser",
+      "scope": "Actual1.0.0 office and data-driven Carousel examples served from a production build.",
+      "result": "passed",
+      "details": {
+        "viewports": [
+          320,
+          1280
+        ],
+        "select": [
+          "Visible label focuses combobox",
+          "Accessible name remains Office after keyboard selection",
+          "London selection publishes local-only feedback",
+          "Space/Arrow/Enter and Escape paths exercised",
+          "Light mobile popup fits viewport"
+        ],
+        "dialog": [
+          "Named Office preview with aria-modal true",
+          "Trigger aria-controls matches real dialog ID",
+          "Initial focus inside dialog",
+          "Six forward and four reverse Tab containment checks",
+          "Escape dismissal restores trigger focus",
+          "Footer close action exercised",
+          "Body-portal dark theme inspected",
+          "320px dialog x16/right304/width288; no horizontal overflow"
+        ],
+        "carousel": [
+          "Next/previous and indicator navigation update stage status",
+          "First/last controls disabled at bounds",
+          "Current slide remains exposed; offscreen slide aria-hidden true",
+          "Narrow and wide navigation exercised",
+          "No autoplay or remote images"
+        ],
+        "boundary": "Bounded Chromium keyboard/DOM and visual checks, not screen-reader, exhaustive accessibility, Nuxt or SSR certification."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "session-utility-runtime",
+      "scope": "Exact provider-neutral redirect, ephemeral bearer-transport and synchronous identity-boundary modules.",
+      "result": "passed",
+      "command": "bun run session-smoke.ts (isolated throwaway consumer)",
+      "details": {
+        "assertions": 26,
+        "redirect_cases": 11,
+        "dispatches": 1,
+        "behaviors": [
+          "Malformed, cross-origin and disallowed redirects fall back",
+          "Allowed route query/hash retained",
+          "Null/rejected token and wrong origin rejected",
+          "Identity change during token acquisition prevents dispatch",
+          "A-to-B-to-A increments generation synchronously",
+          "Null identity closes private gate",
+          "Scope disposal invalidates generation",
+          "Thrown cleanup leaves gate closed"
+        ],
+        "expected_diagnostic": "Vue watcher warning during intentionally thrown cleanup; failure is caught by the smoke assertion, not suppressed.",
+        "boundary": "Controlled token transport and local identity state, not a session server, credential issuance or authorization proof."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "private-cache-built-browser",
+      "scope": "Exact private cache boundary/session components using real Vue, Pinia and Colada with a controlled application-owned session source/reader.",
+      "result": "passed",
+      "details": {
+        "behaviors": [
+          "A-to-B-to-A invalidates captured callbacks synchronously before render",
+          "Only epoch2 private entry remains after first transition; public cache retained",
+          "Late retired read cannot populate active cache",
+          "Mismatching reader identity becomes error with no cached data",
+          "Loading, unavailable and signed-out states distinct",
+          "Retained external private consumer blocks new identity acceptance",
+          "Unmount during pending transition never reopens gate and removes private entries",
+          "Public catalogue survives final teardown"
+        ],
+        "browser_uncaught_errors": 0,
+        "boundary": "Real cache/component lifetimes with controlled identity snapshots/read results; no actual sign-in, credential verification, server authorization or authenticated SSR claim."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "bundled-workbench",
+      "scope": "Unchanged local in-memory Vue/Vuetify/Pinia/Router workbench copied outside repository.",
+      "result": "passed",
+      "command": "bun install --frozen-lockfile && bun run typecheck && bun run build",
+      "details": {
+        "installed_packages": 65,
+        "production_modules": 626,
+        "boundary": "Exact authoritative lockfile used; source corpus and account credentials not needed. This cutover check does not replay earlier workbench browser results."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "selected-ui-license-metadata",
+      "scope": "Installed OpenVue core/themes/icons and their four styling runtime packages.",
+      "result": "observed",
+      "details": {
+        "source_revision": "d064f02ac75c3aaeb60a676c70e5ee08e3e3042e",
+        "declared_license": "MIT",
+        "packages": {
+          "openvue": "1.0.0",
+          "@openvue/core": "1.0.0",
+          "@openvue/themes": "1.0.0",
+          "@openvue/icons": "1.0.0",
+          "@openuxkit/styled": "1.0.0",
+          "@openuxkit/styles": "1.1.0",
+          "@openuxkit/themes": "1.1.0",
+          "@openuxkit/utils": "1.0.1"
+        },
+        "boundary": "Published installed package declarations and local source revision, not a legal opinion or license grant. Preserve applicable notices."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "retained-provenance-and-excluded-content",
+      "scope": "Complete installed skill source records and active documentation.",
+      "result": "passed",
+      "details": {
+        "retained_source_rows_identical_to_original": 459,
+        "retained_roots": 47,
+        "retained_historical_flags": 327,
+        "active_references": 40,
+        "excluded_vendor_guidance_matches": 0,
+        "successor_attribution_matches": 1,
+        "boundary": "Only the permitted ancestry attribution names the superseded UI library. Historical research inputs outside skills/vue-kit remain untouched; they are not part of the installed skill."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "package-and-reference-format",
+      "scope": "Repository skill root and actual isolated installed copy.",
+      "result": "passed",
+      "command": "python3 scripts/validate.py [skill-root] --json; skills-ref validate [skill-root]",
+      "details": {
+        "structural_checks": 14,
+        "errors": 0,
+        "official_format": "valid",
+        "boundary": "Structure, path/link/reference ownership, schemas, frozen retained identities and content snapshots only; not runtime or semantic certification."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "validator-negative-boundaries",
+      "scope": "Seven isolated CLI copies with fresh per-case snapshots.",
+      "result": "passed",
+      "command": "python3 validator-smoke.py (throwaway smoke)",
+      "details": {
+        "negative_cases": 7,
+        "all_exit_codes": 1,
+        "cases": [
+          "excluded-provider-guidance",
+          "superseded-ui-import",
+          "missing-successor-attribution",
+          "missing-contract-extension",
+          "native-source-tampering",
+          "missing-reference-route",
+          "unsafe-extension-path"
+        ],
+        "boundary": "Each diagnostic was checked independently of stale snapshots. These are actual CLI rejection checks, not a source-text assertion suite."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "actual-isolated-install",
+      "scope": "Skills CLI local repository source, selected vue-kit only, Codex copy installation.",
+      "result": "passed",
+      "command": "bunx skills add /home/bbferko/repos/vue-kit-skills --skill vue-kit --agent codex --copy --yes",
+      "details": {
+        "installed_skills": 1,
+        "byte_matching_files": 59,
+        "structural_checks": 14,
+        "official_format": "valid",
+        "boundary": "Actual local repository install and exact payload comparison; no public remote update/install is claimed by this check. Only selected skill is installed, not research inputs or the upstream clone."
+      },
+      "source_commit": "90c3eb4",
+      "recorded_at": "2026-10-21T18:50:27.952380Z"
+    },
+    {
+      "id": "current-reference-syntax",
+      "result": "passed",
+      "scope": "Current master plus all40 references; parsing and Vue template compilation only.",
+      "command": "node reference-syntax.mjs (throwaway compiler smoke)",
+      "details": {
+        "documents": 41,
+        "fences": 326,
+        "vue_fences": 122,
+        "script_fences": 151,
+        "json_fences": 9,
+        "wrapped_template_fragments": 6,
+        "contextual_property_fragments": 3,
+        "errors": 0,
+        "compiler": {
+          "vue": "3.5.44",
+          "typescript": "5.9.3"
+        },
+        "boundary": "Six bare template fragments were enclosed in a template; three explicitly contextual property fragments were enclosed in an object. This does not establish imported types, library contracts or runtime behavior."
+      }
+    },
+    {
+      "id": "openvue-generated-nuxt-production",
+      "result": "passed",
+      "scope": "Official module tuple with explicit component allowlist, Aura theme, SSR cookie-owned dark selector and actual production hydration/navigation.",
+      "command": "Explicit Node24 nuxt typecheck && nuxt build; actual Nitro node-server; HTTP and Chromium interaction",
+      "details": {
+        "versions": {
+          "node": "24.15.0",
+          "nuxt": "4.6.2",
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "@openvue/nuxt-module": "1.0.0",
+          "@openvue/themes": "1.0.0",
+          "typescript": "5.9.3",
+          "vue-tsc": "3.3.2"
+        },
+        "generated_strict_contexts": true,
+        "strictTemplates": true,
+        "ssr_component_theme_style_ids": 11,
+        "root_document_styles_including_page_style": 12,
+        "matrix": [
+          {
+            "width": 320,
+            "dark": false,
+            "body_portals": true,
+            "focus_forward_reverse_restore": true
+          },
+          {
+            "width": 320,
+            "dark": true,
+            "body_portals": true,
+            "focus_forward_reverse_restore": true
+          },
+          {
+            "width": 1280,
+            "dark": false,
+            "body_portals": true,
+            "focus_forward_reverse_restore": true
+          },
+          {
+            "width": 1280,
+            "dark": true,
+            "body_portals": true,
+            "focus_forward_reverse_restore": true
+          }
+        ],
+        "parent_independent_observation": [
+          "Absolute Node24 server executable/version",
+          "Initial SSR theme/component styles",
+          "Unsigned401/private,no-store",
+          "Native dialog body portal/name/focus/Tab/Escape restoration",
+          "Client navigation and SSR refresh"
+        ],
+        "metadata_correction": "Earlier v26.3.0 was Bun1.4.3 collector process.version compatibility metadata, not the production server. Explicit absolute Node24 compilation/build/server and browser matrix were repeated.",
+        "boundary": "Selected OpenVue Nuxt profile, not every module/preset/SSR deployment or exhaustive accessibility. No flash-free-transition claim."
+      }
+    },
+    {
+      "id": "private-cache-generated-nuxt-runtime",
+      "result": "passed",
+      "scope": "Three unchanged private-cache SFCs in generated strict Nuxt contexts and actual SSR/browser lifetimes.",
+      "details": {
+        "versions": {
+          "pinia": "4.1.0",
+          "@pinia/nuxt": "1.0.3",
+          "@pinia/colada": "1.4.8",
+          "@pinia/colada-nuxt": "1.2.0"
+        },
+        "source_fences_sha256": {
+          "PrivateCacheBoundary.vue": "a1ac592965c5262c1b149690adaba2355c8981b571a82b662a037cef706b07d2",
+          "PrivateSession.vue": "646f0d17fad2814a23ec9aab38655b697ee51ec6fb01ce4e5b77444cc01709c0",
+          "PrivateAccount.vue": "d1a766e30dc483f87d0afda3b93434cbf1cf82b359f07a351964710e14475450"
+        },
+        "concurrent_isolated_http_requests": 24,
+        "all_isolated": true,
+        "initial_hydration_browser_api_requests": 0,
+        "behaviors": [
+          "Unsigned401 and private,no-store",
+          "Allowlisted fixture A/B responses remain request-isolated",
+          "A-to-B-to-A rejects retired delayed reads",
+          "Account/session/organization changes retire private scope",
+          "Public cache retained while private entries evicted",
+          "Retained private consumer remains fail-closed",
+          "Reader identity mismatch cannot populate cache"
+        ],
+        "boundary": "Application-owned allowlisted-cookie test fixture is not production authentication, credential verification or tenant authorization. No mutation implementation was exercised; late-mutation guards remain an application obligation."
+      }
+    },
+    {
+      "id": "transport-production-browser-runtime",
+      "result": "passed",
+      "scope": "Exact ChatHost, ChatPane, GenerationPane and application-owned Axios reader with real local HTTP/SSE transport.",
+      "command": "Strict typecheck + production build +12 browser cases; parent independently replayed all12",
+      "details": {
+        "versions": {
+          "vue": "3.5.44",
+          "@tanstack/ai": "0.70.0",
+          "@tanstack/ai-client": "0.40.0",
+          "@tanstack/ai-vue": "0.27.0",
+          "@vueuse/integrations": "15.0.0",
+          "axios": "1.20.0",
+          "typescript": "5.9.3",
+          "vue-tsc": "3.3.13",
+          "vite": "8.3.5"
+        },
+        "compiler": {
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": true,
+          "target": "ES2022",
+          "lib": "ES2023"
+        },
+        "source_fences_sha256": {
+          "ChatHost.vue": "217ca2dda42b8f2da0afaedac320aedf024c1d54cc5bc3fe98bb8d4bfc6b0c5d",
+          "ChatPane.vue": "1ce9a074661c240bd888f35bb25cd7092d82d20464727c1eff938802afb43d0f",
+          "GenerationPane.vue": "bd489c1f2c03559fcaa8535889ec084bc31605e053f25c30aa5e7fab98d0886b",
+          "RecordSummary.vue": "ec4c0f73527457d70751680e8d4d2c212c9ef8afb895b6f28146464a094c7748"
+        },
+        "production_browser_cases": 12,
+        "parent_business_http_requests": {
+          "chat": 6,
+          "generation": 9,
+          "reader": 6,
+          "total": 21
+        },
+        "behaviors": [
+          "Chat partial output/completion/regeneration/RUN_ERROR/stop",
+          "Late chat writes, remount and logout retirement",
+          "Generation real HTTP JSON and TanStack SSE CUSTOM generation:result",
+          "Generation transform/error/stop/reset/remount",
+          "Axios success503/cancel/recovery/unmount",
+          "Same-tick double click and settled-promise cancellation serialization"
+        ],
+        "compiler_limits": [
+          "With extra exactOptionalPropertyTypes/noUncheckedIndexedAccess and dependency checking, upstream BaseTextAdapter midConversationChannels declarations conflict.",
+          "TypeScript7.0.2 with vue-tsc3.3.13 failed ERR_PACKAGE_PATH_NOT_EXPORTED. Neither profile is claimed supported; no dependency patch or weakened application checks."
+        ],
+        "boundary": "Local protocol/backend fixtures, not model inference, authentication, tools, persistence, media or every API in these references. Observer polling is excluded from21 business requests."
+      }
+    },
+    {
+      "id": "bearer-real-http-runtime",
+      "result": "passed",
+      "scope": "Exact provider-neutral bearer helper against an actual loopback HTTP server.",
+      "command": "bun run http-smoke.ts (throwaway smoke)",
+      "details": {
+        "actual_server_requests": 2,
+        "redirected_requests": 0,
+        "behaviors": [
+          "Caller Authorization replaced with current bearer",
+          "Wrong origin rejected before token retrieval",
+          "Actual302 redirect not followed",
+          "Generation change during awaited token prevents dispatch",
+          "Pre-aborted request prevents credential retrieval/dispatch",
+          "Absent credential prevents dispatch"
+        ],
+        "boundary": "Real HTTP dispatch and retirement rules, not credential issuance/verification, login or server authorization."
+      }
+    },
+    {
+      "id": "router-injected-access-runtime",
+      "result": "passed",
+      "scope": "installAccessGuard application injection/composition runtime; not blanket Router certification",
+      "details": {
+        "versions": {
+          "vue": "3.5.44",
+          "vue-router": "5.4.0",
+          "vite": "8.3.5",
+          "@vitejs/plugin-vue": "6.0.10",
+          "typescript": "5.9.3",
+          "vue-tsc": "3.3.13",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47"
+        },
+        "source_fence_sha256": "43871b6c629cdbb4aa2469af6bb5c62798a8328910510655820896339aca0309",
+        "source_unchanged": true,
+        "actual_policy_http_requests": 5,
+        "unique_targets": 7,
+        "loops": 0,
+        "uncaught_errors": 0,
+        "behaviors": [
+          "Application provider installed before router, including direct initial protected navigation",
+          "Public bypass makes no policy request",
+          "Delayed allow changes route only after settlement",
+          "Delayed deny retains route, URL and rendered page; aborted failure4",
+          "HTTP503 reaches router.onError and caller rejection; subsequent navigation recovers",
+          "Disposer removes guard without removing app-owned provider"
+        ],
+        "boundary": "Client navigation policy, not server authorization. Guard disposal deliberately removes this client gate; it is not logout."
+      }
+    },
+    {
+      "id": "graphics-normal-software-rendering",
+      "result": "passed",
+      "scope": "Retained experimental source recipe, normal initialization and unmount in two explicit software-renderer browser profiles.",
+      "details": {
+        "versions": {
+          "vue": "3.5.44",
+          "@tresjs/core": "5.9.3",
+          "three": "0.186.1",
+          "browser": "Chrome/156.0.8078.47"
+        },
+        "webgl2": {
+          "normal_api_wrappers": 0,
+          "visible_cube": true,
+          "unhandled_rejections": 0,
+          "unmounted_cleanly": true
+        },
+        "webgpu": {
+          "runner": "Independent playwright-cli Chrome session",
+          "launch_args": [
+            "--enable-unsafe-webgpu",
+            "--use-angle=vulkan",
+            "--use-vulkan=swiftshader",
+            "--enable-features=Vulkan",
+            "--disable-vulkan-surface"
+          ],
+          "actual_backend": "webgpu",
+          "real_device_observed": true,
+          "adapter_observed_in_device-denial_case": {
+            "vendor": "google",
+            "architecture": "swiftshader",
+            "isFallbackAdapter": true
+          },
+          "normal_api_wrappers": 0,
+          "normal_runs": 2,
+          "unhandled_rejections": 0,
+          "downloaded_canvas_center_rgba": [
+            0,
+            105,
+            182,
+            255
+          ],
+          "unmounted_cleanly": true
+        },
+        "image_limits": [
+          "Earlier WebGPU page screenshot omitted cube pixels that direct canvas readback contained.",
+          "Visible WebGL2 cube later encoded a transparent direct readback; buffer persistence cannot be assumed."
+        ],
+        "boundary": "Actual WebGPU API through software rendering, not native Ryzen/Vega certification. Host render/video devices were inaccessible to this user and no display server was exposed; permissions were not changed."
+      }
+    },
+    {
+      "id": "graphics-controlled-initialization-observation",
+      "result": "observed",
+      "scope": "Explicitly injected adapter/device and WebGL2 fallback denials, separately from normal operation.",
+      "details": {
+        "source_recipe_retained": true,
+        "cases": [
+          {
+            "mode": "adapter-unavailable",
+            "backend": "webgl2",
+            "unhandled_rejections": 0,
+            "intervention_events": 4,
+            "component_errors": []
+          },
+          {
+            "mode": "device-rejected",
+            "backend": "webgl2",
+            "unhandled_rejections": 0,
+            "intervention_events": 4,
+            "component_errors": []
+          },
+          {
+            "mode": "both-unavailable",
+            "backend": "unavailable",
+            "unhandled_rejections": 1,
+            "intervention_events": 5,
+            "component_errors": [
+              "INITIALIZATION_FAILED"
+            ]
+          },
+          {
+            "mode": "device-and-fallback-unavailable",
+            "backend": "unavailable",
+            "unhandled_rejections": 1,
+            "intervention_events": 5,
+            "component_errors": [
+              "INITIALIZATION_FAILED"
+            ]
+          }
+        ],
+        "interpretation": "Single-path denial fell back to WebGL2 cleanly. Deliberately denying both initialization paths emitted INITIALIZATION_FAILED into the retained host alert, followed by an unsuppressed rejection. User-directed retention and independent inspection do not turn that observation into a blanket rendering/hardware failure or an all-path clean-recovery pass.",
+        "boundary": "Test-induced failures are not measurements of an unsupported physical GPU. WebGPU remains experimental; no cleanup shim, error suppression or dependency patch was added."
+      }
+    },
+    {
+      "id": "hosted-independent-webgpu-lab",
+      "result": "passed",
+      "scope": "Separate optional verification/webgpu app, outside installed skill; live tailnet-only HTTPS inspection.",
+      "command": "bun install --frozen-lockfile --cwd verification/webgpu && bun run --cwd verification/webgpu build; loopback Node server + additive Tailscale Serve",
+      "details": {
+        "pins": {
+          "vue": "3.5.44",
+          "@tresjs/core": "5.9.3",
+          "three": "0.186.1",
+          "vite": "8.3.4",
+          "typescript": "5.9.3",
+          "vue-tsc": "3.3.13"
+        },
+        "strict": true,
+        "strictTemplates": true,
+        "secure_context_observed": true,
+        "viewports": [
+          320,
+          1280
+        ],
+        "horizontal_overflow_at320": false,
+        "case_modes_exercised": 5,
+        "fresh_iframe_reset_confirmed": true,
+        "unmount_observers_retained": true,
+        "actual_downloads": {
+          "png": 2,
+          "json": 1,
+          "retained_runs_after_clear": 6
+        },
+        "deployed_source_hashes_verified": 5,
+        "source_recipe_sha256": {
+          "SceneHost.vue": "d565de6a7b1384bdfc777b560ca59e7fcc5233ad6b56e4643c7e9026a1cc9432",
+          "SceneCanvas.vue": "b64dae229540260da95c134dfcfa4e107c2391f8d6e1b03c949cfad83c077ee4"
+        },
+        "existing_tailnet_routes_preserved": true,
+        "static_review": "Two independent read-only reviews found no concrete source/security/transparency issue.",
+        "boundary": "No uploads/analytics/results API. Optional Tailscale hosting is not an installed skill dependency. Private access coordinates are intentionally omitted. Lab build retains the honest Three bundle-size warning."
+      }
+    },
+    {
+      "id": "public-bun-and-npm-installers",
+      "result": "passed",
+      "source_commit": "90c3eb4",
+      "scope": "Both public installer forms at the already-published cutover commit, before this runtime-evidence update.",
+      "command": "bunx skills add PhilosophiMoonbeam/vue-kit-skills --skill vue-kit --agent codex --copy --yes; npx --yes skills add PhilosophiMoonbeam/vue-kit-skills --skill vue-kit --agent codex --copy --yes",
+      "details": {
+        "independent_installs": 2,
+        "selected_skills_each": 1,
+        "byte_matching_files_each": 59,
+        "structural_checks_each": 14,
+        "official_format_each": "valid",
+        "boundary": "Public baseline installs do not certify an unpublished working tree. Final current-payload installation and validation are reported separately at delivery."
+      }
+    },
+    {
+      "id": "validator-additional-negative-boundaries",
+      "result": "passed",
+      "scope": "Six independent CLI copies with fresh snapshots, beyond the retained seven cutover negative cases.",
+      "command": "python3 validator-extra.py (throwaway smoke)",
+      "details": {
+        "negative_cases": 6,
+        "exit_code_each": 1,
+        "cases": [
+          "non-HTTPS primary evidence URL",
+          "wrong historical commit",
+          "source hash tampering",
+          "historical status tampering",
+          "owner mapping mismatch",
+          "duplicate extension identity"
+        ],
+        "boundary": "Expected diagnostics observed independently of stale snapshots; validator code unchanged. Structural checks do not authenticate execution or certify semantics."
+      }
+    },
+    {
+      "id": "fifth-baseline-workbench",
+      "scope": "Unchanged bundled Vue3.5.44/Vuetify4.3.0/Pinia3.0.4/Router4.6.4 app",
+      "result": "passed",
+      "command": "bun install --frozen-lockfile && bun run typecheck && bun run build; actual Vite dev Chromium interaction",
+      "details": {
+        "installed_packages": 65,
+        "build_modules": 626,
+        "viewports": [
+          1280,
+          320
+        ],
+        "behaviors": [
+          "required input error",
+          "trimmed task add",
+          "completion toggle",
+          "removal",
+          "reset dialog initial Cancel focus",
+          "Escape restores Reset tasks focus",
+          "About/Tasks navigation",
+          "dark theme",
+          "no horizontal overflow at320"
+        ],
+        "boundary": "Development browser smoke plus independent production compilation, not an SSR/auth/persistence or exhaustive accessibility claim. Three test-helper misuse/timeouts were corrected; one pptr-only injected selector error is not an application error."
+      }
+    },
+    {
+      "id": "fifth-tween-extremes",
+      "scope": "Exact old/new useTweenedNumber fences in strict production browser consumer",
+      "result": "passed",
+      "command": "bun run typecheck && bun run build; Chromium controlled RAF smoke",
+      "details": {
+        "before": "Opposite finite extremes yielded Infinity then NaN",
+        "after": "Both directional midpoints zero; exact finite MAX_VALUE endpoints",
+        "behaviors": [
+          "live-input stale callback guard before watcher cleanup",
+          "cleanup-inactive callback guard",
+          "restart",
+          "reduced-motion target",
+          "zero queued frames after unmount",
+          "no frame after pre-mount scope disposal"
+        ],
+        "source_sha256": {
+          "before": "c4c14add48d79080b9bb50962232ba7e5217c0e78997fa9fec41b82509a28952",
+          "after": "3a1931543219903a2d27307fc7880ea17b3c6f6e337dea65265a5d3bf1c7964e"
+        },
+        "boundary": "Controlled clock/RAF in actual Chromium, not arbitrary easing or values outside declared finite/positive-duration preconditions."
+      }
+    },
+    {
+      "id": "fifth-vue-ssr-contracts",
+      "scope": "Vue3.5.44 stopped computed scope and development SSR debug branches",
+      "result": "passed",
+      "command": "node ssr-contracts.mjs (throwaway)",
+      "details": {
+        "assertions": 8,
+        "computed_after_scope_stop": 12,
+        "watcher_calls_after_scope_stop": 1,
+        "ssr_html": "<p>14</p>",
+        "debug_events": {
+          "watcher": 1,
+          "computed": 0,
+          "render": 0
+        },
+        "boundary": "Exact NodeSSR and reactivity semantics, not HTTP request isolation."
+      }
+    },
+    {
+      "id": "fifth-i18n-hypothesis-overturned",
+      "scope": "Exact VueI18n11.4.16/plugin11.2.7 eager examples under runtimeOnly true/false",
+      "result": "observed",
+      "details": {
+        "profiles_both_typechecked_built": true,
+        "identical_output_bundle": true,
+        "english": [
+          "Hello, Ada",
+          "2 apples"
+        ],
+        "french": [
+          "Bonjour, Ada",
+          "2 pommes"
+        ],
+        "application_errors": 0,
+        "conclusion": "runtimeOnly alone did not remove JIT; production-only/failure hypothesis overturned and guidance corrected against installed source. dropMessageCompiler:false is explicit existing default.",
+        "boundary": "No claimed failing-before runtime repair; lazy-resource and actual compiler-removal profiles were not exercised.",
+        "current_config_typecheck_build": "Passed after re-extracting runtimeOnly:true/dropMessageCompiler:false; same output asset hash."
+      }
+    },
+    {
+      "id": "fifth-router-runtime",
+      "scope": "Exact TanStackVueRouter1.170.41/core1.171.38 code-based app and DeferredText",
+      "result": "passed",
+      "details": {
+        "strict_router_profile": "Repaired setup return boundary and unknown error narrowing; typecheck/build passed",
+        "before_search": "page=2&q=&extra=keep",
+        "after_search": "page=2&q=",
+        "before_await": "A remained after replacement with B",
+        "after_await": "B displayed; later C then D replacement retained D after late C resolution",
+        "malformed_page": "bad page fell back to1 and q=Vue filtered one item",
+        "boundary": "Browser navigation/deferred consumers, not SSR streaming or server authorization."
+      }
+    },
+    {
+      "id": "fifth-optimistic-writer-retirement",
+      "scope": "Exact Query5.104.5 and Colada1.4.8 before/after writers with real installed caches",
+      "result": "passed",
+      "command": "bun run cache-smoke.mjs (throwaway)",
+      "details": {
+        "profiles": 4,
+        "before_each": {
+          "next_identity_refetches": 1,
+          "next_identity_title": "B server",
+          "retired_service_launches": 1
+        },
+        "after_each": {
+          "next_identity_refetches": 0,
+          "next_identity_title": "B seeded",
+          "retired_service_launches": 0
+        },
+        "overlap_rejected": true,
+        "boundary": "Controlled application service rejection with real cache/mutation lifetimes. Fixture explicitly exits after assertions to avoid library GC timers; no all-timer cleanup, accepted-write cancellation or backend authorization claim."
+      }
+    },
+    {
+      "id": "fifth-query-partitions",
+      "scope": "Exact useProjects/useAccount current modules and real QueryClient observers",
+      "result": "passed",
+      "command": "bun run query-read-smoke.mjs (throwaway)",
+      "details": {
+        "distinct_initial_keys": 2,
+        "partial_errors": 1,
+        "transport_scopes": [
+          "A/same",
+          "A/fails",
+          "A/late",
+          "B/same"
+        ],
+        "late_A_cannot_replace_B": true,
+        "null_scope_no_fetch": true,
+        "literal_ref_getter_inputs": true,
+        "boundary": "Controlled readers, not server validation or identity verification."
+      }
+    },
+    {
+      "id": "fifth-unit-examples",
+      "scope": "Exact subscription/IdentityFocus/hydration fixtures under documented Node24 Vitest5.0.5/VTU2.5.1/jsdom30.1.3",
+      "result": "passed",
+      "command": "bunx --no-install vitest run src/subscription.spec.ts src/IdentityFocus.spec.ts src/hydration.spec.ts; separate set-data-contract.spec.ts",
+      "details": {
+        "source_test_files": 3,
+        "source_tests": 4,
+        "additional_release_contract_tests": 1,
+        "boundary": "Vitest Node/jsdom fixture behavior plus one temporary script-setup setData output check, not browser layout or HTTPSSR isolation.",
+        "teardown_owner_observation": {
+          "temporary_profiles": 2,
+          "manual_plus_auto_plugin_cleanup_calls": 2,
+          "explicit_single_owner_calls": 1,
+          "observed_after": "All per-test teardown hooks settled; initial afterEach probe preceded the auto hook and was corrected to afterAll."
+        }
+      }
+    },
+    {
+      "id": "fifth-form-and-vuetify-consumers",
+      "scope": "Exact active-step SFC, assembled veeVuetify field, consent/people examples and complete native-bag/tabs/files SFCs",
+      "result": "passed",
+      "command": "Strict and strictTemplates union typecheck/build; actual Chromium interactions",
+      "details": {
+        "source_sfcs": 6,
+        "build_modules": 1159,
+        "build_warning": "Single all-in-one throwaway entry exceeds500kB; warning retained, no threshold suppression.",
+        "before_enter": "Accepted Contact immediately without advancing",
+        "after_enter": "Advanced to Profile; age17 blocked and18 accepted exact session snapshot",
+        "before_native": "Required false, aria-invalid absent",
+        "after_native": "Required true, invalid true and enabled field focused for client/server errors; clear normalizes empty string",
+        "consent": "Invalid/error association, checked value and successful selection",
+        "repeatable_fields": "Stable person IDs and described error; added row",
+        "vuetify_native": "Pointer/keyboard Press toggle and required field",
+        "files": "Named Draft panels tablist; Urgent keyboard selection retained across tabs; mixed PNG/text retained PNG with rejected-name policy status; clear; local-only statement",
+        "viewports": [
+          1365,
+          320
+        ],
+        "overflow_at320": false,
+        "boundary": "Controlled application save contract and local Files, not actual server validation/upload or exhaustive accessibility. Fixture field-array owner initialization order was corrected without a source change."
+      }
+    },
+    {
+      "id": "fifth-vueuse-owned-targets",
+      "scope": "Exact OwnedPointerPanelSFC with VueUse15.0.0 core/components",
+      "result": "passed",
+      "command": "Strict typecheck/build; actual production Chromium target lifecycle",
+      "details": {
+        "initial_defect": "Synchronous directive setup displayed0 despite actual320px box",
+        "repair": "next-frame first measurement observed by directive watcher",
+        "observed_initial_width": 320,
+        "observed_resized_width": 250,
+        "pointer_owner_isolation": true,
+        "scroll_lock_owner_isolation": true,
+        "first_owner_remount_preserves_second_lock": true,
+        "application_errors": 0,
+        "boundary": "Actual browser DOM/ResizeObserver/listener ownership; SSR/hydration and intentionally broken wrapper/directive alternatives were not executed."
+      }
+    },
+    {
+      "id": "fifth-vitepress-local-search",
+      "scope": "Exact VitePress1.6.4 selective indexing hook in separate dependency graph at /handbook/",
+      "result": "passed",
+      "command": "bun install && bun run docs:build; actual vitepress preview and Chromium search",
+      "details": {
+        "baseline_excluded_token_searchable": true,
+        "corrected_excluded_token_searchable": false,
+        "control_token_searchable": true,
+        "excluded_public_html_still_readable": true,
+        "hydrated_counter_increment": true,
+        "boundary": "Local index exclusion is not access control. Rewrites were source-checked but no new generated-link rewrite implementation was executed."
+      }
+    },
+    {
+      "id": "fifth-current-reference-syntax",
+      "scope": "Current master plus all40 capability references",
+      "result": "passed",
+      "command": "node reference-syntax.mjs skills/vue-kit (throwaway)",
+      "details": {
+        "documents": 41,
+        "fences": 327,
+        "vue_fences": 123,
+        "script_fences": 151,
+        "json_fences": 9,
+        "wrapped_template_fragments": 6,
+        "contextual_property_fragments": 3,
+        "errors": 0,
+        "boundary": "TypeScript syntax parsing and Vue template compilation only. Does not resolve every imported type or compiler macro contract."
+      }
+    },
+    {
+      "id": "fifth-final-local-package",
+      "scope": "Pre-publication source and two real isolated local SkillsCLI copy installs through Bun and npm; exact60-file payload before this final metadata append.",
+      "result": "passed",
+      "command": "Bun/npm skills add [local repository] --skill vue-kit --agent codex --copy --yes; installed scripts/validate.py and skills-ref validate; SHA256 payload comparison",
+      "details": {
+        "isolated_installs": 2,
+        "selected_skills_each": 1,
+        "matching_files_each": 60,
+        "structural_checks_each": 14,
+        "structural_errors_each": 0,
+        "official_format_each": "valid",
+        "master": {
+          "lines": 194,
+          "body_tokens": 3248,
+          "total_tokens": 3400,
+          "encoding": "cl100k_base"
+        },
+        "final_gate_replay": {
+          "reference_fences": 327,
+          "source_fixture_files": 6,
+          "source_and_temporary_tests": 7,
+          "example_build_modules": 626,
+          "strict_forms_sfcs": 6,
+          "strict_router_build_modules": 93,
+          "strict_cache_build_modules": 16
+        },
+        "boundary": "Local repository installation, not a public remote install. This check records observed copies before its own metadata addition; delivery separately rechecks the exact final payload. No original skill corpus or application node_modules is required to run the installed structural validator."
+      }
+    },
+    {
+      "id": "support-registry-triage",
+      "scope": "Canonical140 exact npm releases/135 names, including historical exclusions and owner-specific schema majors; metadata eligibility only.",
+      "result": "passed",
+      "command": "Registry metadata fetch; native judge_batch with frozen rubric; parent source adjudication of every escalated unit.",
+      "details": {
+        "native_model": "typesafe/jev-1.14.0",
+        "retain": 138,
+        "restrict": 2,
+        "escalated": 15,
+        "errors": 0,
+        "truncations": 0,
+        "deprecated_releases": 0,
+        "boundary": "No blanket package removal inferred from age or metadata. Native retain does not supersede actual exact-graph compiler/runtime restrictions."
+      }
+    },
+    {
+      "id": "support-form-core-and-graphs",
+      "scope": "Actual FormKit2.1.2 validation/plugin engine; vee4.15.1 adapters with Zod3.25.76/Yup1.7.1/Valibot1.5.0; Zod4.6.7 function-rule replacement.",
+      "result": "passed",
+      "command": "node core.mjs && node adapters.mjs; npm strict peer negative install; npm mixed-major graph install/list (throwaway).",
+      "details": {
+        "observed": [
+          "Unhandled async FormKit rejection leaves validating; caught false settles with normal message.",
+          "Nonempty message-string rule is truthy success, not the supported error contract.",
+          "False-returning plugin repeats explicit registrations and does not inherit; normal plugin records/inherits.",
+          "Three supported adapter pairs parse/transform and reject invalid paths; application-owned Zod4 function rule validates without v4 Zod adapter.",
+          "npm rejects v4 Zod adapter plus Zod4 with ERESOLVE.",
+          "Beta root plus v4 adapter installs vee5.0.0-beta.0 and nested vee4.15.1; it is not a completed migration."
+        ],
+        "boundary": "Expected-negative assertions demonstrate excluded contracts, not acceptable production failures. Raw-prefix scope is source-proven; no unprefixed negative browser was claimed."
+      }
+    },
+    {
+      "id": "support-form-production-consumers",
+      "scope": "Exact extracted FormKit, vee and schema SFCs; eager/lazy I18n factories and plugin config in actual Vite8.3.5 production hosts, Vue3.5.44 and I18n11.4.16/plugin11.2.7.",
+      "result": "passed",
+      "command": "Two Vite production builds/previews; real Chromium retained/dropped browser.mjs scenarios; browser.open inspection.",
+      "details": {
+        "observed": [
+          "Caught availability read failure settles and preserves draft with zero writes; restored capability saves.",
+          "Authoritative vee rejection preserves/focuses email; accepted value resets dirty baseline.",
+          "Schema invalid native aria-invalid then accepted session-only value.",
+          "Retained compiler interpolates included AST, inline/imported/fetched raw and trusted-function resources.",
+          "Dropped compiler interpolates included AST/function but leaves raw interpolation syntax literal in production.",
+          "Both profiles dynamically load French and render Bonjour, Ada."
+        ],
+        "browser_errors": 0,
+        "outside_origin_requests": 0,
+        "boundary": "Actual dropMessageCompiler difference, not runtimeOnly alone. No authentication, persistence or complete service is supplied."
+      }
+    },
+    {
+      "id": "support-routing-table-consumers",
+      "scope": "TanStack Vue Router1.170.41/plugin1.168.47 generated split SFCs; Table9.3.1; Vue Router5.4.0 request-local SSR replacement; Vue3.5.44.",
+      "result": "passed",
+      "command": "prepare.mjs; actual generated Vite8.3.4 build; vue-tsc3.3.13/TS5.9.3 strict skipLibCheck:false; runtime.ts; ssr.ts; browser.open navigation/deferred/table scenarios.",
+      "details": {
+        "build_modules": 194,
+        "observed": [
+          "Generated global Register loader/params/search inference is non-any; expected-invalid consumers rejected.",
+          "Real Table feature pipeline, controlled reset, data identity and frozen-state assertions pass.",
+          "Generated browser direct navigation, search, Back, late promise replacement, rejection and retry work; missing local item reaches error UI.",
+          "Numeric ascending Grace/Lin page then Ada; off-page two-row selection persists; filter/clear/no-match work after Vue scheduling.",
+          "Stock SSR actual request handler returns500/Internal Server Error at ServerHeadContent useTags null router.stores; innerWrap slot ignored.",
+          "Classic Vue Router concurrent request-local tenant HTML and escaping pass."
+        ],
+        "browser_errors": 0,
+        "boundary": "Stock TanStack Vue SSR wrappers excluded, not repaired or hydration-certified. Expected500 is diagnostic proof, not a successful SSR implementation."
+      }
+    },
+    {
+      "id": "support-utility-motion-consumers",
+      "scope": "VueUse15 core/components/integrations; async-validator4.2.5; motion-v2.8.0 with framer-motion/motion-dom14.3.0 and motion-utils14.1.1; retained VueUse Motion3.0.3, Vue3.5.44.",
+      "result": "passed",
+      "command": "Exact fence extraction; existing strict application-source profile skipLibCheck:true; Vite7.2.2 production build; actual Node SSR; isolated Chromium adapter/core/native-Motion/Popmotion pages. Separate Vue-tsc3.3.13/TS5.9.3 skipLibCheck:false negative consumer.",
+      "details": {
+        "build_modules": 472,
+        "application_checker": "vue-tsc3.1.5/TS5.9.3; no changed flags",
+        "observed": [
+          "Node overflow core/component construction rejects with undeclared stop; browser returned stop is window.stop.",
+          "Isolated bounding adapter has no initial notification; pointer self stays0,0; zero pagination is Infinity and same mounted controller ignores new total30; as=section safe-area renders DIV.",
+          "Second directive scroll-lock binding locks first target; manual-validator component ignores manual and validates immediately.",
+          "Owned core copies independently lock, restore disconnected element on unmount and remount cleanly; native pointer/initial geometry/mutation and reactive finite pagination work.",
+          "Bordered panel scrollHeight190/clientHeight160/offsetHeight200 exposes offset-box comparison defect; client comparison passes, then child shrink clears overflow.",
+          "Exact manual validator remains idle until explicit submit, retains invalid notice while typing, then validates explicit valid input.",
+          "Native motion.span owns attrs/real x70 transform; config-only mounted reduced-motion state is stale after live preference; hook-owned static branch preserves persistent control.",
+          "Original exact Popmotion SFC crashes production mounting because controller accent shadows ref key accent; actual compiler emits ref:accent. Renamed accentMotion passes selected/unselected/live reduced preference with real Popmotion output.",
+          "Current full-declaration gate rejects motion-v/core15 MaybeRef import and native onDrag conflict; missing ambient names are separately reported, not repaired by pretending packages are compatible.",
+          "Both required-prop and prop-free SFC motion.create consumers rejected; current checker independently confirms TS2769."
+        ],
+        "browser_errors_final": 0,
+        "boundary": "Expected negatives are diagnostic only. Source-only directive inheritance and other unlisted APIs are not separately executed. No Nuxt/hydration/all-browser certification, no dependency patch, no gate weakening. Initial mixed-page renderer failure was isolated to the recipe ref collision, not core cleanup or duplicate Vue runtimes."
+      }
+    },
+    {
+      "id": "support-current-reference-syntax",
+      "scope": "Current master and all40 directly routed references; syntax/template checking, not every imported type.",
+      "result": "passed",
+      "command": "node syntax.mjs skills/vue-kit (throwaway actual Vue3.5.44 compiler and TS5.9.3 parser).",
+      "details": {
+        "documents": 41,
+        "fences": 329,
+        "vue_sfcs_or_template_fragments": 125,
+        "script_fences": 151,
+        "json_fences": 9,
+        "errors": 0
+      }
+    },
+    {
+      "id": "support-bundled-workbench",
+      "scope": "Unchanged bundled Vue3.5.44/Vuetify4.3.0 workbench dependency/build contract.",
+      "result": "passed",
+      "command": "bun install --frozen-lockfile && bun run typecheck && bun run build",
+      "details": {
+        "node": "24.15.0",
+        "bun": "1.4.3",
+        "build_modules": 626,
+        "boundary": "Current dependency, application-source and production-build check; no claim that unrelated earlier UI scenarios were rerun."
+      }
+    },
+    {
+      "id": "support-isolated-skill-installation",
+      "scope": "Pre-publication exact61-file source package and two actual isolated SkillsCLI copy installs through Bun/npm; observed before this final self-record append.",
+      "result": "passed",
+      "command": "bunx/npx skills@latest add [local repository] --skill vue-kit --agent codex --copy --yes; installed Python structural validator; skills-ref validate; full SHA256 payload comparison.",
+      "details": {
+        "isolated_installs": 2,
+        "selected_skills_each": 1,
+        "matching_files_each": 61,
+        "structural_checks_each": 14,
+        "structural_errors_each": 0,
+        "official_format_each": "valid",
+        "master": {
+          "lines": 196,
+          "body_tokens": 3294,
+          "total_tokens": 3447,
+          "encoding": "cl100k_base"
+        },
+        "boundary": "Local-source installation, not a remote-publication claim. No legacy input corpus or application dependencies are required for the installed structural validator. Snapshot self-exclusion avoids recursive hashing; current final payload is independently checked at delivery."
+      }
+    },
+    {
+      "id": "openvue-deep-forms",
+      "scope": "Five complete form consumers; real production HTTP, DOM and local file/editor behavior.",
+      "result": "passed",
+      "command": "node extract.mjs && bun run strict && bun run build && bun run browser",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "environment": {
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "themes": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.13",
+          "vite": "8.3.4",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": false,
+          "chart_js_dev_type_provider": "4.6.1"
+        },
+        "production_modules": 1045,
+        "browser_cases": 7,
+        "behaviors": [
+          "raw versus canonical resolver values; invalid/valid/dirty/touched/reset",
+          "nullable numeric clearing and revalidation",
+          "scalar multi-selection identity after option object replacement",
+          "partial-parent hierarchy map and committed cascade leaf ID",
+          "incomplete/complete date range, mask blur, controlled OTP reset",
+          "actual completion HTTP cancellation, stale work retirement, failure and disconnection",
+          "actual local text-file reading and escaped rich HTML with fresh editor reset owner"
+        ],
+        "corrections": "Strict release contracts use declared PT, Date model, controlled OTP, editor toolbar slot and no asserted hierarchy change payload. Browser harness uses keyboard for hidden combobox inputs, hover expansion for cascade groups and explicit calendar dismissal.",
+        "limits": "Local HTTP is an application-owned fixture; no upload server, backend authorization, stored-HTML sanitization or all-input/browser certification. Quill2.0.3 is the actual optional runtime; large combined demo bundle warning remains visible."
+      }
+    },
+    {
+      "id": "openvue-deep-data",
+      "scope": "Four complete data consumers; client processing, cell cancellation, hierarchy and sparse virtual viewport.",
+      "result": "passed",
+      "command": "bun run extract && bun run typecheck && bun run build; bun run browser",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "environment": {
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "themes": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.13",
+          "vite": "8.3.4",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": false,
+          "chart_js_dev_type_provider": "4.6.1"
+        },
+        "production_modules": 306,
+        "browser_cases": 6,
+        "behaviors": [
+          "numeric sorting/filter/paging, stable selection, expansion and edit",
+          "zero-result data state",
+          "wrapper-level invalid Enter cancellation, corrected value and Escape",
+          "shared tree/tree-table identity and actual Tree aria-checked",
+          "sparse virtual loading geometry, recycled rows and owner disposal",
+          "runtime error observation"
+        ],
+        "corrections": "Removed a filter-event page reset that undid pagination. Cancel invalid cell edits on the wrapper event through structural narrowing because declarations omit preventDefault. Root IDs use actual PT; Tree single selection exposes aria-checked in this release.",
+        "limits": "Local arrays and sparse fixture are not a remote query cache, server pagination/authorization or universal tree/virtualization certification."
+      }
+    },
+    {
+      "id": "openvue-deep-interaction",
+      "scope": "Exact overlay/navigation consumers with actual IndexedDB domain transactions and production emitted store module.",
+      "result": "passed",
+      "command": "bun run extract && bun run strict && bun run build && bun run browser",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "environment": {
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "themes": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.13",
+          "vite": "8.3.4",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": false,
+          "chart_js_dev_type_provider": "4.6.1"
+        },
+        "production_modules": 328,
+        "browser_cases": 8,
+        "behaviors": [
+          "confirm rejection/Escape/X versus accepted persistent deletion",
+          "anchored confirmation",
+          "private dynamic-dialog draft validation and commit",
+          "caller disposal removes portal without commit",
+          "modal containment, body theme scope and trigger restoration",
+          "Drawer/Popover/FocusTrap/BlockUI/Tooltip",
+          "tabs/stepper/menu state and same-ID retained record after draft reset",
+          "domain transaction protects record even when UI disabled state is bypassed"
+        ],
+        "corrections": "Tooltip1.0 does not install its advertised describedby relation: persistent help is associated with its actual control. Step header has explicit native PT name. Production tests import the actual manifest-emitted store entry, not a dev source URL.",
+        "limits": "IndexedDB persistence and local domain policy are real but not server authentication/authorization, multi-process concurrency or distributed transaction certification. Combined fixture bundle warning is not suppressed."
+      }
+    },
+    {
+      "id": "openvue-deep-theming",
+      "scope": "Exact five-file theme consumer and nonce-bearing production server.",
+      "result": "passed",
+      "command": "node extract.mjs && bun run typecheck && bun run build && bun run browser",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "environment": {
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "themes": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.13",
+          "vite": "8.3.4",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": false,
+          "chart_js_dev_type_provider": "4.6.1"
+        },
+        "production_modules": 244,
+        "browser_cases": 6,
+        "behaviors": [
+          "painted global/scoped tokens, reset, real control actions and text contrast",
+          "live body portal theme/focus/trigger lifecycle",
+          "merged PT attributes, panel keyboard visibility/focus",
+          "unstyled action and real counter",
+          "persistent explicit preference and live system changes",
+          "nonce-bearing style creation and token updates without CSP violations; disposal"
+        ],
+        "limits": "CSP intentionally permits inline style attributes; stylesheet nonces do not authorize those attributes. Contrast applies to the named fixture controls, not a blanket accessibility audit. No cross-request theme mutation is certified."
+      }
+    },
+    {
+      "id": "openvue-deep-parent-components",
+      "scope": "Exact office shell plus four layout/media/terminal SFCs in an actual production host.",
+      "result": "passed",
+      "command": "node extract.mjs && bun run typecheck && bun run build && node smoke.mjs",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "environment": {
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "themes": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.13",
+          "vite": "8.3.4",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": false,
+          "chart_js_dev_type_provider": "4.6.1"
+        },
+        "production_modules": 297,
+        "browser_cases": 7,
+        "viewports": [
+          320,
+          1280
+        ],
+        "behaviors": [
+          "named Select label focus, local selection status, disabled trigger before selection",
+          "named modal body portal; initial focus, Tab/Shift+Tab containment, Escape and trigger restoration in both themes",
+          "checklist real percentage0/100/reset and disclosure",
+          "loaded overlapping native image geometry; range50\u219251 changes computed clipping50%\u219251%",
+          "carousel endpoints/page status at both widths",
+          "sole terminal help/status; unmount/remount resets command owner without duplicated responses"
+        ],
+        "corrections": "Actual visual inspection exposed stacked inline SVGs: ImageCompare default stylesheet requires adjacent img nodes. Corrected exact source to real local data-URI images, matching geometry and named native slider.",
+        "limits": "Carousel slides contain no interactive descendants, so hidden-slide focus with added controls remains an application check. Gallery/fullscreen/media, every utility, screen-reader and all-browser behavior are not certified. Data-URI image policy is explicit."
+      }
+    },
+    {
+      "id": "openvue-deep-nuxt",
+      "scope": "Fresh exact official module/options tuple, generated strict contexts, node-server SSR and browser hydration.",
+      "result": "passed",
+      "command": "bun install && bunx --no-install nuxt prepare && bunx --no-install nuxt typecheck && bunx --no-install nuxt build; node nuxt-smoke.mjs",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "environment": {
+          "nuxt": "4.6.2",
+          "nitro": "2.13.5",
+          "vite": "8.3.5",
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "module": "1.0.0",
+          "themes": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.2",
+          "node_types": "24.13.2",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true
+        },
+        "production_modules": {
+          "client": 241,
+          "server": 134
+        },
+        "browser_cases": 2,
+        "viewports": [
+          320,
+          1280
+        ],
+        "http_responses": 4,
+        "behaviors": [
+          "both routes and theme cookies return200 with initial component and theme styles",
+          "clean named selection/modal hydration, body portal, focus containment/restoration and no clipping",
+          "light/dark computed portal backgrounds differ",
+          "client navigation and document refresh retain theme cookie",
+          "Persistent app-dark remains on /other and return navigation, including document refresh after changing preference."
+        ],
+        "corrections": "Failing-before HTTP probe showed dark cookie on /other without app-dark when page owned useHead. Moved head ownership to persistent app shell; page updates same Nuxt cookie.",
+        "limits": "Standalone local UI profile only. Other optional components, selected cache/Vuetify modules, deployment adapters and exhaustive SSR matrix are not covered by this new run."
+      }
+    },
+    {
+      "id": "openvue-expanded-reference-syntax",
+      "scope": "Master plus48 current references; syntax/template compilation only.",
+      "result": "passed",
+      "command": "node reference-syntax.mjs (throwaway consumer)",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {
+          "references/openvue.md": "724954cab14012b609f7479d5380f69f5cff254cd762a1e8ab322f6aa7bcbdaf"
+        }
+      },
+      "details": {
+        "documents": 49,
+        "fences": 358,
+        "vue_fences": 144,
+        "script_fences": 158,
+        "json_fences": 11,
+        "contextual_property_fragments": 3,
+        "errors": 0,
+        "limits": "Bare Vue fragments wrapped in template; three explicitly contextual modules/search/params property fragments wrapped in an object. No imported-type or runtime claim from syntax alone."
+      }
+    },
+    {
+      "id": "openvue-official-skill-format",
+      "scope": "Current master metadata and progressive-discovery footprint.",
+      "result": "passed",
+      "command": "skills-ref validate skills/vue-kit; uv run --with tiktoken python [master measurement]",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "official_result": "Valid skill",
+        "master": {
+          "lines": 207,
+          "body_tokens": 3673,
+          "total_tokens": 3828,
+          "encoding": "cl100k_base"
+        },
+        "references_directly_indexed": 48,
+        "limits": "Format/token checks do not certify reference semantics or runtime behavior."
+      }
+    },
+    {
+      "id": "openvue-expanded-workbench-build",
+      "scope": "Unchanged bundled Vue/Vuetify/Pinia/Router workbench after expanded reference integration.",
+      "result": "passed",
+      "command": "bun install --frozen-lockfile && bun run typecheck && bun run build",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "production_modules": 626,
+        "frozen_install": "65 installs across89 packages; no changes",
+        "limits": "Dependency/type/build replay only. Earlier workbench browser interactions are retained historical checks, not newly rerun."
+      }
+    },
+    {
+      "id": "openvue-expanded-installation",
+      "scope": "Pre-self-record70-file package installed independently through actual Bun and npm Skills CLI copy workflows.",
+      "result": "passed",
+      "command": "bunx/npx skills@latest add [local repository] --skill vue-kit --agent codex --copy --yes; installed Python validator; skills-ref validate; full SHA256 payload comparison",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "isolated_installs": 2,
+        "selected_skills_each": 1,
+        "matching_files_each": 70,
+        "structural_checks_each": 15,
+        "structural_errors_each": 0,
+        "official_format_each": "Valid skill",
+        "limits": "Local-source CLI installation, not a remote publication claim. Performed before this final self-record append; complete final payload is independently replayed afterward. Application dependencies and legacy source corpus are not installed-validator prerequisites."
+      }
+    },
+    {
+      "id": "openvue-expanded-coverage-invariants",
+      "scope": "Complete native document maps and retained historical objects plus corrupted standalone package rejection.",
+      "result": "passed",
+      "command": "Python standard-library exact-object/hash comparisons; five throwaway mutated-package Validator consumers with refreshed footprints",
+      "recorded_at": "2026-10-22T20:06:34.896540Z",
+      "source_profile": {
+        "kind": "exact-fence working-tree consumers",
+        "base_commit": "df73c58",
+        "boundary": "Base commit is authoring lineage, not a false attribution of changed recipes to committed code.",
+        "reference_sha256": {}
+      },
+      "details": {
+        "official_documents_native_maps_preserved": 122,
+        "historical_source_roots_preserved": 47,
+        "historical_source_records_preserved": 459,
+        "historical_reference_objects_preserved": 38,
+        "historical_check_objects_preserved": 43,
+        "whole_historical_assets_preserved": [
+          "source-audit.json",
+          "removals.json",
+          "fifth-pass-audit.json",
+          "support-audit.json"
+        ],
+        "probes": [
+          {
+            "case": "missing-document",
+            "rejected": true
+          },
+          {
+            "case": "native-probability",
+            "rejected": true
+          },
+          {
+            "case": "outside-owner",
+            "rejected": true
+          },
+          {
+            "case": "dropped-escalation",
+            "rejected": true
+          },
+          {
+            "case": "malformed-native",
+            "rejected": true
+          }
+        ],
+        "limits": "Each probe asserts a specific coverage diagnostic; the snapshot was refreshed so the rejection is not merely stale-hash detection. Structural integrity and routing checks do not independently certify source semantics or execution authenticity."
+      }
+    },
+    {
+      "id": "openvue-hardening-local-file",
+      "scope": "Exact LocalTextFile SFC; accepted/rejected replacement, pending read retirement and explicit clearing.",
+      "result": "passed",
+      "command": "bun install && bun run typecheck && bun run build; bunx --no-install playwright test",
+      "recorded_at": "2026-10-22T21:09:01.754241Z",
+      "source_profile": {
+        "kind": "follow-up working-tree exact-fence consumers",
+        "base_commit": "b0bd8c5",
+        "repository_files_sha256": {
+          "skills/vue-kit/references/openvue-forms.md": "75facb3c6f700bae66e18eb59582796e6e7498c8471856cf1950f33952d5b50b"
+        },
+        "boundary": "Base commit identifies the actual failing-before profile. Corrected consumers come from current exact fences; hashes bind their source, not execution authenticity."
+      },
+      "details": {
+        "environment": {
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.13",
+          "vite": "8.3.4",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": false,
+          "chart_js_dev_type_provider": "4.6.1",
+          "unstyled": true,
+          "playwright": "1.56.1"
+        },
+        "production_modules": 55,
+        "browser_scenarios": 1,
+        "before": "Committed consumer retained valid.txt:3 words after selecting a4097-byte replacement; the rejection assertion failed.",
+        "after": [
+          "valid local text reports3 words",
+          "oversized and wrong-type replacements report no accepted file",
+          "rejected replacement retires a pending genuine File.text result",
+          "Clear local report restores its named initial status"
+        ],
+        "probe_boundary": "One genuine File.text promise is held to order the race; its real result is released and awaited. No file content or component is mocked.",
+        "limits": "Local text inspection only; no upload service, sanitizer or storage security is certified."
+      }
+    },
+    {
+      "id": "openvue-hardening-cookie",
+      "scope": "Exact official Nuxt profile; malformed/unknown preference decoding, SSR and hydration/navigation.",
+      "result": "passed",
+      "command": "bun install && bun run prepare && bun run typecheck && bun run build; BASE_URL=[production server] PLAYWRIGHT_MODULE=[actual local module] node scenario.mjs",
+      "recorded_at": "2026-10-22T21:09:01.754241Z",
+      "source_profile": {
+        "kind": "follow-up working-tree exact-fence consumers",
+        "base_commit": "b0bd8c5",
+        "repository_files_sha256": {
+          "skills/vue-kit/references/openvue-setup.md": "c46453f0c08de43eab343628485854149d97ba2bb863d35333fd607c37ba1f18"
+        },
+        "boundary": "Base commit identifies the actual failing-before profile. Corrected consumers come from current exact fences; hashes bind their source, not execution authenticity."
+      },
+      "details": {
+        "environment": {
+          "nuxt": "4.6.2",
+          "nitro": "2.13.5",
+          "vite": "8.3.5",
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "themes": "1.0.0",
+          "module": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.2",
+          "node_types": "24.13.2",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "compiler_boundary": "Unchanged generated Nuxt compiler configuration; not a claim of skipLibCheck:false."
+        },
+        "http_cases": 14,
+        "browser_scenarios": 7,
+        "viewport": 320,
+        "before": "office-theme=% producedHTTP500 rather than200 at the real production SSR endpoint.",
+        "after": "Both routes return200 and consistent SSR theme classes/styles for malformed percent sequences, unknown/object-shaped values, light/dark and encoded dark. All seven browser cases hydrate cleanly, toggle to canonical cookies and retain theme through navigation/refresh.",
+        "strict_correction": "The declared decoder accepts string|null|undefined; both exact readers explicitly narrow to string before decodeURIComponent. No cast or weaker gate.",
+        "limits": "Non-sensitive preference fallback only. Invalid values are normalized in memory and rewritten by a real theme action, not falsely claimed to auto-repair every stored cookie."
+      }
+    },
+    {
+      "id": "openvue-hardening-interactions",
+      "scope": "Exact overlay/navigation consumers plus native IndexedDB, actual Router links and real Toast hosts from production entries.",
+      "result": "passed",
+      "command": "bun install; bun run typecheck && bun run build && bun run test:focused",
+      "recorded_at": "2026-10-22T21:09:01.754241Z",
+      "source_profile": {
+        "kind": "follow-up working-tree exact-fence consumers",
+        "base_commit": "b0bd8c5",
+        "repository_files_sha256": {
+          "skills/vue-kit/references/openvue-overlays.md": "cd6aafd8e4e6859ee20101f25a84e95d55bb58219cd74399d7d58f5b3cd00e38",
+          "skills/vue-kit/references/openvue-navigation.md": "428a1fcf1fa8caa2d700f2561255101a93699bf3de6a6662eefc1228f7710700"
+        },
+        "boundary": "Base commit identifies the actual failing-before profile. Corrected consumers come from current exact fences; hashes bind their source, not execution authenticity."
+      },
+      "details": {
+        "environment": {
+          "vue": "3.5.44",
+          "openvue": "1.0.0",
+          "typescript": "5.9.3",
+          "vue_tsc": "3.3.13",
+          "vite": "8.3.4",
+          "node": "24.15.0",
+          "bun": "1.4.3",
+          "browser": "Chrome/156.0.8078.47",
+          "strict": true,
+          "strictTemplates": true,
+          "skipLibCheck": false,
+          "chart_js_dev_type_provider": "4.6.1",
+          "themes": "1.0.0",
+          "vue_router": "4.6.3",
+          "playwright": "1.64.1"
+        },
+        "production_modules": 354,
+        "browser_scenarios": 8,
+        "before": [
+          "Stored title became Stale local title after another tab had committed a newer title.",
+          "Outcome heading lost focus after a slow DynamicDialog leave.",
+          "Native completion-boundary abort emitted two uncaught InvalidStateError messages.",
+          "New plan retained Abandoned draft and disabled destinations retained href anchors.",
+          "Invalid stored data left Loading local projects while aria-busy was already false and an error was displayed."
+        ],
+        "after": [
+          "same-transaction snapshot checks reject stale rename and delete",
+          "focus waits for persistence plus portal cleanup",
+          "pending native writes abort on owner disposal; completed work is not undone or reported as uncaught cancellation",
+          "New plan clears only its draft/review; tab switching and committed-record identity are preserved",
+          "disabled static/function-valued destinations have no active anchor; enabled modified-click opens a real destination tab",
+          "actual Toast remove/expiry/group/unmount events remain distinct",
+          "failed initial read publishes an error outcome, not permanent loading"
+        ],
+        "production_boundary": "Five built HTML entries plus a manifest-backed emitted project-store module. No dev-source import, fake database or network stub. A genuine external IndexedDB transaction orders the disposal case; native complete events order the finished-transaction edge.",
+        "diagnostic_boundary": "An additional before-run emitted net::ERR_NETWORK_CHANGED; it was retained, not filtered. The final8-case run passed with no captured page/console errors.",
+        "limits": "Local snapshot equality is not a revisioned server protocol, distributed conflict resolution, authentication or authorization. Initial-load owner-guard strengthening also has source evidence; it is not separately advertised as a failing-before visible-publication case."
+      }
+    },
+    {
+      "id": "openvue-hardening-audit",
+      "scope": "Frozen discovery inputs, honest route summaries and standalone CLI corruption rejection.",
+      "result": "passed",
+      "command": "python3 [throwaway audit-probe.py] --expect-rejection; python3 -m unittest discover -s verification -p test_*.py -v",
+      "recorded_at": "2026-10-22T21:09:01.754241Z",
+      "source_profile": {
+        "kind": "follow-up working-tree exact-fence consumers",
+        "base_commit": "b0bd8c5",
+        "repository_files_sha256": {
+          "skills/vue-kit/scripts/validate.py": "61295b15a9dcc317e3390c06622ffd21218a465781a88b6bd86ed6e9bcdd8ce8",
+          "verification/test_validate.py": "98c3900ba6dd3bb8f506cdce5fa43a3e4a72575b33435fa4c729d00df8c34b54"
+        },
+        "boundary": "Base commit identifies the actual failing-before profile. Corrected consumers come from current exact fences; hashes bind their source, not execution authenticity."
+      },
+      "details": {
+        "before_accepted_corruptions": 7,
+        "after_rejected_corruptions": 7,
+        "healthy_standalone_control": "passed",
+        "permanent_regressions": 6,
+        "covered_boundaries": [
+          "erased rubric",
+          "same-cardinality escalation identity substitution",
+          "swapped source kinds",
+          "replaced retrievable source URL",
+          "false disposition/reference summaries",
+          "invalid Unicode policy produces a diagnostic rather than traceback"
+        ],
+        "input_fingerprint": "0545c91984a36770067d15a862975eccd58c5a712ce89204ca186e345b9692da",
+        "fixture_boundary": "Copies refresh the audit footprint before invoking the real standalone CLI; stale hashes cannot substitute for actual metadata validation.",
+        "preserved": "All original native maps/source assets and54 prior check objects remain unchanged.",
+        "limits": "Frozen provenance does not independently certify upstream truth, final semantic routing or runtime authenticity."
+      }
+    },
+    {
+      "id": "openvue-hardening-reference-syntax",
+      "scope": "Current master and48 references, including four changed OpenVue owners.",
+      "result": "passed",
+      "command": "node syntax.mjs (throwaway compiler consumer)",
+      "recorded_at": "2026-10-22T21:09:01.754241Z",
+      "source_profile": {
+        "kind": "follow-up working-tree exact-fence consumers",
+        "base_commit": "b0bd8c5",
+        "repository_files_sha256": {
+          "skills/vue-kit/references/openvue-forms.md": "75facb3c6f700bae66e18eb59582796e6e7498c8471856cf1950f33952d5b50b",
+          "skills/vue-kit/references/openvue-setup.md": "c46453f0c08de43eab343628485854149d97ba2bb863d35333fd607c37ba1f18",
+          "skills/vue-kit/references/openvue-overlays.md": "cd6aafd8e4e6859ee20101f25a84e95d55bb58219cd74399d7d58f5b3cd00e38",
+          "skills/vue-kit/references/openvue-navigation.md": "428a1fcf1fa8caa2d700f2561255101a93699bf3de6a6662eefc1228f7710700"
+        },
+        "boundary": "Base commit identifies the actual failing-before profile. Corrected consumers come from current exact fences; hashes bind their source, not execution authenticity."
+      },
+      "details": {
+        "documents": 49,
+        "fences": 358,
+        "vue_fences": 144,
+        "script_fences": 158,
+        "json_fences": 11,
+        "contextual_property_fragments": 3,
+        "errors": 0,
+        "limits": "Bare Vue fragments were template-wrapped; three explicitly contextual property fragments were object-wrapped. Syntax/template compilation is separate from imported typing and runtime behavior."
+      }
+    },
+    {
+      "id": "openvue-hardening-installed-skill",
+      "scope": "Pre-self-record exact70-file hardened package installed independently through Bun and npm Skills CLI.",
+      "result": "passed",
+      "command": "bunx/npx skills@latest add [local repository] --skill vue-kit --agent codex --copy --yes; installed standard-library validator; skills-ref validate; complete SHA256 comparison",
+      "recorded_at": "2026-10-22T21:09:01.754241Z",
+      "source_profile": {
+        "kind": "follow-up working-tree exact-fence consumers",
+        "base_commit": "b0bd8c5",
+        "repository_files_sha256": {},
+        "boundary": "Base commit identifies the actual failing-before profile. Corrected consumers come from current exact fences; hashes bind their source, not execution authenticity."
+      },
+      "details": {
+        "isolated_installations": 2,
+        "selected_skills_each": 1,
+        "matching_files_each": 70,
+        "structural_checks_each": 15,
+        "structural_errors_each": 0,
+        "official_format_each": "Valid skill",
+        "limits": "Observed before this final self-record append. Local-source copies are not remote publication proof; a final public installation is separately exercised and reported at delivery. No legacy corpus or application dependencies are needed by the installed validator."
+      }
+    }
+  ],
+  "limits": [
+    "No complete authentication server, real login/token verification or tenant authorization is supplied or certified. Cookie/token fixtures are explicitly application-owned test contracts.",
+    "Generated Nuxt4 SSR/module/hydration observations cover the enumerated OpenVue profile and selected private-cache lifetimes, not every module/preset/deployment or an exhaustive SSR matrix.",
+    "Real HTTP/SSE exercised client protocol and lifetime behavior, not inference, hosted-provider accounts, persistence, tools, media or every optional ecosystem integration.",
+    "Reference parsing/template compilation does not verify every imported type. Strict compiler and runtime scopes, pinned versions and unsupported stronger compiler combinations are enumerated per check.",
+    "Browser checks are bounded Chromium keyboard/DOM/visual observations at named widths, not screen-reader, exhaustive accessibility or all-browser certification.",
+    "Experimental WebGPU is retained as requested. Normal software WebGL2/WebGPU rendering and unmount passed; explicitly denied initialization produced separately recorded errors/rejections. Native hardware, lost-device recovery, resource stress and all-path clean teardown are not certified.",
+    "Screenshots and current drawing-buffer readback can disagree. Inspect actual backend, live scene, raw errors and pixels rather than inferring unsupported hardware from an empty image.",
+    "The structural validator checks schemas, retained identities, navigation, exclusions and snapshots; it cannot authenticate execution or certify semantic completeness.",
+    "The cutover subset identifies source90c3eb4; later checks retain their own source profiles or batch lineage. Older reports are identified in repository history at7bf433b98951918c694358e372d3b02cf6f982e5, not freshly reread deleted origins. Snapshot refresh is packaged integrity, not proof every earlier runtime check was repeated.",
+    "Fifth-pass checks exercise only their named working-tree consumers. Proposed smoke scenarios and source-only adjudications in assets/fifth-pass-audit.json are not runtime evidence; no complete optional-package runtime or SSR matrix is claimed.",
+    "Generated-link rewrite execution and full VueUse SSR hydration remain outside current observations. Named SSR construction/default-markup, lazy-catalog and actual compiler-removal profiles are now exercised; this is not a universal SSR matrix.",
+    "Packaged snapshots describe the last recorded integrity footprint, not execution authentication or automatic coverage of later edits. Refresh them only after integration. Historical installation/publication and final-delivery wording is bounded to its original batch; this register does not establish a fresh final-payload or remote-publication pass.",
+    "motion-v2.8.0/core15 full-declaration compatibility and SFC factory consumers fail and are explicitly restricted; native application-source/runtime passes use the unchanged existing skipLibCheck:true profile. No gate is weakened to adopt the library.",
+    "New OpenVue corpus coverage does not mean every official component was executed. Current runtime cases are limited to the named exact-fence consumers; source-only component contracts and explicit non-offerings remain labeled in the coverage ledger.",
+    "OpenVue1.0 configuration declarations require Chart.js as a development type provider under skipLibCheck:false even without a runtime Chart import. Actual Chart/Editor capability peers are separate runtime decisions.",
+    "The schema-required empty unresolved array is not a claim that every runtime/manual question is closed. Native GPU behavior, lost-device recovery, resource stress and all-path clean teardown remain open for the final human gate; software-renderer observations and injected denials do not discharge that boundary."
+  ],
+  "snapshots": {
+    "algorithm": "sha256",
+    "files": {
+      "CHANGELOG.md": "6085b762b6ee023e9b3a86ea043262b620f2fb8e39782ccd44e045d58cde72ef",
+      "SKILL.md": "271a0e35d3eba9a83bab51d0aa49430110f3440346d53b3fe13eb8fd62264952",
+      "assets/coverage-audit.json": "ef20675c85ff4f5daf8888317a0c3d6565d3de1c003552662d8e71cbec5e4b7f",
+      "assets/current-audit.json": "1fdfd58e447f7484442c691d1e74a7d1b4e2fbcba8f4679cdc3bd05183535d87",
+      "assets/example-app/.gitignore": "790e3169bc19b046fe55ba1da6d13b976c28363c8c00462a2195fe5faf260910",
+      "assets/example-app/bun.lock": "35974d579aa2193d0462869027f88f2aed3ebd420ca63c9e70adbdc96b730fe5",
+      "assets/example-app/index.html": "319db4614cf84739ed57b557a7bfa5d6298123967e9d43e9c28bb839a29eae39",
+      "assets/example-app/package.json": "66817663b3161fdec9cbd9ebea64d32a20bd9322cbafdc6379bf3321fca431f4",
+      "assets/example-app/src/AboutPage.vue": "74497924ff5866a6a3dab474d3f12d090765963ae9ff863f7678e1a5d2cd1da5",
+      "assets/example-app/src/App.vue": "d2badede63a969d4f793d76b0fb843125f4fb54ec8ea0a52b3eab916fa201187",
+      "assets/example-app/src/GraphicsPage.vue": "825116ce87ed249760031634709d4bc8610086130884f0db83b109a922fe0f35",
+      "assets/example-app/src/TaskPage.vue": "aa7790bc6cb3555434a8aaccfb7b828f0ca674a5df60d939f789d730eadcaad6",
+      "assets/example-app/src/graphics/GraphicsScene.vue": "efd4c95df1067f0b4cae4bbce24203e6129ab6541dde9f47768d5835c1971bef",
+      "assets/example-app/src/graphics/SpinningCube.vue": "50a6f196460f6990b49cb1fafb5e0480b82f127c1d15411c816dde3b245b2b49",
+      "assets/example-app/src/main.ts": "d95dea0a9fca93d809374ea117359b97e7d5118b2dfd34640aa05ea811d1e540",
+      "assets/example-app/src/task-store.ts": "c91480e8954f2fb511161cb96dd02cdb9dcc08be72b600c802ae97261f2cc4d3",
+      "assets/example-app/tsconfig.json": "ec8e92019f896b9308343f8a7f57e8f875049890cd65ad44a7ad8b6c48943222",
+      "assets/example-app/vite.config.ts": "b44a8e9ad926257e58c2ff3fb16456a278857ef61ebf2587a88356257ef9d1e0",
+      "assets/fifth-pass-audit.json": "5b5ee07faf39f136719064c6fa727240947672ea34558b23ab2d0729e07ea4e4",
+      "assets/openvue-coverage.json": "e8ca4d60580b6c15479f4c9c63706d93c7867cebc1a26c752a3089062c661537",
+      "assets/removals.json": "29c0811112904b5ea75fdaea0480a28603243e18775130d3c618105633059260",
+      "assets/source-audit.json": "6004c472d4e9e668514cad76eb4e29c84c9794d2f49389f33bdaaf8cbab4ff2e",
+      "assets/source-manifest.json": "5568e31a8fde17444d13ad4a4d5730049942f774934ac5d5d5e6b5643b989ea1",
+      "assets/support-audit.json": "c0a722365295af4333d6ce1762b80482c58669058082f07d84681f70589f7594",
+      "references/accessibility.md": "2aedad5ab47c0be2b9c4b52c9f4bcec97baaa297236f47ec77dc5d69749f1e7b",
+      "references/ai-streaming.md": "bcc121b8d36f5a0f0881ae73a920a275ac88f2e52f10ef4797835eb193a775ad",
+      "references/alternative-ui.md": "daea8185c7fda3c7dd7b82eec03d868077d77fb7d8ca54bee3239844942b1c73",
+      "references/architecture-data.md": "28886843ddda1a295323c0483b04a6a1c8819228df1fc59f077ff8712c72c11c",
+      "references/architecture-ui.md": "22c9970f761d5952f39d62fad2d02bb3ef4b212d382cd93e8820893df423efe9",
+      "references/architecture.md": "0c49df7d7e1687bc4ab7404e36a47ade76282d7ea4708cf0563da7dc6a44a61b",
+      "references/auth.md": "ab3b9b54bd0bb9cf23dbb16b88caecaa428034337cc1bdde91b36cc0031583fc",
+      "references/components.md": "c6f60bc8efa9cee8983c6481b55448d70d7b94b00b071141afec154e836caca3",
+      "references/composables.md": "26e04263dfb87266a9217a1468b33169403b4415b17cc41ce4e246cd9db4b313",
+      "references/core-vue.md": "43cfd53a7d9d7cf5f8fef48f796ee272ef1f6eea8bf5394c9494be0f78c6fcce",
+      "references/data-tables.md": "c4b18267070369231044f1eff4a787b00aea30793cff9e806793a796cd03a57e",
+      "references/debugging-ssr.md": "4edc6faf57bdd12affee682699cc82783d6c2f9377bb86a9c1c01fc2cfd7825e",
+      "references/design-system.md": "7cd622b7239ae763390dbff25affa879f569abd1023a651ff2a091d67dfb1623",
+      "references/docs-vitepress.md": "25f6b3e2d1d18e146fcf40f703f73c258ce5081f6576e76afd763a5614c49f5f",
+      "references/formkit.md": "476a44082952edd8c75d032c2cb162714f8462aca3d54c68944926f8986a0eee",
+      "references/forms.md": "eebde31e84ace987aa8229e97c0e734b9e61dff9d7a6a0dfb98a6b663c655469",
+      "references/headless-ui.md": "e9a4ba32c691a05d280793344aeafe78dd13894e1d5d9dbf5b06251817ad00a6",
+      "references/i18n-head.md": "d020885b78a765ecb6756e50b9bbc2a73710b8315a16d84b1f61dc4a1ac446a3",
+      "references/migration.md": "c0d023254aed2dd3227846495eb69db33a06674128034b00d13e6a13d6897146",
+      "references/motion.md": "0c8d09b8e27d3b57df975076452775213b9504a4802c2cc11d0123a8a8fb1817",
+      "references/nuxt-integrations.md": "f6995545e0600c466f0599ea94609bce359ba484ecc12c24334bd825dcbdeb67",
+      "references/nuxt.md": "c7219d6388e6562ee38abe061db9ffe1dc598e1725255d9da919805f5e792310",
+      "references/openvue-components.md": "23a9150ee74bf51e626b9289cff07ed92fe91dfcf1d156dbf6852ada09ced7b5",
+      "references/openvue-data.md": "6d81cff788373b8a4bd1502f894bb74e7da031bde84f7bac4c8148a31fdfdfcc",
+      "references/openvue-forms.md": "6bd729c3115620a2754d11fc8ae3e57124e2635e0abb0fb57cde7d324fff97a2",
+      "references/openvue-navigation.md": "3dd559de2a7ad7be08e787224fef286f4cb229070655562a3ec9a6b5750cb493",
+      "references/openvue-overlays.md": "95cfb536cfd52ec8926e3177c1e9ecf66e706521406589ee10ae11a40b2eadc5",
+      "references/openvue-setup.md": "c46453f0c08de43eab343628485854149d97ba2bb863d35333fd607c37ba1f18",
+      "references/openvue-theming.md": "2f4ded11c607553dd84410e5a21f3517608742acbc1415a09c731bdfd963b644",
+      "references/openvue.md": "023001857cc16df9c27731da21a55d1dd849fcee5d864d96037900cde9d5f269",
+      "references/pinia-colada.md": "cb9f4bcf5b57b2f23a9bc7bd92f442c7c4a6728cb6f418e64944e1a0607fecf1",
+      "references/routing-tanstack.md": "9dfc4d1544e97286a8f80b0a98a5b39fea06b28666eb1a9ba1b46e320c687d8e",
+      "references/routing.md": "6fc009dbf8424fbf27fe09a769d617fb87ed3794cac59a8955ab12f879c859e6",
+      "references/setup-tooling.md": "17a5f4cb305285ba523d04663eb71ddbb9befd69f393e3f9a6346d12a353d406",
+      "references/sources.md": "d81adb7398d03ef9ea2079c7949634ec4d60e85cbc1cfd0bf5b26aa30dc5f0f5",
+      "references/state.md": "51b8622478c7e311bdadd207c511b7df2f258a2ec11070bc7d1e3e5b4802a3dc",
+      "references/tanstack-form.md": "76f83d2a456dfe6331d6d5c450bd9b58b382e036fee19ea23bd36a2450cb0767",
+      "references/tanstack-query.md": "227050ea4a8cb56d0eac32e3d84db4611a2cca2037df628be05681850763b15c",
+      "references/testing.md": "5ff408a7db5da0af5c6178f0c2100786a2c9f8aa3a33676a0f2c1d2e6e8fcd78",
+      "references/tresjs.md": "dc6e5dadf64f1b320f493b5ffeca290cde34d4336978b43505e0dba17e78e945",
+      "references/vee-validate.md": "aa6ba1303fa80240f334af7d561678490a6de7f1277f713fcb5175cdcf143c77",
+      "references/virtualization.md": "39a3e27b83de5a428754f43178d4cbfdeed73a56d43abb9d4a3a732104bf3674",
+      "references/visualization.md": "b88187803fbc617c09ca181acde5e0654ab0aa2599e962a3d2aa88b493e7c1c4",
+      "references/vuetify-components.md": "fc77ffea42644ded19a129dc5155da0ae992ad8b0a7b571824dde67e9ea53d03",
+      "references/vuetify-setup.md": "0a3b105a3989811c25e94f41e4244891b19eea007c425bcc46220b3268b7ae01",
+      "references/vuetify-theme.md": "70903e8fb509581884a84ff5737933a82e32cae9272599a166b0cd1df0534f6b",
+      "references/vueuse-integrations.md": "08a968ad87a46b0dd0a4fe3be7ac5f1ebb5b1776834d17ee67d11584b75e7dd4",
+      "references/vueuse.md": "37e0365c72b8dabe352c7319647ed904d58bdf77f0bb92e7a8beaf2f924d13d0",
+      "scripts/validate.py": "1a0ec4e29053dc9bdc3de2158982f42f13dd3ce7e203d84ee66ccb5f72382ea5"
+    }
+  },
+  "support_tightening": {
+    "audit": "assets/support-audit.json",
+    "historical_checks_preserved": 35,
+    "registry_exact_releases": 140,
+    "registry_package_names": 135,
+    "native_model": "typesafe/jev-1.14.0",
+    "working_tree_after": "4f720aa",
+    "boundary": "Registry eligibility, source research, expected-negative diagnostics and successful consumer observations remain separate."
+  },
+  "openvue_expansion": {
+    "audit": "assets/openvue-coverage.json",
+    "recorded_at": "2026-10-22T20:06:34.896540Z",
+    "historical_checks_unchanged": 43,
+    "source_commit": "d064f02ac75c3aaeb60a676c70e5ee08e3e3042e",
+    "official_documents": 122,
+    "semantic_dispositions": {
+      "documented": 109,
+      "context_only": 12,
+      "excluded": 1
+    },
+    "native_hypotheses_boundary": "Complete retained probability maps are discovery inputs, not semantic acceptance or runtime certification. All21 capped inputs and80 escalations received final dispositions.",
+    "current_reference_count": 48,
+    "boundary": "Master and eight focused owners replace the shallow OpenVue portion; Quasar remains separate. No excluded package is restored; no future-major compatibility is implied.",
+    "appended_check_count": 11,
+    "time_boundary": "Recorded timestamps identify evidence packaging, not invented per-scenario execution times."
+  },
+  "openvue_hardening": {
+    "recorded_at": "2026-10-22T21:09:01.754241Z",
+    "time_boundary": "Evidence-packaging timestamp, not invented per-test execution times.",
+    "working_tree_after": "b0bd8c5",
+    "historical_checks_preserved": 54,
+    "parallel_capability_reviews": 3,
+    "browser_scenarios": 16,
+    "http_cookie_cases": 14,
+    "permanent_validator_regressions": 6,
+    "boundary": "Material findings in the eight OpenVue owners and validator were resolved. This is not a whole-ecosystem/all-browser/future-major certification; no package offering was added or restored.",
+    "appended_check_count": 6
+  }
+}

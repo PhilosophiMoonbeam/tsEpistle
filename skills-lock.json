@@ -200,6 +200,12 @@
       "skillPath": "skills/vue/SKILL.md",
       "computedHash": "9c241141e07e836e4f0537c63e8f929fba3767c2997250be38e699f19b75e3f2"
     },
+    "vue-kit": {
+      "source": "PhilosophiMoonbeam/vue-kit-skills",
+      "sourceType": "github",
+      "skillPath": "skills/vue-kit/SKILL.md",
+      "computedHash": "a000bf7adb511474eb04fc5e9ba77485e6b9d05716fbb33b391da4c9db705bb7"
+    },
     "vue-skilld": {
       "source": "skilld-dev/vue-ecosystem-skills",
       "sourceType": "github",

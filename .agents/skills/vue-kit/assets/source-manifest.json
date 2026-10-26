@@ -1,0 +1,522 @@
+{
+  "schema_version": 2,
+  "baseline": {
+    "vue": "3.5.44",
+    "vuetify": "4.3.0"
+  },
+  "sources": [
+    {
+      "id": "create-adaptable-composable",
+      "references": [
+        "references/composables.md"
+      ],
+      "documents": 1,
+      "flagged_documents": 0,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "floating-ui-vue-skilld",
+      "references": [
+        "references/headless-ui.md"
+      ],
+      "documents": 3,
+      "flagged_documents": 3,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "formkit-core-skilld",
+      "references": [
+        "references/forms.md",
+        "references/formkit.md"
+      ],
+      "documents": 8,
+      "flagged_documents": 8,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "motion-v-skilld",
+      "references": [
+        "references/motion.md"
+      ],
+      "documents": 4,
+      "flagged_documents": 4,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "peccable",
+      "references": [
+        "references/design-system.md",
+        "references/accessibility.md",
+        "references/architecture-ui.md"
+      ],
+      "documents": 13,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "pinia-colada-skilld",
+      "references": [
+        "references/pinia-colada.md",
+        "references/architecture-data.md"
+      ],
+      "documents": 8,
+      "flagged_documents": 8,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "pinia-skilld",
+      "references": [
+        "references/state.md",
+        "references/architecture-data.md"
+      ],
+      "documents": 9,
+      "flagged_documents": 9,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "quasar-skilld",
+      "references": [
+        "references/alternative-ui.md"
+      ],
+      "documents": 7,
+      "flagged_documents": 7,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "reka-ui-skilld",
+      "references": [
+        "references/headless-ui.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "shadcn-vue-skilld",
+      "references": [
+        "references/headless-ui.md",
+        "references/alternative-ui.md"
+      ],
+      "documents": 7,
+      "flagged_documents": 7,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "slidev-cli-skilld",
+      "references": [
+        "references/sources.md"
+      ],
+      "documents": 9,
+      "flagged_documents": 9,
+      "notes": "Excluded historical presentation integration; routes only to the removal decision."
+    },
+    {
+      "id": "tanstack-ai-vue-skilld",
+      "references": [
+        "references/ai-streaming.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "tanstack-vue-form-skilld",
+      "references": [
+        "references/forms.md",
+        "references/tanstack-form.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "tanstack-vue-query-skilld",
+      "references": [
+        "references/tanstack-query.md",
+        "references/architecture-data.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "tanstack-vue-router-skilld",
+      "references": [
+        "references/routing-tanstack.md"
+      ],
+      "documents": 9,
+      "flagged_documents": 9,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "tanstack-vue-store-skilld",
+      "references": [
+        "references/state.md",
+        "references/architecture-data.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "tanstack-vue-table-skilld",
+      "references": [
+        "references/data-tables.md"
+      ],
+      "documents": 4,
+      "flagged_documents": 4,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "tanstack-vue-virtual-skilld",
+      "references": [
+        "references/virtualization.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "tresjs-core-skilld",
+      "references": [
+        "references/tresjs.md"
+      ],
+      "documents": 7,
+      "flagged_documents": 7,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "unhead-vue-skilld",
+      "references": [
+        "references/i18n-head.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "unovis-ts-skilld",
+      "references": [
+        "references/visualization.md"
+      ],
+      "documents": 4,
+      "flagged_documents": 4,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "unovis-vue-skilld",
+      "references": [
+        "references/visualization.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vee-validate-skilld",
+      "references": [
+        "references/forms.md",
+        "references/vee-validate.md"
+      ],
+      "documents": 7,
+      "flagged_documents": 7,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vitepress-skilld",
+      "references": [
+        "references/docs-vitepress.md"
+      ],
+      "documents": 7,
+      "flagged_documents": 7,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-best-practices",
+      "references": [
+        "references/core-vue.md",
+        "references/components.md",
+        "references/composables.md",
+        "references/migration.md",
+        "references/architecture-ui.md"
+      ],
+      "documents": 23,
+      "flagged_documents": 10,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-data-ui-skilld",
+      "references": [
+        "references/visualization.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-debug-guides",
+      "references": [
+        "references/debugging-ssr.md",
+        "references/testing.md",
+        "references/core-vue.md",
+        "references/components.md"
+      ],
+      "documents": 140,
+      "flagged_documents": 48,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-expert",
+      "references": [
+        "references/core-vue.md",
+        "references/components.md",
+        "references/composables.md",
+        "references/migration.md",
+        "references/setup-tooling.md",
+        "references/architecture.md",
+        "references/nuxt.md",
+        "references/nuxt-integrations.md"
+      ],
+      "documents": 8,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-i18n-skilld",
+      "references": [
+        "references/i18n-head.md"
+      ],
+      "documents": 9,
+      "flagged_documents": 9,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-jsx-best-practices",
+      "references": [
+        "references/components.md",
+        "references/migration.md"
+      ],
+      "documents": 2,
+      "flagged_documents": 2,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-options-api-best-practices",
+      "references": [
+        "references/core-vue.md",
+        "references/components.md",
+        "references/migration.md"
+      ],
+      "documents": 11,
+      "flagged_documents": 3,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-patterns",
+      "references": [
+        "references/core-vue.md",
+        "references/components.md",
+        "references/composables.md",
+        "references/architecture.md",
+        "references/nuxt.md"
+      ],
+      "documents": 1,
+      "flagged_documents": 1,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-pinia-best-practices",
+      "references": [
+        "references/state.md",
+        "references/architecture-data.md"
+      ],
+      "documents": 7,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-router-best-practices",
+      "references": [
+        "references/routing.md"
+      ],
+      "documents": 9,
+      "flagged_documents": 4,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-router-skilld",
+      "references": [
+        "references/routing.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-skilld",
+      "references": [
+        "references/core-vue.md",
+        "references/components.md",
+        "references/composables.md",
+        "references/migration.md",
+        "references/sources.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-test-utils-skilld",
+      "references": [
+        "references/testing.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vue-testing-best-practices",
+      "references": [
+        "references/testing.md"
+      ],
+      "documents": 12,
+      "flagged_documents": 11,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vuetify-4",
+      "references": [
+        "references/vuetify-setup.md",
+        "references/vuetify-components.md",
+        "references/vuetify-theme.md",
+        "references/forms.md",
+        "references/data-tables.md"
+      ],
+      "documents": 23,
+      "flagged_documents": 23,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vuetify-skilld",
+      "references": [
+        "references/vuetify-setup.md",
+        "references/vuetify-components.md",
+        "references/vuetify-theme.md",
+        "references/setup-tooling.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vueuse-components-skilld",
+      "references": [
+        "references/vueuse.md"
+      ],
+      "documents": 4,
+      "flagged_documents": 4,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vueuse-core-skilld",
+      "references": [
+        "references/vueuse.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vueuse-integrations-skilld",
+      "references": [
+        "references/vueuse-integrations.md"
+      ],
+      "documents": 4,
+      "flagged_documents": 4,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vueuse-math-skilld",
+      "references": [
+        "references/vueuse.md"
+      ],
+      "documents": 3,
+      "flagged_documents": 3,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vueuse-motion-skilld",
+      "references": [
+        "references/motion.md"
+      ],
+      "documents": 5,
+      "flagged_documents": 5,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "vueuse-shared-skilld",
+      "references": [
+        "references/vueuse.md"
+      ],
+      "documents": 8,
+      "flagged_documents": 8,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    },
+    {
+      "id": "web-ui-vuetify",
+      "references": [
+        "references/vuetify-setup.md",
+        "references/vuetify-components.md",
+        "references/vuetify-theme.md",
+        "references/forms.md",
+        "references/data-tables.md"
+      ],
+      "documents": 6,
+      "flagged_documents": 6,
+      "notes": "Historical source identity and routing input. Current APIs and primary evidence belong to the owning references; original triage flags are not confirmed defects."
+    }
+  ],
+  "extensions": [
+    {
+      "id": "openvue",
+      "references": [
+        "references/openvue.md",
+        "references/openvue-setup.md",
+        "references/openvue-theming.md",
+        "references/openvue-forms.md",
+        "references/openvue-data.md",
+        "references/openvue-overlays.md",
+        "references/openvue-navigation.md",
+        "references/openvue-components.md"
+      ],
+      "primary_urls": [
+        "https://github.com/openvi-foundation/openvue",
+        "https://registry.npmjs.org/openvue/1.0.0",
+        "https://registry.npmjs.org/@openvue/themes/1.0.0",
+        "https://registry.npmjs.org/@openvue/nuxt-module/1.0.0",
+        "https://registry.npmjs.org/@openvue/core/1.0.0",
+        "https://registry.npmjs.org/@openvue/forms/1.0.0",
+        "https://github.com/openvi-foundation/openvue/tree/d064f02ac75c3aaeb60a676c70e5ee08e3e3042e/apps/showcase/server/assets/llms/pages",
+        "https://github.com/openvi-foundation/openvue/tree/d064f02ac75c3aaeb60a676c70e5ee08e3e3042e/apps/showcase/server/assets/llms/components",
+        "https://context7.com/openvi-foundation/openvue",
+        "https://openvue.dev/llms.txt"
+      ],
+      "notes": "OpenVue is the supported successor; exact authoring snapshot is 1.0.0 with Vue 3.5.44, while Vuetify remains preferred at its authored 4.3.0 baseline. Eight capability references are backed by assets/openvue-coverage.json: all 122 pinned official documents retain native routing hypotheses and receive final semantic dispositions. Context7 is discovery, not release or runtime certification; reconcile installed exports and declarations and use only bounded executed evidence in assets/verification.json. Future-major compatibility is not assumed."
+    },
+    {
+      "id": "application-session-contract",
+      "references": [
+        "references/auth.md"
+      ],
+      "primary_urls": [
+        "https://vuejs.org/api/reactivity-core.html#watch",
+        "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html"
+      ],
+      "notes": "Application-owned client session boundaries, not an authentication provider or complete server login implementation."
+    }
+  ],
+  "history": {
+    "commit": "7bf433b98951918c694358e372d3b02cf6f982e5",
+    "policy": "Superseded audit bodies remain in repository history, not the installed skill. Retained native judgments describe historical inputs, not current semantic or runtime acceptance."
+  }
+}
