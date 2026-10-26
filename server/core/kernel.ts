@@ -1,7 +1,6 @@
 import EventEmitter2Module, { type EventEmitter2 as EventEmitter2Instance } from 'eventemitter2'
 import _ from 'lodash'
 import type { ProductMetadata } from '../../shared/product.ts'
-import { installBuiltinWikiAuthoring } from '../agents/skills/builtin/install.ts'
 import type { HttpTransportRuntime, MasterBackgroundWorkers } from '../master.ts'
 import type Page from '../models/pages.ts'
 import type User from '../models/users.ts'
@@ -188,20 +187,6 @@ const kernel: KernelService = {
     await models.storage.refreshTargetsFromDisk()
     await wiki.extensions.init()
     await wiki.auth.activateStrategies()
-    if (wiki.config.agents?.skills?.namespace && wiki.config.lang?.code) {
-      try {
-        const outcome = await installBuiltinWikiAuthoring({
-          db: models.knex,
-          namespace: wiki.config.agents.skills.namespace,
-          locale: wiki.config.lang.code,
-          getRootUser: () => models.users.getRootUser() as unknown as Promise<Parameters<typeof Page.createPage>[0]['user']>,
-          createPage: input => models.pages.createPage(input)
-        })
-        if (outcome === 'conflict') wiki.logger.warn('Bundled wiki-authoring skill conflicts with an existing page; review the source before registering it.')
-      } catch (error) {
-        wiki.logger.warn(`Bundled wiki-authoring skill could not be installed: ${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
     await models.commentProviders.initProvider()
     await models.searchEngines.initEngine()
     await models.storage.initTargets()

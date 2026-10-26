@@ -518,6 +518,23 @@ describe('Wiki source-bound typed synthesis', () => {
     }
   })
 
+  it('preserves distinct same-source paragraphs and immediate citations through the Markdown consumer', () => {
+    const statements = ['External publication requires two approvals.', 'The approvals must precede publication.']
+    const rendered = renderWikiSynthesisAnswer(
+      answer({ claims: statements.map(statement => ({ ...answer().claims[0]!, statement })) })
+    )
+    const document = load(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Approvals', href: '/approvals' }))))
+    const paragraphs = document('body > p')
+    expect(paragraphs.length).toBe(2)
+    for (const [index, statement] of statements.entries()) {
+      const paragraph = paragraphs.eq(index)
+      expect(paragraph.text()).toBe(`${statement} 1`)
+      expect(paragraph.children('a').length).toBe(1)
+      expect(paragraph.children('a').attr('href')).toBe('/approvals')
+      expect(paragraph.children('a').text()).toBe('1')
+    }
+  })
+
   it('renders independently validated selected-field comparisons and lists without native-whole-body expansion in final and streaming consumers', async () => {
     const readText =
       'Fictional and non-operative. Both plans require manager approval.\n\n| Field | Atlas | Boreal |\n| --- | --- | --- |\n| Monthly fee | USD 120 | USD 180 |\n| Status | Pilot only | Pilot only |\n\nPrivate contact: keeper@example.test.'
@@ -525,13 +542,20 @@ describe('Wiki source-bound typed synthesis', () => {
     const statements = [
       'Both Atlas and Boreal require manager approval; the plans are fictional and non-operative.',
       'Fictional, non-operative pilot plans:\n\n| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 120 |\n| Boreal | USD 180 |',
-      'Fictional, non-operative pilot plans:\n\n- Atlas: USD 120 monthly.\n- Boreal: USD 180 monthly.'
+      'Fictional, non-operative pilot plans:\n\n- Atlas: USD 120 monthly.\n- Boreal: USD 180 monthly.',
+      '## Pilot plans\n\nBoth Atlas and Boreal require manager approval; the plans are fictional and non-operative.',
+      '### Pilot fees\n\nFictional, non-operative pilot plans:\n\n| Plan | Monthly fee |\n| --- | --- |\n| Atlas | USD 120 |\n| Boreal | USD 180 |',
+      '## Pilot fees\n\nFictional, non-operative pilot plans:\n\n- Atlas: USD 120 monthly.\n- Boreal: USD 180 monthly.'
     ]
     for (const mode of ['native', 'json_object'] as const)
       for (const statement of statements) {
         const predicted = answer({ claims: [{ ...answer().claims[0]!, statement }] })
-        const validateClaim = vi.fn((_claim: WikiSynthesisAnswer['claims'][number], selected: WikiSynthesisSource) => selected.text === readText)
-        const validateAnswer = vi.fn((_answer: WikiSynthesisAnswer, _rendered: string) => true)
+        const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number], selected: WikiSynthesisSource) =>
+          selected.text === readText && claim.statement === statement
+        )
+        const validateAnswer = vi.fn((candidate: WikiSynthesisAnswer, rendered: string) =>
+          candidate.claims[0]?.statement === statement && rendered === `${statement}${statement.includes('\n') ? '\n\n' : ' '}[[cite:${source.evidenceId}]]`
+        )
         const options = { validateClaim, validateAnswer }
         const accepted = await generate(predicted, [bound], options, mode).result
         expect(accepted.claims).toEqual(predicted.claims)
@@ -545,6 +569,15 @@ describe('Wiki source-bound typed synthesis', () => {
         expect(html.match(/<strong>\[1\]<\/strong>/gu)).toHaveLength(1)
         if (statement.includes('| Plan |')) expect(html.match(/<table>/gu)).toHaveLength(1)
         if (statement.includes('- Atlas:')) expect(html.match(/<ul>/gu)).toHaveLength(1)
+        if (statement.startsWith('#')) {
+          const document = load(html)
+          const heading = document('h2, h3')
+          expect(heading.length).toBe(1)
+          expect(heading.text()).toBe(statement.split('\n')[0]!.replace(/^#{2,3} /u, ''))
+          expect(heading.find('a, strong').length).toBe(0)
+          expect(document('body > p').last().html()).toBe('<strong>[1]</strong>')
+          expect(document('table, ul').find('strong').length).toBe(0)
+        }
         const wire = JSON.stringify(encodeWikiSynthesisAnswer(predicted))
         const guard = createWikiSynthesisStreamGuard([bound])
         for (const character of wire) expect(guard(character)).toBeUndefined()
@@ -571,6 +604,13 @@ describe('Wiki source-bound typed synthesis', () => {
         await expect(
           generate(predicted, [bound], { ...options, validateClaim: () => 'Independent proof rejected this assertion.' }, mode).result
         ).rejects.toThrow('Independent proof rejected')
+        if (statement.startsWith('#')) {
+          await expect(
+            generate(predicted, [bound], { ...options, validateAnswer: () => 'Whole-answer proof rejected this section.' }, mode).result
+          ).rejects.toThrow('Whole-answer proof rejected')
+          const unsupportedHeading = answer({ claims: [{ ...predicted.claims[0]!, statement: statement.replace(/^#{2,3} [^\n]+/u, '## No approval required') }] })
+          await expect(generate(unsupportedHeading, [bound], options, mode).result).rejects.toThrow()
+        }
       }
   })
 
@@ -1154,10 +1194,13 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }))).toBe(true)
     const rendered = renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement: table }] }))
     expect(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Record', href: null })))).toContain('<code>a|b</code>')
-    for (const statement of ['| Record | Owner |\n| --- | --- |\n| Aurora | |', 'Requested record:\n\n| Record | Owner |\n| --- | --- |\n| Aurora | |'])
-      expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).toBe(true)
     for (const statement of [
       `## Records\n${table}`,
+      '| Record | Owner |\n| --- | --- |\n| Aurora | |',
+      'Requested record:\n\n| Record | Owner |\n| --- | --- |\n| Aurora | |'
+    ])
+      expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).toBe(true)
+    for (const statement of [
       `- ${table}`,
       '<table><tr><td>Aurora</td></tr></table>',
       '[owner]: /invented-target',
@@ -1165,13 +1208,32 @@ describe('Wiki source-bound typed synthesis', () => {
       '| Record | Owner |\n| --- | --- |\n| Aurora | Rowan | hidden |',
       '| Record | Owner |\n| --- | --- |',
       '| Record | Owner |\n| --- | --- |\n| Aurora | `unclosed |',
-      `${table}\n[[cite:injected]]`
+      `${table}\n[[cite:injected]]`,
+      '## Records',
+      '### Records\n\n',
+      '## Records\n\n[](/empty-link)',
+      '## Records\n\n&nbsp;',
+      'Supported body.\n\n## Records',
+      '## Records\n\n### Details\n\nSupported body.',
+      '# Records\n\nSupported body.',
+      '#### Records\n\nSupported body.',
+      'Records\n---\n\nSupported body.',
+      '## Recommendations\n\nSupported body.',
+      '### **rEcOmMeNdAtIoNs**\n\nSupported body.',
+      '## Recommendati&#111;ns\n\nSupported body.',
+      '## <script>Records</script>\n\nSupported body.',
+      '## [owner]: /invented-target\n\nSupported body.',
+      '## Records [[cite:injected]]\n\nSupported body.',
+      '## Records\n\n```text\nSupported body.\n```',
+      '## Records\n\nSupported\u0000 body.'
     ]) {
       expect(validateWikiSynthesisShape(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).not.toBe(true)
       expect(() => renderWikiSynthesisAnswer(answer({ claims: [{ ...answer().claims[0]!, statement }] }))).toThrow()
     }
     expect(validateWikiSynthesisShape(answer({ observations: [table] }))).not.toBe(true)
     expect(validateWikiSynthesisShape(answer({ observations: ['First line.\nSecond line.'] }))).not.toBe(true)
+    expect(validateWikiSynthesisShape(answer({ observations: ['## Records\n\nSupported body.'] }))).not.toBe(true)
+    expect(validateWikiSynthesisShape(answer({ recommendations: '## Records\n\nConsider reviewing the source.' }))).not.toBe(true)
   })
 
   it('never uses an inherited response cache and keeps raw-content diagnostic controls disabled on paid provider dispatches', async () => {
@@ -1652,6 +1714,22 @@ describe('Wiki synthesis incremental stable-invariant guard', () => {
     expect(createWikiSynthesisStreamGuard([])(`{"claims":[${JSON.stringify(encodeWikiSynthesisAnswer(answer()).claims[0])}`)).toContain(
       'complete admitted source unit'
     )
+  })
+
+  it('refuses heading-only and reserved sections at both the program and completed-claim stream boundaries', async () => {
+    for (const mode of ['native', 'json_object'] as const)
+      for (const statement of ['## Records', '## Recommendations\n\nExternal publication requires two approvals.']) {
+        const proposed = answer({ claims: [{ ...answer().claims[0]!, statement }] })
+        const validateClaim = vi.fn(() => true)
+        const validateAnswer = vi.fn(() => true)
+        await expect(generate(proposed, [source], { validateClaim, validateAnswer }, mode).result).rejects.toThrow()
+        expect(validateClaim).not.toHaveBeenCalled()
+        expect(validateAnswer).not.toHaveBeenCalled()
+        const guard = createWikiSynthesisStreamGuard([source])
+        const claim = JSON.stringify(encodeWikiSynthesisAnswer(proposed).claims[0])
+        expect(guard(`{"claims":[${claim.slice(0, -1)}`)).toBeUndefined()
+        expect(guard('}')).toBeDefined()
+      }
   })
 
   it('waits for the completed claim object before rejecting a wrong binding or unsafe complete statement', () => {

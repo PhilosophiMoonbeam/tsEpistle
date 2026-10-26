@@ -2791,10 +2791,10 @@ test.describe('responsive UI quality matrix', () => {
       }
     })
 
-    test('Agent source citations preview in place and multiline prompts remain fully visible', async ({ page }, testInfo) => {
+    test('Agent structured answers retain local citations, readable containment and keyboard source previews', async ({ page }, testInfo) => {
       test.skip(!['responsive-chromium-desktop', 'responsive-chromium-mobile'].includes(testInfo.project.name))
       await installAgentContinuityPages(page)
-      const fixture = await installEnabledAgentFixture(page)
+      const fixture = await installEnabledAgentFixture(page, { mode: 'presentation' })
       try {
         const agent = await openContinuityAgent(page, '/agent-context-fixture-a')
         const input = agent.locator('.agent-composer textarea')
@@ -2812,15 +2812,54 @@ test.describe('responsive UI quality matrix', () => {
         await page.screenshot({ path: screenshot })
         await testInfo.attach('agent-multiline-prompt', { path: screenshot, contentType: 'image/png' })
         await sendContinuityPrompt(page, agent, prompt)
+        const markdown = agent.locator('.agent-message--assistant .agent-markdown').last()
+        await expect(markdown.getByRole('heading', { level: 2, name: 'Release review', exact: true })).toBeVisible()
+        await expect(markdown.getByRole('heading', { level: 3 })).toHaveText(['Review sequence', 'Evidence register'])
+        await expect(markdown.locator('h2 a, h3 a, li a, td a, th a')).toHaveCount(0)
+        const paragraphs = markdown.locator('p').filter({ hasText: /^The (release is ready|verification sequence is documented)/ })
+        await expect(paragraphs).toHaveCount(2)
+        await expect(paragraphs.nth(0)).toHaveText('The release is ready for a deliberate review. [3]')
+        await expect(paragraphs.nth(1)).toHaveText('The verification sequence is documented in the release guide. [3]')
+        for (const paragraph of await paragraphs.all()) {
+          await expect(paragraph.locator('a[data-agent-citation]')).toHaveCount(1)
+          await expect(paragraph.locator('a[data-agent-citation]')).toHaveAttribute('href', /#verification-sequence$/)
+        }
+        await expect(markdown.getByRole('listitem')).toHaveText(['Review sources.', 'Confirm the evidence is complete.'])
+        await expect(markdown.locator('ul + p > a[data-agent-citation]')).toHaveText('[3]')
+        const table = markdown.getByRole('table')
+        await expect(table.getByRole('columnheader')).toHaveText(['Review checkpoint', 'Source record', 'Required evidence', 'Release decision'])
+        await expect(table.getByRole('cell')).toHaveText([
+          'Source verification', 'Release guide overview', 'Completed verification sequence', 'Deliberate publication review'
+        ])
+        await expect(markdown.locator('.agent-markdown__table-shell + p > a[data-agent-citation]')).toHaveText('[2]')
+        await expect(markdown.locator('a[data-agent-citation]')).toHaveCount(4)
+        const tableShell = markdown.locator('.agent-markdown__table-shell')
+        await tableShell.scrollIntoViewIfNeeded()
+        await expectLocatorWithinViewport(tableShell, 'Agent evidence table scroll container')
+        await tableShell.focus()
+        await expect(tableShell).toBeFocused()
+        if (testInfo.project.name === 'responsive-chromium-mobile') {
+          expect(await tableShell.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0)
+          await tableShell.press('ArrowRight')
+          await expect.poll(() => tableShell.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+        }
+        expect(await markdown.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+        await expectResponsiveLayout(page, 'Structured Agent answer')
         const tabsBefore = page.context().pages().length
         const preview = page.getByRole('dialog', { name: 'Release guide', exact: true })
         const citation = agent.locator('a[data-agent-citation]').first()
         await expect(citation).toHaveAttribute('href', /#verification-sequence$/)
-        await citation.click()
+        await citation.scrollIntoViewIfNeeded()
+        await expectLocatorWithinViewport(citation, 'Local source citation')
+        await citation.focus()
+        await expect(citation).toBeFocused()
+        await citation.press('Enter')
         await expect(preview).toBeVisible()
         await expect(preview.getByRole('region', { name: 'Source excerpt' })).toContainText('Release evidence excerpt.')
         expect(page.context().pages()).toHaveLength(tabsBefore)
-        await preview.getByRole('button', { name: 'Close source preview', exact: true }).click()
+        await preview.press('Escape')
+        await expect(preview).toBeHidden()
+        await expect(citation).toBeFocused()
         await agent.locator('.agent-sources summary').click()
         await agent.locator('.agent-sources__page').first().click()
         await expect(preview).toBeVisible()

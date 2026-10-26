@@ -19,13 +19,6 @@
       <v-alert class="skill-boundary" type="info" variant="tonal" density="compact" icon="mdi-shield-lock-outline">
         {{ t('organizationSkillsProvideApproved') }}
       </v-alert>
-      <v-alert v-if="bundledSkill && bundledSkill.status !== 'enabled'" type="warning" variant="tonal" density="compact" icon="mdi-book-check-outline">
-        {{ bundledSkill.currentVersionId ? t('builtWikiAuthoringSkillEnable') : t('builtWikiAuthoringSkillApprove') }}
-        <template #append>
-          <v-btn v-if="bundledSkill.currentVersionId" variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="setEnabled(bundledSkill.id, true)">{{ t('enableSkill') }}</v-btn>
-          <v-btn v-else variant="text" size="small" :disabled="Boolean(actionBusyId)" @click="openPreview(bundledSkill.id)">{{ t('reviewSource') }}</v-btn>
-        </template>
-      </v-alert>
       <v-alert v-if="error" class="skill-error" type="error" variant="tonal" closable @click:close="error = ''">
         {{ error }}
         <template #append><v-btn variant="text" size="small" @click="reload">{{ t('retry') }}</v-btn></template>
@@ -323,7 +316,6 @@ type Skill = z.infer<typeof SkillSchema>
 type Preview = z.infer<typeof PreviewSchema>
 
 const skills = shallowRef<Skill[]>([])
-const bundledSkill = computed(() => sourceNamespace.value ? skills.value.find(skill => skill.name === 'wiki-authoring' && skill.rootPath === `${sourceNamespace.value}/wiki-authoring`) ?? null : null)
 const groups = shallowRef<z.infer<typeof GroupSchema>[]>([])
 const preview = shallowRef<Preview | null>(null)
 const search = ref<string | null>('')

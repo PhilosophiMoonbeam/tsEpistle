@@ -463,7 +463,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.readForPatch',
       'Read page for patch',
-      'Read a bounded hashline snapshot for an exact page source revision. On the initial read, set previousSnapshotToken to null; only reuse a non-null token returned by an earlier result for the same page.',
+      'Read a bounded hashline snapshot for an exact Markdown page source revision before preparing a patch. Set previousSnapshotToken to null on the initial read; reuse only a returned token for the same page. Copy the returned document tag, line numbers and line tags exactly; never guess undisclosed source.',
       'read',
       ['read:pages'],
       both,
@@ -900,7 +900,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.prepareCreate',
       'Prepare page creation',
-      'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. First search and read potential duplicates or related pages; include canonical internal links and precise tags only for relationships supported by the new content. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'Prepare an immutable Markdown page-create proposal. First search and read potential duplicates or related pages; add internal links and precise tags only for content-supported relationships. Use editor-compatible GFM; preserve supported extended syntax when explicitly requested. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
       'proposal',
       ['write:pages'],
       both,
@@ -915,7 +915,7 @@ export const ACTION_CATALOG = {
       content: z
         .string()
         .max(1_000_000)
-        .describe('Canonical Wiki Markdown source. Prefer the Visual Markdown-safe GFM subset and avoid raw HTML so human editors can round-trip the page.'),
+        .describe('Wiki Markdown source: paragraphs, headings, emphasis, code fences, lists, task lists, blockquotes, ordinary links/images and rectangular tables. Avoid raw HTML and editor-specific extensions unless requested.'),
       contentType: z.literal('markdown'),
       isPublished: z.boolean().default(true),
       tags: z.array(z.string().max(255)).max(100).default([])
@@ -936,7 +936,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.preparePatch',
       'Prepare page patch',
-      'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility. When the change affects knowledge relationships, first search and read related pages, then maintain canonical internal links and precise tags without manufacturing retrieval signals. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'Prepare a strict hashline patch from the exact Markdown snapshot returned by read-for-patch. Preserve undisclosed lines, terminology, heading hierarchy, link style and final-newline state unless the request changes them. Search and read related pages only when the change affects their relationships; never manufacture links or tags. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
       'proposal',
       ['write:pages'],
       both,

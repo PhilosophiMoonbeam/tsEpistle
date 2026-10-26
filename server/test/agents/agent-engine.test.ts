@@ -1918,6 +1918,51 @@ describe('Ax agent engine', () => {
     expect(answers.map(turn => turn.outcome)).toEqual(['answer_accepted'])
   })
 
+  it('publishes source-bound Markdown sections without a formatting repair or repeated read', async () => {
+    const production = 'The production service supports automated deployments of application releases.'
+    const staging = 'The staging service supports previews.'
+    const fixture = typedRootFixture(
+      input => {
+        const source = synthesisSourcesFromRequest(input)[0]!
+        return typedFixtureReceipt(synthesisFixtureAnswer(input, {
+          claims: [
+            { ...source, statement: `## Production\n\n${production}` },
+            { ...source, statement: `### Staging\n\n${staging}` }
+          ]
+        }))
+      },
+      false,
+      undefined,
+      {
+        title: 'Deployment',
+        content: `# Deployment\n\n## Production\n\n${production}\n\n### Staging\n\n${staging}`,
+        request: 'Summarize production and staging under separate Markdown headings.'
+      }
+    )
+    const result = await fixture.execute()
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    const container = document.createElement('div')
+    container.innerHTML = renderSafeMarkdown(published)
+    expect([...container.querySelectorAll('h2, h3')].map(heading => [heading.tagName, heading.textContent])).toEqual([
+      ['H2', 'Production'], ['H3', 'Staging']
+    ])
+    const paragraphs = [...container.querySelectorAll('p')].map(paragraph => paragraph.textContent)
+    expect(paragraphs).toContain(production)
+    expect(paragraphs).toContain(staging)
+    expect(published.match(/\[\[cite:/gu)).toHaveLength(2)
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(expectedReadIds(['page:42:revision:1']))
+    expect(result.executionLimit).toBeUndefined()
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(result.totalTokens).toBe(fixture.settled.reduce((sum, usage) => sum + usage.totalTokens, 0))
+    const turns = fixture.event.mock.calls
+      .filter(([type]) => type === 'model.turn')
+      .map(([, data]) => questionRecord(data))
+    expect(turns.filter(turn => turn.outcome === 'answer_rejected')).toEqual([])
+    expect(turns.filter(turn => turn.verification !== undefined && questionRecord(turn.verification).phase === 'coverage_audit')).toHaveLength(1)
+  })
+
   it.each(['paragraph', 'list-item'] as const)('uses a complete read to prove a concise multi-sentence %s summary', async kind => {
     const physical = 'The deployment ships 20 cases. Release requires an audit. Elapsed times are estimates, not guarantees.'
     const content = `# Deployment\n\n## Cases after audit\n\n${kind === 'list-item' ? '- ' : ''}${physical}\n\nThe warehouse holds 90 pallets.`

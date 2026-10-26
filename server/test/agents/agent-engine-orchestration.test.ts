@@ -427,6 +427,7 @@ describe('Ax orchestration stages', () => {
     readonly maxTokens?: number
     readonly coverageTokens?: number
     readonly cold?: boolean
+    readonly collectionRead?: 'truncated recent' | 'new complete read'
   }
 
   const warmReadinessFixture = (mode: string, userRequest = 'What does it require?', options: WarmReadinessOptions = {}) => {
@@ -442,6 +443,16 @@ describe('Ax orchestration stages', () => {
       ...page, id: 43, path: 'warehouse', title: 'Warehouse rules', content: '# Warehouse rules\n\nInspection precedes entry.',
       citation: { evidenceId: 'page:43:revision:1', label: 'Warehouse rules', href: '/en/warehouse' }
     }
+    const collectionPage = {
+      ...companion, id: 44, path: 'receiving', title: 'Receiving', content: '# Receiving\n\nThe receiving desk checks incoming deliveries.',
+      citation: { evidenceId: 'page:44:revision:1', label: 'Receiving', href: '/en/receiving' }
+    }
+    const collectionRead = options.collectionRead === 'truncated recent'
+      ? { kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [{
+          ...collectionPage, content: '# Receiving\n\nThe receiving desk', updatedAt: '2026-09-20T09:00:00.000Z',
+          contentTruncated: true, sourceContentCharacters: collectionPage.content.length
+        }] }
+      : options.collectionRead === 'new complete read' ? collectionPage : page
     let providerRevision = 1
     let sourceAuthorized = true
     const nativeRequests: DecisionBatchRequest[] = []
@@ -511,6 +522,11 @@ describe('Ax orchestration stages', () => {
         } : { claims: [], unresolvedFacets: [0] }) }] }
       }
       collected.push(input)
+      if (options.collectionRead && collected.length === 1) return {
+        results: [{ index: 0, functionCalls: [{ id: 'read-collection-source', type: 'function', function: options.collectionRead === 'truncated recent'
+          ? { name: 'wiki_list_recent_pages', params: { limit: 1 } }
+          : { name: 'wiki_get_page', params: { id: collectionPage.id } } }] }]
+      }
       if (options.cold && collected.length === 1) return {
         results: [{ index: 0, functionCalls: [{ id: 'read-falcon', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }] }]
       }
@@ -532,11 +548,17 @@ describe('Ax orchestration stages', () => {
       if (mode === 'provider changed before synthesis') providerRevision++
     })
     const retainedActions = pageEvidenceActions(async (_name, output) => sourceAuthorized &&
-      [page, companion].some(source => JSON.stringify(source) === JSON.stringify(output)))
-    const read = vi.fn(async () => page)
+      [page, companion, collectionRead].some(source => JSON.stringify(source) === JSON.stringify(output)))
+    const read = vi.fn(async () => collectionRead)
     const actions: AgentActionSessionProvider = {
       ...retainedActions,
-      open: async (...args) => ({ ...await retainedActions.open(...args), invoke: read })
+      open: async (...args) => {
+        const session = await retainedActions.open(...args)
+        return { ...session, invoke: read, functions: options.collectionRead === 'truncated recent' ? [...session.functions, {
+          name: 'pages.listRecent' as const, title: 'Read recent pages', description: 'Read recent page excerpts',
+          parameters: { type: 'object', properties: { limit: { type: 'integer' } } }, risk: 'read' as const
+        }] : session.functions }
+      }
     }
     const engine = new AxAgentEngine(factoryFor(chat, { maxContextTokens: 1_000_000, coverage }), actions, undefined, { decisionProviders: decisions })
     const execute = () => engine.execute({
@@ -585,6 +607,26 @@ describe('Ax orchestration stages', () => {
     expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
     expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
   })
+
+  it.each(['truncated recent', 'new complete read'] as const)(
+    'rechecks collection readiness only for changed complete-read input: %s',
+    async collectionRead => {
+      const fixture = warmReadinessFixture('new topic', 'Summarize the receiving requirements.', { collectionRead })
+      const result = await fixture.execute()
+      expect(fixture.read).toHaveBeenCalledOnce()
+      expect(fixture.collected).toHaveLength(2)
+      if (collectionRead === 'truncated recent')
+        expect(new Set(fixture.paidReadiness.map(request => JSON.stringify(request))).size).toBe(1)
+      expect(fixture.paidReadiness).toHaveLength(collectionRead === 'truncated recent' ? 1 : 2)
+      if (collectionRead === 'new complete read') {
+        const state = JSON.parse(fixture.paidReadiness[1]!.state as string) as { evidence: { evidenceId: string }[] }
+        expect(state.evidence.map(read => read.evidenceId)).toContain('page:44:revision:1')
+      }
+      expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
+      expect(fixture.budget.consumedCostMicros).toBe(result.costMicros)
+      expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    }
+  )
 
   it('blocks synthesis when a newly delivered read is revoked after positive readiness', async () => {
     const fixture = warmReadinessFixture('source changed before synthesis', 'What does Falcon dispatch require?', { cold: true })

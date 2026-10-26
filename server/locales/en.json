@@ -9282,8 +9282,6 @@
       "enabled2": "{{enabledSkillCount}} enabled",
       "mapOrganizationSkill": "Map organization skill",
       "organizationSkillsProvideApproved": "Organization skills provide approved instructions and tool guidance. They never bypass page, write, browser, approval, or deployment permissions.",
-      "builtWikiAuthoringSkillEnable": "The built-in wiki-authoring skill is installed but unavailable until an administrator enables it.",
-      "builtWikiAuthoringSkillApprove": "The built-in wiki-authoring skill is installed but unavailable until an administrator reviews and approves it.",
       "enableSkill": "Enable skill",
       "reviewSource": "Review source",
       "retry": "Retry",

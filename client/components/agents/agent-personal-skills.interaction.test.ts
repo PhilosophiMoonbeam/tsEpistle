@@ -335,27 +335,7 @@ describe('Personal skill refresh reconciliation', () => {
   })
 })
 
-describe('Bundled organization skill identity', () => {
-  it('loads namespace metadata before Create is opened and identifies only the reserved root path', async () => {
-    for (const rootPath of ['_skills/wiki-authoring', 'handbook/wiki-authoring']) {
-      const dependencies = organizationDependencies([organizationSkill('wiki-authoring', rootPath)])
-      const mounted = mountInventory(organizationInventory, dependencies)
-      await settle()
-      const reviewAction = Array.from(mounted.host.querySelectorAll('button')).find(
-        button => button.textContent?.trim() === translateEnglish('admin:skillAdmin.reviewSource')
-      )
-      expect(Boolean(reviewAction)).toBe(rootPath.startsWith('_skills/'))
-      expect(document.body.querySelector('#skill-create-title')).toBeNull()
-      expect(mounted.errors).toEqual([])
-      mounted.app.unmount()
-      mounted.host.remove()
-      mountedApps.splice(
-        mountedApps.findIndex(app => app.host === mounted.host),
-        1
-      )
-    }
-  })
-
+describe('Organization skill source metadata', () => {
   it('keeps the inventory usable when source metadata fails and shows only a safe independent message', async () => {
     const mounted = mountInventory(organizationInventory, organizationDependencies([organizationSkill('alpha')], true))
     await settle()

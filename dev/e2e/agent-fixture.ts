@@ -1,6 +1,6 @@
 import type { BrowserContext, Page, Response, Route } from '@playwright/test'
 import type { AgentMediaCapabilities, AgentMediaView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
-export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin'
+export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin' | 'presentation'
 
 export interface AgentFixtureOptions {
   readonly media?: AgentMediaCapabilities
@@ -226,6 +226,28 @@ const successfulMarkdown = [
   '[Follow-up reading](/en/release-guide#title-only)',
   '[Follow-up reading](/en/release-guide#title-only)'
 ].join('\n')
+const presentationMarkdown = [
+  '## Release review',
+  '',
+  'The release is ready for a deliberate review. [[cite:page:6:section:2]]',
+  '',
+  'The verification sequence is documented in the release guide. [[cite:page:6:section:2]]',
+  '',
+  '### Review sequence',
+  '',
+  '- Review sources.',
+  '- Confirm the evidence is complete.',
+  '',
+  '[[cite:page:6:section:2]]',
+  '',
+  '### Evidence register',
+  '',
+  '| Review checkpoint | Source record | Required evidence | Release decision |',
+  '| --- | --- | --- | --- |',
+  '| Source verification | Release guide overview | Completed verification sequence | Deliberate publication review |',
+  '',
+  '[[cite:page:6:section:1]]'
+].join('\n')
 const latestResponseMarkdown = [
   'The latest response is ready to review from the beginning.',
   ...Array.from(
@@ -254,6 +276,7 @@ const responseMarkdown = (mode: AgentFixtureMode): string => {
   if (mode === 'security') return hostileMermaidMarkdown
   if (mode === 'cap') return cappedMermaidMarkdown
   if (mode === 'latest') return latestResponseMarkdown
+  if (mode === 'presentation') return presentationMarkdown
   return successfulMarkdown
 }
 
