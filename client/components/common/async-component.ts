@@ -7,7 +7,8 @@ const ASYNC_COMPONENT_TIMEOUT_MS = 20_000
 
 // Import the compiled default component; a named factory inside its SFC can
 // retain the setup object while production tree shaking drops its render hook.
-export function createAsyncComponent(loader: AsyncComponentLoader, placement: 'flow' | 'floating' = 'flow') {
+export function createAsyncComponent(loader: AsyncComponentLoader, placement: 'flow' | 'floating' | 'header' = 'flow') {
+  const placementClass = placement === 'flow' ? undefined : `async-component-state--${placement}`
   const loadError = shallowRef<Error>()
   let retryLoad: (() => void) | undefined
 
@@ -23,7 +24,7 @@ export function createAsyncComponent(loader: AsyncComponentLoader, placement: 'f
       }
 
       return () => h(AsyncComponentState, {
-        class: placement === 'floating' ? 'async-component-state--floating' : undefined,
+        class: placementClass,
         error: loadError.value,
         onRetry: retry
       })

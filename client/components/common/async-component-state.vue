@@ -79,18 +79,28 @@ export default AsyncComponentState
   text-align: start;
 }
 
-.async-component-state--floating {
+.async-component-state--floating,
+.async-component-state--header {
   position: fixed;
   z-index: 1000;
   inset-inline: 1rem;
-  inset-block-end: 1rem;
   width: auto;
   max-width: 40rem;
-  max-height: calc(100dvh - 2rem);
+  min-height: 0;
+  max-height: calc((100dvh - 3rem) / 2);
   margin-inline: auto;
+  align-items: flex-start;
   overflow: auto;
   border-color: rgba(var(--v-border-color), var(--v-border-opacity));
   background: rgb(var(--v-theme-surface));
+}
+
+.async-component-state--floating {
+  inset-block-end: 1rem;
+}
+
+.async-component-state--header {
+  inset-block-start: 1rem;
 }
 
 .async-component-state--error {

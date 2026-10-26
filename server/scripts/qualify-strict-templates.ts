@@ -43,12 +43,6 @@ assert.equal(pugPackage.version, '3.3.9', 'Requalify Pug source mappings when it
 function checkGlobalOwners(): void {
   const runtime = ts.createSourceFile('client/client-app.ts', fs.readFileSync(path.join(root, 'client/client-app.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
   const environment = ts.createSourceFile('client/env.d.ts', fs.readFileSync(path.join(root, 'client/env.d.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
-  const runtimeImports = new Map<string, string>()
-  for (const statement of runtime.statements) {
-    if (ts.isImportDeclaration(statement) && statement.importClause?.name && !statement.importClause.isTypeOnly && ts.isStringLiteral(statement.moduleSpecifier)) {
-      runtimeImports.set(statement.importClause.name.text, statement.moduleSpecifier.text)
-    }
-  }
   const owners = new Map<string, string>()
   let foundRegistry = false
   for (const statement of runtime.statements) {
@@ -59,30 +53,15 @@ function checkGlobalOwners(): void {
       foundRegistry = true
       assert(declaration.initializer && ts.isArrayLiteralExpression(declaration.initializer))
       for (const registration of declaration.initializer.elements) {
-        const entry = ts.isAsExpression(registration) ? registration.expression : registration
-        let name: string
-        let module: string
-        if (ts.isArrayLiteralExpression(entry)) {
-          assert.equal(entry.elements.length, 2)
-          const [key, component] = entry.elements
-          assert(key && ts.isStringLiteral(key) && component && ts.isIdentifier(component))
-          const owner = runtimeImports.get(component.text)
-          assert(owner, `${key.text} must retain its actual runtime component import`)
-          name = key.text
-          module = owner
-        } else {
-          assert(ts.isCallExpression(entry) && ts.isIdentifier(entry.expression) && entry.expression.text === 'asyncComponent')
-          const [key, loader] = entry.arguments
-          assert(key && ts.isStringLiteral(key))
-          assert(loader && ts.isArrowFunction(loader) && ts.isCallExpression(loader.body))
-          assert.equal(loader.body.expression.kind, ts.SyntaxKind.ImportKeyword)
-          const owner = loader.body.arguments[0]
-          assert(owner && ts.isStringLiteral(owner))
-          name = key.text
-          module = owner.text
-        }
-        assert(!owners.has(name), `Duplicate runtime registration ${name}`)
-        owners.set(name, module)
+        assert(ts.isCallExpression(registration) && ts.isIdentifier(registration.expression) && registration.expression.text === 'asyncComponent')
+        const [key, loader] = registration.arguments
+        assert(key && ts.isStringLiteral(key))
+        assert(loader && ts.isArrowFunction(loader) && ts.isCallExpression(loader.body))
+        assert.equal(loader.body.expression.kind, ts.SyntaxKind.ImportKeyword)
+        const owner = loader.body.arguments[0]
+        assert(owner && ts.isStringLiteral(owner))
+        assert(!owners.has(key.text), `Duplicate runtime registration ${key.text}`)
+        owners.set(key.text, owner.text)
       }
     }
   }

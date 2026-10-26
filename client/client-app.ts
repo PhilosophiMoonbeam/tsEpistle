@@ -13,7 +13,6 @@ import { router } from './router'
 import { preparePwaStartup, setReloadSafetyProvider, pwaState } from './helpers/pwa.ts'
 import { installThemeSwitchGuard, resolveThemeName } from './helpers/theme.ts'
 import { createAsyncComponent } from './components/common/async-component.ts'
-import NavHeader from './components/common/nav-header.vue'
 import { openOfflineStorage, type OfflineStorage } from './helpers/offline-storage.ts'
 import { currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from './helpers/offline-session.ts'
 import {
@@ -254,7 +253,7 @@ const registrations = [
   asyncComponent('History', () => import('./components/history.vue')),
   asyncComponent('Loader', () => import('./components/common/loader.vue')),
   asyncComponent('Login', () => import('./components/login.vue')),
-  ['NavHeader', NavHeader] as const,
+  asyncComponent('NavHeader', () => import('./components/common/nav-header.vue'), 'header'),
   asyncComponent('NewPage', () => import('./components/new-page.vue')),
   asyncComponent('Notify', () => import('./components/common/notify.vue')),
   asyncComponent('NotFound', () => import('./components/not-found.vue')),
