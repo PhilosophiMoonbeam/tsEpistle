@@ -186,7 +186,7 @@
           //- PAGE ACTIONS
 
           template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-menu(location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
+            v-menu(ref='pageActions', location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
               template(v-slot:activator='{ props: menuProps }')
                 v-btn(
                   icon
@@ -205,7 +205,7 @@
                   role='button'
                   link
                   :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
-                  @click='runPageMenuAction(action.handler)'
+                  @click='runPageMenuAction(action.handler, `pageActions`)'
                 )
                   template(v-slot:prepend): v-icon(:color='action.handler === `pageDelete` ? `error` : `primary`') {{ action.icon }}
                   v-list-item-title.text-body-medium {{ $t(`common:header.${action.label}`) }}
@@ -239,7 +239,7 @@
             v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)', :aria-disabled='!onlineActionReady ? `true` : undefined')
               v-icon(start) mdi-exit-to-app
               v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:actions.exit`) : onlineActionUnavailableReason')
-          v-menu(v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
+          v-menu(ref='mobilePageActions', v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(
                 icon
@@ -283,7 +283,7 @@
                 :class='{ "nav-header-menu-danger": action.handler === `pageDelete` }'
                 :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
                 :prepend-icon='action.icon'
-                @click='runPageMenuAction(action.handler)'
+                @click='runPageMenuAction(action.handler, `mobilePageActions`)'
               )
                 v-list-item-title {{ $t(`common:header.${action.label}`) }}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
@@ -479,7 +479,7 @@
       @move-acknowledged='pageMoveAcknowledged'
     )
     page-selector(mode='create', v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
-    page-delete(v-model='deletePageModal', v-if='path && path.length')
+    page-delete(v-model='deletePageModal', :return-focus-to='deletePageReturnFocusTarget', v-if='path && path.length')
     page-convert(v-model='convertPageModal', v-if='path && path.length')
 
     .nav-header-dev(v-if='isDevMode')
@@ -599,6 +599,7 @@ export default defineComponent({
       movePageModal: false,
       convertPageModal: false,
       deletePageModal: false,
+      deletePageReturnFocusTarget: null as HTMLElement | null,
       locales: markRaw(siteLangs),
       isDevMode: false,
       failedLogoUrl: null as string | null,
@@ -944,6 +945,7 @@ export default defineComponent({
     offSearchFocus(this.handleSearchFocusCommand)
     window.removeEventListener('focus', this.handleNotificationFocus)
     this.pageActionsAreOpen = false
+    this.deletePageReturnFocusTarget = null
     if (this.pageActionsFocusFrame !== null) {
       window.cancelAnimationFrame(this.pageActionsFocusFrame)
       this.pageActionsFocusFrame = null
@@ -960,7 +962,12 @@ export default defineComponent({
       this.siteNotifications.reset()
       this.siteNotifications.identityStale = true
     },
-    runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler']): void {
+    runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler'], menuRef: 'pageActions' | 'mobilePageActions'): void {
+      if (handler === 'pageDelete') {
+        const menu = this.$refs[menuRef] as { activatorEl?: HTMLElement } | undefined
+        this.pageDelete(menu?.activatorEl ?? null)
+        return
+      }
       this[handler]()
     },
     invalidateNavHeaderTitleFit(): void {
@@ -1186,10 +1193,10 @@ export default defineComponent({
       }
       if (!open) return
       await this.$nextTick()
-      if (!this.pageActionsAreOpen) return
+      if (!this.pageActionsAreOpen || this.deletePageModal) return
       this.pageActionsFocusFrame = window.requestAnimationFrame(() => {
         this.pageActionsFocusFrame = null
-        if (!this.pageActionsAreOpen) return
+        if (!this.pageActionsAreOpen || this.deletePageModal) return
         const menu = this.$refs.pageActionsMenu
         const root = menu instanceof HTMLElement
           ? menu
@@ -1403,8 +1410,14 @@ export default defineComponent({
       const scope = this.sourceVisibility === 'private' ? '/_private' : ''
       window.location.replace(`${scope}/${locale}/${path}`)
     },
-    pageDelete () {
-      if (!this.onlineActionReady || !this.pageResourceReady) return
+    pageDelete (returnFocusTarget?: HTMLElement | null): void {
+      if (!this.onlineActionReady || !this.pageResourceReady || this.deletePageModal) return
+      const activeElement = document.activeElement
+      // Menu content is transient; VMenu exposes the persistent activator.
+      this.deletePageReturnFocusTarget = returnFocusTarget === undefined
+        ? (activeElement instanceof HTMLElement && !activeElement.closest('.v-overlay__content') ? activeElement : null)
+        : returnFocusTarget
+      void this.pageActionsVisibilityChanged(false)
       this.deletePageModal = true
     },
     async changeLocale (locale: SiteLocale): Promise<void> {
