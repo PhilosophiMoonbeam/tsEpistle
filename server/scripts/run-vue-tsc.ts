@@ -53,4 +53,16 @@ type CompilableModule = Module & { _compile: (source: string, filename: string) 
 const tscModule = new Module(tscPath) as CompilableModule
 tscModule.filename = tscPath
 tscModule.paths = require.resolve.paths(tscPath) ?? []
+
+// TypeScript exits explicitly; drain piped diagnostics and file lists first.
+typescript.sys.exit = code => {
+  process.stdout.write('', error => {
+    if (error) throw error
+    process.stderr.write('', error => {
+      if (error) throw error
+      process.exit(code)
+    })
+  })
+}
+
 tscModule._compile(transformedTsc, tscPath)

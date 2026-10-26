@@ -147,6 +147,8 @@ bun run editor:vue:qualify
 bun run editor:vue:qualify --editor-launcher
 ```
 
+The Vue checker drains stdout and stderr before exiting so piped diagnostics retain complete file lists and the original failure status.
+
 Qualification exercises real HTML/Pug symbols, imported definitions, references, hover, rename, public-type diagnostics/correction, template completions, formatting, asset links, client commands and process retirement, including interrupted initialization. Semantic admission retains its 30-second bound. The exact `volar-service-pug@0.0.71` patch preserves source URI/version on its projected documents; without it, sibling asset links resolve from the synthetic `foo.html` base to the filesystem root.
 
 ### Scheduler worker troubleshooting
