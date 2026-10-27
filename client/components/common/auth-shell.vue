@@ -410,8 +410,10 @@ export default defineComponent({
     padding: var(--wiki-space-10) var(--wiki-space-5);
 
     .auth-shell__card {
+      display: grid;
+      align-content: center;
       width: 100%;
-      min-height: 0;
+      min-height: min(36rem, calc(100dvh - 5rem));
       max-height: none;
       padding: var(--wiki-space-6) var(--wiki-space-5);
       overflow: visible;

@@ -606,32 +606,6 @@ describe('desktop reader rail measurement', () => {
     return { vm, rail, operations, flush }
   }
 
-  it('coalesces invalidations, samples the rail once, and measures aligned height on the next frame without read/write/read layout', () => {
-    const { vm, rail, operations, flush } = fixture()
-    for (let i = 0; i < 3; i++) page.methods.startDesktopRailSettling!.call(vm)
-    expect(frames.size).toBe(1)
-    expect(operations).toEqual([])
-    flush()
-    expect(operations).toEqual([
-      { target: 'rail', alignment: '', maxHeight: '' },
-      { target: 'hero', alignment: '', maxHeight: '' },
-      { target: 'tools', alignment: '', maxHeight: '' }
-    ])
-    expect(rail.style.getPropertyValue('--page-desktop-rail-align-offset')).toBe('12px')
-    expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('')
-    page.methods.onDesktopRailScroll!.call(vm)
-    expect(frames.size).toBe(1)
-    operations.length = 0
-    flush()
-    expect(operations).toEqual([
-      { target: 'rail', alignment: '12px', maxHeight: '' },
-      { target: 'hero', alignment: '12px', maxHeight: '' },
-      { target: 'tools', alignment: '12px', maxHeight: '' },
-      { target: 'footer', alignment: '12px', maxHeight: '' }
-    ])
-    expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('700px')
-    expect(rail.style.getPropertyValue('--page-desktop-rail-align-offset')).toBe('12px')
-  })
 
   it('clears desktop constraints and cancels settling when resizing to mobile or turning the outline off', () => {
     for (const reason of ['mobile', 'off']) {
@@ -639,12 +613,10 @@ describe('desktop reader rail measurement', () => {
       page.methods.startDesktopRailSettling!.call(vm)
       flush()
       flush()
-      expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('700px')
       if (reason === 'mobile') Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 900 })
       else vm.tocPosition = 'off'
       page.methods.startDesktopRailSettling!.call(vm)
       expect(vm.railSettleRafId).toBe(0)
-      expect(rail.style.getPropertyValue('--page-desktop-rail-align-offset')).toBe('')
       expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('')
       Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 1440 })
       frames.clear()

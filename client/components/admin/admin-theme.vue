@@ -414,6 +414,12 @@
               <strong>{{ $t('admin:theme.epistle') }}</strong><span>{{ $t('admin:theme.knowledgeConnected') }}</span
               ><i :style="{ background: previewColors.primary }" />
             </div>
+            <p
+              v-if="draft.tocPosition !== 'off'"
+              class="theme-specimen-adaptation"
+            >
+              {{ $t(draft.tocPosition === 'right' ? 'admin:theme.narrowPreviewRight' : 'admin:theme.narrowPreviewLeft') }}
+            </p>
             <div
               class="theme-specimen-body"
               :class="'theme-specimen-body--' + draft.tocPosition"

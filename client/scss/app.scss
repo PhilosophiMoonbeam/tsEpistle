@@ -63,10 +63,55 @@
   }
 }
 
-.v-card.v-card--variant-elevated {
+// Keep Vuetify's host shadow (including explicit elevation, hover and focus)
+// independent from the mineral top edge. Neutral, genuinely raised cards only:
+// semantic colors, selected/disabled states and explicit flat/shadowless surfaces
+// remain owned by their component or Vuetify.
+:where(.v-card.v-card--variant-elevated):not(:where(
+  .v-card--flat,
+  .v-card--border,
+  .elevation-0,
+  .v-card--disabled,
+  .v-card--active,
+  .is-active,
+  .is-selected,
+  [aria-disabled='true'],
+  [aria-selected='true'],
+  [aria-pressed='true'],
+  [aria-current='true'],
+  [data-state='active'],
+  [data-state='selected'],
+  [class*='bg-'],
+  [style*='background'],
+  [style*='box-shadow']
+)) {
   border: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-sm);
+  background-color: var(--wiki-surface-raised);
+  background-image: var(--wiki-surface-gradient);
+
+  // A separate inset layer composes with every native elevation without
+  // duplicating its shadow recipes or overriding elevation utilities. Vuetify's
+  // hover card already uses this pseudo-element for a duplicate outer shadow;
+  // the real host shadow and its before-layer hover transition stay untouched.
+  &::after {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--wiki-specular-border);
+    content: '';
+    opacity: 1;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  @media (forced-colors: active) {
+    border-color: CanvasText;
+    background: Canvas;
+
+    &::after {
+      box-shadow: none;
+    }
+  }
 }
 
 .v-card-title {

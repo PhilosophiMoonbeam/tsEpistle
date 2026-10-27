@@ -2610,6 +2610,7 @@ test.describe('managed login logo auth independence', () => {
     const artifacts = await installManagedLogo(page, wideEffect)
 
     for (const viewport of [
+      { width: 390, height: 844 },
       { width: 959, height: 900 },
       { width: 1440, height: 650 }
     ]) {
@@ -2618,6 +2619,10 @@ test.describe('managed login logo auth independence', () => {
       await expectOrdinaryLogin(page)
       await expect(page.locator('.login-particle-logo')).toHaveCount(0)
       await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
+      if (viewport.width === 390) {
+        const trailing = await page.locator('main.auth-shell__card').evaluate(card => innerHeight - card.getBoundingClientRect().bottom)
+        expect(trailing).toBeLessThan(160)
+      }
       const email = page.getByLabel('Email Address', { exact: true })
       await email.focus()
       await expect(email).toBeFocused()

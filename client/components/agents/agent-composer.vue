@@ -1489,11 +1489,21 @@ onBeforeUnmount(() => {
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-sm);
   font-family: var(--wiki-font-body);
   transition:
     border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
     box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+}
+
+/* The parent owns the transcript-reading fade; only the backing is translucent.
+   Keep the raised fill opaque when blur or transparency is unavailable. */
+@supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
+    .agent-composer {
+      background: color-mix(in oklch, var(--wiki-surface-raised) 94%, transparent);
+    }
+  }
 }
 
 .agent-composer:has(textarea:focus-visible) {
@@ -2043,8 +2053,21 @@ onBeforeUnmount(() => {
 }
 @media (forced-colors: active) {
   .agent-composer,
+  .agent-composer--disabled:not(.agent-composer--sending),
   .agent-composer__command-menu {
     border: 1px solid CanvasText;
+    background: Canvas;
+    box-shadow: none;
+    color: CanvasText;
+  }
+
+  .agent-composer:has(textarea:focus-visible) {
+    outline-color: Highlight;
+  }
+
+  .agent-composer__input :deep(textarea),
+  .agent-composer__input :deep(textarea::placeholder) {
+    color: CanvasText;
   }
 
 }

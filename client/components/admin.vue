@@ -108,16 +108,13 @@
             span {{ $t('admin:shell.backToWiki') }}
 
     v-main.admin-main(ref='adminMain' tabindex='-1')
-      .admin-route-bar
+      .admin-route-bar(v-if='!isDashboard')
         nav.admin-route-bar__crumbs(:aria-label='$t(`admin:shell.breadcrumb`)')
-          template(v-if='isDashboard')
-            strong(aria-current='page') {{ $t('admin:dashboard.title') }}
-          template(v-else)
-            router-link.admin-route-bar__home(to='/dashboard') {{ $t('admin:dashboard.title') }}
-            v-icon(size='14' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
-            span.admin-route-bar__group(v-if='currentRouteGroup') {{ currentRouteGroup.label }}
-            v-icon(v-if='currentRouteGroup' size='14' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
-            strong(aria-current='page') {{ currentRouteLabel }}
+          router-link.admin-route-bar__home(to='/dashboard') {{ $t('admin:dashboard.title') }}
+          v-icon(size='14' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+          span.admin-route-bar__group(v-if='currentRouteGroup') {{ currentRouteGroup.label }}
+          v-icon(v-if='currentRouteGroup' size='14' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+          strong(aria-current='page') {{ currentRouteLabel }}
       v-defaults-provider(:defaults='{ VDialog: { class: "admin-dialog", VDialog: { class: "admin-dialog" } } }')
         router-view(v-slot='{ Component }')
           transition(name='admin-router' mode='out-in' @after-enter='onRouteEntered')

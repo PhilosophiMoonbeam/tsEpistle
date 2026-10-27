@@ -5,102 +5,103 @@
       <p>{{ $t('common:glossary.searchHint') }}</p>
     </header>
     <div class="glossary-search__content">
-        <v-alert v-if="hostError || error" type="error" class="mb-4" role="alert">{{ hostError || error }}<v-btn variant="text" @click="hostError ? emit('changed') : reload()">Retry</v-btn></v-alert>
-        <v-alert v-if="!access.enabled && !hostError" type="info">The glossary is disabled or still being checked.</v-alert>
-        <v-alert v-else-if="access.enabled && !access.canRead && !access.canManage" type="warning">You do not have permission to read or manage this glossary.</v-alert>
+        <v-alert v-if="hostError || error" type="error" class="mb-4" role="alert">{{ hostError ? t('common:glossaryDirectory.requestFailed') : error }}<v-btn variant="text" @click="hostError ? emit('changed') : reload()">{{ t('common:glossaryDirectory.retry') }}</v-btn></v-alert>
+        <v-alert v-if="!access.enabled && !hostError" type="info">{{ t('common:glossaryDirectory.disabled') }}</v-alert>
+        <v-alert v-else-if="access.enabled && !access.canRead && !access.canManage" type="warning">{{ t('common:glossaryDirectory.forbidden') }}</v-alert>
         <template v-if="access.enabled && (access.canRead || access.canManage)">
-          <form class="glossary-search__controls" @submit.prevent="setLocale">
-            <v-text-field v-model="localeInput" class="glossary-search__locale" label="Catalog locale" maxlength="20" density="compact" hide-details :disabled="saving" />
-            <v-btn type="submit" variant="outlined" :disabled="saving || !localeInput.trim()">Change locale</v-btn>
-            <v-btn v-if="access.canManage" prepend-icon="mdi-plus" :disabled="saving" @click="create">New term</v-btn>
-            <v-btn v-if="mode !== 'directory'" :disabled="saving" variant="text" prepend-icon="mdi-arrow-left" @click="directory">Directory</v-btn>
-          </form>
-          <v-progress-linear v-if="loading || catalogLoading" indeterminate aria-label="Loading glossary" />
+          <div class="glossary-search__controls">
+            <v-text-field :model-value="localeInput" class="glossary-search__locale" :label="t('common:glossaryDirectory.catalogLocale')" maxlength="35" density="compact" hide-details="auto" :error-messages="localeInvalid ? [t('common:glossaryDirectory.invalidLocale')] : []" :aria-invalid="localeInvalid" :disabled="saving" dir="ltr" @update:model-value="setLocale" />
+            <v-btn v-if="mode !== 'directory'" :disabled="saving" variant="text" @click="directory">{{ t('common:glossaryDirectory.directory') }}</v-btn>
+          </div>
+          <v-progress-linear v-if="loading || catalogLoading" indeterminate :aria-label="t('common:glossaryDirectory.loading')" />
           <template v-if="mode === 'directory' && access.canRead">
             <div class="glossary-search__filters">
-              <v-select v-model="letter" :items="['All', ...letters]" :menu-props="{ contentClass: 'glossary-owned-overlay' }" label="A–Z / initial" density="compact" hide-details />
-              <v-select v-model="category" :items="[{ title: 'All categories', value: null }, { title: 'Uncategorized', value: '' }, ...categories.map(value => ({ title: value, value }))]" :menu-props="{ contentClass: 'glossary-owned-overlay' }" label="Category" density="compact" hide-details />
+              <v-select v-model="letter" :items="[{ title: t('common:glossaryDirectory.allLetters'), value: null }, ...letters.map(value => ({ title: value, value }))]" :menu-props="{ contentClass: 'glossary-owned-overlay' }" :label="t('common:glossaryDirectory.initial')" density="compact" hide-details />
+              <v-select v-model="category" :items="[{ title: t('common:glossaryDirectory.allCategories'), value: null }, { title: t('common:glossaryDirectory.uncategorized'), value: '' }, ...categories.map(value => ({ title: value, value }))]" :menu-props="{ contentClass: 'glossary-owned-overlay' }" :label="t('common:glossaryDirectory.category')" density="compact" hide-details />
             </div>
-            <p v-if="!error" class="glossary-search__summary" role="status">{{ catalogLoading ? 'Loading matching terms…' : `${filtered.length} matching terms` }}</p>
-            <ul class="glossary-search__terms" aria-label="Glossary terms" :aria-busy="catalogLoading">
+            <p v-if="!error" class="glossary-search__summary" role="status">{{ catalogLoading ? t('common:glossaryDirectory.loadingMatches') : t('common:glossaryDirectory.matchingTerms', { count: filtered.length }) }}</p>
+            <ul class="glossary-search__terms" :aria-label="t('common:glossaryDirectory.terms')" :aria-busy="catalogLoading">
               <li v-for="item in visible" :key="item.id">
                 <a class="glossary-search__term" :href="termHref(item.term)">
-                  <span class="glossary-search__term-name">{{ item.term }}</span>
-                  <span v-if="item.expansion || item.category" class="glossary-search__term-meta">{{ [item.expansion, item.category].filter(Boolean).join(' · ') }}</span>
+                  <span class="glossary-search__term-name" dir="auto">{{ item.term }}</span>
+                  <span v-if="item.expansion || item.category" class="glossary-search__term-meta" dir="auto">{{ [item.expansion, item.category].filter(Boolean).join(' · ') }}</span>
                 </a>
               </li>
             </ul>
-            <p v-if="!catalogLoading && !error && !filtered.length">No terms match these filters.</p>
-            <div class="glossary-search__pagination">
-              <v-btn :disabled="page === 0" variant="outlined" @click="page--">Previous</v-btn>
-              <span>Page {{ page + 1 }} of {{ Math.max(1, Math.ceil(filtered.length / pageSize)) }}</span>
-              <v-btn :disabled="(page + 1) * pageSize >= filtered.length" variant="outlined" @click="page++">Next</v-btn>
-            </div>
+            <p v-if="!catalogLoading && !error && !filtered.length">{{ t('common:glossaryDirectory.noMatches') }}</p>
+            <nav v-if="filtered.length > pageSize" class="glossary-search__pagination" :aria-label="t('common:glossaryDirectory.pagination')">
+              <v-btn :disabled="currentPage === 0 || catalogLoading" variant="outlined" @click="page = currentPage - 1">{{ t('common:glossaryDirectory.previous') }}</v-btn>
+              <span role="status">{{ t('common:glossaryDirectory.page', { page: currentPage + 1, pages: pageCount }) }}</span>
+              <v-btn :disabled="currentPage + 1 >= pageCount || catalogLoading" variant="outlined" @click="page = currentPage + 1">{{ t('common:glossaryDirectory.next') }}</v-btn>
+            </nav>
           </template>
           <article v-if="mode === 'detail' && detail && access.canRead" class="glossary-search__detail" aria-labelledby="glossary-term-title">
             <h4 id="glossary-term-title" ref="detailHeading" tabindex="-1">{{ detail.term }}</h4>
             <p v-if="detail.expansion">{{ detail.expansion }}</p>
-            <p v-if="detail.category">Category: {{ detail.category }}</p>
-            <p v-if="detail.aliases.length">Also known as: {{ detail.aliases.join(', ') }}</p>
+            <p v-if="detail.category">{{ t('common:glossaryDirectory.termCategory', { category: detail.category }) }}</p>
+            <p v-if="detail.aliases.length">{{ t('common:glossaryDirectory.alsoKnownAs', { aliases: detail.aliases.join(', ') }) }}</p>
             <div class="contents" v-html="detailHtml" />
             <p v-if="detail.documentation"><a :href="safeDocumentation(detail.documentation.href)">{{ detail.documentation.label }}</a></p>
-            <h5 v-if="detail.relatedTerms.length" class="mt-4">Related terms</h5>
+            <h5 v-if="detail.relatedTerms.length" class="mt-4">{{ t('common:glossaryDirectory.relatedTerms') }}</h5>
             <ul v-if="detail.relatedTerms.length"><li v-for="related in detail.relatedTerms" :key="related.id"><a :href="termHref(related.term)" @click.prevent="select(related.term)">{{ related.term }}</a></li></ul>
-            <h5 v-if="detail.references.length" class="mt-4">References</h5>
-            <ul v-if="detail.references.length"><li v-for="reference in detail.references" :key="reference.url"><a v-if="safeReference(reference.url)" :href="reference.url" target="_blank" rel="noopener noreferrer">{{ reference.label || reference.url }}</a><span v-else>{{ reference.label || 'Unavailable reference' }}</span></li></ul>
-            <div v-if="access.canManage" class="d-flex ga-3 mt-4"><v-btn @click="edit">Edit</v-btn><v-btn variant="outlined" color="error" :disabled="saving" @click="remove">Delete</v-btn></div>
+            <h5 v-if="detail.references.length" class="mt-4">{{ t('common:glossaryDirectory.references') }}</h5>
+            <ul v-if="detail.references.length"><li v-for="reference in detail.references" :key="reference.url"><a v-if="safeReference(reference.url)" :href="reference.url" target="_blank" rel="noopener noreferrer">{{ reference.label || reference.url }}</a><span v-else>{{ reference.label || t('common:glossaryDirectory.unavailableReference') }}</span></li></ul>
+            <div v-if="access.canManage" class="d-flex ga-3 mt-4"><v-btn @click="edit">{{ t('common:glossaryDirectory.edit') }}</v-btn><v-btn variant="outlined" color="error" :disabled="saving" @click="remove">{{ t('common:glossaryDirectory.delete') }}</v-btn></div>
           </article>
           <form v-if="mode === 'edit' && access.canManage" @submit.prevent="save">
             <p class="glossary-search__edit-hint">{{ $t('common:glossary.editingSearchHint') }}</p>
             <v-alert v-if="conflict" type="warning" class="mb-4" role="alert">
-              This term or one of its symmetric relations changed. Your draft is intact. Load the current revision to review it before saving again.
-              <v-btn :disabled="loading || saving" variant="text" @click="loadConflict">Load current revision</v-btn>
+              {{ t('common:glossaryDirectory.conflict') }}
+              <v-btn :disabled="loading || saving" variant="text" @click="loadConflict">{{ t('common:glossaryDirectory.loadRevision') }}</v-btn>
             </v-alert>
-            <section v-if="latest" class="mb-4" aria-label="Current server version">
-              <h3>Current server version (revision {{ latest.revision }})</h3>
+            <section v-if="latest" class="mb-4" :aria-label="t('common:glossaryDirectory.serverVersion')">
+              <h3>{{ t('common:glossaryDirectory.serverRevision', { revision: latest.revision }) }}</h3>
               <p>{{ latest.term }} — {{ latest.expansion }}</p><pre>{{ JSON.stringify({ definition: latest.definition, aliases: latest.aliases, relatedTerms: latest.relatedTerms.map(item => item.term), category: latest.category, caseSensitive: latest.caseSensitive, autoLink: latest.autoLink, documentation: latest.documentation, references: latest.references }, null, 2) }}</pre>
-              <v-btn variant="outlined" :disabled="saving" @click="acceptRevision">Keep my draft against this revision</v-btn>
-              <v-btn variant="text" :disabled="saving" @click="useLatest">Discard draft and use server version</v-btn>
+              <v-btn variant="outlined" :disabled="saving" @click="acceptRevision">{{ t('common:glossaryDirectory.keepDraft') }}</v-btn>
+              <v-btn variant="text" :disabled="saving" @click="useLatest">{{ t('common:glossaryDirectory.useServerVersion') }}</v-btn>
             </section>
             <fieldset :disabled="saving || loading" class="pa-0 ma-0 border-0">
-              <v-text-field v-model="draft.term" label="Term" maxlength="255" required @update:model-value="touch" />
-              <v-text-field v-model="draft.expansion" label="Expansion" maxlength="255" @update:model-value="touch" />
-              <v-text-field v-model="draft.category" label="Category" maxlength="255" @update:model-value="touch" />
-              <v-textarea v-model="draft.aliasesText" label="Aliases (one per line, up to 50)" rows="3" @update:model-value="touch" />
-              <v-textarea v-model="draft.definition" label="Definition (Markdown)" maxlength="10000" rows="8" @update:model-value="touch" />
-              <v-checkbox :model-value="preview" label="Show Markdown preview" @update:model-value="setPreview" />
-              <section v-if="preview" aria-label="Definition preview" class="contents mb-4" v-html="previewHtml" />
-              <v-checkbox :model-value="draft.caseSensitive" label="Case-sensitive automatic linking" @update:model-value="setLinkingPreference('caseSensitive', $event)" />
-              <v-checkbox :model-value="draft.autoLink" label="Automatically link this term in reader content" @update:model-value="setLinkingPreference('autoLink', $event)" />
-              <h3>Related terms</h3>
-              <p v-if="!draft.relatedIds.length">No related terms selected.</p>
-              <ul><li v-for="id in draft.relatedIds" :key="id">{{ relatedName(id) }} <v-btn size="small" variant="text" :aria-label="`Remove related term ${relatedName(id)}`" @click="draft.relatedIds = draft.relatedIds.filter(value => value !== id); touch()">Remove</v-btn></li></ul>
+              <v-text-field v-model="draft.term" :label="t('common:glossaryDirectory.term')" maxlength="255" required @update:model-value="touch" />
+              <v-text-field v-model="draft.expansion" :label="t('common:glossaryDirectory.expansion')" maxlength="255" @update:model-value="touch" />
+              <v-text-field v-model="draft.category" :label="t('common:glossaryDirectory.category')" maxlength="255" @update:model-value="touch" />
+              <v-textarea v-model="draft.aliasesText" :label="t('common:glossaryDirectory.aliases')" rows="3" @update:model-value="touch" />
+              <v-textarea v-model="draft.definition" :label="t('common:glossaryDirectory.definition')" maxlength="10000" rows="8" @update:model-value="touch" />
+              <v-checkbox :model-value="preview" :label="t('common:glossaryDirectory.showPreview')" @update:model-value="setPreview" />
+              <section v-if="preview" :aria-label="t('common:glossaryDirectory.definitionPreview')" class="contents mb-4" v-html="previewHtml" />
+              <v-checkbox :model-value="draft.caseSensitive" :label="t('common:glossaryDirectory.caseSensitive')" @update:model-value="setLinkingPreference('caseSensitive', $event)" />
+              <v-checkbox :model-value="draft.autoLink" :label="t('common:glossaryDirectory.autoLink')" @update:model-value="setLinkingPreference('autoLink', $event)" />
+              <h3>{{ t('common:glossaryDirectory.relatedTerms') }}</h3>
+              <p v-if="!draft.relatedIds.length">{{ t('common:glossaryDirectory.noRelatedTerms') }}</p>
+              <ul><li v-for="id in draft.relatedIds" :key="id">{{ relatedName(id) }} <v-btn size="small" variant="text" :aria-label="t('common:glossaryDirectory.removeRelatedTerm', { term: relatedName(id) })" @click="draft.relatedIds = draft.relatedIds.filter(value => value !== id); touch()">{{ t('common:glossaryDirectory.remove') }}</v-btn></li></ul>
               <div v-if="access.canRead">
-                <v-text-field v-model="relatedQuery" label="Find related terms" maxlength="255" />
-                <v-btn variant="outlined" :disabled="relatedLoading" @click="loadRelated(false)">Search related terms</v-btn>
-                <v-progress-linear v-if="relatedLoading" indeterminate aria-label="Loading related terms" />
-                <v-list aria-label="Related term choices"><v-list-item v-for="item in relatedChoices" :key="item.id" :title="item.term" :disabled="draft.relatedIds.length >= 50 || draft.relatedIds.includes(item.id) || item.id === detail?.id" @click="draft.relatedIds.push(item.id); touch()" /></v-list>
-                <v-btn v-if="relatedCursor" variant="text" :disabled="relatedLoading" @click="loadRelated(true)">More related terms</v-btn>
+                <v-text-field v-model="relatedQuery" :label="t('common:glossaryDirectory.findRelatedTerms')" maxlength="255" />
+                <v-btn variant="outlined" :disabled="relatedLoading" @click="loadRelated(false)">{{ t('common:glossaryDirectory.searchRelatedTerms') }}</v-btn>
+                <v-progress-linear v-if="relatedLoading" indeterminate :aria-label="t('common:glossaryDirectory.loadingRelatedTerms')" />
+                <v-list :aria-label="t('common:glossaryDirectory.relatedChoices')"><v-list-item v-for="item in relatedChoices" :key="item.id" :title="item.term" :disabled="draft.relatedIds.length >= 50 || draft.relatedIds.includes(item.id) || item.id === detail?.id" @click="draft.relatedIds.push(item.id); touch()" /></v-list>
+                <v-btn v-if="relatedCursor" variant="text" :disabled="relatedLoading" @click="loadRelated(true)">{{ t('common:glossaryDirectory.moreRelatedTerms') }}</v-btn>
               </div>
-              <h3 class="mt-4">Documentation page</h3>
+              <h3 class="mt-4">{{ t('common:glossaryDirectory.documentationPage') }}</h3>
               <p>{{ documentationText }}</p>
-              <p class="text-caption">A protected association may be withheld. Untouched documentation controls preserve it.</p>
-              <v-btn variant="outlined" @click="picker = true">Choose readable page</v-btn>
-              <v-btn variant="text" @click="unlink">Unlink documentation</v-btn>
-              <v-text-field v-model="draft.documentationLabel" label="Documentation link label" maxlength="255" @update:model-value="documentationDirty.label = true; touch()" />
-              <h3>References</h3>
+              <p class="text-caption">{{ t('common:glossaryDirectory.protectedAssociation') }}</p>
+              <v-btn variant="outlined" @click="picker = true">{{ t('common:glossaryDirectory.choosePage') }}</v-btn>
+              <v-btn variant="text" @click="unlink">{{ t('common:glossaryDirectory.unlinkDocumentation') }}</v-btn>
+              <v-text-field v-model="draft.documentationLabel" :label="t('common:glossaryDirectory.documentationLabel')" maxlength="255" @update:model-value="documentationDirty.label = true; touch()" />
+              <h3>{{ t('common:glossaryDirectory.references') }}</h3>
               <div v-for="(reference, index) in draft.references" :key="index" class="mb-3">
-                <v-text-field v-model="reference.label" :label="`Reference ${index + 1} label`" maxlength="255" @update:model-value="touch" />
-                <v-text-field v-model="reference.url" :label="`Reference ${index + 1} HTTP(S) URL`" maxlength="2048" type="url" required @update:model-value="touch" />
-                <v-btn variant="text" @click="draft.references.splice(index, 1); touch()">Remove reference {{ index + 1 }}</v-btn>
+                <v-text-field v-model="reference.label" :label="t('common:glossaryDirectory.referenceLabel', { number: index + 1 })" maxlength="255" @update:model-value="touch" />
+                <v-text-field v-model="reference.url" :label="t('common:glossaryDirectory.referenceUrl', { number: index + 1 })" maxlength="2048" type="url" required dir="ltr" @update:model-value="touch" />
+                <v-btn variant="text" @click="draft.references.splice(index, 1); touch()">{{ t('common:glossaryDirectory.removeReference', { number: index + 1 }) }}</v-btn>
               </div>
-              <v-btn variant="outlined" :disabled="draft.references.length >= 20" @click="draft.references.push({ label: '', url: '' }); touch()">Add reference</v-btn>
+              <v-btn variant="outlined" :disabled="draft.references.length >= 20" @click="draft.references.push({ label: '', url: '' }); touch()">{{ t('common:glossaryDirectory.addReference') }}</v-btn>
             </fieldset>
             <div class="d-flex ga-3 mt-6">
-              <v-btn type="submit" color="primary" :loading="saving" :disabled="saving || loading || conflict || !dirty">Save term</v-btn>
-              <v-btn :disabled="saving" variant="text" @click="cancelEdit">Cancel editing</v-btn>
+              <v-btn type="submit" color="primary" :loading="saving" :disabled="saving || loading || conflict || !dirty">{{ t('common:glossaryDirectory.saveTerm') }}</v-btn>
+              <v-btn :disabled="saving" variant="text" @click="cancelEdit">{{ t('common:glossaryDirectory.cancelEditing') }}</v-btn>
             </div>
           </form>
+          <footer v-if="access.canManage && mode !== 'edit'" class="glossary-search__footer">
+            <v-btn size="small" variant="text" prepend-icon="mdi-plus" :disabled="saving" @click="create">{{ t('common:glossaryDirectory.newTerm') }}</v-btn>
+          </footer>
         </template>
     </div>
     <page-selector v-if="picker" v-model="picker" class="glossary-owned-overlay" mode="select" :locale="locale" :allow-locale-change="true" :must-exist="true" :open-handler="chooseDocumentation" />
@@ -115,24 +116,29 @@ import { deleteGlossaryTerm, fetchGlossaryPage, fetchGlossaryTerm, GlossaryApiEr
 import { glossaryDraft, glossaryWrite } from '../../helpers/glossary-form.ts'
 import { glossaryHref } from '../../helpers/glossary-runtime.ts'
 import { glossaryIdentity } from '../../helpers/glossary-session.ts'
+import { isGlossaryLocale, glossaryErrorKey } from '../../helpers/glossary-search.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
 import { useWikiStore } from '../../store/index.ts'
 import { createWikiMarkdownRenderer } from '../editor/markdown/preview.ts'
 import PageSelector from './page-selector.vue'
 
 const props = defineProps<{ locale: string; term: string; access: GlossaryAccess; query: string; hostError?: string }>()
 const emit = defineEmits<{ select: [name: string]; locale: [locale: string]; changed: [] }>()
+const t = useTranslate()
 const mode = ref<'directory' | 'detail' | 'edit'>('directory'), detail = ref<GlossaryTerm | null>(null), latest = ref<GlossaryTerm | null>(null)
 const detailHeading = ref<HTMLElement | null>(null)
 watch([mode, detail], () => {
   if (mode.value === 'detail' && detail.value && document.activeElement === document.body) detailHeading.value?.focus()
 }, { flush: 'post' })
-const localeInput = ref(props.locale), letter = ref('All'), category = ref<string | null>(null), page = ref(0), pageSize = 30
+const localeInput = ref(props.locale), letter = ref<string | null>(null), category = ref<string | null>(null), page = ref(0), pageSize = 30
+const localeInvalid = computed(() => !isGlossaryLocale(localeInput.value.trim()))
 const catalog = ref<GlossaryTermSummary[]>([]), loading = ref(false), catalogLoading = ref(false), saving = ref(false), error = ref(''), dirty = ref(false), conflict = ref(false), preview = ref(false), picker = ref(false)
 const draft = ref(glossaryDraft(props.locale)), documentationDirty = reactive({ page: false, label: false }), selectedDocumentation = ref('')
 const relatedQuery = ref(''), relatedChoices = ref<GlossaryTermSummary[]>([]), relatedCursor = ref<string | null>(null), relatedLoading = ref(false)
 let detailController: AbortController | undefined, catalogController: AbortController | undefined, relatedController: AbortController | undefined, saveController: AbortController | undefined
 let generation = 0, relatedGeneration = 0, catalogGeneration = 0, alive = true
 let catalogTimer: ReturnType<typeof setTimeout> | undefined
+let catalogLocale = props.locale
 const store = useWikiStore()
 watch(() => glossaryIdentity(store), () => {
   alive = false; generation++; catalogGeneration++; relatedGeneration++
@@ -146,15 +152,18 @@ const previewHtml = computed(() => safeHtml(markdown.render(draft.value.definiti
 const initial = (name: string): string => Array.from(name.normalize('NFC').trim())[0]?.toLocaleUpperCase(props.locale) ?? '#'
 const letters = computed(() => [...new Set(catalog.value.map(item => initial(item.term)))].sort((a, b) => a.localeCompare(b, props.locale)))
 const categories = computed(() => [...new Set(catalog.value.map(item => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, props.locale)))
-const filtered = computed(() => catalog.value.filter(item => (letter.value === 'All' || initial(item.term) === letter.value) && (category.value === null || item.category === category.value)).sort((a, b) => a.term.localeCompare(b.term, props.locale)))
-const visible = computed(() => filtered.value.slice(page.value * pageSize, (page.value + 1) * pageSize))
-const documentationText = computed(() => selectedDocumentation.value || (draft.value.documentationPageId ? detail.value?.documentation?.label || `Selected page #${draft.value.documentationPageId}` : 'No visible documentation page.'))
-watch([letter, category], () => { page.value = 0 })
+const filtered = computed(() => catalog.value.filter(item => (letter.value === null || initial(item.term) === letter.value) && (category.value === null || item.category === category.value)).sort((a, b) => a.term.localeCompare(b.term, props.locale)))
+const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
+const currentPage = computed(() => Math.min(Math.max(0, page.value), pageCount.value - 1))
+const visible = computed(() => filtered.value.slice(currentPage.value * pageSize, (currentPage.value + 1) * pageSize))
+const documentationText = computed(() => selectedDocumentation.value || (draft.value.documentationPageId ? detail.value?.documentation?.label || t('common:glossaryDirectory.selectedPage', { id: draft.value.documentationPageId }) : t('common:glossaryDirectory.noDocumentation')))
+watch([letter, category], () => { page.value = 0 }, { flush: 'sync' })
+watch(pageCount, () => { page.value = currentPage.value }, { flush: 'sync' })
 function message (failure: unknown): string {
   if (failure instanceof GlossaryApiError && ([401, 403].includes(failure.status) || failure.code === 'GLOSSARY_DISABLED')) {
     detail.value = null; catalog.value = []; relatedChoices.value = []; resetDraft(); emit('changed')
   }
-  return failure instanceof Error ? failure.message : 'Glossary request failed.'
+  return t(`common:glossaryDirectory.${glossaryErrorKey(failure)}`)
 }
 function touch (): void { dirty.value = true }
 function setPreview (value: boolean | null): void {
@@ -168,12 +177,13 @@ function setLinkingPreference (field: 'caseSensitive' | 'autoLink', value: boole
 function canLeave (): boolean {
   if (saving.value) return false
   if (!dirty.value) return true
-  if (!window.confirm('Discard your unsaved glossary changes?')) return false
+  if (!window.confirm(t('common:glossaryDirectory.discardChanges'))) return false
   dirty.value = false
   return true
 }
 defineExpose({ canLeave })
 watch(() => props.query, () => {
+  page.value = 0
   clearTimeout(catalogTimer)
   catalogController?.abort(); catalogGeneration++
   if (mode.value === 'edit') { catalogLoading.value = false; return }
@@ -188,7 +198,13 @@ function directory (): void {
   if (props.term) emit('select', '')
   else void loadCatalog()
 }
-function setLocale (): void { const locale = localeInput.value.trim(); if (/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/iu.test(locale) && canLeave()) { dirty.value = false; emit('locale', locale) } else error.value = 'Choose a valid locale code, for example en or fr-CA.' }
+function setLocale (value: string | null): void {
+  localeInput.value = value ?? ''
+  const locale = localeInput.value.trim()
+  if (!isGlossaryLocale(locale) || locale === props.locale) return
+  if (!canLeave()) { localeInput.value = props.locale; return }
+  emit('locale', locale)
+}
 function resetDraft (term?: GlossaryTerm): void {
   draft.value = glossaryDraft(props.locale, term); documentationDirty.page = false; documentationDirty.label = false; selectedDocumentation.value = ''; dirty.value = false; latest.value = null; conflict.value = false; preview.value = false; picker.value = false
   relatedChoices.value = term?.relatedTerms ? [...term.relatedTerms] : []; relatedCursor.value = null; relatedQuery.value = ''
@@ -210,19 +226,22 @@ async function loadCatalog (): Promise<void> {
   clearTimeout(catalogTimer)
   if (!props.access.canRead) return
   catalogController?.abort(); const request = ++catalogGeneration; catalogController = new AbortController(); const signal = catalogController.signal
-  catalog.value = []; catalogLoading.value = true; error.value = ''; page.value = 0
+  catalogLoading.value = true; error.value = ''
   let cursor: string | undefined
+  const items: GlossaryTermSummary[] = []
   const seen = new Set<string>(), search = props.query, locale = props.locale
   try {
     do {
       const result = await fetchGlossaryPage(locale, search, cursor, signal)
       if (!alive || signal.aborted || request !== catalogGeneration || search !== props.query || locale !== props.locale) return
-      catalog.value.push(...result.items)
+      items.push(...result.items)
       if (result.complete) break
       cursor = result.nextCursor ?? undefined
       if (!cursor || seen.has(cursor)) throw new Error('The catalog continuation did not advance. Please retry.')
       seen.add(cursor)
     } while (cursor !== undefined)
+    catalog.value = items
+    page.value = currentPage.value
   } catch (failure) { if (!signal.aborted && request === catalogGeneration && alive) { catalog.value = []; error.value = message(failure) } }
   finally { if (alive && request === catalogGeneration) catalogLoading.value = false }
 }
@@ -237,9 +256,9 @@ async function loadRelated (more: boolean): Promise<void> {
   } catch (failure) { if (!signal.aborted && alive && request === relatedGeneration) error.value = message(failure) }
   finally { if (alive && request === relatedGeneration) relatedLoading.value = false }
 }
-function relatedName (id: number): string { return relatedChoices.value.find(item => item.id === id)?.term ?? detail.value?.relatedTerms.find(item => item.id === id)?.term ?? `Term #${id}` }
+function relatedName (id: number): string { return relatedChoices.value.find(item => item.id === id)?.term ?? detail.value?.relatedTerms.find(item => item.id === id)?.term ?? t('common:glossaryDirectory.termId', { id }) }
 function chooseDocumentation (selection: { id: number; locale: string; path: string }): boolean { if (!selection.id || saving.value || !props.access.canManage) return false; draft.value.documentationPageId = selection.id; selectedDocumentation.value = `/${selection.locale}/${selection.path}`; documentationDirty.page = true; touch(); return true }
-function unlink (): void { draft.value.documentationPageId = null; draft.value.documentationLabel = ''; selectedDocumentation.value = 'Documentation explicitly unlinked.'; documentationDirty.page = true; documentationDirty.label = true; touch() }
+function unlink (): void { draft.value.documentationPageId = null; draft.value.documentationLabel = ''; selectedDocumentation.value = t('common:glossaryDirectory.documentationUnlinked'); documentationDirty.page = true; documentationDirty.label = true; touch() }
 function termHref (name: string): string { return glossaryHref(window.location.href, name) }
 function safeReference (value: string): boolean { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password } catch { return false } }
 function safeDocumentation (value: string): string | undefined { try { const url = new URL(value, window.location.origin); return url.origin === window.location.origin && ['http:', 'https:'].includes(url.protocol) ? `${url.pathname}${url.search}${url.hash}` : undefined } catch { return undefined } }
@@ -257,7 +276,7 @@ async function save (): Promise<void> {
   finally { if (alive) saving.value = false }
 }
 async function remove (): Promise<void> {
-  if (!props.access.canManage || !detail.value || saving.value || !window.confirm(`Delete “${detail.value.term}”? This also removes its symmetric relations.`)) return
+  if (!props.access.canManage || !detail.value || saving.value || !window.confirm(t('common:glossaryDirectory.confirmDelete', { term: detail.value.term }))) return
   saving.value = true; saveController = new AbortController(); const signal = saveController.signal
   try { await deleteGlossaryTerm(detail.value.id, detail.value.revision, signal); if (!alive || signal.aborted) return; detail.value = null; dirty.value = false; mode.value = 'directory'; saving.value = false; emit('select', ''); emit('changed'); void loadCatalog() }
   catch (failure) { if (!signal.aborted && alive) { error.value = message(failure); if (failure instanceof GlossaryApiError && failure.status === 409) { resetDraft(detail.value ?? undefined); mode.value = 'edit'; conflict.value = true } } }
@@ -278,6 +297,7 @@ watch(() => [props.locale, props.term, props.access.enabled, props.access.canRea
   detailController?.abort(); catalogController?.abort(); relatedController?.abort(); generation++; catalogGeneration++; relatedGeneration++
   clearTimeout(catalogTimer)
   localeInput.value = props.locale
+  if (catalogLocale !== props.locale) { catalogLocale = props.locale; catalog.value = []; page.value = 0; letter.value = null; category.value = null }
   if (!props.access.enabled || !props.access.canRead) { if (!props.access.canManage) { detail.value = null; catalog.value = []; resetDraft() }; return }
   if (props.term) void loadDetail(); else { mode.value = 'directory'; void loadCatalog() }
 }, { immediate: true })
@@ -301,6 +321,7 @@ onBeforeUnmount(() => { alive = false; clearTimeout(catalogTimer); detailControl
 .glossary-search__term-name { color: var(--wiki-primary-ink); font-weight: 650; }
 .glossary-search__term-meta { color: var(--wiki-text-muted); font-size: .875rem; }
 .glossary-search__pagination { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-3); margin-top: var(--wiki-space-4); }
+.glossary-search__footer { margin-top: var(--wiki-space-5); padding-top: var(--wiki-space-2); border-top: 1px solid var(--wiki-surface-border); text-align: start; }
 .glossary-search__detail > h4 { margin: 0 0 var(--wiki-space-2); font-family: var(--wiki-font-heading); font-size: clamp(1.5rem, 4vw, 2.25rem); line-height: 1.2; overflow-wrap: anywhere; }
 .glossary-search__detail > h5 { font-size: 1rem; }
 .glossary-search__detail p, .glossary-search__detail li { overflow-wrap: anywhere; }

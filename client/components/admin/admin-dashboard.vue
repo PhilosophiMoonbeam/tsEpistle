@@ -16,9 +16,13 @@
           span {{ stat.label }}
           v-icon.admin-stat__arrow(size='16' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
         strong.admin-stat__value
-          template(v-if='summaryLoading || summaryError') —
-          template(v-else-if='stat.key === "assetBytes"') {{ formatBytes(Number(stat.value)) }}
-          animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='formatInteger')
+          span.admin-stat__state(v-if='stat.state !== "ready"') {{ $t(`admin:dashboard.inventoryState.${stat.state}`) }}
+          animated-number(v-else :value='Number(stat.value)' :duration='600' :format-value='formatInteger')
+          span.admin-stat__storage(v-if='stat.key === "assets"')
+            template(v-if='stat.storage')
+              span {{ stat.storage.value }}
+              small.admin-stat__unit {{ stat.storage.unit }}
+            small.admin-stat__state(v-else) {{ $t(`admin:dashboard.inventoryState.${stat.storageState}`) }}
         span.admin-stat__hint {{ stat.hint }}
     p.dashboard-summary-status.mt-3(role='status') {{ summaryLoading ? $t(`admin:dashboard.inventoryLoading`) : '' }}
     v-alert.mt-3(v-if='summaryError' type='warning' variant='tonal' density='compact' role='alert')
@@ -109,9 +113,6 @@
                   router-link.admin-record-link(:to='`/users/${props.item.id}`') {{ props.item.name }}
                 td.text-end.text-body-small(width='200') {{ $helpers.formatMoment(props.item.lastLoginAt, 'calendar') }}
 
-    .dashboard-footnote
-      span tsEpistle {{ info.product.version }}
-      span {{ $t(`admin:dashboard.footnote`) }}
 </template>
 
 <script lang="ts">
@@ -126,8 +127,15 @@ import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
 import { getErrorMessage, loadingStart, loadingStop } from '../../helpers/root-ui-store'
 
 const integerFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
-const byteFormatter = new Intl.NumberFormat(undefined, { style: 'unit', unit: 'byte', maximumFractionDigits: 0 })
+const storageFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 })
 const formatInteger = (value: number): string => integerFormatter.format(Math.round(value))
+const isKnownCount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
+const formatStorage = (bytes: number) => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
+  const scale = bytes === 0 ? 0 : Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const exponent = Math.max(0, scale)
+  return { value: storageFormatter.format(bytes / (1024 ** exponent)), unit: units[exponent] }
+}
 
 
 export default {
@@ -139,7 +147,6 @@ export default {
       summaryError: summary?.error,
       refreshSummary: () => summary?.refresh(),
       formatInteger,
-      formatBytes: (value: number) => byteFormatter.format(value),
     }
   },
   data() {
@@ -224,23 +231,31 @@ export default {
           permission: ['manage:system', 'manage:groups', 'write:groups']
         },
         {
-          key: 'assets', label: 'Assets', value: this.info.assetsTotal,
-          hint: 'Stored files', icon: 'mdi-folder-image', to: '/assets', permission: 'manage:system'
+          key: 'assets', label: this.$t('admin:dashboard.assets'), value: this.info.assetsTotal,
+          hint: this.$t('admin:dashboard.assetsHint'), icon: 'mdi-folder-image', to: '/assets', permission: 'manage:system'
         },
         {
-          key: 'assetBytes', label: 'Asset storage', value: this.info.assetsBytes,
-          hint: 'Total stored file bytes', icon: 'mdi-harddisk', to: '/assets', permission: 'manage:system'
-        },
-        {
-          key: 'comments', label: 'Comments', value: this.info.commentsTotal,
-          hint: 'Visible, nonempty discussion contributions', icon: 'mdi-comment-text-outline', to: '/comments', permission: 'manage:system'
+          key: 'comments', label: this.$t('admin:dashboard.comments'), value: this.info.commentsTotal,
+          hint: this.$t('admin:dashboard.commentsHint'), icon: 'mdi-comment-text-outline', to: '/comments', permission: 'manage:system'
         }
       ]
-        .filter((stat) => this.hasPermission(stat.permission) && (this.summaryLoading || this.summaryError || !['assets', 'assetBytes', 'comments'].includes(stat.key) || typeof stat.value === 'number'))
-        .map((stat) => ({
-          ...stat,
-          ariaLabel: this.$t(this.summaryLoading ? 'admin:dashboard.statAriaLoading' : this.summaryError ? 'admin:dashboard.statAriaUnavailable' : 'admin:dashboard.statAriaValue', { label: stat.label, value: stat.value, hint: stat.hint, interpolation: { escapeValue: false } })
-        }))
+        .filter((stat) => this.hasPermission(stat.permission))
+        .map((stat) => {
+          const state = this.summaryLoading ? 'loading' : this.summaryError ? 'error' : isKnownCount(stat.value) ? 'ready' : 'missing'
+          const storageState = this.summaryLoading ? 'loading' : this.summaryError ? 'error' : isKnownCount(this.info.assetsBytes) ? 'ready' : 'missing'
+          const storage = stat.key === 'assets' && storageState === 'ready' ? formatStorage(this.info.assetsBytes as number) : null
+          const valueLabel = state === 'ready' ? formatInteger(stat.value as number) : this.$t(`admin:dashboard.inventoryState.${state}`)
+          const storageLabel = stat.key === 'assets'
+            ? this.$t('admin:dashboard.storageAria', { value: storage ? `${storage.value} ${storage.unit}` : this.$t(`admin:dashboard.inventoryState.${storageState}`) })
+            : ''
+          return {
+            ...stat,
+            state,
+            storage,
+            storageState,
+            ariaLabel: this.$t('admin:dashboard.statAriaValue', { label: stat.label, value: valueLabel, hint: `${stat.hint} ${storageLabel}`, interpolation: { escapeValue: false } })
+          }
+        })
     },
     connections() {
       return [
@@ -406,8 +421,8 @@ export default {
 }
 .dashboard-inventory {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-block: 1px solid var(--wiki-surface-border);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 .admin-stat {
   position: relative;
@@ -417,17 +432,15 @@ export default {
   padding: 1rem 1.5rem;
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  border: 1px solid transparent;
+  border: 1px solid var(--wiki-surface-border);
   border-radius: var(--admin-radius);
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border);
   transition:
     background var(--wiki-motion-fast) var(--wiki-motion-ease),
     border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 
-  + .admin-stat {
-    border-inline-start-color: var(--wiki-surface-border);
-  }
 
   &::before {
     content: '';
@@ -446,8 +459,7 @@ export default {
 
   &:is(:hover, :focus-visible) {
     border-color: var(--wiki-surface-border-strong);
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 6%, var(--wiki-surface-raised));
-    box-shadow: var(--wiki-shadow-xs);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
     &::before {
       opacity: 1;
@@ -462,8 +474,7 @@ export default {
   }
 
   &:active {
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
-    box-shadow: var(--wiki-shadow-inset);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-inset);
   }
 
   &:focus-visible {
@@ -492,12 +503,37 @@ export default {
   &__value {
     position: relative;
     z-index: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-block-size: 5.5rem;
     margin-top: 0.8rem;
-    font-size: 2.5rem;
+    font-size: clamp(1.8rem, 3vw, 2.5rem);
     font-weight: 550;
-    letter-spacing: -0.06em;
+    letter-spacing: -0.03em;
     line-height: 1.1;
     font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  &__storage {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.35rem;
+    font-size: 1.35rem;
+    letter-spacing: -0.03em;
+  }
+  &__unit {
+    font-size: 1.1rem;
+    letter-spacing: 0;
+  }
+  &__state {
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1.4;
+    color: var(--admin-muted);
   }
   &__hint {
     position: relative;
@@ -551,7 +587,8 @@ export default {
   padding: 1.15rem;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--admin-radius);
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border);
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
   transition:
@@ -576,8 +613,7 @@ export default {
 
   &:is(:hover, :focus-visible) {
     border-color: var(--wiki-accent-ink);
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised));
-    box-shadow: var(--wiki-shadow-xs);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
     &::before {
       opacity: 1;
@@ -592,8 +628,7 @@ export default {
   }
 
   &:active {
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, var(--wiki-surface-raised));
-    box-shadow: var(--wiki-shadow-inset);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-inset);
   }
 
   &:focus-visible {
@@ -693,29 +728,12 @@ export default {
     overflow-wrap: anywhere;
   }
 }
-.dashboard-footnote {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 2rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--wiki-surface-border);
-  color: var(--admin-muted);
-  font-size: 0.72rem;
-}
 @media (max-width: 699px) {
   .dashboard-inventory {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .admin-stat {
     padding: 1rem;
-    &:nth-child(3) {
-      border-inline-start: 0;
-    }
-    &:nth-child(n + 3) {
-      border-top: 1px solid var(--wiki-surface-border);
-    }
   }
   .dashboard-connections__grid {
     grid-template-columns: 1fr;

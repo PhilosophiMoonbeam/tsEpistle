@@ -214,12 +214,9 @@ export default defineComponent({
   background-color: var(--wiki-chrome-surface) !important;
   background-image: var(--source-toolbar-tint) !important;
   box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
-  backdrop-filter: var(--wiki-chrome-blur) !important;
-  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+  backdrop-filter: var(--wiki-chrome-filter) !important;
+  -webkit-backdrop-filter: var(--wiki-chrome-filter) !important;
 
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    border-bottom-color: var(--wiki-glass-border) !important;
-  }
 }
 
 .source-toolbar .v-toolbar__content {

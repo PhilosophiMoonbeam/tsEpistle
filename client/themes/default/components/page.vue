@@ -10,7 +10,7 @@
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
     .page-reading-chrome(v-show='readerFocus && !printView && !talkActive && !linksActive', @keydown.esc.capture='readerSectionsEscape')
-      .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)', style='backdrop-filter: var(--wiki-chrome-blur);')
+      .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)')
         v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
         .page-reading-dock-context
           span.page-reading-dock-title {{ readerSection ? readerSection.title : title }}
@@ -96,6 +96,7 @@
     v-main.page-main(
       ref='content'
       :aria-busy='navigationPending ? `true` : undefined'
+      :class='{ "page-main--with-rail": tocPosition !== `off` && !printView && (!readerFocus || talkActive || linksActive) }'
     )
       v-container.page-hero(
         ref='pageHero'
@@ -178,17 +179,19 @@
               )
                 v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
                 span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
+      #page-desktop-rail-anchor
       v-container.page-body(fluid)
         v-row
           #page-mobile-tools.page-mobile-tools
           #page-tablet-tools.page-tablet-tools
 
-          v-col.page-col-sd(
-            ref='desktopRailCol'
-            cols='12'
-            :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
-            )
-            #page-desktop-rail.page-desktop-rail(ref='desktopRail')
+          Teleport(defer, to='#page-desktop-rail-anchor', :disabled='isTocCompact || tocPosition === `off` || printView')
+            v-col.page-col-sd(
+              ref='desktopRailCol'
+              cols='12'
+              :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
+              )
+              #page-desktop-rail.page-desktop-rail(ref='desktopRail')
 
 
 
@@ -1721,12 +1724,11 @@ export default defineComponent({
       lastSampledRailTop: -1,
       railSettleHandler: null as (() => void) | null,
       lastRailMaxHeight: -1,
-      lastRailAlignmentOffset: null as number | null,
-      railAlignmentDirty: true,
       railStickyTop: 80,
       railSpacingGap: 8,
       cachedRailEl: null as HTMLElement | null,
       navFooterEl: null as HTMLElement | null,
+      navHeaderEl: null as HTMLElement | null,
       cachedHeaderEl: null as HTMLElement | null,
       cachedTitleEl: null as HTMLElement | null,
       railResizeObserver: null as ResizeObserver | null
@@ -2286,7 +2288,6 @@ export default defineComponent({
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
     this.resizeHandler = () => {
-      this.markDesktopRailAlignmentDirty()
       this.handleSideNavVisibility()
       this.startDesktopRailSettling()
       this.ensureActiveTocVisible()
@@ -2379,7 +2380,8 @@ export default defineComponent({
     this.railSettleHandler = null
     if (this.cachedRailEl) {
       this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
-      this.cachedRailEl.style.removeProperty('--page-desktop-rail-align-offset')
+      this.cachedRailEl.style.removeProperty('--page-rail-header-height')
+      this.cachedRailEl.closest<HTMLElement>('.page-main')?.style.removeProperty('--page-rail-header-height')
       this.cachedRailEl = null
     }
     this.navFooterEl = null
@@ -2387,10 +2389,9 @@ export default defineComponent({
       this.railResizeObserver.disconnect()
       this.railResizeObserver = null
     }
+    this.navHeaderEl = null
     this.cachedHeaderEl = null
     this.cachedTitleEl = null
-    this.lastRailAlignmentOffset = null
-    this.railAlignmentDirty = true
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
@@ -4189,7 +4190,6 @@ export default defineComponent({
       const previousWidth = this.winWidth
       const nextWidth = window.innerWidth
       if (nextWidth === previousWidth) { return }
-      this.markDesktopRailAlignmentDirty()
       this.winWidth = nextWidth
       if (previousWidth >= 1280 && nextWidth < 1280) {
         this.tocExpanded = false
@@ -4200,9 +4200,6 @@ export default defineComponent({
         this.navShown = false
       }
     },
-    markDesktopRailAlignmentDirty(): void {
-      this.railAlignmentDirty = true
-    },
     resetDesktopRailMeasurementState(): void {
       this.cancelDesktopRailSettling()
       if (this.railRafId) {
@@ -4212,13 +4209,12 @@ export default defineComponent({
       this.railMeasurementPending = false
       if (this.cachedRailEl) {
         this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
-        this.cachedRailEl.style.removeProperty('--page-desktop-rail-align-offset')
+        this.cachedRailEl.style.removeProperty('--page-rail-header-height')
+        this.cachedRailEl.closest<HTMLElement>('.page-main')?.style.removeProperty('--page-rail-header-height')
       }
       this.cachedRailEl = null
       this.navFooterEl = null
       this.lastRailMaxHeight = -1
-      this.lastRailAlignmentOffset = null
-      this.railAlignmentDirty = true
     },
     selectPageView(value: unknown): void {
       if (value === 'article' || value === 'talk' || (value === 'links' && this.linksVisible)) this.$emit('update:activeView', value)
@@ -4268,14 +4264,19 @@ export default defineComponent({
 
       if (!this.railResizeObserver) {
         this.railResizeObserver = new ResizeObserver(() => {
-          this.markDesktopRailAlignmentDirty()
           this.startDesktopRailSettling()
         })
       }
+      const navHeaderEl = document.querySelector<HTMLElement>('.nav-header')
+      if (navHeaderEl !== this.navHeaderEl) {
+        if (this.navHeaderEl) this.railResizeObserver.unobserve(this.navHeaderEl)
+        this.navHeaderEl = navHeaderEl
+        if (navHeaderEl) this.railResizeObserver.observe(navHeaderEl)
+      }
+
 
       const headerEl = this.getPageHeaderElement()
       if (headerEl !== this.cachedHeaderEl) {
-        this.markDesktopRailAlignmentDirty()
         if (this.cachedHeaderEl) {
           try {
             this.railResizeObserver.unobserve(this.cachedHeaderEl)
@@ -4287,7 +4288,6 @@ export default defineComponent({
 
       const titleEl = this.getPageTitleElement()
       if (titleEl !== this.cachedTitleEl) {
-        this.markDesktopRailAlignmentDirty()
         if (this.cachedTitleEl) {
           try {
             this.railResizeObserver.unobserve(this.cachedTitleEl)
@@ -4316,8 +4316,7 @@ export default defineComponent({
     },
     onDesktopRailScroll(): void {
       this.railMeasurementPending = true
-      // Settling already has a frame queued. Let it consume the scroll or
-      // alignment invalidation so two callbacks cannot force layout in turn.
+      // Settling already has a frame queued; let it consume the scroll sample.
       if (this.railRafId || this.railSettleRafId) return
       this.railRafId = window.requestAnimationFrame(() => {
         this.railRafId = 0
@@ -4333,7 +4332,6 @@ export default defineComponent({
     },
     startDesktopRailSettling(): void {
       if (typeof window === 'undefined') return
-      this.markDesktopRailAlignmentDirty()
       if (window.innerWidth < 1280 || this.tocPosition === 'off') {
         this.resetDesktopRailMeasurementState()
         return
@@ -4394,20 +4392,16 @@ export default defineComponent({
         this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
       }
       if (topChanged || this.railMeasurementPending || isStable || reachedMax) {
-        const needsAlignment = topChanged || this.railAlignmentDirty || isStable || reachedMax
         this.railMeasurementPending = false
-        this.updateDesktopRailMeasurements(needsAlignment, railRect)
+        this.updateDesktopRailMeasurements(topChanged || isStable || reachedMax, railRect)
       }
     },
     updateDesktopRailMeasurements(isResize = false, sampledRailRect?: DOMRect): void {
       if (typeof window === 'undefined') return
-      if (isResize) this.markDesktopRailAlignmentDirty()
 
-      const previousRailEl = this.cachedRailEl
       const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
         ? this.cachedRailEl
         : this.getDesktopRailElement()
-      if (railEl !== previousRailEl) this.markDesktopRailAlignmentDirty()
       this.cachedRailEl = railEl
       if (!railEl) return
 
@@ -4416,11 +4410,17 @@ export default defineComponent({
         return
       }
 
+      const computed = getComputedStyle(railEl)
+      const headerBottom = document.querySelector('.nav-header')?.getBoundingClientRect().bottom ?? 56
+      const headerHeight = `${Math.max(56, headerBottom)}px`
+      if (railEl.style.getPropertyValue('--page-rail-header-height') !== headerHeight) {
+        railEl.style.setProperty('--page-rail-header-height', headerHeight)
+        railEl.closest<HTMLElement>('.page-main')?.style.setProperty('--page-rail-header-height', headerHeight)
+      }
+      const parsedTop = parseFloat(computed.top)
+      this.railStickyTop = Number.isFinite(parsedTop) ? parsedTop : Math.max(56, headerBottom) + 16
       if (isResize || !this.navFooterEl || !this.navFooterEl.isConnected) {
         this.navFooterEl = document.querySelector('.nav-footer')
-        const computed = getComputedStyle(railEl)
-        const parsedTop = parseFloat(computed.top)
-        this.railStickyTop = Number.isFinite(parsedTop) ? parsedTop : 80
         const rawGap = computed.getPropertyValue('--wiki-space-2').trim()
         let resolvedGap = 8
         if (rawGap.endsWith('px')) {
@@ -4446,39 +4446,10 @@ export default defineComponent({
       if (toolsCard && tocCard && toolsCard.parentElement === tocCard.parentElement &&
           (tocCard.compareDocumentPosition(toolsCard) & Node.DOCUMENT_POSITION_FOLLOWING)) {
         tocCard.parentElement?.insertBefore(toolsCard, tocCard)
-        this.markDesktopRailAlignmentDirty()
         sampledRailRect = undefined
       }
 
       const railRect = sampledRailRect ?? railEl.getBoundingClientRect()
-      if (window.scrollY <= 1 && (isResize || this.railAlignmentDirty)) {
-        const heroEl = this.getPageHeaderElement()
-        const heroRect = heroEl?.getBoundingClientRect()
-        const toolsRect = toolsCard?.getBoundingClientRect()
-        if (heroRect && toolsRect && toolsRect.height > 0 && railRect.height > 0) {
-          const inlineOffset = parseFloat(railEl.style.getPropertyValue('--page-desktop-rail-align-offset'))
-          const currentOffset = this.lastRailAlignmentOffset ?? (Number.isFinite(inlineOffset) ? inlineOffset : 0)
-          // The seam between the utilities/metadata card and the page contents
-          // card rests on the boundary between the page header (hero) and the
-          // page reader area. The card gap is space-4, so the seam midpoint
-          // sits railSpacingGap (space-2) below the utilities card bottom.
-          const currentSeam = toolsRect.bottom + this.railSpacingGap
-          const nextOffset = currentOffset + heroRect.bottom - currentSeam
-          if (Number.isFinite(nextOffset)) {
-            if (this.lastRailAlignmentOffset === null || Math.abs(nextOffset - currentOffset) >= 0.25) {
-              this.lastRailAlignmentOffset = nextOffset
-              railEl.style.setProperty('--page-desktop-rail-align-offset', `${nextOffset}px`)
-              this.railAlignmentDirty = false
-              // Alignment changes margin-block-start. Let the browser lay it
-              // out before measuring the new top, rather than forcing another
-              // layout synchronously in this measurement.
-              this.onDesktopRailScroll()
-              return
-            }
-            this.railAlignmentDirty = false
-          }
-        }
-      }
 
       const footerTop = this.navFooterEl
         ? this.navFooterEl.getBoundingClientRect().top
@@ -4499,7 +4470,6 @@ export default defineComponent({
 <style lang="scss">
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
-  --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
   --page-layout-shell-max: 132rem;
   --page-reader-shell-max: var(--page-layout-shell-max);
   --page-shortcut-target: 36px;
@@ -5237,7 +5207,7 @@ export default defineComponent({
 }
 
 
-/* Stacking context must paint above .page-hero (z-index: 2) so upward-lifted desktop rail cards remain visible and interactive */
+// Keep the article and its local controls above the hero backing.
 .page-body {
   position: relative;
   z-index: 3;
@@ -5254,9 +5224,10 @@ export default defineComponent({
 
 .page-col-sd {
   position: sticky;
-  inset-block-start: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-4));
+  inset-block-start: calc(max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) + var(--wiki-space-4));
   align-self: flex-start;
-  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-6));
+  margin-block-start: 0;
+  max-height: calc(100dvh - max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) - var(--wiki-space-8));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent) transparent;
@@ -5295,6 +5266,14 @@ export default defineComponent({
   }
 }
 
+.page-col-sd > .page-desktop-rail > :is(.page-tools-card, .page-toc-card) {
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
+}
+
+#page-desktop-rail-anchor {
+  display: contents;
+}
+
 .page-mobile-tools,
 .page-tablet-tools,
 .page-mobile-metadata {
@@ -5318,12 +5297,6 @@ export default defineComponent({
   margin-block-end: var(--wiki-space-5);
 }
 
-.page-col-sd--with-toc {
-  margin-block-start: calc(
-    (var(--page-toc-desktop-lift) * -1) +
-    var(--page-desktop-rail-align-offset, 0px)
-  );
-}
 
 .page-col-sd--toc-off,
 .page-col-content--toc-off {
@@ -5342,17 +5315,54 @@ export default defineComponent({
 
 
 @media (min-width: 1280px) {
+  // One grid anchors both the hero and sticky rail at the document start.
+  // The rail spans the article row, so its containing block reaches the footer.
+  .page-main--with-rail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    align-content: start;
+    padding-block-start: max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px));
+
+    > .page-hero {
+      grid-area: 1 / 1;
+      margin-block-start: var(--wiki-space-4);
+    }
+
+    > .page-body {
+      grid-area: 2 / 1;
+    }
+
+    .page-col-sd--with-toc {
+      grid-area: 1 / 1 / 3 / 2;
+      z-index: 4;
+      width: var(--page-metadata-rail-width);
+      margin-inline: max(var(--wiki-page-gutter), calc((100% - var(--page-reader-shell-max)) / 2 + var(--wiki-page-gutter)));
+      justify-self: start;
+    }
+
+    .page-col-sd--toc-right {
+      justify-self: end;
+    }
+
+    .page-col-content--toc-left:not(.is-page-header) {
+      margin-inline-start: auto;
+    }
+  }
+
   .page-col-sd {
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-    max-height: var(--page-desktop-rail-max-height, calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-6)));
+    overflow-y: auto;
+    overflow-x: clip;
+    scroll-padding-block: var(--wiki-space-2);
+    max-height: min(var(--page-desktop-rail-max-height, 100dvh), calc(100dvh - max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) - var(--wiki-space-8)));
   }
 
   .page-desktop-rail {
     display: flex;
     flex-direction: column;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
   }
 
@@ -5364,7 +5374,10 @@ export default defineComponent({
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
-    min-height: 0;
+    // A long outline scrolls independently; on short windows the outer rail
+    // also scrolls so utilities, tags, ratings and discussion remain reachable.
+    min-height: var(--page-toc-empty-height);
+    max-height: max(var(--page-toc-empty-height), calc(100dvh - var(--page-rail-header-height, 56px) - var(--page-toc-empty-height) - var(--wiki-space-8)));
   }
 
   .page-toc-heading,
@@ -5440,25 +5453,9 @@ export default defineComponent({
   flex-direction: column;
   border: 1px solid var(--wiki-surface-border) !important;
   border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(
-      165deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent),
-      transparent 34%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 5%, transparent)
-    ),
-    color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent) !important;
-  box-shadow: var(--wiki-shadow-xs);
-
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    backdrop-filter: var(--wiki-chrome-blur);
-    -webkit-backdrop-filter: var(--wiki-chrome-blur);
-    border-color: var(--wiki-glass-border) !important;
-  }
-
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    background: var(--wiki-surface-raised) !important;
-  }
+  background-color: var(--wiki-surface-raised) !important;
+  background-image: var(--wiki-surface-gradient) !important;
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
   > .page-toc-heading {
     padding:
@@ -5750,25 +5747,9 @@ export default defineComponent({
   border: 1px solid var(--wiki-surface-border) !important;
   overflow: hidden !important;
   border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(
-      165deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent),
-      transparent 34%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 5%, transparent)
-    ),
-    color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent) !important;
-  box-shadow: var(--wiki-shadow-xs);
-
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    backdrop-filter: var(--wiki-chrome-blur);
-    -webkit-backdrop-filter: var(--wiki-chrome-blur);
-    border-color: var(--wiki-glass-border) !important;
-  }
-
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    background: var(--wiki-surface-raised) !important;
-  }
+  background-color: var(--wiki-surface-raised) !important;
+  background-image: var(--wiki-surface-gradient) !important;
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
   &__utilities {
     display: flex;
@@ -5848,18 +5829,6 @@ export default defineComponent({
 
 }
 
-.v-theme--dark .page-tools-card {
-  // Neutral charcoal: keep the warm cast restrained so the surface never
-  // reads brown in dark mode.
-  background:
-    linear-gradient(
-      165deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 3%, transparent),
-      transparent 34%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 3%, transparent)
-    ),
-    color-mix(in srgb, var(--wiki-surface-raised) 92%, transparent) !important;
-}
 
 .page-col-content:not(.is-page-header) {
   min-width: 0;
@@ -6479,10 +6448,12 @@ export default defineComponent({
     border-color: CanvasText;
     box-shadow: none;
   }
+  .page-tools-card,
   .page-toc-card {
     border-color: CanvasText !important;
     background: Canvas !important;
-    box-shadow: none;
+    color: CanvasText;
+    box-shadow: none !important;
   }
 
   .page-toc-card .page-toc-toggle {
@@ -6629,18 +6600,15 @@ export default defineComponent({
   width: 100%;
   isolation: isolate;
   padding: .25rem .375rem .25rem .75rem;
-  border: 1px solid color-mix(in srgb, var(--wiki-surface-border-strong) 82%, transparent);
+  border: var(--wiki-hud-border);
   border-radius: var(--wiki-radius-pill);
-  background-color: var(--wiki-chrome-surface) !important;
+  background-color: var(--wiki-reading-dock-surface) !important;
   background-image: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent)) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md);
-  backdrop-filter: var(--wiki-chrome-blur) !important;
-  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
+  backdrop-filter: var(--wiki-hud-filter) !important;
+  -webkit-backdrop-filter: var(--wiki-hud-filter) !important;
 
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    border-color: var(--wiki-glass-border);
-  }
 
   .v-icon,
   .page-reading-dock-title,

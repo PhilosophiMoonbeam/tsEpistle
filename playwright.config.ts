@@ -38,7 +38,7 @@ export default defineConfig({
     {
       name: 'accessibility-keyboard',
       dependencies: ['chromium'],
-      testMatch: '**/quality.e2e.ts',
+      testMatch: ['**/quality.e2e.ts', '**/materials.e2e.ts'],
       use: { ...devices['Desktop Chrome'] }
     },
     {

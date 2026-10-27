@@ -1493,12 +1493,9 @@ export default defineComponent({
   color: rgb(var(--v-theme-on-surface));
   box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
   // One app-bar backdrop; nested search paints retain their existing alpha/tints.
-  -webkit-backdrop-filter: var(--wiki-chrome-blur) !important;
-  backdrop-filter: var(--wiki-chrome-blur) !important;
+  -webkit-backdrop-filter: var(--wiki-chrome-filter) !important;
+  backdrop-filter: var(--wiki-chrome-filter) !important;
 
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    border-bottom-color: var(--wiki-glass-border) !important;
-  }
 
   > .v-toolbar__content {
     overflow: hidden;

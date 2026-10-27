@@ -2323,8 +2323,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 @keyframes agentOpaqueGlassRetire {
   from, to {
-    -webkit-backdrop-filter: var(--wiki-chrome-blur);
-    backdrop-filter: var(--wiki-chrome-blur);
+    -webkit-backdrop-filter: var(--wiki-agent-contextual-filter);
+    backdrop-filter: var(--wiki-agent-contextual-filter);
   }
 }
 @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {

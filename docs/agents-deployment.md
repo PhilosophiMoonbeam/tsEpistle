@@ -16,10 +16,20 @@ Fresh and fallback Luminous Archive palettes use light canvas `#F4F1EA`, surface
 
 The prescribed light hex pair has WCAG relative luminances 0.880842/0.964671, an 8.3829-percentage-point separation. Its low-chroma OKLCH hues are 87.47°/91.45°: the assessment’s simultaneous 60–85° requirement is incompatible with those exact colors. Acceptance retains the prescribed hex and measured separation, without claiming the incompatible hue interval passed.
 
+`--wiki-surface-gradient` is the shared 145° mineral sheen, not the assessment diagram’s conceptual 135°. Light mode blends 4% warm accent into the raised surface at 0%, the unblended raised surface at 62%, and 3% spectral accent at 100%; dark uses 6%, 58%, and 5% respectively. Accent blends use OKLCH. `--wiki-specular-border` supplies the inset top hairline at white 65%/7% for light/dark; compose it with existing elevation and focus shadows rather than replacing them. Both roles re-resolve at nested theme boundaries. Existing foreground solvers sample flat and gradient backings, including custom palettes and interior gradient samples.
+
 ### Shared form focus
 
 Vuetify fields use their native segmented outline for a single 2px focus border, preserving floating-label notches. A 3px, 18%-opacity halo supplements focus without drawing a second rectangle. Forced colors uses the system Highlight border without the halo; raw controls retain their separate keyboard focus indicator. Validation labels and messages retain semantic ink independently of the focused border.
 Header Search removes its resting frame while focused in forced colors, reserving the same space with padding so only the native Highlight boundary is painted. The Page Properties locale menu targets its native combobox as the popup activator; Escape from a settled option returns focus to Locale without changing the selection or closing the properties dialog.
+
+### Personal workspace
+
+Profile, Pages, My live notes, My discussions, Notifications and Offline access share the workspace hero, one display heading and a visible Reload action. Each action uses its route’s real refresh path. Profile save/reset stays beneath Reading preferences in the left column; dirty Reload requires a discard decision. Pages keeps its local filter and live notes keeps an unsent custom address across Reload.
+
+Offline Reload refreshes local inventory and storage status in place. It neither reinitializes nor unlocks the private vault; enrollment blocks Reload, and a typed unlock secret remains local through inventory refresh. Locked, unlocked, disconnected and unavailable-storage states retain their original controls.
+
+Notifications presents five event rows with separate In-App and Email columns. Every channel control names its event and channel and is associated with its row and column headers. Unsaved changes block Reload; Save, Cancel and failed-save feedback retain the current account’s draft. These settings do not change per-page watches or the approval inbox.
 
 ### Current Agent Administration navigation
 

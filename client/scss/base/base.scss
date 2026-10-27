@@ -65,11 +65,17 @@
   --wiki-surface-raised: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-surface-bright)) 6%);
   --wiki-surface-sunken: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, rgb(var(--v-theme-surface)) 28%);
   --wiki-surface-soft: var(--wiki-surface-sunken);
-  --wiki-glass-bg: color-mix(in srgb, rgb(var(--v-theme-surface)) 82%, transparent);
-  --wiki-glass-blur: blur(16px) saturate(180%);
-  --wiki-chrome-surface: rgba(var(--v-theme-surface), .30);
-  --wiki-chrome-blur: blur(16px) saturate(180%);
-  --wiki-glass-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
+  // Tier A is persistent chrome, not a general-purpose card treatment.
+  --wiki-chrome-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 84%, transparent);
+  --wiki-chrome-filter: blur(16px) saturate(140%);
+  --wiki-hud-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 90%, transparent);
+  --wiki-hud-filter: blur(20px) saturate(150%);
+  --wiki-hud-border: 1px solid color-mix(in oklch, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+  // The Focus reading dock is the named 92% exception to the general 90% HUD.
+  // It shares the HUD filter/border and --wiki-shadow-md, not a local palette.
+  --wiki-reading-dock-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 92%, transparent);
+  --wiki-agent-contextual-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 86%, transparent);
+  --wiki-agent-contextual-filter: blur(24px) saturate(125%);
   --wiki-accent-warm: rgb(var(--v-theme-primary));
   --wiki-accent-ink: var(--wiki-primary-ink);
   --wiki-accent-spectral: rgb(var(--v-theme-secondary));
@@ -178,8 +184,58 @@
     color-mix(in oklch, var(--wiki-surface-raised) 95%, var(--wiki-accent-spectral) 5%) 100%
   );
   --wiki-specular-border: inset 0 1px 0 0 rgba(255, 255, 255, .07);
+  --wiki-agent-contextual-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 84%, transparent);
+  --wiki-agent-contextual-filter: blur(26px) saturate(130%);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
   --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
+}
+
+// Keep the active (including saved custom) palette when diffusion is unavailable.
+// Re-resolve at every theme boundary so nested previews cannot inherit a solid
+// backing computed from an ancestor's palette or a different material mode.
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root,
+  .v-theme--light,
+  .v-theme--dark {
+    --wiki-chrome-surface: rgb(var(--v-theme-surface));
+    --wiki-chrome-filter: none;
+    --wiki-hud-surface: rgb(var(--v-theme-surface));
+    --wiki-hud-filter: none;
+    --wiki-reading-dock-surface: rgb(var(--v-theme-surface));
+    --wiki-agent-contextual-surface: rgb(var(--v-theme-surface));
+    --wiki-agent-contextual-filter: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  .v-theme--light,
+  .v-theme--dark {
+    --wiki-chrome-surface: rgb(var(--v-theme-surface));
+    --wiki-chrome-filter: none;
+    --wiki-hud-surface: rgb(var(--v-theme-surface));
+    --wiki-hud-filter: none;
+    --wiki-reading-dock-surface: rgb(var(--v-theme-surface));
+    --wiki-agent-contextual-surface: rgb(var(--v-theme-surface));
+    --wiki-agent-contextual-filter: none;
+  }
+}
+
+// System surfaces/edges pair with the browser's forced foreground colors and
+// the existing Highlight focus rules; never replace the saved theme itself.
+@media (forced-colors: active) {
+  :root,
+  .v-theme--light,
+  .v-theme--dark {
+    --wiki-chrome-surface: Canvas;
+    --wiki-chrome-filter: none;
+    --wiki-hud-surface: Canvas;
+    --wiki-hud-filter: none;
+    --wiki-hud-border: 1px solid CanvasText;
+    --wiki-reading-dock-surface: Canvas;
+    --wiki-agent-contextual-surface: Canvas;
+    --wiki-agent-contextual-filter: none;
+  }
 }
 
 html.wiki-theme-switching,

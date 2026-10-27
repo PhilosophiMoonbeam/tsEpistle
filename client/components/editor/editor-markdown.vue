@@ -27,7 +27,7 @@
                   )
                     v-icon.editor-markdown-tool-icon(data-tool='heading') {{ formatState.headingLevel > 0 ? `mdi-format-header-${formatState.headingLevel}` : tools.heading.icon }}
                     v-tooltip(activator='parent', location='bottom') {{ headingToolLabel }}
-                v-list.py-0(density='compact')
+                v-list.editor-markdown-tool-menu.py-0(density='compact')
                   v-list-item(v-for='n in 6', :key='n', :active='formatState.headingLevel === n', @click='setHeaderLine(n)')
                     template(v-slot:prepend)
                       v-icon.editor-markdown-tool-icon(data-tool='heading') {{ $t(`editor:editorMarkdown.mdiFormatHeader`, { n, interpolation: { escapeValue: false } }) }}
@@ -70,8 +70,9 @@
         .editor-tool-group(role='group', :aria-label='$t(`editor:markup.viewGroup`)')
           v-btn.editor-tool(data-editor-contents-toggle, icon, rounded='md', variant='text', :aria-label='$t(`editor:contents.toggle`, { defaultValue: `Toggle contents pane` })', :aria-expanded='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', aria-controls='editor-markdown-contents', @click='toggleContents')
             v-icon.editor-markdown-tool-icon(data-tool='contents') mdi-format-list-bulleted-square
+            v-tooltip(activator='parent', location='bottom') {{ $t('editor:contents.toggle', { defaultValue: 'Toggle contents pane' }) }}
           v-btn.editor-tool(
-            v-if='previewShown'
+            v-if='previewShown && $vuetify.display.mdAndUp'
             icon
             rounded='md'
             variant='text'
@@ -109,33 +110,42 @@
             rounded='md'
             variant='text'
             :aria-label='previewShown ? $t(`editor:markup.showEditor`) : $t(`editor:markup.showPreview`)'
+            :aria-pressed='previewShown'
             @click='togglePreview'
           )
             v-icon.editor-markdown-tool-icon(data-tool='preview') {{ previewShown ? 'mdi-pencil-outline' : 'mdi-book-open-outline' }}
             v-tooltip(activator='parent', location='bottom') {{ previewShown ? $t('editor:markup.showEditor') : $t('editor:markup.showPreview') }}
           v-menu(v-if='!$vuetify.display.mdAndUp', location="left", min-width='260')
             template(v-slot:activator='{ props: menuProps }')
-              v-btn.editor-tool(v-bind='menuProps', icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.moreTools`)')
-                v-icon.editor-markdown-tool-icon(data-tool='more') mdi-dots-horizontal
-            v-list(nav, density='compact')
+              v-btn.editor-tool.editor-markdown-more-tools(v-bind='menuProps', rounded='md', variant='text', :aria-label='$t(`editor:markup.moreTools`)')
+                v-icon.editor-markdown-tool-icon(data-tool='more', start) mdi-dots-horizontal
+                span {{ $t('editor:markup.toolsShort') }}
+            v-list.editor-markdown-tool-menu(nav, density='compact')
+              v-list-subheader {{ $t('editor:markup.insertTools') }}
               template(v-for='toolId of mobileMenuTools', :key='toolId')
                 v-divider(v-if='toolId === `divider`')
-                v-list-item(v-else, @click='runMarkdownTool(toolId)')
+                v-list-item(v-else, :active='toolPressed(toolId) === true', :aria-pressed='toolPressed(toolId)', @click='runMarkdownTool(toolId)')
                   template(v-slot:prepend)
                     v-icon.editor-markdown-tool-icon.mr-3(:data-tool='toolId') {{ tools[toolId].icon }}
                   v-list-item-title {{ toolLabel(toolId) }}
+              v-list-item(v-if='previewShown', :active='previewAlignmentEnabled', :aria-pressed='previewAlignmentEnabled', @click='togglePreviewAlignment')
+                template(v-slot:prepend)
+                  v-icon.editor-markdown-tool-icon.mr-3(data-tool='alignPreview') mdi-crosshairs-gps
+                v-list-item-title {{ $t('editor:markup.alignPreview') }}
               v-divider
-              v-list-item(@click='toggleHelp')
+              v-list-item(:active='helpShown', :aria-pressed='helpShown', @click='toggleHelp')
                 template(v-slot:prepend)
                   v-icon.editor-markdown-tool-icon.mr-3(data-tool='help') mdi-help-circle-outline
                 v-list-item-title {{$t('editor:markup.markdownFormattingHelp')}}
     .editor-markdown-main
       .editor-markdown-sidebar(
+        v-if='$vuetify.display.mdAndUp'
         role='toolbar'
         aria-orientation='vertical'
         :aria-label='$t(`editor:markup.insertTools`)'
         v-roving-toolbar='{ onEscape: focusEditor }'
       )
+        .editor-markdown-sidebar-label {{ $t('editor:markup.insertGroup') }}
         v-btn.editor-tool(
           v-for='toolId of sidebarTools'
           :key='toolId'
@@ -147,15 +157,18 @@
           @click='runMarkdownTool(toolId)'
         )
           v-icon.editor-markdown-tool-icon(:data-tool='toolId') {{ tools[toolId].icon }}
+          span.editor-markdown-touch-label {{ toolLabel(toolId) }}
           v-tooltip(activator='parent', location='right') {{ toolLabel(toolId) }}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           .editor-markdown-sidebar-actions
             v-btn.editor-tool(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen')
               v-icon.editor-markdown-tool-icon(data-tool='fullscreen') mdi-arrow-expand-all
+              span.editor-markdown-touch-label {{ $t('editor:markup.distractionFreeMode') }}
               v-tooltip(activator='parent', location='right') {{$t('editor:markup.distractionFreeMode')}} (F11)
             v-btn.editor-tool(icon, rounded='md', variant='text', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp')
               v-icon.editor-markdown-tool-icon(data-tool='help') mdi-help-circle-outline
+              span.editor-markdown-touch-label {{ $t('editor:markup.markdownFormattingHelp') }}
               v-tooltip(activator='parent', location='right') {{$t('editor:markup.markdownFormattingHelp')}}
       editor-contents-pane(v-if='contentsShown && (!previewShown || $vuetify.display.mdAndUp)', id='editor-markdown-contents', :headings='headings', :current-line='currentSectionLine', :line-count='cm?.lineCount ?? 1', :busy='outlineLoading', @jump='jumpToSource', @close='toggleContents')
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
@@ -282,7 +295,7 @@ const SIDEBAR_TOOLS: FormattingToolId[] = ['link', 'assets', 'diagram', 'content
 const MOBILE_MENU_TOOLS: MobileMenuEntry[] = [
   'link', 'assets', 'diagram', 'contentExtension', 'definitionList', 'abbreviation', 'codeBlock', 'table',
   'divider',
-  'strikethrough', 'highlight', 'blockquote', 'inlineCode', 'unorderedList', 'orderedList'
+  'italic', 'strikethrough', 'highlight', 'blockquote', 'inlineCode', 'unorderedList', 'orderedList'
 ]
 
 type ToggleMarkupOptions = {
@@ -456,7 +469,7 @@ export default defineComponent({
       if (!this.$vuetify.display.mdAndUp) {
         return [
           { id: 'history', labelKey: 'editor:markup.historyGroup', tools: ['undo', 'redo'] },
-          { id: 'text', labelKey: 'editor:markup.textGroup', tools: ['bold', 'italic', 'heading'] }
+          { id: 'text', labelKey: 'editor:markup.textGroup', tools: ['bold', 'heading'] }
         ]
       }
       return [
@@ -1342,32 +1355,25 @@ export default defineComponent({
 <style lang='scss'>
 
 
-// Glyph-only tints also style teleported heading/mobile menus. Keep the button's
-// neutral surface, pressed border and focus ring independent of the icon hue.
+// Ordinary glyphs inherit interaction ink, including menus teleported outside
+// the editor. Semantic admonition icons deliberately do not use this class.
 .editor-markdown-tool-icon.v-icon {
-  // Blue and rose make a muted violet even when the secondary palette is gray.
-  --wiki-markdown-icon-ink: color-mix(in oklch, var(--wiki-info-ink) 70%, var(--wiki-error-ink));
-  --wiki-markdown-icon-solid: color-mix(in srgb, var(--wiki-markdown-icon-ink) 76%, rgb(var(--v-theme-on-surface)));
-  color: color-mix(in srgb, var(--wiki-markdown-icon-solid) 90%, transparent);
-  // Vuetify dims list prepend icons separately; apply transparency only once.
+  color: var(--wiki-text-muted);
   opacity: 1;
+}
 
-  @each $ink, $tools in (
-    primary: (highlight, blockquote, assets, definitionList, abbreviation),
-    info: (link, unorderedList, orderedList, outdent, indent, alignLeft, alignCenter, alignRight, horizontalBar, table, contents, alignPreview, preview, fullscreen, help),
-    success: (inlineCode, codeBlock, keyboardKey, taskList, contentExtension, spellcheck)
-  ) {
-    @each $tool in $tools {
-      &[data-tool='#{$tool}'] { --wiki-markdown-icon-ink: var(--wiki-#{$ink}-ink); }
-    }
-  }
+.editor-tool.v-btn:hover:not([aria-disabled='true']):not(:disabled):not(.is-active):not([aria-pressed='true']) .editor-markdown-tool-icon,
+.editor-markdown-tool-menu .v-list-item:hover:not(.v-list-item--active) .editor-markdown-tool-icon {
+  color: rgb(var(--v-theme-on-surface));
+}
 
-  &[data-tool='undo'],
-  &[data-tool='redo'],
-  &[data-tool='more'],
-  &[data-tool='back'] {
-    --wiki-markdown-icon-ink: color-mix(in srgb, var(--wiki-info-ink) 55%, rgb(var(--v-theme-on-surface)));
-  }
+.editor-markdown .editor-tool.v-btn:is(.is-active, [aria-pressed='true']),
+.editor-markdown-tool-menu .v-list-item--active {
+  background: color-mix(in oklch, var(--wiki-accent-warm) 16%, var(--wiki-surface-raised));
+  border-color: color-mix(in oklch, var(--wiki-accent-warm) 45%, var(--wiki-surface-border));
+  color: var(--wiki-accent-ink);
+
+  .editor-markdown-tool-icon { color: var(--wiki-accent-ink); }
 }
 
 .editor-tool.v-btn:is([aria-disabled='true'], :disabled) .editor-markdown-tool-icon {
@@ -1375,11 +1381,18 @@ export default defineComponent({
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .editor-markdown-tool-icon.v-icon { color: var(--wiki-markdown-icon-solid); }
+  .editor-markdown-tool-icon.v-icon { opacity: 1; }
 }
 
 @media (forced-colors: active) {
-  .editor-markdown-tool-icon.v-icon { color: inherit; }
+  .editor-markdown-tool-icon.v-icon { color: inherit !important; }
+  .editor-markdown .editor-tool.v-btn:is(.is-active, [aria-pressed='true']),
+  .editor-markdown-tool-menu .v-list-item--active {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    outline: 1px solid Highlight;
+  }
 }
 
 .editor-markdown {
@@ -1592,6 +1605,58 @@ export default defineComponent({
       padding-inline-start: 3px;
     }
   }
+  &-more-tools.v-btn {
+    height: 44px;
+    min-width: 0;
+    padding-inline: 8px;
+    flex: 0 0 auto;
+  }
+
+  // Keep mobile controls visible at 390px, with 44px hit targets.
+  @media (max-width: 839.98px) {
+    &-toolbar .v-toolbar__content { padding-inline: 4px; }
+    &-toolbar-inner,
+    &-toolbar-inner .editor-tool-group { gap: 1px; }
+  }
+
+  &-sidebar-label {
+    color: var(--wiki-text-muted);
+    font-size: .625rem;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+    padding-inline: 3px;
+    text-align: center;
+    width: 100%;
+  }
+
+  &-touch-label { display: none; }
+
+  @media (hover: none), (pointer: coarse) {
+    &-sidebar {
+      .editor-tool.v-btn.v-btn--icon {
+        height: auto;
+        min-height: 44px;
+        padding: 4px 2px;
+        width: 52px;
+      }
+
+      .v-btn__content {
+        flex-direction: column;
+        gap: 3px;
+        max-width: 100%;
+        white-space: normal;
+      }
+
+      .editor-markdown-touch-label {
+        display: block;
+        font-size: .625rem;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+        text-align: center;
+      }
+    }
+  }
 
 
   &-sidebar {
@@ -1607,22 +1672,21 @@ export default defineComponent({
     flex: 0 0 60px;
 
     gap: 8px;
+    min-height: 0;
+    overflow-y: auto;
 
     .v-btn.v-btn--icon {
       width: 44px;
       height: 44px;
+      flex: 0 0 auto;
     }
 
-    @include until($tablet) {
-      display: none;
-    }
   }
   &-sidebar-actions {
     align-items: center;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    transform: translateY(-24px);
   }
 
   &-sysbar {
