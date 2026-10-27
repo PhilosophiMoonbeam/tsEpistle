@@ -2101,7 +2101,7 @@ export default defineComponent({
 }
 
 .account-menu__connectivity-indicator--success { color: rgb(var(--v-theme-success)); }
-.account-menu__connectivity-indicator--warning { color: rgb(var(--v-theme-warning)); }
+.account-menu__connectivity-indicator--warning { color: var(--wiki-warning-ink); }
 .account-menu__connectivity-indicator--error { color: rgb(var(--v-theme-error)); }
 
 

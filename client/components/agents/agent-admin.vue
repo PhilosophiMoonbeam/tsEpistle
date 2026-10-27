@@ -54,12 +54,17 @@
           @keydown.end.prevent="selectSection(sectionItems.length - 1, $event)"
         >
           <span class="agent-section__icon"><v-icon :icon="section.icon" size="20" aria-hidden="true" /></span>
-          <span class="agent-section__copy"><strong>{{ section.title }}</strong><small>{{ section.description }}</small></span>
+          <span class="agent-section__copy"><strong>{{ section.title }}</strong></span>
           <v-chip v-if="section.badge" class="agent-section__badge" size="x-small" variant="tonal">{{ section.badge }}</v-chip>
         </button>
       </div>
 
-      <v-window v-model="tab" class="agent-content">
+      <div class="agent-content">
+        <header class="agent-content__header">
+          <h2>{{ activeSection?.title }}</h2>
+          <p>{{ activeSection?.description }}</p>
+        </header>
+      <v-window v-model="tab" class="agent-content__panels">
         <v-window-item id="agent-panel-overview" value="overview" role="tabpanel" aria-labelledby="agent-tab-overview">
           <section class="agent-overview">
             <div class="agent-overview__intro">
@@ -351,6 +356,7 @@
           <AgentMediaProviders :csrf-token="csrfToken" :groups="groups" :groups-loading="resourceState.groups.loading" :groups-error="resourceState.groups.error" @refresh-groups="refreshResources(['groups'])" />
         </v-window-item>
       </v-window>
+      </div>
     </div>
 
     <v-dialog v-model="connectionHistoryDialog" max-width="46rem" scrollable aria-labelledby="connection-history-title">
@@ -897,6 +903,7 @@ const sectionItems = computed(() => [
   { value: 'memory', title: t('knowledgeMemory'), description: t('sourcesRetention'), icon: 'mdi-book-open-page-variant-outline', badge: '' },
   { value: 'runtime', title: t('runtime'), description: t('policySafeguards'), icon: 'mdi-tune-variant', badge: resourceState.runtime.error ? resourceState.runtime.loaded ? t('stale') : t('unavailable') : dataLoaded.value ? runtime.value?.enabled ? t('active') : t('paused') : resourceState.runtime.loading ? t('loading') : '' }
 ])
+const activeSection = computed(() => sectionItems.value.find(section => section.value === tab.value))
 const selectSection = (requestedIndex: number, event: KeyboardEvent): void => {
   const sections = sectionItems.value
   if (!sections.length) return
@@ -1415,18 +1422,27 @@ onMounted(() => {
 
 
 .agent-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-6); }
-.agent-sections { display: flex; gap: var(--wiki-space-1); min-width: 0; overflow-x: auto; padding-block-end: var(--wiki-space-2); border-block-end: 1px solid var(--wiki-surface-border); scrollbar-width: thin; }
+.agent-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2);
+  min-inline-size: 0;
+  padding: var(--wiki-space-1);
+  padding-block-end: var(--wiki-space-3);
+  border-block-end: 1px solid var(--wiki-surface-border);
+}
 .agent-section {
   position: relative;
   display: flex;
-  flex: 0 0 auto;
-  min-height: var(--wiki-control-height);
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: var(--wiki-control-height);
   gap: var(--wiki-space-2);
-  padding: var(--wiki-space-3);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
   align-items: center;
-  overflow: hidden;
   border: 1px solid transparent;
-  border-radius: var(--wiki-control-radius);
+  border-radius: var(--wiki-radius-pill);
   background: transparent;
   color: rgb(var(--v-theme-on-surface));
   cursor: pointer;
@@ -1473,6 +1489,7 @@ onMounted(() => {
 
 .agent-section__icon {
   display: grid;
+  flex: 0 0 auto;
   width: auto;
   height: auto;
   place-items: center;
@@ -1486,26 +1503,46 @@ onMounted(() => {
 .agent-section__copy {
   display: grid;
   min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .agent-section__copy strong {
   font-size: .82rem;
   font-weight: 700;
-}
-
-.agent-section__copy small {
-  color: var(--wiki-text-muted);
-  font-size: max(.7rem, var(--wiki-label-size));
+  line-height: 1.4;
 }
 
 .agent-section__badge {
-  justify-self: end;
+  flex: 0 0 auto;
   color: var(--wiki-accent-ink);
 }
 
 
 .agent-content {
   min-width: 0;
+}
+
+.agent-content__header {
+  margin-block-end: var(--wiki-space-4);
+  overflow-wrap: anywhere;
+}
+
+.agent-content__header h2 {
+  margin: 0;
+  font-family: var(--wiki-font-heading);
+  font-size: 1.18rem;
+  font-weight: 730;
+}
+
+.agent-content__header p {
+  margin: var(--wiki-space-1) 0 0;
+  color: var(--wiki-text-muted);
+  font-size: .82rem;
+}
+
+.agent-content__panels {
+  min-inline-size: 0;
 }
 
 .agent-panel {

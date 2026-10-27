@@ -73,4 +73,25 @@ describe('cached particle colors', () => {
     expect(rgba).toEqual(originalRgba)
     expect(seed).toEqual(originalSeed)
   })
+
+  it('keeps dark glyph cores legible without recoloring amber, exposing transparent pixels, or retaining a stale light palette', () => {
+    const rgba = new Uint8Array([72, 76, 81, 255, 249, 161, 52, 255, 72, 76, 81, 0])
+    const source = { count: 3, rgba, seed: new Uint16Array([1, 65535, 30000]) }
+    const target = new Float32Array(12)
+    updateParticleColors(source, target)
+    const light = target.slice()
+    updateParticleColors(source, target, true)
+
+    const backing = [17, 19, 23].map(channel => channel / 255)
+    const luminance = (rgb: number[]): number => 0.2126 * toLinear(rgb[0]!) + 0.7152 * toLinear(rgb[1]!) + 0.0722 * toLinear(rgb[2]!)
+    // Fully covered glyph core at the material's dimmest existing bead shading.
+    const composite = backing.map((channel, index) => toSrgb(target[index]! * 0.55) * target[3]! + channel * (1 - target[3]!))
+    expect((luminance(composite) + 0.05) / (luminance(backing) + 0.05)).toBeGreaterThanOrEqual(4.5)
+    expect(Array.from(target.slice(4, 8))).toEqual(Array.from(light.slice(4, 8)))
+    expect(Array.from(target.slice(8, 12))).toEqual(Array.from(light.slice(8, 12)))
+    expect(target[3]).toBe(light[3])
+
+    updateParticleColors(source, target, false)
+    expect(target).toEqual(light)
+  })
 })

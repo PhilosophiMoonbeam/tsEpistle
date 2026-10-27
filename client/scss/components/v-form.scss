@@ -8,6 +8,7 @@
 
 .v-field {
   border-radius: var(--wiki-control-radius, .75rem);
+  outline: none;
   background-color: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
   box-shadow: var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, transparent));
   transition:
@@ -15,15 +16,23 @@
     box-shadow var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
 }
 
+// The segmented native outline is the only crisp edge that may meet an
+// outlined floating label. This also supersedes the wiki-notched-field opt-in.
 .v-field--variant-outlined {
+  box-shadow: none;
+
   .v-field__outline {
+    border: 0;
     color: var(--wiki-control-edge, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent));
     --v-field-border-opacity: 1;
   }
+}
 
-  &.v-field--focused .v-field__outline {
-    color: var(--wiki-purpose-primary-ink);
-  }
+// Solo and plain fields render an empty native outline, without notch segments.
+// Paint that existing layer, rather than adding a second wrapper rectangle.
+:is(.v-field--variant-solo, .v-field--variant-solo-inverted, .v-field--variant-solo-filled, .v-field--variant-plain) > .v-field__outline {
+  border: 0 solid currentColor;
+  border-radius: inherit;
 }
 
 .v-input {
@@ -46,61 +55,51 @@
     line-height: 1.35;
   }
 
-  &:not(.v-input--error).v-input--focused .v-field {
-    outline: none;
-    box-shadow:
-      var(
-        --wiki-focus-ring,
-        0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-focus)) 44%, transparent)
-      ),
-      var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent));
-  }
-
   // Focused labels use the palette's readable primary ink: a light primary
   // (the default amber) falls below AA contrast on the field surface.
-  &:not(.v-input--error).v-input--focused .v-field-label {
-    color: var(--wiki-purpose-primary-ink);
-  }
-
-  // Vuetify paints the focused outline with a `text-primary` utility that is
-  // !important, so the readable ink must be !important too to apply.
-  &:not(.v-input--error) .v-field--focused .v-field__outline.text-primary {
+  &:not(.v-input--error, .is-success, .v-input--disabled).v-input--focused .v-field-label {
     color: var(--wiki-purpose-primary-ink) !important;
   }
 
   &.v-input--error:not(.v-input--disabled) {
-    .v-field {
-      box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-error)) 58%, transparent);
-    }
-
-    &.v-input--focused .v-field {
-      outline: none;
-      box-shadow:
-        0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-error)) 30%, transparent),
-        0 0 0 1px rgb(var(--v-theme-error));
-    }
-
     :is(.v-field__outline, .v-field-label, .v-messages) {
-      color: var(--wiki-error-ink);
+      // Vuetify's text-* utilities are !important, including floating labels.
+      color: var(--wiki-error-ink) !important;
       opacity: 1;
     }
   }
 
   &.is-success:not(.v-input--error, .v-input--disabled) {
-    .v-field {
-      box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-success)) 52%, transparent);
-    }
-
-    &.v-input--focused .v-field {
-      outline: none;
-      box-shadow:
-        0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-success)) 28%, transparent),
-        0 0 0 1px rgb(var(--v-theme-success));
-    }
-
     :is(.v-field__outline, .v-field-label, .v-messages) {
-      color: var(--wiki-success-ink);
+      color: var(--wiki-success-ink) !important;
       opacity: 1;
+    }
+  }
+
+  &:is(.v-input--error, .is-success):not(.v-input--disabled) .v-field__outline {
+    --v-field-border-opacity: 1;
+  }
+
+  &:is(.v-input--error, .is-success):not(.v-input--disabled) :is(.v-field--variant-solo, .v-field--variant-solo-inverted, .v-field--variant-solo-filled, .v-field--variant-plain) > .v-field__outline {
+    border-width: var(--v-field-border-width);
+  }
+
+  // Use component focus as well as keyboard focus: selects retain their focused
+  // state while their menu is open, and readonly controls remain focusable.
+  &:not(.v-input--disabled) .v-field:not(.v-field--disabled):is(.v-field--focused, :has(:focus-visible)) {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--wiki-focus-color) 18%, transparent);
+
+    > .v-field__outline {
+      --v-field-border-opacity: 1;
+      --v-field-border-width: 2px;
+      // Override text-primary/error/success utilities without changing the
+      // semantic validation labels, messages or icons.
+      color: var(--wiki-focus-color) !important;
+    }
+
+    &:is(.v-field--variant-solo, .v-field--variant-solo-inverted, .v-field--variant-solo-filled, .v-field--variant-plain) > .v-field__outline {
+      border-width: var(--v-field-border-width);
     }
   }
 
@@ -119,63 +118,11 @@
     :is(.v-field__outline, .v-field-label, .v-messages) {
       opacity: .62;
     }
-  }
-}
-// Vuetify renders outlined labels with separate start, notch and end edges.
-// This opt-in class removes the continuous field shadow so the native
-// segmented outline remains the only edge that can meet a floating label.
-.wiki-notched-field {
-  // Keep the native segmented outline as the only edge around a floating label.
-  // The shared focus rule targets the field container, so clear it explicitly.
-  .v-field--variant-outlined {
-    border: 0;
-    box-shadow: none;
-    outline: none;
-    outline-offset: 0;
 
     .v-field__outline {
-      border: 0;
+      --v-field-border-width: 1px;
+      color: var(--wiki-control-edge, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent)) !important;
     }
-  }
-
-  .v-field--variant-outlined:has(:focus-visible) {
-    box-shadow: none;
-    outline: none;
-    outline-offset: 0;
-  }
-
-  .v-field--variant-outlined.v-field--focused .v-field__outline,
-  .v-field--variant-outlined:has(:focus-visible) .v-field__outline {
-    color: var(--wiki-focus-color, rgb(var(--v-theme-focus)));
-    --v-field-border-width: 2px;
-    --v-field-border-opacity: 1;
-  }
-
-  &:not(.v-input--error).v-input--focused .v-field--variant-outlined,
-  &.v-input--error:not(.v-input--disabled) .v-field--variant-outlined,
-  &.is-success:not(.v-input--error, .v-input--disabled) .v-field--variant-outlined,
-  &.is-success:not(.v-input--error, .v-input--disabled).v-input--focused .v-field--variant-outlined {
-    box-shadow: none;
-    outline: none;
-    outline-offset: 0;
-  }
-
-  &.v-input--error:not(.v-input--disabled) .v-field--variant-outlined .v-field__outline {
-    color: rgb(var(--v-theme-error));
-    --v-field-border-opacity: 1;
-  }
-
-  &.is-success:not(.v-input--error, .v-input--disabled) .v-field--variant-outlined .v-field__outline {
-    color: rgb(var(--v-theme-success));
-    --v-field-border-opacity: 1;
-  }
-}
-
-@media (forced-colors: active) {
-  .wiki-notched-field .v-field--variant-outlined:has(:focus-visible) .v-field__outline {
-    color: Highlight;
-    --v-field-border-width: 2px;
-    --v-field-border-opacity: 1;
   }
 }
 
@@ -197,8 +144,13 @@
 }
 
 @media (forced-colors: active) {
-  .v-input.v-input--focused:not(.v-input--disabled) .v-field {
-    outline: .125rem solid Highlight;
-    outline-offset: .125rem;
+  .v-input:not(.v-input--disabled) .v-field:not(.v-field--disabled):is(.v-field--focused, :has(:focus-visible)) {
+    box-shadow: none;
+
+    > .v-field__outline {
+      color: Highlight !important;
+      --v-field-border-opacity: 1;
+      --v-field-border-width: 2px;
+    }
   }
 }

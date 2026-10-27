@@ -178,6 +178,9 @@ export const createInkColorMap = (colors: ThemeModeColors, surfaces: readonly st
   const inks: Record<string, string> = {}
   for (const key of WIKI_INK_KEYS) {
     const candidates = INK_STEPS.map(step => mixHex(colors[key], onSurface, step))
+    // The canonical burnished amber has a prescribed text ink; custom palettes
+    // still use the same surface-aware solver and never inherit it blindly.
+    if (key === 'primary' && colors.primary === '#E88D1F' && onSurface === '#000000') candidates.unshift('#9A5406')
     inks[`${key}-ink`] =
       candidates.find(candidate => score(candidate) >= 4.5) ?? candidates.reduce((best, candidate) => (score(candidate) > score(best) ? candidate : best))
   }

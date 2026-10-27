@@ -329,7 +329,7 @@ onBeforeUnmount(disconnect)
   color: rgb(var(--v-theme-error));
 }
 .logging-trail-output .level-warn strong {
-  color: rgb(var(--v-theme-warning));
+  color: var(--wiki-warning-ink);
 }
 .v-theme--light .logging-trail-output strong {
   color: #005a88;

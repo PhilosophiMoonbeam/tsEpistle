@@ -808,7 +808,7 @@ onBeforeUnmount(() => {
     color: rgb(var(--v-theme-success));
   }
   .system-warning {
-    color: rgb(var(--v-theme-warning));
+    color: var(--wiki-warning-ink);
   }
   .system-callout {
     display: flex;

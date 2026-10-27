@@ -100,9 +100,10 @@ const particleRendererTestModule = {
     return sceneBackendLease
   }
 }
+const resolvedTheme = Vue.ref({ dark: false })
 const bundle = await Bun.build({
   entrypoints: ['virtual:LogoParticleScene.vue'],
-  external: ['@tresjs/core', 'three', 'three/webgpu', 'three/tsl', 'vue'],
+  external: ['@tresjs/core', 'three', 'three/webgpu', 'three/tsl', 'vue', 'vuetify'],
   format: 'cjs',
   plugins: [
     {
@@ -144,6 +145,7 @@ moduleFactory(
   compiledModule.exports,
   specifier => {
     if (specifier === 'vue') return Vue
+    if (specifier === 'vuetify') return { useTheme: () => ({ current: resolvedTheme }) }
     if (specifier === '@tresjs/core') return tresTestModule
     if (specifier === 'particle-renderer-test-boundary') return particleRendererTestModule
     if (specifier === 'three') return Three

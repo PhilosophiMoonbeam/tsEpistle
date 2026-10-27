@@ -303,7 +303,7 @@
         <v-text-field autofocus
           ref="folderInput"
           v-model="folderName"
-          class="agent-history__folder-input wiki-notched-field"
+          class="agent-history__folder-input"
           counter="64"
           :label="$t('common:agentHistoryPanel.folderName')"
           maxlength="64"

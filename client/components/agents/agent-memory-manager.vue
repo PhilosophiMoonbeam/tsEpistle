@@ -68,7 +68,6 @@
             <v-textarea
               ref="memoryEditor"
               v-model="draftContent"
-              class="wiki-notched-field"
               :counter="targetLimit"
               :maxlength="targetLimit"
               :label="draftTarget === 'user' ? $t('common:agentMemoryManager.personalDetail') : $t('common:agentMemoryManager.projectWorkflowFact')"

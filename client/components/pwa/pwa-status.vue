@@ -362,7 +362,7 @@ const applyUpdate = async (): Promise<void> => {
 }
 
 .pwa-status-panel__value--success { color: rgb(var(--v-theme-success)) !important; }
-.pwa-status-panel__value--warning { color: rgb(var(--v-theme-warning)) !important; }
+.pwa-status-panel__value--warning { color: var(--wiki-warning-ink) !important; }
 .pwa-status-panel__value--error { color: rgb(var(--v-theme-error)) !important; }
 
 .pwa-status-panel__alert {

@@ -60,6 +60,7 @@ import {
   unref,
   watch
 } from 'vue'
+import { useTheme } from 'vuetify'
 import type { LogoEffectDescriptor, ParsedLogoParticles, ParticleContentRect } from './particle-logo'
 import { ParticleCloud } from './particle-cloud'
 import { updateParticleColors } from './particle-colors'
@@ -527,14 +528,15 @@ const createParticleUniforms = (effect: LogoEffectDescriptor): ParticleNodeUnifo
 
 export const createParticleSceneResources = (
   particles: ParsedLogoParticles,
-  effect: LogoEffectDescriptor
+  effect: LogoEffectDescriptor,
+  isDark = false
 ): ParticleSceneResources => {
   assertParticleViews(particles, effect)
 
   const { cloudMotionTexture, motion } = createParticleMotionTexture(particles.count)
   const cloud = new ParticleCloud(particles, motion)
   const colors = new Float32Array(particles.count * 4)
-  updateParticleColors(particles, colors)
+  updateParticleColors(particles, colors, isDark)
   const geometry = createParticleSpriteGeometry(particles, cloud, colors)
   const uniforms = createParticleUniforms(effect)
   const material = createParticleSpriteMaterial(uniforms, cloudMotionTexture)
@@ -566,6 +568,24 @@ export const createParticleSceneResources = (
     motionDiagnosticsBenchmark,
     uniforms
   }
+}
+
+const updateParticleSceneColors = (resources: ParticleSceneResources, isDark: boolean): void => {
+  const colors = resources.geometry.getAttribute('particleColor')
+  // Use the existing GPU attribute's prefix as scratch, then expand backwards
+  // so no unread particle color is overwritten and no theme buffer is allocated.
+  updateParticleColors(resources.particles, colors.array as Float32Array, isDark)
+  for (let index = resources.particles.count - 1; index >= 0; index -= 1) {
+    const offset = index * 4
+    const red = colors.array[offset]!
+    const green = colors.array[offset + 1]!
+    const blue = colors.array[offset + 2]!
+    const alpha = colors.array[offset + 3]!
+    for (let corner = 0; corner < 4; corner += 1) {
+      colors.setXYZW(index * 4 + corner, red, green, blue, alpha)
+    }
+  }
+  colors.needsUpdate = true
 }
 
 export const disposeParticleSceneResources = (resources: ParticleSceneResources): void => {
@@ -1026,6 +1046,7 @@ export default defineComponent({
     'context-lost': (_event: Event): boolean => true
   },
   setup (props, { emit, expose }) {
+    const theme = useTheme()
     const resources = shallowRef<ParticleSceneResources | null>(null)
     const renderEnabled = ref(props.active)
     const contentRect = shallowRef(props.contentRect)
@@ -1208,13 +1229,24 @@ export default defineComponent({
 
     try {
       if (startup && startup.resourcesStartedAt === undefined) startup.resourcesStartedAt = performance.now()
-      resources.value = markRaw(createParticleSceneResources(props.particles, props.effect))
+      resources.value = markRaw(createParticleSceneResources(props.particles, props.effect, theme.current.value.dark))
       if (startup && startup.resourcesEndedAt === undefined) startup.resourcesEndedAt = performance.now()
     } catch (error) {
       setupError = asError(error)
       canvasMounted.value = false
       renderEnabled.value = false
     }
+
+    watch(
+      () => theme.current.value.dark,
+      isDark => {
+        const current = resources.value
+        if (tornDown || !current || current.disposed || fenceForScene.hasFailed) return
+        updateParticleSceneColors(current, isDark)
+        if (renderEnabled.value && loopControl.ready) tresContext?.renderer.invalidate()
+      },
+      { flush: 'sync' }
+    )
 
     watch(
       () => props.contentRect,

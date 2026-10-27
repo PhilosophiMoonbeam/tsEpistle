@@ -273,7 +273,6 @@ const pairs = (): Pair[] => {
     { name: 'field success text', kind: 'text', ink: declaration(FORM, has('.v-input.is-success', '.v-field-label'), 'color'), on: ['raised'] },
     { name: 'disabled filled button label', kind: 'text', ink: disabledFilled.get('color') ?? '', on: [disabledFilled.get('background-color') ?? ''] },
     { name: 'field outline', kind: 'ui', ink: declaration(FORM, '.v-field--variant-outlined .v-field__outline', 'color'), on: ['raised', 'surface'] },
-    { name: 'focused field outline', kind: 'ui', ink: declaration(FORM, has('.v-field--focused .v-field__outline.text-primary'), 'color'), on: ['raised'] },
     { name: 'checked switch thumb', kind: 'ui', ink: declaration(BASE, '.v-switch :is(.v-switch__track, .v-switch__thumb).bg-primary', 'background-color'), on: ['surface', 'raised'] },
     { name: 'unchecked switch outline', kind: 'ui', ink: declaration(APP, has('.v-switch .v-selection-control:not(.v-selection-control--dirty)'), '--wiki-switch-off-outline'), on: ['surface', 'raised'] },
     { name: 'focus indicator', kind: 'ui', ink: 'var(--wiki-focus-color)', on: ['background', 'surface', 'raised'] },
