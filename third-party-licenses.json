@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "e5928458ec6af0d435cd6e11d2281cc28b0899f0dc900416139a350af1df0f8e",
+    "sha256": "a10c07d35a224180f2a6b32bb33e306207840731415f94acf0b00b1ed6196520",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -5659,7 +5659,6 @@
     {
       "name": "qs",
       "versions": [
-        "6.16.0",
         "6.16.1"
       ],
       "license": "BSD-3-Clause",
