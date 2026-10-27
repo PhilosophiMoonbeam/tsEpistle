@@ -7,7 +7,7 @@
       :logo-url='logoUrl'
       :background-url='backgroundUrl'
       login-composition
-      :large-logo-visible='largeLogoVisible'
+      :large-logo-visible='!!logoEffect && largeLogoVisible'
       :busy='isLoading'
       :footer-sentence='showRegisterLink ? $t(`auth:switchToRegister.text`, { link: `{{link}}` }) : ``'
       :footer-link-label='showRegisterLink ? $t(`auth:switchToRegister.link`) : ``'
@@ -269,7 +269,7 @@
           @click='screen = `login`'
           ) {{ $t('auth:switchToLogin.link') }}
       template(#aside)
-        LoginParticleLogo(:effect='logoEffect', @stage-visibility='largeLogoVisible = $event')
+        LoginParticleLogo(v-if='logoEffect', :effect='logoEffect', @stage-visibility='largeLogoVisible = $event')
     v-dialog(v-model='isTFAShown', max-width='500', persistent, aria-labelledby='login-tfa-title', @keydown.esc='cancelContinuation')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
         form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(false)')
@@ -384,9 +384,10 @@ import { sanitizeTfaQrImage } from '../helpers/tfa-qr'
 import AuthShell from './common/auth-shell.vue'
 import PasswordStrength from './common/password-strength.vue'
 import PasswordVisibilityToggle from './common/password-visibility-toggle.vue'
-import LoginParticleLogo from './login-logo/LoginParticleLogo.vue'
 import { isLogoEffectDescriptor, type LogoEffectDescriptor } from './login-logo/particle-logo'
 const LoginSuccessAnimation = defineAsyncComponent(() => import('./login-success-animation.vue'))
+// Decorative control code must not delay the form or load for unconfigured logos.
+const LoginParticleLogo = defineAsyncComponent(() => import('./login-logo/LoginParticleLogo.vue'))
 
 type LoginScreen = 'login' | 'forgot' | 'verifyEmail' | 'resetPwd' | 'changePwd' | 'success'
 
