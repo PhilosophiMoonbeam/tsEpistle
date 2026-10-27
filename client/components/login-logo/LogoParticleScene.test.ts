@@ -203,7 +203,7 @@ const makeParticles = (): ParsedLogoParticles => {
   const depth = new Int8Array(buffer, 12, 3)
   depth.set([-127, 0, 127])
   const rgba = new Uint8Array(buffer, 15, 12)
-  rgba.set([12, 34, 56, 255, 200, 100, 50, 190, 245, 240, 235, 128])
+  rgba.set([35, 38, 44, 255, 240, 180, 40, 190, 245, 240, 235, 128])
   const size = new Uint8Array(buffer, 27, 3)
   size.set([1, 128, 255])
   const seed = new Uint16Array(buffer, 30, 3)
@@ -470,6 +470,7 @@ const mountPrewarmingScene = () => {
 
 beforeEach(() => {
   resetLoopHarness()
+  resolvedTheme.value = { dark: false }
   sceneBackendLease = null
   Reflect.deleteProperty(window, '__logoParticlePerformance')
   document.body.replaceChildren()
@@ -993,6 +994,94 @@ describe('LogoParticleScene shader prewarm readiness', () => {
       expect(backend.draws).toBe(2)
       expect(scene.events).toEqual(['first-frame', 'frame-pending', 'first-frame'])
       expect(backend.compileLoopStates).toEqual([false])
+    } finally {
+      backend.resolveCompilation()
+      await readiness
+      await scene.close()
+    }
+  })
+
+  it('updates live and hidden theme colors in the same GPU attribute before resumed drawing', async () => {
+    const backend = makePrewarmingBackend()
+    const scene = mountPrewarmingScene()
+    const readiness = scene.ready(backend)
+    const resources = scene.resources
+    const colors = resources.geometry.getAttribute('particleColor')
+    if (!(colors instanceof Three.BufferAttribute)) throw new Error('Particle colors have no GPU attribute')
+    const storage = colors.array
+    const lightColors = storage.slice()
+    const source = new Uint8Array(resources.particles.buffer).slice()
+    const initialVersion = colors.version
+    const assertResourceIdentity = (): void => {
+      expect(scene.state.resources).toBe(resources)
+      expect(resources.geometry.getAttribute('particleColor')).toBe(colors)
+      expect(colors.array).toBe(storage)
+      expect(resources.disposed).toBe(false)
+      expect(new Uint8Array(resources.particles.buffer)).toEqual(source)
+    }
+    const assertDarkColors = (): void => {
+      assertResourceIdentity()
+      expect(colors.count).toBe(resources.particles.count * 4)
+      for (let vertex = 0; vertex < colors.count; vertex += 1) {
+        const offset = vertex * 4
+        expect(storage[offset + 3]).toBe(lightColors[offset + 3])
+        if (vertex < 4) {
+          // Charcoal becomes silver/slate at every quad corner, not just the scratch prefix.
+          expect(storage[offset]).toBeGreaterThan(0.7)
+          expect(storage[offset + 1]).toBeGreaterThan(storage[offset]!)
+          expect(storage[offset + 2]).toBeGreaterThan(storage[offset + 1]!)
+        } else {
+          expect(storage.slice(offset, offset + 3)).toEqual(lightColors.slice(offset, offset + 3))
+        }
+      }
+    }
+
+    try {
+      backend.resolveCompilation()
+      await readiness
+      scene.draw(backend)
+      const invalidations = loopHarness.invalidations
+      resolvedTheme.value = { dark: true }
+      await Vue.nextTick()
+      assertDarkColors()
+      expect(colors.version).toBeGreaterThan(initialVersion)
+      expect(loopHarness.invalidations).toBeGreaterThan(invalidations)
+      const darkColors = storage.slice()
+      const darkVersion = colors.version
+      scene.draw(backend)
+      expect(colors.version).toBe(darkVersion)
+
+      scene.active.value = false
+      await Vue.nextTick()
+      const draws = backend.draws
+      const hiddenInvalidations = loopHarness.invalidations
+      resolvedTheme.value = { dark: false }
+      await Vue.nextTick()
+      assertResourceIdentity()
+      expect(storage).toEqual(lightColors)
+      expect(colors.version).toBeGreaterThan(darkVersion)
+      resolvedTheme.value = { dark: true }
+      await Vue.nextTick()
+      assertDarkColors()
+      expect(storage).toEqual(darkColors)
+      scene.draw(backend)
+      expect(backend.draws).toBe(draws)
+      expect(loopHarness.invalidations).toBe(hiddenInvalidations)
+
+      scene.active.value = true
+      await Vue.nextTick()
+      assertDarkColors()
+      const resumedVersion = colors.version
+      scene.draw(backend)
+      expect(backend.draws).toBe(draws + 1)
+      expect(colors.version).toBe(resumedVersion)
+      resolvedTheme.value = { dark: false }
+      await Vue.nextTick()
+      assertResourceIdentity()
+      expect(storage).toEqual(lightColors)
+      expect(colors.version).toBeGreaterThan(resumedVersion)
+      expect(backend.compileLoopStates).toEqual([false])
+      expect(scene.errors).toEqual([])
     } finally {
       backend.resolveCompilation()
       await readiness

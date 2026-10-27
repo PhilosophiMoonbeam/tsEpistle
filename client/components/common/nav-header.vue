@@ -1730,7 +1730,7 @@ export default defineComponent({
     }
 
     .v-field--focused {
-      border-color: var(--wiki-focus-color);
+      border-color: transparent;
       background-color: rgba(var(--v-theme-surface), .54) !important;
       box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
 

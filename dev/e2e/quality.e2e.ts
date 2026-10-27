@@ -285,6 +285,155 @@ test.describe('release accessibility profiles', () => {
     }
   })
 
+  test('keeps native notched and solo field focus visible through keyboard, popups, and forced colors', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    test.setTimeout(60_000)
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+
+    const expectNativeFocus = async (control: Locator, variant: 'outlined' | 'solo', forcedColors = false) => {
+      const field = control.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " v-field ")][1]')
+      await expect(field).toHaveClass(/v-field--focused/u)
+      // Wait for finite native transitions, including floating labels and the
+      // halo, without finishing animations or sleeping past a guessed duration.
+      await field.evaluate(async element => {
+        getComputedStyle(element).boxShadow
+        const transitions = element.getAnimations({ subtree: true }).filter(animation =>
+          animation instanceof CSSTransition && Number.isFinite(animation.effect?.getComputedTiming().endTime)
+        )
+        await Promise.all(transitions.map(animation => animation.finished))
+      })
+      await expect(field).toHaveCSS('outline-style', 'none')
+      const wrapperBorders = await field.evaluate(element => {
+        const style = getComputedStyle(element)
+        return ['top', 'right', 'bottom', 'left'].map(side => ({
+          width: Number.parseFloat(style.getPropertyValue(`border-${side}-width`)),
+          color: style.getPropertyValue(`border-${side}-color`)
+        }))
+      })
+      for (const border of wrapperBorders) {
+        // A transparent resting-frame border may retain layout geometry, but
+        // must never paint a second crisp boundary around the native outline.
+        if (border.width > 0) expect(cssColorAlpha(border.color), 'The wrapper must not paint a second crisp rectangle').toBe(0)
+      }
+      const outline = field.locator(':scope > .v-field__outline')
+      await expect(outline, 'One native boundary owns field focus').toHaveCount(1)
+      await expect(outline).toHaveCSS('opacity', '1')
+      if (variant === 'outlined') {
+        for (const side of ['top', 'right', 'bottom', 'left']) await expect(outline).toHaveCSS(`border-${side}-width`, '0px')
+        const start = outline.locator('.v-field__outline__start')
+        const end = outline.locator('.v-field__outline__end')
+        await expect(start).toHaveCSS('border-left-width', '2px')
+        await expect(end).toHaveCSS('border-right-width', '2px')
+        for (const segment of [start, end]) {
+          await expect(segment).toHaveCSS('border-top-width', '2px')
+          await expect(segment).toHaveCSS('border-bottom-width', '2px')
+          await expect(segment).toHaveCSS('opacity', '1')
+        }
+        const notch = outline.locator('.v-field__outline__notch')
+        await expect(notch.locator('.v-field-label')).toBeVisible()
+        const gap = await notch.evaluate(element => ({
+          width: element.getBoundingClientRect().width,
+          top: getComputedStyle(element, '::before').opacity,
+          bottom: getComputedStyle(element, '::after').borderBottomWidth
+        }))
+        expect(gap.width, 'The real floating label has an open notch, not a line through its text').toBeGreaterThan(0)
+        expect(gap.top).toBe('0')
+        expect(gap.bottom).toBe('2px')
+      } else {
+        await expect(outline.locator('.v-field__outline__notch')).toHaveCount(0)
+        for (const side of ['top', 'right', 'bottom', 'left']) {
+          await expect(outline).toHaveCSS(`border-${side}-width`, '2px')
+          await expect(outline).toHaveCSS(`border-${side}-style`, 'solid')
+        }
+      }
+      if (forcedColors) {
+        await expect(field).toHaveCSS('box-shadow', 'none')
+        const highlight = await page.evaluate(() => {
+          const probe = document.createElement('span')
+          probe.style.color = 'Highlight'
+          document.body.append(probe)
+          const color = getComputedStyle(probe).color
+          probe.remove()
+          return color
+        })
+        await expect(outline, 'System Highlight keeps the native boundary visible in forced colors').toHaveCSS('color', highlight)
+      } else {
+        const shadow = await field.evaluate(element => getComputedStyle(element).boxShadow)
+        const halo = /^(.*\)) 0px 0px 0px 3px$/u.exec(shadow)
+        expect(halo, 'The settled focus halo is one soft 3px band, not an outer outline').not.toBeNull()
+        expect(cssColorAlpha(halo?.[1] ?? 'transparent')).toBeCloseTo(0.18, 2)
+      }
+    }
+
+    // The normal anonymous login renders genuinely labeled, outlined inputs.
+    await page.goto('/login', { waitUntil: 'networkidle' })
+    const email = page.getByRole('textbox', { name: /email/i })
+    const password = page.getByLabel('Password', { exact: true })
+    await expect(email).toBeVisible()
+    expect(await tabToControl(page, email), 'Login email remains keyboard reachable').toBe(true)
+    await expect(email).toBeFocused()
+    await expectNativeFocus(email, 'outlined')
+    await page.keyboard.press('Tab')
+    await expect(password).toBeFocused()
+    await expectNativeFocus(password, 'outlined')
+    await page.keyboard.press('Shift+Tab')
+    await expect(email).toBeFocused()
+
+    // Use the installed admin fixture and published reader; no copied markup,
+    // provider credentials, page saves, or taxonomy writes are involved.
+    await openAuthenticatedPage(page, '/en/home', '.page-header-section')
+    const search = await openSearch(page)
+    await expect(search).toHaveAccessibleName(/search/i)
+    await expect(search).toBeFocused()
+    await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeVisible()
+    await expectNativeFocus(search, 'solo')
+    await page.emulateMedia({ forcedColors: 'active' })
+    await expectNativeFocus(search, 'solo', true)
+    await page.emulateMedia({ forcedColors: 'none' })
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeHidden()
+
+    await page.goto('/e/en/home', { waitUntil: 'networkidle' })
+    await expect(page.locator('.editor-markdown')).toBeVisible()
+    await page.getByRole('button', { name: 'Page', exact: true }).click()
+    const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+    await expect(properties).toBeVisible()
+    const title = properties.getByRole('textbox', { name: 'Title', exact: true })
+    await expect(title).toBeFocused()
+    await expectNativeFocus(title, 'outlined')
+    await page.keyboard.press('Tab')
+    await expect(properties.getByRole('textbox', { name: /^short description$/iu })).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(title).toBeFocused()
+
+    const locale = properties.getByRole('combobox', { name: 'Locale', exact: true })
+    expect(await tabToControl(page, locale), 'Locale stays in the real properties tab order').toBe(true)
+    await expectNativeFocus(locale, 'outlined')
+    const previousLocale = await locale.inputValue()
+    // v-select's input is intentionally covered by field__input. Native
+    // ArrowDown opens its real popup without a forced pointer click.
+    await locale.press('ArrowDown')
+    await expect(locale).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await expect(page.getByRole('option').first()).toBeVisible()
+    await expectNativeFocus(locale, 'outlined')
+    await page.keyboard.press('Escape')
+    await expect(locale).toHaveAttribute('aria-expanded', 'false')
+    await expect(properties).toBeVisible()
+    await expect(locale).toBeFocused()
+    await expect(locale).toHaveValue(previousLocale)
+
+    const tags = properties.getByRole('combobox', { name: /^Tags\b/u })
+    expect(await tabToControl(page, tags), 'Tags remains a labeled keyboard combobox').toBe(true)
+    await expectNativeFocus(tags, 'outlined')
+    await page.emulateMedia({ forcedColors: 'active' })
+    await expectNativeFocus(tags, 'outlined', true)
+    await page.emulateMedia({ forcedColors: 'none' })
+    await properties.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(properties).toBeHidden()
+  })
+
   test('keeps typing in an incoming profile field when route entry completes', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     await page.emulateMedia({ reducedMotion: 'no-preference' })

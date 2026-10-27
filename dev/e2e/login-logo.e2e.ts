@@ -73,7 +73,7 @@ const colorProbeEffect = {
   width: 8,
   height: 8,
   aspect: 1,
-  count: 4,
+  count: 13,
   medianStroke: 2
 } as const
 
@@ -84,13 +84,24 @@ type ColorProbeParticle = {
   readonly seed: number
   readonly size: number
   readonly kind: 'dust' | 'bead'
+  readonly role: 'source' | 'low-luminance' | 'glyph-core'
 }
 
 const colorProbeParticles = [
-  { x: -0.68, y: 0.28, color: [54, 163, 217, 238], seed: 20_000, size: 255, kind: 'dust' },
-  { x: -0.22, y: 0.28, color: [128, 128, 128, 238], seed: 30_000, size: 255, kind: 'dust' },
-  { x: 0.22, y: -0.24, color: [54, 163, 217, 238], seed: 64_000, size: 255, kind: 'bead' },
-  { x: 0.68, y: -0.24, color: [128, 128, 128, 238], seed: 62_000, size: 255, kind: 'bead' }
+  { x: 0.28, y: 0.28, color: [54, 163, 217, 238], seed: 20_000, size: 255, kind: 'dust', role: 'source' },
+  { x: 0.72, y: 0.28, color: [128, 128, 128, 238], seed: 30_000, size: 255, kind: 'dust', role: 'low-luminance' },
+  { x: 0.28, y: -0.24, color: [54, 163, 217, 238], seed: 64_000, size: 255, kind: 'bead', role: 'source' },
+  { x: 0.72, y: -0.24, color: [128, 128, 128, 238], seed: 62_000, size: 255, kind: 'bead', role: 'low-luminance' },
+  { x: 0.28, y: -0.72, color: [240, 180, 40, 238], seed: 30_000, size: 255, kind: 'dust', role: 'source' },
+  { x: 0.72, y: -0.72, color: [245, 240, 235, 238], seed: 30_000, size: 255, kind: 'dust', role: 'source' },
+  // Opaque charcoal source records form a T independently of the production color helper.
+  { x: -0.72, y: 0.7, color: [35, 38, 44, 255], seed: 64_000, size: 255, kind: 'bead', role: 'glyph-core' },
+  { x: -0.44, y: 0.7, color: [35, 38, 44, 255], seed: 64_000, size: 255, kind: 'bead', role: 'glyph-core' },
+  { x: -0.16, y: 0.7, color: [35, 38, 44, 255], seed: 64_000, size: 255, kind: 'bead', role: 'glyph-core' },
+  { x: -0.44, y: 0.36, color: [35, 38, 44, 255], seed: 64_000, size: 255, kind: 'bead', role: 'glyph-core' },
+  { x: -0.44, y: 0.02, color: [35, 38, 44, 255], seed: 64_000, size: 255, kind: 'bead', role: 'glyph-core' },
+  { x: -0.44, y: -0.32, color: [35, 38, 44, 255], seed: 64_000, size: 255, kind: 'bead', role: 'glyph-core' },
+  { x: -0.44, y: -0.66, color: [35, 38, 44, 255], seed: 64_000, size: 255, kind: 'bead', role: 'glyph-core' }
 ] as const satisfies readonly ColorProbeParticle[]
 
 type ManagedEffect = typeof squareEffect | typeof wideEffect | typeof colorProbeEffect
@@ -1476,7 +1487,7 @@ function expectPerceptuallyEquivalent(label: string, first: RgbaFrame, second: R
   expect(difference.p95, `${label} p95 perceptual difference`).toBeLessThanOrEqual(0.12)
 }
 
-function expectColorProbePixels(frame: RgbaFrame, geometry: CanvasSurfaceGeometry): void {
+function expectColorProbePixels(frame: RgbaFrame, geometry: CanvasSurfaceGeometry, colorScheme: 'light' | 'dark' = 'light'): void {
   for (const sample of colorProbeParticles) {
     const pixel = locateColorProbePixel(frame, sample, geometry)
     if (sample.kind === 'bead') {
@@ -1484,6 +1495,16 @@ function expectColorProbePixels(frame: RgbaFrame, geometry: CanvasSurfaceGeometr
     } else {
       // Dust sprites are intentionally sampled at their actual rasterized coverage.
       expect(pixel.alpha).toBeGreaterThan(0)
+    }
+    if (colorScheme === 'dark' && sample.role !== 'source') {
+      // The silver/slate treatment is a display contract, not an exact copy of its algorithm.
+      expect(pixel.red).toBeGreaterThan(sample.color[0])
+      expect(pixel.green).toBeGreaterThanOrEqual(pixel.red)
+      expect(pixel.blue).toBeGreaterThanOrEqual(pixel.green)
+      continue
+    }
+    if (sample.role === 'glyph-core') {
+      expect(readColorProbeLuminance(pixel), 'Light-mode charcoal cores must retain their source darkness').toBeLessThan(0.1)
     }
     if (sample.kind === 'dust') {
       const actualChannels = [pixel.red, pixel.green, pixel.blue]
@@ -1507,16 +1528,17 @@ function expectIntrinsicProbeSamplesEquivalent(
   first: RgbaFrame,
   firstGeometry: CanvasSurfaceGeometry,
   second: RgbaFrame,
-  secondGeometry: CanvasSurfaceGeometry
+  secondGeometry: CanvasSurfaceGeometry,
+  colorScope: 'all' | 'unchanged' = 'all'
 ): void {
   for (const sample of colorProbeParticles) {
     const firstPixel = locateColorProbePixel(first, sample, firstGeometry)
     const secondPixel = locateColorProbePixel(second, sample, secondGeometry)
     const diagnostic = `${label} ${sample.kind} intrinsic sample first=(${firstPixel.x},${firstPixel.y}) second=(${secondPixel.x},${secondPixel.y})`
-    expect(rgbDistance(firstPixel, secondPixel), diagnostic).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
-    if (sample.kind === 'bead') {
-      expect(Math.abs(firstPixel.alpha - secondPixel.alpha), diagnostic).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
+    if (colorScope === 'all' || sample.role === 'source') {
+      expect(rgbDistance(firstPixel, secondPixel), diagnostic).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
     }
+    expect(Math.abs(firstPixel.alpha - secondPixel.alpha), diagnostic).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
   }
 }
 
@@ -1546,7 +1568,7 @@ async function capturePageComposition(page: Page): Promise<PageCompositionCaptur
   })
 }
 
-function expectStraightSourceOver(composition: PageCompositionCapture): void {
+function expectStraightSourceOver(composition: PageCompositionCapture, colorScheme: 'light' | 'dark' = 'light'): void {
   expect(composition.visible.width).toBe(composition.backdrop.width)
   expect(composition.visible.height).toBe(composition.backdrop.height)
   const frame = composition.frame
@@ -1556,7 +1578,9 @@ function expectStraightSourceOver(composition: PageCompositionCapture): void {
     const screenshotPixel = mapCanvasPixelToScreenshot(composition.geometry, composition.visible, canvasPixel)
     const pagePixel = readRgbaPixel(composition.visible, screenshotPixel.x, screenshotPixel.y)
     const backdropPixel = readRgbaPixel(composition.backdrop, screenshotPixel.x, screenshotPixel.y)
-    const source = [sample.color[0], sample.color[1], sample.color[2]]
+    const source = colorScheme === 'dark' && sample.role !== 'source'
+      ? [canvasPixel.red, canvasPixel.green, canvasPixel.blue]
+      : [sample.color[0], sample.color[1], sample.color[2]]
     const backdrop = [backdropPixel.red, backdropPixel.green, backdropPixel.blue]
     const actual = [pagePixel.red, pagePixel.green, pagePixel.blue]
     const sourceDistances = source.map((channel, index) => backdrop[index]! - channel)
@@ -1574,6 +1598,27 @@ function expectStraightSourceOver(composition: PageCompositionCapture): void {
         `${diagnostic} expected-rgb=[${expected.map(channelValue => channelValue.toFixed(3)).join(',')}] ${channelName} delta=${(actual[channel]! - value).toFixed(3)}`
       ).toBeLessThanOrEqual(COLOR_PROBE_PIXEL_TOLERANCE)
     }
+  }
+}
+
+function expectDarkGlyphCoreContrast(composition: PageCompositionCapture): void {
+  const background = { red: 17, green: 19, blue: 23, alpha: 255, x: 0, y: 0 }
+  const backgroundLuminance = readColorProbeLuminance(background)
+  for (const sample of colorProbeParticles) {
+    if (sample.role !== 'glyph-core') continue
+    const core = locateColorProbePixel(composition.frame, sample, composition.geometry)
+    const alpha = core.alpha / 255
+    const composite = {
+      ...core,
+      red: core.red * alpha + background.red * (1 - alpha),
+      green: core.green * alpha + background.green * (1 - alpha),
+      blue: core.blue * alpha + background.blue * (1 - alpha)
+    }
+    const screenshotPixel = mapCanvasPixelToScreenshot(composition.geometry, composition.visible, core)
+    const visibleCore = readRgbaPixel(composition.visible, screenshotPixel.x, screenshotPixel.y)
+    const diagnostic = `Charcoal T core (${sample.x},${sample.y}) rgba=[${core.red},${core.green},${core.blue},${core.alpha}]`
+    expect((readColorProbeLuminance(composite) + 0.05) / (backgroundLuminance + 0.05), diagnostic).toBeGreaterThanOrEqual(4.5)
+    expect((readColorProbeLuminance(visibleCore) + 0.05) / (backgroundLuminance + 0.05), `${diagnostic} production screenshot`).toBeGreaterThanOrEqual(4.5)
   }
 }
 
@@ -1886,24 +1931,50 @@ test.describe('strict particle backend consumer coverage', () => {
       skipUnsupportedStrictBackend(testInfo, backend, capability)
 
       await prepareStrictBackendPage(page, backend, colorProbeEffect, 'light')
-      const lightFrame = await withFrozenLogoFrame(page, async () => decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png))
-      const lightComposition = await capturePageComposition(page)
-      const lightTheme = await readApplicationTheme(page)
-      expect(lightTheme.className).toMatch(/v-theme--light/)
-      expectColorProbePixels(lightFrame, lightComposition.geometry)
-      expectStraightSourceOver(lightComposition)
+      const canvas = await page.locator('.login-particle-logo canvas').elementHandle()
+      if (!canvas) throw new Error('The committed particle canvas is unavailable.')
+      await withFrozenLogoFrame(page, async () => {
+        const lightComposition = await capturePageComposition(page)
+        const lightTheme = await readApplicationTheme(page)
+        expect(lightTheme.className).toMatch(/v-theme--light/)
+        expectColorProbePixels(lightComposition.frame, lightComposition.geometry)
+        expectStraightSourceOver(lightComposition)
 
-      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
-      await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
-      await expect.poll(async () => (await readApplicationTheme(page)).background).not.toBe(lightTheme.background)
-      const darkFrame = await withFrozenLogoFrame(page, async () => decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0, 0)).png))
-      const darkComposition = await capturePageComposition(page)
-      const darkTheme = await readApplicationTheme(page)
-      expect(darkTheme.className).toMatch(/v-theme--dark/)
-      expect(darkTheme.background).not.toBe(lightTheme.background)
-      expectColorProbePixels(darkFrame, darkComposition.geometry)
-      expectStraightSourceOver(darkComposition)
-      expectPerceptuallyEquivalent(`${backend} light/dark intrinsic particle output`, lightFrame, darkFrame)
+        await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
+        await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
+        await expect.poll(async () => (await readApplicationTheme(page)).background).not.toBe(lightTheme.background)
+        const darkComposition = await capturePageComposition(page)
+        const darkTheme = await readApplicationTheme(page)
+        expect(darkTheme.className).toMatch(/v-theme--dark/)
+        expect(darkTheme.background).not.toBe(lightTheme.background)
+        expectColorProbePixels(darkComposition.frame, darkComposition.geometry, 'dark')
+        expectStraightSourceOver(darkComposition, 'dark')
+        expectDarkGlyphCoreContrast(darkComposition)
+        expectIntrinsicProbeSamplesEquivalent(
+          `${backend} unchanged light/dark colors and all alpha`,
+          lightComposition.frame,
+          lightComposition.geometry,
+          darkComposition.frame,
+          darkComposition.geometry,
+          'unchanged'
+        )
+
+        await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
+        await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+        await expect.poll(async () => (await readApplicationTheme(page)).background).toBe(lightTheme.background)
+        const lightAgainComposition = await capturePageComposition(page)
+        expectColorProbePixels(lightAgainComposition.frame, lightAgainComposition.geometry)
+        expectStraightSourceOver(lightAgainComposition)
+        expectIntrinsicProbeSamplesEquivalent(
+          `${backend} light roundtrip`,
+          lightComposition.frame,
+          lightComposition.geometry,
+          lightAgainComposition.frame,
+          lightAgainComposition.geometry
+        )
+        expectPerceptuallyEquivalent(`${backend} light roundtrip intrinsic output`, lightComposition.frame, lightAgainComposition.frame)
+        expect(await canvas.evaluate(element => element.isConnected && element === document.querySelector('.login-particle-logo canvas'))).toBe(true)
+      })
       await expectLoginValidation(page)
     })
 
@@ -2116,8 +2187,9 @@ test.describe('strict particle backend consumer coverage', () => {
         await prepareStrictBackendPage(target, backend, colorProbeEffect, colorScheme)
         const composition = await capturePageComposition(target)
         expect((await readApplicationTheme(target)).className).toMatch(colorScheme === 'light' ? /v-theme--light/ : /v-theme--dark/)
-        expectColorProbePixels(composition.frame, composition.geometry)
-        expectStraightSourceOver(composition)
+        expectColorProbePixels(composition.frame, composition.geometry, colorScheme)
+        expectStraightSourceOver(composition, colorScheme)
+        if (colorScheme === 'dark') expectDarkGlyphCoreContrast(composition)
         return { frame: composition.frame, screenshot: composition.visible }
       } finally {
         await target.close()
@@ -3111,7 +3183,7 @@ test.describe('managed login logo auth independence', () => {
 test.describe('particle compositor without service workers', () => {
   test.use({ serviceWorkers: 'block' })
 
-  test('keeps rendered particle colors intrinsic across theme changes and composites straight-alpha samples', async ({ context, page }, testInfo) => {
+  test('lifts dark charcoal glyph cores while preserving source colors, alpha and same-theme roundtrips', async ({ context, page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
 
     const prepare = async (target: Page, colorScheme: 'light' | 'dark', query: string): Promise<LogoBackendOutcome> => {
@@ -3150,20 +3222,13 @@ test.describe('particle compositor without service workers', () => {
       return outcome
     }
 
-    const captureIntrinsic = async (target: Page): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry }> =>
-      withFrozenLogoFrame(target, async () => {
-        const geometry = await readCanvasSurfaceGeometry(target)
-        const frame = await decodeScreenshot((await captureLogoRenderedFrame(target, undefined, 0, 0)).png)
-        return { frame, geometry }
-      })
-
     const cold = async (
       colorScheme: 'light' | 'dark'
-    ): Promise<{ readonly frame: RgbaFrame; readonly geometry: CanvasSurfaceGeometry; readonly theme: ApplicationThemeObservation } | null> => {
+    ): Promise<(PageCompositionCapture & { readonly theme: ApplicationThemeObservation }) | null> => {
       const target = await context.newPage()
       try {
         if ((await prepare(target, colorScheme, `logo-color-probe-cold-${colorScheme}`)).state === 'static') return null
-        const capture = await captureIntrinsic(target)
+        const capture = await capturePageComposition(target)
         return { ...capture, theme: await readApplicationTheme(target) }
       } finally {
         await target.close()
@@ -3175,14 +3240,17 @@ test.describe('particle compositor without service workers', () => {
     if (coldLight) {
       expect(coldLight.theme.className).toMatch(/v-theme--light/)
       expectColorProbePixels(coldLight.frame, coldLight.geometry)
+      expectStraightSourceOver(coldLight)
     }
     if (coldDark) {
       expect(coldDark.theme.className).toMatch(/v-theme--dark/)
-      expectColorProbePixels(coldDark.frame, coldDark.geometry)
+      expectColorProbePixels(coldDark.frame, coldDark.geometry, 'dark')
+      expectStraightSourceOver(coldDark, 'dark')
+      expectDarkGlyphCoreContrast(coldDark)
     }
     if (coldLight && coldDark) {
       expect(coldLight.theme.background).not.toBe(coldDark.theme.background)
-      expectIntrinsicProbeSamplesEquivalent('cold light/dark', coldLight.frame, coldLight.geometry, coldDark.frame, coldDark.geometry)
+      expectIntrinsicProbeSamplesEquivalent('cold light/dark unchanged colors and all alpha', coldLight.frame, coldLight.geometry, coldDark.frame, coldDark.geometry, 'unchanged')
     }
 
     if ((await prepare(page, 'light', 'logo-color-probe-live')).state === 'static') return
@@ -3219,11 +3287,12 @@ test.describe('particle compositor without service workers', () => {
       expect(liveLight.theme.background).not.toBe(liveDark.theme.background)
       expect(liveDark.theme.background).not.toBe(liveLightAgain.theme.background)
       expectColorProbePixels(liveLight.frame, liveLightComposition.geometry)
-      expectColorProbePixels(liveDark.frame, liveDarkComposition.geometry)
+      expectColorProbePixels(liveDark.frame, liveDarkComposition.geometry, 'dark')
+      expectDarkGlyphCoreContrast(liveDarkComposition)
       expectColorProbePixels(liveLightAgain.frame, liveLightAgainComposition.geometry)
       if (coldLight) expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
       if (coldDark) expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
-      expectIntrinsicProbeSamplesEquivalent('live light/dark', liveLight.frame, liveLightComposition.geometry, liveDark.frame, liveDarkComposition.geometry)
+      expectIntrinsicProbeSamplesEquivalent('live light/dark unchanged colors and all alpha', liveLight.frame, liveLightComposition.geometry, liveDark.frame, liveDarkComposition.geometry, 'unchanged')
       expectIntrinsicProbeSamplesEquivalent(
         'live light/light again',
         liveLight.frame,
@@ -3232,7 +3301,7 @@ test.describe('particle compositor without service workers', () => {
         liveLightAgainComposition.geometry
       )
       expectStraightSourceOver(liveLightComposition)
-      expectStraightSourceOver(liveDarkComposition)
+      expectStraightSourceOver(liveDarkComposition, 'dark')
       expectStraightSourceOver(liveLightAgainComposition)
     })
   })

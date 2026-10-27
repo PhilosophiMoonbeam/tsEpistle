@@ -6,6 +6,24 @@ This document separates the current normative runtime contract and mode-selected
 
 This section is the operator authority for runtime behavior and safe operating boundaries. It is not itself a build, deployment, live-provider run, or release-attestation result. In Development Sprint, retain a truthful focused smoke result for the changed behavior. Enterprise Release retains its comprehensive acceptance evidence. A health response alone is insufficient in either mode.
 
+### Sign-in particle contrast
+
+Dark sign-in particle scenes lift low-luminance glyph cores toward silver-slate, preserving bright source colors, amber accents, source transparency and light appearance. Resolved appearance changes update the existing GPU color attribute without recreating scene resources. The 4.5:1 dark-glyph contrast requirement applies to covered glyph cores against `#111317`; preserved antialias fringes and lifecycle fades are not opaque text pixels.
+
+### Canonical mineral palette
+
+Fresh and fallback Luminous Archive palettes use light canvas `#F4F1EA`, surface `#FCFBF8`, burnished primary `#E88D1F`, indigo-slate secondary `#3B4D6B` and bronze accent `#8C6239`. Dark canvas/surface are `#111317`/`#181B20`, with primary `#F9A134`, secondary `#8CA2C6` and accent `#D4A373`. Existing valid saved palettes and policy remain unchanged; adopting the new defaults in a saved palette is an explicit Theme Studio action. Text and icons use the existing surface-aware ink roles, including light canonical primary ink `#9A5406`.
+
+The prescribed light hex pair has WCAG relative luminances 0.880842/0.964671, an 8.3829-percentage-point separation. Its low-chroma OKLCH hues are 87.47°/91.45°: the assessment’s simultaneous 60–85° requirement is incompatible with those exact colors. Acceptance retains the prescribed hex and measured separation, without claiming the incompatible hue interval passed.
+
+### Shared form focus
+
+Vuetify fields use their native segmented outline for a single 2px focus border, preserving floating-label notches. A 3px, 18%-opacity halo supplements focus without drawing a second rectangle. Forced colors uses the system Highlight border without the halo; raw controls retain their separate keyboard focus indicator. Validation labels and messages retain semantic ink independently of the focused border.
+
+### Current Agent Administration navigation
+
+Agent Administration (`/a/agents`) exposes all eleven sections, including Browser access, through compact wrapping pills. Labels and badges remain visible without horizontal scrolling; the selected section’s title and description appear in the content header. Left/Right arrows follow the reading direction, while Home/End select the first/last section. Section hashes, restoration, panel associations and inline navigation remain supported.
+
 ### Current chat workspace UI
 
 Redundant composer helper notices are removed; actionable connection, admission and mutation-lock messages remain. **Images** defaults on only when image generation is supported for the current conversation, and users can deselect it. While reading the transcript, the composer is 20% opaque (80% transparent); focusing or engaging it quickly restores full opacity. The **Latest** jump button is independently 80% opaque (20% transparent), outside the faded composer, and disappears when the transcript reaches the latest messages.
