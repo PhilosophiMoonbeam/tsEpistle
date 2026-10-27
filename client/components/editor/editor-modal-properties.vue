@@ -166,7 +166,10 @@
             v-container.pa-0(fluid)
               v-row
                 v-col(cols='12', md='2')
+                  //- Restore popup focus to the native combobox, not its non-focusable field wrapper.
                   v-select(
+                    id='editor-properties-locale'
+                    :menu-props='{ activator: "#editor-properties-locale" }'
                     variant="outlined"
                     :label='$t(`editor:props.locale`)'
                     suffix='/'
