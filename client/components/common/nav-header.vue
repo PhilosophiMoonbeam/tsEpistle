@@ -1739,6 +1739,15 @@ export default defineComponent({
       }
     }
 
+    @media (forced-colors: active) {
+      .v-field--focused {
+        // Forced colors paints transparent borders; reserve their space without
+        // adding a second boundary around the native system-highlight outline.
+        border: 0;
+        padding: 1px;
+      }
+    }
+
     .v-progress-linear {
       color: var(--wiki-accent-spectral) !important;
     }
