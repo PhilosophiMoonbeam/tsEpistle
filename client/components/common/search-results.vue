@@ -1792,7 +1792,7 @@ export default defineComponent({
         this.moreError = ''
         this.searchError = ''
         this.response = {
-          results: ranked.results.map(({ document, score }): DownloadedSearchRow => {
+          results: ranked.results.map(({ document, score, excerpt }): DownloadedSearchRow => {
             const isPrivate = privateIdentities.has(documentIdentity(document))
             return {
               id: document.pageId,
@@ -1803,6 +1803,7 @@ export default defineComponent({
               visibility: isPrivate ? 'private' : 'public',
               tags: [],
               score,
+              excerpt,
               matchedFields: [],
               offline: true,
               offlineSiteId: document.siteId,

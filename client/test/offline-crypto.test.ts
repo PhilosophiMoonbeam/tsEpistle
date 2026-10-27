@@ -506,6 +506,18 @@ describe('offline draft crypto', () => {
     expect(envelope.ciphertext.byteLength).toBeGreaterThan(OFFLINE_DRAFT_TAG_BYTES)
   })
 
+  it('keeps a bounded save reason inside the authenticated ciphertext', async () => {
+    const handle = await requestKey(installFetch(octetStreamResponse(tsodk1Frame(context))))
+    const reason = 'Reviewed the source and clarified the policy.'
+    const reasonPayload = { ...payload, changeReason: reason }
+    const envelope = await encryptOfflineDraft(handle, reasonPayload, { recordId: 'reason-draft', draftRevision: 1, submissionId: null })
+    expect(await decryptOfflineDraft(handle, envelope)).toEqual(reasonPayload)
+    expect(JSON.stringify(envelope)).not.toContain(reason)
+    await expect(encryptOfflineDraft(handle, { ...payload, changeReason: 'x'.repeat(201) }, {
+      recordId: 'invalid-reason-draft', draftRevision: 1, submissionId: null
+    })).rejects.toThrow()
+  })
+
   it('reconciles a same-owner ordinary draft from an older generation only', async () => {
     const oldFetch = installFetch(octetStreamResponse(tsodk1Frame(context)))
     const oldHandle = await requestDraftKey(fetchType(oldFetch), {

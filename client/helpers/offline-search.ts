@@ -10,6 +10,8 @@ export const OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS = 16 * 1024
 export type OfflineSearchResult = {
   document: OfflineSearchDocumentV1
   score: number
+  /** Transient, normalized admitted searchText only; never persisted or a preview fetch. */
+  excerpt: string | null
 }
 
 export type OfflineSearchMatch = 'exact-title' | 'title-prefix' | 'title-token' | 'description' | 'body'
@@ -495,14 +497,82 @@ export const mergeOfflineSearchCorpora = (...corpora: readonly (OfflineSearchCor
   return Object.freeze(merged)
 }
 
-const finishSearch = (ranked: RankedOfflineSearchDocument[], maxResults: number, signal?: AbortSignal): OfflineSearchResponse => {
+const offlineExcerptPattern = (queryTerms: readonly string[]): RegExp | null => {
+  const terms = queryTerms.filter(term => term.length <= 318)
+  return terms.length ? new RegExp(terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|'), 'u') : null
+}
+
+const offlineExcerptInChunk = (body: string, pattern: RegExp, offset: number): string | null => {
+  // Query terms are at most 512 units. Overlap keeps chunk boundaries from hiding a match.
+  const match = pattern.exec(body.slice(offset, offset + OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS + OFFLINE_SEARCH_QUERY_CHARACTER_LIMIT))
+  if (!match) return null
+  const position = offset + match.index
+  let start = Math.max(0, position - Math.min(80, 318 - match[0].length))
+  if (start > 0) {
+    const word = body.indexOf(' ', start)
+    if (word >= start && word < position) start = word + 1
+  }
+  let end = Math.min(body.length, start + 318)
+  if (start > 0 && /[\uDC00-\uDFFF]/u.test(body[start]!)) start += 1
+  if (end < body.length && /[\uD800-\uDBFF]/u.test(body[end - 1]!)) end -= 1
+  return `${start > 0 ? '…' : ''}${body.slice(start, end).trim()}${end < body.length ? '…' : ''}`
+}
+
+const offlineExcerpt = (body: string, pattern: RegExp | null, signal?: AbortSignal): string | null => {
+  if (!pattern) return null
+  for (let offset = 0; offset < body.length; offset += OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS) {
+    throwIfAborted(signal)
+    const excerpt = offlineExcerptInChunk(body, pattern, offset)
+    if (excerpt !== null) return excerpt
+  }
+  return null
+}
+
+const offlineExcerptAsync = async (body: string, pattern: RegExp | null, signal?: AbortSignal): Promise<string | null> => {
+  if (!pattern) return null
+  for (let offset = 0; offset < body.length; offset += OFFLINE_SEARCH_SCORING_CHUNK_CHARACTERS) {
+    throwIfAborted(signal)
+    const excerpt = offlineExcerptInChunk(body, pattern, offset)
+    if (excerpt !== null) return excerpt
+    await yieldToEventLoop()
+  }
+  throwIfAborted(signal)
+  return null
+}
+
+const finishSearch = (ranked: RankedOfflineSearchDocument[], maxResults: number, queryTerms: string[], signal?: AbortSignal): OfflineSearchResponse => {
   throwIfAborted(signal)
   ranked.sort(compareDocuments)
   throwIfAborted(signal)
+  const pattern = offlineExcerptPattern(queryTerms)
   return {
-    results: ranked.slice(0, maxResults).map(({ prepared, score }) => ({ document: prepared.document, score })),
+    results: ranked.slice(0, maxResults).map(({ prepared, score }) => ({
+      document: prepared.document,
+      score,
+      excerpt: offlineExcerpt(prepared.body, pattern, signal)
+    })),
     hasMore: ranked.length > maxResults
   }
+}
+
+const finishSearchAsync = async (
+  ranked: RankedOfflineSearchDocument[],
+  maxResults: number,
+  queryTerms: string[],
+  signal?: AbortSignal
+): Promise<OfflineSearchResponse> => {
+  throwIfAborted(signal)
+  ranked.sort(compareDocuments)
+  const pattern = offlineExcerptPattern(queryTerms)
+  const results: OfflineSearchResult[] = []
+  for (const { prepared, score } of ranked.slice(0, maxResults)) {
+    throwIfAborted(signal)
+    const excerpt = await offlineExcerptAsync(prepared.body, pattern, signal)
+    throwIfAborted(signal)
+    results.push({ document: prepared.document, score, excerpt })
+  }
+  throwIfAborted(signal)
+  return { results, hasMore: ranked.length > maxResults }
 }
 
 const rankPreparedDocuments = (
@@ -565,7 +635,7 @@ export const searchPreparedOfflineDocuments = (corpus: OfflineSearchCorpus, quer
   const maxResults = boundedLimit(options.limit)
   const { normalizedQuery, queryTerms } = normalizeOfflineQuery(query)
   if (normalizedQuery && queryTerms.length === 0) return { results: [], hasMore: false }
-  return finishSearch(rankPreparedDocuments(preparedDocuments(corpus), normalizedQuery, queryTerms, options.signal), maxResults, options.signal)
+  return finishSearch(rankPreparedDocuments(preparedDocuments(corpus), normalizedQuery, queryTerms, options.signal), maxResults, queryTerms, options.signal)
 }
 
 /**
@@ -583,5 +653,5 @@ export const searchPreparedOfflineDocumentsAsync = async (
   const { normalizedQuery, queryTerms } = normalizeOfflineQuery(query)
   if (normalizedQuery && queryTerms.length === 0) return { results: [], hasMore: false }
   const ranked = await rankPreparedDocumentsAsync(preparedDocuments(corpus), normalizedQuery, queryTerms, options.signal)
-  return finishSearch(ranked, maxResults, options.signal)
+  return finishSearchAsync(ranked, maxResults, queryTerms, options.signal)
 }

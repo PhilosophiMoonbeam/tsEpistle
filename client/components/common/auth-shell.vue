@@ -2,7 +2,7 @@
   .auth-shell(:class='shellClass', :style='backgroundStyle')
     main.auth-shell__card(:aria-busy='busy ? `true` : `false`', :aria-labelledby='headingId')
       header.auth-shell__brand
-        .auth-shell__logo
+        .auth-shell__logo(v-show='!loginComposition || !largeLogoVisible')
           img(
             v-if='logoUrl && !logoImageFailed'
             :key='logoUrl'
@@ -51,6 +51,9 @@ export default defineComponent({
     backgroundUrl: { type: String, default: '' },
     busy: { type: Boolean, default: false },
     size: { type: String as PropType<'compact' | 'wide'>, default: 'compact' },
+    /** Login alone opts into the centered mobile card and unframed desktop stage. */
+    loginComposition: { type: Boolean, default: false },
+    largeLogoVisible: { type: Boolean, default: false },
     /** Sentence around the footer link. Mark the link position with the literal text {{link}}. */
     footerSentence: { type: String, default: '' },
     footerLinkLabel: { type: String, default: '' },
@@ -62,7 +65,10 @@ export default defineComponent({
   },
   computed: {
     shellClass (): Record<string, boolean> {
-      return { 'auth-shell--wide': this.size === 'wide' }
+      return {
+        'auth-shell--wide': this.size === 'wide',
+        'auth-shell--login': this.loginComposition
+      }
     },
     backgroundStyle (): Record<string, string> {
       return this.backgroundUrl ? { backgroundImage: `url(${JSON.stringify(this.backgroundUrl)})` } : {}
@@ -312,6 +318,11 @@ export default defineComponent({
       overflow: visible;
     }
   }
+
+  &--login::after {
+    border: 0;
+    border-radius: 0;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -389,6 +400,40 @@ export default defineComponent({
   }
 }
 
+// This is the particle stage's explicit 960px contract, not Vuetify's md breakpoint.
+@media screen and (width < 960px) {
+  .auth-shell--login {
+    display: grid;
+    grid-template-columns: minmax(0, 30rem);
+    align-content: center;
+    justify-content: center;
+    padding: var(--wiki-space-10) var(--wiki-space-5);
+
+    .auth-shell__card {
+      width: 100%;
+      min-height: 0;
+      max-height: none;
+      padding: var(--wiki-space-6) var(--wiki-space-5);
+      overflow: visible;
+      border: 1px solid var(--wiki-surface-border-strong);
+      border-radius: var(--wiki-hero-radius);
+      background: var(--wiki-surface-raised);
+      box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
+    }
+
+    .auth-shell__brand {
+      margin-bottom: var(--wiki-space-4);
+    }
+
+    .auth-shell__footer {
+      margin: var(--wiki-space-6) calc(-1 * var(--wiki-space-5)) calc(-1 * var(--wiki-space-6));
+      padding: var(--wiki-space-4) var(--wiki-space-5);
+      border-end-start-radius: inherit;
+      border-end-end-radius: inherit;
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .auth-shell *,
   .auth-shell *::before,
@@ -399,7 +444,8 @@ export default defineComponent({
 }
 
 @media (forced-colors: active) {
-  .auth-shell__card {
+  .auth-shell__card,
+  .auth-shell--login .auth-shell__card {
     border-color: CanvasText;
     background: Canvas;
   }
@@ -419,6 +465,10 @@ export default defineComponent({
       max-height: none;
       border: 0;
       box-shadow: none;
+    }
+
+    &--login .auth-shell__logo {
+      display: flex !important;
     }
   }
 }

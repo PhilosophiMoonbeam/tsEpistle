@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { PageEditorKey } from './page-editors.ts'
 import { PAGE_EDITOR_KEYS } from './page-editors.ts'
+import { PageChangeReasonSchema } from './page-change-reason.ts'
 
 export const OFFLINE_SCHEMA_VERSION = 1 as const
 export const OFFLINE_DB_NAME = 'tsepistle-offline' as const
@@ -140,7 +141,8 @@ export const OfflineDraftPayloadV1Schema = z
     state: OfflineDraftStateSchema,
     title: z.string().max(4096),
     description: z.string().max(16_384),
-    content: z.string().max(OFFLINE_RECORD_BYTES_LIMIT)
+    content: z.string().max(OFFLINE_RECORD_BYTES_LIMIT),
+    changeReason: PageChangeReasonSchema
   })
   .strict()
 export type OfflineDraftPayloadV1 = z.infer<typeof OfflineDraftPayloadV1Schema>

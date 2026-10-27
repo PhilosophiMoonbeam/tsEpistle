@@ -4,11 +4,12 @@
       :title='$t("profile:pages.title")'
       :description='$t("profile:pages.subtitle")'
       icon='mdi-file-document-multiple-outline'
+      :eyebrow='$t("profile:workspace", { defaultValue: "Your workspace" })'
       heading-id='profile-pages-title'
     )
       template(#actions)
         v-btn(
-          variant='outlined'
+          variant='text'
           prepend-icon='mdi-refresh'
           @click='refresh'
           :loading='loading'
@@ -115,6 +116,7 @@
 </template>
 
 <script lang='ts'>
+import AdminHero from '@/components/common/admin-hero.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { fetchPages, type PageListRow } from '../../helpers/pages-api'
 import { getErrorMessage, showNotification, setLoading } from '../../helpers/root-ui-store'
@@ -122,6 +124,7 @@ import { wikiStore } from '@/store/index.ts'
 
 export default {
   components: {
+    AdminHero,
     AsyncState
   },
 

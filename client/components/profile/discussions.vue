@@ -1,14 +1,25 @@
 <template lang='pug'>
 v-container.profile-discussions(fluid)
-  header.mb-6
-    h1.text-headline-medium My discussions
-    p.text-body-medium.mt-2 Your contributions on pages you can currently read. Hidden or locked discussions are not included.
+  admin-hero(
+    :title='$t("profile:nav.discussions", { defaultValue: "My discussions" })'
+    :description='$t("profile:discussions.subtitle", { defaultValue: "Your contributions on pages you can currently read. Hidden or locked discussions are not included." })'
+    :eyebrow='$t("profile:workspace", { defaultValue: "Your workspace" })'
+    icon='mdi-comment-text-multiple-outline'
+    heading-id='profile-discussions-title'
+  )
+    template(#actions)
+      v-btn(
+        variant='text'
+        prepend-icon='mdi-refresh'
+        :loading='loading'
+        :disabled='loading || blocked || !ownerId'
+        @click='restart'
+      ) {{ $t('profile:reload', { defaultValue: 'Reload' }) }}
   v-alert.mb-4(v-if='error', type='error', variant='tonal', role='alert')
     div {{ error }}
     v-btn.mt-2(variant='text', @click='refreshIdentity', :disabled='loading') Refresh discussions
   p(v-if='!ownerId', role='status') Sign in to see your discussions.
   template(v-else)
-    v-btn.mb-4(variant='outlined', @click='restart', :disabled='loading || blocked') Refresh
     p(v-if='loading', role='status') Loading your discussions…
     p(v-if='!loading && !error && !items.length && nextCursor === null', role='status') No readable contributions to show.
     ol.profile-discussions__list(v-if='items.length')
@@ -31,6 +42,7 @@ import { wikiStore } from '../../store/index.ts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import { fetchMyDiscussions, notificationIdentityInvalidated, notificationPageHref } from '../../helpers/site-notifications-api.ts'
 import type { DiscussionContribution } from '../../../shared/discussion-annotations.ts'
+import AdminHero from '../common/admin-hero.vue'
 
 defineOptions({ name: 'ProfileDiscussions' })
 
@@ -89,6 +101,7 @@ const load = async (append: boolean): Promise<void> => {
 }
 
 const restart = (): void => {
+  if (loading.value || blocked.value || ownerId.value === null) return
   clear()
   void load(false)
 }

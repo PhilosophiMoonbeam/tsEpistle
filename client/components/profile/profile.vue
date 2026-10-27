@@ -18,10 +18,18 @@
       admin-hero(
         :title='$t("profile:title")'
         :description='$t("profile:subtitle")'
-        :eyebrow='$t("profile:hero.eyebrow", { defaultValue: "Account" })'
+        :eyebrow='$t("profile:workspace", { defaultValue: "Your workspace" })'
         icon='mdi-account-circle-outline'
         heading-id='profile-title'
       )
+        template(#actions)
+          v-btn(
+            variant='text'
+            prepend-icon='mdi-refresh'
+            :loading='profileLoading'
+            :disabled='reloadBlocked'
+            @click='reloadProfile'
+          ) {{ $t('profile:overview.reload', { defaultValue: 'Reload' }) }}
         template(#extra)
           .profile-identity
             v-avatar(v-if='picture.kind === `initials`', size='40', color='primary')
@@ -202,6 +210,33 @@
                     variant='outlined'
                     density='comfortable'
                   )
+
+          .profile-save-dock(
+            role='region'
+            :aria-label='$t("profile:dock.label", { defaultValue: "Profile changes" })'
+            :class='{ "profile-save-dock--dirty": dirty }'
+          )
+            p.profile-save-dock__copy(role='status' aria-live='polite' aria-atomic='true')
+              v-icon(size='18' aria-hidden='true') {{ dirty ? 'mdi-circle-edit-outline' : 'mdi-check-circle-outline' }}
+              span#profile-save-state {{ dockMessage }}
+            .profile-save-dock__actions
+              v-btn(
+                v-if='dirty'
+                variant='text'
+                :disabled='saving'
+                prepend-icon='mdi-undo-variant'
+                @click='resetDraft'
+              ) {{ $t('profile:dock.reset', { defaultValue: 'Reset' }) }}
+              v-btn.profile-save-dock__save(
+                color='primary'
+                variant='flat'
+                prepend-icon='mdi-check'
+                :loading='saving'
+                :aria-disabled='canSave ? undefined : "true"'
+                aria-describedby='profile-save-state'
+                :class='{ "profile-save-dock__save--inactive": !canSave }'
+                @click='saveDraft'
+              ) {{ $t('profile:dock.save', { defaultValue: 'Save changes' }) }}
 
         .profile-column
           section.profile-section(aria-labelledby='profile-avatar-title')
@@ -388,32 +423,6 @@
                 dt {{ $t('profile:activity.pagesCreated') }}
                 dd {{ user.pagesTotal }}
 
-      .profile-save-dock(
-        role='region'
-        :aria-label='$t("profile:dock.label", { defaultValue: "Profile changes" })'
-        :class='{ "profile-save-dock--dirty": dirty }'
-      )
-        p.profile-save-dock__copy(role='status' aria-live='polite' aria-atomic='true')
-          v-icon(size='18' aria-hidden='true') {{ dirty ? 'mdi-circle-edit-outline' : 'mdi-check-circle-outline' }}
-          span#profile-save-state {{ dockMessage }}
-        .profile-save-dock__actions
-          v-btn(
-            v-if='dirty'
-            variant='text'
-            :disabled='saving'
-            prepend-icon='mdi-undo-variant'
-            @click='resetDraft'
-          ) {{ $t('profile:dock.reset', { defaultValue: 'Reset' }) }}
-          v-btn.profile-save-dock__save(
-            color='primary'
-            variant='flat'
-            prepend-icon='mdi-check'
-            :loading='saving'
-            :aria-disabled='canSave ? undefined : "true"'
-            aria-describedby='profile-save-state'
-            :class='{ "profile-save-dock__save--inactive": !canSave }'
-            @click='saveDraft'
-          ) {{ $t('profile:dock.save', { defaultValue: 'Save changes' }) }}
 
 </template>
 
@@ -421,6 +430,7 @@
 import { passwordPolicyMixin } from '../../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../../shared/security-policy.ts'
 import AsyncState from '@/components/common/async-state.vue'
+import AdminHero from '../common/admin-hero.vue'
 import PasswordStrength from '../common/password-strength.vue'
 import PasswordVisibilityToggle from '../common/password-visibility-toggle.vue'
 import ProfileMcpKeys from './profile-mcp-keys.vue'
@@ -472,6 +482,7 @@ export default {
   mixins: [passwordPolicyMixin],
   components: {
     AsyncState,
+    AdminHero,
     ProfileMcpKeys,
     ProfileExternalMcp,
     AvatarCropDialog,
@@ -488,6 +499,7 @@ export default {
       changePassLoading: false,
       profileLoading: true,
       profileError: '',
+      reloadConfirming: false,
       profileGeneration: 0,
       disposed: false,
       user: null as Profile | null,
@@ -552,6 +564,9 @@ export default {
     },
     dirty (): boolean {
       return this.changedFields.length > 0
+    },
+    reloadBlocked (): boolean {
+      return this.profileLoading || this.saving || this.changePassLoading || this.avatarLoading || this.pendingAvatar !== null || this.reloadConfirming || !this.user || !this.isProfileCurrent(this.user, this.profileGeneration)
     },
     draftIssues (): Partial<Record<'name' | 'handle', ProfileDraftIssue>> {
       return this.user ? profileDraftIssues(this.user) : {}
@@ -699,6 +714,29 @@ export default {
     },
     isProfileCurrent (profile: Profile, generation: number): boolean {
       return !this.disposed && generation === this.profileGeneration && profile === this.user && profile.id === this.accountId
+    },
+    async reloadProfile (): Promise<void> {
+      const profile = this.user
+      const generation = this.profileGeneration
+      if (!profile || this.reloadBlocked) return
+      this.reloadConfirming = true
+      try {
+        if (this.dirty) {
+          const confirmed = await requestConfirmation({
+            title: this.$t('profile:overview.reloadTitle', { defaultValue: 'Discard changes and reload?' }),
+            message: this.discardMessage,
+            confirmLabel: this.$t('profile:overview.reloadConfirm', { defaultValue: 'Discard and reload' }),
+            cancelLabel: this.$t('profile:discard.keep', { defaultValue: 'Keep editing' }),
+            tone: 'destructive'
+          })
+          if (!confirmed) return
+        }
+        if (!this.isProfileCurrent(profile, generation) || this.saving || this.changePassLoading || this.avatarLoading || this.pendingAvatar) return
+        this.resetDraft()
+        await this.loadProfile()
+      } finally {
+        this.reloadConfirming = false
+      }
     },
     async loadProfile (): Promise<boolean> {
       const generation = ++this.profileGeneration
@@ -1343,7 +1381,6 @@ export default {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: .75rem;
-  margin-top: var(--wiki-space-6);
   padding: .8rem 1rem;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--profile-radius);

@@ -10,7 +10,7 @@ import { resolveTagName } from '../helpers/tag-aliases.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { tagNames } from '../helpers/taxonomy-plan.ts'
 import _ from 'lodash'
-import { searchExcerpt } from '../helpers/search-excerpt.ts'
+import { matchingSearchExcerpt, searchExcerpt } from '../helpers/search-excerpt.ts'
 import { isStructuredSearchQuery } from '../helpers/search-query.ts'
 import { withSearchContract } from '../helpers/search-contract.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
@@ -2762,7 +2762,9 @@ const search = async (input: OperationInput) => {
             'pages.isPublished',
             'pages.isSearchable',
             'pages.publishStartDate',
-            'pages.publishEndDate'
+            'pages.publishEndDate',
+            'pages.render',
+            'pages.renderedSourceRevision'
           )
           .withGraphJoined('tags')
           .modifyGraph('tags', builder => {
@@ -2860,7 +2862,13 @@ const search = async (input: OperationInput) => {
     return [
       rankedSearchResult(
         {
-          ...page,
+          id: page.id,
+          path: page.path,
+          title: page.title,
+          description: page.description ?? '',
+          tags: page.tags,
+          visibility: page.visibility,
+          ownerId: page.ownerId,
           locale: page.localeCode,
           sourceRevision,
           score: rankedPage.score,
@@ -2947,7 +2955,24 @@ const search = async (input: OperationInput) => {
   )
   const privateCandidates = orderedResults.filter(result => result.visibility === 'private')
   const admittedPrivateIds = new Set(privateCandidates.slice(0, PRIVATE_SEARCH_WINDOW_LIMIT).map(result => result.id))
-  const results = orderedResults.filter(result => result.visibility !== 'private' || admittedPrivateIds.has(result.id))
+  const results = orderedResults
+    .filter(result => result.visibility !== 'private' || admittedPrivateIds.has(result.id))
+    .map(result => {
+      const page = livePagesById.get(result.id)
+      const revision = currentSourceRevision(result.sourceRevision)
+      // These rows have passed their branch's current authorization and scope filters.
+      // Password-protected rows remain metadata-only even for an unlocked session.
+      const excerpt =
+        page !== undefined &&
+        !currentProtectedPageIds.has(page.id) &&
+        revision !== undefined &&
+        currentSourceRevision(page.sourceRevision) === revision &&
+        currentSourceRevision(page.renderedSourceRevision) === revision &&
+        typeof page.render === 'string'
+          ? matchingSearchExcerpt(page.render, query)
+          : null
+      return { ...result, excerpt }
+    })
   const privateContributionTruncated = privateCandidates.length > PRIVATE_SEARCH_WINDOW_LIMIT
   return {
     ...publicResponse,

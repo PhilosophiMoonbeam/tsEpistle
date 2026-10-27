@@ -1,6 +1,23 @@
 <template>
   <section class="profile-notes" aria-labelledby="profile-notes-title">
-    <header><div><h1 id="profile-notes-title">{{ t('inventory', 'My live notes') }}</h1><p>{{ t('inventoryHelp', 'Your standalone collaborative Markdown notes. Publishing a page does not remove a note.') }}</p></div><button type="button" :disabled="loading || creating || !ready" @click="load(false)">{{ t('reload', 'Reload') }}</button></header>
+    <AdminHero
+      :title="t('inventory', 'My live notes')"
+      :description="t('inventoryHelp', 'Your standalone collaborative Markdown notes. Publishing a page does not remove a note.')"
+      :eyebrow="translate('profile:workspace', { defaultValue: 'Your workspace' })"
+      icon="mdi-note-text-outline"
+      heading-id="profile-notes-title"
+    >
+      <template #actions>
+        <v-btn
+          type="button"
+          variant="text"
+          prepend-icon="mdi-refresh"
+          :loading="loading"
+          :disabled="loading || creating || !ready"
+          @click="load(false)"
+        >{{ t('reload', 'Reload') }}</v-btn>
+      </template>
+    </AdminHero>
     <p v-if="!ready" role="status">{{ t('accountRequired', 'A current signed-in account is required. Reload after signing in again.') }}</p>
     <form v-if="canCreate" class="profile-notes__create" @submit.prevent="create">
       <details><summary>{{ t('customAddress', 'Custom address (optional)') }}</summary>
@@ -33,6 +50,7 @@ import { createLiveNotesApi, LiveNotesApiError } from '../../helpers/live-notes-
 import type { LiveNoteAccess, LiveNoteSummary, LiveNoteView } from '../../../shared/live-notes.ts'
 import { requestConfirmation } from '../common/confirm-dialog.ts'
 import { notifyReloadSafetyChanged, setReloadSafetyProvider } from '../../helpers/pwa.ts'
+import AdminHero from '../common/admin-hero.vue'
 
 const t = (key: string, defaultValue: string) => translate(`common:liveNotes.${key}`, { defaultValue })
 const identity = () => `${wikiStore.user.id}:${wikiStore.user.authVersion}:${wikiStore.offlineIdentityEpoch}:${siteConfig.agentCsrfToken}`
@@ -122,12 +140,10 @@ onBeforeUnmount(() => { disposed = true; generation++; controller.abort(); setRe
 </script>
 <style scoped>
 .profile-notes { max-width: 70rem; padding: clamp(1rem, 3vw, 2.5rem); margin: auto; color: rgb(var(--v-theme-on-surface)); }
-.profile-notes header { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
-.profile-notes h1 { font-size: 1.8rem; line-height: 1.3; }
 .profile-notes p { margin-block: .75rem; }
-.profile-notes button, .profile-notes input { font: inherit; color: inherit; background: rgb(var(--v-theme-surface)); border: 1px solid var(--wiki-surface-border); border-radius: .4rem; min-height: 44px; padding: .65rem .85rem; }
-.profile-notes button { cursor: pointer; }
-.profile-notes button:disabled { opacity: .55; cursor: not-allowed; }
+.profile-notes button:not(.v-btn), .profile-notes input { font: inherit; color: inherit; background: rgb(var(--v-theme-surface)); border: 1px solid var(--wiki-surface-border); border-radius: .4rem; min-height: 44px; padding: .65rem .85rem; }
+.profile-notes button:not(.v-btn) { cursor: pointer; }
+.profile-notes button:not(.v-btn):disabled { opacity: .55; cursor: not-allowed; }
 .profile-notes :is(a, button, input, summary):focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 3px; }
 .profile-notes__create { padding: 1rem; margin-block: 1.5rem; border: 1px solid var(--wiki-surface-border); border-radius: .5rem; }
 .profile-notes__create label { display: grid; gap: .5rem; max-width: 30rem; }

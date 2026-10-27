@@ -463,6 +463,7 @@ describe('pages api helper', () => {
           id: 7,
           title: 'Alpha',
           description: '',
+          excerpt: null,
           path: 'docs/alpha',
           locale: 'en',
           visibility: 'public',
@@ -480,6 +481,9 @@ describe('pages api helper', () => {
       results: [{ id: 7, matchedFields: ['knowledge'] }]
     })
 
+    response.results[0].excerpt = 'x'.repeat(321)
+    await expect(searchPages(fetchImpl, 'alpha', {}, 'Bad search response')).rejects.toThrow('Bad search response')
+    response.results[0].excerpt = null
     response.results[0].matchedFields = ['untrusted']
     await expect(searchPages(fetchImpl, 'alpha', {}, 'Bad search response')).rejects.toThrow('Bad search response')
   })

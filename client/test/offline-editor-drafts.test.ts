@@ -339,6 +339,25 @@ describe('offline editor draft coordinator', () => {
     coordinator.destroy()
   })
 
+  it('recovers reason-only edits at the same text version and retains the last valid draft after invalid input', async () => {
+    const storage = new InMemoryDraftStorage()
+    const owner = ownerKey(7)
+    let current: OfflineEditorDraftValues = { ...values('unchanged body'), changeReason: 'Initial reason' }
+    const writer = makeCoordinator({ storage, owner, currentValues: () => current }).coordinator
+    await expect(writer.captureThrough(1)).resolves.toBe(true)
+    current = { ...current, changeReason: 'Corrected reason' }
+    await expect(writer.captureThrough(1)).resolves.toBe(true)
+    current = { ...current, changeReason: 'Invalid\nreason' }
+    await expect(writer.captureThrough(2)).resolves.toBe(false)
+    expect(writer.hasCommittedCurrentValues).toBe(false)
+    writer.destroy()
+    invalidateOfflineSession()
+    const reader = makeCoordinator({ storage, owner, currentValues: () => values('server body') }).coordinator
+    const recovered = await reader.initialize()
+    expect(recovered.candidate?.payload).toMatchObject({ content: 'unchanged body', changeReason: 'Corrected reason' })
+    reader.destroy()
+  })
+
   it.each([
     { state: 'local', sameText: false, online: true },
     { state: 'local', sameText: true, online: true },
@@ -505,7 +524,7 @@ describe('offline editor draft coordinator', () => {
 
   it('freezes an exact receipt, atomically finalizes it, and preserves a later fork for a fresh consumer', async () => {
     const storage = new InMemoryDraftStorage()
-    let current = values('text captured before publish')
+    let current = { ...values('text captured before publish'), changeReason: 'Reason for the submitted revision' }
     let editorIdentity = identity()
     const { coordinator } = makeCoordinator({
       storage,
@@ -518,6 +537,7 @@ describe('offline editor draft coordinator', () => {
     expect(submission).not.toBeNull()
     if (!submission) throw new Error('Expected an immutable submission receipt')
     const storedBeforePublish = cloneEnvelope(storage.records.get(submission.recordId)!)
+    expect(submission.payload.changeReason).toBe('Reason for the submitted revision')
     expect(Object.isFrozen(submission)).toBe(true)
     expect(Object.isFrozen(submission.envelope)).toBe(true)
     expect(Object.isFrozen(submission.payload)).toBe(true)
@@ -532,7 +552,7 @@ describe('offline editor draft coordinator', () => {
       error: null
     })
 
-    current = values('text edited after receipt creation')
+    current = { ...values('text edited after receipt creation'), changeReason: 'Reason for the later local edit' }
     coordinator.scheduleCapture()
     await coordinator.captureNow()
     expect(storage.records.get(submission.recordId)).toEqual(storedBeforePublish)
@@ -573,6 +593,7 @@ describe('offline editor draft coordinator', () => {
     }).coordinator
     const recovered = await reader.initialize()
     expect(recovered.candidate?.payload.content).toBe('text edited after receipt creation')
+    expect(recovered.candidate?.payload.changeReason).toBe('Reason for the later local edit')
     expect(recovered.candidate?.payload.state).toBe('local')
     reader.destroy()
   })

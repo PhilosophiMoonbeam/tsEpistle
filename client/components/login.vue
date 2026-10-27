@@ -6,6 +6,8 @@
       :eyebrow='eyebrow'
       :logo-url='logoUrl'
       :background-url='backgroundUrl'
+      login-composition
+      :large-logo-visible='largeLogoVisible'
       :busy='isLoading'
       :footer-sentence='showRegisterLink ? $t(`auth:switchToRegister.text`, { link: `{{link}}` }) : ``'
       :footer-link-label='showRegisterLink ? $t(`auth:switchToRegister.link`) : ``'
@@ -267,7 +269,7 @@
           @click='screen = `login`'
           ) {{ $t('auth:switchToLogin.link') }}
       template(#aside)
-        LoginParticleLogo(:effect='logoEffect')
+        LoginParticleLogo(:effect='logoEffect', @stage-visibility='largeLogoVisible = $event')
     v-dialog(v-model='isTFAShown', max-width='500', persistent, aria-labelledby='login-tfa-title', @keydown.esc='cancelContinuation')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
         form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(false)')
@@ -436,6 +438,7 @@ export default defineComponent({
   data () {
     return {
       strategies: [] as AuthStrategy[],
+      largeLogoVisible: false,
       selectedStrategyKey: 'unselected',
       screen: 'login' as LoginScreen,
       username: '',

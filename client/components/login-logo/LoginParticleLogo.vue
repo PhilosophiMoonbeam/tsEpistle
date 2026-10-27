@@ -143,7 +143,10 @@ export default defineComponent({
       validator: (value: unknown) => value === null || isLogoEffectDescriptor(value)
     }
   },
-  setup (props) {
+  emits: {
+    'stage-visibility': (_visible: boolean) => true
+  },
+  setup (props, { emit }) {
     const instance = getCurrentInstance()
     const particlePerformanceStartup =
       typeof window === 'undefined' ? null : ((window as ParticlePerformanceWindow).__logoParticlePerformance?.startup ?? null)
@@ -627,6 +630,14 @@ export default defineComponent({
         '--login-logo-image-height': toPixels(content.height)
       }
     })
+
+    // Only a committed, currently visible enhancement replaces the card mark.
+    // Static/error/reduced-motion states retain the ordinary logo and workspace title.
+    watch(
+      () => sceneReady.value && sceneActive.value && fieldStyle.value !== null,
+      visible => emit('stage-visibility', visible),
+      { immediate: true, flush: 'sync' }
+    )
 
     return {
       activeEffect,

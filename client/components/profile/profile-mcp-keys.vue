@@ -45,18 +45,23 @@
           <p class="profile-muted text-body-small">{{ t('setupApproval', { defaultValue: 'These clients support remote HTTP with Bearer keys; no Wiki OAuth sign-in is configured here. Start with a permitted read. Read and propose edits also requires compatible client approval support, your current Wiki permissions, and human approval for every proposed change.' }) }}</p>
         </section>
         <div class="profile-mcp__inventory">
-          <h3 class="text-title-small">Your keys</h3>
-          <p v-if="!catalog.keys.length" class="profile-muted text-body-small">No MCP access keys yet.</p>
-          <ul v-else class="profile-mcp__keys">
-            <li v-for="item in catalog.keys" :key="item.id" class="profile-mcp__key">
-              <div class="profile-mcp__key-copy">
-                <strong>{{ item.name }}</strong>
-                <span class="profile-muted text-body-small">{{ item.access === 'read-only' ? 'Read only' : 'Read and propose edits' }} · {{ item.isRevoked ? 'Revoked' : isExpired(item) ? 'Expired' : 'Active' }}</span>
-                <span class="profile-muted text-body-small">Expires <time :datetime="item.expiresAt">{{ formatDate(item.expiresAt) }}</time></span>
-              </div>
-              <v-btn v-if="!item.isRevoked" color="error" variant="text" :disabled="busy" :aria-label="`Revoke MCP key ${item.name}`" @click="revoke(item)">Revoke</v-btn>
-            </li>
-          </ul>
+          <h3 class="text-title-small">{{ t('inventory.title', { defaultValue: 'Your keys' }) }}</h3>
+          <p v-if="!catalog.keys.length" class="profile-muted text-body-small">{{ t('inventory.empty', { defaultValue: 'No MCP access keys yet.' }) }}</p>
+          <p v-else-if="!keyInventory.active.length" class="profile-muted text-body-small">{{ t('inventory.noActive', { defaultValue: 'No active MCP access keys. Revoked and expired keys are in the history below.' }) }}</p>
+          <component :is="group.history ? 'details' : 'div'" v-for="group in keyGroups" :key="group.history ? 'history' : 'active'" :class="group.history ? 'profile-mcp__history' : 'profile-mcp__active'">
+            <summary v-if="group.history" class="profile-mcp__history-summary">{{ group.label }}</summary>
+            <h4 v-else class="text-title-small">{{ group.label }}</h4>
+            <ul class="profile-mcp__keys">
+              <li v-for="item in group.keys" :key="item.id" class="profile-mcp__key">
+                <div class="profile-mcp__key-copy">
+                  <strong>{{ item.name }}</strong>
+                  <span class="profile-muted text-body-small">{{ item.access === 'read-only' ? 'Read only' : 'Read and propose edits' }} · {{ item.isRevoked ? 'Revoked' : isExpired(item) ? 'Expired' : 'Active' }}</span>
+                  <span class="profile-muted text-body-small">Expires <time :datetime="item.expiresAt">{{ formatDate(item.expiresAt) }}</time></span>
+                </div>
+                <v-btn v-if="!item.isRevoked" color="error" variant="text" :disabled="busy" :aria-label="`Revoke MCP key ${item.name}`" @click="revoke(item)">Revoke</v-btn>
+              </li>
+            </ul>
+          </component>
         </div>
       </template>
     </div>
@@ -88,6 +93,8 @@ const mutating = ref(false)
 const issuanceUncertain = ref(false)
 const error = ref('')
 const notice = ref('')
+const expiryNow = ref(Date.now())
+let expiryTimer: ReturnType<typeof setTimeout> | undefined
 const busy = computed(() => loading.value || mutating.value)
 const isCurrent = computed(() => props.ownerId > 0 && props.ownerId === wikiStore.user.id)
 const canManageSystem = computed(() => isCurrent.value && wikiStore.user.permissions.includes('manage:system'))
@@ -109,8 +116,41 @@ let generation = 0
 let disposed = false
 const current = (owner: number, revision: number) => !disposed && isCurrent.value && owner === props.ownerId && revision === generation
 const fetcher = (url: string, init: RequestInit) => window.fetch(url, init)
-const isExpired = (item: PersonalMcpKey) => Date.parse(item.expiresAt) <= Date.now()
+const isExpired = (item: PersonalMcpKey) => Date.parse(item.expiresAt) <= expiryNow.value
 const formatDate = (value: string) => new Date(value).toLocaleString()
+const keyInventory = computed(() => {
+  const active: PersonalMcpKey[] = []
+  const inactive: PersonalMcpKey[] = []
+  let revoked = 0
+  let expired = 0
+  for (const item of catalog.value?.keys ?? []) {
+    if (item.isRevoked) {
+      inactive.push(item)
+      revoked++
+    } else if (isExpired(item)) {
+      inactive.push(item)
+      expired++
+    } else active.push(item)
+  }
+  return { active, inactive, revoked, expired }
+})
+const keyGroups = computed(() => [
+  { history: false, label: t('inventory.active', { defaultValue: 'Active keys ({{count}})', count: keyInventory.value.active.length }), keys: keyInventory.value.active },
+  { history: true, label: t('inventory.history', { defaultValue: 'Inactive keys: {{count}} ({{revoked}} revoked, {{expired}} expired)', count: keyInventory.value.inactive.length, revoked: keyInventory.value.revoked, expired: keyInventory.value.expired }), keys: keyInventory.value.inactive }
+].filter(group => group.keys.length))
+
+// Update at the actual expiry boundary, including while the disclosure is closed.
+function scheduleExpiry() {
+  clearTimeout(expiryTimer)
+  expiryTimer = undefined
+  expiryNow.value = Date.now()
+  let next = Infinity
+  for (const item of catalog.value?.keys ?? []) {
+    const expiresAt = Date.parse(item.expiresAt)
+    if (!item.isRevoked && expiresAt > expiryNow.value) next = Math.min(next, expiresAt)
+  }
+  if (Number.isFinite(next)) expiryTimer = setTimeout(scheduleExpiry, Math.min(next - expiryNow.value, 2_147_483_647))
+}
 
 function forgetSecret() {
   issuedKey.value = ''
@@ -216,8 +256,9 @@ async function revoke(item: PersonalMcpKey) {
   }
 }
 
+watch(catalog, scheduleExpiry, { flush: 'sync' })
 watch(() => [props.ownerId, props.csrfToken, wikiStore.user.id], () => { name.value = ''; access.value = 'read-only'; expirationDays.value = 30; setupClient.value = 'claude-code'; issuanceUncertain.value = false; void load() }, { immediate: true, flush: 'sync' })
-onBeforeUnmount(() => { disposed = true; generation++; forgetSecret(); catalog.value = null })
+onBeforeUnmount(() => { disposed = true; generation++; clearTimeout(expiryTimer); forgetSecret(); catalog.value = null })
 </script>
 
 <style scoped>
@@ -228,6 +269,10 @@ onBeforeUnmount(() => { disposed = true; generation++; forgetSecret(); catalog.v
 .profile-mcp__inventory, .profile-mcp__setup { border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-4); }
 .profile-mcp__snippet { margin: 0; padding: var(--wiki-space-3); max-width: 100%; overflow-x: auto; border: 1px solid var(--wiki-surface-border); border-radius: var(--profile-radius); background: var(--wiki-surface-base); font-size: 0.875rem; user-select: text; }
 .profile-mcp__keys { padding: 0; margin: 0; list-style: none; }
+.profile-mcp__active > h4 { margin: 0; }
+.profile-mcp__history { min-width: 0; border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-3); }
+.profile-mcp__history-summary { cursor: pointer; color: var(--wiki-accent-ink); font-weight: 600; overflow-wrap: anywhere; }
+.profile-mcp__history[open] > .profile-mcp__history-summary { margin-bottom: var(--wiki-space-2); }
 .profile-mcp__key { display: flex; align-items: center; justify-content: space-between; gap: var(--wiki-space-2); padding-block: var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
 .profile-mcp__key-copy { display: grid; min-width: 0; gap: var(--wiki-space-1); overflow-wrap: anywhere; }
 @media (max-width: 420px) { .profile-mcp__key { align-items: start; flex-direction: column; } }

@@ -654,44 +654,6 @@ describe('login personalized static-logo integration', () => {
     expect(providerList?.textContent).toContain('mdi-login')
   })
 
-  it('renders the decorative field as the direct sibling immediately after the unchanged login card', async () => {
-    const dom = await renderLoginDom(managedEffect)
-    const document = dom.window.document
-    const login = document.querySelector<HTMLElement>('.login')
-    const card = document.querySelector<HTMLElement>('main.auth-shell__card')
-    const field = document.querySelector<HTMLElement>('.login-particle-logo')
-    if (!login || !card || !field) throw new Error('Managed login composition was not rendered')
-
-    expect(document.querySelectorAll('.login-particle-logo')).toHaveLength(1)
-    expect(login.firstElementChild).toBe(card)
-    expect(card.nextElementSibling).toBe(field)
-    expect(field.parentElement).toBe(login)
-    expect(field.closest('main, form, [role="dialog"], .login-dialog-card')).toBeNull()
-    expect(card.contains(field)).toBe(false)
-    expect(document.querySelector('.auth-shell__brand')?.contains(field)).toBe(false)
-    expect(document.querySelector('.login-form')?.contains(field)).toBe(false)
-    expect(document.querySelector('[role="dialog"]')?.contains(field) ?? false).toBe(false)
-
-    const ordinaryLogo = card.querySelector<HTMLImageElement>('.auth-shell__brand .auth-shell__logo img')
-    const title = card.querySelector<HTMLElement>('#login-site-title')
-    const username = card.querySelector<HTMLInputElement>('form.login-form input[name="username"]')
-    const password = card.querySelector<HTMLInputElement>('form.login-form input[name="password"]')
-    const submit = card.querySelector<HTMLButtonElement>('form.login-form button[type="submit"]')
-    const ordinarySequence = [ordinaryLogo, title, username, password, submit]
-    expect(ordinarySequence.every((element): element is HTMLElement => element !== null)).toBe(true)
-    for (let index = 1; index < ordinarySequence.length; index += 1) {
-      expect(ordinarySequence[index - 1]!.compareDocumentPosition(ordinarySequence[index]!) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    }
-    expect(ordinaryLogo?.getAttribute('src')).toBe(managedEffect.logoUrl)
-    expect(ordinaryLogo?.getAttribute('alt')).toBe('')
-    expect(title?.textContent).toBe('Example knowledge base')
-    expect(card.compareDocumentPosition(field) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    const logoFrame = card.querySelector<HTMLElement>('.auth-shell__brand .auth-shell__logo')
-    expect(logoFrame).not.toBeNull()
-    expect(logoFrame?.querySelector('img')).toBe(ordinaryLogo)
-
-    dom.window.close()
-  })
 
   it('accepts only a valid descriptor bound to the current site logo', () => {
     const staleEffect: LogoEffectDescriptor = {

@@ -45,6 +45,14 @@
   --wiki-type-micro: .75rem;
   --wiki-type-label: .8125rem;
   --wiki-type-body-sm: .875rem;
+}
+
+// Resolve theme-dependent roles again at each theme boundary, including nested
+// light previews inside dark pages (and the reverse), rather than inheriting
+// custom properties already resolved against the ancestor's palette.
+:root,
+.v-theme--light,
+.v-theme--dark {
   // Secondary text that must stay readable (meets WCAG AA on standard surfaces).
   --wiki-text-muted: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent);
   // Decorative or non-essential text only (dividers, placeholders); never for content.
@@ -63,7 +71,7 @@
   --wiki-chrome-blur: blur(16px) saturate(180%);
   --wiki-glass-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   --wiki-accent-warm: rgb(var(--v-theme-primary));
-  --wiki-accent-ink: color-mix(in srgb, var(--wiki-accent-warm) 38%, rgb(var(--v-theme-on-surface)) 62%);
+  --wiki-accent-ink: var(--wiki-primary-ink);
   --wiki-accent-spectral: rgb(var(--v-theme-secondary));
   // Palette colors as text or icons on page surfaces. Each ink keeps its palette
   // color when that color already meets 4.5:1 and otherwise deepens or lightens
@@ -75,7 +83,16 @@
   --wiki-success-ink: rgb(var(--v-theme-success-ink, var(--v-theme-success)));
   --wiki-warning-ink: rgb(var(--v-theme-warning-ink, var(--v-theme-warning)));
   --wiki-error-ink: rgb(var(--v-theme-error-ink, var(--v-theme-error)));
-  --wiki-ambient-accent: color-mix(in srgb, rgb(var(--v-theme-primary)) 62%, rgb(var(--v-theme-secondary)) 38%);
+  --wiki-ambient-accent: color-mix(in oklch, var(--wiki-accent-warm) 62%, var(--wiki-accent-spectral) 38%);
+  // The exact material recipe is 145deg; the assessment's 135deg diagram is conceptual.
+  --wiki-surface-gradient: linear-gradient(
+    145deg,
+    color-mix(in oklch, var(--wiki-surface-raised) 96%, var(--wiki-accent-warm) 4%) 0%,
+    var(--wiki-surface-raised) 62%,
+    color-mix(in oklch, var(--wiki-surface-raised) 97%, var(--wiki-accent-spectral) 3%) 100%
+  );
+  // Consumers compose this inset highlight with their elevation/focus shadows.
+  --wiki-specular-border: inset 0 1px 0 0 rgba(255, 255, 255, .65);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 15%, transparent);
   --wiki-shadow-xs: 0 1px 2px var(--wiki-shadow-color);
   --wiki-shadow-sm: 0 .375rem 1rem color-mix(in srgb, var(--wiki-shadow-color) 60%, transparent);
@@ -154,6 +171,13 @@
 }
 
 .v-theme--dark {
+  --wiki-surface-gradient: linear-gradient(
+    145deg,
+    color-mix(in oklch, var(--wiki-surface-raised) 94%, var(--wiki-accent-warm) 6%) 0%,
+    var(--wiki-surface-raised) 58%,
+    color-mix(in oklch, var(--wiki-surface-raised) 95%, var(--wiki-accent-spectral) 5%) 100%
+  );
+  --wiki-specular-border: inset 0 1px 0 0 rgba(255, 255, 255, .07);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
   --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
 }
@@ -215,12 +239,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--wiki-ambient-accent) 58%, rgb(var(--v-theme-on-surface)) 42%);
+  background: color-mix(in oklch, var(--wiki-ambient-accent) 58%, rgb(var(--v-theme-on-surface)) 42%);
   background-clip: padding-box;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--wiki-accent-spectral) 26%, transparent);
+  background: color-mix(in oklch, var(--wiki-accent-spectral) 26%, transparent);
   color: rgb(var(--v-theme-on-surface));
 }
 
@@ -429,39 +453,39 @@ body {
 }
 
 .wiki-tag-color[data-tag-color='violet'] {
-  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-secondary-ink) 44%, var(--wiki-accent-warm) 56%);
-  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-secondary-fill) 88%, var(--wiki-accent-warm) 12%);
-  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-secondary-edge) 58%, var(--wiki-accent-warm) 42%);
+  --wiki-tag-color-ink: color-mix(in oklch, var(--wiki-purpose-secondary-ink) 44%, var(--wiki-accent-warm) 56%);
+  --wiki-tag-color-fill: color-mix(in oklch, var(--wiki-purpose-secondary-fill) 88%, var(--wiki-accent-warm) 12%);
+  --wiki-tag-color-edge: color-mix(in oklch, var(--wiki-purpose-secondary-edge) 58%, var(--wiki-accent-warm) 42%);
 }
 
 .wiki-tag-color[data-tag-color='teal'] {
-  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-success-ink) 44%, var(--wiki-accent-spectral) 56%);
-  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-success-fill) 88%, var(--wiki-accent-spectral) 12%);
-  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-success-edge) 58%, var(--wiki-accent-spectral) 42%);
+  --wiki-tag-color-ink: color-mix(in oklch, var(--wiki-purpose-success-ink) 44%, var(--wiki-accent-spectral) 56%);
+  --wiki-tag-color-fill: color-mix(in oklch, var(--wiki-purpose-success-fill) 88%, var(--wiki-accent-spectral) 12%);
+  --wiki-tag-color-edge: color-mix(in oklch, var(--wiki-purpose-success-edge) 58%, var(--wiki-accent-spectral) 42%);
 }
 
 .wiki-tag-color[data-tag-color='cyan'] {
-  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-info-ink) 44%, var(--wiki-accent-spectral) 56%);
-  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-info-fill) 88%, var(--wiki-accent-spectral) 12%);
-  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-info-edge) 58%, var(--wiki-accent-spectral) 42%);
+  --wiki-tag-color-ink: color-mix(in oklch, var(--wiki-purpose-info-ink) 44%, var(--wiki-accent-spectral) 56%);
+  --wiki-tag-color-fill: color-mix(in oklch, var(--wiki-purpose-info-fill) 88%, var(--wiki-accent-spectral) 12%);
+  --wiki-tag-color-edge: color-mix(in oklch, var(--wiki-purpose-info-edge) 58%, var(--wiki-accent-spectral) 42%);
 }
 
 .wiki-tag-color[data-tag-color='orange'] {
-  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-warning-ink) 44%, var(--wiki-accent-warm) 56%);
-  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-warning-fill) 88%, var(--wiki-accent-warm) 12%);
-  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-warning-edge) 58%, var(--wiki-accent-warm) 42%);
+  --wiki-tag-color-ink: color-mix(in oklch, var(--wiki-purpose-warning-ink) 44%, var(--wiki-accent-warm) 56%);
+  --wiki-tag-color-fill: color-mix(in oklch, var(--wiki-purpose-warning-fill) 88%, var(--wiki-accent-warm) 12%);
+  --wiki-tag-color-edge: color-mix(in oklch, var(--wiki-purpose-warning-edge) 58%, var(--wiki-accent-warm) 42%);
 }
 
 .wiki-tag-color[data-tag-color='rose'] {
-  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-error-ink) 44%, var(--wiki-accent-warm) 56%);
-  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-error-fill) 88%, var(--wiki-accent-warm) 12%);
-  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-error-edge) 58%, var(--wiki-accent-warm) 42%);
+  --wiki-tag-color-ink: color-mix(in oklch, var(--wiki-purpose-error-ink) 44%, var(--wiki-accent-warm) 56%);
+  --wiki-tag-color-fill: color-mix(in oklch, var(--wiki-purpose-error-fill) 88%, var(--wiki-accent-warm) 12%);
+  --wiki-tag-color-edge: color-mix(in oklch, var(--wiki-purpose-error-edge) 58%, var(--wiki-accent-warm) 42%);
 }
 
 .wiki-tag-color[data-tag-color='indigo'] {
-  --wiki-tag-color-ink: color-mix(in srgb, var(--wiki-purpose-primary-ink) 44%, var(--wiki-accent-spectral) 56%);
-  --wiki-tag-color-fill: color-mix(in srgb, var(--wiki-purpose-primary-fill) 88%, var(--wiki-accent-spectral) 12%);
-  --wiki-tag-color-edge: color-mix(in srgb, var(--wiki-purpose-primary-edge) 58%, var(--wiki-accent-spectral) 42%);
+  --wiki-tag-color-ink: color-mix(in oklch, var(--wiki-purpose-primary-ink) 44%, var(--wiki-accent-spectral) 56%);
+  --wiki-tag-color-fill: color-mix(in oklch, var(--wiki-purpose-primary-fill) 88%, var(--wiki-accent-spectral) 12%);
+  --wiki-tag-color-edge: color-mix(in oklch, var(--wiki-purpose-primary-edge) 58%, var(--wiki-accent-spectral) 42%);
 }
 
 .wiki-tag-color[data-tag-color='neutral'] {

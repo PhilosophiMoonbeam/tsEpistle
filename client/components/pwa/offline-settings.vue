@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import AdminHero from '../common/admin-hero.vue'
 import OfflineLibrary from './offline-library.vue'
 import PwaStatus from './pwa-status.vue'
 import { OfflineStorageError, openOfflineStorage, subscribeOfflineStorageChanges, type OfflineStorage } from '../../helpers/offline-storage.ts'
@@ -311,6 +312,28 @@ async function openStorage(): Promise<void> {
   }
 }
 
+async function reloadLocalInventory(): Promise<void> {
+  if (reloadBlocked.value) return
+  const storage = offlineStorage.value
+  if (!storage) {
+    await openStorage()
+    return
+  }
+  // Keep the existing connection so reloading does not reset the library or private-reading drafts.
+  const token = storageOpenToken
+  storageBusy.value = true
+  try {
+    const available = await refreshStorageStatus()
+    if (token !== storageOpenToken) return
+    await refreshReadingState()
+    if (available && token === storageOpenToken && offlineStorage.value === storage) {
+      libraryRefreshToken.value += 1
+    }
+  } finally {
+    if (token === storageOpenToken) storageBusy.value = false
+  }
+}
+
 async function requestPersistence(): Promise<void> {
   const storage = offlineStorage.value
   if (!storage || persistenceBusy.value) return
@@ -588,13 +611,17 @@ onBeforeUnmount(() => {
 
 <template>
   <v-container ref="settingsRoot" class="offline-settings" fluid>
-    <header class="offline-settings__heading">
-      <v-avatar size="56" color="primary" variant="tonal"><v-icon size="30">mdi-cloud-check-outline</v-icon></v-avatar>
-      <div>
-        <h1 class="text-headline-medium font-weight-bold">{{ $t('common:offlineSettings.offlineAccess') }}</h1>
-        <p class="text-body-large text-medium-emphasis">{{ $t('common:offlineSettings.keepReadingWhenConnection') }}</p>
-      </div>
-    </header>
+    <AdminHero
+      :title="$t('common:offlineSettings.offlineAccess')"
+      :description="$t('common:offlineSettings.keepReadingWhenConnection')"
+      icon="mdi-cloud-check-outline"
+      :eyebrow="$t('profile:workspace', { defaultValue: 'Your workspace' })"
+      heading-id="offline-settings-title"
+    >
+      <template #actions>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="reloadBlocked" :loading="storageBusy" @click="reloadLocalInventory">{{ $t('profile:pages.reloadShort') }}</v-btn>
+      </template>
+    </AdminHero>
     <div class="offline-settings__layout">
       <v-card class="offline-settings__library" variant="flat">
         <OfflineLibrary
@@ -607,7 +634,7 @@ onBeforeUnmount(() => {
           @changed="handleLibraryChanged"
           @busy="libraryBusy = $event"
           @error="libraryNotice = $event"
-          @retry-storage="openStorage"
+          @retry-storage="reloadLocalInventory"
         />
         <p v-if="libraryNotice" class="offline-settings__notice" role="alert">{{ libraryNotice }}</p>
       </v-card>
@@ -682,7 +709,7 @@ onBeforeUnmount(() => {
             {{ storageEstimate.persisted ? $t('common:offlineSettings.persistentStorageEnabled') : $t('common:offlineSettings.persistentStorageHasNot') }}
           </p>
           <div class="offline-settings__actions">
-            <v-btn variant="outlined" :loading="storageBusy" :disabled="clearBusy || persistenceBusy" @click="openStorage">{{ $t('common:offlineSettings.refreshStorage') }}</v-btn>
+            <v-btn variant="outlined" :loading="storageBusy" :disabled="reloadBlocked" @click="reloadLocalInventory">{{ $t('common:offlineSettings.refreshStorage') }}</v-btn>
             <v-btn variant="tonal" :disabled="!offlineStorage || clearBusy" :loading="persistenceBusy" @click="requestPersistence">{{ $t('common:offlineSettings.keepStorageDevice') }}</v-btn>
           </div>
           <p v-if="storageMessage && storageState === 'available' && !storageBusy" class="text-medium-emphasis" role="status">{{ storageMessage }}</p>
@@ -735,8 +762,6 @@ onBeforeUnmount(() => {
   padding: clamp(1rem, 3vw, 2rem);
   color: rgb(var(--v-theme-on-surface));
 }
-.offline-settings__heading { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
-.offline-settings__heading p { margin: .4rem 0 0; max-width: 70ch; }
 .offline-settings__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 1.5rem; align-items: start; }
 .offline-settings__library, .offline-settings__storage, .offline-settings__reading { min-width: 0; padding: 1.25rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); }
 .offline-settings__reading-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
@@ -751,5 +776,4 @@ onBeforeUnmount(() => {
 .offline-settings__backdrop { position: fixed; inset: 0; z-index: 2500; display: grid; place-items: center; padding: 1rem; background: rgba(0, 0, 0, .5); }
 .offline-settings__dialog { width: min(100%, 520px); padding: 1.5rem; border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); box-shadow: var(--wiki-shadow-md); max-height: calc(100dvh - 2rem); overflow: auto; }
 @media (max-width: 1100px) { .offline-settings__layout { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 600px) { .offline-settings__heading { align-items: flex-start; } .offline-settings__heading :deep(.v-avatar) { display: none; } }
 </style>

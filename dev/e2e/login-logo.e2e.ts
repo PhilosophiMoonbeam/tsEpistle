@@ -703,6 +703,7 @@ async function expectBackendReady(
   const staticImage = field.locator('.login-particle-logo__image')
   await expect(canvas).toHaveCount(1)
   await expect(staticImage).toHaveCSS('opacity', '0')
+  await expect(page.locator('.auth-shell__brand .auth-shell__logo')).toBeHidden()
   await expect
     .poll(
       async () =>
@@ -1010,7 +1011,6 @@ async function expectOrdinaryLogin(page: Page): Promise<void> {
   const card = page.locator('main.auth-shell__card')
   const title = card.locator('#login-site-title')
   await expect(card).toBeVisible({ timeout: 15_000 })
-  await expect(card.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
   await expect(title).toBeVisible()
   expect((await title.textContent())?.trim()).toBeTruthy()
   await expect(page.getByLabel('Email Address', { exact: true })).toBeVisible()
@@ -1040,6 +1040,7 @@ async function expectStaticFallback(page: Page, effect: ManagedEffect): Promise<
   const field = page.locator('.login-particle-logo')
   const image = field.locator('.login-particle-logo__image')
   await expectOrdinaryLogin(page)
+  await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
   await expect(field).toBeVisible()
   await expect(image).toBeVisible()
   await expect(image).toHaveAttribute('src', effect.staticUrl)
@@ -2616,6 +2617,7 @@ test.describe('managed login logo auth independence', () => {
       await page.goto(`/login?logo-sample=viewport-${viewport.width}x${viewport.height}`)
       await expectOrdinaryLogin(page)
       await expect(page.locator('.login-particle-logo')).toHaveCount(0)
+      await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
       const email = page.getByLabel('Email Address', { exact: true })
       await email.focus()
       await expect(email).toBeFocused()
@@ -2645,6 +2647,7 @@ test.describe('managed login logo auth independence', () => {
     await expectOrdinaryLogin(page)
     expect(await measureLogoFreeWidth(page)).toBeLessThanOrEqual(0)
     await expect(page.locator('.login-particle-logo')).toHaveCount(0)
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
     expect(artifacts.particle).toHaveLength(priorParticleRequestCount)
     expect(artifacts.static).toHaveLength(priorStaticRequestCount)
 
@@ -2766,6 +2769,7 @@ test.describe('managed login logo auth independence', () => {
 
     await expect(field.locator('canvas')).toHaveCount(1)
     await expect(staticImage).toHaveCSS('opacity', '0')
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo')).toBeHidden()
     await expect.poll(async () => (await readLogoResourceTrace(page)).pointerListenersAdded).toBeGreaterThanOrEqual(5)
     await expect.poll(async () => (await readLogoPerformance(page)).callbackCount).toBeGreaterThan(0)
     const priorTrace = await readLogoResourceTrace(page)
@@ -2788,6 +2792,7 @@ test.describe('managed login logo auth independence', () => {
     expect((changeReport?.trace.pointerListenersAdded ?? 0) - (changeReport?.trace.pointerListenersRemoved ?? 0)).toBe(0)
     await expect(staticImage).toHaveCSS('opacity', '1')
     await expect(field.locator('canvas')).toHaveCount(0)
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
     await expect(page.getByLabel('Email Address', { exact: true })).toBeFocused()
     const immediateTrace = await readLogoResourceTrace(page)
     expect(immediateTrace.activeIdleCallbacks).toBe(0)
@@ -2866,6 +2871,7 @@ test.describe('managed login logo auth independence', () => {
 
     await expect(canvas).toHaveCount(1)
     await expect(field.locator('.login-particle-logo__image')).toHaveCSS('opacity', '0')
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo')).toBeHidden()
     await expect.poll(async () => (await readLogoResourceTrace(page)).rafCallbacks).toBeGreaterThan(3)
     await expect.poll(() => readLogoMotion(page)).not.toBeNull()
     expect(artifacts.particle).toHaveLength(1)
@@ -2980,6 +2986,7 @@ test.describe('managed login logo auth independence', () => {
     })
     await expect(staticImage).toHaveCSS('opacity', '1')
     await expect(canvas).toHaveCount(0)
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
     await expect(email).toBeFocused()
     await expect
       .poll(async () => {
@@ -2997,6 +3004,7 @@ test.describe('managed login logo auth independence', () => {
     await expectOrdinaryLogin(page)
     await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toHaveAttribute('src', squareEffect.logoUrl)
     await expect(page.locator('.login-particle-logo')).toHaveCount(0)
+    await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
     expect(artifacts.particle).toHaveLength(0)
     await expectLoginValidation(page)
   })

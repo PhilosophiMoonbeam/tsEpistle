@@ -29,7 +29,7 @@ const compiled = compileTemplate({
 if (compiled.errors.length) throw new Error(`Cannot compile pages.vue: ${compiled.errors}`)
 const render = new Function('Vue', compiled.code)(Vue) as RenderFunction
 const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const evaluate = new Function('AsyncState', 'fetchPages', 'getErrorMessage', 'showNotification', 'setLoading', 'wikiStore', script)
+const evaluate = new Function('AdminHero', 'AsyncState', 'fetchPages', 'getErrorMessage', 'showNotification', 'setLoading', 'wikiStore', script)
 
 const passthrough = (tag = 'div') =>
   Vue.defineComponent({
@@ -114,15 +114,15 @@ const settle = async () => {
   await Vue.nextTick()
 }
 const mount = async (rows: PageListRow[], mobile = false) => {
+  const AdminHero = Vue.defineComponent({
+    props: ['title', 'description', 'icon', 'headingId'],
+    setup: (props, { slots }) => () => Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.actions?.()])
+  })
   const fetchPages = vi.fn(async () => rows)
-  const options = evaluate(AsyncState, fetchPages, String, vi.fn(), vi.fn(), { user: { id: 7 }, showError: vi.fn() }) as ComponentOptions
+  const options = evaluate(AdminHero, AsyncState, fetchPages, String, vi.fn(), vi.fn(), { user: { id: 7 }, showError: vi.fn() }) as ComponentOptions
   app = Vue.createApp({ ...options, render })
   for (const name of ['v-container', 'v-row', 'v-col', 'v-card', 'v-avatar', 'v-icon', 'v-spacer', 'v-chip']) app.component(name, passthrough())
   app.component('v-btn', passthrough('button'))
-  app.component('admin-hero', Vue.defineComponent({
-    props: ['title', 'description', 'icon', 'headingId'],
-    setup: (props, { slots }) => () => Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.actions?.()])
-  }))
   app.component('v-text-field', TextField)
   app.component('v-data-table', DataTable)
   app.component('v-pagination', Pagination)

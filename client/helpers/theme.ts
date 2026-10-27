@@ -93,15 +93,6 @@ export const contrastForeground = (background: string): '#000000' | '#FFFFFF' =>
   return blackContrast >= whiteContrast ? '#000000' : '#FFFFFF'
 }
 
-const contrastForegroundForSurfaces = (background: string, surface: string): '#000000' | '#FFFFFF' => {
-  const candidates = ['#000000', '#FFFFFF'] as const
-  return candidates.reduce((best, candidate) => {
-    const candidateContrast = Math.min(contrastRatio(candidate, background), contrastRatio(candidate, surface))
-    const bestContrast = Math.min(contrastRatio(best, background), contrastRatio(best, surface))
-    return candidateContrast > bestContrast ? candidate : best
-  })
-}
-
 const mixHex = (base: string, mix: string, amount: number): string => {
   const channels = [1, 3, 5].map(index => {
     const baseChannel = Number.parseInt(base.slice(index, index + 2), 16)
@@ -111,6 +102,119 @@ const mixHex = (base: string, mix: string, amount: number): string => {
       .padStart(2, '0')
   })
   return `#${channels.join('')}`.toUpperCase()
+}
+
+type ColorChannels = readonly [number, number, number]
+
+const hexChannels = (hex: string): ColorChannels =>
+  [Number.parseInt(hex.slice(1, 3), 16) / 255, Number.parseInt(hex.slice(3, 5), 16) / 255, Number.parseInt(hex.slice(5, 7), 16) / 255]
+
+const channelsHex = (channels: ColorChannels): string =>
+  `#${channels.map(channel => Math.round(Math.max(0, Math.min(1, channel)) * 255).toString(16).padStart(2, '0')).join('')}`.toUpperCase()
+
+// CSS Color 4's OKLab transforms. These only sample the shared material backing;
+// foreground selection remains in the existing ink/purpose solvers below.
+const rgbToOklab = (rgb: ColorChannels): ColorChannels => {
+  const [r, g, b] = rgb.map(channel => {
+    const absolute = Math.abs(channel)
+    return absolute <= 0.04045 ? channel / 12.92 : Math.sign(channel) * ((absolute + 0.055) / 1.055) ** 2.4
+  })
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s]
+}
+
+const oklabToRgb = ([lightness, a, b]: ColorChannels): ColorChannels => {
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3
+  const encode = (channel: number): number => {
+    const absolute = Math.abs(channel)
+    return absolute <= 0.0031308 ? channel * 12.92 : Math.sign(channel) * (1.055 * absolute ** (1 / 2.4) - 0.055)
+  }
+  return [encode(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s), encode(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s), encode(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)]
+}
+
+const interpolateChannels = (base: ColorChannels, mix: ColorChannels, amount: number): ColorChannels =>
+  [base[0] + (mix[0] - base[0]) * amount, base[1] + (mix[1] - base[1]) * amount, base[2] + (mix[2] - base[2]) * amount]
+
+const mixOklch = (base: ColorChannels, mix: ColorChannels, amount: number): ColorChannels => {
+  const first = rgbToOklab(base)
+  const second = rgbToOklab(mix)
+  const firstChroma = Math.hypot(first[1], first[2])
+  const secondChroma = Math.hypot(second[1], second[2])
+  // Achromatic colors have a powerless hue, inherited from the other endpoint.
+  const firstHue = firstChroma < 0.000004 ? Math.atan2(second[2], second[1]) : Math.atan2(first[2], first[1])
+  const secondHue = secondChroma < 0.000004 ? firstHue : Math.atan2(second[2], second[1])
+  const hueDelta = ((secondHue - firstHue + 3 * Math.PI) % (2 * Math.PI)) - Math.PI
+  const hue = firstHue + hueDelta * amount
+  const chroma = firstChroma + (secondChroma - firstChroma) * amount
+  return [first[0] + (second[0] - first[0]) * amount, chroma * Math.cos(hue), chroma * Math.sin(hue)]
+}
+
+// CSS Color 4 local-MINDE mapping for saturated custom palettes on sRGB displays.
+// Do not simply clip out-of-gamut OKLCH stops before measuring their contrast.
+const gamutMapOklab = (lab: ColorChannels): ColorChannels => {
+  if (lab[0] >= 1) return [1, 1, 1]
+  if (lab[0] <= 0) return [0, 0, 0]
+  const inGamut = (rgb: ColorChannels): boolean => rgb.every(channel => channel >= -0.000001 && channel <= 1.000001)
+  const clip = (rgb: ColorChannels): ColorChannels => [Math.max(0, Math.min(1, rgb[0])), Math.max(0, Math.min(1, rgb[1])), Math.max(0, Math.min(1, rgb[2]))]
+  const original = oklabToRgb(lab)
+  if (inGamut(original)) return clip(original)
+  let clipped = clip(original)
+  const difference = (candidate: ColorChannels): number => {
+    const mapped = rgbToOklab(clipped)
+    return Math.hypot(candidate[0] - mapped[0], candidate[1] - mapped[1], candidate[2] - mapped[2])
+  }
+  if (difference(lab) < 0.02) return clipped
+  const chroma = Math.hypot(lab[1], lab[2])
+  let minimum = 0
+  let maximum = chroma
+  let minimumInGamut = true
+  while (maximum - minimum > 0.0001) {
+    const current = (minimum + maximum) / 2
+    const candidate: ColorChannels = [lab[0], lab[1] * current / chroma, lab[2] * current / chroma]
+    const rgb = oklabToRgb(candidate)
+    if (minimumInGamut && inGamut(rgb)) {
+      minimum = current
+      continue
+    }
+    clipped = clip(rgb)
+    const delta = difference(candidate)
+    if (delta < 0.02) {
+      if (0.02 - delta < 0.0001) return clipped
+      minimumInGamut = false
+      minimum = current
+    } else {
+      maximum = current
+    }
+  }
+  return clipped
+}
+
+const sampleMineralGradient = (colors: ThemeModeColors, surfaceBright: string, dark: boolean): string[] => {
+  // The CSS raised blend is fractional sRGB, not a pre-rounded hex swatch.
+  const raisedRgb = interpolateChannels(hexChannels(colors.surface), hexChannels(surfaceBright), 0.06)
+  // Keep these percentages in sync with --wiki-surface-gradient in base.scss.
+  const stops = [
+    mixOklch(raisedRgb, hexChannels(colors.primary), dark ? 0.06 : 0.04),
+    rgbToOklab(raisedRgb),
+    mixOklch(raisedRgb, hexChannels(colors.secondary), dark ? 0.05 : 0.03)
+  ]
+  const samples = new Set<string>([channelsHex(raisedRgb)])
+  for (let segment = 0; segment < stops.length - 1; segment++) {
+    const startRgb = oklabToRgb(stops[segment])
+    const endRgb = oklabToRgb(stops[segment + 1])
+    // Sample both modern OKLab and legacy sRGB gradient interpolation, including
+    // interior luminance extrema. The 58%/62% center changes area, not colors.
+    for (let step = 0; step <= 32; step++) {
+      const amount = step / 32
+      samples.add(channelsHex(gamutMapOklab(interpolateChannels(stops[segment], stops[segment + 1], amount))))
+      samples.add(channelsHex(gamutMapOklab(rgbToOklab(interpolateChannels(startRgb, endRgb, amount)))))
+    }
+  }
+  return [...samples]
 }
 
 export const WIKI_PURPOSE_KEYS = ['primary', 'secondary', 'success', 'info', 'warning', 'error', 'neutral'] as const
@@ -123,8 +227,8 @@ const chooseReadableColor = (candidates: readonly string[], surfaces: readonly s
   return candidates.reduce((best, candidate) => (score(candidate) > score(best) ? candidate : best))
 }
 
-const createPurposeColorMap = (colors: ThemeModeColors, raisedSurface: string): Record<string, string> => {
-  const onSurface = contrastForeground(colors.surface)
+const createPurposeColorMap = (colors: ThemeModeColors, surfaces: readonly string[]): Record<string, string> => {
+  const onSurface = chooseReadableColor(['#000000', '#FFFFFF'], surfaces, 7)
   const seeds: Record<WikiPurposeKey, string> = {
     primary: colors.primary,
     secondary: colors.secondary,
@@ -141,7 +245,8 @@ const createPurposeColorMap = (colors: ThemeModeColors, raisedSurface: string): 
     const fill = mixHex(colors.surface, seed, 0.08)
     const edge = mixHex(colors.surface, seed, 0.22)
     const initialInk = mixHex(seed, onSurface, 0.62)
-    const foreground = chooseReadableColor(['#000000', '#FFFFFF'], [colors.surface, raisedSurface, fill], 4.5)
+    const backings = [...surfaces, fill]
+    const foreground = chooseReadableColor(['#000000', '#FFFFFF'], backings, 7)
     const ink = chooseReadableColor(
       [
         initialInk,
@@ -151,7 +256,7 @@ const createPurposeColorMap = (colors: ThemeModeColors, raisedSurface: string): 
         mixHex(initialInk, foreground, 0.8),
         foreground
       ],
-      [colors.surface, raisedSurface, fill],
+      backings,
       4.5
     )
     purposeColors[`purpose-${key}-ink`] = ink
@@ -167,13 +272,13 @@ const INK_STEPS = Array.from({ length: 21 }, (_, index) => index / 20)
 
 // Palette colors used as text or icons (`text-<color>` utilities and the
 // `--wiki-<color>-ink` tokens). Each ink keeps the palette color when it already
-// reads at 4.5:1 on every page surface and on its own 12% tint; otherwise it
-// moves toward the surface text color in 5% steps until it does. A light
-// primary such as the default amber therefore keeps its hue as a deeper bronze
+// reads at 4.5:1 on every page surface (including the mineral gradient) and its
+// own 12% tint; otherwise it moves toward the surface text color in 5% steps.
+// A light primary such as the default amber therefore keeps its hue as a deeper bronze
 // in light mode and stays unchanged in dark mode.
 export const createInkColorMap = (colors: ThemeModeColors, surfaces: readonly string[]): Record<string, string> => {
-  const onSurface = contrastForeground(colors.surface)
-  // Tonal buttons and chips lay their own ink at Vuetify's 12% activated opacity under the label.
+  const onSurface = chooseReadableColor(['#000000', '#FFFFFF'], surfaces, 7)
+  // Tonal buttons and chips use the existing surface-backed 12% activated fill.
   const score = (ink: string): number => Math.min(...[...surfaces, mixHex(colors.surface, ink, 0.12)].map(surface => contrastRatio(ink, surface)))
   const inks: Record<string, string> = {}
   for (const key of WIKI_INK_KEYS) {
@@ -193,7 +298,9 @@ const createThemeColorMap = (colors: ThemeModeColors, dark: boolean): Record<str
   const surfaceVariant = mixHex(colors.background, colors.surface, 0.5)
   const surfaceRaised = mixHex(colors.surface, surfaceBright, 0.06)
   const surfaceSunken = mixHex(colors.background, colors.surface, 0.28)
-  const disabledPrimaryRaised = mixHex(surfaceRaised, colors.primary, 0.8)
+  const mineralSurfaces = sampleMineralGradient(colors, surfaceBright, dark)
+  const surfaces = [colors.background, colors.surface, surfaceRaised, surfaceSunken, ...mineralSurfaces]
+  const disabledPrimaryRaised = mineralSurfaces.map(surface => mixHex(surface, colors.primary, 0.8))
   const disabledPrimarySunken = mixHex(surfaceSunken, colors.primary, 0.8)
   const colorMap: Record<string, string> = {
     ...colors,
@@ -201,14 +308,15 @@ const createThemeColorMap = (colors: ThemeModeColors, dark: boolean): Record<str
     'surface-light': surfaceLight,
     'surface-variant': surfaceVariant,
     'on-surface-variant': contrastForeground(surfaceVariant),
-    'on-primary-disabled-raised': contrastForeground(disabledPrimaryRaised),
+    'on-primary-disabled-raised': chooseReadableColor(['#000000', '#FFFFFF'], disabledPrimaryRaised, 21),
     'on-primary-disabled-sunken': contrastForeground(disabledPrimarySunken),
-    // A neutral focus role is selected against both root surfaces, not the site accent.
-    focus: contrastForegroundForSurfaces(colors.background, colors.surface),
-    ...createPurposeColorMap(colors, surfaceRaised),
-    ...createInkColorMap(colors, [colors.background, colors.surface, surfaceRaised, surfaceSunken])
+    // Control/focus and readable inks see the same real flat/gradient backings.
+    focus: chooseReadableColor(['#000000', '#FFFFFF'], surfaces, 21),
+    ...createPurposeColorMap(colors, surfaces),
+    ...createInkColorMap(colors, surfaces)
   }
   for (const key of THEME_COLOR_KEYS) colorMap[`on-${key}`] = contrastForeground(colors[key])
+  colorMap['on-surface'] = chooseReadableColor(['#000000', '#FFFFFF'], surfaces, 7)
   return colorMap
 }
 export const createWikiThemes = (colors: ThemeColors): Record<'light' | 'dark', ThemeDefinition> => ({

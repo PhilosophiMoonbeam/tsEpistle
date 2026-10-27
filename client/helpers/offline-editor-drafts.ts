@@ -1,5 +1,6 @@
 import { OfflineDraftPayloadV1Schema, type OfflineDraftEnvelopeV1, type OfflineDraftPayloadV1, type OfflineDraftState } from '../../shared/offline.ts'
 import { isPageEditorKey, type PageEditorKey } from '../../shared/page-editors.ts'
+import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import { OfflineDraftConflictError, openOfflineStorage, type OfflineStorage } from './offline-storage.ts'
 import {
   decryptOfflineDraft,
@@ -33,6 +34,7 @@ export type OfflineEditorDraftValues = {
   readonly title: string
   readonly description: string
   readonly content: string
+  readonly changeReason?: string
 }
 
 export type OfflineDraftRecovery = {
@@ -240,8 +242,11 @@ const sameFullIdentity = (left: OfflineEditorDraftIdentity, right: OfflineEditor
   left.baseSourceRevision === right.baseSourceRevision &&
   left.baseUpdatedAt === right.baseUpdatedAt
 
-const sameText = (payload: OfflineEditorDraftValues, values: OfflineEditorDraftValues): boolean =>
-  payload.title === values.title && payload.description === values.description && payload.content === values.content
+const sameValues = (payload: OfflineEditorDraftValues, values: OfflineEditorDraftValues): boolean =>
+  payload.title === values.title &&
+  payload.description === values.description &&
+  payload.content === values.content &&
+  payload.changeReason === values.changeReason
 
 const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => left.byteLength === right.byteLength && left.every((value, index) => value === right[index])
 
@@ -290,11 +295,15 @@ const safeIdentity = (raw: OfflineEditorDraftIdentity): OfflineEditorDraftIdenti
   }
 }
 
-const safeValues = (raw: OfflineEditorDraftValues): OfflineEditorDraftValues => ({
-  title: raw.title,
-  description: raw.description,
-  content: raw.content
-})
+const safeValues = (raw: OfflineEditorDraftValues): OfflineEditorDraftValues => {
+  const changeReason = PageChangeReasonSchema.parse(raw.changeReason)
+  return {
+    title: raw.title,
+    description: raw.description,
+    content: raw.content,
+    ...(changeReason === undefined ? {} : { changeReason })
+  }
+}
 
 const makeSubmission = (envelope: OfflineDraftEnvelopeV1): OfflineDraftSubmission => ({
   recordId: envelope.recordId,
@@ -321,7 +330,8 @@ const makePayload = (
     state,
     title: values.title,
     description: values.description,
-    content: values.content
+    content: values.content,
+    ...(values.changeReason === undefined ? {} : { changeReason: values.changeReason })
   })
 
 const statusForOutcome = (outcome: OfflineSubmissionOutcome): { kind: SubmissionOutcomeKind; status: number | null; reason: string | null } => {
@@ -348,6 +358,7 @@ export class OfflineEditorDraftCoordinator {
   private captureTimer: ReturnType<typeof setTimeout> | null = null
   private capturePromise: Promise<boolean> | null = null
   private capturePromiseVersion = 0
+  private capturePromiseSnapshot: CaptureSnapshot | null = null
   private discardPromise: Promise<boolean> | null = null
   private discarding = false
   private transitionTail: Promise<unknown> = Promise.resolve()
@@ -435,7 +446,7 @@ export class OfflineEditorDraftCoordinator {
   get hasCommittedCurrentValues(): boolean {
     if (!this.currentDraft) return false
     try {
-      return sameText(this.currentDraft.payload, this.currentValues()) && this.committedEditVersion >= this.latestEditVersion
+      return sameValues(this.currentDraft.payload, this.currentValues()) && this.committedEditVersion >= this.latestEditVersion
     } catch {
       return false
     }
@@ -557,6 +568,9 @@ export class OfflineEditorDraftCoordinator {
     this.currentDraft = null
     this.persistedCapture = null
     this.activePrepared = null
+    this.capturePromise = null
+    this.capturePromiseVersion = 0
+    this.capturePromiseSnapshot = null
     this.reviewRequired = false
     this.envelopes.clear()
     this.outcomeKind = null
@@ -741,7 +755,7 @@ export class OfflineEditorDraftCoordinator {
     const submissions = await this.listMatchingSubmissions(session.storage, session.handle, identity, session.actorEpoch)
     if (!this.fenceCurrent(session.actorEpoch, session.handle)) return this.view
     const newest = matches[matches.length - 1]
-    const isNewer = newest !== undefined && !sameText(newest.payload, values)
+    const isNewer = newest !== undefined && !sameValues(newest.payload, values)
     this.currentDraft =
       newest !== undefined && !isNewer
         ? {
@@ -809,7 +823,18 @@ export class OfflineEditorDraftCoordinator {
       if (this.unavailableLatched && this.draftState.state !== 'unavailable') this.setState({ state: 'unavailable' })
       return Promise.resolve(true)
     }
-    if (!unavailableOverride && this.capturePromise && version <= this.capturePromiseVersion) return this.capturePromise
+    const pendingSnapshot = this.capturePromiseSnapshot
+    if (!unavailableOverride && this.capturePromise && version <= this.capturePromiseVersion) {
+      // Before execution starts, the queued operation will read the latest values.
+      if (pendingSnapshot === null) return this.capturePromise
+      try {
+        if (sameValues(pendingSnapshot.values, this.currentValues()) && sameFullIdentity(pendingSnapshot.identity, this.currentIdentity())) {
+          return this.capturePromise
+        }
+      } catch {
+        // Invalid current values must reach the capture error path, not an older success.
+      }
+    }
     const operation = this.enqueue(async () => {
       if (this.destroyed || this.discarding || !this.isAuthenticatedUser()) {
         if (unavailableOverride && !this.destroyed) {
@@ -826,6 +851,7 @@ export class OfflineEditorDraftCoordinator {
           editVersion: Math.max(version, this.latestEditVersion),
           stateOverride
         }
+        if (!unavailableOverride && this.capturePromise === shared) this.capturePromiseSnapshot = snapshot
         const captured = await this.captureInternal(snapshot, true)
         if (unavailableOverride) {
           this.unavailableLatched = true
@@ -844,11 +870,13 @@ export class OfflineEditorDraftCoordinator {
     })
     if (unavailableOverride) return operation
     this.capturePromiseVersion = Math.max(this.capturePromiseVersion, version)
+    this.capturePromiseSnapshot = null
     const shared = operation.then(
       result => {
         if (this.capturePromise === shared) {
           this.capturePromise = null
           this.capturePromiseVersion = 0
+          this.capturePromiseSnapshot = null
         }
         return result
       },
@@ -856,6 +884,7 @@ export class OfflineEditorDraftCoordinator {
         if (this.capturePromise === shared) {
           this.capturePromise = null
           this.capturePromiseVersion = 0
+          this.capturePromiseSnapshot = null
         }
         throw error
       }
@@ -898,7 +927,13 @@ export class OfflineEditorDraftCoordinator {
         persisted &&
         snapshot.editVersion <= persisted.editVersion &&
         sameFullIdentity(snapshot.identity, persisted.identity) &&
-        sameText(persisted.values, snapshot.values)
+        // Clearing an acknowledged reason is not a new unsaved page draft.
+        // A different nonempty reason still requires its own encrypted capture.
+        (sameValues(persisted.values, snapshot.values) ||
+          (snapshot.values.changeReason === undefined &&
+            persisted.values.title === snapshot.values.title &&
+            persisted.values.description === snapshot.values.description &&
+            persisted.values.content === snapshot.values.content))
       )
         return true
       // The receipt already retains this version, including a create-to-page
@@ -907,7 +942,7 @@ export class OfflineEditorDraftCoordinator {
       if (
         submitted &&
         snapshot.editVersion <= submitted.editVersion &&
-        sameText(submitted.payload, snapshot.values) &&
+        sameValues(submitted.payload, snapshot.values) &&
         snapshot.identity.editorKey === submitted.identity.editorKey &&
         snapshot.identity.locale === submitted.identity.locale &&
         snapshot.identity.path === submitted.identity.path &&
@@ -1232,7 +1267,7 @@ export class OfflineEditorDraftCoordinator {
     const sourceState = stateForCapture(this.currentDraft?.payload.state ?? this.draftState.state, this.reviewRequired)
     const sourceMatches =
       this.currentDraft !== null &&
-      sameText(this.currentDraft.payload, snapshot.values) &&
+      sameValues(this.currentDraft.payload, snapshot.values) &&
       sameFullIdentity(
         {
           editorKey: this.currentDraft.payload.editorKey,
@@ -1327,6 +1362,7 @@ export class OfflineEditorDraftCoordinator {
       const editVersion = this.captureVersion(options.editVersion, true)
       snapshot = { values: this.currentValues(), identity: this.currentIdentity(), editVersion }
     } catch {
+      this.setState({ error: 'The page was not submitted because the editor draft values are invalid.' })
       return Promise.resolve(null)
     }
     return this.enqueue(async () => {
@@ -1348,7 +1384,7 @@ export class OfflineEditorDraftCoordinator {
     } catch {
       return false
     }
-    const newer = this.latestEditVersion > prepared.publicValue.editVersion || !sameText(prepared.payload, values)
+    const newer = this.latestEditVersion > prepared.publicValue.editVersion || !sameValues(prepared.payload, values)
     if (!newer) return true
     const snapshot: CaptureSnapshot = {
       values,
@@ -1383,7 +1419,7 @@ export class OfflineEditorDraftCoordinator {
                 baseUpdatedAt: outcome.baseUpdatedAt ?? outcome.identity.baseUpdatedAt
               }
             : this.currentIdentity()
-        const values = { title: current.payload.title, description: current.payload.description, content: current.payload.content }
+        const values = safeValues(current.payload)
         survivingForkPayload = makePayload(stateForCapture(current.payload.state, this.reviewRequired), identity, values)
         survivingFork = await encryptOfflineDraft(session.handle, survivingForkPayload, {
           recordId: current.recordId,
@@ -1394,7 +1430,7 @@ export class OfflineEditorDraftCoordinator {
     } else {
       const identity = this.currentIdentity()
       const sourcePayload = current?.payload ?? prepared.sourcePayload ?? prepared.payload
-      const values = { title: sourcePayload.title, description: sourcePayload.description, content: sourcePayload.content }
+      const values = safeValues(sourcePayload)
       survivingForkPayload = makePayload(state ?? 'needs-review', identity, values)
       survivingFork = await encryptOfflineDraft(session.handle, survivingForkPayload, {
         recordId:
@@ -1569,11 +1605,7 @@ export class OfflineEditorDraftCoordinator {
             baseSourceRevision: current.payload.baseSourceRevision,
             baseUpdatedAt: current.payload.baseUpdatedAt
           },
-          {
-            title: current.payload.title,
-            description: current.payload.description,
-            content: current.payload.content
-          }
+          safeValues(current.payload)
         )
         const envelope = await encryptOfflineDraft(session.handle, payload, {
           recordId: current.recordId,

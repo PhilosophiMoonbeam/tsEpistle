@@ -953,6 +953,7 @@ export default defineComponent({
         wikiStore.editor.content,
         wikiStore.page.title,
         wikiStore.page.description,
+        this.changeReason,
         wikiStore.page.locale,
         wikiStore.page.path,
         JSON.stringify(wikiStore.page.pageFeatures),
@@ -965,7 +966,7 @@ export default defineComponent({
         : [this.$t('editor:save.changeReasonInvalid', { defaultValue: 'Use a single line of at most 200 characters without controls or bidi formatting.' })]
     },
     isDirty () {
-      return !this.sameEditableState(this.savedState, this.currentEditableState(), true)
+      return this.changeReason !== '' || !this.sameEditableState(this.savedState, this.currentEditableState(), true)
     },
     reloadSafetyInputs(): readonly unknown[] {
       return [
@@ -973,6 +974,7 @@ export default defineComponent({
         wikiStore.editor.content,
         wikiStore.page.title,
         wikiStore.page.description,
+        this.changeReason,
         wikiStore.page.locale,
         wikiStore.page.path,
         wikiStore.page.tags,
@@ -1041,10 +1043,16 @@ export default defineComponent({
     },
     isAuthenticated(newValue: boolean) {
       if (newValue) void this.initializeOfflineDrafts()
-      else this.offlineDraftCoordinator?.lock()
+      else {
+        this.changeReason = ''
+        this.offlineDraftCoordinator?.lock()
+      }
     },
     accountId(newValue: number, oldValue: number) {
-      if (newValue !== oldValue) void this.initializeOfflineDrafts()
+      if (newValue !== oldValue) {
+        this.changeReason = ''
+        void this.initializeOfflineDrafts()
+      }
     }
   },
   created() {
@@ -1154,6 +1162,9 @@ export default defineComponent({
     this.editorAdapterUnsubscribe = null
     setReloadSafetyProvider(null)
     this.offlineDraftCoordinator?.destroy()
+    this.changeReason = ''
+    this.submissionCaptureValues = null
+    this.submissionCaptureIdentity = null
     this.offlineDraftCoordinator = null
     removeEditorPageCss()
   },
@@ -1527,7 +1538,8 @@ export default defineComponent({
         getValues: () => this.submissionCaptureValues ?? ({
           title: wikiStore.page.title,
           description: wikiStore.page.description,
-          content: wikiStore.editor.content
+          content: wikiStore.editor.content,
+          changeReason: this.changeReason
         }),
         detachedApply: payload => this.applyOfflineDraft(payload),
         detachedReplace: payload => this.applyOfflineDraft(payload),
@@ -1585,10 +1597,12 @@ export default defineComponent({
     },
     applyOfflineDraft(payload: OfflineDraftPayloadV1) {
       if (!this.offlineDraftCoordinator || this.offlineDraftStatus === 'locked' || !this.isAuthenticated) return
+      const changeReason = PageChangeReasonSchema.parse(payload.changeReason) ?? ''
       this.editorAdapter?.replaceText(payload.content, { detached: true })
       wikiStore.page.title = payload.title
       wikiStore.page.description = payload.description
       wikiStore.editor.content = payload.content
+      this.changeReason = changeReason
       this.notifySafetyChanged()
     },
     async initializeOfflineDrafts() {
@@ -1724,6 +1738,7 @@ export default defineComponent({
           if (resolution === 'discard' && prompt.kind === 'create') clearOfflineCreateIdentity()
           if (
             capture &&
+            this.changeReason === capture.changeReason &&
             _.isEqual(this.canonicalEditableState(capture), this.canonicalEditableState(this.currentEditableState()))
           ) {
             // Explicit server-version choice replaces the baseline; later edits must stay in memory.
@@ -1780,6 +1795,7 @@ export default defineComponent({
         projection: { state: 'pending', value: null }
       }
       wikiStore.editor.content = ''
+      this.changeReason = ''
       wikiStore.editor.id = 0
       wikiStore.editor.mode = 'create'
       wikiStore.editor.activeModal = ''
@@ -2176,7 +2192,8 @@ export default defineComponent({
           this.submissionCaptureValues = Object.freeze({
             title: capture.title,
             description: capture.description,
-            content: capture.content
+            content: capture.content,
+            changeReason: capture.changeReason
           })
           this.submissionCaptureIdentity = capture.identity
           let receiptPreparationError: unknown = null
@@ -2189,6 +2206,14 @@ export default defineComponent({
           } finally {
             this.submissionCaptureValues = null
             this.submissionCaptureIdentity = null
+            if (
+              this.offlineDraftCoordinator === coordinator &&
+              this.isCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration) &&
+              this.isDirty &&
+              !coordinator.hasCommittedCurrentValues
+            ) {
+              coordinator.scheduleCapture(this.editorAdapterSafety.editVersion)
+            }
           }
           if (!prepared) {
             if (
@@ -2778,6 +2803,7 @@ export default defineComponent({
       }
     },
     restoreCurrentSavedState () {
+      this.changeReason = ''
       wikiStore.editor.content = this.savedState.content
       wikiStore.page.description = this.savedState.description
       wikiStore.page.isPublished = this.savedState.isPublished

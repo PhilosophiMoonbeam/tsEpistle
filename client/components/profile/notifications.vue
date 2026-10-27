@@ -1,25 +1,38 @@
 <template lang='pug'>
 v-container.profile-notification-preferences(fluid)
-  header.mb-6
-    h1.text-headline-medium Notifications
-    p.text-body-medium.mt-2 Choose which events appear in your inbox or are sent by email. New categories are off until you enable and save them.
-    p.text-body-small.mt-2 These settings do not change your existing per-page watches or approval inbox.
+  AdminHero(:title='$t(`profile:nav.notifications`)', :description='$t(`profile:notificationPreferences.description`, { defaultValue: `Choose which events appear in your inbox or are sent by email. New categories are off until you enable and save them.` })', icon='mdi-bell-outline', :eyebrow='$t(`profile:workspace`, { defaultValue: `Your workspace` })', heading-id='profile-notifications-title')
+    template(#extra)
+      p.text-body-small {{ $t('profile:notificationPreferences.existingWatches', { defaultValue: 'These settings do not change your existing per-page watches or approval inbox.' }) }}
+      p.text-body-small.mt-2(v-if='dirty', id='profile-notifications-reload-help') {{ $t('profile:notificationPreferences.reloadBlocked', { defaultValue: 'Save or cancel your changes before reloading preferences.' }) }}
+    template(#actions)
+      v-btn(variant='text', prepend-icon='mdi-refresh', :disabled='dirty || loading || saving || refreshingIdentity', :loading='loading || refreshingIdentity', :aria-describedby='dirty ? `profile-notifications-reload-help` : undefined', @click='refreshIdentity') {{ $t('profile:pages.reloadShort') }}
   p(v-if='!ownerId', role='status') Sign in to manage notifications.
   p(v-else-if='loading', role='status') Loading your notification preferences…
   v-alert.mb-4(v-if='error', type='error', variant='tonal', role='alert')
     div {{ error }}
-    v-btn.mt-2(v-if='!saved || blocked', variant='text', :disabled='loading || saving', @click='refreshIdentity') Refresh preferences
+    v-btn.mt-2(v-if='!saved || blocked', variant='text', :disabled='dirty || loading || saving || refreshingIdentity', @click='refreshIdentity') Refresh preferences
   p.text-success.mb-4(v-if='success', role='status') {{ success }}
   form(v-if='saved && !blocked', @submit.prevent='save', :aria-busy='saving ? `true` : undefined')
-    fieldset.profile-notification-preferences__fieldset(:disabled='saving')
-      legend.text-title-medium Delivery preferences
-      .profile-notification-preferences__category(v-for='category in categories', :key='category.key')
-        .profile-notification-preferences__copy
-          h2.text-title-small {{ category.label }}
-          p.text-body-small.text-medium-emphasis {{ category.description }}
-        .profile-notification-preferences__channels
-          v-checkbox(:model-value='draft[category.key].inApp', :label='`In-app: ${category.label}`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `inApp`, $event)')
-          v-checkbox(:model-value='draft[category.key].email', :label='`Email: ${category.label}`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `email`, $event)')
+    table.profile-notification-preferences__matrix
+      caption.text-title-medium {{ $t('profile:notificationPreferences.deliveryPreferences', { defaultValue: 'Delivery preferences' }) }}
+      colgroup
+        col
+        col.profile-notification-preferences__channel-column
+        col.profile-notification-preferences__channel-column
+      thead
+        tr
+          th#profile-notifications-event(scope='col') {{ $t('profile:notificationPreferences.event', { defaultValue: 'Event' }) }}
+          th#profile-notifications-in-app.profile-notification-preferences__channel-heading(scope='col') {{ $t('profile:notificationPreferences.inApp', { defaultValue: 'In-App' }) }}
+          th#profile-notifications-email.profile-notification-preferences__channel-heading(scope='col') {{ $t('profile:notificationPreferences.email', { defaultValue: 'Email' }) }}
+      tbody
+        tr(v-for='category in categories', :key='category.key')
+          th(:id='`profile-notifications-${category.key}`', scope='row')
+            span.text-title-small(:id='`profile-notifications-${category.key}-label`') {{ category.label }}
+            p.profile-notification-preferences__description.text-body-small.text-medium-emphasis(:id='`profile-notifications-${category.key}-description`') {{ category.description }}
+          td(:headers='`profile-notifications-${category.key} profile-notifications-in-app`')
+            v-checkbox.profile-notification-preferences__toggle(:model-value='draft[category.key].inApp', :aria-labelledby='`profile-notifications-${category.key}-label profile-notifications-in-app`', :aria-describedby='`profile-notifications-${category.key}-description`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `inApp`, $event)')
+          td(:headers='`profile-notifications-${category.key} profile-notifications-email`')
+            v-checkbox.profile-notification-preferences__toggle(:model-value='draft[category.key].email', :aria-labelledby='`profile-notifications-${category.key}-label profile-notifications-email`', :aria-describedby='`profile-notifications-${category.key}-description`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `email`, $event)')
     .d-flex.flex-wrap.ga-3.mt-6
       v-btn(type='submit', color='primary', :disabled='!dirty || saving', :loading='saving') Save preferences
       v-btn(variant='text', :disabled='!dirty || saving', @click='cancel') Cancel changes
@@ -27,6 +40,7 @@ v-container.profile-notification-preferences(fluid)
 
 <script setup lang='ts'>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AdminHero from '../common/admin-hero.vue'
 import { wikiStore } from '../../store/index.ts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import { fetchNotificationPreferences, notificationIdentityInvalidated, updateNotificationPreferences } from '../../helpers/site-notifications-api.ts'
@@ -62,6 +76,7 @@ const saved = ref<NotificationPreferences | null>(null)
 const draftOwner = ref<number | null>(null)
 const loading = ref(false)
 const saving = ref(false)
+const refreshingIdentity = ref(false)
 const blocked = ref(false)
 const error = ref('')
 const success = ref('')
@@ -114,17 +129,23 @@ const load = async (): Promise<void> => {
   }
 }
 const refreshIdentity = async (): Promise<void> => {
-  clear()
-  blocked.value = true
-  const requestGeneration = generation
-  const outcome = await wikiStore.refreshAuth().catch(() => 'unavailable' as const)
-  if (disposed || requestGeneration !== generation) return
-  if (outcome !== 'authenticated') {
-    error.value = 'Your account could not be verified. Sign in or try again.'
-    return
+  if (disposed || dirty.value || loading.value || saving.value || refreshingIdentity.value) return
+  refreshingIdentity.value = true
+  try {
+    clear()
+    blocked.value = true
+    const requestGeneration = generation
+    const outcome = await wikiStore.refreshAuth().catch(() => 'unavailable' as const)
+    if (disposed || requestGeneration !== generation) return
+    if (outcome !== 'authenticated') {
+      error.value = 'Your account could not be verified. Sign in or try again.'
+      return
+    }
+    blocked.value = false
+    void load()
+  } finally {
+    refreshingIdentity.value = false
   }
-  blocked.value = false
-  void load()
 }
 const save = async (): Promise<void> => {
   const owner = draftOwner.value
@@ -176,8 +197,32 @@ onBeforeUnmount(() => {
 
 <style scoped lang='scss'>
 .profile-notification-preferences { max-width: 70rem; }
-.profile-notification-preferences__fieldset { border: 0; padding: 0; min-width: 0; }
-.profile-notification-preferences__category { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1.25rem; border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
-.profile-notification-preferences__copy { flex: 1 1 18rem; }
-.profile-notification-preferences__channels { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
+.profile-notification-preferences__matrix {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.profile-notification-preferences__matrix caption {
+  margin-block-end: .75rem;
+  text-align: start;
+}
+.profile-notification-preferences__channel-column { width: 4.75rem; }
+.profile-notification-preferences__matrix th,
+.profile-notification-preferences__matrix td {
+  padding: 1rem .25rem;
+  border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  vertical-align: middle;
+  text-align: start;
+}
+.profile-notification-preferences__matrix th:first-child { padding-inline-start: 0; }
+.profile-notification-preferences__matrix thead th {
+  padding-block: .75rem;
+  font-size: .75rem;
+  font-weight: 650;
+}
+.profile-notification-preferences__matrix .profile-notification-preferences__channel-heading { text-align: center; }
+.profile-notification-preferences__description { margin-block-start: .35rem; font-weight: 400; }
+.profile-notification-preferences__toggle :deep(.v-selection-control) { justify-content: center; }
 </style>

@@ -19,10 +19,16 @@ The prescribed light hex pair has WCAG relative luminances 0.880842/0.964671, an
 ### Shared form focus
 
 Vuetify fields use their native segmented outline for a single 2px focus border, preserving floating-label notches. A 3px, 18%-opacity halo supplements focus without drawing a second rectangle. Forced colors uses the system Highlight border without the halo; raw controls retain their separate keyboard focus indicator. Validation labels and messages retain semantic ink independently of the focused border.
+Header Search removes its resting frame while focused in forced colors, reserving the same space with padding so only the native Highlight boundary is painted. The Page Properties locale menu targets its native combobox as the popup activator; Escape from a settled option returns focus to Locale without changing the selection or closing the properties dialog.
 
 ### Current Agent Administration navigation
 
 Agent Administration (`/a/agents`) exposes all eleven sections, including Browser access, through compact wrapping pills. Labels and badges remain visible without horizontal scrolling; the selected section’s title and description appear in the content header. Left/Right arrows follow the reading direction, while Home/End select the first/last section. Section hashes, restoration, panel associations and inline navigation remain supported.
+
+### Isolated native Agent producer verification
+
+`bun run test:postgres server/test/controllers/agents-native-producer.postgres.test.ts` uses the repository’s disposable PostgreSQL runner and bounded loopback provider responder. It exercises the real provider factory, engine, memory action, durable runtime, host SSE ownership/replay and dispatch-accounting reconciliation. The constructor-injected transport retains production origin/path/public-DNS guards; no local-provider exception is added to the spawned application. HTTP fixture identity seeding, model loading and priced decision providers are explicit test seams, not maintained-application login or semantic-model evidence. The original conversation keeps its frozen memory snapshot; changed memory is admitted by a new conversation.
+
 
 ### Current chat workspace UI
 

@@ -146,6 +146,40 @@ describe('page search visibility', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
+  it('exposes only matching current-render passages and never protected body text', async () => {
+    const candidates = [
+      page({ id: 201, title: 'Needle current', render: '<p>Actual needle paragraph.</p>', renderedSourceRevision: '1' }),
+      page({ id: 202, title: 'Needle protected', render: '<p>Secret needle content.</p>', renderedSourceRevision: '1' }),
+      page({ id: 203, title: 'Needle stale render', render: '<p>Stale needle content.</p>', renderedSourceRevision: '0' }),
+      page({ id: 204, title: 'Needle pending render', render: '<p>Pending needle content.</p>', renderedSourceRevision: null }),
+      page({ id: 205, title: 'Needle metadata', render: '<p>A different paragraph.</p>', renderedSourceRevision: '1' }),
+      page({ id: 206, title: 'Knowledge result', render: '<p>Unrelated body.</p>', renderedSourceRevision: '1' })
+    ]
+    searchVisible.mockResolvedValueOnce([{
+      id: 206, sourceRevision: '1', locale: 'en', path: candidates[5].path,
+      visibility: 'public', score: 1, matchedFields: ['knowledge'], knowledge: {}
+    }])
+    installSearchWiki({
+      pageResults: [candidates, candidates],
+      protectedIds: [202],
+      metadataMatches: [[202], [202]],
+      engineResponse: {
+        results: candidates.slice(0, 5).map(candidate => ({
+          id: candidate.id, sourceRevision: '1', locale: 'en', path: candidate.path,
+          score: 1, matchedFields: ['title', 'content']
+        })),
+        suggestions: [], totalHits: 5
+      }
+    })
+    const operations = await loadOperations()
+    const result = await operations.search({ query: 'needle' })
+    expect(new Map(result.results.map(row => [row.id, row.excerpt]))).toEqual(new Map([
+      [201, 'Actual needle paragraph.'], [202, null], [203, null],
+      [204, null], [205, null], [206, null]
+    ]))
+    expect(JSON.stringify(result)).not.toMatch(/Secret needle|Stale needle|Pending needle/)
+  })
+
   it('rechecks protected public metadata eligibility and rejects stale content-only provider evidence', async () => {
     const protectedPage = page({ id: 3, sourceRevision: '8', title: 'Amber Falcon Runbook', description: 'Restricted procedures' })
     installSearchWiki({

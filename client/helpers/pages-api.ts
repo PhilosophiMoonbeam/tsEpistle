@@ -1147,6 +1147,8 @@ export type PageSearchRow = {
   tags: string[]
   score: number
   matchedFields: PageSearchMatchField[]
+  /** Plain-text matching body passage, at most 320 UTF-16 units; null means unavailable. */
+  excerpt: string | null
 }
 
 export type PageSearchResult = {
@@ -1674,7 +1676,8 @@ export async function searchPages(
         !Array.isArray(row.tags) ||
         typeof row.score !== 'number' ||
         !Number.isFinite(row.score) ||
-        !Array.isArray(row.matchedFields)
+        !Array.isArray(row.matchedFields) ||
+        (row.excerpt !== null && (typeof row.excerpt !== 'string' || row.excerpt.length === 0 || row.excerpt.length > 320))
       ) {
         throw new Error(fallbackMessage)
       }
@@ -1695,7 +1698,8 @@ export async function searchPages(
         visibility,
         tags: tags as string[],
         score: row.score,
-        matchedFields: matchedFields as PageSearchMatchField[]
+        matchedFields: matchedFields as PageSearchMatchField[],
+        excerpt: row.excerpt as string | null
       }
     })
     if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)

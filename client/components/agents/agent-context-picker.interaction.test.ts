@@ -152,6 +152,7 @@ const row = (id: string | number): PageSearchRow => ({
   id,
   title: `Topic ${id}`,
   description: `Description for topic ${id}`,
+  excerpt: null,
   path: `handbook/topic-${id}`,
   locale: 'en',
   visibility: 'public',

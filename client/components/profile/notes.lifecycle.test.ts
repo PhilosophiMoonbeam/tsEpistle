@@ -23,7 +23,7 @@ for (const statement of metadata.scriptSetupAst!) {
 }
 parts.push(script.slice(end))
 const source = new Bun.Transpiler({ loader: 'ts' }).transformSync(parts.join(''))
-const bindings = Object.keys(metadata.bindings!).filter(name => !metadata.imports?.[name])
+const bindings = Object.keys(metadata.bindings!).filter(name => !metadata.imports?.[name]?.isType)
 const evaluate = new Function(`{ ${[...Object.keys(metadata.imports!), 'siteConfig'].join(', ')} }`, `${source}\nreturn { ${bindings.join(', ')} }`)
 const template = compileTemplate({ source: descriptor.template!.content, filename, id: 'notes-inventory', compilerOptions: { mode: 'function' } })
 if (template.errors.length) throw template.errors[0]
@@ -36,6 +36,13 @@ const settle = async () => {
   }
 }
 const empty = { items: [] as LiveNoteSummary[], hasMore: false, nextCursor: null }
+const AdminHero = Vue.defineComponent({
+  props: ['title', 'headingId'],
+  setup: (props, { slots }) => () => Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.actions?.()])
+})
+const VBtn = Vue.defineComponent({
+  setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.())
+})
 function mount(api: Partial<LiveNotesApi>) {
   const store = Vue.reactive({
     authRefreshOutcome: 'authenticated' as string | null,
@@ -45,9 +52,11 @@ function mount(api: Partial<LiveNotesApi>) {
   })
   const errors: unknown[] = []
   const component = Vue.defineComponent({
+    components: { AdminHero, VBtn },
     setup: () =>
       evaluate({
         ...Vue,
+        AdminHero,
         wikiStore: store,
         createLiveNotesApi: () => api,
         LiveNotesApiError,

@@ -10348,6 +10348,24 @@
     }
   },
   "profile": {
+    "reload": "Reload",
+    "overview": {
+      "reload": "Reload",
+      "reloadTitle": "Discard changes and reload?",
+      "reloadConfirm": "Discard and reload"
+    },
+    "discussions": {
+      "subtitle": "Your contributions on pages you can currently read. Hidden or locked discussions are not included."
+    },
+    "notificationPreferences": {
+      "description": "Choose which events appear in your inbox or are sent by email. New categories are off until you enable and save them.",
+      "existingWatches": "These settings do not change your existing per-page watches or approval inbox.",
+      "reloadBlocked": "Save or cancel your changes before reloading preferences.",
+      "deliveryPreferences": "Delivery preferences",
+      "event": "Event",
+      "inApp": "In-App",
+      "email": "Email"
+    },
     "externalMcpOAuth": {
       "title": "External tool connections",
       "description": "Connect your own account for OAuth-protected tools available to your Wiki account.",
@@ -10507,6 +10525,13 @@
       }
     },
     "mcp": {
+      "inventory": {
+        "title": "Your keys",
+        "empty": "No MCP access keys yet.",
+        "noActive": "No active MCP access keys. Revoked and expired keys are in the history below.",
+        "active": "Active keys ({{count}})",
+        "history": "Inactive keys: {{count}} ({{revoked}} revoked, {{expired}} expired)"
+      },
       "adminWarning": "Your account can manage the system and read all pages regardless of page rules, including private pages. Both Read only and Read and propose edits keys inherit these unrestricted page reads. Read only prevents edits; it does not restrict which pages the client can read.",
       "pageAccess": "Page reads follow your current permissions and page rules, including private-page restrictions. Choosing Read only limits tools, not a separate set of pages.",
       "setupTitle": "Set up your MCP client",

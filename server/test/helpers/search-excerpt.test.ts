@@ -1,5 +1,5 @@
 import { describe, expect, it } from '../bun-test.mts'
-import { searchExcerpt } from '../../helpers/search-excerpt.ts'
+import { matchingSearchExcerpt, searchExcerpt } from '../../helpers/search-excerpt.ts'
 describe('source preview excerpts', () => {
   it('returns bounded plain text around a query and excludes invisible executable content', () => {
     const render = `<script>credential</script><style>private</style><p hidden>hidden</p><p>${'Opening words. '.repeat(300)}</p><p>Orbital calibration &amp; testing.</p><p>${'Later words. '.repeat(300)}</p>`
@@ -62,5 +62,32 @@ describe('source preview excerpts', () => {
     expect(result.excerpt.length).toBeLessThanOrEqual(180)
     expect(result.excerpt.startsWith('…')).toBe(true)
     expect(result.excerptTruncated).toBe(true)
+  })
+})
+
+describe('inline matching passages', () => {
+  it('returns the actual matching passage rather than the opening paragraph', () => {
+    const render = `<p>Opening boilerplate ${'before '.repeat(100)}</p><p>Orbital calibration &amp; testing.</p><p>${'after '.repeat(100)}</p>`
+    const excerpt = matchingSearchExcerpt(render, '"orbital calibration"')
+    expect(excerpt).toContain('Orbital calibration & testing.')
+    expect(excerpt).not.toContain('Opening boilerplate')
+    expect(excerpt!.length).toBeLessThanOrEqual(320)
+    expect(excerpt!.startsWith('…')).toBe(true)
+    expect(excerpt!.endsWith('…')).toBe(true)
+  })
+
+  it('does not fabricate a body passage for metadata-only, excluded or hidden matches', () => {
+    const render = '<h1>Visible title</h1><p>Visible paragraph.</p><script>needle</script><p hidden>needle</p><span aria-hidden="true">needle</span>'
+    expect(matchingSearchExcerpt(render, 'needle')).toBeNull()
+    expect(matchingSearchExcerpt(render, '-visible')).toBeNull()
+    expect(matchingSearchExcerpt(render, 'metadata')).toBeNull()
+  })
+
+  it('preserves literal punctuation and Unicode offsets without splitting surrogate pairs', () => {
+    const render = `<p>${'İ🙂 '.repeat(200)}desired[marker] ${'🙂 '.repeat(200)}</p>`
+    const excerpt = matchingSearchExcerpt(render, '"desired[marker]"')!
+    expect(excerpt).toContain('desired[marker]')
+    expect(excerpt.length).toBeLessThanOrEqual(320)
+    expect(excerpt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u)
   })
 })

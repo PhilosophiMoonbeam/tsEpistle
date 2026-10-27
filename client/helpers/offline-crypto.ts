@@ -161,7 +161,8 @@ const canonicalPayload = (payload: OfflineDraftPayloadV1): OfflineDraftPayloadV1
   state: payload.state,
   title: payload.title,
   description: payload.description,
-  content: payload.content
+  content: payload.content,
+  ...(payload.changeReason === undefined ? {} : { changeReason: payload.changeReason })
 })
 
 const parsePayload = (payload: OfflineDraftPayloadV1): OfflineDraftPayloadV1 => {
