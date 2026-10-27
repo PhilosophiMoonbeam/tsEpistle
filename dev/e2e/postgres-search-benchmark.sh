@@ -1,27 +1,66 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../ci/docker-resources.sh"
+
+namespace=${WIKI_TEST_NAMESPACE:-tsepistle-ci-postgres-search-${$}-${RANDOM}}
+if [[ ! "$namespace" =~ ^tsepistle-ci-[a-z0-9][a-z0-9-]*$ ]]; then
+  echo 'WIKI_TEST_NAMESPACE must be a Docker-safe tsepistle-ci- namespace.' >&2
+  exit 1
+fi
 
 POSTGRES_SEARCH_TEST_IMAGE=${POSTGRES_SEARCH_TEST_IMAGE:-postgres:17-alpine}
-container="wiki-postgres-search-benchmark-${$}"
+container="${namespace}-postgres-search-db"
 requested_port=${POSTGRES_SEARCH_POSTGRES_PORT:-0}
 report=${POSTGRES_SEARCH_BENCHMARK_FILE:-postgres-search-benchmark.json}
+if docker container inspect "$container" >/dev/null 2>&1; then
+  echo "Docker namespace $namespace is already in use." >&2
+  exit 1
+fi
+umask 077
+work=$(mktemp -d "${TMPDIR:-/tmp}/tsepistle-postgres-search.XXXXXX")
+cidfile="$work/container-id"
 
 cleanup() {
-  docker rm -f "$container" >/dev/null 2>&1 || true
+  local status=$? container_id='' cleanup_failed=false
+  trap - EXIT HUP INT TERM
+  # Docker writes this exclusive CID file after create, even when start fails.
+  # A name collision must never authorize removing another run's container.
+  if [[ -f "$cidfile" ]]; then
+    read -r container_id < "$cidfile" || true
+    if [[ "$container_id" =~ ^[a-f0-9]{64}$ ]]; then
+      if ! docker rm -f -v "$container_id" >/dev/null 2>&1; then
+        echo "Could not remove owned PostgreSQL $container_id; retry using $cidfile." >&2
+        status=1
+        cleanup_failed=true
+      fi
+    else
+      echo 'Invalid owned PostgreSQL container ID; cleanup was not attempted.' >&2
+      status=1
+      cleanup_failed=true
+    fi
+  fi
+  if [[ "$cleanup_failed" = false ]]; then rm -rf -- "$work"; fi
+  exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cleanup
 
-docker run -d --name "$container" -p "127.0.0.1:${requested_port}:5432" \
+docker run -d "${ci_postgres_docker_args[@]}" --cidfile "$cidfile" \
+  --label "org.tsepistle.ci.owner=$namespace" --name "$container" -p "127.0.0.1:${requested_port}:5432" \
   -e POSTGRES_PASSWORD='Password123!' \
   -e POSTGRES_USER=wiki \
   -e POSTGRES_DB=wiki_postgres_search_benchmark \
   "$POSTGRES_SEARCH_TEST_IMAGE" >/dev/null
-port=$(docker port "$container" 5432/tcp | cut -d: -f2)
+container_id=$(< "$cidfile")
+if [[ ! "$container_id" =~ ^[a-f0-9]{64}$ ]]; then
+  echo 'Docker did not return a valid owned PostgreSQL container ID.' >&2
+  exit 1
+fi
+port=$(docker port "$container_id" 5432/tcp | cut -d: -f2)
 for attempt in {1..90}; do
-  if docker exec "$container" psql --username=wiki --dbname=wiki_postgres_search_benchmark --command='SELECT 1' >/dev/null 2>&1; then
+  if docker exec "$container_id" psql --username=wiki --dbname=wiki_postgres_search_benchmark --command='SELECT 1' >/dev/null 2>&1; then
     break
   fi
   if [ "$attempt" -eq 90 ]; then

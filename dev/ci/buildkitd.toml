@@ -1,0 +1,23 @@
+# Reuse the owned local-CI builder without the host-sized default cache budget.
+# GC targets do not limit in-flight build data. Existing builders are unchanged.
+[worker.oci]
+  gc = true
+  reservedSpace = "5GB"
+  maxUsedSpace = "20GB"
+  minFreeSpace = "40GB"
+
+[[worker.oci.gcpolicy]]
+  filters = ["type==source.local", "type==exec.cachemount", "type==source.git.checkout"]
+  keepDuration = "48h"
+  maxUsedSpace = "2GB"
+
+[[worker.oci.gcpolicy]]
+  keepDuration = "336h"
+  reservedSpace = "5GB"
+  maxUsedSpace = "20GB"
+
+[[worker.oci.gcpolicy]]
+  all = true
+  reservedSpace = "5GB"
+  maxUsedSpace = "20GB"
+  minFreeSpace = "40GB"

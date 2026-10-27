@@ -143,6 +143,8 @@ async function ensureBuilder(namespace: string, unit: string): Promise<void> {
       builder,
       '--driver',
       'docker-container',
+      '--buildkitd-config',
+      path.join(root, 'dev/ci/buildkitd.toml'),
       '--driver-opt',
       'memory=8g',
       '--driver-opt',
