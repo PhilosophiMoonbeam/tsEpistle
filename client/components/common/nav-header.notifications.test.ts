@@ -7,6 +7,8 @@ import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mt
 
 import { translateEnglish } from '../../test/english-translate.mts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
+import * as pageActionEvents from '../../helpers/page-action-events.ts'
+import type { ReaderPageActionsState, ReaderPageActionRequest } from '../../helpers/page-action-events.ts'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
 import type { Component } from 'vue'
 import { installVuetifyFixture } from '../../test/vuetify-fixture.mts'
@@ -335,6 +337,10 @@ const bundle = await Bun.build({
         build.onResolve({ filter: /^\.\.\/\.\.\/helpers\/offline-sync-status\.ts$/ }, () => ({
           path: path.resolve(path.dirname(componentPath), '../../helpers/offline-sync-status.ts')
         }))
+        build.onResolve({ filter: /^\.\.\/\.\.\/helpers\/page-action-events$/ }, () => ({
+          path: 'page-action-events',
+          external: true
+        }))
         build.onResolve({ filter: /^.*$/ }, args => ({ path: args.path, namespace: 'header-notifications-stub' }))
         build.onLoad({ filter: /.*/, namespace: 'header-notifications-stub' }, args => {
           if (args.path === '@/store/index.ts') {
@@ -394,13 +400,6 @@ const bundle = await Bun.build({
           if (args.path === '../../store/agents.ts') {
             return { contents: 'export const useAgentsStore = () => ({ destroyWorkspace: globalThis.__headerDestroyAgents })', loader: 'js' }
           }
-          if (args.path.endsWith('/page-action-events')) {
-            return {
-              contents:
-                'export const onPageConvert=()=>{}; export const onPageDelete=()=>{}; export const onPageDuplicate=()=>{}; export const onPageEdit=()=>{}; export const onPageHistory=()=>{}; export const onPageMove=()=>{}; export const onPageSource=()=>{}; export const offPageConvert=()=>{}; export const offPageDelete=()=>{}; export const offPageDuplicate=()=>{}; export const offPageEdit=()=>{}; export const offPageHistory=()=>{}; export const offPageMove=()=>{}; export const offPageSource=()=>{}',
-              loader: 'js'
-            }
-          }
           if (args.path.endsWith('/search-navigation-events')) {
             return {
               contents:
@@ -439,6 +438,7 @@ moduleFactory(
   compiledModule.exports,
   specifier => {
     if (specifier === 'vue') return VueRuntime
+    if (specifier === 'page-action-events') return pageActionEvents
     throw new Error(`Unexpected import in nav-header.vue: ${specifier}`)
   },
   compiledModule,
@@ -454,8 +454,10 @@ interface HeaderVm {
   accountMenuVisibilityChanged: (open: boolean) => void
   setAccountTooltip: (open: boolean) => void
   accountTooltipOpen: boolean
-  applyNavHeaderTitleFit: () => void
-  navHeaderTitleFitScale: number
+  pageActionsVisibilityChanged: (open: boolean, menuRef: 'pageActions' | 'mobilePageActions') => Promise<void>
+  runPageMenuAction: (handler: string, menuRef: 'pageActions' | 'mobilePageActions') => Promise<void>
+  pageActionsAreOpen: boolean
+  mobilePageActionsAreOpen: boolean
 }
 
 const mountedApps: Array<() => void> = []
@@ -518,6 +520,10 @@ afterEach(() => {
   wikiStore.site.title = 'Wiki'
   wikiStore.site.search = ''
   wikiStore.user = user(1)
+  Object.assign(wikiStore.page, { path: 'home', mode: 'view', locale: 'en', visibility: 'public', id: 1, sourceRevision: '' })
+  Object.assign(wikiStore.page.effectivePermissions.pages, { write: false, manage: false, delete: false })
+  wikiStore.page.effectivePermissions.source.read = false
+  wikiStore.page.effectivePermissions.history.read = false
   wikiStore.authRefreshPending = false
   wikiStore.authRefreshSettled = true
   wikiStore.authRefreshOutcome = 'authenticated'
@@ -577,146 +583,6 @@ describe('search header affordances', () => {
   })
 })
 
-describe('workspace title responsiveness', () => {
-  // JSDOM has no text layout. Model only the browser's measured widths, leaving
-  // the component to choose the scale and restore its word-breaking behavior.
-  const titleGeometry = (host: HTMLElement) => {
-    const box = host.querySelector<HTMLElement>('.nav-header-title-stacked')!
-    const geometry = { width: 100, naturalWidth: 120, overflowReads: 0 }
-    box.style.fontSize = '13px'
-    Object.defineProperties(box, {
-      clientWidth: { get: () => geometry.width },
-      clientHeight: { get: () => 48 },
-      scrollHeight: { get: () => 48 }
-    })
-    box.getBoundingClientRect = () => new browserWindow.DOMRect(
-      0, 0, geometry.width,
-      (Number(box.style.getPropertyValue('--nav-header-title-fit')) || 1) * 32
-    )
-    for (const line of box.querySelectorAll<HTMLElement>('.nav-header-title-line')) {
-      Object.defineProperties(line, {
-        clientWidth: { get: () => geometry.width },
-        scrollWidth: {
-          get: () => {
-            geometry.overflowReads += 1
-            return geometry.naturalWidth * (Number(box.style.getPropertyValue('--nav-header-title-fit')) || 1)
-          }
-        },
-        clientHeight: { get: () => 24 },
-        scrollHeight: { get: () => 24 }
-      })
-    }
-    return { box, geometry }
-  }
-
-  it.each([1, 0.92, 0.84, 0.76, 0.7])('keeps the largest fitting title scale (%s) without repeating unchanged layout walks', async expectedScale => {
-    const mounted = await mountHeader({ smAndDown: true })
-    const { box, geometry } = titleGeometry(mounted.host)
-    geometry.naturalWidth = 100 / expectedScale
-
-    mounted.vm.applyNavHeaderTitleFit()
-
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(expectedScale)
-    expect(box.style.getPropertyValue('--nav-header-title-fit')).toBe(expectedScale.toFixed(3))
-    expect(box.classList.contains('is-measuring')).toBe(false)
-    const reads = geometry.overflowReads
-    mounted.vm.applyNavHeaderTitleFit()
-    mounted.vm.applyNavHeaderTitleFit()
-    expect(geometry.overflowReads).toBe(reads)
-  })
-
-  it('refits changed width, title and typography while keeping minimum-scale word breaking', async () => {
-    const mounted = await mountHeader({ smAndDown: true })
-    const { box, geometry } = titleGeometry(mounted.host)
-    geometry.naturalWidth = 300
-    mounted.vm.applyNavHeaderTitleFit()
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
-    expect(box.classList.contains('is-measuring')).toBe(false)
-
-    geometry.width = 320
-    mounted.vm.applyNavHeaderTitleFit()
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(1)
-
-    geometry.naturalWidth = 400
-    wikiStore.site.title = 'Longer workspace'
-    await settle()
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.76)
-
-    geometry.naturalWidth = 500
-    box.style.fontFamily = 'Updated Heading'
-    mounted.vm.applyNavHeaderTitleFit()
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
-
-    geometry.width = 0
-    mounted.vm.applyNavHeaderTitleFit()
-    await settle()
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(1)
-    geometry.width = 320
-    mounted.vm.applyNavHeaderTitleFit()
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
-  })
-
-  it('shares an unchanged font-ready fit but refits after a subsequent font load', async () => {
-    const previousFonts = Object.getOwnPropertyDescriptor(browserWindow.document, 'fonts')
-    const { promise: ready, resolve: resolveReady } = Promise.withResolvers<void>()
-    const fonts = Object.assign(new browserWindow.EventTarget(), {
-      status: 'loaded',
-      ready
-    })
-    Object.defineProperty(browserWindow.document, 'fonts', { configurable: true, value: fonts })
-    browserGlobalRestorations.push(() => {
-      if (previousFonts) Object.defineProperty(browserWindow.document, 'fonts', previousFonts)
-      else Reflect.deleteProperty(browserWindow.document, 'fonts')
-    })
-    const mounted = await mountHeader({ smAndDown: true })
-    const { geometry } = titleGeometry(mounted.host)
-    mounted.vm.applyNavHeaderTitleFit()
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.84)
-    const reads = geometry.overflowReads
-
-    resolveReady()
-    await settle()
-    fonts.dispatchEvent(new browserWindow.Event('loadingdone'))
-    expect(geometry.overflowReads).toBe(reads)
-
-    fonts.status = 'loading'
-    fonts.dispatchEvent(new browserWindow.Event('loading'))
-    geometry.naturalWidth = 140
-    fonts.status = 'loaded'
-    fonts.dispatchEvent(new browserWindow.Event('loadingdone'))
-    expect(mounted.vm.navHeaderTitleFitScale).toBe(0.7)
-    expect(geometry.overflowReads).toBeGreaterThan(reads)
-  })
-
-  it('splits multi-word workspace titles onto two balanced lines for the stacked small-screen variant', async () => {
-    wikiStore.site.title = `Tim O'Pedia`
-    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
-
-    const stacked = mounted.host.querySelector('.nav-header-title-stacked')
-    expect(stacked).not.toBeNull()
-    expect([...stacked!.querySelectorAll('.nav-header-title-line')].map(line => line.textContent)).toEqual(['Tim', `O'Pedia`])
-    expect(stacked?.querySelectorAll('.nav-header-title-line').length).toBe(2)
-    expect(mounted.host.querySelector('.nav-header-title-single')?.textContent).toBe(`Tim O'Pedia`)
-  })
-
-  it('keeps a single-word title whole in the stacked variant', async () => {
-    wikiStore.site.title = 'Encyclopedia'
-    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
-
-    expect(mounted.host.querySelector('.nav-header-title-stacked')?.textContent).toBe('Encyclopedia')
-    expect(mounted.host.querySelector('.nav-header-title-stacked')?.querySelectorAll('.nav-header-title-line').length).toBe(1)
-  })
-
-  it('renders one balanced split for four-word titles by minimizing the longest line', async () => {
-    wikiStore.site.title = 'Wiki Knowledge Base Portal'
-    const mounted = await mountHeader({ hideSearch: true, smAndDown: true })
-
-    expect([...mounted.host.querySelectorAll('.nav-header-title-stacked .nav-header-title-line')].map(line => line.textContent)).toEqual([
-      'Wiki Knowledge',
-      'Base Portal'
-    ])
-  })
-})
 
 describe('notification header identity recovery', () => {
   it('recovers an A-to-B shared-cookie identity without displaying stale items or retrying while stale', async () => {
@@ -1087,5 +953,77 @@ describe('account continuity without a verified connection', () => {
     Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
     await settle()
     expect(calls.filter(call => call.kind === 'refreshAuth')).toHaveLength(1)
+  })
+})
+
+describe('reader-owned header page actions', () => {
+  const readerState = (): ReaderPageActionsState => ({
+    page: {
+      pageId: wikiStore.page.id,
+      locale: wikiStore.page.locale,
+      path: wikiStore.page.path,
+      visibility: wikiStore.page.visibility,
+      sourceRevision: wikiStore.page.sourceRevision
+    },
+    ready: true,
+    actions: {
+      print: { visible: true, enabled: true },
+      fullWidth: { visible: true, enabled: true, active: false },
+      watch: { visible: true, enabled: true },
+      watchSettings: { visible: false, enabled: true },
+      approval: { visible: true, enabled: true },
+      protection: { visible: true, enabled: true }
+    }
+  })
+
+
+  it.each([false, true])('closes before dispatch and refuses disabled, changed-page and retired reader commands (mobile: %s)', async mobile => {
+    const state = VueRuntime.reactive(readerState())
+    const reply = (request: pageActionEvents.ReaderPageActionsRequest) => request.reply(state)
+    const received: ReaderPageActionRequest[] = []
+    const receive = (request: ReaderPageActionRequest) => received.push(request)
+    const menuRef = mobile ? 'mobilePageActions' : 'pageActions'
+    pageActionEvents.onReaderPageActionsRequest(reply)
+    pageActionEvents.onReaderPageAction(receive)
+    try {
+      const { host, vm } = await mountHeader({ smAndDown: mobile })
+      await vm.pageActionsVisibilityChanged(true, menuRef)
+      await vm.runPageMenuAction('print', menuRef)
+      expect(vm.pageActionsAreOpen).toBe(false)
+      expect(vm.mobilePageActionsAreOpen).toBe(false)
+      expect(received.map(request => request.action)).toEqual(['print'])
+      expect(received[0]?.page).toEqual(state.page)
+
+      state.actions.print!.enabled = false
+      state.actions.print!.blockedReason = 'Unlock the current page before printing.'
+      pageActionEvents.emitReaderPageActionsChanged()
+      await settle()
+      expect(host.querySelector('[aria-disabled="true"]')?.textContent).toContain('Unlock the current page')
+      await vm.pageActionsVisibilityChanged(true, menuRef)
+      await vm.runPageMenuAction('print', menuRef)
+      expect(received).toHaveLength(1)
+
+      state.actions.print!.enabled = true
+      pageActionEvents.emitReaderPageActionsChanged()
+      await vm.pageActionsVisibilityChanged(true, menuRef)
+      const pending = vm.runPageMenuAction('print', menuRef)
+      wikiStore.page.sourceRevision = 'different-revision'
+      await pending
+      expect(received).toHaveLength(1)
+
+      // Even a responding old component cannot supply authority for a new page.
+      expect(pageActionEvents.getReaderPageActions({ ...state.page, path: 'different-page' })).toBeNull()
+      wikiStore.page.sourceRevision = state.page.sourceRevision
+      pageActionEvents.offReaderPageActionsRequest(reply)
+      pageActionEvents.emitReaderPageActionsChanged()
+      await settle()
+      expect(host.querySelector('.page-actions-menu')).toBeNull()
+      pageActionEvents.emitReaderPageAction({ page: state.page, action: 'print', returnFocusTo: null })
+      expect(received).toHaveLength(1)
+    } finally {
+      pageActionEvents.offReaderPageActionsRequest(reply)
+      pageActionEvents.offReaderPageAction(receive)
+      pageActionEvents.emitReaderPageActionsChanged()
+    }
   })
 })

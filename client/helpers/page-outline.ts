@@ -291,6 +291,7 @@ function readingCoverage(unit: ReadingUnit): number {
 function createReadingProgress(container: HTMLElement, options: PageReadingProgressOptions) {
   let scope: PageReadingProgressScope | null = null
   let scopeIdentity = ''
+  let storageKey = ''
   let sections: ReadingSection[] = []
   let fingerprint = ''
   let loaded = false
@@ -336,7 +337,6 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
     lastPublished = serialized
     options.onChange(state)
   }
-  const key = (): string => `wiki:reading-mastery:${scope!.pageId}`
   const decode = (raw: string | null): ReadingRecord | null => {
     if (!raw || raw.length > 1_000_000) return null
     try {
@@ -377,7 +377,7 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
   const readRecord = (): ReadingRecord | null => {
     if (!scope || !storageAvailable) return null
     try {
-      return decode(window.localStorage.getItem(key()))
+      return decode(window.localStorage.getItem(storageKey))
     } catch {
       storageAvailable = false
       return null
@@ -403,7 +403,7 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
       }))
     }
     try {
-      window.localStorage.setItem(key(), JSON.stringify(record))
+      window.localStorage.setItem(storageKey, JSON.stringify(record))
       changed = false
     } catch {
       // Denied storage/quota must never interfere with in-memory reading.
@@ -466,6 +466,9 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
     deliberatelyOpen = new WeakMap()
     scope = valid && next ? { ...next, reader: { ...next.reader } } : null
     scopeIdentity = identity
+    // The serialized tuple is unambiguous across every scope dimension; a
+    // page-only key would let another rightful reader overwrite this record.
+    storageKey = identity ? `wiki:reading-mastery:${identity}` : ''
     publish()
   }
   const measure = (headings: ReadingHeading[], articleTop: number, articleBottom: number): void => {
@@ -555,7 +558,7 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
     if (target instanceof HTMLDetailsElement && !target.open) deliberatelyOpen.delete(target)
   }
   const onStorage = (event: StorageEvent): void => {
-    if (!scope || !loaded || (event.key !== key() && event.key !== null)) return
+    if (!scope || !loaded || (event.key !== storageKey && event.key !== null)) return
     if (event.storageArea && storageAvailable) {
       try {
         if (event.storageArea !== window.localStorage) return

@@ -1870,7 +1870,8 @@ export default defineComponent({
   overflow-y: hidden;
   position: fixed;
   text-align: center;
-  width: 100%;
+  width: min(100%, 100vw);
+  max-width: 100vw;
   z-index: 1006;
 
   @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
@@ -1908,6 +1909,7 @@ export default defineComponent({
     box-sizing: border-box;
     margin: 0 auto;
     max-width: 68rem;
+    min-width: 0;
     padding: 0 clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6)) max(clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)), env(safe-area-inset-bottom, 0px));
     width: 100%;
 
@@ -1953,6 +1955,8 @@ export default defineComponent({
     flex-direction: column;
     margin-inline: auto;
     min-height: 0;
+    min-width: 0;
+    width: 100%;
     // The overlay owns the single scroller, including filters at large text sizes.
     overflow: clip;
     border: 1px solid var(--wiki-surface-border-strong);
@@ -1970,6 +1974,8 @@ export default defineComponent({
     gap: var(--wiki-space-2);
     box-sizing: border-box;
     min-height: 40px;
+    min-width: 0;
+    max-width: 100%;
     padding: 3px var(--wiki-space-3);
     overflow-x: auto;
     overscroll-behavior-inline: contain;
@@ -2327,9 +2333,7 @@ export default defineComponent({
     &-container { padding-inline: var(--wiki-space-2); }
     &-container--ask { padding: 0; }
     &-scope { gap: var(--wiki-space-2); padding-inline: var(--wiki-space-3); }
-    &-scope-actions .v-btn,
-    &-filter-actions .v-btn,
-    &-close { min-height: 2.75rem; }
+    &-scope .v-btn { min-height: 2.75rem; }
     &-content { padding: var(--wiki-space-3); }
   }
 

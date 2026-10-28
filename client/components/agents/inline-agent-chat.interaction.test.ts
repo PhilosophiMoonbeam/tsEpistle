@@ -3029,7 +3029,7 @@ describe('Inline Agent panel semantics', () => {
     })
   }
 
-  it('keeps surviving editable panel content focused across the compact-header breakpoint', async () => {
+  it('keeps surviving editable panel content focused across header and modal boundaries', async () => {
     const state = loadGoalLockState(null)
     const mounted = mountInlineAgent(state, { viewportWidth: 759 })
     await settle()
@@ -3042,13 +3042,13 @@ describe('Inline Agent panel semantics', () => {
     vi.spyOn(draft, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
     draft.focus()
     draft.setSelectionRange(5, 12)
-    for (const width of [760, 759]) {
+    for (const width of [760, 1024, 1600, 759]) {
       resizeViewport?.(width)
       await settle()
       expect(document.activeElement).toBe(draft)
       expect(draft.value).toBe('Unsent working memory note')
       expect([draft.selectionStart, draft.selectionEnd]).toEqual([5, 12])
-      expect(panel.getAttribute('role')).toBe('dialog')
+      expect(panel.getAttribute('role')).toBe(width < 1024 ? 'dialog' : 'complementary')
     }
   })
 

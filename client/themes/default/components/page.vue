@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive }]')
+  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive, "wiki-page--full-width": readerFullWidth }]')
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
     glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', v-slot='{ glossary }')
       nav-header(reserve-actions, :before-search-exit='glossary.canLeave')
@@ -51,10 +51,10 @@
         v-show='readerSectionsOpen'
         role='dialog'
         aria-modal='false'
-        :aria-label='$t(`common:page.chooseSection`)'
+        aria-labelledby='page-reading-sections-title'
       )
         .page-reading-sections-header
-          span {{$t('common:page.chooseSection')}}
+          h2#page-reading-sections-title {{$t('common:page.chooseSection')}} · {{tocFlattened.length}}
           v-btn(icon, variant='text', size='small', :aria-label='$t(`common:actions.close`)', @click='closeReaderSections(true)')
             v-icon(aria-hidden='true') mdi-close
     v-navigation-drawer(
@@ -316,54 +316,20 @@
                       v-icon mdi-bell-outline
                   span {{$t('common:page.watchPage')}}
                   span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
-                v-menu(v-if='isAuthenticated && pageWatched', :location='isTocMobile ? "top end" : `bottom`', :close-on-content-click='false', min-width='260')
-                  template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(v-bind='utilityTooltipProps(`watching`)')
-                      template(v-slot:activator='{ props: tooltipProps }')
-                        v-btn.page-watch-control.page-watch-control--watching(
-                          icon
-                          rounded='lg'
-                          size='small'
-                          variant='text'
-                          v-bind='mergeProps(menuProps, tooltipProps)'
-                          :loading='pageWatchLoading'
-                          :aria-label='$t(`common:page.watchingPage`)'
-                        )
-                          v-icon mdi-bell-ring
-                      span {{$t('common:page.watchingPage')}}
-                  v-card.page-watch-settings
-                    v-card-title.text-body-large {{$t('common:page.watchSettings')}}
-                    v-card-text
-                      v-switch(
-                        :model-value='pageWatchEmailEnabled'
-                        :label='$t(`common:page.emailNotifications`)'
-                        color='primary'
-                        density='compact'
-                        hide-details
-                        :disabled='pageWatchLoading || !pageWatchActionReady'
-                        :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
-                        @update:model-value='setPageWatchDelivery(`pageWatchEmailEnabled`, $event)'
-                      )
-                      v-switch(
-                        :model-value='pageWatchInAppEnabled'
-                        :label='$t(`common:page.inAppNotifications`)'
-                        color='primary'
-                        density='compact'
-                        hide-details
-                        :disabled='pageWatchLoading || !pageWatchActionReady'
-                        :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
-                        @update:model-value='setPageWatchDelivery(`pageWatchInAppEnabled`, $event)'
-                      )
-                      p.page-tool-helper#page-watch-settings-reason(v-if='pageWatchBlockedReason', role='status') {{ pageWatchBlockedReason }}
-                    v-card-actions
-                      v-btn.page-watch-stop(
-                        variant='text'
-                        prepend-icon='mdi-bell-off-outline'
-                        :loading='pageWatchLoading'
-                        :aria-disabled='pageWatchBlockedReason ? `true` : undefined'
-                        :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
-                        @click='togglePageWatch'
-                      ) {{$t('common:page.stopWatchingPage')}}
+                v-tooltip(v-bind='utilityTooltipProps(`watching`)', v-if='isAuthenticated && pageWatched')
+                  template(v-slot:activator='{ props }')
+                    v-btn.page-watch-control.page-watch-control--watching(
+                      icon
+                      rounded='lg'
+                      size='small'
+                      variant='text'
+                      v-bind='props'
+                      :loading='pageWatchLoading'
+                      :aria-label='$t(`common:page.watchingPage`)'
+                      @click='openPageWatchSettings'
+                    )
+                      v-icon mdi-bell-ring
+                  span {{$t('common:page.watchingPage')}}
 
                 v-tooltip(v-bind='utilityTooltipProps(`approval`)', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
@@ -494,7 +460,7 @@
                     span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
                     span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
                     v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
-                .page-toc-heading(v-else)
+                .page-toc-heading(v-else-if='!readerSectionsOpen')
                   span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
                   span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
                   span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
@@ -592,10 +558,54 @@
     nav-footer
     notify
     v-dialog(
+      v-model='pageWatchSettingsOpen'
+      max-width='380'
+      aria-labelledby='page-watch-settings-title'
+      @after-leave='restoreReaderActionFocus'
+    )
+      v-card.page-watch-settings
+        v-toolbar(color='surface', class='border-b', flat)
+          v-toolbar-title.text-title-medium#page-watch-settings-title(tag='h2') {{$t('common:page.watchSettings')}}
+          v-spacer
+          v-btn(icon, @click='pageWatchSettingsOpen = false', :aria-label='$t(`common:actions.close`)')
+            v-icon(aria-hidden='true') mdi-close
+        v-card-text
+          v-switch(
+            :model-value='pageWatchEmailEnabled'
+            :label='$t(`common:page.emailNotifications`)'
+            color='primary'
+            density='compact'
+            hide-details
+            :disabled='pageWatchLoading || !pageWatchActionReady'
+            :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
+            @update:model-value='setPageWatchDelivery(`pageWatchEmailEnabled`, $event)'
+          )
+          v-switch(
+            :model-value='pageWatchInAppEnabled'
+            :label='$t(`common:page.inAppNotifications`)'
+            color='primary'
+            density='compact'
+            hide-details
+            :disabled='pageWatchLoading || !pageWatchActionReady'
+            :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
+            @update:model-value='setPageWatchDelivery(`pageWatchInAppEnabled`, $event)'
+          )
+          p.page-tool-helper#page-watch-settings-reason(v-if='pageWatchBlockedReason', role='status') {{ pageWatchBlockedReason }}
+        v-card-actions
+          v-btn.page-watch-stop(
+            variant='text'
+            prepend-icon='mdi-bell-off-outline'
+            :loading='pageWatchLoading'
+            :aria-disabled='pageWatchBlockedReason ? `true` : undefined'
+            :aria-describedby='pageWatchBlockedReason ? `page-watch-settings-reason` : undefined'
+            @click='togglePageWatch'
+          ) {{$t('common:page.stopWatchingPage')}}
+    v-dialog(
       v-model='protectionDialog'
       :fullscreen='$vuetify.display.smAndDown'
       max-width='560'
       aria-labelledby='page-protection-title'
+      @after-leave='restoreReaderActionFocus'
     )
       v-card
         v-toolbar(color='surface', class='border-b', flat)
@@ -674,6 +684,7 @@
       max-width='680'
       scrollable
       aria-labelledby='page-approval-title'
+      @after-leave='restoreReaderActionFocus'
     )
       v-card
         v-toolbar(color='surface', class='border-b', flat)
@@ -901,7 +912,17 @@ import {
   emitPageEdit,
   emitPageHistory,
   emitPageMove,
-  emitPageSource
+  emitPageSource,
+  emitReaderPageActionsChanged,
+  offReaderPageAction,
+  offReaderPageActionsRequest,
+  onReaderPageAction,
+  onReaderPageActionsRequest,
+  sameReaderPageIdentity,
+  type ReaderPageActionRequest,
+  type ReaderPageActionsRequest,
+  type ReaderPageActionsState,
+  type ReaderPageIdentity
 } from '../../../helpers/page-action-events'
 import {
   brandingDuplicatesSiteLogo,
@@ -1478,6 +1499,7 @@ export default defineComponent({
     return {
       goTo: useGoTo(),
       readerContentRoot: shallowRef<HTMLElement | null>(null),
+      readerActionReturnFocus: shallowRef<HTMLElement | null>(null),
       offlineStorage: shallowRef<OfflineStorage | null>(null),
       offlineSyncService: inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
     }
@@ -1630,6 +1652,9 @@ export default defineComponent({
       preSearchCollapsedByUser: null as Set<string> | null,
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
+      readerFullWidth: false,
+      readerActionReturnPage: null as ReaderPageIdentity | null,
+      pageWatchSettingsOpen: false,
       readerSectionsOpen: false,
       readingProgress: 0,
       activeAnchor: '',
@@ -1735,6 +1760,49 @@ export default defineComponent({
     }
   },
   computed: {
+    readerPageIdentity (): ReaderPageIdentity {
+      return { pageId: this.pageId, locale: this.locale, path: this.path, visibility: this.visibility, sourceRevision: this.sourceRevision }
+    },
+    readerPageActionsState (): ReaderPageActionsState {
+      const page = this.readerPageIdentity
+      const current = wikiStore.page
+      const ready = !this.navigationPending && !this.offlineDisposed &&
+        page.pageId > 0 && page.sourceRevision.length > 0 &&
+        current.mode === 'view' && current.id === page.pageId && current.locale === page.locale &&
+        current.path === page.path && current.visibility === page.visibility && current.sourceRevision === page.sourceRevision
+      const canManage = this.isAuthenticated && (this.hasWritePagesPermission || this.hasManagePagesPermission || this.hasAdminPermission)
+      return {
+        page,
+        ready,
+        actions: {
+          print: { visible: true, enabled: true, active: this.printView },
+          fullWidth: { visible: !this.talkActive && !this.linksActive, enabled: true, active: this.readerFullWidth },
+          watch: {
+            visible: this.isAuthenticated && !this.pageWatched,
+            enabled: this.pageWatchActionReady && !this.pageWatchLoading,
+            blockedReason: this.pageWatchBlockedReason
+          },
+          watchSettings: {
+            visible: this.isAuthenticated && this.pageWatched,
+            enabled: this.pageWatchActionReady && !this.pageWatchLoading,
+            active: this.pageWatched,
+            blockedReason: this.pageWatchBlockedReason
+          },
+          approval: {
+            visible: canManage,
+            enabled: this.pageOnlineActionReady && !this.approvalLoading && !this.approvalInitialLoading,
+            active: Boolean(this.pageApproval),
+            blockedReason: this.pageOnlineActionUnavailableReason
+          },
+          protection: {
+            visible: canManage,
+            enabled: this.pageOnlineActionReady && !this.protectionLoading && !this.protectionInitialLoading,
+            active: this.pageProtection.protected,
+            blockedReason: this.pageProtectionBlockedReason
+          }
+        }
+      }
+    },
     navigationOpen: {
       get (): boolean { return (this.talkActive || this.linksActive || !this.readerFocus) && this.navShown },
       set (value: boolean) { if (!this.readerFocus || this.talkActive || this.linksActive) this.navShown = value }
@@ -2129,6 +2197,13 @@ export default defineComponent({
     }
   },
   watch: {
+    readerPageActionsState: {
+      deep: true,
+      handler () { emitReaderPageActionsChanged() }
+    },
+    pageWatched (watched: boolean) {
+      if (!watched) this.pageWatchSettingsOpen = false
+    },
     selectedPageView: {
       immediate: true,
       handler(value: string) {
@@ -2261,6 +2336,9 @@ export default defineComponent({
     })
   },
   mounted () {
+    onReaderPageActionsRequest(this.provideReaderPageActions)
+    onReaderPageAction(this.runReaderPageAction)
+    emitReaderPageActionsChanged()
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       this.scrollOpts.duration = 0
     }
@@ -2348,7 +2426,12 @@ export default defineComponent({
     }
   },
   beforeUnmount () {
+    offReaderPageActionsRequest(this.provideReaderPageActions)
+    offReaderPageAction(this.runReaderPageAction)
     this.offlineDisposed = true
+    this.readerActionReturnFocus = null
+    this.readerActionReturnPage = null
+    emitReaderPageActionsChanged()
     this.annotationJumpUnsubscribe?.()
     if (this.approvalReviewerTimer !== null) clearTimeout(this.approvalReviewerTimer)
     this.pageActionGeneration += 1
@@ -2414,6 +2497,41 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
+    provideReaderPageActions (request: ReaderPageActionsRequest): void {
+      if (sameReaderPageIdentity(request.page, this.readerPageIdentity)) request.reply(this.readerPageActionsState)
+    },
+    runReaderPageAction (request: ReaderPageActionRequest): void {
+      const state = this.readerPageActionsState
+      const action = state.actions[request.action]
+      if (!state.ready || !sameReaderPageIdentity(request.page, state.page) || !action?.visible || !action.enabled) return
+      if (request.action === 'print') { this.print(); return }
+      if (request.action === 'fullWidth') { this.readerFullWidth = !this.readerFullWidth; return }
+      if (request.action === 'watch') { void this.togglePageWatch(); return }
+      this.readerActionReturnFocus = request.returnFocusTo
+      this.readerActionReturnPage = state.page
+      if (request.action === 'watchSettings') this.openPageWatchSettings()
+      else if (request.action === 'approval') this.openApprovalWorkflow()
+      else if (request.action === 'protection') this.openPageProtection()
+    },
+    openPageWatchSettings (event?: MouseEvent): void {
+      if (!this.pageWatched) return
+      if (event?.currentTarget instanceof HTMLElement) {
+        this.readerActionReturnFocus = event.currentTarget
+        this.readerActionReturnPage = this.readerPageIdentity
+      }
+      this.pageWatchSettingsOpen = true
+    },
+    restoreReaderActionFocus (): void {
+      if (this.pageWatchSettingsOpen || this.approvalDialog || this.protectionDialog) return
+      const target = this.readerActionReturnFocus
+      const page = this.readerActionReturnPage
+      this.readerActionReturnFocus = null
+      this.readerActionReturnPage = null
+      if (page && sameReaderPageIdentity(page, this.readerPageIdentity) &&
+        target?.isConnected && target.getClientRects().length > 0 && !target.matches(':disabled,[aria-disabled="true"]')) {
+        target.focus({ preventScroll: true })
+      }
+    },
     tagColor (canonicalTag: string): string {
       return tagColorBucket(canonicalTag)
     },
@@ -3156,6 +3274,10 @@ export default defineComponent({
       else if (action === 'save') await this.updateOfflinePage(true)
     },
     resetPageRouteState(): void {
+      this.readerActionReturnFocus = null
+      this.readerActionReturnPage = null
+      this.pageWatchSettingsOpen = false
+      this.readerFullWidth = false
       this.pageActionGeneration += 1
       this.pageWatchRequestId += 1
       this.protectionRequestId += 1
@@ -6700,6 +6822,8 @@ export default defineComponent({
     flex: 0 0 auto;
   }
 
+  .page-toc-filter .v-field--focused { box-shadow: none; }
+
   .page-toc-list {
     flex: 1 1 auto;
     min-height: 0;
@@ -6720,6 +6844,8 @@ export default defineComponent({
   border-bottom: 1px solid var(--wiki-surface-border);
   color: var(--wiki-accent-ink);
   font-family: var(--wiki-font-display);
+
+  h2 { margin: 0; font: inherit; }
 }
 
 .wiki-page.wiki-page--reading {
@@ -6781,6 +6907,12 @@ export default defineComponent({
 
   .page-main,
   .page-body { background: var(--page-reader-background); }
+}
+
+// A transient view command; it does not change the saved reading measure.
+.wiki-page.wiki-page--full-width {
+  --page-reader-shell-max: var(--page-layout-shell-max);
+  --page-reader-copy-max: 100%;
 }
 
 @media (max-width: 599px) {

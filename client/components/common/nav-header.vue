@@ -183,8 +183,8 @@
 
           //- PAGE ACTIONS
 
-          template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-menu(ref='pageActions', location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
+          template(v-if='desktopPageMenuActions.length && $vuetify.display.mdAndUp')
+            v-menu(ref='pageActions', v-model='pageActionsAreOpen', location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged($event, `pageActions`)')
               template(v-slot:activator='{ props: menuProps }')
                 v-btn(
                   icon
@@ -196,17 +196,20 @@
                   v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.pageActions`)')
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4 {{$t('common:header.currentPage')}}
-                p.nav-header-menu__note(v-if='!onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
-                v-list-item.pl-4(
-                  v-for='action of desktopPageMenuActions'
-                  :key='action.handler'
-                  role='button'
-                  link
-                  :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
-                  @click='runPageMenuAction(action.handler, `pageActions`)'
-                )
-                  template(v-slot:prepend): v-icon(:color='action.handler === `pageDelete` ? `error` : `primary`') {{ action.icon }}
-                  v-list-item-title.text-body-medium {{ $t(`common:header.${action.label}`) }}
+                template(v-for='(action, index) of desktopPageMenuActions', :key='action.handler')
+                  v-divider(v-if='index > 0 && action.group !== desktopPageMenuActions[index - 1].group')
+                  v-list-item.pl-4(
+                    role='button'
+                    link
+                    :class='{ "nav-header-menu-danger": action.group === `destructive` }'
+                    :aria-disabled='!action.enabled ? `true` : undefined'
+                    :aria-pressed='action.active'
+                    :aria-description='action.blockedReason || undefined'
+                    @click='runPageMenuAction(action.handler, `pageActions`)'
+                  )
+                    template(v-slot:prepend): v-icon(:color='action.group === `destructive` ? `error` : `primary`') {{ action.icon }}
+                    v-list-item-title.text-body-medium {{ action.label }}
+                    v-list-item-subtitle(v-if='action.blockedReason') {{ action.blockedReason }}
 
           //- NEW PAGE
 
@@ -237,7 +240,7 @@
             v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)', :aria-disabled='!onlineActionReady ? `true` : undefined')
               v-icon(start) mdi-exit-to-app
               v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:actions.exit`) : onlineActionUnavailableReason')
-          v-menu(ref='mobilePageActions', v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240')
+          v-menu(ref='mobilePageActions', v-model='mobilePageActionsAreOpen', v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240', @update:model-value='pageActionsVisibilityChanged($event, `mobilePageActions`)')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(
                 icon
@@ -247,7 +250,7 @@
                 :data-search-modal-action='$vuetify.display.xs ? `` : undefined'
               )
                 v-icon mdi-dots-vertical
-            v-list.nav-header-menu(nav)
+            v-list.nav-header-menu.page-actions-menu(ref='mobilePageActionsMenu' nav)
               v-list-item(
                 v-if='$vuetify.display.xs && canEnterAgent'
                 role='button'
@@ -272,18 +275,20 @@
                 v-list-item-title {{ $t('common:header.browseTags') }}
               v-divider(v-if='$vuetify.display.xs && !hideSearch && hasMobilePageActions')
               v-list-subheader(v-if='hasMobilePageActions') {{ $t('common:header.pageActions') }}
-              p.nav-header-menu__note(v-if='hasMobilePageActions && !onlineActionReady && onlineActionUnavailableReason') {{ onlineActionUnavailableReason }}
-              v-list-item(
-                v-for='action of mobilePageMenuActions'
-                :key='action.handler'
-                :role='action.handler === `pageDuplicate` ? undefined : `button`'
-                link
-                :class='{ "nav-header-menu-danger": action.handler === `pageDelete` }'
-                :disabled='action.handler === `pageView` ? !readerActionReady : !onlineActionReady'
-                :prepend-icon='action.icon'
-                @click='runPageMenuAction(action.handler, `mobilePageActions`)'
-              )
-                v-list-item-title {{ $t(`common:header.${action.label}`) }}
+              template(v-for='(action, index) of mobilePageMenuActions', :key='action.handler')
+                v-divider(v-if='index > 0 && action.group !== mobilePageMenuActions[index - 1].group')
+                v-list-item(
+                  role='button'
+                  link
+                  :class='{ "nav-header-menu-danger": action.group === `destructive` }'
+                  :aria-disabled='!action.enabled ? `true` : undefined'
+                  :aria-pressed='action.active'
+                  :aria-description='action.blockedReason || undefined'
+                  :prepend-icon='action.icon'
+                  @click='runPageMenuAction(action.handler, `mobilePageActions`)'
+                )
+                  v-list-item-title {{ action.label }}
+                  v-list-item-subtitle(v-if='action.blockedReason') {{ action.blockedReason }}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
               v-list-item(
                 role='button'
@@ -503,6 +508,14 @@ import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session
 import { useAgentsStore } from '../../store/agents.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
 import {
+  emitReaderPageAction,
+  getReaderPageActions,
+  offReaderPageActionsChanged,
+  onReaderPageActionsChanged,
+  sameReaderPageIdentity,
+  type ReaderPageAction,
+  type ReaderPageActionsState,
+  type ReaderPageIdentity,
   offPageConvert,
   offPageDelete,
   offPageDuplicate,
@@ -538,15 +551,33 @@ type PageMoveAcknowledgement = { locale: string, path: string, receipt: MovePage
 
 // Both page menus share order and permission gates; their presentation stays local.
 const PAGE_MENU_ACTIONS = [
-  { handler: 'pageView', label: 'view', icon: 'mdi-file-document-outline', mode: 'view', permission: null },
-  { handler: 'pageEdit', label: 'edit', icon: 'mdi-file-document-edit-outline', mode: 'edit', permission: 'hasWritePagesPermission' },
-  { handler: 'pageHistory', label: 'history', icon: 'mdi-history', mode: 'history', permission: 'hasReadHistoryPermission' },
-  { handler: 'pageSource', label: 'viewSource', icon: 'mdi-code-tags', mode: 'source', permission: 'hasReadSourcePermission' },
-  { handler: 'pageConvert', label: 'convert', icon: 'mdi-lightning-bolt', mode: null, permission: 'hasWritePagesPermission' },
-  { handler: 'pageDuplicate', label: 'duplicate', icon: 'mdi-content-duplicate', mode: null, permission: 'hasWritePagesPermission' },
-  { handler: 'pageMove', label: 'move', icon: 'mdi-content-save-move-outline', mode: null, permission: 'hasManagePagesPermission' },
-  { handler: 'pageDelete', label: 'delete', icon: 'mdi-trash-can-outline', mode: null, permission: 'hasDeletePagesPermission' }
+  { handler: 'pageView', label: 'view', icon: 'mdi-file-document-outline', mode: 'view', permission: null, group: 'read' },
+  { handler: 'pageSource', label: 'viewSource', icon: 'mdi-code-tags', mode: 'source', permission: 'hasReadSourcePermission', group: 'read' },
+  { handler: 'pageHistory', label: 'history', icon: 'mdi-history', mode: 'history', permission: 'hasReadHistoryPermission', group: 'read' },
+  { handler: 'pageEdit', label: 'edit', icon: 'mdi-file-document-edit-outline', mode: 'edit', permission: 'hasWritePagesPermission', group: 'mutation' },
+  { handler: 'pageConvert', label: 'convert', icon: 'mdi-lightning-bolt', mode: null, permission: 'hasWritePagesPermission', group: 'mutation' },
+  { handler: 'pageDuplicate', label: 'duplicate', icon: 'mdi-content-duplicate', mode: null, permission: 'hasWritePagesPermission', group: 'mutation' },
+  { handler: 'pageMove', label: 'move', icon: 'mdi-content-save-move-outline', mode: null, permission: 'hasManagePagesPermission', group: 'mutation' },
+  { handler: 'pageDelete', label: 'delete', icon: 'mdi-trash-can-outline', mode: null, permission: 'hasDeletePagesPermission', group: 'destructive' }
 ] as const
+const READER_PAGE_MENU_ACTIONS = [
+  { handler: 'print', label: 'common:header.print', fallback: 'Print', icon: 'mdi-printer', group: 'read' },
+  { handler: 'fullWidth', label: 'common:header.fullWidth', fallback: 'Full width', icon: 'mdi-arrow-expand-horizontal', group: 'read' },
+  { handler: 'watch', label: 'common:page.watchPage', fallback: 'Watch page', icon: 'mdi-bell-outline', group: 'watch' },
+  { handler: 'watchSettings', label: 'common:page.watchSettings', fallback: 'Watch settings', icon: 'mdi-bell-ring', group: 'watch' },
+  { handler: 'approval', label: 'common:page.approvalWorkflow', fallback: 'Approval workflow', icon: 'mdi-check-decagram-outline', group: 'mutation' },
+  { handler: 'protection', label: 'common:page.pagePasswordProtection', fallback: 'Page password protection', icon: 'mdi-form-textbox-password', group: 'mutation' }
+] as const
+type PageMenuRef = 'pageActions' | 'mobilePageActions'
+type HeaderPageMenuAction = {
+  handler: (typeof PAGE_MENU_ACTIONS)[number]['handler'] | ReaderPageAction
+  label: string
+  icon: string
+  group: 'read' | 'watch' | 'mutation' | 'destructive'
+  enabled: boolean
+  active?: boolean
+  blockedReason?: string
+}
 
 const ADMIN_PERMISSION_NAMES = new Set([
   'manage:system',
@@ -602,6 +633,10 @@ export default defineComponent({
       isDevMode: false,
       failedLogoUrl: null as string | null,
       pageActionsAreOpen: false,
+      mobilePageActionsAreOpen: false,
+      pageActionsPage: null as ReaderPageIdentity | null,
+      mobilePageActionsPage: null as ReaderPageIdentity | null,
+      readerActionsRevision: 0,
       accountMenuOpen: false,
       accountTooltipOpen: false,
       accountMenuTab: 'notifications' as AccountMenuTabId,
@@ -621,17 +656,74 @@ export default defineComponent({
     }
   },
   computed: {
-    pageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
-      return PAGE_MENU_ACTIONS.filter(action =>
-        (action.mode === null || this.mode !== action.mode) &&
-        (action.permission === null || this[action.permission])
-      )
+    currentPageIdentity(): ReaderPageIdentity {
+      return {
+        pageId: this.sourcePageId,
+        locale: this.locale,
+        path: this.path,
+        visibility: this.sourceVisibility,
+        sourceRevision: this.sourceSourceRevision
+      }
     },
-    desktopPageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
+    pageActionContextKey(): string {
+      const page = this.currentPageIdentity
+      return [page.pageId, page.locale, page.path, page.visibility, page.sourceRevision, this.mode].join('\u0000')
+    },
+    readerPageActions(): ReaderPageActionsState | null {
+      // The counter invalidates the query after reader registration/retirement;
+      // the state itself remains owned and freshly supplied by the reader.
+      void this.readerActionsRevision
+      return this.mode === 'view' && this.pageResourceReady
+        ? getReaderPageActions(this.currentPageIdentity)
+        : null
+    },
+    pageMenuActions(): HeaderPageMenuAction[] {
+      if (!this.pageResourceReady || !['view', 'source', 'history'].includes(this.mode)) return []
+      const pageActions: HeaderPageMenuAction[] = PAGE_MENU_ACTIONS
+        .filter(action =>
+          (action.mode === null || this.mode !== action.mode) &&
+          (action.permission === null || this[action.permission])
+        )
+        .map(action => {
+          const enabled = action.handler === 'pageView' ? this.readerActionReady : this.onlineActionReady
+          return {
+            ...action,
+            label: this.$t(`common:header.${action.label}`),
+            enabled,
+            blockedReason: enabled ? '' : this.onlineActionUnavailableReason
+          }
+        })
+      const reader = this.readerPageActions
+      const readerActions: HeaderPageMenuAction[] = []
+      for (const action of READER_PAGE_MENU_ACTIONS) {
+        const availability = reader?.actions[action.handler]
+        if (!availability?.visible) continue
+        const enabled = reader?.ready === true && availability.enabled
+        readerActions.push({
+          handler: action.handler,
+          label: this.$t(action.label, { defaultValue: action.fallback }),
+          icon: action.icon,
+          group: action.group,
+          enabled,
+          active: availability.active,
+          blockedReason: enabled ? '' : availability.blockedReason || reader?.blockedReason ||
+            this.$t('common:navHeader.readerActionUnavailable', { defaultValue: 'This action is not available for the current page.' })
+        })
+      }
+      return [
+        ...readerActions.filter(action => action.group === 'read'),
+        ...pageActions.filter(action => action.group === 'read'),
+        ...readerActions.filter(action => action.group === 'watch'),
+        ...pageActions.filter(action => action.group === 'mutation'),
+        ...readerActions.filter(action => action.group === 'mutation'),
+        ...pageActions.filter(action => action.group === 'destructive')
+      ]
+    },
+    desktopPageMenuActions(): HeaderPageMenuAction[] {
       return this.pageMenuActions.filter(action => action.handler !== 'pageEdit')
     },
-    mobilePageMenuActions(): (typeof PAGE_MENU_ACTIONS)[number][] {
-      return this.path ? this.pageMenuActions : []
+    mobilePageMenuActions(): HeaderPageMenuAction[] {
+      return this.pageMenuActions
     },
     search: {
       get(): string { return wikiStore.site.search ?? '' },
@@ -797,15 +889,10 @@ export default defineComponent({
     hasDeletePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.delete },
     hasReadSourcePermission(): boolean { return wikiStore.page.effectivePermissions.source.read },
     hasReadHistoryPermission(): boolean { return wikiStore.page.effectivePermissions.history.read },
-    hasAnyPagePermissions () {
-      return this.hasWritePagesPermission || this.hasManagePagesPermission ||
-        this.hasDeletePagesPermission || this.hasReadSourcePermission || this.hasReadHistoryPermission
-    },
     hasMobilePageActions (): boolean {
       return Boolean(
         (this.path && (
-          this.mode !== 'view' ||
-          this.hasAnyPagePermissions ||
+          this.mobilePageMenuActions.length > 0 ||
           this.hasNewPagePermission
         )) ||
         (this.isAuthenticated && this.isAdmin) ||
@@ -814,6 +901,17 @@ export default defineComponent({
     }
   },
   watch: {
+    pageActionContextKey: {
+      flush: 'sync',
+      handler(): void {
+        this.headerActionGeneration += 1
+        this.closePageActionMenus()
+        this.movePageModal = false
+        this.convertPageModal = false
+        this.deletePageModal = false
+        this.duplicateOpts.modal = false
+      }
+    },
     approvalsTabVisible(visible: boolean): void {
       if (!visible && this.accountMenuTab === 'approvals') this.accountMenuTab = 'notifications'
     },
@@ -829,6 +927,12 @@ export default defineComponent({
       handler(small: boolean): void {
         const searchHadFocus = typeof document !== 'undefined' &&
           Boolean(document.activeElement?.closest('.nav-header-search-control'))
+        const pageMenuWasOpen = this.pageActionsAreOpen || this.mobilePageActionsAreOpen
+        this.closePageActionMenus()
+        if (pageMenuWasOpen) void this.$nextTick(() => {
+          const menu = this.$refs[small ? 'mobilePageActions' : 'pageActions'] as { activatorEl?: HTMLElement } | undefined
+          menu?.activatorEl?.focus({ preventScroll: true })
+        })
         if (small) {
           if (!this.searchIsFocused) this.searchIsShown = false
         } else {
@@ -877,6 +981,7 @@ export default defineComponent({
     onPageDuplicate(this.pageDuplicate)
     onSearchFocus(this.handleSearchFocusCommand)
     onPageDelete(this.pageDelete)
+    onReaderPageActionsChanged(this.readerPageActionsChanged)
     this.isDevMode = siteConfig.devMode === true
     window.addEventListener('keydown', this.handleSearchShortcut)
     window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, this.invalidateNotificationSession)
@@ -895,30 +1000,54 @@ export default defineComponent({
     offPageConvert(this.pageConvert)
     offPageDuplicate(this.pageDuplicate)
     offPageDelete(this.pageDelete)
+    offReaderPageActionsChanged(this.readerPageActionsChanged)
     window.removeEventListener('keydown', this.handleSearchShortcut)
     window.removeEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, this.invalidateNotificationSession)
     document.removeEventListener('visibilitychange', this.handleNotificationVisibility)
     offSearchFocus(this.handleSearchFocusCommand)
     window.removeEventListener('focus', this.handleNotificationFocus)
-    this.pageActionsAreOpen = false
+    this.closePageActionMenus()
     this.deletePageReturnFocusTarget = null
-    if (this.pageActionsFocusFrame !== null) {
-      window.cancelAnimationFrame(this.pageActionsFocusFrame)
-      this.pageActionsFocusFrame = null
-    }
   },
   methods: {
     invalidateNotificationSession(): void {
       this.siteNotifications.reset()
       this.siteNotifications.identityStale = true
     },
-    runPageMenuAction(handler: (typeof PAGE_MENU_ACTIONS)[number]['handler'], menuRef: 'pageActions' | 'mobilePageActions'): void {
-      if (handler === 'pageDelete') {
-        const menu = this.$refs[menuRef] as { activatorEl?: HTMLElement } | undefined
-        this.pageDelete(menu?.activatorEl ?? null)
-        return
+    readerPageActionsChanged(): void {
+      this.readerActionsRevision += 1
+    },
+    closePageActionMenus(): void {
+      this.pageActionsAreOpen = false
+      this.mobilePageActionsAreOpen = false
+      this.pageActionsPage = null
+      this.mobilePageActionsPage = null
+      if (this.pageActionsFocusFrame !== null) {
+        window.cancelAnimationFrame(this.pageActionsFocusFrame)
+        this.pageActionsFocusFrame = null
       }
-      this[handler]()
+    },
+    async runPageMenuAction(handler: HeaderPageMenuAction['handler'], menuRef: PageMenuRef): Promise<void> {
+      const page = menuRef === 'pageActions' ? this.pageActionsPage : this.mobilePageActionsPage
+      const action = this.pageMenuActions.find(candidate => candidate.handler === handler)
+      if (!page || !sameReaderPageIdentity(page, this.currentPageIdentity) || !action?.enabled) return
+      const generation = this.headerActionGeneration
+      const menu = this.$refs[menuRef] as { activatorEl?: HTMLElement } | undefined
+      const returnFocusTo = menu?.activatorEl ?? null
+      this.closePageActionMenus()
+      await this.$nextTick()
+      if (generation !== this.headerActionGeneration || !sameReaderPageIdentity(page, this.currentPageIdentity)) return
+      // Recheck after menu teardown; reader authority may have changed meanwhile.
+      const current = this.pageMenuActions.find(candidate => candidate.handler === handler)
+      if (!current?.enabled) return
+      if (returnFocusTo?.isConnected) returnFocusTo.focus({ preventScroll: true })
+      if (READER_PAGE_MENU_ACTIONS.some(candidate => candidate.handler === handler)) {
+        emitReaderPageAction({ page, action: handler as ReaderPageAction, returnFocusTo })
+      } else if (handler === 'pageDelete') {
+        this.pageDelete(returnFocusTo)
+      } else {
+        this[handler as (typeof PAGE_MENU_ACTIONS)[number]['handler']]()
+      }
     },
     handleLogoError (event: Event): void {
       const image = event.currentTarget
@@ -1079,24 +1208,33 @@ export default defineComponent({
     setAccountTooltip(open: boolean): void {
       this.accountTooltipOpen = open && !this.accountMenuOpen
     },
-    async pageActionsVisibilityChanged(open: boolean): Promise<void> {
-      this.pageActionsAreOpen = open
+    async pageActionsVisibilityChanged(open: boolean, menuRef: PageMenuRef = 'pageActions'): Promise<void> {
+      if (menuRef === 'pageActions') {
+        this.pageActionsAreOpen = open
+        this.pageActionsPage = open ? markRaw(this.currentPageIdentity) : null
+      } else {
+        this.mobilePageActionsAreOpen = open
+        this.mobilePageActionsPage = open ? markRaw(this.currentPageIdentity) : null
+      }
       if (this.pageActionsFocusFrame !== null) {
         window.cancelAnimationFrame(this.pageActionsFocusFrame)
         this.pageActionsFocusFrame = null
       }
       if (!open) return
       await this.$nextTick()
-      if (!this.pageActionsAreOpen || this.deletePageModal) return
+      const isOpen = (): boolean => menuRef === 'pageActions' ? this.pageActionsAreOpen : this.mobilePageActionsAreOpen
+      if (!isOpen() || this.deletePageModal) return
       this.pageActionsFocusFrame = window.requestAnimationFrame(() => {
         this.pageActionsFocusFrame = null
-        if (!this.pageActionsAreOpen || this.deletePageModal) return
-        const menu = this.$refs.pageActionsMenu
+        if (!isOpen() || this.deletePageModal) return
+        const menu = this.$refs[menuRef === 'pageActions' ? 'pageActionsMenu' : 'mobilePageActionsMenu']
         const root = menu instanceof HTMLElement
           ? menu
           : (menu as { $el?: unknown } | undefined)?.$el
         if (root instanceof HTMLElement) {
-          root.querySelector<HTMLElement>('[role="button"]')?.focus()
+          const first = root.querySelector<HTMLElement>('[role="button"]:not([aria-disabled="true"])') ||
+            root.querySelector<HTMLElement>('[role="button"]')
+          first?.focus()
         }
       })
     },
@@ -1930,6 +2068,13 @@ export default defineComponent({
   }
 }
 
+.nav-header-menu.page-actions-menu {
+  max-width: min(calc(100vw - (var(--wiki-space-4) * 2)), 24rem);
+  max-height: min(70dvh, 36rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .nav-header-menu.account-menu {
   width: min(calc(100vw - (var(--wiki-space-4) * 2)), 24rem);
   max-height: min(82dvh, 44rem);
@@ -1949,6 +2094,7 @@ export default defineComponent({
   height: 32px;
   place-items: center;
 }
+.page-actions-menu .v-list-item-subtitle,
 .account-menu__profile .v-list-item-subtitle,
 .account-menu__offline .v-list-item-subtitle,
 .account-menu__unverified .v-list-item-subtitle {

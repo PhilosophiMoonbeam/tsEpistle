@@ -210,6 +210,23 @@ describe('Agent memory manager rendered contract', () => {
     expect(browserWindow.document.querySelector('.agent-memory__dialog')).toBeNull()
   })
 
+  it('returns focus to a surviving control when Escape cancels an unsaved editor', async () => {
+    const { host, addMemory } = await mountManager()
+    const close = host.querySelector<HTMLButtonElement>('.agent-panel-header button')
+    if (!close) throw new Error('The memory manager has no close control')
+    addMemory.click()
+    await settle()
+    const textarea = host.querySelector<HTMLTextAreaElement>('.agent-memory__editor textarea')
+    if (!textarea) throw new Error('The memory editor did not render its textarea')
+    textarea.value = 'Keep this unsaved detail out of memory'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    textarea.focus()
+    textarea.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await settle()
+    expect(browserWindow.document.activeElement).toBe(close)
+    expect(memoryWrites).toEqual([])
+  })
+
   for (const modifier of ['ctrlKey', 'metaKey'] as const) {
     it(`saves with ${modifier}+Enter and prevents the key action without bypassing empty-draft guards`, async () => {
       const { host, addMemory } = await mountManager()

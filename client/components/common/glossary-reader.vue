@@ -83,6 +83,9 @@ let hoverController: AbortController | null = null, hoverGeneration = 0, hoverTo
 let hoverScope: { owner: string; page: string; locale: string; href: string } | null = null
 let cleanup: (() => void) | null = null, observer: MutationObserver | null = null, timer: ReturnType<typeof setTimeout> | undefined
 let hideTimer: ReturnType<typeof setTimeout> | undefined, focusTimer: ReturnType<typeof setTimeout> | undefined
+let hoverAuthorityTimer: ReturnType<typeof setTimeout> | undefined
+let hoverAuthorityDeadline: ReturnType<typeof setTimeout> | undefined
+let revalidateHover: (() => Promise<void>) | null = null
 let suppressedAnchor: HTMLAnchorElement | null = null
 let touchActivation: { anchor: HTMLAnchorElement; time: number; wasOpen: boolean } | null = null
 let disposed = false, currentUrl = '', historyIndex = 0, restoring = false
@@ -90,7 +93,7 @@ const historyKey = '__glossaryIndex'
 function historyState (index: number): Record<string, unknown> { return { ...(history.state ?? {}), [historyKey]: index } }
 function retainHover (): void { clearTimeout(hideTimer) }
 function closeHover (restoreFocus = false): void {
-  retainHover(); clearTimeout(focusTimer)
+  retainHover(); clearTimeout(focusTimer); clearTimeout(hoverAuthorityTimer); clearTimeout(hoverAuthorityDeadline); revalidateHover = null
   const anchor = hoverAnchor.value
   hoverGeneration++; hoverController?.abort(); hoverController = null
   hoverScope = null
@@ -187,6 +190,38 @@ async function openHover (anchor: HTMLAnchorElement, touch = false): Promise<voi
     const html = sanitizeGlossaryDefinition(term.definitionHtml)
     definition.value = { id: term.id, revision: term.revision, term: term.term, expansion: term.expansion, locale: term.locale, definitionHtml: html, definitionText: glossaryDefinitionText(html) }
     hoverLoading.value = false
+    const termId = term.id, termRevision = term.revision
+    let checkingAuthority = false
+    const revalidate = async (): Promise<void> => {
+      if (!current() || checkingAuthority) return
+      clearTimeout(hoverAuthorityTimer)
+      checkingAuthority = true
+      const deadline = setTimeout(() => {
+        if (current()) { revoke(); error.value = t('common:glossaryHover.unavailable') }
+      }, 5000)
+      hoverAuthorityDeadline = deadline
+      try {
+        const permission = await fetchGlossaryAccess(locale, signal)
+        if (!current()) return
+        if (!permission.enabled || !permission.canRead) { revoke(); return }
+        const latest = await lookupGlossaryTerm(locale, name, signal)
+        if (!current()) return
+        if (latest.id !== termId || latest.revision !== termRevision) closeHover(true)
+      } catch {
+        if (current()) { revoke(); error.value = t('common:glossaryHover.unavailable') }
+      } finally {
+        clearTimeout(deadline)
+        if (hoverAuthorityDeadline === deadline) hoverAuthorityDeadline = undefined
+        checkingAuthority = false
+        if (current() && revalidateHover === revalidate && document.visibilityState !== 'hidden') {
+          hoverAuthorityTimer = setTimeout(revalidate, 5000)
+        }
+      }
+    }
+    // An open definition needs a bounded authority lease even when the app has
+    // no auth request in flight. Nothing polls after dismissal or while hidden.
+    revalidateHover = revalidate
+    if (document.visibilityState !== 'hidden') hoverAuthorityTimer = setTimeout(revalidate, 5000)
   } catch (failure) {
     if (!current()) return
     definition.value = null; hoverLoading.value = false
@@ -346,6 +381,10 @@ watch(() => [props.pageKey, props.locale, identity.value, transportReady.value],
 watch(() => props.contentRoot, () => decorate(), { flush: 'sync' })
 function pointerout (event: PointerEvent): void { if (ownedAnchor(event.target) || hoverCard.value?.contains(event.target)) leavePointer(event) }
 function pointercancel (): void { touchActivation = null }
+function revalidateVisibleHover (): void {
+  clearTimeout(hoverAuthorityTimer)
+  if (document.visibilityState !== 'hidden') void revalidateHover?.()
+}
 onMounted(() => {
   currentUrl = window.location.href
   const initial: unknown = history.state?.[historyKey]
@@ -357,6 +396,8 @@ onMounted(() => {
   window.addEventListener('hashchange', navigation)
   window.addEventListener('online', refresh)
   window.addEventListener('offline', refresh)
+  window.addEventListener('focus', revalidateVisibleHover)
+  document.addEventListener('visibilitychange', revalidateVisibleHover)
   document.addEventListener('click', click, true)
   document.addEventListener('pointerover', pointerover, true)
   document.addEventListener('pointerout', pointerout, true)
@@ -372,6 +413,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('popstate', popstate, true); window.removeEventListener('wiki:navigation', navigation)
   window.removeEventListener('hashchange', navigation)
   window.removeEventListener('online', refresh); window.removeEventListener('offline', refresh)
+  window.removeEventListener('focus', revalidateVisibleHover)
+  document.removeEventListener('visibilitychange', revalidateVisibleHover)
   document.removeEventListener('click', click, true)
   document.removeEventListener('pointerover', pointerover, true)
   document.removeEventListener('pointerout', pointerout, true)

@@ -196,17 +196,6 @@ describe('page reader chrome template', () => {
     expect(reasons).toEqual(['Watch reason', 'Offline reason', 'Offline reason'])
   })
 
-  it('uses one bell: it starts watching, then opens the watch settings with Stop watching', async () => {
-    const idle = (await renderTemplate(PAGE, baseState())).document
-    expect(idle.querySelectorAll('.page-watch-control')).toHaveLength(1)
-    expect(idle.querySelector('.page-watch-control')?.getAttribute('aria-pressed')).toBe('false')
-    expect(idle.querySelector('.page-watch-stop')).toBeNull()
-
-    const watching = (await renderTemplate(PAGE, baseState({ pageWatched: true }))).document
-    expect(watching.querySelectorAll('.page-watch-control')).toHaveLength(1)
-    expect(watching.querySelector('.page-watch-control')?.getAttribute('aria-label')).toBe('common:page.watchingPage')
-    expect(watching.querySelector('.page-watch-settings .page-watch-stop')?.textContent).toContain('common:page.stopWatchingPage')
-  })
 
   it('exposes both offline toggle states and omits pressed state for non-toggle actions', async () => {
     for (const { pressed, attribute } of [

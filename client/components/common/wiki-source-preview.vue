@@ -15,7 +15,7 @@
             <div class="wiki-source-preview__metadata"><span>{{ source.locale.toUpperCase() }}</span><span v-if="source.visibility === 'private'">{{ $t('common:wikiSourcePreview.privatePage') }}</span><span>{{ $t('common:wikiSourcePreview.revision', { sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } }) }}</span></div>
             <p class="wiki-source-preview__path">{{ source.path }}</p>
             <p v-if="source.description" class="wiki-source-preview__description">{{ source.description }}</p>
-            <div class="wiki-source-preview__caption"><span>{{ renderedExcerpt.matched ? $t('common:wikiSourcePreview.passageMatchingSearch') : $t('common:wikiSourcePreview.page') }}</span><time :datetime="source.updatedAt">{{ $t('common:wikiSourcePreview.updated', { updated, interpolation: { escapeValue: false } }) }}</time></div>
+            <div class="wiki-source-preview__caption"><span>{{ $t('common:wikiSourcePreview.page') }}</span><time :datetime="source.updatedAt">{{ $t('common:wikiSourcePreview.updated', { updated, interpolation: { escapeValue: false } }) }}</time></div>
             <!-- Sanitized passive current-render HTML; highlighting replaces text nodes only. -->
             <div v-if="renderedExcerpt.html" class="wiki-source-preview__excerpt" v-html="renderedExcerpt.html" />
             <p v-else class="wiki-source-preview__empty">{{ $t(source.structuredExcerpt.truncated ? 'common:wikiSourcePreview.structuredUnavailable' : 'common:wikiSourcePreview.pageHasNoPreview') }}</p>

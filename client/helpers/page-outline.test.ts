@@ -469,7 +469,6 @@ describe('document outline', () => {
 })
 
 describe('local reading traversal', () => {
-  const storageKey = 'wiki:reading-mastery:progress-fixture'
   const scope: PageReadingProgressScope = {
     canonicalWorkspaceId: 'canonical-workspace',
     reader: { kind: 'account', accountId: 'reader-a' },
@@ -482,8 +481,14 @@ describe('local reading traversal', () => {
 
   afterEach(() => {
     vi.useRealTimers()
-    window.localStorage.removeItem(storageKey)
+    window.localStorage.clear()
   })
+
+  function storedRecord(): { key: string; raw: string } {
+    expect(window.localStorage.length).toBe(1)
+    const key = window.localStorage.key(0)!
+    return { key, raw: window.localStorage.getItem(key)! }
+  }
 
   function fixture({ short = false, noHeadings = false, disclosure = false } = {}) {
     const now = Date.now()
@@ -643,7 +648,7 @@ describe('local reading traversal', () => {
     try {
       page.read(0)
       vi.advanceTimersByTime(1_500)
-      const raw = window.localStorage.getItem(storageKey)!
+      const { raw } = storedRecord()
       expect(raw).not.toContain('Confidential')
       expect(raw).not.toContain('private-heading')
       expect(JSON.parse(raw).sections[0]).toMatchObject({ index: 0, coverage: [[[0, 1]]] })
@@ -666,11 +671,90 @@ describe('local reading traversal', () => {
     }
   })
 
+  const namespaceBoundaries: {
+    name: string
+    initial?: Partial<PageReadingProgressScope>
+    change: Partial<PageReadingProgressScope>
+  }[] = [
+    { name: 'workspace', change: { canonicalWorkspaceId: 'another-workspace' } },
+    { name: 'account', change: { reader: { kind: 'account', accountId: 'reader-b' } } },
+    { name: 'reader kind', change: { reader: { kind: 'anonymous' } } },
+    { name: 'locale', change: { locale: 'fr' } },
+    { name: 'page', change: { pageId: 'another-page' } },
+    { name: 'source revision', change: { sourceRevision: 'revision-2' } },
+    { name: 'authority', change: { authority: 'private-readable' } },
+    { name: 'authority revision', change: { authorityKey: 'authority-revision-2' } },
+    {
+      name: 'delimiter-containing workspace/account identities',
+      initial: { canonicalWorkspaceId: 'workspace:account:reader', reader: { kind: 'account', accountId: 'a' } },
+      change: { canonicalWorkspaceId: 'workspace', reader: { kind: 'account', accountId: 'reader:account:a' } }
+    }
+  ]
+  for (const { name, initial, change } of namespaceBoundaries) {
+    test(`retains independently earned records across ${name} scope switches`, () => {
+      const page = fixture()
+      const firstScope: PageReadingProgressScope = { ...scope, authority: 'public-readable', ...initial }
+      const secondScope = { ...firstScope, ...change }
+      try {
+        page.tracker.setReadingProgressScope(firstScope)
+        page.flush()
+        page.read(0)
+        const firstEarned = page.states.at(-1)!
+        expect(firstEarned.completedAnchors).toEqual(['#private-heading-0'])
+        vi.advanceTimersByTime(1_500)
+        const firstSaved = storedRecord()
+
+        page.tracker.setReadingProgressScope(secondScope)
+        expect(page.states.at(-1)?.progress).toBe(0)
+        page.flush()
+        expect(page.states.at(-1)?.progress).toBe(0)
+        // Move without reading first, so the distant viewport cannot earn
+        // skipped sections through either the jump or the prior scope's intent.
+        page.scroll(1_400)
+        page.read(1_400)
+        const secondEarned = page.states.at(-1)!
+        expect(secondEarned.completedAnchors).toEqual(['#private-heading-2'])
+        expect(secondEarned.sections[0]?.progress).toBe(0)
+        vi.advanceTimersByTime(1_500)
+        expect(window.localStorage.getItem(firstSaved.key)).toBe(firstSaved.raw)
+
+        page.tracker.setReadingProgressScope(firstScope)
+        page.flush()
+        expect(page.states.at(-1)).toEqual(firstEarned)
+        page.tracker.setReadingProgressScope(secondScope)
+        page.flush()
+        expect(page.states.at(-1)).toEqual(secondEarned)
+      } finally {
+        page.dispose()
+      }
+    })
+  }
+
+  for (const disabledScope of [null, { ...scope, authority: 'unavailable' as const }]) {
+    test(`discards pending private coverage on ${disabledScope ? 'unavailable authority' : 'scope removal'}`, () => {
+      const page = fixture()
+      try {
+        page.read(0)
+        expect(page.states.at(-1)?.completedAnchors).toEqual(['#private-heading-0'])
+        page.tracker.setReadingProgressScope(disabledScope)
+        expect(page.states.at(-1)).toEqual({ status: 'disabled', progress: 0, sections: [], completedAnchors: [] })
+        vi.advanceTimersByTime(1_500)
+        window.dispatchEvent(new Event('pagehide'))
+        expect(window.localStorage.length).toBe(0)
+        page.tracker.setReadingProgressScope(scope)
+        page.flush()
+        expect(page.states.at(-1)?.progress).toBe(0)
+      } finally {
+        page.dispose()
+      }
+    })
+  }
+
   test('restores only exact current records and rejects corrupt, stale, future and changed revisions', () => {
     const first = fixture()
     first.read(0)
     vi.advanceTimersByTime(1_500)
-    const raw = window.localStorage.getItem(storageKey)!
+    const { key: storageKey, raw } = storedRecord()
     first.dispose()
     const saved = JSON.parse(raw)
     const candidates = [
@@ -701,7 +785,8 @@ describe('local reading traversal', () => {
     try {
       page.read(0)
       vi.advanceTimersByTime(1_500)
-      const otherTab = JSON.parse(window.localStorage.getItem(storageKey)!)
+      const { key: storageKey, raw } = storedRecord()
+      const otherTab = JSON.parse(raw)
       otherTab.sections[0].coverage = [[]]
       otherTab.sections[1].coverage = [[[0, 1]]]
       window.dispatchEvent(new StorageEvent('storage', { key: storageKey, newValue: JSON.stringify(otherTab) }))
