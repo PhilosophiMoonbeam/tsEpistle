@@ -248,12 +248,15 @@ interface OfflineDraftPayloadV1 {
   title: string
   description: string
   content: string
+  changeReason?: string
 }
 ```
 
-`recordId` is a random opaque identifier. The clear envelope has no editor, page, route, locale, revision, timestamp, title, description, source, or state information beyond the minimum selectors needed for ownership selection and race control; locked records therefore reveal only a generic count in the UI. `OfflineDraftPayloadV1` and any future draft payload fields are encrypted; the schema rejects unknown clear fields.
+`recordId` is a random opaque identifier. The clear envelope has no editor, page, route, locale, revision, timestamp, title, description, source, change reason, or state information beyond the minimum selectors needed for ownership selection and race control; locked records therefore reveal only a generic count in the UI. `OfflineDraftPayloadV1` and any future draft payload fields are encrypted; the schema rejects unknown clear fields.
 
 `sessionGeneration` is persisted in `meta` and copied into each envelope. `draftRevision` is a separate monotonically increasing per-draft commit number and advances on every successful local edit commit. An explicit publish creates an immutable opaque `submissionId`; the frozen encrypted submission record is written atomically before any network mutation. Subsequent edits use a newer `draftRevision` and never mutate that submission record.
+
+An optional change reason uses the existing single-line, 200-character validator, including its control-character and bidirectional-formatting exclusions. It travels with the encrypted working draft and immutable save capture; reason-only changes recapture even when the editor text version is unchanged. Existing payloads without the field remain valid without changing the envelope version, key derivation, or AAD. A confirmed save clears the reason only while the current source and reason still match that save capture. Later edits, rejected writes, and unknown outcomes keep the pending reason. Actor invalidation clears the visible reason with its owning session; encrypted retention follows the existing draft and receipt policy.
 
 Capture and restore are wired explicitly through `client/components/editor.vue`, `client/helpers/editor-key.ts`, `client/components/editor/editor-markdown.vue`, `client/components/editor/editor-visual-markdown.vue`, `client/components/editor/editor-ckeditor.vue`, `client/components/editor/editor-asciidoc.vue`, and `client/components/editor/editor-code.vue`; each implementation maps only its canonical `PageEditorKey` and returns the eligible text payload.
 
@@ -264,6 +267,8 @@ The editor host keeps its draft coordinator outside Vue's deep reactivity so dur
 Successful foreground saves acknowledge the exact source text, editor edit version, and resulting page/revision identity inside that coordinator only. A delayed local-capture callback already covered by that save does not create a new recovery draft after the immutable receipt and source draft have been retired. Newer edit versions and different text still capture normally; reopening genuine retained drafts or drafts from another editor instance still requires the existing recovery review. The acknowledgement is cleared with the actor/key/session boundary and is never inferred from matching server text alone.
 
 For an existing page, **Keep server version** reloads the normal server-authorized editor only after the chosen record is durably deleted and the captured editor source and metadata are still unchanged. Edits made during deletion stay in memory and remain locally recoverable. Ordinary saved-draft or receipt deletion retains the live editor without navigation; deleting a live receipt clears its in-memory publishing gate. Other saved drafts and receipts remain intact. The normal editor bootstrap loads the complete authoritative source and metadata instead of treating a local record deletion as a replacement server document. New-page draft deletion retains its existing explicit clear behavior.
+
+**Keep as new draft** atomically replaces the selected unresolved receipt with a review fork and releases that exact receipt's in-memory publishing gate. The explicit choice does not replay the uncertain request; a subsequent normal Save captures a fresh submission.
 
 An explicit recovery record ID selects only that draft or receipt. If it does not name a draft candidate, it must never fall back to the sole unrelated draft; resolving a submission leaves every other envelope byte-identical.
 
@@ -280,6 +285,8 @@ Transitions:
 9. Transport loss, crash, or tab termination after submission enters **Outcome unknown**. The app MUST NOT replay automatically; the immutable record survives logout locked/opaque, then same-account online verification fetches authoritative state and asks the user to resolve, or explicit deletion removes it.
 
 The advisory timestamp conflict endpoint is not a write guard. `sourceRevision` compare-and-swap remains authoritative. Live Yjs collaboration keeps its existing freshly authorized generation-fenced reconnect path; a recovered local fork is never injected automatically into a shared session.
+
+For the same editor identity, a negative advisory timestamp result cannot dismiss a known revision conflict. Successful saving or explicit conflict resolution acknowledges the new base; a delayed check from an older source revision or checkout date cannot restore stale conflict state. **View Latest Version** uses the validated server visibility, locale, and path to construct the canonical public or private reader route. Missing or invalid visibility fails the latest-version load instead of falling back to a public destination.
 
 A device recovery copy is separate from page publication state. Fresh online editing starts with local recovery capture, not **Needs review**; reopening a matching recovery record online or reconnecting still requires review. Notices describe the recovery copy or recovered edits without implying that an already published page is unpublished.
 
