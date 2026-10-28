@@ -53,40 +53,47 @@ async function readInk(locator: Locator, name: string, minimum: number): Promise
   }, { name, minimum })
 }
 
-// Read the real compositor output, including backdrop blur/saturation, tints,
-// nested button overlays and gradients. In each narrow glyph box, the recurring
-// color cluster is its exposed backing, not antialiased text. Sample across the
-// whole width so a good gradient end cannot conceal a bad one. An ambiguous
-// tile fails closed instead of falling back to an assumed token/surface color.
+// Sample the real compositor backing with glyph paint temporarily hidden.
+// Computed ink/currentColor, geometry, material colors, gradients, overlays and
+// filters remain unchanged. Contrast is evaluated with the ORIGINAL ink, never
+// the measurement-only transparent text fill. No heuristic separates text from
+// a patterned/blurred backing, so every sampled background color is retained.
 function backingPixels(data: Buffer, width: number, height: number, channels: number, sample: InkSample): Pixel[] {
   const left = Math.max(0, Math.ceil(sample.box.x))
   const right = Math.min(width, Math.floor(sample.box.x + sample.box.width))
   const top = Math.max(0, Math.ceil(sample.box.y))
   const bottom = Math.min(height, Math.floor(sample.box.y + sample.box.height))
   if (right <= left || bottom <= top) throw new Error(`${sample.name}: no visible backing pixels`)
-  const result: Pixel[] = []
-  for (let start = left; start < right; start += 24) {
-    const end = Math.min(right, start + 24)
-    const buckets = new Map<string, Pixel[]>()
-    for (let y = top; y < bottom; y += 1) {
-      for (let x = start; x < end; x += 1) {
-        const offset = (y * width + x) * channels
-        const pixel: Pixel = [data[offset]!, data[offset + 1]!, data[offset + 2]!]
-        const key = pixel.map(channel => Math.floor(channel / 4)).join(',')
-        const bucket = buckets.get(key)
-        if (bucket) bucket.push(pixel)
-        else buckets.set(key, [pixel])
-      }
+  const colors = new Map<string, Pixel>()
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      const offset = (y * width + x) * channels
+      const pixel: Pixel = [data[offset]!, data[offset + 1]!, data[offset + 2]!]
+      colors.set(pixel.join(','), pixel)
     }
-    const backing = [...buckets.values()].sort((a, b) => b.length - a.length)[0]
-    if (!backing || backing.length < (end - start) * (bottom - top) * .35) {
-      throw new Error(`${sample.name}: backing is not independently identifiable at x=${start}; inspect the screenshot`)
-    }
-    // Keep every actual color in the cluster, not its average or the one with
-    // the most favorable contrast. Quantization only groups nearby pixels.
-    result.push(...new Map(backing.map(pixel => [pixel.join(','), pixel])).values())
   }
-  return result
+  return [...colors.values()]
+}
+
+async function captureBacking(page: Page): Promise<Buffer> {
+  const mask = await page.addStyleTag({ content: `
+    :is(.nav-header, .page-reading-dock),
+    :is(.nav-header, .page-reading-dock) *,
+    :is(.nav-header, .page-reading-dock) *::before,
+    :is(.nav-header, .page-reading-dock) *::after {
+      -webkit-text-fill-color: transparent !important;
+      text-decoration-color: transparent !important;
+      text-shadow: none !important;
+    }
+    :is(.nav-header, .page-reading-dock) svg { visibility: hidden !important; }
+  ` })
+  try {
+    await settled(page)
+    return await page.screenshot({ scale: 'css' })
+  } finally {
+    await mask.evaluate(element => element.remove())
+    await settled(page)
+  }
 }
 
 function contrastRatio(first: ArrayLike<number>, second: ArrayLike<number>) {
@@ -129,7 +136,7 @@ async function measureContrast(page: Page, sample: InkSample, backgrounds: Pixel
 async function keyboardFocus(page: Page, control: Locator) {
   // Establish keyboard modality, then use the real focusable control. No
   // synthetic :focus-visible class or replacement ring styles are injected.
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift')
   await control.focus()
   await expect(control).toBeFocused()
   expect(await control.evaluate(element => element.matches(':focus-visible'))).toBe(true)
@@ -217,7 +224,7 @@ test('native floating controls and Focus dock retain AA over prose and saturated
   test.setTimeout(120_000)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' })
-  await openAuthenticatedPage(page, '/en/visual-markdown-browser', 'article.contents')
+  await openAuthenticatedPage(page, '/', 'article.contents')
   const cdp = await page.context().newCDPSession(page)
   const results: Array<ContrastResult & { mode: string; fallback: boolean; backingName: string }> = []
   try {
@@ -262,11 +269,11 @@ test('native floating controls and Focus dock retain AA over prose and saturated
         }
         for (const backing of ['prose', 'black', 'white', 'red', 'lime', 'orange']) {
           await installUnderlay(page, backing)
-          // A screenshot is the backing oracle, not a copy of token constants.
-          // No foreground, background, opacity or filter override is used.
+          // Hide only glyph paint to obtain the native backing. Original
+          // computed ink above is the foreground used for every AA assertion.
           await page.mouse.move(0, 450)
           const samples = await Promise.all(targets.map(target => readInk(target.locator, target.name, target.minimum)))
-          const capture = await page.screenshot({ scale: 'css' })
+          const capture = await captureBacking(page)
           const image = await sharp(capture).removeAlpha().raw().toBuffer({ resolveWithObject: true })
           for (const sample of samples) {
             const pixels = backingPixels(image.data, image.info.width, image.info.height, image.info.channels, sample)

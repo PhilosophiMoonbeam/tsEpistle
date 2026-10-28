@@ -581,23 +581,16 @@ postgresAdmissionSuite('PostgreSQL agent admission authority', () => {
     resolver: AgentProviderRegistry | { resolve: AgentProviderRegistry['resolve']; resolveCurrent: AgentProviderRegistry['resolveCurrent'] },
     observe?: (request: AgentEngineRequest) => void
   ) =>
-    new AgentProductRuntime(
-      db,
-      resolver,
-      {
-        async execute(request, sink) {
-          if (observe) observe(request)
-          await sink.text('admitted')
-          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
-        }
-      },
-      {
-        workerId: `postgres-admission-${randomUUID()}`,
-        globalConcurrency: 1,
-        perUserConcurrency: 1,
-        goals: { enabled: false, maxContinuations: 1, maxTokens: 1_000_000, maxToolCalls: 1_000, maxDurationMilliseconds: 60_000 }
+    new AgentProductRuntime(db, resolver, {
+      async execute(request, sink) {
+        if (observe) observe(request)
+        await sink.text('admitted')
+        return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
       }
-    )
+    }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: `postgres-admission-${randomUUID()}`,
+    globalConcurrency: 1,
+    perUserConcurrency: 1,
+    goals: { enabled: false, maxContinuations: 1, maxTokens: 1_000_000, maxToolCalls: 1_000, maxDurationMilliseconds: 60_000 } })
 
   const durableCounts = async (): Promise<Record<string, number>> => {
     const names = ['agentMessages', 'agentRuns', 'agentRunSkills', 'agentQuotaReservations', 'agentEvents'] as const

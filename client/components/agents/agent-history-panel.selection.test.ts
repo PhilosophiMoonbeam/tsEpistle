@@ -403,6 +403,10 @@ const makeDragEvent = (): {
 }
 
 const makeThread = (session: AgentSessionSummary): AgentThreadState => ({
+  memoryContext: {
+    ownerId: 1, sessionId: session.id, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+  },
   session: {
     ...session,
     status: 'active',

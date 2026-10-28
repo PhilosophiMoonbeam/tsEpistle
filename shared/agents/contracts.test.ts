@@ -6,8 +6,15 @@ import {
   AGENT_TASK_KINDS,
   AGENT_FEATURE_FLAG_KEYS,
   AGENT_TOOL_NAMES,
-  agentProviderReasoningEfforts
+  agentProviderReasoningEfforts,
+  AgentMemoryContextProjectionSchema,
+  AgentMemoryReceiptEventSchema,
+  AgentMemorySavedDataSchema,
+  AgentManualMemorySavedReceiptSchema,
+  AgentRunStreamReadySchema,
+  AgentEventSchema
 } from './contracts.ts'
+import { AgentKnowledgeContextSchema, AgentSourceContextProjectionSchema } from './knowledge-context.ts'
 
 describe('frozen agent contracts', () => {
   it('keeps action, event, and feature identifiers unique', () => {
@@ -44,5 +51,130 @@ describe('frozen agent contracts', () => {
     expect(agentProviderReasoningEfforts('anthropic-messages')).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(agentProviderReasoningEfforts('gemini-api')).toEqual(['minimal', 'low', 'medium', 'high'])
     expect(agentProviderReasoningEfforts('legacy-completions')).toEqual([])
+  })
+
+  it('keeps eight committed attachments separate from a ninth current hint and pending selection', () => {
+    const sources = Array.from({ length: 8 }, (_, index) => ({
+      id: index + 1, locale: 'en', path: `page-${index + 1}`, title: `Page ${index + 1}`,
+      visibility: 'public' as const, sourceRevision: '3'
+    }))
+    const hint = { id: 9, locale: 'en', path: 'historical', observedUpdatedAt: '2026-10-27T00:00:00Z' }
+    const identities = sources.map(({ id, locale, path }) => ({ id, locale, path }))
+    const projection = {
+      identity: { kind: 'draft', ownerId: 1, draftId: 'draft', sessionId: 'session' },
+      generation: 4, scope: { kind: 'all' },
+      attachedSources: sources.map(source => ({ source, access: 'accessible' })),
+      pendingSources: [{ id: 10, locale: 'en', path: 'pending' }],
+      currentPage: { included: true, origin: 'historical', hint, access: 'accessible' },
+      accessibleIdentities: [...identities, { id: 9, locale: 'en', path: 'historical' }]
+    }
+    expect(AgentSourceContextProjectionSchema.safeParse(projection).success).toBe(true)
+    expect(AgentSourceContextProjectionSchema.safeParse({
+      ...projection, accessibleIdentities: [...projection.accessibleIdentities, projection.pendingSources[0]]
+    }).success).toBe(false)
+    expect(AgentSourceContextProjectionSchema.safeParse({
+      ...projection, attachedSources: [...projection.attachedSources, { source: { ...sources[0], id: 11 }, access: 'accessible' }]
+    }).success).toBe(false)
+    expect(AgentSourceContextProjectionSchema.safeParse({
+      ...projection, currentPage: { ...projection.currentPage, hint: { ...hint, ...identities[0] } },
+      accessibleIdentities: identities
+    }).success).toBe(true)
+    expect(AgentSourceContextProjectionSchema.safeParse({
+      ...projection, attachedSources: [], accessibleIdentities: [{ id: 9, locale: 'en', path: 'historical' }]
+    }).success).toBe(true)
+    expect(AgentKnowledgeContextSchema.safeParse({
+      scope: { kind: 'all' }, sources: sources.map(source => ({ ...source, path: '界'.repeat(1024), title: '界'.repeat(500) }))
+    }).success).toBe(false)
+  })
+
+  it('represents unavailable historical memory without asserting empty loaded counts', () => {
+    const unknown = {
+      ownerId: 1, sessionId: 'session',
+      frozen: { snapshotId: null, user: { state: 'unavailable' }, agent: { state: 'unknown' } },
+      latestSaved: { user: { state: 'error' }, agent: { state: 'offline' } },
+      nextSession: { user: 'unknown', agent: 'unknown' }
+    }
+    expect(AgentMemoryContextProjectionSchema.safeParse(unknown).success).toBe(true)
+    expect(AgentMemoryContextProjectionSchema.safeParse({
+      ...unknown, frozen: { ...unknown.frozen, user: { state: 'unavailable', characters: 0, limit: 1375 } }
+    }).success).toBe(false)
+    const user = { state: 'available', target: 'user', characters: 12, limit: 1375, snapshotId: 'a'.repeat(64) }
+    const loaded = {
+      ...unknown, frozen: { ...unknown.frozen, snapshotId: 'session', user },
+      latestSaved: { ...unknown.latestSaved, user: { ...user, characters: 20, snapshotId: 'b'.repeat(64) } },
+      nextSession: { user: 'changed', agent: 'unknown' }
+    }
+    expect(AgentMemoryContextProjectionSchema.safeParse(loaded).success).toBe(true)
+    expect(AgentMemoryContextProjectionSchema.safeParse({
+      ...loaded, nextSession: { user: 'unchanged', agent: 'unknown' }
+    }).success).toBe(false)
+  })
+
+  it('accepts pre-execution attempt0 admission events without allowing attempt0 memory receipts', () => {
+    const queued = {
+      id: 'queued-event', runId: 'run', sequence: 1, attempt: 0, schemaVersion: 1,
+      type: 'run.queued', createdAt: '2026-10-27T00:00:00Z', data: {}
+    }
+    expect(AgentEventSchema.safeParse(queued).success).toBe(true)
+    expect(AgentEventSchema.safeParse({ ...queued, type: 'goal.created' }).success).toBe(true)
+    expect(AgentEventSchema.safeParse({ ...queued, attempt: -1 }).success).toBe(false)
+    const targets = [{ target: 'user', characters: 12, limit: 1375, snapshotId: 'a'.repeat(64) }]
+    const included = {
+      ...queued, type: 'memory.contextIncluded',
+      data: { ownerId: 1, sessionId: 'session', snapshotId: 'session', deliveryId: 'dispatch', targets }
+    }
+    expect(AgentEventSchema.safeParse({ ...included, attempt: 1 }).success).toBe(true)
+    expect(AgentEventSchema.safeParse(included).success).toBe(false)
+    const saved = {
+      ...queued, type: 'memory.saved',
+      data: { ownerId: 1, sessionId: 'session', snapshotId: 'session', origin: 'memory.manage', operationId: 'tool', operation: 'add', changed: true, targets }
+    }
+    expect(AgentEventSchema.safeParse({ ...saved, attempt: 1 }).success).toBe(true)
+    expect(AgentEventSchema.safeParse(saved).success).toBe(false)
+  })
+
+  it('validates nonempty delivery receipts and rejects memory text, wrong limits and replay-invalid envelopes', () => {
+    const event = {
+      id: 'event', runId: 'run', sequence: 9, attempt: 1, schemaVersion: 1,
+      type: 'memory.contextIncluded', createdAt: '2026-10-27T00:00:00Z',
+      data: {
+        ownerId: 1, sessionId: 'session', snapshotId: 'session', deliveryId: 'dispatch',
+        targets: [{ target: 'user', characters: 12, limit: 1375, snapshotId: 'a'.repeat(64) }]
+      }
+    }
+    expect(AgentMemoryReceiptEventSchema.safeParse(event).success).toBe(true)
+    const ready = { schemaVersion: 1, ownerId: 1, sessionId: 'session', runId: 'run', replayThroughSequence: 8 }
+    expect(AgentRunStreamReadySchema.safeParse(ready).success).toBe(true)
+    expect(AgentRunStreamReadySchema.safeParse({ ...ready, replayThroughSequence: -1 }).success).toBe(false)
+    expect(AgentMemoryReceiptEventSchema.safeParse({ ...event, sequence: 0 }).success).toBe(false)
+    expect(AgentMemoryReceiptEventSchema.safeParse({ ...event, attempt: 0 }).success).toBe(false)
+    expect(AgentMemoryReceiptEventSchema.safeParse({ ...event, data: { ...event.data, text: 'private' } }).success).toBe(false)
+    expect(AgentMemoryReceiptEventSchema.safeParse({
+      ...event, data: { ...event.data, targets: [{ ...event.data.targets[0], characters: 0 }] }
+    }).success).toBe(false)
+    expect(AgentMemoryReceiptEventSchema.safeParse({
+      ...event, data: { ...event.data, targets: [{ ...event.data.targets[0], limit: 2200 }] }
+    }).success).toBe(false)
+  })
+
+  it('permits only changed add/replace save receipts with explicit manual version identity', () => {
+    const saved = {
+      ownerId: 1, sessionId: 'session', snapshotId: 'session', origin: 'memory.manage',
+      operationId: 'tool', operation: 'replace', changed: true,
+      targets: [{ target: 'agent', characters: 40, limit: 2200, snapshotId: 'b'.repeat(64) }]
+    }
+    expect(AgentMemorySavedDataSchema.safeParse(saved).success).toBe(true)
+    for (const operation of ['remove', 'clear']) {
+      expect(AgentMemorySavedDataSchema.safeParse({ ...saved, operation }).success).toBe(false)
+    }
+    expect(AgentMemorySavedDataSchema.safeParse({ ...saved, changed: false }).success).toBe(false)
+    const manual = {
+      schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: null,
+      runId: null, attempt: null, snapshotId: null, entryId: 'entry', entryVersion: 2,
+      operation: 'replace', changed: true, targets: saved.targets
+    }
+    expect(AgentManualMemorySavedReceiptSchema.safeParse(manual).success).toBe(true)
+    expect(AgentManualMemorySavedReceiptSchema.safeParse({ ...manual, entryVersion: 1 }).success).toBe(false)
+    expect(AgentManualMemorySavedReceiptSchema.safeParse({ ...manual, runId: 'invented-run' }).success).toBe(false)
   })
 })

@@ -307,7 +307,10 @@ body {
 :where(a, button, [role='button'], input, textarea, select, summary, [tabindex]):focus-visible {
   outline: .125rem solid var(--wiki-focus-color);
   outline-offset: var(--wiki-focus-offset);
-  box-shadow: var(--wiki-focus-ring);
+  // Cards keep their native elevation; the opaque outline owns keyboard focus.
+  &:not(:where(.v-card)) {
+    box-shadow: var(--wiki-focus-ring);
+  }
 }
 
 .v-field__input:focus-visible,

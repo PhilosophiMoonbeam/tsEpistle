@@ -410,6 +410,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       new AxAgentEngine(providerFactory, actionSessions, undefined, { externalMcp, decisionProviders }),
       {
         router,
+        memorySigningSecret: wiki.config.sessionSecret,
         authorizeMedia: ownerId =>
           assertWikiAgentMediaAccess(ownerId, { enabled: wiki.config.agents.enabled, providerEnabled: wiki.config.agents.provider.enabled }),
         workerId: `http-${workerIdentity}`,
@@ -650,6 +651,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       banner: publicSiteBanner(wiki.config.banner),
       offlineDraftSiteId: wiki.config.offlineDraftSiteId,
       logoUrl: branding.logoUrl,
+      logoSourceSha256: branding.logoSourceSha256,
       logoEffect: branding.logoEffect,
       logoIcons: branding.logoIcons,
       availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { AgentKnowledgeContext } from './knowledge-context.ts'
+import { AgentCurrentPageHintSchema, type AgentKnowledgeContext } from './knowledge-context.ts'
 import type { SpecialistInvocationView } from './specialists.ts'
 import type { AgentMediaInputs, AgentMediaKind } from './media-providers.ts'
 export const AGENT_PERMISSION_KEYS = ['use:agents', 'use:agent-browser', 'use:mcp'] as const
@@ -202,12 +202,7 @@ export type RequestAuthContext<Principal = unknown> =
   | { readonly kind: 'user'; readonly userId: number; readonly ownershipUserId: number; readonly principal: Principal }
   | { readonly kind: 'apiKey'; readonly apiKeyId: number; readonly groupId: number; readonly ownershipUserId: null; readonly principal: Principal }
 
-export interface AgentCurrentPageHint {
-  readonly id: number
-  readonly locale: string
-  readonly path: string
-  readonly observedUpdatedAt: string
-}
+export type AgentCurrentPageHint = z.infer<typeof AgentCurrentPageHintSchema>
 
 export interface AgentPageReference {
   readonly id: number
@@ -505,6 +500,143 @@ export interface AgentArtifactView {
   readonly available: boolean
 }
 
+/**
+ * Metadata never contains memory text. Counts use the repository's UTF-16
+ * characters including its existing entry separators, not bytes/tokens.
+ * snapshotId is an opaque owner-bound fingerprint of the target's frozen/saved
+ * contents (HMAC-SHA256 with the existing server signing secret over owner,
+ * target and canonical ordered contents). Never expose an unkeyed content hash.
+ * Unknown/unavailable/error/offline carry no invented zero counts or limits.
+ * Stale retains previously authorized metadata but is not evidence of freshness.
+ */
+export const AGENT_MEMORY_CHARACTER_LIMITS = { user: 1375, agent: 2200 } as const
+const AgentContextIdSchema = z.string().min(1).max(128)
+// Fingerprint input is JSON.stringify([ownerId, target, orderedContents]); use
+// the repository's existing createdAt/id entry order and lowercase hex digest.
+const AgentMemoryFingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/)
+const AgentUserMemoryCountSchema = z.strictObject({
+  target: z.literal('user'), characters: z.number().int().min(0).max(1375), limit: z.literal(1375),
+  snapshotId: AgentMemoryFingerprintSchema
+})
+const AgentAgentMemoryCountSchema = z.strictObject({
+  target: z.literal('agent'), characters: z.number().int().min(0).max(2200), limit: z.literal(2200),
+  snapshotId: AgentMemoryFingerprintSchema
+})
+export const AgentMemoryTargetCountSchema = z.discriminatedUnion('target', [AgentUserMemoryCountSchema, AgentAgentMemoryCountSchema])
+const AgentMemoryUnavailableSchema = z.strictObject({ state: z.enum(['unknown', 'unavailable', 'error', 'offline']) })
+const AgentUserMemoryMetadataSchema = z.union([
+  AgentUserMemoryCountSchema.extend({ state: z.enum(['available', 'stale']) }), AgentMemoryUnavailableSchema
+])
+const AgentAgentMemoryMetadataSchema = z.union([
+  AgentAgentMemoryCountSchema.extend({ state: z.enum(['available', 'stale']) }), AgentMemoryUnavailableSchema
+])
+export const AgentMemoryContextProjectionSchema = z.strictObject({
+  ownerId: z.number().int().positive(),
+  sessionId: AgentContextIdSchema,
+  frozen: z.strictObject({
+    // The existing session id identifies its immutable memorySnapshot. Null
+    // means the historical snapshot could not be loaded/authorized, not empty.
+    snapshotId: AgentContextIdSchema.nullable(),
+    user: AgentUserMemoryMetadataSchema, agent: AgentAgentMemoryMetadataSchema
+  }),
+  latestSaved: z.strictObject({ user: AgentUserMemoryMetadataSchema, agent: AgentAgentMemoryMetadataSchema }),
+  nextSession: z.strictObject({
+    user: z.enum(['unknown', 'unchanged', 'changed']), agent: z.enum(['unknown', 'unchanged', 'changed'])
+  })
+}).superRefine((value, ctx) => {
+  if (value.frozen.snapshotId !== null && value.frozen.snapshotId !== value.sessionId)
+    ctx.addIssue({ code: 'custom', path: ['frozen', 'snapshotId'], message: 'Frozen snapshot identity must be the owning session' })
+  for (const target of ['user', 'agent'] as const) {
+    const frozen = value.frozen[target]
+    const saved = value.latestSaved[target]
+    if ((frozen.state === 'available' || frozen.state === 'stale') && value.frozen.snapshotId === null)
+      ctx.addIssue({ code: 'custom', path: ['frozen', target], message: 'Known frozen counts require a snapshot identity' })
+    if ((frozen.state === 'available' || frozen.state === 'stale') &&
+      (saved.state === 'available' || saved.state === 'stale') &&
+      frozen.snapshotId === saved.snapshotId && frozen.characters !== saved.characters)
+      ctx.addIssue({ code: 'custom', path: ['latestSaved', target], message: 'Identical target snapshots must have identical counts' })
+    const expected = frozen.state === 'available' && saved.state === 'available'
+      ? (frozen.snapshotId === saved.snapshotId ? 'unchanged' : 'changed') : 'unknown'
+    if (value.nextSession[target] !== expected)
+      ctx.addIssue({ code: 'custom', path: ['nextSession', target], message: 'Next-session state must compare fresh authoritative target snapshots' })
+  }
+})
+
+const AgentMemoryReceiptTargetsSchema = z.array(AgentMemoryTargetCountSchema).min(1).max(2)
+  .refine(value => new Set(value.map(row => row.target)).size === value.length, { message: 'Receipt targets must be distinct' })
+  .refine(value => value.some(row => row.characters > 0), { message: 'Receipt must include nonempty memory' })
+
+/**
+ * Produced AFTER observed successful delivery of nonempty frozen memory to the
+ * provider on an applicable non-subagent request. deliveryId is the existing
+ * provider invocation/dispatch identity; append at most once for that delivery.
+ * A start/intent, disconnected/failed dispatch, GET, panel-open or message delta
+ * never qualifies. A later failed run does not erase a real successful delivery.
+ * This acknowledges context delivery, never cognitive recall or a particular entry.
+ */
+export const AgentMemoryContextIncludedDataSchema = z.strictObject({
+  ownerId: z.number().int().positive(), sessionId: AgentContextIdSchema,
+  snapshotId: AgentContextIdSchema, deliveryId: AgentContextIdSchema,
+  targets: AgentMemoryReceiptTargetsSchema
+}).superRefine((value, ctx) => {
+  if (value.snapshotId !== value.sessionId)
+    ctx.addIssue({ code: 'custom', path: ['snapshotId'], message: 'Inclusion must identify the frozen owning session' })
+  if (value.targets.some(row => row.characters === 0))
+    ctx.addIssue({ code: 'custom', path: ['targets'], message: 'Inclusion targets must be nonempty actually delivered frozen memory' })
+})
+
+/**
+ * Persist only after fenced successful changed=true memory.manage add/replace.
+ * targets reports the resulting authorized saved-store target(s), never a new
+ * frozen session snapshot. operationId is the existing successful tool-call id.
+ * remove/clear/no-op/denied/failure/pending are deliberately unrepresentable.
+ */
+export const AgentMemorySavedDataSchema = z.strictObject({
+  ownerId: z.number().int().positive(), sessionId: AgentContextIdSchema,
+  snapshotId: AgentContextIdSchema, origin: z.literal('memory.manage'),
+  operationId: AgentContextIdSchema, operation: z.enum(['add', 'replace']),
+  changed: z.literal(true), targets: AgentMemoryReceiptTargetsSchema
+}).refine(value => value.snapshotId === value.sessionId, { message: 'Save must identify its unchanged frozen owning session' })
+
+/**
+ * Manual mutation response only: no invented run/attempt or second event store.
+ * entryId/resulting entryVersion come from the successful authorized write,
+ * including optimistic expectedVersion checks, without an additional read.
+ * (ownerId, entryId, entryVersion) is its replay identity; entryVersion increases
+ * monotonically per entry. A create has version1; replace has version>=2.
+ * sessionId echoes a shape-validated client correlation (null outside a session),
+ * NOT proof of session access or loaded frozen memory. Authorize the owner via
+ * the existing mutation principal; no session lookup is required just to reward.
+ * A target-changing replacement includes BOTH resulting target counts.
+ */
+export const AgentManualMemorySavedReceiptSchema = z.strictObject({
+  schemaVersion: z.literal(1), origin: z.literal('manual'),
+  ownerId: z.number().int().positive(), sessionId: AgentContextIdSchema.nullable(),
+  runId: z.null(), attempt: z.null(), snapshotId: z.null(),
+  entryId: AgentContextIdSchema, entryVersion: z.number().int().positive(),
+  operation: z.enum(['add', 'replace']), changed: z.literal(true),
+  targets: AgentMemoryReceiptTargetsSchema
+}).refine(value => value.operation === 'add' ? value.entryVersion === 1 : value.entryVersion >= 2, { message: 'Manual operation must match the resulting entry version' })
+
+export const AgentManualMemoryMutationContextSchema = z.strictObject({
+  sessionId: AgentContextIdSchema.nullable()
+})
+export type AgentManualMemoryMutationContext = z.infer<typeof AgentManualMemoryMutationContextSchema>
+// Manual create/update request bodies include `context` with the schema above.
+// Their existing mutation response gains REQUIRED `receipt`, null for no-change;
+// remove/clear never populate it. Response fields containing existing memory
+// management content are not copied into this metadata-only receipt.
+export const AgentManualMemoryMutationReceiptFieldsSchema = z.strictObject({
+  receipt: AgentManualMemorySavedReceiptSchema.nullable()
+})
+export type AgentManualMemoryMutationReceiptFields = z.infer<typeof AgentManualMemoryMutationReceiptFieldsSchema>
+
+export type AgentMemoryTargetCount = z.infer<typeof AgentMemoryTargetCountSchema>
+export type AgentMemoryContextProjection = z.infer<typeof AgentMemoryContextProjectionSchema>
+export type AgentMemoryContextIncludedData = z.infer<typeof AgentMemoryContextIncludedDataSchema>
+export type AgentMemorySavedData = z.infer<typeof AgentMemorySavedDataSchema>
+export type AgentManualMemorySavedReceipt = z.infer<typeof AgentManualMemorySavedReceiptSchema>
+
 export const AGENT_EVENT_TYPES = [
   'run.queued',
   'run.started',
@@ -519,6 +651,8 @@ export const AGENT_EVENT_TYPES = [
   'message.completed',
   'model.turn',
   'evidence.provenance',
+  'memory.contextIncluded',
+  'memory.saved',
   'tool.started',
   'task.planCreated',
   'task.created',
@@ -560,16 +694,91 @@ export const AGENT_EVENT_TYPES = [
 export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number]
 export type AgentEventData = Readonly<Record<string, string | number | boolean | null | readonly unknown[] | Readonly<Record<string, unknown>>>>
 
-export interface AgentEvent {
-  readonly id: string
-  readonly runId: string
-  readonly sequence: number
-  readonly type: AgentEventType
-  readonly attempt: number
-  readonly schemaVersion: 1
-  readonly data: AgentEventData
-  readonly createdAt: string
-}
+// Admission/queued events precede the first execution attempt and legitimately
+// carry attempt0. Memory receipts below require an actual positive attempt.
+export const AgentEventEnvelopeSchema = z.strictObject({
+  id: AgentContextIdSchema, runId: AgentContextIdSchema,
+  sequence: z.number().int().positive(), attempt: z.number().int().nonnegative(),
+  schemaVersion: z.literal(1), createdAt: z.iso.datetime({ offset: true })
+})
+type AgentEventEnvelope = z.infer<typeof AgentEventEnvelopeSchema>
+
+// New memory event variants require their exact validated payload; do not hide
+// missing semantics behind optional data or a deprecated transport path.
+export type AgentEvent = AgentEventEnvelope & (
+  | { readonly type: 'memory.contextIncluded'; readonly data: AgentMemoryContextIncludedData }
+  | { readonly type: 'memory.saved'; readonly data: AgentMemorySavedData }
+  | { readonly type: Exclude<AgentEventType, 'memory.contextIncluded' | 'memory.saved'>; readonly data: AgentEventData }
+)
+
+const AgentMemoryEventEnvelopeSchema = AgentEventEnvelopeSchema.extend({
+  attempt: z.number().int().positive()
+})
+export const AgentMemoryReceiptEventSchema = z.discriminatedUnion('type', [
+  AgentMemoryEventEnvelopeSchema.extend({ type: z.literal('memory.contextIncluded'), data: AgentMemoryContextIncludedDataSchema }),
+  AgentMemoryEventEnvelopeSchema.extend({ type: z.literal('memory.saved'), data: AgentMemorySavedDataSchema })
+])
+export type AgentMemoryReceiptEvent = z.infer<typeof AgentMemoryReceiptEventSchema>
+
+export const AgentEventSchema = z.union([
+  AgentMemoryReceiptEventSchema,
+  AgentEventEnvelopeSchema.extend({
+    type: z.enum(AGENT_EVENT_TYPES.filter(
+      (type): type is Exclude<AgentEventType, 'memory.contextIncluded' | 'memory.saved'> =>
+        type !== 'memory.contextIncluded' && type !== 'memory.saved'
+    )),
+    data: z.record(z.string(), z.union([
+      z.string(), z.number(), z.boolean(), z.null(),
+      z.array(z.unknown()), z.record(z.string(), z.unknown())
+    ]))
+  })
+])
+
+/**
+ * Non-durable transport control, sent FIRST on EVERY SSE connection (including
+ * automatic reconnect) with no SSE id. replayThroughSequence is the existing
+ * initial authorized run.eventSequence, not a new counter or an extra fetch.
+ * Extend that existing query with sessionId. A cursor ahead of this value is
+ * invalid. Until this control validates, all receipts are replay/ineligible.
+ * Events <= replayThroughSequence are replay; later events are live. Reset this
+ * boundary on connection open/error, not the existing monotonic run watermark.
+ * The SSE data for durable events is the complete AgentEvent (including original
+ * id/runId/sequence/type); SSE event name and lastEventId must match type/sequence.
+ * Never invent event ids or reconstruct missing authoritative envelope fields.
+ */
+export const AGENT_RUN_STREAM_READY_EVENT = 'stream.ready'
+export const AgentRunStreamReadySchema = z.strictObject({
+  schemaVersion: z.literal(1), ownerId: z.number().int().positive(),
+  sessionId: AgentContextIdSchema, runId: AgentContextIdSchema,
+  replayThroughSequence: z.number().int().nonnegative()
+})
+export type AgentRunStreamReady = z.infer<typeof AgentRunStreamReadySchema>
+
+/**
+ * Projection/hydration never rewards. Consumers capture existing owner, session
+ * and workspace generation before subscription/mutation; reject results after
+ * any changes. For live events also match runId, current attempt and frozen
+ * snapshotId. Dedup by event.id AND runId/sequence; keep the existing per-run
+ * sequence watermark monotonic across attempt changes and reconnects. Reconnect
+ * catch-up and bootstrap are history, not live. Use stream.ready on EVERY
+ * connection to distinguish catch-up from later live events. Advance the existing
+ * watermark for ALL event types, not just memory. Unknown cursor/attempt/boundary
+ * suppresses rewards until synchronized, without an extra fetch/provider call.
+ * Repeated operationId/deliveryId in the same run/attempt is the same receipt.
+ * Inclusion targets must exactly match the nonempty available frozen targets'
+ * fingerprints/counts/limits in the authorized projection; unknown/stale state
+ * cannot qualify. Save targets are resulting saved metadata and cannot be
+ * compared to frozen counts; match operation origin and identity instead.
+ * Manual receipts qualify only from the current generation's successful mutation
+ * response, with matching owner/session and a new entryVersion, never a list GET.
+ * Neither event contents nor manual responses may overwrite frozen metadata.
+ */
+export const AgentMemoryReceiptDeliverySchema = z.strictObject({
+  generation: z.number().int().nonnegative(),
+  phase: z.enum(['bootstrap', 'replay', 'live']),
+  receipt: z.union([AgentMemoryReceiptEventSchema, AgentManualMemorySavedReceiptSchema])
+})
+export type AgentMemoryReceiptDelivery = z.infer<typeof AgentMemoryReceiptDeliverySchema>
 
 export interface AgentRoutingDecisionView {
   readonly runId: string
@@ -586,6 +795,7 @@ export interface AgentRoutingDecisionView {
 
 export interface AgentThreadState {
   readonly session: AgentSessionView
+  readonly memoryContext: AgentMemoryContextProjection
   readonly messages: readonly AgentMessageView[]
   readonly tools: readonly AgentToolCallView[]
   readonly tasks: readonly AgentTaskView[]

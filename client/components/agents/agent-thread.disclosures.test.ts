@@ -54,6 +54,10 @@ const makeMessage = (id: string, ordinal: number, runId: string | null = null): 
 const renderDuplicateSources = async (): Promise<string> => {
   const messages = [makeMessage('message one/α', 1), makeMessage('message two/β', 2)]
   const thread: AgentThreadState = {
+    memoryContext: {
+      ownerId: 1, sessionId: 'session-sources', frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+      latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+    },
     session: {
       id: 'session-sources',
       title: 'Repeated source references',
@@ -167,5 +171,17 @@ describe('Agent thread disclosures', () => {
     } finally {
       dom.window.close()
     }
+  })
+
+  test('uses host persistence recovery rather than provider failure or generic resend guidance after committed work', () => {
+    const message: AgentMessageView = {
+      ...makeMessage('host-persistence-failure', 1, 'committed-run'), status: 'failed',
+      runOutcome: { status: 'failed', errorCode: 'AGENT_HOST_PERSISTENCE_FAILED' }
+    }
+    const presentation = buildAgentThreadPresentation([message], [], [], [])
+    expect(presentation.orderedMessages[0]?.recovery).toEqual({
+      title: { key: 'common:agentThread.responseFailed' },
+      description: { key: 'common:agentThread.recoveryHostPersistence' }
+    })
   })
 })

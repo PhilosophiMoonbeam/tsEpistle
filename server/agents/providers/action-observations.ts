@@ -187,6 +187,8 @@ export interface ActionOperationReceiptObservation extends ActionObservationBase
   readonly receipt:
     | {
         readonly operation: 'memory.manage'
+        readonly action: 'add' | 'replace' | 'remove'
+        readonly saveEligible: boolean
         readonly changed: boolean
         readonly target: 'agent' | 'user'
         readonly characters: number
@@ -721,7 +723,7 @@ const presentDomainObservationValidated = (
 
   if (actionName === 'memory.manage') {
     const source = output as { readonly changed: boolean; readonly target: 'agent' | 'user'; readonly characters: number; readonly limit: number }
-    const request = input as { readonly target: 'agent' | 'user' }
+    const request = input as { readonly target: 'agent' | 'user'; readonly action: 'add' | 'replace' | 'remove' }
     if (source.target !== request.target) return null
     const status = source.changed ? 'applied' : 'no-change'
     const presentation = presentationFor(
@@ -742,7 +744,11 @@ const presentDomainObservationValidated = (
       ),
       representation: 'operation-receipt',
       supportsFactualClaim: 'operation-status-only',
-      receipt: { operation: 'memory.manage', changed: source.changed, target: source.target, characters: source.characters, limit: source.limit }
+      receipt: {
+        operation: 'memory.manage', action: request.action,
+        saveEligible: source.changed && (request.action === 'add' || request.action === 'replace'),
+        changed: source.changed, target: source.target, characters: source.characters, limit: source.limit
+      }
     }
   }
 

@@ -784,10 +784,21 @@ export default defineComponent({
     agentOwnerId(newOwnerId: number, oldOwnerId: number | undefined) {
       if (oldOwnerId === undefined || newOwnerId === oldOwnerId) return
       this.agentResumeSessionId = null
+      if (oldOwnerId > 0) {
+        this.approvalId = ''
+        const url = new URL(window.location.href)
+        if (url.searchParams.has('agentApproval')) {
+          url.searchParams.delete('agentApproval')
+          window.history.replaceState(window.history.state, '', url)
+        }
+      }
       if (this.searchMode === 'ask') {
         this.searchMode = 'search'
         this.searchIsFocused = false
       }
+    },
+    canAsk(ready: boolean) {
+      if (ready) void this.$nextTick(this.openRequestedApproval)
     },
     authAuthorityReady(ready: boolean) {
       if (ready) useAgentsStore().setCurrentPage(this.currentPageHint())
@@ -819,12 +830,7 @@ export default defineComponent({
   mounted() {
     if (this.authAuthorityReady) useAgentsStore().setCurrentPage(this.currentPageHint())
     if (!this.canAsk && this.searchMode === 'ask') this.searchMode = 'search'
-    const approvalId = new URL(window.location.href).searchParams.get('agentApproval')
-    if (approvalId && /^[0-9a-f-]{36}$/i.test(approvalId) && this.canAsk) {
-      this.approvalId = approvalId
-      this.searchMode = 'ask'
-      this.searchIsFocused = true
-    }
+    this.openRequestedApproval()
     if (this.isAgentOpen) this.latchAgentOpeningPage()
     if (this.searchMode === 'search' && this.searchIsFocused && this.normalizedSearch.length >= 2) {
       this.queueSearch(this.search)
@@ -871,6 +877,14 @@ export default defineComponent({
     this.agentResumeSessionId = null
   },
   methods: {
+    openRequestedApproval(): void {
+      if (!this.canAsk || this.approvalId) return
+      const approvalId = new URL(window.location.href).searchParams.get('agentApproval')
+      if (!approvalId || !/^[0-9a-f-]{36}$/i.test(approvalId)) return
+      this.approvalId = approvalId
+      this.searchMode = 'ask'
+      this.searchIsFocused = true
+    },
     matchSummary(item: PageSearchRow): string {
       const labels = {
         title: 'common:searchPanel.matchTitle',

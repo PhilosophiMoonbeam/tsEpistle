@@ -93,3 +93,40 @@
     animation: none !important;
   }
 }
+
+// Opt-in owner contract: one cited-copy action per row/block. The action appends
+// this inert overlay only after a successful write and removes it on completion.
+.wiki-cited-copy-owner[data-cited-copy-owner] {
+  position: relative;
+}
+
+.wiki-cited-copy-sweep {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+
+  &::before {
+    --wiki-attractor-sweep: wiki-attractor-sweep 450ms ease-out 0s 1 normal none running;
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(100deg, transparent 30%, rgba(var(--v-theme-primary), .14) 50%, transparent 70%);
+    animation: var(--wiki-attractor-sweep);
+  }
+}
+
+@keyframes wiki-attractor-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wiki-cited-copy-sweep {
+    display: none;
+
+    &::before { animation: none; }
+  }
+}

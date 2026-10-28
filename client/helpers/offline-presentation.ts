@@ -31,7 +31,8 @@ export function rememberOfflinePresentation(appearance = ''): void {
         lang: siteConfig.lang,
         rtl: siteConfig.rtl,
         appearance,
-        logoUrl
+        logoUrl,
+        logoSourceSha256: siteConfig.logoSourceSha256
       })
     )
   } catch {
@@ -119,6 +120,7 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
       footerOverride: '',
       banner: { isEnabled: false, title: '', content: '' },
       logoUrl: offlineLogoPath(saved.logoUrl, window.location.origin) ?? '',
+      logoSourceSha256: typeof saved.logoSourceSha256 === 'string' && /^[a-f\d]{64}$/i.test(saved.logoSourceSha256) ? saved.logoSourceSha256 : null,
       logoEffect: null,
       product: {
         ...product,

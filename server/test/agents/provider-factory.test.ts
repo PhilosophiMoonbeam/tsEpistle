@@ -631,6 +631,22 @@ describe('external MCP execution failure boundary', () => {
     }
   })
 
+  it('classifies host persistence without exposing database causes or blaming the provider', () => {
+    const error = Object.assign(new Error('INSERT private SQL bindings and memory text'), {
+      code: 'SQLITE_CONSTRAINT', providerStatus: 401, diagnostics: { providerErrorCode: 'private_binding' }
+    })
+    const failure = classifyAgentExecutionFailure(error, 'host_persistence')
+    expect(failure).toMatchObject({
+      code: 'AGENT_HOST_PERSISTENCE_FAILED', stage: 'host_persistence', status: 500,
+      message: 'Agent host could not persist execution metadata. Execution stopped without retrying completed work.'
+    })
+    expect(failure.providerStatus).toBeUndefined()
+    expect(failure.diagnostics).toBeUndefined()
+    expect(failure.cause).toBeUndefined()
+    expect(JSON.stringify({ ...failure, message: failure.message })).not.toContain('private')
+    expect(classifyAgentExecutionFailure(failure, 'unknown')).toBe(failure)
+  })
+
   it('preserves cleanup precedence and already-classified uncertainty', () => {
     const applicationError = new AgentRepositoryError('EXTERNAL_MCP_ACCESS_DENIED', 'private details', 403)
     expect(classifyAgentExecutionFailure(applicationError, 'action_cleanup')).toMatchObject({

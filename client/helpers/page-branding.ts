@@ -3,6 +3,7 @@ import { PageBrandingViewSchema, type PageBrandingView } from '../../shared/page
 export type PageBrandingStyle = Record<string, string>
 
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i
+const SHA256_PATTERN = /^[0-9a-f]{64}$/i
 
 export const normalizePageBrandingView = (value: unknown): PageBrandingView | null => {
   const result = PageBrandingViewSchema.safeParse(value)
@@ -29,6 +30,7 @@ const comparablePath = (value: string): string | null => {
   try {
     const base = typeof window === 'undefined' ? 'http://wiki.invalid' : window.location.origin
     const url = new URL(value, base)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
     return `${url.origin}${decodeURIComponent(url.pathname)}`
   } catch {
     return null
@@ -37,15 +39,29 @@ const comparablePath = (value: string): string | null => {
 
 export interface SiteLogoIdentity {
   logoUrl?: string | null
+  /** Hash of uploaded source bytes from resolveActiveBranding, not the rendered logo URL hash. */
+  logoSourceSha256?: string | null
 }
 
-/** True when a page branding image uses the site logo's public image path. */
+/**
+ * Matches genuine source hashes when both are available; a mismatch wins over
+ * path equality. Otherwise only the same canonical public URL matches, never a
+ * shared filename or a digest inferred from a URL.
+ */
 export const brandingDuplicatesSiteLogo = (
   branding: Pick<PageBrandingView, 'imageUrl' | 'sourceSha256'> | null | undefined,
   site: SiteLogoIdentity | null | undefined
 ): boolean => {
   if (!branding || !site) return false
-  if (!branding.imageUrl || !site.logoUrl) return false
+  if (!branding.imageUrl?.trim() || !site.logoUrl?.trim()) return false
   const brandingPath = comparablePath(branding.imageUrl)
-  return brandingPath !== null && brandingPath === comparablePath(site.logoUrl)
+  const sitePath = comparablePath(site.logoUrl)
+  if (brandingPath === null || sitePath === null) return false
+  if (
+    typeof branding.sourceSha256 === 'string' && SHA256_PATTERN.test(branding.sourceSha256) &&
+    typeof site.logoSourceSha256 === 'string' && SHA256_PATTERN.test(site.logoSourceSha256)
+  ) {
+    return branding.sourceSha256.toLowerCase() === site.logoSourceSha256.toLowerCase()
+  }
+  return brandingPath === sitePath
 }

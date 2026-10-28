@@ -423,6 +423,7 @@ export const useWikiStore = defineStore('wiki', {
       mascot: true,
       title: window.siteConfig.title,
       logoUrl: window.siteConfig.logoUrl,
+      logoSourceSha256: window.siteConfig.logoSourceSha256,
       product: window.siteConfig.product,
       search: '',
       searchMode: 'search' as 'search' | 'ask',

@@ -1,7 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import {
   type AgentActionName,
+  AgentMemoryContextIncludedDataSchema,
+  AgentMemorySavedDataSchema,
   type AgentCurrentPageHint,
   type AgentEventData,
   type AgentEventType,
@@ -16,7 +18,7 @@ import {
   isTerminalAgentRunStatus
 } from '../../shared/agents/contracts.ts'
 import { type DecisionUsage, DecisionUsageSchema } from '../../shared/agents/decision-providers.ts'
-import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { type AgentKnowledgeContext, AgentCurrentPageHintSchema, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import {
   AgentMediaKindSchema,
   agentMediaToolInputs,
@@ -88,7 +90,7 @@ import {
   storeAgentMedia
 } from './media.ts'
 import { assertAgentMediaBinding, listAgentMediaBindings } from './media-providers.ts'
-import { type AgentMemorySnapshot, decodeAgentMemorySnapshot } from './memory.ts'
+import { type AgentMemoryMutationResult, type AgentMemorySnapshot, agentMemoryTargetCount, decodeAgentMemorySnapshot } from './memory.ts'
 import {
   type AgentChildBudgetReservation,
   AgentChildBudgetReservations,
@@ -127,7 +129,7 @@ import type {
   AgentGoalBudgetClassificationResult,
   AgentGoalBudgetClassifier
 } from './providers/utility.ts'
-import { AgentRepositoryError, appendAgentEvent, validateAgentGoogleSearchGrounding } from './repository.ts'
+import { AgentRepositoryError, appendAgentEvent, validateAgentEventData, validateAgentGoogleSearchGrounding } from './repository.ts'
 import type { AgentTurnRouter } from './routing.ts'
 import { SkillValidationError } from './skills/parser.ts'
 import { lockSkillAdmissionPrincipal, resolveSelectedSkillVersionIdsInTransaction, validateSelectedSkillVersionIdsInTransaction } from './skills/runtime.ts'
@@ -856,6 +858,9 @@ export interface AgentEngineRequest {
   readonly mediaBindings?: AgentMediaBindings
   readonly authorizeMedia?: () => Promise<void>
   readonly authorizeDispatch?: () => Promise<void>
+  /** Observed successful provider delivery, never dispatch intent. Host owns metadata. */
+  readonly memoryContextDelivered?: (deliveryId: string) => Promise<void>
+  readonly memorySaved?: (operationId: string, operation: 'add' | 'replace', result: AgentMemoryMutationResult) => Promise<void>
   readonly beforeExternalTool?: () => Promise<void>
   readonly mediaRequest?: { readonly kind: 'image' | 'transcription' | 'video' | 'music' }
   readonly run: AgentRunClaim
@@ -896,7 +901,7 @@ export interface AgentEngineSink {
     }[]
   ): Promise<readonly AgentMediaView[] | void>
   text(delta: string): Promise<void>
-  event(type: AgentEventType, data: AgentEventData): Promise<void>
+  event(type: Exclude<AgentEventType, 'memory.contextIncluded' | 'memory.saved'>, data: AgentEventData): Promise<void>
 }
 
 export interface AgentEngineResult {
@@ -992,6 +997,7 @@ export interface MutateAgentGoalInput {
 }
 
 export interface AgentProductRuntimeOptions {
+  readonly memorySigningSecret: string | Uint8Array
   readonly router?: AgentTurnRouter
   readonly authorizeMedia?: (ownerId: number) => Promise<void>
   readonly workerId: string
@@ -1491,25 +1497,7 @@ const currentPageHint = (value: string | undefined): AgentCurrentPageHint | unde
     const parsed: unknown = JSON.parse(value)
     const currentPage = typeof parsed === 'object' && parsed !== null ? Reflect.get(parsed, 'currentPage') : undefined
     if (currentPage === undefined) return undefined
-    if (typeof currentPage !== 'object' || currentPage === null) throw new Error('invalid page context')
-    const id = Reflect.get(currentPage, 'id')
-    const locale = Reflect.get(currentPage, 'locale')
-    const path = Reflect.get(currentPage, 'path')
-    const observedUpdatedAt = Reflect.get(currentPage, 'observedUpdatedAt')
-    if (
-      !Number.isSafeInteger(id) ||
-      id < 1 ||
-      typeof locale !== 'string' ||
-      locale.length < 1 ||
-      locale.length > 16 ||
-      typeof path !== 'string' ||
-      path.length < 1 ||
-      path.length > 1_024 ||
-      typeof observedUpdatedAt !== 'string' ||
-      !Number.isFinite(Date.parse(observedUpdatedAt))
-    )
-      throw new Error('invalid page context')
-    return { id, locale, path, observedUpdatedAt }
+    return AgentCurrentPageHintSchema.parse(currentPage)
   } catch (error) {
     if (error instanceof AgentRepositoryError) throw error
     throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored run context is invalid', 500)
@@ -1671,6 +1659,7 @@ export class AgentProductRuntime {
   readonly #authorizeMedia: AgentProductRuntimeOptions['authorizeMedia']
   readonly #router: AgentTurnRouter | undefined
   readonly #specialists: AgentSpecialistStore
+  readonly #memorySigningSecret: string | Uint8Array
   constructor(knex: Knex, resolver: AgentAdmissionResolver, engine: AgentEngine, options: AgentProductRuntimeOptions) {
     this.#knex = knex
     this.#resolver = resolver
@@ -1682,6 +1671,7 @@ export class AgentProductRuntime {
     this.#logger = options.logger
     this.#authorizeMedia = options.authorizeMedia
     this.#router = options.router
+    this.#memorySigningSecret = options.memorySigningSecret
     this.#specialists = new AgentSpecialistStore(knex)
   }
 
@@ -2838,10 +2828,30 @@ export class AgentProductRuntime {
       .first('eventSequence', 'assistantMessageId')) as { eventSequence: number; assistantMessageId: string } | undefined
     if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while recording output', 409)
     assertNoTransientGoogleSearchSuggestions(data)
+    validateAgentEventData(type, data)
+    const receipt = type === 'memory.contextIncluded' ? AgentMemoryContextIncludedDataSchema.parse(data)
+      : type === 'memory.saved' ? AgentMemorySavedDataSchema.parse(data) : null
+    if (receipt !== null && (receipt.ownerId !== claim.ownerId || receipt.sessionId !== claim.sessionId || receipt.snapshotId !== claim.sessionId))
+      throw new AgentRepositoryError('INVALID_AGENT_EVENT', 'Agent memory receipt does not match its owned session', 500)
     const encoded = canonicalJson(data)
     const sequence = Number(run.eventSequence) + 1
+    const receiptHash = receipt === null ? null : sha256(JSON.stringify([
+      'agent-memory-receipt', claim.id, claim.attempts, type, 'deliveryId' in receipt ? receipt.deliveryId : receipt.operationId
+    ]))
+    // Durable event ids are PostgreSQL UUIDs. Encode the deterministic receipt
+    // hash as UUIDv8, retaining the required version and RFC variant bits.
+    const eventId = receiptHash === null ? randomUUID()
+      : `${receiptHash.slice(0, 8)}-${receiptHash.slice(8, 12)}-8${receiptHash.slice(13, 16)}-${((Number.parseInt(receiptHash[16]!, 16) & 3) | 8).toString(16)}${receiptHash.slice(17, 20)}-${receiptHash.slice(20, 32)}`
+    if (receipt !== null) {
+      const existing = await transaction('agentEvents').where({ id: eventId, runId: claim.id, attempt: claim.attempts }).first('dataSha256')
+      if (existing) {
+        if (existing.dataSha256 !== sha256(encoded))
+          throw new AgentRepositoryError('AGENT_EVENT_IDEMPOTENCY_MISMATCH', 'Agent memory receipt identity changed', 409)
+        return
+      }
+    }
     await transaction('agentEvents').insert({
-      id: randomUUID(),
+      id: eventId,
       runId: claim.id,
       sequence,
       type,
@@ -3994,6 +4004,28 @@ export class AgentProductRuntime {
         run: claim,
         purpose: 'root',
         authorizeDispatch: () => this.#authorizeClaim(claim),
+        memoryContextDelivered: async deliveryId => {
+          const targets = (['user', 'agent'] as const)
+            .filter(target => memory[target].length > 0)
+            .map(target => agentMemoryTargetCount(claim.ownerId, target, memory[target], this.#memorySigningSecret))
+          if (targets.length === 0) return
+          const publicDeliveryId = createHmac('sha256', this.#memorySigningSecret)
+            .update(JSON.stringify(['agent-memory-context-delivery', claim.id, claim.attempts, claim.leaseToken, deliveryId]))
+            .digest('hex')
+          await this.#appendPresentationEvent(claim, 'memory.contextIncluded', AgentMemoryContextIncludedDataSchema.parse({
+            ownerId: claim.ownerId, sessionId: claim.sessionId, snapshotId: claim.sessionId, deliveryId: publicDeliveryId, targets
+          }))
+        },
+        memorySaved: async (operationId, operation, result) => {
+          if (!result.changed) return
+          const count = agentMemoryTargetCount(claim.ownerId, result.target, result.entries, this.#memorySigningSecret)
+          if (count.characters !== result.characters || count.limit !== result.limit)
+            throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Saved memory metadata does not match the committed operation', 500)
+          await this.#appendPresentationEvent(claim, 'memory.saved', AgentMemorySavedDataSchema.parse({
+            ownerId: claim.ownerId, sessionId: claim.sessionId, snapshotId: claim.sessionId, origin: 'memory.manage',
+            operationId, operation, changed: true, targets: [count]
+          }))
+        },
         beforeExternalTool: () => this.#authorizeExternalTool(claim),
         messages,
         memory,

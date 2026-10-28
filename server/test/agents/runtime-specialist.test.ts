@@ -84,7 +84,7 @@ describe('retained independent specialist runtime history', () => {
     await db.destroy()
   })
 
-  const thread = (sessionId: string) => projectAgentThread(db, 7, sessionId, { profileResolutionToken: () => 'fixture-resolution' })
+  const thread = (sessionId: string) => projectAgentThread(db, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'fixture-resolution' })
   const enable = () => Object.assign(f.view.policy, { specialistEnabled: true })
   const warmup = async () => {
     const sessionId = await f.session(true)

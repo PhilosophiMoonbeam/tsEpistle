@@ -2,6 +2,12 @@ import { z } from 'zod'
 import {
   AGENT_ACTION_NAMES,
   AGENT_EVENT_TYPES,
+  AGENT_RUN_STREAM_READY_EVENT,
+  AgentMemoryContextProjectionSchema,
+  AgentEventSchema,
+  AgentManualMemoryMutationContextSchema,
+  AgentManualMemoryMutationReceiptFieldsSchema,
+  AgentRunStreamReadySchema,
   AGENT_GOAL_BUDGET_LIMIT_REASONS,
   AGENT_GOAL_BUDGET_SELECTIONS,
   AGENT_GOAL_STATUSES,
@@ -11,7 +17,9 @@ import {
   AGENT_TERMINAL_RUN_STATUSES,
   AGENT_TOOL_CALL_NAMES,
   type AgentConversationFolderView,
-  type AgentEventType,
+  type AgentEvent,
+  type AgentManualMemoryMutationContext,
+  type AgentRunStreamReady,
   type AgentMediaView,
   type AgentThreadState,
   type CancelAgentGoalRequest,
@@ -29,7 +37,7 @@ import {
   type UpdateAgentSkillPreferencesRequest
 } from '../../shared/agents/contracts.ts'
 import { cleanAgentConversationFolderName } from '../../shared/agents/conversation-folders.ts'
-import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { AgentCurrentPageHintSchema, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { AgentMediaInputsSchema } from '../../shared/agents/media-providers.ts'
 import { SpecialistInvocationViewSchema } from '../../shared/agents/specialists.ts'
 import { translate } from '../modules/localization.ts'
@@ -96,12 +104,7 @@ const Message = z.object({
   media: z.array(Media).optional(),
   googleSearchGrounding: GoogleSearchGrounding.optional(),
   knowledgeContext: AgentKnowledgeContextSchema.optional(),
-  currentPage: z.strictObject({
-    id: z.number().int().positive(),
-    locale: z.string().min(1).max(35),
-    path: z.string().min(1).max(1024),
-    observedUpdatedAt: z.string().refine(value => Number.isFinite(Date.parse(value)))
-  }).nullable().optional(),
+  currentPage: AgentCurrentPageHintSchema.nullable().optional(),
   id: Uuid,
   runId: Uuid.nullable(),
   runOutcome: z.object({ status: z.enum(AGENT_TERMINAL_RUN_STATUSES), errorCode: z.string().nullable() }).optional(),
@@ -315,6 +318,7 @@ const RoutingDecision = z.strictObject({
 })
 const Thread = z.object({
   session: Session,
+  memoryContext: AgentMemoryContextProjectionSchema,
   messages: z.array(Message),
   tools: z.array(Tool),
   tasks: z.array(Task),
@@ -325,11 +329,11 @@ const Thread = z.object({
   artifacts: z.array(Artifact),
   historyWindow: HistoryWindow,
   suggestions: z.array(Suggestion)
-})
+}).refine(thread => thread.memoryContext.sessionId === thread.session.id && (!thread.session.currentRun || thread.session.currentRun.sessionId === thread.session.id), { message: 'Thread context does not match its session.' })
 const LaunchPage = z
   .object({ pageId: z.number().int().positive().nullable(), locale: z.string().nullable(), path: z.string().nullable(), observedUpdatedAt: Iso.nullable() })
   .nullable()
-const CreatedThread = Thread.extend({ launchPage: LaunchPage.optional() })
+const CreatedThread = Thread.safeExtend({ launchPage: LaunchPage.optional() })
 const SessionSummary = z.object({
   id: Uuid,
   title: z.string(),
@@ -378,6 +382,9 @@ const MemoryMutation = z.object({
   characters: z.number().int().nonnegative(),
   limit: z.number().int().positive()
 })
+const ManualMemoryMutation = MemoryMutation.extend(AgentManualMemoryMutationReceiptFieldsSchema.shape)
+  .refine(value => value.changed === (value.receipt !== null), { message: 'Mutation receipt must identify an actual change.' })
+  .refine(value => value.receipt === null || value.receipt.targets.some(row => row.target === value.target && row.characters === value.characters && row.limit === value.limit), { message: 'Receipt must match the committed mutation metadata.' })
 const McpProposal = z.object({
   id: Uuid,
   actionName: z.enum(AGENT_ACTION_NAMES),
@@ -569,7 +576,7 @@ export const createAgentThread = (fetcher: BrowserFetch, csrfToken: string, inpu
 
 export const getAgentThread = (fetcher: BrowserFetch, csrfToken: string, sessionId: string, signal?: AbortSignal): Promise<AgentThreadState> => {
   assertUuid(sessionId, 'Session ID')
-  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, { signal }) as Promise<AgentThreadState>
+  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread.refine(thread => thread.session.id === sessionId), { signal }) as Promise<AgentThreadState>
 }
 export const moveAgentSessionToFolder = (fetcher: BrowserFetch, csrfToken: string,
 sessionId: string,
@@ -577,7 +584,7 @@ input: UpdateAgentSessionFolderRequest): Promise<AgentThreadState> => {
   assertUuid(sessionId, 'Session ID')
   assertPositiveVersion(input.expectedSessionVersion)
   if (input.folderId !== null) assertUuid(input.folderId, 'Folder ID')
-  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/folder`, Thread, {
+  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}/folder`, Thread.refine(thread => thread.session.id === sessionId), {
     method: 'PUT',
     body: JSON.stringify(input)
   }) as Promise<AgentThreadState>
@@ -588,7 +595,7 @@ sessionId: string,
 input: UpdateAgentSessionRequest): Promise<AgentThreadState> => {
   assertUuid(sessionId, 'Session ID')
   assertPositiveVersion(input.expectedSessionVersion)
-  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, {
+  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread.refine(thread => thread.session.id === sessionId), {
     method: 'PATCH',
     body: JSON.stringify(input)
   }) as Promise<AgentThreadState>
@@ -614,11 +621,11 @@ export const clearUnfiledAgentHistory = async (fetcher: BrowserFetch, csrfToken:
 
 export const getAgentMemories = (fetcher: BrowserFetch, csrfToken: string, signal?: AbortSignal): Promise<AgentMemoryView> => requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryView, { signal })
 
-export const createAgentMemory = (fetcher: BrowserFetch, csrfToken: string, input: { readonly target: AgentMemoryTarget; readonly content: string }) => requestJson(fetcher, csrfToken, '/_api/agents/memories', MemoryMutation, { method: 'POST', body: JSON.stringify(input) })
+export const createAgentMemory = (fetcher: BrowserFetch, csrfToken: string, input: { readonly target: AgentMemoryTarget; readonly content: string; readonly context: AgentManualMemoryMutationContext }) => requestJson(fetcher, csrfToken, '/_api/agents/memories', ManualMemoryMutation, { method: 'POST', body: JSON.stringify({ ...input, context: AgentManualMemoryMutationContextSchema.parse(input.context) }) })
 
 export const updateAgentMemory = (fetcher: BrowserFetch, csrfToken: string,
 memoryId: string,
-input: { readonly expectedVersion: number; readonly target: AgentMemoryTarget; readonly content: string }) => requestJson(fetcher, csrfToken, `/_api/agents/memories/${encodeURIComponent(memoryId)}`, MemoryMutation, { method: 'PUT', body: JSON.stringify(input) })
+input: { readonly expectedVersion: number; readonly target: AgentMemoryTarget; readonly content: string; readonly context: AgentManualMemoryMutationContext }) => requestJson(fetcher, csrfToken, `/_api/agents/memories/${encodeURIComponent(memoryId)}`, ManualMemoryMutation, { method: 'PUT', body: JSON.stringify({ ...input, context: AgentManualMemoryMutationContextSchema.parse(input.context) }) })
 
 export const removeAgentMemory = (fetcher: BrowserFetch, csrfToken: string, memoryId: string, expectedVersion: number) => requestJson(
   fetcher,
@@ -738,23 +745,63 @@ input: UpdateAgentSkillPreferencesRequest): Promise<readonly string[]> => (
   })
 ).skillIds
 
+
 export const subscribeAgentRun = (
-  runId: string,
+  context: { readonly ownerId: number; readonly sessionId: string; readonly runId: string },
   after: number,
   handlers: {
-    readonly event: (type: AgentEventType, sequence: number) => void
+    readonly ready: (ready: AgentRunStreamReady) => void
+    readonly reset: () => void
+    readonly event: (event: AgentEvent, phase: 'replay' | 'live') => void
     readonly error: () => void
   }
 ): EventSource => {
-  const source = new EventSource(`/_api/agents/runs/${encodeURIComponent(runId)}/events?after=${after}`)
+  if (!Number.isSafeInteger(after) || after < 0) throw invalidRequest('Invalid event cursor.')
+  const source = new EventSource(`/_api/agents/runs/${encodeURIComponent(context.runId)}/events?after=${after}`)
+  let ready: AgentRunStreamReady | null = null
+  let cursor = after
+  let failed = false
+  const reset = (): void => {
+    ready = null
+    handlers.reset()
+  }
+  const fail = (): void => {
+    if (failed) return
+    failed = true
+    reset()
+    source.close()
+    handlers.error()
+  }
+  source.addEventListener('open', reset)
+  source.addEventListener(AGENT_RUN_STREAM_READY_EVENT, event => {
+    if (failed) return
+    try {
+      const frame = event as MessageEvent
+      const boundary = AgentRunStreamReadySchema.parse(JSON.parse(frame.data))
+      if (frame.lastEventId !== '' && frame.lastEventId !== String(cursor)) return fail()
+      if (ready || boundary.ownerId !== context.ownerId || boundary.sessionId !== context.sessionId || boundary.runId !== context.runId || boundary.replayThroughSequence < cursor)
+        return fail()
+      ready = boundary
+      handlers.ready(boundary)
+    } catch { fail() }
+  })
   for (const type of AGENT_EVENT_TYPES) {
     source.addEventListener(type, event => {
-      const eventId = (event as MessageEvent).lastEventId
-      const sequence = /^[1-9]\d*$/.test(eventId) ? Number(eventId) : Number.NaN
-      handlers.event(type, Number.isSafeInteger(sequence) && sequence > after ? sequence : after)
+      if (failed) return
+      try {
+        const frame = event as MessageEvent
+        const payload = AgentEventSchema.parse(JSON.parse(frame.data))
+        const sequence = /^[1-9]\d*$/.test(frame.lastEventId) ? Number(frame.lastEventId) : Number.NaN
+        if (!ready || !Number.isSafeInteger(sequence) || sequence !== payload.sequence || type !== payload.type || payload.runId !== context.runId)
+          return fail()
+        if ((payload.type === 'memory.contextIncluded' || payload.type === 'memory.saved') &&
+          (payload.data.ownerId !== context.ownerId || payload.data.sessionId !== context.sessionId)) return fail()
+        cursor = Math.max(cursor, sequence)
+        handlers.event(payload, sequence <= ready.replayThroughSequence ? 'replay' : 'live')
+      } catch { fail() }
     })
   }
-  source.addEventListener('error', handlers.error)
+  source.addEventListener('error', fail)
   return source
 }
 

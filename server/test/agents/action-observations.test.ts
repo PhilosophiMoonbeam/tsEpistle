@@ -252,25 +252,31 @@ describe('typed action observations', () => {
     const unchanged = presentDomainObservation(
       'memory.manage',
       { action: 'add', target: 'user', content: 'Prefers concise answers.' },
-      { changed: false, message: 'Already present.', target: 'user', entries: ['Prefers concise answers.'], characters: 24, limit: 2200 },
+      { changed: false, message: 'Already present.', target: 'user', entries: ['Prefers concise answers.'], characters: 24, limit: 1375 },
       context
     )
     expectKind(unchanged, 'receipt')
     if (unchanged.kind !== 'receipt') throw new Error('Expected memory receipt')
     expect(unchanged.status).toBe('no-change')
-    expect(unchanged.receipt).toMatchObject({ operation: 'memory.manage', changed: false })
+    expect(unchanged.receipt).toMatchObject({ operation: 'memory.manage', action: 'add', saveEligible: false, changed: false })
     expect(unchanged.presentation.text).not.toContain('applied')
 
     const privateMemoryEntry = 'private-memory-entry-should-not-be-presented'
     const changed = presentDomainObservation(
       'memory.manage',
       { action: 'add', target: 'user', content: privateMemoryEntry },
-      { changed: true, message: 'Updated.', target: 'user', entries: [privateMemoryEntry], characters: privateMemoryEntry.length, limit: 2200 },
+      { changed: true, message: 'Updated.', target: 'user', entries: [privateMemoryEntry], characters: privateMemoryEntry.length, limit: 1375 },
       context
     )
     expectKind(changed, 'receipt')
     if (changed.kind !== 'receipt') throw new Error('Expected memory receipt')
     expect(changed.status).toBe('applied')
+    expect(changed.receipt).toMatchObject({ operation: 'memory.manage', action: 'add', saveEligible: true, changed: true })
+    const removed = presentDomainObservation('memory.manage', { action: 'remove', target: 'user', oldText: 'private' },
+      { changed: true, message: 'Removed.', target: 'user', entries: [], characters: 0, limit: 1375 }, context)
+    expectKind(removed, 'receipt')
+    if (removed.kind !== 'receipt') throw new Error('Expected remove operation receipt')
+    expect(removed.receipt).toMatchObject({ operation: 'memory.manage', action: 'remove', changed: true, saveEligible: false })
     expect(JSON.stringify(changed)).not.toContain(privateMemoryEntry)
 
     const proposalBase = {

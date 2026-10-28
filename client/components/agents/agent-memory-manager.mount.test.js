@@ -50,8 +50,15 @@ const loadManager = (view, overrides = {}) => {
   const getAgentMemories = overrides.getAgentMemories ?? vi.fn().mockResolvedValue(view)
   const clearAgentMemories = overrides.clearAgentMemories ?? vi.fn()
   const removeAgentMemory = overrides.removeAgentMemory ?? vi.fn()
-  const createAgentMemory = overrides.createAgentMemory ?? vi.fn()
-  const updateAgentMemory = overrides.updateAgentMemory ?? vi.fn()
+  const createAgentMemory = overrides.createAgentMemory ?? vi.fn().mockResolvedValue({ changed: false, receipt: null })
+  const updateAgentMemory = overrides.updateAgentMemory ?? vi.fn().mockResolvedValue({ changed: false, receipt: null })
+  const capture = { ownerId: 1, sessionId: 'session-current', generation: 1, ownerGeneration: 0, selectionVersion: 1 }
+  const agents = overrides.agents ?? {
+    captureMemoryMutationContext: () => capture,
+    isMemoryMutationContextCurrent: () => true,
+    consumeManualMemoryReceipt: vi.fn(),
+    invalidateSavedMemory: vi.fn()
+  }
   const createModalFocusScope = overrides.createModalFocusScope ?? vi.fn(() => ({ deactivate: vi.fn() }))
   const emittedBusy = []
   const emit = (event, busy) => {
@@ -109,9 +116,11 @@ const loadManager = (view, overrides = {}) => {
     'removeAgentMemory',
     'updateAgentMemory',
     'createModalFocusScope',
+    'useAgentsStore',
+    'AGENT_MEMORY_CHARACTER_LIMITS',
     'window',
     'HTMLElement',
-    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCount, memoryCountLabel, canAddTo, clearMemoryDisabledReason, open, actionBusy, removing, clearing, clearReviewCount, clearError, draftTarget, draftContent, editing, draftConflict, error, beginAdd, beginEdit, beginRemove, beginClear, cancelClear, cancelEditOnEscape, keepDraftAfterRefresh, load, remove, clear, requestClose, saveShortcut }`
+    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCount, memoryCountLabel, canAddTo, clearMemoryDisabledReason, open, actionBusy, removing, clearing, clearReviewCount, clearError, draftTarget, draftContent, editing, draftConflict, error, beginAdd, beginEdit, beginRemove, beginClear, cancelClear, cancelEditOnEscape, keepDraftAfterRefresh, load, remove, clear, requestClose, save, saveShortcut }`
   )
   const manager = evaluate(
     getter => ({
@@ -137,10 +146,13 @@ const loadManager = (view, overrides = {}) => {
     removeAgentMemory,
     updateAgentMemory,
     createModalFocusScope,
+    () => agents,
+    { user: 1375, agent: 2200 },
     { fetch: vi.fn() },
     TestHTMLElement
   )
   return {
+    agents,
     clearAgentMemories,
     createAgentMemory,
     createModalFocusScope,
@@ -169,10 +181,12 @@ const populatedView = () => ({
 })
 const deferred = () => {
   let resolve
-  const promise = new Promise(done => {
+  let reject
+  const promise = new Promise((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 describe('Agent memory manager initial loading', () => {
@@ -474,5 +488,93 @@ describe('Agent memory filtering', () => {
       { target: 'agent', entries: originalView.agent.entries }
     ])
     expect(manager.memories.value).toEqual(originalView)
+  })
+})
+
+describe('Agent manual memory receipt forwarding', () => {
+  it.each(['changed', 'no-op', 'failure', 'switched'])('forwards only actual current changed add responses: %s', async outcome => {
+    const mutation = deferred()
+    const capture = { ownerId: 1, sessionId: 'session-current', generation: 3, ownerGeneration: 2, selectionVersion: 4 }
+    let current = true
+    const agents = {
+      captureMemoryMutationContext: () => capture,
+      isMemoryMutationContextCurrent: candidate => current && candidate === capture,
+      consumeManualMemoryReceipt: vi.fn(),
+      invalidateSavedMemory: vi.fn()
+    }
+    const createAgentMemory = vi.fn(() => mutation.promise)
+    const { manager, getAgentMemories } = loadManager(populatedView(), { agents, createAgentMemory })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(agents.consumeManualMemoryReceipt).not.toHaveBeenCalled()
+    manager.beginAdd('agent')
+    manager.draftContent.value = 'Explicitly saved note'
+    const completion = manager.save()
+    expect(createAgentMemory.mock.calls[0][2]).toEqual({
+      target: 'agent', content: 'Explicitly saved note', context: { sessionId: capture.sessionId }
+    })
+    expect(agents.consumeManualMemoryReceipt).not.toHaveBeenCalled()
+    const receipt = {
+      schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: capture.sessionId,
+      runId: null, attempt: null, snapshotId: null, entryId: 'entry-new', entryVersion: 1, operation: 'add', changed: true,
+      targets: [{ target: 'agent', characters: 21, limit: 2200, snapshotId: 'a'.repeat(64) }]
+    }
+    if (outcome === 'switched') current = false
+    if (outcome === 'failure') mutation.reject(new Error('Memory changed concurrently.'))
+    else mutation.resolve({ changed: outcome !== 'no-op', receipt: outcome === 'no-op' ? null : receipt })
+    await completion
+    if (outcome === 'changed') {
+      expect(agents.consumeManualMemoryReceipt).toHaveBeenCalledWith(capture, receipt, { entryId: null, entryVersion: 1, target: 'agent' })
+      expect(getAgentMemories).toHaveBeenCalledTimes(2)
+    } else {
+      expect(agents.consumeManualMemoryReceipt).not.toHaveBeenCalled()
+      expect(getAgentMemories).toHaveBeenCalledTimes(outcome === 'no-op' ? 2 : 1)
+    }
+  })
+
+  it('correlates an optimistic replacement response without treating a list refresh as its receipt', async () => {
+    const receipt = {
+      schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: 'session-current',
+      runId: null, attempt: null, snapshotId: null, entryId: memoryEntry.id, entryVersion: memoryEntry.version + 1,
+      operation: 'replace', changed: true,
+      targets: [
+        { target: 'user', characters: 0, limit: 1375, snapshotId: 'b'.repeat(64) },
+        { target: 'agent', characters: 24, limit: 2200, snapshotId: 'c'.repeat(64) }
+      ]
+    }
+    const updateAgentMemory = vi.fn().mockResolvedValue({ changed: true, receipt })
+    const { agents, manager } = loadManager(populatedView(), { updateAgentMemory })
+    await Promise.resolve()
+    await Promise.resolve()
+    manager.beginEdit(memoryEntry)
+    manager.draftTarget.value = 'agent'
+    manager.draftContent.value = 'Updated project context'
+    await manager.save()
+    expect(updateAgentMemory.mock.calls[0].slice(2)).toEqual([memoryEntry.id, {
+      expectedVersion: memoryEntry.version, target: 'agent', content: 'Updated project context', context: { sessionId: 'session-current' }
+    }])
+    expect(agents.consumeManualMemoryReceipt).toHaveBeenCalledTimes(1)
+    expect(agents.consumeManualMemoryReceipt.mock.calls[0].slice(1)).toEqual([receipt, {
+      entryId: memoryEntry.id, entryVersion: memoryEntry.version + 1, target: 'agent'
+    }])
+  })
+
+  it.each(['remove', 'clear'])('invalidates saved metadata without forwarding a reward for %s', async operation => {
+    const { agents, manager } = loadManager(populatedView(), {
+      removeAgentMemory: vi.fn().mockResolvedValue({ changed: true, characters: 0, limit: 1375 }),
+      clearAgentMemories: vi.fn().mockResolvedValue(1)
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    if (operation === 'remove') {
+      manager.beginRemove(memoryEntry, { currentTarget: null })
+      await manager.remove()
+    } else {
+      manager.beginClear({ currentTarget: null })
+      await manager.clear()
+    }
+    expect(agents.consumeManualMemoryReceipt).not.toHaveBeenCalled()
+    expect(agents.invalidateSavedMemory).toHaveBeenCalledTimes(1)
+    expect(agents.invalidateSavedMemory.mock.calls[0][1]).toEqual(operation === 'remove' ? ['user'] : ['user', 'agent'])
   })
 })

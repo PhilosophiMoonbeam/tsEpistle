@@ -549,7 +549,7 @@ const fixture = (
   }
   const text = vi.fn(async () => {})
   const emittedEvents: AgentEvent[] = []
-  const event = vi.fn(async (type: AgentEventType, data: AgentEventData) => {
+  const event = vi.fn(async (type: Exclude<AgentEventType, 'memory.contextIncluded' | 'memory.saved'>, data: AgentEventData) => {
     emittedEvents.push({
       id: `event-${emittedEvents.length + 1}`,
       runId: request.run.id,
@@ -875,7 +875,7 @@ describe('external MCP in the admitted native host loop', () => {
         if (revocation === 'synthesis' && collectionSteps >= 2 && countRequests.length > 0) authorized = false
       }
     }
-    const event = async (type: AgentEventType, data: AgentEventData) => {
+    const event = async (type: Exclude<AgentEventType, 'memory.contextIncluded' | 'memory.saved'>, data: AgentEventData) => {
       await f.event(type, data)
       const completed = data as { actionName?: string }
       if (type !== 'tool.completed') return
@@ -1938,7 +1938,7 @@ describe('external MCP producer-to-projection integrity', () => {
     expect(projected.tools[0]).toMatchObject({ state: 'complete', risk: 'external', proposalId: null })
     expect(result.citations).toBeUndefined()
     expect(f.emittedEvents.some(event => event.type === 'proposal.created')).toBe(false)
-    const corruptions: { type: AgentEventType; patch: AgentEventData }[] = [
+    const corruptions: { type: 'tool.started' | 'tool.completed'; patch: AgentEventData }[] = [
       { type: 'tool.started', patch: { proposalId: '00000000-0000-4000-8000-000000000099' } },
       { type: 'tool.completed', patch: { proposalId: '00000000-0000-4000-8000-000000000099' } },
       { type: 'tool.started', patch: { risk: 'read' } },

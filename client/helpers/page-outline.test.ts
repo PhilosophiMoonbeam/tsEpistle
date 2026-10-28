@@ -9,7 +9,9 @@ import {
   isBranchEffectivelyExpanded,
   outlineSublistId,
   trackPageOutline,
-  type OutlineNode
+  type OutlineNode,
+  type PageReadingProgressScope,
+  type PageReadingProgressState
 } from './page-outline'
 
 const originalScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY')
@@ -464,4 +466,301 @@ describe('document outline', () => {
       tracker.dispose()
     }
   })
+})
+
+describe('local reading traversal', () => {
+  const storageKey = 'wiki:reading-mastery:progress-fixture'
+  const scope: PageReadingProgressScope = {
+    canonicalWorkspaceId: 'canonical-workspace',
+    reader: { kind: 'account', accountId: 'reader-a' },
+    locale: 'en',
+    pageId: 'progress-fixture',
+    sourceRevision: 'revision-1',
+    authority: 'private-readable',
+    authorityKey: 'authority-revision-1'
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+    window.localStorage.removeItem(storageKey)
+  })
+
+  function fixture({ short = false, noHeadings = false, disclosure = false } = {}) {
+    const now = Date.now()
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    let nextFrame = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      disconnect(): void {}
+    })
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: short ? 700 : 2_200 })
+    Object.defineProperty(document.body, 'scrollHeight', { configurable: true, value: short ? 700 : 2_200 })
+    const rect = (top: number, bottom: number): DOMRect => ({
+      top, bottom, left: 0, right: 100, width: 100, height: bottom - top, x: 0, y: top, toJSON: () => ({})
+    })
+    const header = document.createElement('header')
+    header.className = 'nav-header'
+    header.getBoundingClientRect = () => rect(0, 64)
+    const article = document.createElement('article')
+    article.getBoundingClientRect = () => rect(100 - window.scrollY, (short ? 600 : 2_200) - window.scrollY)
+    const entries = noHeadings ? [] : (short ? [100] : [100, 800, 1_500]).map((top, index) => {
+      const heading = document.createElement('h2')
+      heading.id = `private-heading-${index}`
+      heading.textContent = `Confidential heading ${index}`
+      heading.getClientRects = () => [rect(top - window.scrollY, top + 40 - window.scrollY)] as unknown as DOMRectList
+      article.append(heading, document.createTextNode(`Confidential prose ${index}`))
+      return { anchor: `#${heading.id}`, title: heading.textContent, depth: 0 }
+    })
+    if (noHeadings) article.textContent = 'Confidential prose without headings'
+    const details = document.createElement('details')
+    const summary = document.createElement('summary')
+    summary.textContent = 'Confidential disclosure'
+    details.append(summary, document.createTextNode('Confidential disclosure body'))
+    summary.getBoundingClientRect = () => rect(200 - window.scrollY, 230 - window.scrollY)
+    details.getBoundingClientRect = () => rect(200 - window.scrollY, (details.open ? 500 : 230) - window.scrollY)
+    if (disclosure) article.append(details)
+    document.body.append(header, article)
+    const states: PageReadingProgressState[] = []
+    const scalar: number[] = []
+    // Invoke the registered browser input boundary with trusted-event metadata;
+    // dispatchEvent intentionally cannot manufacture a trusted DOM event.
+    const windowEvents = vi.spyOn(window, 'addEventListener')
+    const articleEvents = vi.spyOn(article, 'addEventListener')
+    const tracker = trackPageOutline(article, entries, () => {}, value => scalar.push(value), {
+      scope, onChange: state => states.push(state)
+    })
+    const wheel = windowEvents.mock.calls.find(([type]) => type === 'wheel')![1] as EventListener
+    const keydown = windowEvents.mock.calls.find(([type]) => type === 'keydown')![1] as EventListener
+    const click = articleEvents.mock.calls.find(([type]) => type === 'click')![1] as EventListener
+    windowEvents.mockRestore()
+    articleEvents.mockRestore()
+    const flush = (): void => {
+      const callbacks = [...frames.values()]
+      frames.clear()
+      callbacks.forEach(callback => callback(0))
+    }
+    const scroll = (top: number): void => {
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: top })
+      window.dispatchEvent(new Event('scroll'))
+      flush()
+    }
+    const beginRead = (top: number): void => {
+      wheel({ isTrusted: true, target: article } as unknown as Event)
+      scroll(top)
+    }
+    const read = (top: number): void => {
+      beginRead(top)
+      vi.advanceTimersByTime(1_000)
+    }
+    flush()
+    return {
+      tracker, article, details, summary, states, scalar, flush, scroll, beginRead, read,
+      end(): void {
+        keydown({ isTrusted: true, target: article, key: 'End' } as unknown as Event)
+        scroll(short ? 0 : 1_400)
+        vi.advanceTimersByTime(1_000)
+      },
+      openDetails(): void {
+        details.open = false
+        click({ isTrusted: true, target: summary } as unknown as Event)
+        details.open = true
+        details.dispatchEvent(new Event('toggle'))
+        flush()
+      },
+      dispose(): void {
+        tracker.dispose()
+        article.remove()
+        header.remove()
+      }
+    }
+  }
+
+  test('keeps scalar short-page 100 separate from earned no-heading traversal', () => {
+    const page = fixture({ short: true, noHeadings: true })
+    try {
+      expect(page.scalar.at(-1)).toBe(100)
+      expect(page.states.at(-1)?.sections).toEqual([{ anchor: '', progress: 0, completed: false }])
+      page.end()
+      expect(page.states.at(-1)?.progress).toBe(0)
+      page.read(0)
+      expect(page.states.at(-1)?.sections).toEqual([{ anchor: '', progress: 100, completed: true }])
+    } finally {
+      page.dispose()
+    }
+  })
+
+  test('does not award skipped sections for End, programmatic/TOC jumps, or synthetic gestures', () => {
+    const page = fixture()
+    try {
+      page.end()
+      expect(page.scalar.at(-1)).toBe(100)
+      expect(page.states.at(-1)?.completedAnchors).toEqual([])
+      page.tracker.setNavigationAnchor('#private-heading-2')
+      page.scroll(1_400)
+      vi.advanceTimersByTime(1_000)
+      expect(page.states.at(-1)?.progress).toBe(0)
+      page.tracker.setNavigationAnchor(null)
+      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1 }))
+      page.flush()
+      vi.advanceTimersByTime(1_000)
+      expect(page.states.at(-1)?.progress).toBe(0)
+      page.read(1_400)
+      expect(page.states.at(-1)?.sections.map(section => section.completed)).toEqual([false, false, true])
+    } finally {
+      page.dispose()
+    }
+  })
+
+  test('requires a deliberate expansion and visible dwell before completing disclosure content', () => {
+    const page = fixture({ short: true, disclosure: true })
+    try {
+      page.read(0)
+      expect(page.states.at(-1)?.sections[0]?.completed).toBe(false)
+      page.details.open = true
+      page.details.dispatchEvent(new Event('toggle'))
+      page.flush()
+      page.read(0)
+      expect(page.states.at(-1)?.sections[0]?.completed).toBe(false)
+      page.openDetails()
+      page.read(0)
+      expect(page.states.at(-1)?.sections[0]?.completed).toBe(true)
+    } finally {
+      page.dispose()
+    }
+  })
+
+  test('persists ordinal coverage without private labels and clears immediately on authority/account changes', () => {
+    const page = fixture()
+    try {
+      page.read(0)
+      vi.advanceTimersByTime(1_500)
+      const raw = window.localStorage.getItem(storageKey)!
+      expect(raw).not.toContain('Confidential')
+      expect(raw).not.toContain('private-heading')
+      expect(JSON.parse(raw).sections[0]).toMatchObject({ index: 0, coverage: [[[0, 1]]] })
+      page.tracker.setReadingProgressScope({ ...scope, authority: 'unavailable' })
+      expect(page.states.at(-1)).toEqual({ status: 'disabled', progress: 0, sections: [], completedAnchors: [] })
+      page.tracker.setReadingProgressScope({ ...scope, reader: { kind: 'anonymous' } })
+      page.flush()
+      expect(page.states.at(-1)?.status).toBe('disabled')
+      page.tracker.setReadingProgressScope({ ...scope, reader: { kind: 'account', accountId: 'reader-b' } })
+      page.flush()
+      expect(page.states.at(-1)?.completedAnchors).toEqual([])
+      page.tracker.setReadingProgressScope(scope)
+      page.flush()
+      expect(page.states.at(-1)?.completedAnchors).toEqual(['#private-heading-0'])
+      page.tracker.setReadingProgressScope({ ...scope, authorityKey: 'authority-revision-2' })
+      page.flush()
+      expect(page.states.at(-1)?.completedAnchors).toEqual([])
+    } finally {
+      page.dispose()
+    }
+  })
+
+  test('restores only exact current records and rejects corrupt, stale, future and changed revisions', () => {
+    const first = fixture()
+    first.read(0)
+    vi.advanceTimersByTime(1_500)
+    const raw = window.localStorage.getItem(storageKey)!
+    first.dispose()
+    const saved = JSON.parse(raw)
+    const candidates = [
+      raw,
+      '{broken',
+      JSON.stringify({ ...saved, version: 2 }),
+      JSON.stringify({ ...saved, savedAt: Date.now() + 1 }),
+      JSON.stringify({ ...saved, savedAt: Date.now() - 91 * 24 * 60 * 60 * 1_000 }),
+      JSON.stringify({ ...saved, fingerprint: 'removed-or-renamed-section' }),
+      JSON.stringify({ ...saved, sections: [{ ...saved.sections[0], coverage: [[[0, 2]]] }, ...saved.sections.slice(1)] })
+    ]
+    for (const [index, value] of candidates.entries()) {
+      window.localStorage.setItem(storageKey, value)
+      const page = fixture()
+      try {
+        expect(page.states.at(-1)?.completedAnchors).toEqual(index === 0 ? ['#private-heading-0'] : [])
+        page.tracker.setReadingProgressScope({ ...scope, sourceRevision: 'revision-2' })
+        page.flush()
+        expect(page.states.at(-1)?.completedAnchors).toEqual([])
+      } finally {
+        page.dispose()
+      }
+    }
+  })
+
+  test('merges same-scope tab coverage, ignores another reader and honors deletion', () => {
+    const page = fixture()
+    try {
+      page.read(0)
+      vi.advanceTimersByTime(1_500)
+      const otherTab = JSON.parse(window.localStorage.getItem(storageKey)!)
+      otherTab.sections[0].coverage = [[]]
+      otherTab.sections[1].coverage = [[[0, 1]]]
+      window.dispatchEvent(new StorageEvent('storage', { key: storageKey, newValue: JSON.stringify(otherTab) }))
+      expect(page.states.at(-1)?.completedAnchors).toEqual(['#private-heading-0', '#private-heading-1'])
+      window.dispatchEvent(new StorageEvent('storage', { key: storageKey, newValue: JSON.stringify({ ...otherTab, scope: 'another-account' }) }))
+      expect(page.states.at(-1)?.completedAnchors).toHaveLength(2)
+      vi.advanceTimersByTime(1_500)
+      const merged = JSON.parse(window.localStorage.getItem(storageKey)!)
+      expect(merged.sections.slice(0, 2).map((section: { coverage: number[][][] }) => section.coverage)).toEqual([[[[0, 1]]], [[[0, 1]]]])
+      // A stale writer may close before receiving the union. The surviving
+      // tab must repair its subset write even without earning new coverage.
+      window.localStorage.setItem(storageKey, JSON.stringify(otherTab))
+      window.dispatchEvent(new StorageEvent('storage', { key: storageKey, newValue: JSON.stringify(otherTab) }))
+      vi.advanceTimersByTime(1_500)
+      expect(JSON.parse(window.localStorage.getItem(storageKey)!).sections[0].coverage).toEqual([[[0, 1]]])
+      window.dispatchEvent(new StorageEvent('storage', { key: storageKey, newValue: null }))
+      expect(page.states.at(-1)?.completedAnchors).toEqual([])
+    } finally {
+      page.dispose()
+    }
+  })
+
+  test('resets changed sections on live refresh without awarding phantom completion', () => {
+    const page = fixture()
+    try {
+      page.read(0)
+      page.read(700)
+      expect(page.states.at(-1)?.completedAnchors).toEqual(['#private-heading-0', '#private-heading-1'])
+      page.article.querySelector('h2')!.textContent = 'Changed content'
+      page.tracker.refresh()
+      page.flush()
+      expect(page.states.at(-1)?.sections.map(section => section.completed)).toEqual([false, true, false])
+    } finally {
+      page.dispose()
+    }
+  })
+
+  for (const method of ['getItem', 'setItem'] as const) {
+    test(`continues in memory when ${method} is denied and cancels pending dwell on disposal`, () => {
+      const denied = vi.spyOn(Storage.prototype, method).mockImplementation(() => { throw new Error('Storage denied') })
+      const page = fixture({ short: true })
+      try {
+        page.read(0)
+        expect(page.states.at(-1)?.completedAnchors).toEqual(['#private-heading-0'])
+        vi.advanceTimersByTime(1_500)
+        page.tracker.setReadingProgressScope({ ...scope, sourceRevision: 'revision-2' })
+        page.flush()
+        const pending = vi.getTimerCount()
+        page.beginRead(0)
+        expect(vi.getTimerCount()).toBe(pending + 1)
+        page.dispose()
+        expect(vi.getTimerCount()).toBe(pending)
+        const count = page.states.length
+        vi.advanceTimersByTime(5_000)
+        expect(page.states).toHaveLength(count)
+      } finally {
+        page.dispose()
+        denied.mockRestore()
+      }
+    })
+  }
 })

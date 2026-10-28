@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AxAIService, AxChatRequest, AxChatResponse, AxAIGoogleGeminiChatRequest } from '@ax-llm/ax'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
-import { AGENT_TOOL_NAMES, type AgentActionName, type AgentEvent } from '../../../shared/agents/contracts.ts'
+import { AGENT_TOOL_NAMES, type AgentActionName, type AgentEvent, type AgentEventData } from '../../../shared/agents/contracts.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
 import { registerMemoryAction } from '../../agents/actions/memory.ts'
 import { type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity, invokingAgentRunLease } from '../../agents/coordinator.ts'
 import type { AgentMemoryRepository } from '../../agents/memory.ts'
+import { parseChildEvidencePacket } from '../../agents/orchestration.ts'
 import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
@@ -2595,6 +2596,93 @@ describe('Ax agent engine', () => {
     expect(result).toMatchObject({ inputTokens: 3, outputTokens: 309, totalTokens: 4_580, costMicros: 9_157 })
     expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ usageVersion: 2, inputTokens: 3, outputTokens: 309, totalTokens: 4_580 }))
   })
+  it.each(['delivered', 'empty', 'subagent', 'failed-request', 'failed-stream', 'later-failure'] as const)(
+    'reports frozen context only after successful provider work (%s)',
+    async mode => {
+      const order: string[] = []
+      const delivered = vi.fn(async (_deliveryId: string) => { order.push('included') })
+      const reconcile = vi.fn(async () => { order.push('settled') })
+      const taskId = '00000000-0000-4000-8000-000000000081'
+      const childPacket = {
+        taskId, outcome: 'blocked', claims: [], conflicts: [],
+        unanswered: ['No source-reading tools are available for this task.'], recommendedFollowups: []
+      }
+      const text = vi.fn(async (_delta: string) => { if (mode === 'later-failure') throw new Error('later publication failed') })
+      const chat = vi.fn(async (): Promise<AxChatResponse | ReadableStream<AxChatResponse>> => {
+        if (mode === 'failed-request') throw new Error('provider request failed')
+        if (mode === 'failed-stream') return new ReadableStream({ start(controller) { controller.error(new Error('provider stream disconnected')) } })
+        return { results: [{ index: 0, content: mode === 'subagent' ? JSON.stringify(childPacket) : 'Validated answer.' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 3, totalTokens: 10 } } }
+      })
+      const factory = {
+        create: async () => ({
+          service: rootFixtureService(chat),
+          capabilities: { streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema',
+            usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
+          transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1', pricing
+        })
+      } as unknown as AgentProviderFactory
+      const input = request(new AbortController().signal)
+      const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+        ...input, run: { ...input.run, executionMode: mode === 'subagent' ? 'agent' : 'generation-only' }, purpose: mode === 'subagent' ? 'subagent' : 'root',
+        ...(mode === 'subagent' ? {
+          task: { id: taskId, kind: 'source_scout' as const, title: 'Read sources', question: 'What do the sources say?', sourceScope: [], requiredEvidenceCount: 1 },
+          subagentRunId: '00000000-0000-4000-8000-000000000082', actionAllowlist: []
+        } : {}),
+        ...(mode === 'empty' ? { memory: { user: [], agent: [] } } : {}),
+        memoryContextDelivered: delivered,
+        dispatchBudget: {
+          reserve: async maximum => ({ id: 17, ...maximum }), reconcile, release: async () => {}, consumeTool: async () => {},
+          unsettledExposure: { tokens: 0, costMicros: 0 }
+        }
+      }, {
+        text,
+        event: async () => {}
+      })
+      if (mode === 'failed-request' || mode === 'failed-stream' || mode === 'later-failure') await expect(execution).rejects.toThrow()
+      else await execution
+      expect(chat).toHaveBeenCalledOnce()
+      if (mode === 'subagent') {
+        expect(parseChildEvidencePacket(text.mock.calls.map(([delta]) => delta).join(''))).toEqual(childPacket)
+        expect(reconcile).toHaveBeenCalledOnce()
+      }
+      if (mode === 'delivered' || mode === 'later-failure') {
+        expect(delivered).toHaveBeenCalledWith('17')
+        expect(JSON.stringify(delivered.mock.calls)).not.toContain(input.run.leaseToken)
+        expect(order).toEqual(['settled', 'included'])
+      } else expect(delivered).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['native', 'prompt'] as const)('halts after a committed %s memory save if host receipt persistence fails', async mode => {
+    const committed = { changed: true, message: 'Memory saved for new conversations.', target: 'user', entries: ['Prefers concise answers.'], characters: 24, limit: 1375 }
+    const memorySaved = vi.fn(async () => { throw new Error('INSERT private SQL bindings and memory text') })
+    const fixture = questionFixture(mode, [{
+      calls: [{ id: 'committed-memory', name: 'memory.manage', arguments: { action: 'add', target: 'user', content: 'Prefers concise answers.' } }]
+    }], () => committed, [questionMemoryAction], {}, { memorySaved })
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const execution = fixture.execute('Remember my preference for concise answers.', undefined, {
+      reserve: async maximum => ({ id: 1, ...maximum }), reconcile, release, consumeTool: async () => {},
+      unsettledExposure: { tokens: 0, costMicros: 0 }
+    })
+    await expect(execution).rejects.toMatchObject({
+      code: 'AGENT_HOST_PERSISTENCE_FAILED', stage: 'host_persistence', status: 500,
+      message: 'Agent host could not persist execution metadata. Execution stopped without retrying completed work.'
+    })
+    expect(fixture.invoke).toHaveBeenCalledOnce()
+    expect(memorySaved).toHaveBeenCalledOnce()
+    expect(fixture.providerCalls).toHaveLength(1)
+    expect(reconcile).toHaveBeenCalledOnce()
+    expect(release).not.toHaveBeenCalled()
+    expect(fixture.event.mock.calls.filter(([type]) => type === 'tool.completed')).toEqual([
+      ['tool.completed', expect.objectContaining({ actionName: 'memory.manage', result: JSON.stringify(committed) })]
+    ])
+    expect(fixture.event.mock.calls.some(([type]) => type === 'tool.failed')).toBe(false)
+    expect(JSON.stringify(fixture.event.mock.calls)).not.toContain('INSERT private SQL')
+    expect(fixture.text).not.toHaveBeenCalled()
+  })
+
   it('normalizes a root pre-dispatch token exposure fence without calling the provider', async () => {
     const chat = vi.fn(async () => ({
       results: [{ index: 0, content: 'should not run' }],
@@ -9018,7 +9106,7 @@ describe('Agent event projection', () => {
   it('keeps completed tools and terminal suggestions after more than 1,000 legal events', () => {
     const runId = '00000000-0000-4000-8000-000000000099'
     let sequence = 0
-    const event = (type: AgentEvent['type'], data: AgentEvent['data']): AgentEvent => ({
+    const event = (type: Exclude<AgentEvent['type'], 'memory.contextIncluded' | 'memory.saved'>, data: AgentEventData): AgentEvent => ({
       id: `event-${sequence + 1}`,
       runId,
       sequence: ++sequence,

@@ -202,11 +202,13 @@
 import AgentPanelHeader from './agent-panel-header.vue'
 import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef, useId, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
-import type { AgentRefreshResult } from '../../store/agents.ts'
+import { useAgentsStore, type AgentRefreshResult } from '../../store/agents.ts'
+import { AGENT_MEMORY_CHARACTER_LIMITS } from '../../../shared/agents/contracts.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const agents = useAgentsStore()
 
 // biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup prop aliases and the normalized computed binding are not duplicate Options API keys.
 const props = defineProps<{ csrfToken: string; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
@@ -229,7 +231,7 @@ const actionBusy = ref('')
 const error = ref('')
 const dialogError = ref('')
 const clearError = ref('')
-const memories = shallowRef<AgentMemoryView>({ agent: emptyStore(2_200), user: emptyStore(1_375) })
+const memories = shallowRef<AgentMemoryView>({ agent: emptyStore(AGENT_MEMORY_CHARACTER_LIMITS.agent), user: emptyStore(AGENT_MEMORY_CHARACTER_LIMITS.user) })
 const editing = shallowRef<{ id: string; version: number } | null>(null)
 const draftConflict = shallowRef<{ readonly latest: AgentMemoryEntry | null; readonly kind: 'changed' | 'removed' } | null>(null)
 const refreshNotice = ref('')
@@ -381,13 +383,14 @@ const load = async (committedMessage?: string): Promise<AgentRefreshResult> => {
   loadController = controller
   const generation = ++loadGeneration
   const draftRevisionAtStart = draftRevision.value
+  const context = agents.captureMemoryMutationContext()
   loading.value = true
   error.value = ''
   refreshNotice.value = ''
   memoryRefreshResult.value = rejectedRefresh(undefined, false)
   try {
     const nextMemories = await getAgentMemories(window.fetch.bind(window), csrfToken, controller.signal)
-    if (disposed || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
+    if (disposed || generation !== loadGeneration || controller.signal.aborted || (context && !agents.isMemoryMutationContextCurrent(context))) return rejectedRefresh(undefined, false)
     const draftChangedDuringRefresh = draftRevision.value !== draftRevisionAtStart
     memories.value = nextMemories
     stale.value = false
@@ -398,7 +401,7 @@ const load = async (committedMessage?: string): Promise<AgentRefreshResult> => {
     memoryRefreshResult.value = result
     return result
   } catch (value) {
-    if (disposed || generation !== loadGeneration || controller.signal.aborted) return rejectedRefresh(undefined, false)
+    if (disposed || generation !== loadGeneration || controller.signal.aborted || (context && !agents.isMemoryMutationContextCurrent(context))) return rejectedRefresh(undefined, false)
     stale.value = loaded.value
     const reason = message(value, loaded.value ? t('common:agentMemoryManager.agentMemoryCouldNot') : t('common:agentMemoryManager.agentMemoryCouldNotLoad'))
     error.value = loaded.value
@@ -511,11 +514,18 @@ const save = async (): Promise<void> => {
   }
   if (!current || !content || draftOverLimit.value || saving.value || actionBusy.value || stale.value || loading.value || !memoryRefreshResult.value.accepted || !memoryRefreshResult.value.current || draftConflict.value) return
   const draftRevisionAtStart = draftRevision.value
+  const context = agents.captureMemoryMutationContext()
+  const target = draftTarget.value
   saving.value = true; actionBusy.value = 'save'; error.value = ''
   try {
-    if (current.id) await updateAgentMemory(window.fetch.bind(window), csrfToken, current.id, { expectedVersion: current.version, target: draftTarget.value, content })
-    else await createAgentMemory(window.fetch.bind(window), csrfToken, { target: draftTarget.value, content })
-    if (disposed) return
+    const input = { target, content, context: { sessionId: context?.sessionId ?? null } }
+    const mutation = current.id
+      ? await updateAgentMemory(window.fetch.bind(window), csrfToken, current.id, { ...input, expectedVersion: current.version })
+      : await createAgentMemory(window.fetch.bind(window), csrfToken, input)
+    if (disposed || (context && !agents.isMemoryMutationContextCurrent(context))) return
+    if (context && mutation.changed && mutation.receipt) agents.consumeManualMemoryReceipt(context, mutation.receipt, {
+      entryId: current.id || null, entryVersion: current.id ? current.version + 1 : 1, target
+    })
     if (draftRevision.value !== draftRevisionAtStart) {
       error.value = t('common:agentMemoryManager.memoryWasSavedBut')
       await load(t('common:agentMemoryManager.memoryWasSaved'))
@@ -540,10 +550,12 @@ const remove = async (): Promise<void> => {
   }
   if (!entry || saving.value || actionBusy.value || stale.value || loading.value || !memoryRefreshResult.value.accepted || !memoryRefreshResult.value.current) return
   const draftRevisionAtStart = draftRevision.value
+  const context = agents.captureMemoryMutationContext()
   saving.value = true; actionBusy.value = 'remove'; dialogError.value = ''
   try {
     const mutation = await removeAgentMemory(window.fetch.bind(window), csrfToken, entry.id, entry.version)
-    if (disposed) return
+    if (disposed || (context && !agents.isMemoryMutationContextCurrent(context))) return
+    if (context && mutation.changed) agents.invalidateSavedMemory(context, [entry.target])
     const store = memories.value[entry.target]
     memories.value = {
       ...memories.value,
@@ -574,10 +586,12 @@ const clear = async (): Promise<void> => {
   }
   if (saving.value || actionBusy.value || stale.value || loading.value || !memoryRefreshResult.value.accepted || !memoryRefreshResult.value.current || (clearReviewCount.value !== null && clearReviewCount.value !== memoryCount.value)) return
   const draftRevisionAtStart = draftRevision.value
+  const context = agents.captureMemoryMutationContext()
   saving.value = true; actionBusy.value = 'clear'; clearError.value = ''
   try {
-    await clearAgentMemories(window.fetch.bind(window), csrfToken)
-    if (disposed) return
+    const removed = await clearAgentMemories(window.fetch.bind(window), csrfToken)
+    if (disposed || (context && !agents.isMemoryMutationContextCurrent(context))) return
+    if (context && removed > 0) agents.invalidateSavedMemory(context, ['user', 'agent'])
     memories.value = {
       agent: emptyStore(memories.value.agent.limit),
       user: emptyStore(memories.value.user.limit)

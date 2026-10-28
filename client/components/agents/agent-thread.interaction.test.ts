@@ -227,6 +227,10 @@ const makeTool = (overrides: Partial<AgentToolCallView> = {}): AgentToolCallView
 })
 
 const makeThread = (sessionId: string, overrides: Partial<AgentThreadState> = {}): AgentThreadState => ({
+  memoryContext: {
+    ownerId: 1, sessionId, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+  },
   session: makeSession(sessionId),
   messages: [],
   tools: [],

@@ -3,6 +3,9 @@ import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
   AGENT_EVENT_TYPES,
+  AgentMemoryContextIncludedDataSchema,
+  AgentMemorySavedDataSchema,
+  AgentEventSchema,
   type AgentEvent,
   type AgentEventData,
   type AgentEventType,
@@ -128,6 +131,14 @@ const validatedEventData = (data: AgentEventData): { encoded: string; sha256: st
   const encoded = canonicalJson(data)
   if (Buffer.byteLength(encoded) > 65_536) throw new AgentRepositoryError('INVALID_AGENT_EVENT', 'Agent event data exceeds 64 KiB', 400)
   return { encoded, sha256: digest(encoded) }
+}
+
+export const validateAgentEventData = (type: AgentEventType, data: AgentEventData): void => {
+  const parsed = type === 'memory.contextIncluded'
+    ? AgentMemoryContextIncludedDataSchema.safeParse(data)
+    : type === 'memory.saved' ? AgentMemorySavedDataSchema.safeParse(data) : null
+  if (parsed !== null && !parsed.success)
+    throw new AgentRepositoryError('INVALID_AGENT_EVENT', 'Agent memory receipt is invalid', 400)
 }
 
 export interface AgentSessionRecord {
@@ -551,27 +562,22 @@ const eventRecord = (row: EventRow): AgentEvent => {
   }
   if (!isJsonValue(data) || data === null || Array.isArray(data) || typeof data !== 'object')
     throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent event payload is invalid', 500)
-  return {
-    id: row.id,
-    runId: row.runId,
-    sequence: row.sequence,
-    type: type.data,
-    attempt: row.attempt,
-    schemaVersion: 1,
-    data: data as AgentEventData,
-    createdAt: iso(row.createdAt)
-  }
+  const event = AgentEventSchema.safeParse({
+    id: row.id, runId: row.runId, sequence: row.sequence, type: type.data,
+    attempt: row.attempt, schemaVersion: 1, data, createdAt: iso(row.createdAt)
+  })
+  if (!event.success) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored agent event is invalid', 500)
+  return event.data
 }
 
-export interface AppendAgentEventInput {
-  readonly id: string
-  readonly runId: string
+export type AppendAgentEventInput = Pick<AgentEvent, 'id' | 'runId' | 'attempt'> & {
   readonly ownerId: number
-  readonly type: AgentEventType
-  readonly attempt: number
-  readonly data: AgentEventData
   readonly leaseToken?: string
-}
+} & (
+  | Pick<Extract<AgentEvent, { type: 'memory.contextIncluded' }>, 'type' | 'data'>
+  | Pick<Extract<AgentEvent, { type: 'memory.saved' }>, 'type' | 'data'>
+  | { readonly type: Exclude<AgentEventType, 'memory.contextIncluded' | 'memory.saved'>; readonly data: AgentEventData }
+)
 
 const sameEvent = (row: EventRow, input: AppendAgentEventInput, dataSha256: string): boolean =>
   row.runId === input.runId && row.type === input.type && row.attempt === input.attempt && row.dataSha256 === dataSha256
@@ -579,6 +585,9 @@ const sameEvent = (row: EventRow, input: AppendAgentEventInput, dataSha256: stri
 export const appendAgentEvent = async (knex: Knex, input: AppendAgentEventInput): Promise<AgentEvent> => {
   const type = eventTypeSchema.parse(input.type)
   if (!Number.isSafeInteger(input.attempt) || input.attempt < 0) throw new AgentRepositoryError('INVALID_AGENT_EVENT', 'Agent event attempt is invalid', 400)
+  if ((type === 'memory.contextIncluded' || type === 'memory.saved') && input.attempt < 1)
+    throw new AgentRepositoryError('INVALID_AGENT_EVENT', 'Agent memory receipt requires a claimed run attempt', 400)
+  validateAgentEventData(type, input.data)
   const payload = validatedEventData(input.data)
   return knex.transaction(async transaction => {
     const existing = await transaction<EventRow>('agentEvents')
@@ -594,8 +603,22 @@ export const appendAgentEvent = async (knex: Knex, input: AppendAgentEventInput)
 
     const runQuery = transaction('agentRuns').where({ id: input.runId, ownerId: input.ownerId }).forUpdate()
     if (input.leaseToken !== undefined) runQuery.andWhere('leaseToken', input.leaseToken)
-    const run = (await runQuery.select('eventSequence').first()) as { eventSequence: number } | undefined
+    const run = (await runQuery.select('eventSequence', 'sessionId', 'attempts').first()) as { eventSequence: number; sessionId: string; attempts: number } | undefined
     if (!run) return notFound()
+    if (input.type === 'memory.contextIncluded' || input.type === 'memory.saved') {
+      if (input.data.ownerId !== input.ownerId || input.data.sessionId !== run.sessionId || input.attempt !== run.attempts)
+        throw new AgentRepositoryError('INVALID_AGENT_EVENT', 'Agent memory receipt does not match its owned run attempt', 400)
+      const identity = input.type === 'memory.contextIncluded' ? input.data.deliveryId : input.data.operationId
+      const receipts = await transaction<EventRow>('agentEvents').where({ runId: input.runId, type: input.type, attempt: input.attempt })
+      for (const row of receipts) {
+        const receipt = eventRecord(row)
+        const previousIdentity = receipt.type === 'memory.contextIncluded' ? receipt.data.deliveryId
+          : receipt.type === 'memory.saved' ? receipt.data.operationId : null
+        if (previousIdentity !== identity) continue
+        if (row.dataSha256 !== payload.sha256) return conflict('AGENT_EVENT_IDEMPOTENCY_MISMATCH', 'Agent memory receipt identity changed')
+        return receipt
+      }
+    }
     const sequence = Number(run.eventSequence) + 1
     const now = new Date()
     const row: EventRow = {

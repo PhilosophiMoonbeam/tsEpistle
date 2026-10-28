@@ -19,7 +19,7 @@ import {
   projectAgentMedia,
   storeAgentMedia
 } from '../agents/media.ts'
-import { AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { AgentCurrentPageHintSchema, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { createHash, createHmac } from 'node:crypto'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import type { Knex } from 'knex'
@@ -27,6 +27,8 @@ import { z, ZodError } from 'zod'
 
 import {
   AGENT_GENERATION_TOOLS,
+  AgentManualMemoryMutationContextSchema,
+  AgentManualMemoryMutationReceiptFieldsSchema,
   isTerminalAgentRunStatus,
   type AgentMediaCapabilities,
   type DecideAgentApprovalRequest
@@ -280,14 +282,7 @@ const SubmitMessageSchema = z
     generationTools: GenerationToolsSchema.optional(),
     invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
     knowledgeContext: AgentKnowledgeContextSchema.optional(),
-    currentPage: z
-      .strictObject({
-        id: z.number().int().positive(),
-        locale: z.string().min(1).max(16),
-        path: z.string().min(1).max(1_024),
-        observedUpdatedAt: z.iso.datetime()
-      })
-      .optional()
+    currentPage: AgentCurrentPageHintSchema.optional()
   })
   .refine(value => value.content.trim().length > 0 || (value.attachmentIds?.length ?? 0) > 0, 'Write a message or attach a file.')
 const CreateGoalSchema = z.strictObject({
@@ -299,14 +294,7 @@ const CreateGoalSchema = z.strictObject({
   objective: z.string().min(1).max(32_000),
   invokedSkillVersionIds: z.array(z.uuid()).max(8).optional(),
   knowledgeContext: AgentKnowledgeContextSchema.optional(),
-  currentPage: z
-    .strictObject({
-      id: z.number().int().positive(),
-      locale: z.string().min(1).max(16),
-      path: z.string().min(1).max(1_024),
-      observedUpdatedAt: z.iso.datetime()
-    })
-    .optional()
+  currentPage: AgentCurrentPageHintSchema.optional()
 })
 const GoalMutationSchema = z.strictObject({ expectedVersion: z.number().int().positive() })
 const ResumeGoalSchema = GoalMutationSchema.extend({ runId: z.uuid(), clientRequestId: z.uuid() })
@@ -336,11 +324,12 @@ const DecisionSchema = z
       ...(input.confirmationPath === undefined ? {} : { confirmationPath: input.confirmationPath })
     })
   )
-const CreateMemorySchema = z.strictObject({ target: z.enum(['agent', 'user']), content: z.string().min(1).max(2_200) })
+const CreateMemorySchema = z.strictObject({ target: z.enum(['agent', 'user']), content: z.string().min(1).max(2_200), context: AgentManualMemoryMutationContextSchema })
 const UpdateMemorySchema = z.strictObject({
   expectedVersion: z.number().int().positive(),
   target: z.enum(['agent', 'user']),
-  content: z.string().min(1).max(2_200)
+  content: z.string().min(1).max(2_200),
+  context: AgentManualMemoryMutationContextSchema
 })
 
 const proposalActionEnabled = (config: AgentHostWiki['config']['agents'], actionName: keyof typeof ACTION_CATALOG): boolean => {
@@ -527,6 +516,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   const projectSession = async (ownerId: number, sessionId: string, signal?: AbortSignal) => {
     const configuration = await resolveSessionConfiguration(ownerId, sessionId, signal)
     const thread = await projectAgentThread(wiki.models.knex, ownerId, sessionId, {
+      memorySigningSecret: wiki.config.sessionSecret,
       profileResolutionToken: session => configuration.profileResolutionToken ?? fallbackProfileResolutionToken(session),
       ...(signal === undefined ? {} : { signal })
     })
@@ -669,8 +659,10 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     `${apiPrefix}/memories`,
     asyncRoute(async (req, res) => {
       const input = CreateMemorySchema.parse(req.body)
-      const result = await memoryRepository.add(requestSkillPrincipal(req).userId, input.target, input.content)
-      return res.status(result.changed ? 201 : 200).json(result)
+      const result = await memoryRepository.add(requestSkillPrincipal(req).userId, input.target, input.content, {
+        sessionId: input.context.sessionId, signingSecret: wiki.config.sessionSecret
+      })
+      return res.status(result.changed ? 201 : 200).json({ ...result, ...AgentManualMemoryMutationReceiptFieldsSchema.parse({ receipt: result.receipt }) })
     })
   )
   router.put(
@@ -678,7 +670,10 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     asyncRoute(async (req, res) => {
       const memoryId = UUIDSchema.parse(routeParameter(req, 'memoryId'))
       const input = UpdateMemorySchema.parse(req.body)
-      return res.json(await memoryRepository.update(requestSkillPrincipal(req).userId, memoryId, input.expectedVersion, input.target, input.content))
+      const result = await memoryRepository.update(requestSkillPrincipal(req).userId, memoryId, input.expectedVersion, input.target, input.content, {
+        sessionId: input.context.sessionId, signingSecret: wiki.config.sessionSecret
+      })
+      return res.json({ ...result, ...AgentManualMemoryMutationReceiptFieldsSchema.parse({ receipt: result.receipt }) })
     })
   )
   router.delete(

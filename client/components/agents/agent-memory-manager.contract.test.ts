@@ -38,6 +38,9 @@ const bundledSfc = await Bun.build({
       name: 'agent-memory-manager-contract-sfc',
       setup(build) {
         build.onResolve({ filter: /^@\// }, args => ({ path: path.join(process.cwd(), 'client', args.path.slice(2)) }))
+        build.onResolve({ filter: /shared\/agents\/contracts\.ts$/ }, () => ({
+          path: path.join(process.cwd(), 'shared/agents/contracts.ts')
+        }))
         build.onResolve({ filter: /^virtual:agent-memory-manager\.vue$/ }, args => ({
           namespace: 'agent-memory-manager-sfc',
           path: args.path
@@ -83,10 +86,27 @@ const bundledSfc = await Bun.build({
             export const createAgentMemory = async (_fetcher, _csrfToken, input) => {
               const entries = globalThis.__memoryContractWrites
               entries.push({ id: String(entries.length + 1), version: 1, createdAt: '2026-10-02T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z', ...input })
+              return { changed: true, receipt: {
+                schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: input.context.sessionId,
+                runId: null, attempt: null, snapshotId: null, entryId: String(entries.length), entryVersion: 1,
+                operation: 'add', changed: true,
+                targets: [{ target: input.target, characters: input.content.length, limit: input.target === 'agent' ? 2200 : 1375, snapshotId: 'a'.repeat(64) }]
+              } }
             }
             export const removeAgentMemory = async () => ({ characters: 0, limit: 1375 })
-            export const updateAgentMemory = async () => undefined
+            export const updateAgentMemory = async () => ({ changed: false, receipt: null })
           `,
+          loader: 'ts'
+        }))
+        build.onResolve({ filter: /store\/agents\.ts$/ }, () => ({
+          namespace: 'agent-memory-manager-store', path: 'agents.ts'
+        }))
+        build.onLoad({ filter: /.*/, namespace: 'agent-memory-manager-store' }, () => ({
+          contents: `export const useAgentsStore = () => ({
+            captureMemoryMutationContext: () => null,
+            isMemoryMutationContextCurrent: () => false,
+            consumeManualMemoryReceipt: () => false
+          })`,
           loader: 'ts'
         }))
         build.onResolve({ filter: /modal-focus-scope/ }, () => ({

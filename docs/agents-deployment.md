@@ -18,6 +18,10 @@ The prescribed light hex pair has WCAG relative luminances 0.880842/0.964671, an
 
 `--wiki-surface-gradient` is the shared 145° mineral sheen, not the assessment diagram’s conceptual 135°. Light mode blends 4% warm accent into the raised surface at 0%, the unblended raised surface at 62%, and 3% spectral accent at 100%; dark uses 6%, 58%, and 5% respectively. Accent blends use OKLCH. `--wiki-specular-border` supplies the inset top hairline at white 65%/7% for light/dark; compose it with existing elevation and focus shadows rather than replacing them. Both roles re-resolve at nested theme boundaries. Existing foreground solvers sample flat and gradient backings, including custom palettes and interior gradient samples.
 
+### Login composition
+
+Login opts into a centered narrow-screen card while short viewports retain natural scrolling and reachable fields/actions. The decorative stage has no independent box frame. A committed visible particle enhancement hides the redundant inner mark; static, reduced-motion and failed-enhancement states retain the ordinary logo and text identity. The optional enhancement loads asynchronously without enlarging the critical login form budget. Other authentication shells retain their existing composition.
+
 ### Shared form focus
 
 Vuetify fields use their native segmented outline for a single 2px focus border, preserving floating-label notches. A 3px, 18%-opacity halo supplements focus without drawing a second rectangle. Forced colors uses the system Highlight border without the halo; raw controls retain their separate keyboard focus indicator. Validation labels and messages retain semantic ink independently of the focused border.

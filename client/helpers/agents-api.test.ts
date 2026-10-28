@@ -37,6 +37,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+const unknownMemoryContext = (sessionId: string) => ({
+  ownerId: 1, sessionId, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+  latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+})
+
 describe('agents client boundary', () => {
   it('rejects malformed thread responses instead of rendering unvalidated provider data', async () => {
     const fetcher = vi.fn(
@@ -57,6 +62,7 @@ describe('agents client boundary', () => {
       transcription: false
     }
     const thread = {
+      memoryContext: unknownMemoryContext(sessionId),
       session: {
         id: sessionId,
         title: '',
@@ -90,6 +96,10 @@ describe('agents client boundary', () => {
 
     fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: null } }))
     expect((await getAgentThread(fetcher, 'csrf', sessionId)).session.mediaCapabilities).toBeNull()
+    for (const memoryContext of [undefined, { ...thread.memoryContext, ownerId: 0 }, { ...thread.memoryContext, sessionId: 'foreign-session' }]) {
+      fetcher.mockImplementation(async () => Response.json({ ...thread, memoryContext }))
+      await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
+    }
 
     const invalidCapabilities: unknown[] = [undefined, [], true, { ...mediaCapabilities, unknownGeneration: true }]
     for (const flag of Object.keys(mediaCapabilities)) {
@@ -183,6 +193,7 @@ describe('agents client boundary', () => {
       }
     ]
     const thread = {
+      memoryContext: unknownMemoryContext(sessionId),
       session: {
         id: sessionId,
         title: 'Activity',
@@ -246,6 +257,7 @@ describe('agents client boundary', () => {
     const sessionId = '00000000-0000-4000-8000-000000000083'
     const now = '2026-08-17T00:00:00.000Z'
     const thread = {
+      memoryContext: unknownMemoryContext(sessionId),
       session: {
         id: sessionId,
         title: 'Activity',
@@ -402,16 +414,23 @@ describe('agents client boundary', () => {
     }
     const responses = [
       Response.json({ user: { entries: [entry], characters: 24, limit: 1_375 }, agent: { entries: [], characters: 0, limit: 2_200 } }),
-      Response.json({ changed: true, message: 'Saved', target: 'user', entries: [entry.content], characters: 24, limit: 1_375 }, { status: 201 })
+      Response.json({
+        changed: true, message: 'Saved', target: 'user', entries: [entry.content], characters: 24, limit: 1_375,
+        receipt: {
+          schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: null, runId: null, attempt: null, snapshotId: null,
+          entryId: entry.id, entryVersion: 1, operation: 'add', changed: true,
+          targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }]
+        }
+      }, { status: 201 })
     ]
     const fetcher = vi.fn(async () => responses.shift()!)
 
     expect(await getAgentMemories(fetcher, 'csrf')).toMatchObject({ user: { entries: [entry] } })
-    expect(await createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content })).toMatchObject({ changed: true, target: 'user' })
+    expect(await createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content, context: { sessionId: null } })).toMatchObject({ changed: true, target: 'user', receipt: { entryId: entry.id } })
     expect(fetcher).toHaveBeenNthCalledWith(
       2,
       '/_api/agents/memories',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ target: 'user', content: entry.content }) })
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ target: 'user', content: entry.content, context: { sessionId: null } }) })
     )
   })
 
@@ -486,7 +505,7 @@ describe('agents client boundary', () => {
     )
   })
 
-  it('accepts only canonical nonregressing SSE event IDs and forwards EventSource EOF errors', () => {
+  it('forwards complete validated envelopes and separates admission replay from live receipts', () => {
     const listeners = new Map<string, (event: MessageEvent) => void>()
     class FakeEventSource {
       readonly close = vi.fn()
@@ -498,18 +517,71 @@ describe('agents client boundary', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     const event = vi.fn()
     const error = vi.fn()
-
-    const source = subscribeAgentRun('00000000-0000-4000-8000-000000000001', 7, { event, error })
-    listeners.get('run.started')?.({ lastEventId: '8' } as MessageEvent)
-    listeners.get('run.started')?.({ lastEventId: ' 9 ' } as MessageEvent)
-    listeners.get('run.started')?.({ lastEventId: '08' } as MessageEvent)
-    listeners.get('run.started')?.({ lastEventId: '6' } as MessageEvent)
-    listeners.get('run.started')?.({ lastEventId: '1e2' } as MessageEvent)
+    const ready = vi.fn()
+    const reset = vi.fn()
+    const context = { ownerId: 1, sessionId: 'session-1', runId: 'run-1' }
+    const source = subscribeAgentRun(context, 7, { event, error, ready, reset })
+    const boundary = { schemaVersion: 1, ...context, replayThroughSequence: 8 }
+    listeners.get('open')?.(new MessageEvent('open'))
+    listeners.get('stream.ready')?.(new MessageEvent('stream.ready', { data: JSON.stringify(boundary) }))
+    const admission = { id: 'admission', runId: context.runId, sequence: 8, attempt: 0, schemaVersion: 1, type: 'run.queued', data: {}, createdAt: '2026-10-28T00:00:00Z' }
+    listeners.get('run.queued')?.(new MessageEvent('run.queued', { lastEventId: '8', data: JSON.stringify(admission) }))
+    const receipt = {
+      ...admission, id: 'receipt', sequence: 9, attempt: 1, type: 'memory.contextIncluded',
+      data: { ownerId: 1, sessionId: context.sessionId, snapshotId: context.sessionId, deliveryId: 'dispatch-1',
+        targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }] }
+    }
+    listeners.get('memory.contextIncluded')?.(new MessageEvent('memory.contextIncluded', { lastEventId: '9', data: JSON.stringify(receipt) }))
+    expect(ready).toHaveBeenCalledWith(boundary)
+    listeners.get('open')?.(new MessageEvent('open'))
+    listeners.get('stream.ready')?.(new MessageEvent('stream.ready', { lastEventId: '9', data: JSON.stringify({ ...boundary, replayThroughSequence: 9 }) }))
+    listeners.get('memory.contextIncluded')?.(new MessageEvent('memory.contextIncluded', { lastEventId: '9', data: JSON.stringify(receipt) }))
+    const later = { ...receipt, id: 'receipt-next', sequence: 10, data: { ...receipt.data, deliveryId: 'dispatch-2' } }
+    listeners.get('memory.contextIncluded')?.(new MessageEvent('memory.contextIncluded', { lastEventId: '10', data: JSON.stringify(later) }))
+    expect(event.mock.calls).toEqual([[admission, 'replay'], [receipt, 'live'], [receipt, 'replay'], [later, 'live']])
+    expect(reset).toHaveBeenCalledTimes(2)
     listeners.get('error')?.(new MessageEvent('error'))
-
-    expect(event.mock.calls.map(call => call[1])).toEqual([8, 7, 7, 7, 7])
+    expect(reset).toHaveBeenCalledTimes(3)
     expect(error).toHaveBeenCalledTimes(1)
-    expect(source).toBeInstanceOf(FakeEventSource)
+    expect(source.close).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['missing-ready', 'foreign-owner', 'foreign-session', 'foreign-run', 'ahead-cursor', 'bad-json', 'frame-id', 'frame-type', 'event-run', 'memory-attempt', 'private-text'])('fails closed for malformed or foreign SSE %s', kind => {
+    const listeners = new Map<string, (event: MessageEvent) => void>()
+    class FakeEventSource {
+      readonly close = vi.fn()
+      constructor(readonly url: string) {}
+      addEventListener(type: string, listener: EventListener) { listeners.set(type, listener as (event: MessageEvent) => void) }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const event = vi.fn()
+    const error = vi.fn()
+    const context = { ownerId: 1, sessionId: 'session-1', runId: 'run-1' }
+    const source = subscribeAgentRun(context, 7, { event, error, ready: vi.fn(), reset: vi.fn() })
+    const boundary = {
+      schemaVersion: 1, ...context, replayThroughSequence: kind === 'ahead-cursor' ? 6 : 7,
+      ...(kind === 'foreign-owner' ? { ownerId: 2 } : {}),
+      ...(kind === 'foreign-session' ? { sessionId: 'other' } : {}),
+      ...(kind === 'foreign-run' ? { runId: 'other' } : {})
+    }
+    if (kind !== 'missing-ready') listeners.get('stream.ready')?.(new MessageEvent('stream.ready', { data: JSON.stringify(boundary) }))
+    const memory = kind === 'memory-attempt' || kind === 'private-text'
+    const payload = {
+      id: 'event-8', runId: kind === 'event-run' ? 'other' : context.runId, sequence: 8,
+      attempt: kind === 'memory-attempt' ? 0 : 1, schemaVersion: 1, type: memory ? 'memory.saved' : 'run.started',
+      createdAt: '2026-10-28T00:00:00Z',
+      data: memory ? { ownerId: 1, sessionId: context.sessionId, snapshotId: context.sessionId,
+        origin: 'memory.manage', operationId: 'tool-1', operation: 'add', changed: true,
+        targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }],
+        ...(kind === 'private-text' ? { content: 'private memory' } : {}) } : {}
+    }
+    listeners.get(kind === 'frame-type' ? 'message.delta' : payload.type)?.(new MessageEvent(payload.type, {
+      lastEventId: kind === 'frame-id' ? '08' : '8',
+      data: kind === 'bad-json' ? '{' : JSON.stringify(payload)
+    }))
+    expect(event).not.toHaveBeenCalled()
+    expect(error).toHaveBeenCalledTimes(1)
+    expect(source.close).toHaveBeenCalledTimes(1)
   })
 
   it('validates personal skill documents across create, list, update, and remove requests', async () => {
@@ -745,6 +817,7 @@ describe('agents client boundary', () => {
       completedAt: now
     }
     const thread = {
+      memoryContext: unknownMemoryContext(sessionId),
       session: {
         id: sessionId,
         title: 'Deployment',
@@ -835,6 +908,7 @@ describe('agents client boundary', () => {
   it('patches session title and retention through the session endpoint', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000088'
     const threadResponse = {
+      memoryContext: unknownMemoryContext(sessionId),
       session: {
         id: sessionId,
         title: 'Renamed topic',

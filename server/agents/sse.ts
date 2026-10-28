@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express'
 import type { Knex } from 'knex'
-import { isTerminalAgentRunStatus, type AgentRunStatus } from '../../shared/agents/contracts.ts'
+import { AGENT_RUN_STREAM_READY_EVENT, AgentRunStreamReadySchema, isTerminalAgentRunStatus, type AgentRunStatus } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError, listOwnedAgentEvents } from './repository.ts'
 
@@ -48,13 +48,15 @@ const parseCursor = (req: AgentSseRequest): number => {
   return cursor
 }
 
-const writeWithBackpressure = async (res: Response, value: string): Promise<boolean> => {
+const writeWithBackpressure = async (res: Response, value: string, signal: AbortSignal): Promise<boolean> => {
+  if (signal.aborted || res.destroyed || res.writableEnded) return false
   if (res.write(value)) return true
   const { promise, resolve } = Promise.withResolvers<boolean>()
   const finish = (result: boolean): void => {
     clearTimeout(timer)
     res.off('drain', onDrain)
     res.off('close', onClose)
+    signal.removeEventListener('abort', onClose)
     resolve(result)
   }
   const onDrain = (): void => finish(true)
@@ -62,6 +64,8 @@ const writeWithBackpressure = async (res: Response, value: string): Promise<bool
   const timer = setTimeout(() => finish(false), 5_000)
   res.once('drain', onDrain)
   res.once('close', onClose)
+  signal.addEventListener('abort', onClose, { once: true })
+  if (signal.aborted || res.destroyed) finish(false)
   return promise
 }
 
@@ -110,23 +114,26 @@ export const streamOwnedAgentEvents = async (
   limits: AgentSseLimits
 ): Promise<void> => {
   if (limits.signal?.aborted || req.aborted || res.destroyed) return
-  const run = (await knex('agentRuns').where({ id: runId, ownerId }).first('id', 'status', 'eventSequence')) as
-    | { id: string; status: string; eventSequence: number }
+  const run = (await knex('agentRuns').where({ id: runId, ownerId }).first('id', 'sessionId', 'status', 'eventSequence')) as
+    | { id: string; sessionId: string; status: string; eventSequence: number }
     | undefined
   if (!run) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
   const currentConnections = connections.get(ownerId) ?? 0
   if (currentConnections >= limits.maximumConnectionsPerUser) throw new AgentRepositoryError('SSE_CONNECTION_LIMIT', 'Too many agent event streams', 429)
   let cursor = parseCursor(req)
   if (cursor > run.eventSequence) throw new AgentRepositoryError('INVALID_EVENT_CURSOR', 'Event cursor is ahead of the run', 400)
+  const ready = AgentRunStreamReadySchema.parse({ schemaVersion: 1, ownerId, sessionId: run.sessionId, runId: run.id, replayThroughSequence: run.eventSequence })
 
   connections.set(ownerId, currentConnections + 1)
   let closed = false
+  const streamAbort = new AbortController()
   let wakeCurrent: (() => void) | null = null
   const wake = (): void => {
     wakeCurrent?.()
   }
   const onClose = (): void => {
     closed = true
+    streamAbort.abort()
     wake()
   }
   const requestLifecycle = hasRequestLifecycleEvents(req) ? req : null
@@ -157,6 +164,7 @@ export const streamOwnedAgentEvents = async (
       Connection: 'keep-alive'
     })
     res.flushHeaders()
+    if (!(await writeWithBackpressure(res, `event: ${AGENT_RUN_STREAM_READY_EVENT}\ndata: ${canonicalJson(ready)}\n\n`, streamAbort.signal))) return
 
     const reconciliationMilliseconds = limits.reconciliationMilliseconds ?? 1_000
     const keepaliveMilliseconds = limits.keepaliveMilliseconds ?? 15_000
@@ -164,8 +172,9 @@ export const streamOwnedAgentEvents = async (
     while (!closed) {
       const events = await listOwnedAgentEvents(knex, ownerId, runId, cursor, 1_000)
       for (const event of events) {
-        const envelope = canonicalJson({ schemaVersion: event.schemaVersion, attempt: event.attempt, data: event.data, createdAt: event.createdAt })
-        const sent = await writeWithBackpressure(res, `id: ${event.sequence}\nevent: ${event.type}\ndata: ${envelope}\n\n`)
+        if (closed) break
+        const envelope = canonicalJson(event)
+        const sent = await writeWithBackpressure(res, `id: ${event.sequence}\nevent: ${event.type}\ndata: ${envelope}\n\n`, streamAbort.signal)
         if (!sent) {
           closed = true
           break
@@ -180,7 +189,7 @@ export const streamOwnedAgentEvents = async (
       if (!current) break
       if (isTerminalAgentRunStatus(current.status) && cursor >= current.eventSequence) break
       if (Date.now() - lastWriteAt >= keepaliveMilliseconds) {
-        if (!(await writeWithBackpressure(res, ': keepalive\n\n'))) break
+        if (!(await writeWithBackpressure(res, ': keepalive\n\n', streamAbort.signal))) break
         lastWriteAt = Date.now()
       }
       const { promise, resolve } = Promise.withResolvers<void>()
@@ -189,6 +198,7 @@ export const streamOwnedAgentEvents = async (
         clearTimeout(timer)
         resolve()
       }
+      if (closed) wakeCurrent()
       await promise
       wakeCurrent = null
     }

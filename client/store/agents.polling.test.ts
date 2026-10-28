@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
-import type { AgentConversationFolderView, AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentConversationFolderView, AgentEvent, AgentEventType, AgentMemoryReceiptEvent, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { AGENT_CHAT_RECENT_STORAGE_KEY, clearAgentChatRecent, readAgentChatRecent, writeAgentChatRecent } from '../helpers/agent-chat-continuity.ts'
 import type { AgentSessionSummary } from '../helpers/agents-api.ts'
 import type { BrowserFetch } from '../helpers/json-transport.ts'
@@ -39,6 +39,10 @@ const admissionToken = (sessionId: string, ownerId: number, overrides: Record<st
 }
 
 const activeThread = (ownerId = 1, sessionId = '00000000-0000-4000-8000-000000000001'): AgentThreadState => ({
+  memoryContext: {
+    ownerId, sessionId, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+  },
   session: {
     id: sessionId,
     title: '',
@@ -116,9 +120,11 @@ type ReadyAgentStoreFixture = {
   networkPaused: boolean
   connection: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed'
   workspaceVersion: number
+  workspaceOwnerId: number | null
   initializedWorkspaceVersion: number | null
 }
 const markWorkspaceReady = (store: ReadyAgentStoreFixture): void => {
+  store.workspaceOwnerId ??= 1
   store.loading = false
   store.networkPaused = false
   store.connection = 'connected'
@@ -152,6 +158,29 @@ const waitForPost = async (started: Promise<void>, sending: Promise<boolean>): P
   ])
 }
 
+const streamBoundary = (thread: AgentThreadState, replayThroughSequence = thread.session.currentRun!.eventSequence) => ({
+  schemaVersion: 1, ownerId: thread.memoryContext.ownerId, sessionId: thread.session.id,
+  runId: thread.session.currentRun!.id, replayThroughSequence
+})
+const runEvent = (type: Exclude<AgentEventType, 'memory.contextIncluded' | 'memory.saved'>, sequence: number, runId = activeThread().session.currentRun!.id): AgentEvent => ({
+  id: `event-${sequence}`, runId, sequence, type, attempt: 1, schemaVersion: 1, data: {}, createdAt: '2026-10-28T00:00:00Z'
+})
+const memoryThread = (): AgentThreadState => {
+  const thread = activeThread()
+  const user = { target: 'user' as const, characters: 24, limit: 1375 as const, snapshotId: 'a'.repeat(64), state: 'available' as const }
+  const agent = { target: 'agent' as const, characters: 0, limit: 2200 as const, snapshotId: 'b'.repeat(64), state: 'available' as const }
+  return { ...thread, memoryContext: {
+    ownerId: 1, sessionId: thread.session.id,
+    frozen: { snapshotId: thread.session.id, user, agent }, latestSaved: { user, agent },
+    nextSession: { user: 'unchanged', agent: 'unchanged' }
+  } }
+}
+const inclusionEvent = (thread: AgentThreadState, sequence: number, deliveryId = `dispatch-${sequence}`): AgentMemoryReceiptEvent => ({
+  id: `memory-${sequence}`, runId: thread.session.currentRun!.id, sequence, type: 'memory.contextIncluded',
+  attempt: 1, schemaVersion: 1, createdAt: '2026-10-28T00:00:00Z',
+  data: { ownerId: thread.memoryContext.ownerId, sessionId: thread.session.id, snapshotId: thread.session.id, deliveryId,
+    targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }] }
+})
 class FakeEventSource {
   static instances: FakeEventSource[] = []
   readonly listeners: Record<string, Array<(event: MessageEvent) => void>> = {}
@@ -166,8 +195,8 @@ class FakeEventSource {
     listeners.push(listener as (event: MessageEvent) => void)
   }
 
-  emit(type: string, lastEventId: string) {
-    for (const listener of this.listeners[type] ?? []) listener({ lastEventId } as MessageEvent)
+  emit(type: string, lastEventId: string, data: unknown = null) {
+    for (const listener of this.listeners[type] ?? []) listener(new MessageEvent(type, { lastEventId, data: JSON.stringify(data) }))
   }
 }
 
@@ -184,6 +213,7 @@ describe('Agent chat refresh fallback', () => {
   const createStore = () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
+    store.workspaceOwnerId = 1
     closeWorkspace = () => store.closeWorkspace()
     return store
   }
@@ -217,7 +247,8 @@ describe('Agent chat refresh fallback', () => {
 
     store.connect(thread.session.currentRun!.id, 999)
     expect(FakeEventSource.instances[0]?.url).toContain('after=1')
-    FakeEventSource.instances[0]?.emit('run.started', '2')
+    FakeEventSource.instances[0]?.emit('stream.ready', '', streamBoundary(thread))
+    FakeEventSource.instances[0]?.emit('run.started', '2', runEvent('run.started', 2))
     await vi.advanceTimersByTimeAsync(50)
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(store.thread?.session.currentRun?.workingPhase).toBe('correcting')
@@ -319,10 +350,10 @@ describe('Agent chat refresh fallback', () => {
 
     store.connectCurrentRun()
     const source = FakeEventSource.instances[0]!
-    source.emit('run.completed', '2')
+    source.emit('stream.ready', '', streamBoundary(thread))
+    source.emit('run.completed', '2', runEvent('run.completed', 2))
     source.emit('error', '')
 
-    expect(source.close).toHaveBeenCalledTimes(1)
     expect(store.reconnectAttempt).toBe(0)
     vi.advanceTimersByTime(49)
     await flushMicrotasks()
@@ -404,8 +435,7 @@ describe('Agent chat refresh fallback', () => {
     const failed = FakeEventSource.instances[0]!
     failed.emit('error', '')
     failed.emit('error', '')
-    failed.emit('run.started', '99')
-    expect(failed.close).toHaveBeenCalledTimes(1)
+    failed.emit('run.started', '99', runEvent('run.started', 99))
     expect(store.source).toBeNull()
     expect(store.eventSequence).toBe(1)
     await vi.advanceTimersByTimeAsync(1_000)
@@ -492,11 +522,280 @@ describe('Agent chat refresh fallback', () => {
     const source = FakeEventSource.instances[0]!
     store.closeWorkspace()
     source.emit('error', '')
-    source.emit('run.started', '2')
+    source.emit('run.started', '2', runEvent('run.started', 2))
 
     expect(store.connection).toBe('closed')
     expect(store.refreshTimer).toBeNull()
     expect(store.watchdogTimer).toBeNull()
+  })
+
+  it('rewards only new live provider delivery and saved operations, never replay, duplicate or switched context', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const thread = memoryThread()
+    store.thread = thread
+    store.connectCurrentRun()
+    const source = FakeEventSource.instances[0]!
+    source.emit('stream.ready', '', streamBoundary(thread, 3))
+    const queued = { ...runEvent('run.queued', 2), attempt: 0 }
+    source.emit('run.queued', '2', queued)
+    source.emit('memory.contextIncluded', '3', inclusionEvent(thread, 3))
+    expect(store.eventSequence).toBe(3)
+    expect(store.memoryReceipt).toBeNull()
+    const live = inclusionEvent(thread, 4, 'live-dispatch')
+    source.emit(live.type, '4', live)
+    expect(store.memoryReceipt).toMatchObject({ phase: 'live', generation: store.workspaceVersion, receipt: { id: live.id } })
+    store.clearMemoryReceipt()
+    source.emit(live.type, '5', { ...live, sequence: 5 })
+    source.emit(live.type, '6', { ...live, id: 'different-event', sequence: 6 })
+    source.emit(live.type, '7', { ...inclusionEvent(thread, 7), attempt: 2 })
+    expect(store.memoryReceipt).toBeNull()
+    expect(store.eventSequence).toBe(7)
+    const saved: AgentMemoryReceiptEvent = {
+      id: 'save-8', runId: live.runId, sequence: 8, type: 'memory.saved', attempt: 1, schemaVersion: 1, createdAt: live.createdAt,
+      data: { ownerId: 1, sessionId: thread.session.id, snapshotId: thread.session.id, origin: 'memory.manage',
+        operationId: 'memory-tool-1', operation: 'replace', changed: true,
+        targets: [{ target: 'user', characters: 31, limit: 1375, snapshotId: 'c'.repeat(64) }] }
+    }
+    source.emit(saved.type, '8', saved)
+    expect(store.memoryReceipt).toMatchObject({ receipt: { id: saved.id } })
+    expect(store.memoryContext?.frozen.user).toMatchObject({ characters: 24, snapshotId: 'a'.repeat(64) })
+    expect(store.memoryContext?.latestSaved.user).toMatchObject({ characters: 31, snapshotId: 'c'.repeat(64) })
+    expect(store.memoryContext?.nextSession.user).toBe('changed')
+    store.beginSessionTransition('read')
+    source.emit(live.type, '9', inclusionEvent(thread, 9))
+    expect(store.memoryReceipt).toBeNull()
+  })
+
+  it('keeps its all-event watermark across reconnects and attempts, suppressing catch-up receipts', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const thread = memoryThread()
+    store.thread = thread
+    store.connectCurrentRun()
+    const initial = FakeEventSource.instances[0]!
+    initial.emit('stream.ready', '', streamBoundary(thread))
+    initial.emit('message.delta', '12', runEvent('message.delta', 12))
+    store.connect(thread.session.currentRun!.id, 0)
+    expect(FakeEventSource.instances[1]!.url).toContain('after=12')
+    const reconnected = FakeEventSource.instances[1]!
+    reconnected.emit('stream.ready', '', streamBoundary(thread, 13))
+    reconnected.emit('memory.contextIncluded', '13', inclusionEvent(thread, 13))
+    expect(store.memoryReceipt).toBeNull()
+    reconnected.emit('memory.contextIncluded', '14', inclusionEvent(thread, 14))
+    expect(store.memoryReceipt).toMatchObject({ receipt: { sequence: 14 } })
+    store.clearMemoryReceipt()
+    store.thread = { ...store.thread!, session: { ...thread.session, currentRun: { ...thread.session.currentRun!, attempt: 2 } } }
+    reconnected.emit('memory.contextIncluded', '15', inclusionEvent(thread, 15))
+    expect(store.memoryReceipt).toBeNull()
+    store.connect(thread.session.currentRun!.id, 0)
+    expect(FakeEventSource.instances[2]!.url).toContain('after=15')
+  })
+
+  it.each(['owner', 'session', 'generation', 'snapshot', 'count', 'stale', 'unknown-attempt'])('suppresses receipts after a foreign or unavailable %s fence', kind => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const thread = memoryThread()
+    store.thread = thread
+    store.connectCurrentRun()
+    const source = FakeEventSource.instances[0]!
+    source.emit('stream.ready', '', streamBoundary(thread))
+    if (kind === 'owner') store.workspaceOwnerId = 2
+    if (kind === 'session') store.thread = activeThread(1, '00000000-0000-4000-8000-000000000099')
+    if (kind === 'generation') store.workspaceVersion += 1
+    if (kind === 'snapshot') store.thread = { ...thread, memoryContext: activeThread().memoryContext }
+    const frozenUser = thread.memoryContext.frozen.user
+    if (kind === 'stale' && frozenUser.state === 'available') store.thread = { ...thread, memoryContext: {
+      ...thread.memoryContext, frozen: { ...thread.memoryContext.frozen, user: { ...frozenUser, state: 'stale' } },
+      nextSession: { ...thread.memoryContext.nextSession, user: 'unknown' }
+    } }
+    if (kind === 'unknown-attempt') store.thread = { ...thread, session: { ...thread.session, currentRun: { ...thread.session.currentRun!, attempt: 0 } } }
+    const event = inclusionEvent(thread, 2)
+    if (kind === 'count') event.data.targets[0]!.characters = 25
+    source.emit(event.type, '2', event)
+    expect(store.memoryReceipt).toBeNull()
+  })
+
+  it.each(['memory.contextIncluded', 'memory.saved'] as const)('synchronizes a queued attempt from its ordered start before live %s and an older GET settle', async type => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const base = memoryThread()
+    const queued: AgentThreadState = { ...base, session: {
+      ...base.session, currentRun: { ...base.session.currentRun!, attempt: 0, status: 'queued', startedAt: null }
+    } }
+    store.thread = queued
+    store.connectCurrentRun()
+    const source = FakeEventSource.instances[0]!
+    source.emit('stream.ready', '', streamBoundary(queued))
+    const pending = deferred<Response>()
+    const fetcher = spyOnFetch().mockImplementation(() => pending.promise)
+    const refreshing = store.refreshThread()
+    const started = { ...runEvent('run.attemptStarted', 2), data: { runId: base.session.currentRun!.id, attempt: 1 } }
+    source.emit(started.type, '2', started)
+    const included = inclusionEvent(base, 3)
+    const receipt: AgentMemoryReceiptEvent = type === 'memory.contextIncluded' ? included : {
+      ...included, type: 'memory.saved',
+      data: { ownerId: 1, sessionId: base.session.id, snapshotId: base.session.id, origin: 'memory.manage',
+        operationId: 'queued-save', operation: 'add', changed: true,
+        targets: [{ target: 'user', characters: 31, limit: 1375, snapshotId: 'c'.repeat(64) }] }
+    }
+    source.emit(receipt.type, '3', receipt)
+    expect(store.thread?.session.currentRun?.attempt).toBe(1)
+    expect(store.memoryReceipt).toMatchObject({ phase: 'live', receipt: { sequence: 3, attempt: 1, type } })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    pending.resolve(Response.json(queued))
+    await refreshing
+    expect(store.thread?.session.currentRun?.attempt).toBe(1)
+    expect(store.memoryReceipt).toMatchObject({ receipt: { sequence: 3, attempt: 1 } })
+    expect(store.memoryContext?.frozen).toEqual(base.memoryContext.frozen)
+    if (type === 'memory.saved') expect(store.memoryContext?.latestSaved.user).toMatchObject({ characters: 31, snapshotId: 'c'.repeat(64) })
+    store.clearMemoryReceipt()
+    source.emit(receipt.type, '3', receipt)
+    expect(store.memoryReceipt).toBeNull()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('synchronizes replayed attempt metadata without rewarding replayed delivery', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const base = memoryThread()
+    const queued: AgentThreadState = { ...base, session: {
+      ...base.session, currentRun: { ...base.session.currentRun!, attempt: 0, status: 'queued', startedAt: null }
+    } }
+    store.thread = queued
+    store.connectCurrentRun()
+    const source = FakeEventSource.instances[0]!
+    const fetcher = spyOnFetch()
+    source.emit('stream.ready', '', streamBoundary(queued, 3))
+    source.emit('run.attemptStarted', '2', { ...runEvent('run.attemptStarted', 2), data: { runId: base.session.currentRun!.id, attempt: 1 } })
+    source.emit('memory.contextIncluded', '3', inclusionEvent(base, 3))
+    expect(store.thread?.session.currentRun?.attempt).toBe(1)
+    expect(store.memoryReceipt).toBeNull()
+    source.emit('memory.contextIncluded', '4', inclusionEvent(base, 4))
+    expect(store.memoryReceipt).toMatchObject({ phase: 'live', receipt: { sequence: 4 } })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it.each(['rename', 'retention', 'move'] as const)('retains live feedback after a settled same-session %s without reconnecting or weakening selection/owner fences', async mutation => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = createStore()
+    const thread = memoryThread()
+    store.thread = thread
+    markWorkspaceReady(store)
+    store.connectCurrentRun()
+    const source = FakeEventSource.instances[0]!
+    source.emit('stream.ready', '', streamBoundary(thread))
+    const folderId = '00000000-0000-4000-8000-000000000090'
+    const projected: AgentThreadState = { ...thread, session: {
+      ...thread.session, version: 2,
+      ...(mutation === 'rename' ? { title: 'Renamed current conversation' } : {}),
+      ...(mutation === 'retention' ? { retention: 'temporary' as const } : {}),
+      ...(mutation === 'move' ? { folderId } : {})
+    } }
+    const fetcher = spyOnFetch().mockImplementation(async (input, init) => {
+      if (init?.method === 'PATCH' || init?.method === 'PUT') return Response.json(projected)
+      if (String(input).startsWith('/_api/agents/sessions')) return Response.json({ sessions: [summaryForThread(projected)], nextCursor: null })
+      throw new Error(`Unexpected request: ${String(input)}`)
+    })
+    if (mutation === 'rename') await store.renameSession(thread.session.id, 'Renamed current conversation')
+    else if (mutation === 'retention') await store.setSessionRetention(thread.session.id, 'temporary')
+    else await store.moveSessionToFolder(thread.session.id, folderId)
+    source.emit('memory.contextIncluded', '2', inclusionEvent(thread, 2))
+    expect(store.memoryReceipt).toMatchObject({ phase: 'live', receipt: { sequence: 2 } })
+    expect(FakeEventSource.instances).toHaveLength(1)
+    expect(source.close).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    store.clearMemoryReceipt()
+    store.beginSessionReadTransition()
+    source.emit('memory.contextIncluded', '3', inclusionEvent(thread, 3))
+    expect(store.memoryReceipt).toBeNull()
+    store.cancelSessionReadTransition()
+    source.emit('memory.contextIncluded', '4', inclusionEvent(thread, 4))
+    expect(store.memoryReceipt).toMatchObject({ receipt: { sequence: 4 } })
+    store.clearMemoryReceipt()
+    store.ownerGeneration += 1
+    source.emit('memory.contextIncluded', '5', inclusionEvent(thread, 5))
+    expect(store.memoryReceipt).toBeNull()
+    expect(FakeEventSource.instances).toHaveLength(1)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses only current changed manual response receipts and monotonically deduplicates entry versions', async () => {
+    const store = createStore()
+    const thread = memoryThread()
+    store.thread = thread
+    const capture = store.captureMemoryMutationContext()!
+    const receipt = {
+      schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: thread.session.id,
+      runId: null, attempt: null, snapshotId: null, entryId: 'manual-entry', entryVersion: 2,
+      operation: 'replace', changed: true,
+      targets: [
+        { target: 'user', characters: 0, limit: 1375, snapshotId: 'c'.repeat(64) },
+        { target: 'agent', characters: 24, limit: 2200, snapshotId: 'd'.repeat(64) }
+      ]
+    }
+    const expected = { entryId: 'manual-entry', entryVersion: 2, target: 'agent' as const }
+    expect(store.consumeManualMemoryReceipt(capture, null, expected)).toBe(false)
+    expect(store.consumeManualMemoryReceipt(capture, { ...receipt, changed: false }, expected)).toBe(false)
+    expect(store.consumeManualMemoryReceipt(capture, { ...receipt, ownerId: 2 }, expected)).toBe(false)
+    expect(store.consumeManualMemoryReceipt(capture, { ...receipt, sessionId: null }, expected)).toBe(false)
+    const pending = deferred<Response>()
+    spyOnFetch().mockImplementation(() => pending.promise)
+    const refreshing = store.refreshThread()
+    expect(store.consumeManualMemoryReceipt(capture, receipt, expected)).toBe(true)
+    expect(store.memoryContext?.frozen).toEqual(thread.memoryContext.frozen)
+    expect(store.memoryContext?.nextSession).toEqual({ user: 'changed', agent: 'changed' })
+    expect(store.memoryReceipt).toMatchObject({ phase: 'live', receipt: { entryVersion: 2 } })
+    store.clearMemoryReceipt()
+    expect(store.consumeManualMemoryReceipt(capture, receipt, expected)).toBe(false)
+    pending.resolve(Response.json(thread))
+    await refreshing
+    expect(store.memoryContext?.latestSaved.agent).toMatchObject({ characters: 24, snapshotId: 'd'.repeat(64) })
+    store.invalidateSavedMemory(capture, ['agent'])
+    expect(store.memoryContext?.latestSaved.agent.state).toBe('stale')
+    expect(store.memoryContext?.nextSession.agent).toBe('unknown')
+    expect(store.memoryReceipt).toBeNull()
+    store.beginSessionTransition('read')
+    expect(store.consumeManualMemoryReceipt(capture, { ...receipt, entryVersion: 3 }, { ...expected, entryVersion: 3 })).toBe(false)
+    store.closeWorkspace()
+    expect(store.memoryContext).toBeNull()
+    expect(store.memoryReceipt).toBeNull()
+  })
+
+  it('keeps unknown and per-target unavailable memory distinct from authorized zero, stale and offline metadata', () => {
+    const store = createStore()
+    store.thread = activeThread()
+    expect(store.memoryContext?.frozen).toEqual({ snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } })
+    expect(store.memoryContext?.latestSaved.user).not.toHaveProperty('limit')
+    const thread = memoryThread()
+    store.thread = { ...thread, memoryContext: {
+      ...thread.memoryContext, latestSaved: { user: { state: 'error' }, agent: thread.memoryContext.latestSaved.agent },
+      nextSession: { user: 'unknown', agent: 'unchanged' }
+    } }
+    expect(store.memoryContext?.frozen.agent).toMatchObject({ state: 'available', characters: 0, limit: 2200 })
+    expect(store.memoryContext?.latestSaved.user).toEqual({ state: 'error' })
+    store.networkPaused = true
+    const priorOnline = Object.getOwnPropertyDescriptor(navigator, 'onLine')
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
+    try {
+      expect(store.memoryContext?.frozen.agent.state).toBe('stale')
+      expect(store.memoryContext?.latestSaved.user.state).toBe('error')
+      expect(store.memoryContext?.nextSession.agent).toBe('unknown')
+      Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
+      store.networkPaused = false
+      store.networkPaused = true
+      expect(store.memoryContext?.frozen.agent).toEqual({ state: 'offline' })
+      expect(store.memoryContext?.latestSaved.user).toEqual({ state: 'error' })
+    } finally {
+      if (priorOnline) Object.defineProperty(navigator, 'onLine', priorOnline)
+      else Reflect.deleteProperty(navigator, 'onLine')
+    }
   })
 })
 
@@ -2261,6 +2560,7 @@ describe('Agent empty conversation lifecycle', () => {
     store.setDraft(empty.session.id, 'Unsent original draft')
     const replacement = {
       ...empty,
+      memoryContext: activeThread(1, '00000000-0000-4000-8000-000000000099').memoryContext,
       session: {
         ...empty.session,
         id: '00000000-0000-4000-8000-000000000099',
@@ -2481,7 +2781,10 @@ describe('Agent proposal decisions', () => {
       const next = threadForSession('00000000-0000-4000-8000-000000000007', '00000000-0000-4000-8000-000000000008')
       if (boundary === 'owner') store.ownerGeneration += 1
       if (boundary === 'workspace') store.workspaceVersion += 1
-      store.thread = boundary === 'session' ? next : { ...next, session: { ...next.session, id: store.thread.session.id } }
+      store.thread = boundary === 'session' ? next : {
+        ...next, session: { ...next.session, id: store.thread.session.id },
+        memoryContext: { ...next.memoryContext, sessionId: store.thread.session.id }
+      }
       const current = store.thread
       pending.resolve(Response.json({ proposalId: proposal.id, approvalId: proposal.approval!.id, status: 'denied', decidedAt: '2026-08-23T20:01:00.000Z' }))
       await deciding

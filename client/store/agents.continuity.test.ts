@@ -22,11 +22,16 @@ const source = (n: number): WikiSource => ({
   description: '',
   visibility: 'public',
   updatedAt: '2026-09-18T00:00:00Z',
-  sourceRevision: 'revision',
+  sourceRevision: '1',
   excerpt: `Private excerpt ${n}`,
   excerptTruncated: false
 })
+let fixtureOwnerId = 1
 const thread = (n: number): AgentThreadState => ({
+  memoryContext: {
+    ownerId: fixtureOwnerId, sessionId: id(n), frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+  },
   session: {
     id: id(n),
     title: '',
@@ -116,9 +121,12 @@ const fixture = () => {
     }
   }
 }
-const initialize = (store: ReturnType<typeof useAgentsStore>, currentPage: AgentCurrentPageHint | null = page(1), ownerId = 1, resumeSessionId?: string) =>
-  store.initialize('csrf', { ownerId, routeSync: false, currentPage, ...(resumeSessionId ? { resumeSessionId } : {}) })
+const initialize = (store: ReturnType<typeof useAgentsStore>, currentPage: AgentCurrentPageHint | null = page(1), ownerId = 1, resumeSessionId?: string) => {
+  fixtureOwnerId = ownerId
+  return store.initialize('csrf', { ownerId, routeSync: false, currentPage, ...(resumeSessionId ? { resumeSessionId } : {}) })
+}
 afterEach(() => {
+  fixtureOwnerId = 1
   for (const store of stores.splice(0)) store.closeWorkspace()
   vi.restoreAllMocks()
   clearAgentChatRecent()
@@ -548,5 +556,54 @@ describe('Automatic conversation source context', () => {
     window.sessionStorage.setItem('agents.chat-pin.v1', JSON.stringify({ version: 1, ownerId: 1, sessionId: id(99) }))
     expect(readAgentChatRecent(1, now)).toBeNull()
     expect(window.sessionStorage.getItem('agents.chat-pin.v1')).toBeNull()
+  })
+
+  it('projects only committed attachments, dedupes the independent ninth hint and keeps pending selections out of requests', async () => {
+    fixture()
+    const store = createStore()
+    await initialize(store, page(9))
+    expect(store.sourceContext).toMatchObject({ attachedSources: [], currentPage: { included: true }, generation: store.workspaceVersion })
+    const sources = Array.from({ length: 8 }, (_, index) => source(index + 1))
+    store.updateDraft(id(1), { sources, pendingSources: [{ id: 10, locale: 'en', path: 'page-10' }] })
+    expect(store.sourceContext?.attachedSources).toHaveLength(8)
+    expect(store.sourceContext?.accessibleIdentities).toHaveLength(9)
+    expect(store.sourceContext?.pendingSources).toEqual([{ id: 10, locale: 'en', path: 'page-10' }])
+    expect(store.sourceContext?.accessibleIdentities.some(row => row.id === 10)).toBe(false)
+    store.setCurrentPage(page(1))
+    expect(store.sourceContext?.accessibleIdentities).toHaveLength(8)
+    store.updateDraft(id(1), { sources: sources.slice(0, 1) })
+    expect(store.sourceContext?.pendingSources).toEqual([])
+    store.updateDraft(id(1), { includeCurrentPage: false })
+    expect(store.sourceContext?.currentPage.included).toBe(false)
+    expect(store.sourceContext?.identity).toEqual({ kind: 'draft', ownerId: 1, draftId: id(1), sessionId: id(1) })
+    store.updateDraft(id(1), { sources: [], scope: { kind: 'selected' } })
+    expect(store.sourceContext).toBeNull()
+    store.updateDraft(id(1), { sources: [source(1), source(1)], scope: { kind: 'all' } })
+    expect(store.sourceContext).toBeNull()
+    store.updateDraft(id(1), { sources: sources.map(row => ({ ...row, path: '界'.repeat(1000) })) })
+    expect(store.sourceContext).toBeNull()
+    store.closeWorkspace()
+    expect(store.sourceContext).toBeNull()
+  })
+
+  it('preserves the historical source revision and page override instead of silently replacing them with navigation or fresh revisions', async () => {
+    fixture()
+    const store = createStore()
+    await initialize(store, page(2))
+    const historicalSource = { ...source(9), sourceRevision: '2' }
+    const { id: sourceId, locale, path, title, visibility, sourceRevision } = historicalSource
+    store.thread = { ...store.thread!, messages: [{
+      id: id(101), runId: null, role: 'user', ordinal: 1, status: 'complete', content: 'Original request', citations: [],
+      createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z',
+      currentPage: page(7), knowledgeContext: { scope: { kind: 'selected' }, sources: [{ id: sourceId, locale, path, title, visibility, sourceRevision }] }
+    }] }
+    expect(await store.restoreRequest(id(101))).toBe('Original request')
+    expect(store.drafts[id(1)]?.sources[0]?.sourceRevision).toBe('2')
+    expect(store.sourceContext?.attachedSources[0]).toMatchObject({ source: { sourceRevision: '2' }, access: 'stale' })
+    expect(store.sourceContext?.currentPage).toMatchObject({ included: true, origin: 'historical', hint: page(7), access: 'unknown' })
+    store.setCurrentPage(page(3))
+    expect(store.sourceContext?.currentPage.hint).toEqual(page(7))
+    store.updateDraft(id(1), { currentPageOverride: null, includeCurrentPage: false })
+    expect(store.sourceContext?.currentPage).toMatchObject({ included: false, origin: 'historical', hint: null })
   })
 })

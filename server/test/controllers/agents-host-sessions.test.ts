@@ -12,7 +12,7 @@ import createKnex, { type Knex } from 'knex'
 import sharp from 'sharp'
 import { z } from 'zod'
 import { agentProviderMediaInputMimeTypes, type AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
-import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
+import { AGENT_FEATURE_FLAG_KEYS, AgentManualMemoryMutationReceiptFieldsSchema, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import { createActionAuthority } from '../../agents/actions/kernel.ts'
 import { applyApprovedProposal } from '../../agents/proposals/execution.ts'
 import { persistProposal, type PersistedProposal } from '../../agents/proposals/repository.ts'
@@ -502,25 +502,18 @@ describe('ordinary-origin agent session API', () => {
       reservationMilliseconds: 60_000
     }
     return trackAuxiliaryRuntime(
-      new AgentProductRuntime(
-        db,
-        {
-          async resolve() {
-            return resolved
-          },
-          async resolveCurrent() {
-            return resolved
-          }
+      new AgentProductRuntime(db, {
+        async resolve() {
+          return resolved
         },
-        engine,
-        {
-          workerId: `goal-accounting-${maxTokens}`,
-          globalConcurrency: 1,
-          perUserConcurrency: 1,
-          utilityModel,
-          goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
+        async resolveCurrent() {
+          return resolved
         }
-      )
+      }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: `goal-accounting-${maxTokens}`,
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      utilityModel,
+      goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 } })
     )
   }
   const insertAccountingSession = async (sessionId: string): Promise<void> => {
@@ -787,33 +780,26 @@ describe('ordinary-origin agent session API', () => {
       if (!version) throw new Error('HTTP provider resolution fixture is missing its immutable version')
       return { ...resolvedAdmission, transportKind: version.transportKind }
     }
-    runtime = new AgentProductRuntime(
-      db,
-      {
-        async resolve(transaction) {
-          return resolveAdmission(transaction)
-        },
-        async resolveCurrent(transaction) {
-          return resolveAdmission(transaction)
-        }
+    runtime = new AgentProductRuntime(db, {
+      async resolve(transaction) {
+        return resolveAdmission(transaction)
       },
-      fakeEngine,
-      {
-        authorizeMedia: async () => {
-          mediaAuthorizationChecks += 1
-          if (!agentsEnabled || !mediaAuthorized) throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Wiki Agent access was revoked.', 403)
-        },
-        workerId: 'test-worker',
-        globalConcurrency: 1,
-        perUserConcurrency: 1,
-        goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
-        logger: {
-          error(value: unknown): void {
-            runtimeLogs.push(value)
-          }
-        }
+      async resolveCurrent(transaction) {
+        return resolveAdmission(transaction)
       }
-    )
+    }, fakeEngine, { memorySigningSecret: 'agent-memory-test-signing-secret', authorizeMedia: async () => {
+      mediaAuthorizationChecks += 1
+      if (!agentsEnabled || !mediaAuthorized) throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Wiki Agent access was revoked.', 403)
+    },
+    workerId: 'test-worker',
+    globalConcurrency: 1,
+    perUserConcurrency: 1,
+    goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
+    logger: {
+      error(value: unknown): void {
+        runtimeLogs.push(value)
+      }
+    } })
     const app = express()
     app.use(cookieParser())
     app.use(session({ secret: 'ordinary-host-test-secret', resave: false, saveUninitialized: true }))
@@ -2437,7 +2423,7 @@ describe('ordinary-origin agent session API', () => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
-    const standalone = await projectAgentThread(db, 7, sessionId, { profileResolutionToken: () => 'standalone-resolution' })
+    const standalone = await projectAgentThread(db, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'standalone-resolution' })
     expect(standalone.session.mediaCapabilities).toBeNull()
     const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
     expect(response.status).toBe(200)
@@ -3560,32 +3546,25 @@ describe('ordinary-origin agent session API', () => {
     let engineCalls = 0
     let originEngineRunId: string | undefined
     const originRuntime = trackAuxiliaryRuntime(
-      new AgentProductRuntime(
-        db,
-        {
-          async resolve() {
-            return resolved
-          },
-          async resolveCurrent() {
-            return resolved
-          }
+      new AgentProductRuntime(db, {
+        async resolve() {
+          return resolved
         },
-        {
-          preflight: preflightAgentRequest,
-          async execute(request, sink) {
-            engineCalls += 1
-            engineMessages = request.messages.map(message => ({ ...message }))
-            originEngineRunId = request.run.id
-            return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
-          }
-        },
-        {
-          workerId: `origin-boundary-${randomUUID()}`,
-          globalConcurrency: 1,
-          perUserConcurrency: 1,
-          goals: { enabled: false, maxContinuations: 1, maxTokens: 1_000_000, maxToolCalls: 1_000, maxDurationMilliseconds: 60_000 }
+        async resolveCurrent() {
+          return resolved
         }
-      )
+      }, {
+        preflight: preflightAgentRequest,
+        async execute(request, sink) {
+          engineCalls += 1
+          engineMessages = request.messages.map(message => ({ ...message }))
+          originEngineRunId = request.run.id
+          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
+        }
+      }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: `origin-boundary-${randomUUID()}`,
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      goals: { enabled: false, maxContinuations: 1, maxTokens: 1_000_000, maxToolCalls: 1_000, maxDurationMilliseconds: 60_000 } })
     )
     type StateCase = {
       readonly name: string
@@ -5588,6 +5567,51 @@ describe('ordinary-origin agent session API', () => {
     expect(row).toMatchObject({ version: session.version, retention: 'saved' })
   })
 
+  it('requires manual correlation and returns only actual changed write receipts without creating run events', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const MutationResponse = z.object(AgentManualMemoryMutationReceiptFieldsSchema.shape)
+    const beforeEvents = await db('agentEvents').count<{ count: number }[]>('* as count')
+    const missingContext = await fetch(`${baseUrl}/_api/agents/memories`, {
+      method: 'POST', headers, body: JSON.stringify({ target: 'user', content: 'Concise answers.' })
+    })
+    expect(missingContext.status).toBe(400)
+    // Correlation does not grant session access and needs no session lookup.
+    const context = { sessionId: 'correlation-not-session-authority' }
+    const created = await fetch(`${baseUrl}/_api/agents/memories`, {
+      method: 'POST', headers, body: JSON.stringify({ target: 'user', content: 'Concise answers.', context })
+    })
+    expect(created.status).toBe(201)
+    const receipt = MutationResponse.parse(await created.json()).receipt!
+    expect(receipt).toMatchObject({
+      ownerId: 7, sessionId: context.sessionId, origin: 'manual', operation: 'add', changed: true, entryVersion: 1,
+      runId: null, attempt: null, snapshotId: null, targets: [{ target: 'user', characters: 16, limit: 1375 }]
+    })
+    expect(await db('agentMemories').where({ id: receipt.entryId, ownerId: 7 }).first('version')).toEqual({ version: receipt.entryVersion })
+    const duplicate = await fetch(`${baseUrl}/_api/agents/memories`, {
+      method: 'POST', headers, body: JSON.stringify({ target: 'user', content: 'Concise answers.', context })
+    })
+    expect(duplicate.status).toBe(200)
+    expect(MutationResponse.parse(await duplicate.json()).receipt).toBeNull()
+    const updated = await fetch(`${baseUrl}/_api/agents/memories/${receipt.entryId}`, {
+      method: 'PUT', headers, body: JSON.stringify({ expectedVersion: 1, target: 'agent', content: 'Concise project notes.', context })
+    })
+    expect(updated.status).toBe(200)
+    const replacement = MutationResponse.parse(await updated.json()).receipt!
+    expect(replacement).toMatchObject({
+      ownerId: 7, sessionId: context.sessionId, entryId: receipt.entryId, entryVersion: 2, operation: 'replace',
+      targets: [{ target: 'user', characters: 0, limit: 1375 }, { target: 'agent', characters: 22, limit: 2200 }]
+    })
+    expect(JSON.stringify(replacement)).not.toContain('Concise project')
+    const conflict = await fetch(`${baseUrl}/_api/agents/memories/${receipt.entryId}`, {
+      method: 'PUT', headers, body: JSON.stringify({ expectedVersion: 1, target: 'agent', content: 'Stale write.', context })
+    })
+    expect(conflict.status).toBe(409)
+    const removed = await fetch(`${baseUrl}/_api/agents/memories/${receipt.entryId}?expectedVersion=2`, { method: 'DELETE', headers })
+    expect(removed.status).toBe(200)
+    expect(await removed.json()).not.toHaveProperty('receipt')
+    expect(await db('agentEvents').count('* as count')).toEqual(beforeEvents)
+  })
+
   it('clears only unfiled history while preserving folders, owner isolation, and personal memory', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const SessionResponseSchema = z.object({ session: z.object({ id: z.string(), version: z.number() }) })
@@ -5595,7 +5619,7 @@ describe('ordinary-origin agent session API', () => {
     const createdMemory = await fetch(`${baseUrl}/_api/agents/memories`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ target: 'user', content: 'Prefers concise, evidence-first answers.' })
+      body: JSON.stringify({ target: 'user', content: 'Prefers concise, evidence-first answers.', context: { sessionId: null } })
     })
     expect(createdMemory.status).toBe(201)
     expect(await createdMemory.json()).toMatchObject({ changed: true, target: 'user', entries: ['Prefers concise, evidence-first answers.'], limit: 1_375 })
@@ -5644,7 +5668,7 @@ describe('ordinary-origin agent session API', () => {
     const otherMemory = await fetch(`${baseUrl}/_api/agents/memories`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ target: 'user', content: 'Other owner memory.' })
+      body: JSON.stringify({ target: 'user', content: 'Other owner memory.', context: { sessionId: null } })
     })
     expect(otherMemory.status).toBe(201)
     const otherSession = SessionResponseSchema.parse(

@@ -267,6 +267,9 @@ const messageRecovery = (message: AgentMessageView): AgentMessageRecovery | null
   let descriptionKey = 'common:agentThread.recoveryGeneric'
   if (failed && outcome?.status === 'failed') {
     switch (outcome.errorCode) {
+      case 'AGENT_HOST_PERSISTENCE_FAILED':
+        descriptionKey = 'common:agentThread.recoveryHostPersistence'
+        break
       case 'AGENT_QUOTA_EXHAUSTED':
         descriptionKey = 'common:agentThread.recoveryQuota'
         break

@@ -360,6 +360,10 @@ const loadGoalLockState = (
 ): LockState => {
   const ref = <T>(value: T): ValueRef<T> => Vue.ref(value) as ValueRef<T>
   const thread = ref({
+    memoryContext: {
+      ownerId: 2, sessionId: 'session-1', frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+      latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+    },
     session: {
       id: 'session-1',
       title: 'Release planning',
@@ -667,6 +671,10 @@ const resolvedMediaCapabilities = (capabilities: AgentMediaCapabilities): Requir
 })
 
 const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved', capabilities: AgentMediaCapabilities | null = null): AgentThreadState => ({
+  memoryContext: {
+    ownerId: 2, sessionId: id, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+  },
   session: {
     id,
     title: 'Release planning',

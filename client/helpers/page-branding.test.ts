@@ -110,9 +110,51 @@ describe('brandingDuplicatesSiteLogo', () => {
     expect(brandingDuplicatesSiteLogo(branding('/assets/a%20b.png?v=1'), { logoUrl: '/assets/a b.png?v=2' })).toBe(true)
   })
 
-  it('does not disclose or compare original upload fingerprints', () => {
-    const site = { logoUrl: `/_site-logo/${'c'.repeat(64)}/logo.png` }
-    expect(brandingDuplicatesSiteLogo(branding(`/assets/home-mark.png?v=${sourceSha256}`), site)).toBe(false)
+  it('recognizes re-uploaded source bytes across distinct asset and CDN URLs', () => {
+    const site = {
+      logoUrl: `https://cdn.example.test/_site-logo/${'c'.repeat(64)}/logo.png`,
+      logoSourceSha256: sourceSha256
+    }
+    expect(brandingDuplicatesSiteLogo(branding(`/assets/home-mark.webp?v=${sourceSha256}`), site)).toBe(true)
+    expect(brandingDuplicatesSiteLogo(branding('/assets/Home%20Mark.PNG'), {
+      ...site,
+      logoSourceSha256: sourceSha256.toUpperCase()
+    })).toBe(true)
+  })
+
+  it('retains different source bytes even when URLs or generic filenames match', () => {
+    const site = { logoUrl: '/assets/logo.png', logoSourceSha256: 'b'.repeat(64) }
+    expect(brandingDuplicatesSiteLogo(branding('/assets/logo.png?v=old'), site)).toBe(false)
+    expect(brandingDuplicatesSiteLogo(branding('/other/logo.png'), site)).toBe(false)
+  })
+
+  it('never infers source identity from a filename, version query, or rendered-logo digest', () => {
+    const site = { logoUrl: `/_site-logo/${sourceSha256}/logo.png` }
+    expect(brandingDuplicatesSiteLogo(branding(`/assets/logo.png?v=${sourceSha256}`), site)).toBe(false)
+    expect(brandingDuplicatesSiteLogo(branding('/assets/logo.png'), { logoUrl: '/other/logo.png' })).toBe(false)
+    expect(brandingDuplicatesSiteLogo(branding('/assets/Logo.PNG'), { logoUrl: '/assets/logo.png' })).toBe(false)
+    expect(brandingDuplicatesSiteLogo(branding('/assets/logo.webp'), { logoUrl: '/assets/logo.png' })).toBe(false)
+    expect(brandingDuplicatesSiteLogo(branding('https://cdn.example.test/assets/logo.png'), { logoUrl: '/assets/logo.png' })).toBe(false)
+  })
+
+  it('falls back to canonical URL identity when source metadata is absent or invalid', () => {
+    for (const logoSourceSha256 of [undefined, null, '', 'not-a-hash', 'a'.repeat(63)]) {
+      const site = { logoUrl: '/assets/logo.png', logoSourceSha256 }
+      expect(brandingDuplicatesSiteLogo(branding('/assets/logo.png?v=new'), site)).toBe(true)
+      expect(brandingDuplicatesSiteLogo(branding('/other/logo.png'), site)).toBe(false)
+    }
+    expect(brandingDuplicatesSiteLogo(branding('/other/logo.png', 'not-a-hash'), {
+      logoUrl: '/assets/logo.png',
+      logoSourceSha256: sourceSha256
+    })).toBe(false)
+  })
+
+  it('does not suppress malformed or non-image URLs even with matching source hashes', () => {
+    const site = { logoUrl: '/assets/logo.png', logoSourceSha256: sourceSha256 }
+    for (const imageUrl of ['', '   ', 'https://[invalid/logo.png', '/assets/bad%zz.png', 'data:image/png;base64,abc', 'javascript:logo.png']) {
+      expect(brandingDuplicatesSiteLogo(branding(imageUrl), site)).toBe(false)
+      expect(brandingDuplicatesSiteLogo(branding('/assets/logo.png'), { ...site, logoUrl: imageUrl })).toBe(false)
+    }
   })
 
   it('keeps distinct or missing images', () => {

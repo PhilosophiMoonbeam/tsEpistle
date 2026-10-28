@@ -65,6 +65,7 @@ export type SiteConfig = {
   logoUrl: string
   logoEffect: LogoEffectDescriptor | null
   /** SHA-256 of the active site logo's uploaded source; null for unmanaged logos. */
+  logoSourceSha256: string | null
   product: ProductMetadata
   featurePageRatings: boolean
   availableEditors: PageEditorKey[]

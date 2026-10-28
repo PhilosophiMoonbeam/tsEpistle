@@ -3770,6 +3770,7 @@ export default defineComponent({
     utilityTooltipProps (key: string): Record<string, unknown> {
       return {
         id: `page-tool-tip-${key}`,
+        disabled: this.readerFocus,
         target: this.utilityTooltipTarget,
         location: this.utilityTooltip.location,
         offset: this.utilityTooltip.offset,
@@ -6616,7 +6617,7 @@ export default defineComponent({
     opacity: 1;
   }
 
-  .v-btn { flex-shrink: 0; min-height: 36px; height: 36px; color: var(--wiki-accent-ink); }
+  .v-btn { flex-shrink: 0; min-height: 36px; height: 36px; color: rgb(var(--v-theme-on-surface)); }
 }
 
 

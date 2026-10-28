@@ -1127,13 +1127,11 @@ describe('admitted automatic conversation routing', () => {
       }
       const admitted = await f.submit(await f.session())
       await f.runtime.runOnce()
-      const replacement = new AgentProductRuntime(db, f.registry, f.engine, {
-        router: f.router,
-        workerId: `routing-replacement-${randomUUID()}`,
-        globalConcurrency: 1,
-        perUserConcurrency: 1,
-        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false }
-      })
+      const replacement = new AgentProductRuntime(db, f.registry, f.engine, { memorySigningSecret: 'agent-memory-test-signing-secret', router: f.router,
+      workerId: `routing-replacement-${randomUUID()}`,
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false } })
       try {
         await replacement.runOnce()
       } finally {
@@ -1202,12 +1200,10 @@ describe('admitted automatic conversation routing', () => {
     let stopping: Promise<void> | undefined
     const historical = admissionKind.startsWith('historical')
     const activeRuntime = historical
-      ? new AgentProductRuntime(db, f.registry, f.engine, {
-          workerId: 'historical-approval-run',
-          globalConcurrency: 1,
-          perUserConcurrency: 1,
-          orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false }
-        })
+      ? new AgentProductRuntime(db, f.registry, f.engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'historical-approval-run',
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false } })
       : f.runtime
     f.engine.execute = async (request, sink) => {
       await execute(request, sink)
@@ -1357,13 +1353,11 @@ describe('admitted automatic conversation routing', () => {
       }
       return execute(request, sink)
     }
-    const resumed = new AgentProductRuntime(db, f.registry, f.engine, {
-      router: f.router,
-      workerId: 'approval-routing-resume',
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false }
-    })
+    const resumed = new AgentProductRuntime(db, f.registry, f.engine, { memorySigningSecret: 'agent-memory-test-signing-secret', router: f.router,
+    workerId: 'approval-routing-resume',
+    globalConcurrency: 1,
+    perUserConcurrency: 1,
+    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false } })
     try {
       await resumed.runOnce()
     } finally {

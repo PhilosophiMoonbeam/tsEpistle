@@ -106,6 +106,12 @@ const thread = (value = pins(), exp = 4_000_000_000): AgentThreadState => ({
     lastActivityAt: DATE,
     expiresAt: null
   },
+  memoryContext: {
+    ownerId: value.ownerId, sessionId: value.sessionId,
+    frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    nextSession: { user: 'unknown', agent: 'unknown' }
+  },
   messages: [],
   tools: [],
   tasks: [],

@@ -179,7 +179,7 @@ const eventData = (
   errorCode: row.errorCode
 })
 
-const appendTaskEvent = async (transaction: Knex.Transaction, claim: AgentRunClaim, type: AgentEventType, row: AgentTaskRow): Promise<void> => {
+const appendTaskEvent = async (transaction: Knex.Transaction, claim: AgentRunClaim, type: Extract<AgentEventType, `task.${string}` | `subagent.${string}`>, row: AgentTaskRow): Promise<void> => {
   await appendAgentEvent(transaction, {
     id: randomUUID(),
     runId: claim.id,

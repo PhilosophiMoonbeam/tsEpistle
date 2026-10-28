@@ -41,7 +41,7 @@ describe('agent event SSE lifecycle', () => {
 
   it('ends a partial run after its final event and releases connection accounting', async () => {
     const data = '{"outcome":"partial"}'
-    await knex('agentRuns').insert({ id: 'run-partial', ownerId: 7, status: 'partial', eventSequence: 1 })
+    await knex('agentRuns').insert({ id: 'run-partial', sessionId: 'session-partial', ownerId: 7, status: 'partial', eventSequence: 1 })
     await knex('agentEvents').insert({
       id: 'event-partial',
       runId: 'run-partial',
@@ -72,15 +72,18 @@ describe('agent event SSE lifecycle', () => {
       keepaliveMilliseconds: 60_000
     })
 
-    expect(response.write).toHaveBeenCalledOnce()
+    expect(response.write).toHaveBeenCalledTimes(2)
+    expect(response.write.mock.calls[0]?.[0]).toBe(`event: stream.ready\ndata: {"ownerId":7,"replayThroughSequence":1,"runId":"run-partial","schemaVersion":1,"sessionId":"session-partial"}\n\n`)
     expect(response.write).toHaveBeenCalledWith(expect.stringContaining('event: run.partial'))
+    const partial = JSON.parse(response.write.mock.calls[1]![0].split('\ndata: ')[1]!)
+    expect(partial).toEqual({ id: 'event-partial', runId: 'run-partial', sequence: 1, type: 'run.partial', attempt: 1, schemaVersion: 1, data: { outcome: 'partial' }, createdAt: '2026-08-17T12:00:00.000Z' })
     expect(response.end).toHaveBeenCalledOnce()
     expect(connections.has(7)).toBe(false)
   })
 
   it('delivers a stored event through compression before the run is allowed to finish', async () => {
     const data = '{"message":"queued before completion"}'
-    await knex('agentRuns').insert({ id: 'run-live', ownerId: 7, status: 'running', eventSequence: 1 })
+    await knex('agentRuns').insert({ id: 'run-live', sessionId: 'session-live', ownerId: 7, status: 'running', eventSequence: 1 })
     await knex('agentEvents').insert({
       id: 'event-live',
       runId: 'run-live',
@@ -152,24 +155,33 @@ describe('agent event SSE lifecycle', () => {
       body.setEncoding('utf8')
       let received = ''
       let earlyEventReceived = false
+      let readyReceived = false
       for await (const chunk of body) {
         received += chunk
-        const frameEnd = received.indexOf('\n\n')
-        if (earlyEventReceived || frameEnd < 0) continue
-        const frame = received.slice(0, frameEnd)
-        expect(frame.split('\n').slice(0, 2)).toEqual(['id: 1', 'event: run.queued'])
-        const envelope = JSON.parse(frame.split('\n').find(line => line.startsWith('data: '))!.slice(6))
-        expect(envelope).toEqual({
-          schemaVersion: 1,
-          attempt: 1,
-          data: { message: 'queued before completion' },
-          createdAt: '2026-08-17T12:00:00.000Z'
-        })
-        expect(streamEnded).toBe(false)
-        expect(connections.get(7)).toBe(1)
-        expect(await knex('agentRuns').where({ id: 'run-live' }).first('status')).toEqual({ status: 'running' })
-        earlyEventReceived = true
-        await knex('agentRuns').where({ id: 'run-live' }).update({ status: 'partial' })
+        let frameEnd: number
+        while ((frameEnd = received.indexOf('\n\n')) >= 0) {
+          const frame = received.slice(0, frameEnd)
+          received = received.slice(frameEnd + 2)
+          const envelope = JSON.parse(frame.split('\n').find(line => line.startsWith('data: '))!.slice(6))
+          if (frame.startsWith('event: stream.ready\n')) {
+            expect(readyReceived).toBe(false)
+            expect(frame).not.toContain('id: ')
+            expect(envelope).toEqual({ schemaVersion: 1, ownerId: 7, sessionId: 'session-live', runId: 'run-live', replayThroughSequence: 1 })
+            readyReceived = true
+            continue
+          }
+          expect(readyReceived).toBe(true)
+          expect(frame.split('\n').slice(0, 2)).toEqual(['id: 1', 'event: run.queued'])
+          expect(envelope).toEqual({
+            id: 'event-live', runId: 'run-live', sequence: 1, type: 'run.queued',
+            schemaVersion: 1, attempt: 1, data: { message: 'queued before completion' }, createdAt: '2026-08-17T12:00:00.000Z'
+          })
+          expect(streamEnded).toBe(false)
+          expect(connections.get(7)).toBe(1)
+          expect(await knex('agentRuns').where({ id: 'run-live' }).first('status')).toEqual({ status: 'running' })
+          earlyEventReceived = true
+          await knex('agentRuns').where({ id: 'run-live' }).update({ status: 'partial' })
+        }
       }
       expect(earlyEventReceived).toBe(true)
       expect(await streaming).toBeUndefined()
@@ -192,7 +204,7 @@ describe('agent event SSE lifecycle', () => {
   }, 10_000)
 
   it('resumes owner-scoped stored events from Last-Event-ID and closes without replaying them again', async () => {
-    await knex('agentRuns').insert({ id: 'run-reconnect', ownerId: 7, status: 'partial', eventSequence: 3 })
+    await knex('agentRuns').insert({ id: 'run-reconnect', sessionId: 'session-reconnect', ownerId: 7, status: 'partial', eventSequence: 3 })
     await knex('agentEvents').insert(
       [1, 2, 3].map(sequence => {
         const data = JSON.stringify({ sequence })
@@ -241,7 +253,8 @@ describe('agent event SSE lifecycle', () => {
     firstResponse.emit('drain')
     await firstStream
 
-    expect(firstResponse.write.mock.calls.map(([chunk]) => chunk.match(/^id: (\d+)\n/)?.[1])).toEqual(['2', '3'])
+    expect(firstResponse.write.mock.calls.map(([chunk]) => chunk.match(/^id: (\d+)\n/)?.[1])).toEqual([undefined, '2', '3'])
+    expect(firstResponse.write.mock.calls[0]?.[0]).toContain('"replayThroughSequence":3')
     expect(firstResponse.end).toHaveBeenCalledOnce()
     expect(connections.has(7)).toBe(false)
 
@@ -268,7 +281,8 @@ describe('agent event SSE lifecycle', () => {
     expect(connections.get(7)).toBe(1)
     await secondStream
 
-    expect(secondResponse.write).not.toHaveBeenCalled()
+    expect(secondResponse.write).toHaveBeenCalledOnce()
+    expect(secondResponse.write.mock.calls[0]?.[0]).toBe(firstResponse.write.mock.calls[0]?.[0])
     expect(secondResponse.end).toHaveBeenCalledOnce()
     expect(connections.has(7)).toBe(false)
 
@@ -296,7 +310,7 @@ describe('agent event SSE lifecycle', () => {
   })
 
   it('removes attached lifecycle listeners and releases accounting once when request and response both close', async () => {
-    await knex('agentRuns').insert({ id: 'run-aborted', ownerId: 7, status: 'running', eventSequence: 0 })
+    await knex('agentRuns').insert({ id: 'run-aborted', sessionId: 'session-aborted', ownerId: 7, status: 'running', eventSequence: 0 })
 
     const request = Object.assign(new EventEmitter(), {
       aborted: false,
@@ -337,7 +351,7 @@ describe('agent event SSE lifecycle', () => {
   })
 
   it('retains AbortSignal cleanup for a request without lifecycle hooks', async () => {
-    await knex('agentRuns').insert({ id: 'run-signalled', ownerId: 7, status: 'running', eventSequence: 0 })
+    await knex('agentRuns').insert({ id: 'run-signalled', sessionId: 'session-signalled', ownerId: 7, status: 'running', eventSequence: 0 })
 
     const request = { get: () => undefined, query: {} } satisfies AgentSseRequest
     const headersFlushed = Promise.withResolvers<void>()
@@ -345,7 +359,7 @@ describe('agent event SSE lifecycle', () => {
       status: vi.fn(),
       set: vi.fn(),
       flushHeaders: vi.fn(() => headersFlushed.resolve()),
-      write: vi.fn(() => true),
+      write: vi.fn(() => false),
       end: vi.fn()
     })
     response.status.mockReturnValue(response)

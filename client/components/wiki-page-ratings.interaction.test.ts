@@ -28,6 +28,7 @@ const siteConfig: SiteConfig = {
   footerOverride: '',
   banner: { isEnabled: false, title: '', content: '' },
   logoUrl: '',
+  logoSourceSha256: null,
   logoEffect: null,
   product: {
     ...packageMetadata.product,

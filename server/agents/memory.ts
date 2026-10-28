@@ -1,14 +1,20 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 
+import {
+  AGENT_MEMORY_CHARACTER_LIMITS,
+  AgentManualMemorySavedReceiptSchema,
+  AgentMemoryContextProjectionSchema,
+  AgentMemoryTargetCountSchema,
+  type AgentManualMemoryMutationReceiptFields,
+  type AgentMemoryContextProjection,
+  type AgentMemoryTargetCount
+} from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
 
-export const AGENT_MEMORY_LIMITS = {
-  agent: 2_200,
-  user: 1_375
-} as const
+export const AGENT_MEMORY_LIMITS = AGENT_MEMORY_CHARACTER_LIMITS
 
 export type AgentMemoryTarget = keyof typeof AGENT_MEMORY_LIMITS
 
@@ -133,6 +139,68 @@ const mutationResult = (view: AgentMemoryView, targetValue: AgentMemoryTarget, c
   return { changed, message, target: targetValue, entries: store.entries.map(entry => entry.content), characters: store.characters, limit: store.limit }
 }
 
+const viewForRows = (rows: readonly MemoryRow[]): AgentMemoryView => {
+  const entries = [...rows].sort((left, right) => new Date(left.createdAt).valueOf() - new Date(right.createdAt).valueOf() || left.id.localeCompare(right.id)).map(record)
+  return { agent: storeView(entries, 'agent'), user: storeView(entries, 'user') }
+}
+
+export const agentMemoryTargetCount = (
+  ownerId: number, targetValue: AgentMemoryTarget, contents: readonly string[], signingSecret: string | Uint8Array
+): AgentMemoryTargetCount => AgentMemoryTargetCountSchema.parse({
+  target: targetValue,
+  characters: assertCapacity(targetValue, contents),
+  limit: AGENT_MEMORY_LIMITS[targetValue],
+  snapshotId: createHmac('sha256', signingSecret).update(JSON.stringify([ownerId, targetValue, contents])).digest('hex')
+})
+
+export const projectAgentMemoryContext = (
+  ownerId: number, sessionId: string, frozenValue: unknown, saved: AgentMemoryView | null, signingSecret: string | Uint8Array
+): AgentMemoryContextProjection => {
+  let frozen: AgentMemoryContextProjection['frozen'] = { snapshotId: null, user: { state: 'unavailable' }, agent: { state: 'unavailable' } }
+  if (typeof frozenValue === 'string' && frozenValue.length > 0) {
+    try {
+      const snapshot = decodeAgentMemorySnapshot(frozenValue)
+      frozen = {
+        snapshotId: sessionId,
+        user: { state: 'available', ...agentMemoryTargetCount(ownerId, 'user', snapshot.user, signingSecret), target: 'user', limit: AGENT_MEMORY_LIMITS.user },
+        agent: { state: 'available', ...agentMemoryTargetCount(ownerId, 'agent', snapshot.agent, signingSecret), target: 'agent', limit: AGENT_MEMORY_LIMITS.agent }
+      }
+    } catch {
+      frozen = { snapshotId: null, user: { state: 'error' }, agent: { state: 'error' } }
+    }
+  }
+  const latestSaved: AgentMemoryContextProjection['latestSaved'] = saved === null
+    ? { user: { state: 'error' }, agent: { state: 'error' } }
+    : {
+        user: { state: 'available', ...agentMemoryTargetCount(ownerId, 'user', saved.user.entries.map(entry => entry.content), signingSecret), target: 'user', limit: AGENT_MEMORY_LIMITS.user },
+        agent: { state: 'available', ...agentMemoryTargetCount(ownerId, 'agent', saved.agent.entries.map(entry => entry.content), signingSecret), target: 'agent', limit: AGENT_MEMORY_LIMITS.agent }
+      }
+  return AgentMemoryContextProjectionSchema.parse({
+    ownerId, sessionId, frozen, latestSaved,
+    nextSession: {
+      user: frozen.user.state === 'available' && latestSaved.user.state === 'available' ? (frozen.user.snapshotId === latestSaved.user.snapshotId ? 'unchanged' : 'changed') : 'unknown',
+      agent: frozen.agent.state === 'available' && latestSaved.agent.state === 'available' ? (frozen.agent.snapshotId === latestSaved.agent.snapshotId ? 'unchanged' : 'changed') : 'unknown'
+    }
+  })
+}
+
+interface ManualMemoryContext {
+  readonly sessionId: string | null
+  readonly signingSecret: string | Uint8Array
+}
+
+const manualMutationFields = (
+  context: ManualMemoryContext | undefined, ownerId: number, view: AgentMemoryView,
+  commit: { entryId: string; entryVersion: number; operation: 'add' | 'replace'; targets: readonly AgentMemoryTarget[] } | null
+): Partial<AgentManualMemoryMutationReceiptFields> => {
+  if (context === undefined) return {}
+  return { receipt: commit === null ? null : AgentManualMemorySavedReceiptSchema.parse({
+    schemaVersion: 1, origin: 'manual', ownerId, sessionId: context.sessionId, runId: null, attempt: null, snapshotId: null,
+    entryId: commit.entryId, entryVersion: commit.entryVersion, operation: commit.operation, changed: true,
+    targets: commit.targets.map(targetValue => agentMemoryTargetCount(ownerId, targetValue, view[targetValue].entries.map(entry => entry.content), context.signingSecret))
+  }) }
+}
+
 export const emptyAgentMemorySnapshot = (): AgentMemorySnapshot => ({ agent: [], user: [] })
 
 export const encodeAgentMemorySnapshot = (snapshot: AgentMemorySnapshot): string => canonicalJson(SnapshotSchema.parse(snapshot))
@@ -170,26 +238,35 @@ export class AgentMemoryRepository {
     }
   }
 
-  async add (ownerId: number, targetValue: AgentMemoryTarget, rawContent: string): Promise<AgentMemoryMutationResult> {
+  async add (ownerId: number, targetValue: AgentMemoryTarget, rawContent: string): Promise<AgentMemoryMutationResult>
+  async add (ownerId: number, targetValue: AgentMemoryTarget, rawContent: string, context: ManualMemoryContext): Promise<AgentMemoryMutationResult & AgentManualMemoryMutationReceiptFields>
+  async add (ownerId: number, targetValue: AgentMemoryTarget, rawContent: string, context?: ManualMemoryContext): Promise<AgentMemoryMutationResult & Partial<AgentManualMemoryMutationReceiptFields>> {
     const content = normalizeContent(targetValue, rawContent)
-    let changed = false
-    await this.#knex.transaction(async transaction => {
+    return this.#knex.transaction(async transaction => {
       await lockOwner(transaction, ownerId)
       const rows = await rowsFor(transaction, ownerId)
       const duplicate = rows.find(row => row.target === targetValue && row.contentSha256 === sha256(content))
-      if (duplicate) return
+      if (duplicate) {
+        const view = viewForRows(rows)
+        return { ...mutationResult(view, targetValue, false, 'Memory already exists; no duplicate was added.'), ...manualMutationFields(context, ownerId, view, null) }
+      }
       assertCapacity(targetValue, [...rows.filter(row => row.target === targetValue).map(row => row.content), content])
       const now = new Date()
-      await transaction('agentMemories').insert({ id: randomUUID(), ownerId, target: targetValue, content, contentSha256: sha256(content), version: 1, createdAt: now, updatedAt: now })
-      changed = true
+      const row: MemoryRow = { id: randomUUID(), ownerId, target: targetValue, content, contentSha256: sha256(content), version: 1, createdAt: now, updatedAt: now }
+      await transaction('agentMemories').insert(row)
+      const view = viewForRows([...rows, row])
+      return {
+        ...mutationResult(view, targetValue, true, 'Memory saved for new conversations.'),
+        ...manualMutationFields(context, ownerId, view, { entryId: row.id, entryVersion: 1, operation: 'add', targets: [targetValue] })
+      }
     })
-    return mutationResult(await this.list(ownerId), targetValue, changed, changed ? 'Memory saved for new conversations.' : 'Memory already exists; no duplicate was added.')
   }
 
-  async update (ownerId: number, id: string, expectedVersion: number, targetValue: AgentMemoryTarget, rawContent: string): Promise<AgentMemoryMutationResult> {
+  async update (ownerId: number, id: string, expectedVersion: number, targetValue: AgentMemoryTarget, rawContent: string): Promise<AgentMemoryMutationResult>
+  async update (ownerId: number, id: string, expectedVersion: number, targetValue: AgentMemoryTarget, rawContent: string, context: ManualMemoryContext): Promise<AgentMemoryMutationResult & AgentManualMemoryMutationReceiptFields>
+  async update (ownerId: number, id: string, expectedVersion: number, targetValue: AgentMemoryTarget, rawContent: string, context?: ManualMemoryContext): Promise<AgentMemoryMutationResult & Partial<AgentManualMemoryMutationReceiptFields>> {
     const content = normalizeContent(targetValue, rawContent)
-    let changed = false
-    await this.#knex.transaction(async transaction => {
+    return this.#knex.transaction(async transaction => {
       await lockOwner(transaction, ownerId)
       const rows = await rowsFor(transaction, ownerId)
       const current = rows.find(row => row.id === id && row.ownerId === ownerId)
@@ -197,15 +274,26 @@ export class AgentMemoryRepository {
       if (Number(current.version) !== expectedVersion) throw new AgentRepositoryError('AGENT_MEMORY_VERSION_CHANGED', 'Memory entry changed concurrently', 409)
       const duplicate = rows.find(row => row.id !== id && row.target === targetValue && row.contentSha256 === sha256(content))
       if (duplicate) throw new AgentRepositoryError('AGENT_MEMORY_DUPLICATE', 'An identical memory entry already exists', 409)
-      const nextContents = rows.filter(row => row.target === targetValue && row.id !== id).map(row => row.content)
-      nextContents.push(content)
-      assertCapacity(targetValue, nextContents)
-      if (current.target === targetValue && current.content === content) return
-      const updated = await transaction('agentMemories').where({ id, ownerId, version: expectedVersion }).update({ target: targetValue, content, contentSha256: sha256(content), version: expectedVersion + 1, updatedAt: new Date() })
+      const next = { ...current, target: targetValue, content, contentSha256: sha256(content), version: expectedVersion + 1, updatedAt: new Date() }
+      const nextRows = rows.map(row => row.id === id ? next : row)
+      assertCapacity(targetValue, nextRows.filter(row => row.target === targetValue).map(row => row.content))
+      if (current.target === targetValue && current.content === content) {
+        const view = viewForRows(rows)
+        return { ...mutationResult(view, targetValue, false, 'Memory was already up to date.'), ...manualMutationFields(context, ownerId, view, null) }
+      }
+      const updated = await transaction('agentMemories').where({ id, ownerId, version: expectedVersion }).update({
+        target: next.target, content: next.content, contentSha256: next.contentSha256, version: next.version, updatedAt: next.updatedAt
+      })
       if (updated !== 1) throw new AgentRepositoryError('AGENT_MEMORY_VERSION_CHANGED', 'Memory entry changed concurrently', 409)
-      changed = true
+      const view = viewForRows(nextRows)
+      return {
+        ...mutationResult(view, targetValue, true, 'Memory updated for new conversations.'),
+        ...manualMutationFields(context, ownerId, view, {
+          entryId: id, entryVersion: next.version, operation: 'replace',
+          targets: current.target === targetValue ? [targetValue] : [target(current.target), targetValue]
+        })
+      }
     })
-    return mutationResult(await this.list(ownerId), targetValue, changed, changed ? 'Memory updated for new conversations.' : 'Memory was already up to date.')
   }
 
   async remove (ownerId: number, id: string, expectedVersion: number): Promise<AgentMemoryMutationResult> {

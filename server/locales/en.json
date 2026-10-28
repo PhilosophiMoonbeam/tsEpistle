@@ -1,5 +1,13 @@
 {
   "common": {
+    "citedCopy": {
+      "copy": "Copy with citation",
+      "copied": "Copied with citation",
+      "selectedTextHint": "Copy selected text: {{shortcut}}",
+      "failed": "Could not copy. Select the readable text and copy it manually; the source remains available.",
+      "invalidText": "This snippet is not available as clean readable text. Select the readable text and copy it manually.",
+      "invalidSource": "Could not copy a safe source citation. Open the source and copy its link instead."
+    },
     "glossaryDirectory": {
       "retry": "Retry",
       "disabled": "The glossary is disabled or still being checked.",
@@ -2666,6 +2674,7 @@
       "partialAnswer": "Partial answer",
       "recoveryPartial": "Review the returned answer before continuing. Narrow your request or ask an explicit follow-up.",
       "recoveryGeneric": "Review or edit the request in the composer, then send it when you are ready. Nothing is sent automatically.",
+      "recoveryHostPersistence": "The Agent host could not persist execution metadata. Completed actions remain committed. Review their results before deliberately retrying; do not assume the provider or those actions failed.",
       "recoveryQuota": "The account quota is exhausted. Wait for quota to become available or ask an administrator before sending another request.",
       "recoveryContext": "This request exceeds the context limit. Start a new conversation or reduce selected sources and attachments before sending a shorter request.",
       "recoveryOutput": "The response reached its output limit. Review the partial answer, then ask for a shorter answer or an explicit continuation.",

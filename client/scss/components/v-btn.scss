@@ -38,7 +38,8 @@
   }
 
   &:focus-visible {
-    outline: none;
+    outline: 2px solid var(--wiki-focus-color, rgb(var(--v-theme-on-surface)));
+    outline-offset: 2px;
     box-shadow:
       var(
         --wiki-focus-ring,

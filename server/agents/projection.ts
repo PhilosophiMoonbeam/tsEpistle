@@ -11,6 +11,7 @@ import {
   type AgentArtifactView,
   type AgentCitation,
   type AgentEvent,
+  type AgentEventData,
   type AgentFollowUpSuggestion,
   type AgentGoogleSearchGrounding,
   type AgentMessageView,
@@ -28,9 +29,10 @@ import {
   isExternalMcpToolCallName,
   isTerminalAgentRunStatus
 } from '../../shared/agents/contracts.ts'
-import { type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { type AgentKnowledgeContext, AgentCurrentPageHintSchema, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
 import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
 import { type AgentMediaRow, projectAgentMedia } from './media.ts'
+import { AgentMemoryRepository, projectAgentMemoryContext } from './memory.ts'
 import {
   AgentRepositoryError,
   getOwnedAgentSession,
@@ -50,12 +52,7 @@ const proposalStatusSchema = z.enum(AGENT_PROPOSAL_STATUSES)
 const approvalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled'])
 const riskSchema = z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write'])
 const toolRiskSchema = z.union([riskSchema, z.literal('external')])
-const currentPageSchema = z.object({
-  id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  locale: z.string().min(1).max(16),
-  path: z.string().min(1).max(1_024),
-  observedUpdatedAt: z.string().refine(value => Number.isFinite(Date.parse(value)))
-})
+const currentPageSchema = AgentCurrentPageHintSchema
 
 const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
 const nullableIso = (value: Date | string | null): string | null => (value === null ? null : iso(value))
@@ -107,13 +104,13 @@ interface ToolAccumulator {
   completedAt: string | null
 }
 
-const toolStateForFailure = (data: AgentEvent['data']): AgentToolState => {
+const toolStateForFailure = (data: AgentEventData): AgentToolState => {
   const state = stringValue(data.state, 32)
   if (state === 'denied' || state === 'cancelled') return state
   return 'failed'
 }
 
-const completedToolState = (data: AgentEvent['data']): AgentToolState => {
+const completedToolState = (data: AgentEventData): AgentToolState => {
   const result = stringValue(data.result)
   if (result === null) return 'complete'
   try {
@@ -131,7 +128,7 @@ const contextExclusionSchema = z.strictObject({
   reason: z.literal('tool_result_capacity')
 })
 
-const contextExclusionFor = (data: AgentEvent['data']): AgentToolContextExclusion | undefined => {
+const contextExclusionFor = (data: AgentEventData): AgentToolContextExclusion | undefined => {
   if (!Object.hasOwn(data, 'contextExclusion')) return undefined
   const parsed = contextExclusionSchema.safeParse(data.contextExclusion)
   if (!parsed.success) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool context exclusion is invalid', 500)
@@ -184,6 +181,7 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
 
   for (const event of events) {
     if (event.attempt !== visibleAttempts.get(event.runId)) continue
+    if (event.type === 'memory.contextIncluded' || event.type === 'memory.saved') continue
     if (event.type === 'suggestions.updated') {
       if (event.runId !== latestRunId) continue
       const parsed = z
@@ -504,6 +502,7 @@ export interface ProjectedAgentThread extends AgentThreadState {
 }
 
 export interface ProjectAgentThreadOptions {
+  readonly memorySigningSecret: string | Uint8Array
   readonly profileResolutionToken: (session: {
     readonly id: string
     readonly version: number
@@ -517,6 +516,9 @@ export interface ProjectAgentThreadOptions {
 export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId: string, options: ProjectAgentThreadOptions): Promise<ProjectedAgentThread> => {
   options.signal?.throwIfAborted()
   const session = await getOwnedAgentSession(knex, ownerId, sessionId)
+  const savedMemory = await new AgentMemoryRepository(knex).list(ownerId).catch(() => null)
+  options.signal?.throwIfAborted()
+  const memoryContext = projectAgentMemoryContext(ownerId, sessionId, Reflect.get(session, 'memorySnapshot'), savedMemory, options.memorySigningSecret)
   const now = options.now ?? new Date()
   const groupIds = (await knex('userGroups').where({ userId: ownerId }).limit(257).pluck('groupId')) as number[]
   if (groupIds.length > 256) throw new AgentRepositoryError('AGENT_GROUPS_OVERFLOW', 'Agent user belongs to too many groups to project safely', 500)
@@ -703,8 +705,15 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
         const hint = Reflect.get(payload, 'currentPage')
         if (hint === undefined) context.currentPage = null
         else {
-          const page = currentPageSchema.safeParse(hint)
-          if (page.success) context.currentPage = page.data
+          // Historical records may contain obsolete enrichment. Recover only
+          // the canonical navigation fields; never project that enrichment.
+          if (typeof hint === 'object' && hint !== null && !Array.isArray(hint)) {
+            const page = currentPageSchema.safeParse({
+              id: Reflect.get(hint, 'id'), locale: Reflect.get(hint, 'locale'), path: Reflect.get(hint, 'path'),
+              observedUpdatedAt: Reflect.get(hint, 'observedUpdatedAt')
+            })
+            if (page.success) context.currentPage = page.data
+          }
         }
       }
       sourceContexts.set(row.runId, context)
@@ -762,6 +771,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   }
   return {
     session: sessionView,
+    memoryContext,
     messages,
     tools: reduced.tools,
     tasks: taskViews,

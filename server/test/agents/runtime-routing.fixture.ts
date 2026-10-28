@@ -572,24 +572,22 @@ export const routingFixture = async (db: Knex): Promise<RoutingFixture> => {
       return { inputTokens: 5, outputTokens: 3, totalTokens: 8, costMicros: 10 }
     }
   }
-  const runtime = new AgentProductRuntime(db, registry, engine, {
-    router,
-    authorizeMedia: async ownerId => {
-      const user = await db('users').where({ id: ownerId }).first('isActive')
-      if (!user || (user.isActive !== true && user.isActive !== 1)) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Agent user is unavailable', 401)
-      const groups = await db('groups').join('userGroups', 'groups.id', 'userGroups.groupId').where('userGroups.userId', ownerId).select('groups.permissions')
-      const permitted = groups.some(group => {
-        const permissions: unknown = typeof group.permissions === 'string' ? JSON.parse(group.permissions) : group.permissions
-        return Array.isArray(permissions) && (permissions.includes('use:agents') || permissions.includes('manage:system'))
-      })
-      if (!permitted) throw new AgentRepositoryError('AGENT_PERMISSION_REVOKED', 'Wiki Agent access is no longer permitted.', 403)
-    },
-    workerId: `routing-${randomUUID()}`,
-    globalConcurrency: 4,
-    perUserConcurrency: 4,
-    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false },
-    goals: { enabled: true, maxContinuations: 2, maxTokens: 100_000, maxToolCalls: 32, maxDurationMilliseconds: 60_000 }
-  })
+  const runtime = new AgentProductRuntime(db, registry, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', router,
+  authorizeMedia: async ownerId => {
+    const user = await db('users').where({ id: ownerId }).first('isActive')
+    if (!user || (user.isActive !== true && user.isActive !== 1)) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Agent user is unavailable', 401)
+    const groups = await db('groups').join('userGroups', 'groups.id', 'userGroups.groupId').where('userGroups.userId', ownerId).select('groups.permissions')
+    const permitted = groups.some(group => {
+      const permissions: unknown = typeof group.permissions === 'string' ? JSON.parse(group.permissions) : group.permissions
+      return Array.isArray(permissions) && (permissions.includes('use:agents') || permissions.includes('manage:system'))
+    })
+    if (!permitted) throw new AgentRepositoryError('AGENT_PERMISSION_REVOKED', 'Wiki Agent access is no longer permitted.', 403)
+  },
+  workerId: `routing-${randomUUID()}`,
+  globalConcurrency: 4,
+  perUserConcurrency: 4,
+  orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false },
+  goals: { enabled: true, maxContinuations: 2, maxTokens: 100_000, maxToolCalls: 32, maxDurationMilliseconds: 60_000 } })
   const session = async (historicalPreference = false, ownerId = 7) => {
     const id = randomUUID()
     await createAgentSession(db, {

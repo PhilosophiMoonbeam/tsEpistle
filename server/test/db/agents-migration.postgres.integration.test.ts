@@ -234,7 +234,7 @@ suite('PostgreSQL first-class agent migration', () => {
       await db('agentSkillGrants').insert({ skillId, groupId: 1 })
       await db('agentUserSkillPreferences').insert({ ownerId: 7, skillId, ordinal: 0 })
 
-      const thread = await projectAgentThread(db, 7, sessionId, { profileResolutionToken: () => 'token' })
+      const thread = await projectAgentThread(db, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' })
       expect(thread.session.skills).toMatchObject([{ skillId, versionId, name: 'projection-skill' }])
     } finally {
       await db('agentUserSkillPreferences').where({ ownerId: 7, skillId }).delete()

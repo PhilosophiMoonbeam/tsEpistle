@@ -12,6 +12,7 @@ export const AGENT_EXECUTION_FAILURE_STAGES = [
   'provider_response',
   'usage_reconciliation',
   'action_cleanup',
+  'host_persistence',
   'unknown'
 ] as const
 
@@ -31,6 +32,7 @@ export type AgentExecutionFailureCode =
   | 'MEDIA_PROVIDER_CORRUPT'
   | 'AGENT_ACCESS_REVOKED'
   | 'AGENT_EVENT_CORRUPT'
+  | 'AGENT_HOST_PERSISTENCE_FAILED'
   | AgentPdfErrorCode
   | 'AGENT_PDF_PAGE_LIMIT'
   | 'AGENT_MEDIA_PART_LIMIT'
@@ -141,6 +143,7 @@ const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
   MEDIA_PROVIDER_CORRUPT: true,
   AGENT_ACCESS_REVOKED: true,
   AGENT_EVENT_CORRUPT: true,
+  AGENT_HOST_PERSISTENCE_FAILED: true,
   ...Object.fromEntries(Object.keys(AGENT_PDF_ERRORS).map(code => [code, true as const])),
   AGENT_PDF_PAGE_LIMIT: true,
   AGENT_MEDIA_PART_LIMIT: true,
@@ -210,11 +213,13 @@ const SAFE_STAGES: Readonly<Record<string, true>> = {
   provider_response: true,
   usage_reconciliation: true,
   action_cleanup: true,
+  host_persistence: true,
   unknown: true
 }
 
 const SAFE_MESSAGE = 'Agent inference failed'
 const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
+  AGENT_HOST_PERSISTENCE_FAILED: 'Agent host could not persist execution metadata. Execution stopped without retrying completed work.',
   WIKI_VERIFICATION_UNAVAILABLE: 'Wiki factual publication requires an enabled, priced Jev decision provider. Ask an administrator to check the default decision provider and its credential.',
   WIKI_VERIFICATION_BINDING_INVALID: 'Wiki facts could not be verified against their original source bindings. No factual answer was published.',
   WIKI_VERIFICATION_PLAN_INVALID: 'Wiki factual verification could not be prepared. No factual answer was published. Contact an administrator.',
@@ -273,6 +278,7 @@ const SAFE_STATUS_BY_CODE: Readonly<Record<string, number>> = {
   MEDIA_PROVIDER_CORRUPT: 500,
   AGENT_ACCESS_REVOKED: 403,
   AGENT_EVENT_CORRUPT: 500,
+  AGENT_HOST_PERSISTENCE_FAILED: 500,
   EXTERNAL_MCP_ACCESS_DENIED: 403,
   EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED: 409,
   EXTERNAL_MCP_TOOL_COLLISION: 409,
@@ -432,6 +438,7 @@ const attachedDiagnostics = (value: object): AgentExecutionFailureDiagnostics | 
 }
 
 export const classifyAgentExecutionFailure = (error: unknown, stage: AgentExecutionFailureStage): AgentExecutionFailure => {
+  if (stage === 'host_persistence') return new AgentExecutionFailure('AGENT_HOST_PERSISTENCE_FAILED', stage)
   if (error instanceof AgentExecutionFailure) return error
   if (stage === 'action_cleanup') return new AgentExecutionFailure('ACTION_SESSION_CLOSE_FAILED', stage)
   const queue: Array<{ readonly value: unknown; readonly links: number }> = [{ value: error, links: 0 }]

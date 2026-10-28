@@ -1,4 +1,5 @@
 import type { BrowserContext, Page, Response, Route } from '@playwright/test'
+import { createHmac } from 'node:crypto'
 import type { AgentMediaCapabilities, AgentMediaView, AgentProposalView, AgentThreadState } from '../../shared/agents/contracts.ts'
 export type AgentFixtureMode = 'success' | 'failure' | 'retry' | 'stop' | 'approval' | 'partial' | 'focus' | 'security' | 'cap' | 'latest' | 'pin' | 'presentation'
 
@@ -85,6 +86,7 @@ type AgentSession = {
 }
 type FixtureThread = {
   session: AgentSession
+  memoryContext: AgentThreadState['memoryContext']
   messages: AgentMessage[]
   tools: AgentTool[]
   tasks: never[]
@@ -282,6 +284,10 @@ const responseMarkdown = (mode: AgentFixtureMode): string => {
 
 const threadFor = (sessionId = SESSION_ID): FixtureThread => ({
   session: sessionFor(sessionId),
+  memoryContext: {
+    ownerId: 1, sessionId, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+  },
   messages: [],
   tools: [],
   tasks: [],
@@ -473,13 +479,17 @@ const finalizeThread = (state: FixtureState, runId: string, status: Exclude<Agen
   state.finalizedRuns.add(runId)
 }
 
-const eventStream = (runId: string, terminal: AgentRunStatus | null): string => {
-  const events: Array<{ id: number; type: string; data: Record<string, unknown> }> = [
-    { id: 2, type: 'run.started', data: { runId } },
-    { id: 3, type: 'message.delta', data: { runId, text: ' evidence' } }
+const eventStream = (run: AgentRun, ownerId: number, terminal: AgentRunStatus | null, after: number): string => {
+  const events: Array<{ sequence: number; type: string; data: Record<string, unknown> }> = [
+    { sequence: 2, type: 'run.started', data: { runId: run.id } },
+    { sequence: 3, type: 'message.delta', data: { runId: run.id, text: ' evidence' } }
   ]
-  if (terminal) events.push({ id: 4, type: terminal === 'partial' ? 'run.partial' : terminal === 'failed' ? 'run.failed' : 'run.completed', data: { runId } })
-  return events.map(event => `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
+  if (terminal) events.push({ sequence: 4, type: terminal === 'partial' ? 'run.partial' : terminal === 'failed' ? 'run.failed' : 'run.completed', data: { runId: run.id } })
+  const ready = { schemaVersion: 1, ownerId, sessionId: run.sessionId, runId: run.id, replayThroughSequence: run.eventSequence }
+  return `event: stream.ready\ndata: ${JSON.stringify(ready)}\n\n` + events.filter(event => event.sequence > after).map(event => {
+    const envelope = { ...event, id: `${run.id}:${event.sequence}`, runId: run.id, attempt: run.attempt, schemaVersion: 1, createdAt: NOW }
+    return `id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(envelope)}\n\n`
+  }).join('')
 }
 
 const requestDescription = (route: Route): string => {
@@ -538,6 +548,7 @@ export async function installEnabledAgentFixture(page: Page | BrowserContext, op
     const thread = copy(state.thread)
     return {
       ...thread,
+      memoryContext: { ...thread.memoryContext, ownerId },
       session: {
         ...thread.session,
         mediaCapabilities: {
@@ -643,20 +654,24 @@ export async function installEnabledAgentFixture(page: Page | BrowserContext, op
     }
     if (path === '/_api/agents/skills' && request.method() === 'GET') return json(route, { skills: [] })
     if (path === '/_api/agents/memories' && request.method() === 'GET') {
-      const userCharacters = state.memoryEntries.filter(entry => entry.target === 'user').reduce((sum, entry) => sum + entry.content.length, 0)
-      const agentCharacters = state.memoryEntries.filter(entry => entry.target === 'agent').reduce((sum, entry) => sum + entry.content.length, 0)
+      const userCharacters = state.memoryEntries.filter(entry => entry.target === 'user').map(entry => entry.content).join('\n§\n').length
+      const agentCharacters = state.memoryEntries.filter(entry => entry.target === 'agent').map(entry => entry.content).join('\n§\n').length
       return json(route, {
         agent: { entries: state.memoryEntries.filter(entry => entry.target === 'agent'), characters: agentCharacters, limit: 2_200 },
         user: { entries: state.memoryEntries.filter(entry => entry.target === 'user'), characters: userCharacters, limit: 1_375 }
       })
     }
     if (path === '/_api/agents/memories' && request.method() === 'POST') {
-      const body = (request.postDataJSON() ?? {}) as { target?: 'agent' | 'user'; content?: string }
+      const body = (request.postDataJSON() ?? {}) as { target?: 'agent' | 'user'; content?: string; context?: { sessionId: string | null } }
+      if (!body.context || !(body.context.sessionId === null || typeof body.context.sessionId === 'string')) return invalidRequest(route)
       const target = body.target === 'agent' ? 'agent' : 'user'
       const content = typeof body.content === 'string' ? body.content.trim() : ''
       const entry: FixtureMemory = { id: uuidAt(MEMORY_ID, state.memoryEntries.length + 1), target, content, version: 1, createdAt: NOW, updatedAt: NOW }
       state.memoryEntries.push(entry)
-      const characters = state.memoryEntries.filter(item => item.target === target).reduce((sum, item) => sum + item.content.length, 0)
+      const contents = state.memoryEntries.filter(item => item.target === target).map(item => item.content)
+      const characters = contents.join('\n§\n').length
+      const ownerId = await ownerResolution
+      if (ownerId === null) throw new Error('Memory fixture requires an authenticated owner.')
       return json(
         route,
         {
@@ -665,28 +680,49 @@ export async function installEnabledAgentFixture(page: Page | BrowserContext, op
           target,
           entries: state.memoryEntries.filter(item => item.target === target).map(item => item.content),
           characters,
-          limit: target === 'agent' ? 2_200 : 1_375
+          limit: target === 'agent' ? 2_200 : 1_375,
+          receipt: {
+            schemaVersion: 1, origin: 'manual', ownerId, sessionId: body.context.sessionId, runId: null, attempt: null, snapshotId: null,
+            entryId: entry.id, entryVersion: entry.version, operation: 'add', changed: true,
+            targets: [{ target, characters, limit: target === 'agent' ? 2200 : 1375,
+              snapshotId: createHmac('sha256', 'agent-e2e-fixture-only').update(JSON.stringify([ownerId, target, contents])).digest('hex') }]
+          }
         },
         201
       )
     }
     if (path.startsWith('/_api/agents/memories/') && request.method() === 'PUT') {
       const id = path.split('/').pop() ?? ''
-      const body = (request.postDataJSON() ?? {}) as { target?: 'agent' | 'user'; content?: string; expectedVersion?: number }
+      const body = (request.postDataJSON() ?? {}) as { target?: 'agent' | 'user'; content?: string; expectedVersion?: number; context?: { sessionId: string | null } }
+      if (!body.context || !(body.context.sessionId === null || typeof body.context.sessionId === 'string')) return invalidRequest(route)
       const entry = state.memoryEntries.find(item => item.id === id)
       if (!entry) return json(route, { error: 'Memory not found.' }, 404)
+      if (body.expectedVersion !== entry.version) return json(route, { message: 'Memory changed concurrently.' }, 409)
+      const oldTarget = entry.target
+      const changed = entry.target !== (body.target === 'agent' ? 'agent' : 'user') || entry.content !== (typeof body.content === 'string' ? body.content.trim() : entry.content)
       entry.target = body.target === 'agent' ? 'agent' : 'user'
       entry.content = typeof body.content === 'string' ? body.content.trim() : entry.content
-      entry.version += 1
+      if (changed) entry.version += 1
       entry.updatedAt = LATER
-      const characters = state.memoryEntries.filter(item => item.target === entry.target).reduce((sum, item) => sum + item.content.length, 0)
+      const characters = state.memoryEntries.filter(item => item.target === entry.target).map(item => item.content).join('\n§\n').length
+      const ownerId = await ownerResolution
+      if (ownerId === null) throw new Error('Memory fixture requires an authenticated owner.')
       return json(route, {
-        changed: true,
+        changed,
         message: 'Memory updated.',
         target: entry.target,
         entries: state.memoryEntries.filter(item => item.target === entry.target).map(item => item.content),
         characters,
-        limit: entry.target === 'agent' ? 2_200 : 1_375
+        limit: entry.target === 'agent' ? 2_200 : 1_375,
+        receipt: !changed ? null : {
+          schemaVersion: 1, origin: 'manual', ownerId, sessionId: body.context.sessionId, runId: null, attempt: null, snapshotId: null,
+          entryId: entry.id, entryVersion: entry.version, operation: 'replace', changed: true,
+          targets: [...new Set([oldTarget, entry.target])].map(target => {
+            const contents = state.memoryEntries.filter(item => item.target === target).map(item => item.content)
+            return { target, characters: contents.join('\n§\n').length, limit: target === 'agent' ? 2200 : 1375,
+              snapshotId: createHmac('sha256', 'agent-e2e-fixture-only').update(JSON.stringify([ownerId, target, contents])).digest('hex') }
+          })
+        }
       })
     }
     if (path.startsWith('/_api/agents/memories/') && request.method() === 'DELETE') {
@@ -786,11 +822,13 @@ export async function installEnabledAgentFixture(page: Page | BrowserContext, op
               ? 'partial'
               : 'succeeded'
       if (terminal) finalizeThread(state, runId, terminal)
+      const ownerId = await ownerResolution
+      if (ownerId === null) throw new Error('Stream fixture requires an authenticated owner.')
       return route.fulfill({
         status: 200,
         contentType: 'text/event-stream',
         headers: { 'cache-control': 'no-cache', connection: 'keep-alive' },
-        body: eventStream(runId, terminal)
+        body: eventStream(run, ownerId, terminal, Number(new URL(request.url()).searchParams.get('after') ?? 0))
       })
     }
     const decisionMatch = path.match(/^\/_api\/agents\/proposals\/([^/]+)\/approvals\/([^/]+)\/decision$/)

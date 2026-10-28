@@ -235,6 +235,38 @@ async function expectCopySweepPaint(page: Page, panel: Locator, name: string, ps
 }
 
 test.describe('release accessibility profiles', () => {
+  test('opens MCP review only after verified authority and does not reopen a dismissed link', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    await authenticateAsAdmin(page)
+    await installEnabledAgentFixture(page)
+    const authority = Promise.withResolvers<void>()
+    const requested = Promise.withResolvers<void>()
+    await page.route('**/_api/users/whoami', async route => {
+      requested.resolve()
+      await authority.promise
+      await route.continue()
+    })
+    try {
+      await page.goto('/?agentApproval=00000000-0000-4000-8000-000000000999', { waitUntil: 'domcontentloaded' })
+      await requested.promise
+      await openSearch(page)
+      await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeVisible()
+      const review = page.locator('.approval-surface')
+      await expect(review).toHaveCount(0)
+      authority.resolve()
+      await expect(review).toBeVisible()
+      await expect(review.getByRole('heading', { level: 1 })).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(review).toBeHidden()
+      expect(new URL(page.url()).searchParams.has('agentApproval')).toBe(false)
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.page-header-section')).toBeVisible()
+      await expect(page.locator('.approval-surface')).toHaveCount(0)
+    } finally {
+      authority.resolve()
+    }
+  })
+
   test('focuses initial and subsequent administration headings without a ring or focus scroll', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     await page.setViewportSize({ width: 1280, height: 300 })
