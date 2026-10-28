@@ -1,5 +1,16 @@
 {
   "common": {
+    "glossaryHover": {
+      "termLabel": "Glossary definition: {{term}}",
+      "locale": "Definition language: {{locale}}",
+      "close": "Close definition",
+      "loading": "Loading definition…",
+      "notFound": "This term is no longer available in this locale.",
+      "unavailable": "The glossary is unavailable. Reconnect and verify your session to try again.",
+      "pin": "Pin to my memory",
+      "pinUnavailable": "Pinning is unavailable here. Reading this definition does not save a memory.",
+      "openGlossary": "Open full glossary"
+    },
     "citedCopy": {
       "copy": "Copy with citation",
       "copied": "Copied with citation",

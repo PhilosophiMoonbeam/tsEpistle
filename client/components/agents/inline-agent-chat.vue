@@ -19,7 +19,8 @@
 
     <!-- biome-ignore lint/a11y/noStaticElementInteractions: The responsive named dialog/complementary panel handles bubbled Escape, with modal focus owned by panelFocusScope. -->
     <div
-      v-if="historyOpen"
+      v-if="historyMounted"
+      v-show="historyOpen"
       id="agent-history-panel"
       ref="historyPanel"
       class="inline-agent__side inline-agent__side--history"
@@ -28,6 +29,7 @@
       :aria-describedby="historyDescriptionId"
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
       tabindex="-1"
+      @focusin="lastActivePanel = 'history'"
       @keydown="handleNonModalPanelKeydown"
     >
       <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
@@ -42,6 +44,7 @@
         >{{ $t('common:agentWorkspace.memory') }}</v-btn>
       </div>
       <AgentHistoryPanel
+        :active="historyOpen"
         :heading-id="historyHeadingId"
         :description-id="historyDescriptionId"
         :network-blocked="connectionBlocked"
@@ -517,6 +520,7 @@
       :aria-describedby="memoryDescriptionId"
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
       tabindex="-1"
+      @focusin="lastActivePanel = 'memory'"
       @keydown="handleNonModalPanelKeydown"
     >
       <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
@@ -753,8 +757,16 @@ const setSessionNotice = (message: string): void => {
     }, SESSION_NOTICE_VISIBLE_MS)
   }
 }
+type PanelKind = 'history' | 'memory'
 const historyOpen = ref(false)
+const historyMounted = ref(false)
+watch(historyOpen, open => {
+  if (open) historyMounted.value = true
+}, { flush: 'sync' })
 const memoryOpen = ref(false)
+const lastActivePanel = ref<PanelKind | null>(null)
+// A narrow viewport keeps an in-flight memory mutation visible until switching is safe.
+let deferredHistoryOpen = false
 const panelMenuOpen = ref(false)
 const memoryMutationBusy = ref(false)
 const initializationError = ref('')
@@ -787,8 +799,9 @@ let transcriptFrame: number | null = null
 let transcriptFrameShouldFollow = false
 let transcriptGrowthPending = false
 let panelFocusScope: ModalFocusScope | null = null
-let panelFocusKind: 'history' | 'memory' | null = null
-let pendingPanelFocusKind: 'history' | 'memory' | null = null
+let panelFocusKind: PanelKind | null = null
+let pendingPanelFocusKind: PanelKind | null = null
+let pendingPanelOpenFocusKind: PanelKind | null = null
 let disposed = false
 let closingForExpiry = false
 let initializationEpoch = 0
@@ -808,6 +821,8 @@ const sendStarter = (prompt: string): void => {
 
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
+const widePanelQuery = '(min-width: 1600px)'
+const dockedPanelQuery = '(min-width: 1024px)'
 const mobilePanelQuery = '(max-width: 639.98px)'
 
 const pageHintFromProps = (): AgentCurrentPageHint | null => {
@@ -1409,23 +1424,25 @@ const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLEl
   if (component instanceof HTMLElement) return component
   return component?.$el instanceof HTMLElement ? component.$el : null
 }
-const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
+const triggerForPanel = (kind: PanelKind): HTMLElement | null => {
   const direct = componentElement(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
   const panels = componentElement(panelMenuTrigger.value)
   const usePanelMenu = kind === 'memory' && window.matchMedia(mobilePanelQuery).matches
   return (usePanelMenu ? [panels, direct] : [direct, panels]).find(isVisibleTrigger) ?? null
 }
 const openSkillManager = (): void => { if (networkActionAllowed()) skillManagerOpen.value = true }
-const preparePanelTriggerRestore = (kind: 'history' | 'memory'): void => {
+const preparePanelTriggerRestore = (kind: PanelKind): void => {
   pendingPanelFocusKind = kind
 }
 const closeHistory = (): void => {
+  deferredHistoryOpen = false
   const closingKind = historyOpen.value ? 'history' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   historyOpen.value = false
 }
 const closeMemory = (): void => {
   if (memoryMutationBusy.value) return
+  deferredHistoryOpen = false
   const closingKind = memoryOpen.value ? 'memory' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   memoryOpen.value = false
@@ -1434,11 +1451,14 @@ const updateMemoryOpen = (open: boolean): void => {
   if (open && (connectionBlocked.value || admissionBlocked.value)) return
   if (open) {
     if (memoryMutationBusy.value) return
-    historyOpen.value = false
+    deferredHistoryOpen = false
+    lastActivePanel.value = 'memory'
+    if (!memoryOpen.value) pendingPanelOpenFocusKind = 'memory'
+    if (panelMode.value !== 'wide') historyOpen.value = false
     memoryOpen.value = true
   } else closeMemory()
 }
-const historyToggleBlocked = computed(() => memoryMutationBusy.value && memoryOpen.value)
+const historyToggleBlocked = computed(() => panelMode.value !== 'wide' && memoryMutationBusy.value && memoryOpen.value && !historyOpen.value)
 const requestClose = (): void => {
   if (memoryMutationBusy.value) return
   emit('close')
@@ -1451,8 +1471,11 @@ const toggleHistory = (): void => {
     return
   }
   if (!networkActionAllowed()) return
+  deferredHistoryOpen = false
+  lastActivePanel.value = 'history'
+  pendingPanelOpenFocusKind = 'history'
   historyOpen.value = true
-  memoryOpen.value = false
+  if (panelMode.value !== 'wide') memoryOpen.value = false
 }
 const toggleMemory = (): void => {
   if (memoryMutationBusy.value) return
@@ -1462,19 +1485,33 @@ const toggleMemory = (): void => {
     return
   }
   if (!networkActionAllowed()) return
-  memoryOpen.value = true
-  historyOpen.value = false
+  updateMemoryOpen(true)
 }
 const reconcilePanelMode = (): void => {
-  const nextMode = window.matchMedia('(min-width: 1760px)').matches
+  const nextMode = (panelModeMedia[0]?.matches ?? window.matchMedia(widePanelQuery).matches)
     ? 'wide'
-    : window.matchMedia('(min-width: 1024px)').matches
+    : (panelModeMedia[1]?.matches ?? window.matchMedia(dockedPanelQuery).matches)
       ? 'docked'
       : 'modal'
+  if (nextMode === 'wide') {
+    if (deferredHistoryOpen) historyOpen.value = true
+    deferredHistoryOpen = false
+  } else if (deferredHistoryOpen || (historyOpen.value && memoryOpen.value)) {
+    const keepHistory = deferredHistoryOpen || lastActivePanel.value !== 'memory'
+    if (keepHistory && memoryOpen.value && memoryMutationBusy.value) {
+      deferredHistoryOpen = true
+      historyOpen.value = false
+    } else {
+      historyOpen.value = keepHistory
+      memoryOpen.value = !keepHistory
+      deferredHistoryOpen = false
+    }
+  }
   panelMode.value = nextMode
 }
 const closePanels = (): void => {
   if (memoryOpen.value && memoryMutationBusy.value) return
+  deferredHistoryOpen = false
   const closingKind = historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   historyOpen.value = false
@@ -1483,10 +1520,16 @@ const closePanels = (): void => {
 const handleNonModalPanelKeydown = (event: KeyboardEvent): void => {
   if (panelMode.value === 'modal' || event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   if (activeOwnedOverlayRoots('.agent-owned-overlay').length > 0) return
+  const kind = event.currentTarget === historyPanel.value ? 'history' : event.currentTarget === memoryPanel.value ? 'memory' : null
+  if (!kind) return
   event.preventDefault()
   event.stopPropagation()
-  closePanels()
+  if (kind === 'history') closeHistory()
+  else closeMemory()
 }
+watch(memoryMutationBusy, busy => {
+  if (!busy && deferredHistoryOpen) reconcilePanelMode()
+})
 const openClearUnfiledHistory = (): void => {
   if (!networkActionAllowed()) return
   if (sessionMutationBusy.value) return
@@ -1688,6 +1731,7 @@ watch(networkPaused, paused => {
 watch(admissionBlocked, blocked => {
   if (!blocked) return
   waitingForConnection.value = false
+  deferredHistoryOpen = false
   memoryOpen.value = false
   skillManagerOpen.value = false
   personalMcpOpen.value = false
@@ -1703,6 +1747,12 @@ watch(() => pwaState.connectionState, state => {
 })
 watch(() => props.ownerId, (ownerId, previousOwnerId) => {
   if (disposed || ownerId === previousOwnerId) return
+  historyOpen.value = false
+  historyMounted.value = false
+  deferredHistoryOpen = false
+  lastActivePanel.value = null
+  pendingPanelOpenFocusKind = null
+  pendingPanelFocusKind = null
   componentGeneration += 1
   retryGeneration += 1
   promptGeneration += 1
@@ -1796,18 +1846,29 @@ watch(discardDraftOpen, async (open, _previous, onCleanup) => {
     onEscape: () => resolveDraftDiscard(false)
   })
 })
-watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [previousHistory, previousMemory]) => {
-  const kind = history ? 'history' : memory ? 'memory' : null
+watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [previousHistory, previousMemory, previousMode], onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
+  const focusRequest = pendingPanelOpenFocusKind
+  pendingPanelOpenFocusKind = null
+  const newlyOpened: PanelKind | null = focusRequest === 'history' && history && !previousHistory
+    ? 'history'
+    : focusRequest === 'memory' && memory && !previousMemory ? 'memory' : null
+  const kind = newlyOpened ?? (lastActivePanel.value === 'memory' && memory ? 'memory' : history ? 'history' : memory ? 'memory' : null)
+  const previousFocus = document.activeElement
+  const closingPanelHadFocus = (previousHistory && !history && Boolean(historyPanel.value?.contains(previousFocus))) ||
+    (previousMemory && !memory && Boolean(memoryPanel.value?.contains(previousFocus)))
+  const restoringTrigger = pendingPanelFocusKind !== null
   if (!kind || mode !== 'modal') {
     panelFocusScope?.deactivate({ restoreFocus: false })
     panelFocusScope = null
     panelFocusKind = null
     if (kind) {
-      const newlyOpened = history ? !previousHistory : !previousMemory
       await nextTick()
-      const currentKind = historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
-      if (panelMode.value !== 'modal' && currentKind === kind && (newlyOpened || document.activeElement === document.body)) {
-        const root = kind === 'history' ? historyPanel.value : memoryPanel.value
+      if (disposed || cancelled || panelMode.value === 'modal' || activeOwnedOverlayRoots('.agent-owned-overlay').length > 0) return
+      const root = kind === 'history' ? historyPanel.value : memoryPanel.value
+      const transferFocus = !restoringTrigger && (closingPanelHadFocus || (mode !== previousMode && document.activeElement === document.body))
+      if (newlyOpened || (transferFocus && (document.activeElement === previousFocus || document.activeElement === document.body))) {
         root?.focus({ preventScroll: true })
       }
     }
@@ -1818,8 +1879,7 @@ watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [pre
   panelFocusScope = null
   panelFocusKind = null
   await nextTick()
-  const currentKind = historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
-  if (panelMode.value !== 'modal' || currentKind !== kind) return
+  if (disposed || cancelled || panelMode.value !== 'modal') return
   const root = kind === 'history' ? historyPanel.value : memoryPanel.value
   if (!root) return
   panelFocusKind = kind
@@ -1830,14 +1890,11 @@ watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [pre
     onEscape: kind === 'history' ? closeHistory : closeMemory
   })
 })
-watch([historyOpen, memoryOpen], ([history, memory]) => {
-  if (history || memory) {
-    pendingPanelFocusKind = null
-    return
-  }
+watch([historyOpen, memoryOpen], ([history, memory], [previousHistory, previousMemory]) => {
   const restoreKind = pendingPanelFocusKind
   pendingPanelFocusKind = null
-  if (!restoreKind) return
+  if (!restoreKind || (restoreKind === 'history' ? history || !previousHistory : memory || !previousMemory)) return
+  if (panelMode.value === 'modal' && (history || memory)) return
   triggerForPanel(restoreKind)?.focus({ preventScroll: true })
 }, { flush: 'post' })
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
@@ -1875,8 +1932,8 @@ watch([thread, pendingApprovalId, connection], () => {
 }, { flush: 'post' })
 onMounted(() => {
   panelModeMedia = [
-    window.matchMedia('(min-width: 1760px)'),
-    window.matchMedia('(min-width: 1024px) and (max-width: 1759.98px)')
+    window.matchMedia(widePanelQuery),
+    window.matchMedia(dockedPanelQuery)
   ]
   panelModeMedia.forEach(media => { media.addEventListener('change', reconcilePanelMode) })
   reconcilePanelMode()
@@ -2922,10 +2979,19 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 }
 
-/* Panel geometry follows the mode computed at the fixed 1024px and 1760px fit thresholds. */
-.inline-agent[data-panel-mode="docked"],
-.inline-agent[data-panel-mode="wide"] {
+/* Panel geometry follows the fixed 1024px docked and 1600px wide thresholds. */
+.inline-agent[data-panel-mode="docked"] {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.inline-agent[data-panel-mode="wide"] {
+  --inline-agent-history-track: 0px;
+  --inline-agent-memory-track: 0px;
+  grid-template-columns: var(--inline-agent-history-track) minmax(0, 1fr) var(--inline-agent-memory-track);
+}
+
+.inline-agent[data-panel-mode="wide"]:dir(rtl) {
+  grid-template-columns: var(--inline-agent-memory-track) minmax(0, 1fr) var(--inline-agent-history-track);
 }
 
 .inline-agent[data-panel-mode="docked"].inline-agent--history {
@@ -2937,25 +3003,24 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent[data-panel-mode="wide"].inline-agent--history {
-  grid-template-columns: 20rem minmax(0, 1fr);
+  --inline-agent-history-track: 280px;
 }
 
 .inline-agent[data-panel-mode="wide"].inline-agent--memory {
-  grid-template-columns: 22rem minmax(0, 1fr);
+  --inline-agent-memory-track: 300px;
 }
 
 
-.inline-agent[data-panel-mode="docked"] .inline-agent__card,
-.inline-agent[data-panel-mode="wide"] .inline-agent__card {
+.inline-agent[data-panel-mode="docked"] .inline-agent__card {
   grid-column: 1;
   grid-row: 1;
 }
 
+.inline-agent[data-panel-mode="wide"] .inline-agent__card,
 .inline-agent[data-panel-mode="docked"].inline-agent--history .inline-agent__card,
-.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__card,
-.inline-agent[data-panel-mode="docked"].inline-agent--memory .inline-agent__card,
-.inline-agent[data-panel-mode="wide"].inline-agent--memory .inline-agent__card {
+.inline-agent[data-panel-mode="docked"].inline-agent--memory .inline-agent__card {
   grid-column: 2;
+  grid-row: 1;
 }
 
 
@@ -2965,6 +3030,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   z-index: auto;
   width: 100%;
   max-width: none;
+  box-sizing: border-box;
   grid-row: 1;
   justify-self: stretch;
   border-radius: 0;
@@ -2972,15 +3038,28 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent[data-panel-mode="docked"] .inline-agent__side--history,
-.inline-agent[data-panel-mode="wide"] .inline-agent__side--history {
+.inline-agent[data-panel-mode="docked"] .inline-agent__side--memory {
   grid-column: 1;
   border-inline-end: 1px solid var(--wiki-surface-border);
 }
 
-.inline-agent[data-panel-mode="docked"] .inline-agent__side--memory,
-.inline-agent[data-panel-mode="wide"] .inline-agent__side--memory {
+.inline-agent[data-panel-mode="wide"] .inline-agent__side--history {
   grid-column: 1;
-  border-inline-end: 1px solid var(--wiki-surface-border);
+  border-right: 1px solid var(--wiki-surface-border);
+}
+
+.inline-agent[data-panel-mode="wide"] .inline-agent__side--memory {
+  grid-column: 3;
+  border-left: 1px solid var(--wiki-surface-border);
+}
+
+/* Grid line numbering follows text direction; the workbench rails stay physical. */
+.inline-agent[data-panel-mode="wide"]:dir(rtl) .inline-agent__side--history {
+  grid-column: 3;
+}
+
+.inline-agent[data-panel-mode="wide"]:dir(rtl) .inline-agent__side--memory {
+  grid-column: 1;
 }
 
 .inline-agent[data-panel-mode="docked"] .inline-agent__side :deep(.agent-history),

@@ -44,7 +44,7 @@
         <div v-else class="taxonomy-records">
           <button v-for="entry in visible" :key="entry.id" type="button" class="taxonomy-record" :class="{ 'is-selected': selectedId === entry.id }" :aria-pressed="selectedId === entry.id" :aria-label="$t(selectedId === entry.id ? 'admin:tags.selectedRecordLabel' : 'admin:tags.recordLabel', { name: entry.title || entry.tag, state: stateLabel(entry), interpolation: { escapeValue: false } })" :disabled="mutationBusy" @click="select(entry.id)">
             <v-icon :icon="selectedId === entry.id ? 'mdi-check' : state(entry) === 'alias' ? 'mdi-arrow-u-right-top' : state(entry) === 'archived' ? 'mdi-archive-outline' : 'mdi-pound'" size="18" aria-hidden="true" />
-            <span><strong><bdi>{{ entry.tag }}</bdi></strong><small><bdi>{{ entry.title || (state(entry) === 'alias' ? $t('admin:tags.alias') : $t('admin:tags.noDisplayLabel')) }}</bdi></small></span>
+            <span><strong><bdi>{{ entry.tag }}</bdi></strong><small v-if="entry.title && entry.title !== entry.tag"><bdi>{{ entry.title }}</bdi></small></span>
             <span class="taxonomy-record-meta"><b>{{ $t('admin:tags.pagesCount', { count: entry.pageCount }) }}</b><small v-if="state(entry) !== 'active'">{{ stateLabel(entry) }}</small></span>
           </button>
         </div>

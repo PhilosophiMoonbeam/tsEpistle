@@ -1,4 +1,4 @@
-import type { GlossaryAccess, GlossaryAutolinkTerm, GlossaryPage, GlossaryTerm, GlossaryTermInput, GlossaryTermSummary } from '../../shared/glossary.ts'
+import { glossaryNameKey, type GlossaryAccess, type GlossaryAutolinkTerm, type GlossaryPage, type GlossaryTerm, type GlossaryTermInput, type GlossaryTermSummary } from '../../shared/glossary.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 
 export class GlossaryApiError extends Error {
@@ -70,14 +70,22 @@ async function request<T>(path: string, valid: (value: unknown) => value is T, s
 }
 const query = (values: Record<string, string | undefined>): string =>
   `?${new URLSearchParams(Object.entries(values).filter((entry): entry is [string, string] => entry[1] !== undefined)).toString()}`
-export const fetchGlossaryAccess = (locale: string, signal?: AbortSignal): Promise<GlossaryAccess> => request(`/access${query({ locale })}`, access, signal)
+export const fetchGlossaryAccess = async (locale: string, signal?: AbortSignal): Promise<GlossaryAccess> => {
+  const result = await request(`/access${query({ locale })}`, access, signal)
+  if (result.locale !== locale) throw new Error('The glossary returned a different locale.')
+  return result
+}
 export const fetchGlossaryPage = (locale: string, search = '', cursor?: string, signal?: AbortSignal): Promise<GlossaryPage<GlossaryTermSummary>> =>
   request(`/${query({ locale, query: search, cursor, limit: '100' })}`, page(summary), signal)
 export const fetchGlossaryAutolinkPage = (locale: string, cursor?: string, signal?: AbortSignal): Promise<GlossaryPage<GlossaryAutolinkTerm>> =>
   request(`/autolink${query({ locale, cursor, limit: '200' })}`, page(autolink), signal)
 export const fetchGlossaryTerm = (id: number, signal?: AbortSignal): Promise<GlossaryTerm> => request(`/terms/${id}`, term, signal)
-export const lookupGlossaryTerm = (locale: string, name: string, signal?: AbortSignal): Promise<GlossaryTerm> =>
-  request(`/lookup${query({ locale, name })}`, term, signal)
+export const lookupGlossaryTerm = async (locale: string, name: string, signal?: AbortSignal): Promise<GlossaryTerm> => {
+  const result = await request(`/lookup${query({ locale, name })}`, term, signal)
+  if (result.locale !== locale || ![result.term, ...result.aliases].some(value => glossaryNameKey(value) === glossaryNameKey(name)))
+    throw new Error('The glossary returned a different term or locale.')
+  return result
+}
 export const saveGlossaryTerm = (input: GlossaryWrite, id?: number, expectedRevision?: number, signal?: AbortSignal): Promise<GlossaryTerm> =>
   request(id === undefined ? '/terms' : `/terms/${id}`, term, signal, id === undefined ? 'POST' : 'PUT', {
     ...input,

@@ -53,7 +53,7 @@
       <span>{{ $t('common:agentHistoryPanel.openingConversationArchive') }}</span>
     </div>
 
-    <div v-else class="agent-history__body">
+    <div v-else ref="historyBody" class="agent-history__body" @scroll.passive="rememberHistoryScroll">
       <div v-if="normalizedSearch && !hasSearchResults" class="agent-history__empty agent-history__empty--search">
         <v-icon icon="mdi-text-search" size="22" />
         <div>
@@ -85,7 +85,7 @@
             <div class="agent-history__section-actions">
               <span class="agent-history__count" :aria-label="$t('common:agentHistoryPanel.recentConversations', { filteredRecentSessionsCount: filteredRecentSessions.length, interpolation: { escapeValue: false } })">{{ filteredRecentSessions.length }}</span>
               <!-- Destructive Clear lives with the list it empties, away from the panel's Close. -->
-              <v-tooltip v-if="hasUnfiledSessions" location="bottom" :disabled="!clearHistoryDisabled" :text="networkBlocked ? networkRequiredMessage : $t('common:agentWorkspace.waitForUpdate')">
+              <v-tooltip v-if="active && hasUnfiledSessions" location="bottom" :disabled="!clearHistoryDisabled" :text="networkBlocked ? networkRequiredMessage : $t('common:agentWorkspace.waitForUpdate')">
                 <template #activator="{ props: tooltipProps }">
                   <v-btn
                     v-bind="tooltipProps"
@@ -130,6 +130,7 @@
                   </template>
                   <template #append>
                     <AgentHistorySessionActions
+                      v-if="active"
                       :session="session"
                       :folders="folders"
                       :busy="sessionBusy(session.id)"
@@ -181,7 +182,7 @@
                 <span class="agent-history__folder-name">{{ group.folder.name }}</span>
                 <span class="agent-history__folder-count" :aria-label="$t('common:agentHistoryPanel.conversations2', { count: group.sessions.length, interpolation: { escapeValue: false } })">{{ group.sessions.length }}</span>
               </v-expansion-panel-title>
-              <v-menu content-class="agent-owned-overlay" location="bottom end">
+              <v-menu v-if="active" content-class="agent-owned-overlay" location="bottom end">
                 <template #activator="{ props: menuProps }">
                   <span :ref="element => setFolderActionTrigger(group.folder.id, element as ComponentRoot | null)" class="agent-history__folder-action-anchor">
                     <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="$t('common:agentHistoryPanel.actions', { name: group.folder.name, interpolation: { escapeValue: false } })" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy || networkBlocked" />
@@ -219,6 +220,7 @@
                     </template>
                     <template #append>
                       <AgentHistorySessionActions
+                        v-if="active"
                         :session="session"
                         :folders="folders"
                         :busy="sessionBusy(session.id)"
@@ -292,7 +294,7 @@
     </div>
   </v-card>
 
-  <v-dialog content-class="agent-owned-overlay" v-model="folderEditorOpen" max-width="28rem" :aria-labelledby="folderEditorTitleId" :persistent="savingFolder">
+  <v-dialog v-if="active" content-class="agent-owned-overlay" v-model="folderEditorOpen" max-width="28rem" :aria-labelledby="folderEditorTitleId" :persistent="savingFolder">
     <v-card rounded="xl">
       <v-card-title :id="folderEditorTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-folder-outline" aria-hidden="true" /></v-avatar>
@@ -330,7 +332,7 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog content-class="agent-owned-overlay" v-model="sessionEditorOpen" max-width="28rem" :aria-labelledby="sessionEditorTitleId" :persistent="savingSessionTitle">
+  <v-dialog v-if="active" content-class="agent-owned-overlay" v-model="sessionEditorOpen" max-width="28rem" :aria-labelledby="sessionEditorTitleId" :persistent="savingSessionTitle">
     <v-card rounded="xl">
       <v-card-title :id="sessionEditorTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-pencil-outline" aria-hidden="true" /></v-avatar>
@@ -351,7 +353,7 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(deletingSession)" max-width="29rem" :aria-labelledby="deleteTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelDeleteSession() }">
+  <v-dialog v-if="active" content-class="agent-owned-overlay" :model-value="Boolean(deletingSession)" max-width="29rem" :aria-labelledby="deleteTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelDeleteSession() }">
     <v-card ref="deleteDialogCard" rounded="xl">
       <v-card-title :id="deleteTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-outline" aria-hidden="true" /></v-avatar>
@@ -369,7 +371,7 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog content-class="agent-owned-overlay" :model-value="Boolean(removingFolder)" max-width="30rem" :aria-labelledby="removeFolderTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelRemoveFolder() }">
+  <v-dialog v-if="active" content-class="agent-owned-overlay" :model-value="Boolean(removingFolder)" max-width="30rem" :aria-labelledby="removeFolderTitleId" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelRemoveFolder() }">
     <v-card ref="removeFolderDialogCard" rounded="xl">
       <v-card-title :id="removeFolderTitleId" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="warning" size="38" variant="tonal"><v-icon icon="mdi-folder-remove-outline" aria-hidden="true" /></v-avatar>
@@ -411,11 +413,12 @@ const sessionEditorTitleId = `${historyId}-session-editor-title`
 const deleteTitleId = `${historyId}-delete-title`
 const removeFolderTitleId = `${historyId}-remove-folder-title`
 // biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup prop aliases and the normalized computed binding are not duplicate Options API keys.
-const props = defineProps<{ headingId: string; descriptionId: string; networkBlocked?: boolean }>()
+const props = defineProps<{ active: boolean; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
 const { headingId, descriptionId } = props
 const agents = useAgentsStore()
 const { folders, loading, sessionMutationBusy, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
+const active = computed(() => props.active)
 const networkBlocked = computed(() => props.networkBlocked === true)
 const networkRequiredMessage = t('common:agentHistoryPanel.connectionRequiredChangeConversation')
 const openFolderIds = ref<string[]>([])
@@ -467,6 +470,11 @@ const sessionDragMime = 'application/x-ts-epistle-agent-session'
 type ComponentRoot = ComponentPublicInstance | HTMLElement
 const historyCloseButton = useTemplateRef<ComponentRoot>('historyCloseButton')
 const historySearchField = useTemplateRef<ComponentRoot>('historySearchField')
+const historyBody = useTemplateRef<HTMLElement>('historyBody')
+let historyScrollTop = 0
+const rememberHistoryScroll = (): void => {
+  if (active.value) historyScrollTop = historyBody.value?.scrollTop ?? historyScrollTop
+}
 const deleteDialogCard = useTemplateRef<ComponentRoot>('deleteDialogCard')
 const removeFolderDialogCard = useTemplateRef<ComponentRoot>('removeFolderDialogCard')
 const folderInput = useTemplateRef<ComponentRoot>('folderInput')
@@ -756,6 +764,7 @@ const sessionLocationName = (session: AgentSessionSummary): string =>
   session.folderId === null ? t('common:agentHistoryPanel.recent') : folders.value.find(folder => folder.id === session.folderId)?.name ?? t('common:agentHistoryPanel.currentFolder')
 const refreshHistoryBlocked = (): boolean =>
   disposed ||
+  !active.value ||
   networkBlocked.value ||
   loading.value ||
   refreshingHistory.value ||
@@ -1045,7 +1054,7 @@ watch(sessionEditorOpen, async open => {
   onWatcherCleanup(() => { cancelled = true })
   if (open) return
   await nextTick()
-  if (cancelled) return
+  if (cancelled || disposed || !active.value) return
   restoreSessionEditorFocus()
 })
 const beginDeleteSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
@@ -1233,7 +1242,7 @@ watch(folderEditorOpen, async open => {
   if (open) return
   resetFolderWorkflow()
   await nextTick()
-  if (cancelled || disposed) return
+  if (cancelled || disposed || !active.value) return
   const target = folderEditorRestoreTarget.value
   folderEditorRestoreTarget.value = null
   const focusTarget = [
@@ -1359,19 +1368,24 @@ const expandActiveFolder = (): void => {
   const id = activeFolderId()
   if (id && searchFolderSnapshot?.manualChoices.get(id) !== false && !openFolderIds.value.includes(id)) openFolderIds.value.push(id)
 }
-watch([deletingSession, removingFolder], async ([session, folder]) => {
+watch([active, deletingSession, removingFolder], async ([panelActive, session, folder]) => {
   let cancelled = false
   onWatcherCleanup(() => { cancelled = true })
+  if (!panelActive) {
+    destructiveFocusScope?.deactivate({ restoreFocus: false })
+    destructiveFocusScope = null
+    return
+  }
   if (!session && !folder) {
     await nextTick()
-    if (cancelled) return
+    if (cancelled || disposed || !active.value) return
     destructiveFocusScope?.deactivate({ restoreFocus: true })
     destructiveFocusScope = null
     destructiveRestoreTarget.value = null
     return
   }
   await nextTick()
-  if (cancelled) return
+  if (cancelled || disposed || !active.value) return
   const root = componentElement(session ? deleteDialogCard.value : removeFolderDialogCard.value)
   if (!root) return
   destructiveFocusScope?.deactivate({ restoreFocus: false })
@@ -1436,7 +1450,20 @@ const startPendingInitialRefresh = (): void => {
   if (!initialRefreshPending.value || refreshHistoryBlocked()) return
   void refreshHistory()
 }
-watch([loading, sessionMutationBusy, savingFolder, deleting, deletingSession, removingFolder, refreshingHistory], startPendingInitialRefresh)
+watch([active, loading, sessionMutationBusy, savingFolder, deleting, deletingSession, removingFolder, refreshingHistory], startPendingInitialRefresh)
+watch(active, async panelActive => {
+  let cancelled = false
+  onWatcherCleanup(() => { cancelled = true })
+  if (!panelActive) {
+    clearDragState()
+    cancelPendingSessionRead()
+    return
+  }
+  const scrollTop = historyScrollTop
+  startPendingInitialRefresh()
+  await nextTick()
+  if (!cancelled && !disposed && active.value && historyBody.value) historyBody.value.scrollTop = scrollTop
+}, { flush: 'post' })
 onMounted(() => {
   initialRefreshPending.value = true
   startPendingInitialRefresh()

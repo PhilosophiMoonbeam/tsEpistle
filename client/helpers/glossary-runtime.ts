@@ -1,4 +1,50 @@
+import DOMPurify from 'dompurify'
 import type { GlossaryAutolinkTerm } from '../../shared/glossary.ts'
+
+/** A transient, authorized view; never a catalog entry or a persisted definition cache. */
+export interface GlossaryHoverDefinition {
+  id: number
+  revision: number
+  term: string
+  expansion: string
+  locale: string
+  definitionHtml: string
+  definitionText: string
+}
+export interface GlossaryPinRequest extends GlossaryHoverDefinition {
+  key: string
+  ownerKey: string
+  pageKey: string
+  sourceHref: string
+  glossaryHref: string
+}
+/** The memory owner supplies availability/pending for this exact selection, not a read-side success flag. */
+export interface GlossaryPinState {
+  key: string
+  available: boolean
+  pending: boolean
+  unavailableReason?: string
+}
+export type GlossaryPinRequestHandler = (request: Readonly<GlossaryPinRequest>, signal: AbortSignal) => void
+export interface GlossaryLinkOptions {
+  locale?: string
+  label?: (term: string, visibleLabel: string) => string
+}
+
+/** Match the directory's safeHtml restrictions, and keep definitions free of form/navigation side effects. */
+export function sanitizeGlossaryDefinition(html: string): string {
+  return DOMPurify.sanitize(html, {
+    FORBID_TAGS: ['img', 'svg', 'math', 'iframe', 'video', 'audio', 'source', 'style', 'form', 'input', 'button', 'textarea', 'select', 'option'],
+    FORBID_ATTR: ['style', 'src', 'srcset', 'autofocus']
+  })
+}
+/** Plain text is derived only from the sanitized, visible definition, not hidden documentation or source markdown. */
+export function glossaryDefinitionText(html: string): string {
+  const template = document.createElement('template')
+  template.innerHTML = sanitizeGlossaryDefinition(html)
+  for (const element of template.content.querySelectorAll('p,div,li,br,pre,blockquote,h1,h2,h3,h4,h5,h6,tr')) element.after(document.createTextNode('\n'))
+  return (template.content.textContent ?? '').replace(/[ \t]+\n/gu, '\n').replace(/\n{3,}/gu, '\n\n').trim()
+}
 
 const excluded =
   'a,form,fieldset,button,input,textarea,select,option,label,summary,details,[contenteditable],h1,h2,h3,h4,h5,h6,pre,code,kbd,samp,script,style,template,svg,math,canvas,video,audio,iframe,object,embed,picture,figure,.mermaid,.plantuml,.katex,.MathJax,[class*="content-extension--"],[data-content-extension],[data-wiki-extension],[data-glossary-owned],[data-annotation-ui]'
@@ -54,7 +100,7 @@ function normalized(source: string): { text: string; starts: number[]; ends: num
 }
 type Match = { start: number; end: number; id: number; term: string; label?: string; explicit?: boolean }
 /** DOM-only decoration. Cleanup restores the very same original Text nodes, never canonical HTML/source. */
-export function linkGlossaryContent(root: HTMLElement, terms: readonly GlossaryAutolinkTerm[], href = window.location.href): () => void {
+export function linkGlossaryContent(root: HTMLElement, terms: readonly GlossaryAutolinkTerm[], href = window.location.href, options: GlossaryLinkOptions = {}): () => void {
   const nodes: Text[] = []
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   while (walker.nextNode()) if (walker.currentNode instanceof Text && allowed(walker.currentNode, root)) nodes.push(walker.currentNode)
@@ -113,7 +159,11 @@ export function linkGlossaryContent(root: HTMLElement, terms: readonly GlossaryA
       const anchor = root.ownerDocument.createElement('a')
       anchor.href = glossaryHref(href, match.term)
       anchor.textContent = match.label ?? node.data.slice(match.start, match.end)
-      anchor.setAttribute('aria-label', `Glossary: ${match.term}`)
+      anchor.dataset.glossaryTerm = match.term
+      if (options.locale) anchor.dataset.glossaryLocale = options.locale
+      anchor.setAttribute('aria-label', options.label?.(match.term, anchor.textContent) ?? `Glossary: ${anchor.textContent}`)
+      anchor.setAttribute('aria-haspopup', 'dialog')
+      anchor.setAttribute('aria-expanded', 'false')
       wrapper.append(anchor)
       position = match.end
     }

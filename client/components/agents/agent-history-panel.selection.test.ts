@@ -332,6 +332,7 @@ const loadPanel = (
       thread
     }),
     () => ({
+      active: true,
       headingId: 'agent-history-title',
       descriptionId: 'agent-history-description'
     }),
@@ -453,7 +454,7 @@ const loadDeletionPanel = (active: AgentSessionSummary, sessions: AgentSessionSu
     useTemplateRef: () => shallowRef(null),
     watch,
     storeToRefs,
-    defineProps: () => ({ headingId: 'history-title', descriptionId: 'history-description' }),
+    defineProps: () => ({ active: true, headingId: 'history-title', descriptionId: 'history-description' }),
     defineEmits: () => vi.fn(),
     useAgentsStore: () => store,
     agentConversationFolderNameKey,
