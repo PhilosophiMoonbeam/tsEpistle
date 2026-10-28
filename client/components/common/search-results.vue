@@ -1370,7 +1370,7 @@ export default defineComponent({
         window.getComputedStyle(element).visibility !== 'hidden' &&
         !element.closest('[inert], [aria-hidden="true"]') &&
         !element.matches(':disabled')
-      const toggle = Array.from(document.querySelectorAll<HTMLElement>('.page-nav-toggle[aria-controls="page-navigation-drawer"]')).find(visible)
+      const toggle = Array.from(document.querySelectorAll<HTMLElement>('.nav-header [aria-controls="page-navigation-drawer"]')).find(visible)
       if (toggle?.getAttribute('aria-expanded') === 'false') {
         // Reuse the reader's drawer lifecycle and its keyboard focus hand-off.
         toggle.click()

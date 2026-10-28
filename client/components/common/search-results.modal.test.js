@@ -110,7 +110,7 @@ describe('clearable search recovery', () => {
       const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
       const dom = new JSDOM(
         `<!doctype html><html><body>
-        <button class="page-nav-toggle" aria-controls="page-navigation-drawer" aria-expanded="${destination === 'closed-drawer' ? 'false' : 'true'}">Navigation</button>
+        <header class="nav-header"><button aria-controls="page-navigation-drawer" aria-expanded="${destination === 'closed-drawer' ? 'false' : 'true'}">Navigation</button></header>
         <div id="page-navigation-drawer"><nav class="nav-sidebar">
           <button disabled>Unavailable action</button><a href="/en/hidden" aria-hidden="true">Hidden page</a><a href="/en/guide">Guide</a>
         </nav></div><main><h1>Current article</h1></main>
@@ -121,7 +121,7 @@ describe('clearable search recovery', () => {
         const document = dom.window.document
         // jsdom has no layout: these fixtures model visibility only, not browser geometry.
         for (const element of document.querySelectorAll('*')) element.getClientRects = () => [{ width: 100, height: 44 }]
-        const toggle = document.querySelector('.page-nav-toggle')
+        const toggle = document.querySelector('.nav-header [aria-controls="page-navigation-drawer"]')
         const guide = document.querySelector('a[href="/en/guide"]')
         const article = document.querySelector('main')
         if (destination === 'unavailable-navigation') {

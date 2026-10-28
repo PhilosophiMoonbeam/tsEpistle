@@ -29,6 +29,14 @@
           .page-reading-dock-meta(v-if='readerSection')
             span.page-reading-dock-position {{ $t('common:page.sectionPosition', { current: readerSectionIndex + 1, total: tocFlattened.length }) }}
             span.page-reading-dock-document {{ title }}
+          v-btn.page-reading-dock-top(
+            v-if='upBtnShown'
+            variant='text'
+            size='small'
+            prepend-icon='mdi-arrow-up'
+            :aria-label='$t(`common:actions.returnToTop`)'
+            @click='returnToTop'
+          ) {{$t('common:page.top')}}
         .page-reading-dock-actions
           template(v-if='readerHasSections')
             v-btn.page-reading-previous(
@@ -58,14 +66,6 @@
               @click='toggleReaderSections'
             ) {{$t('common:page.chooseSection')}}
           v-btn.page-reading-exit(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}
-          v-btn.page-reading-dock-top(
-            v-if='upBtnShown'
-            variant='text'
-            size='small'
-            prepend-icon='mdi-arrow-up'
-            :aria-label='$t(`common:actions.returnToTop`)'
-            @click='returnToTop'
-          ) {{$t('common:page.top')}}
       #page-reading-sections-host.page-reading-sections(
         ref='readerSections'
         v-show='readerSectionsOpen'
@@ -88,6 +88,7 @@
       v-model='navigationOpen'
       :aria-label='$t(`common:sidebar.mainMenu`)'
       @update:model-value='navigationVisibilityChanged'
+      @keydown.esc='navigationEscape'
       )
       vue-scroll.page-nav-scroll(:ops='scrollStyle', style='scrollbar-gutter: auto;')
         nav-sidebar(
@@ -4302,8 +4303,15 @@ export default defineComponent({
       void this.goTo(0, this.scrollOpts)
       this.$nextTick(() => this.focusPageTitle())
     },
+    navigationEscape (event: KeyboardEvent): void {
+      if (event.defaultPrevented || event.isComposing || this.$vuetify.display.width >= 1280 || !this.navigationOpen) return
+      event.preventDefault()
+      event.stopPropagation()
+      this.navShown = false
+      this.navigationVisibilityChanged(false)
+    },
     navigationVisibilityChanged (shown: boolean) {
-      if (this.readerFocus || (shown && this.$vuetify.display.width >= 1280)) return
+      if (this.readerDockVisible || (shown && this.$vuetify.display.width >= 1280)) return
       if (shown) {
         this.$nextTick(() => {
           document.querySelector<HTMLElement>('#page-navigation-drawer .nav-sidebar button, #page-navigation-drawer .nav-sidebar a')?.focus()
@@ -4316,7 +4324,7 @@ export default defineComponent({
             : navToggle?.$el instanceof HTMLElement
               ? navToggle.$el
               : null
-          element?.focus()
+          element?.focus({ preventScroll: true })
         })
       }
     },
@@ -5405,7 +5413,7 @@ export default defineComponent({
 // Part of the article's reserved flow, never a floating button on its prose.
 .page-reading-toolbar {
   position: sticky;
-  inset-block-start: var(--v-layout-top, 56px);
+  inset-block-start: calc(max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) + 1px);
   z-index: 4;
   display: flex;
   align-items: center;
@@ -6813,8 +6821,22 @@ export default defineComponent({
 
 
 .page-reading-dock-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: .5rem;
+  min-height: 44px;
+  align-content: center;
   flex: 1 1 auto;
   min-width: 0;
+
+  > .page-reading-dock-title,
+  > .page-reading-dock-meta { grid-column: 1; }
+
+  > .page-reading-dock-top {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    min-height: 44px;
+  }
 }
 
 .page-reading-dock-actions {
@@ -7011,7 +7033,6 @@ export default defineComponent({
     display: grid;
     grid-template-columns: 44px 44px minmax(0, 1fr) minmax(0, 1fr);
 
-    .page-reading-dock-top { grid-column: 1 / -1; }
 
     &:not(:has(.page-reading-sections-toggle)) { grid-template-columns: minmax(0, 1fr); }
 
@@ -7029,6 +7050,7 @@ export default defineComponent({
 @media print {
   .page-position,
   .page-focus-control,
+  .page-reading-toolbar,
   .page-reading-chrome { display: none !important; }
 }
 

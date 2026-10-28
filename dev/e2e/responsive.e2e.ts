@@ -659,8 +659,6 @@ test.describe('responsive UI quality matrix', () => {
     expect(returnToTopBounds).not.toBeNull()
     if (returnToTopBounds) {
       expect(returnToTopBounds.x, 'Return to top stays on the right').toBeGreaterThan(viewport.width / 2)
-      expect(viewport.width - returnToTopBounds.x - returnToTopBounds.width, 'Return to top keeps a safe right inset').toBeGreaterThanOrEqual(0)
-      expect(viewport.width - returnToTopBounds.x - returnToTopBounds.width, 'Return to top keeps a safe right inset').toBeLessThanOrEqual(32)
 
       if (await pageEditFab.count()) {
         await pageEditFab.click()
@@ -669,7 +667,7 @@ test.describe('responsive UI quality matrix', () => {
           viewport.width < 840 ? page.getByText('Edit Page', { exact: true }).last() : page.getByRole('button', { name: 'Edit Page', exact: true })
         await expect(editPageAction).toBeVisible()
       }
-      const neighboringFixedActions = page.locator('.page-nav-toggle:visible, .page-edit-fab:visible, .v-speed-dial__content .v-btn:visible')
+      const neighboringFixedActions = page.locator('.page-edit-fab:visible, .v-speed-dial__content .v-btn:visible')
       for (const neighboringAction of await neighboringFixedActions.all()) {
         const neighboringBounds = await neighboringAction.boundingBox()
         expect(neighboringBounds).not.toBeNull()
