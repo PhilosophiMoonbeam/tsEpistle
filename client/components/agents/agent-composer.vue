@@ -1506,15 +1506,7 @@ onBeforeUnmount(() => {
   }
 }
 
-.agent-composer:has(textarea:focus-visible) {
-  /* Semi-transparent focus outline: 40% of the neutral focus color. */
-  outline: 2px solid color-mix(in srgb, var(--wiki-focus-color) 40%, transparent);
-  outline-offset: 2px;
-}
-.agent-composer__input :deep(.v-field:has(:focus-visible)) {
-  outline: none;
-  box-shadow: none;
-}
+/* Shared native field focus owns the boundary and halo; do not add a second ring. */
 
 .agent-composer--sending {
   border-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
@@ -1576,9 +1568,6 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-.agent-composer__input :deep(textarea:focus-visible) {
-  outline: none;
-}
 
 .agent-composer__attachments {
   display: flex;
@@ -2061,9 +2050,6 @@ onBeforeUnmount(() => {
     color: CanvasText;
   }
 
-  .agent-composer:has(textarea:focus-visible) {
-    outline-color: Highlight;
-  }
 
   .agent-composer__input :deep(textarea),
   .agent-composer__input :deep(textarea::placeholder) {
