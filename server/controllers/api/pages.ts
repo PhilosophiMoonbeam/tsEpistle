@@ -122,6 +122,8 @@ const errorStatus = (err: unknown, fallback: number): number => {
   if (typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number') {
     return err.status
   }
+  if (err instanceof Error && err.name === 'PageNotFound') return 404
+  if (err instanceof Error && (err.name === 'PageHistoryForbidden' || err.name === 'PageViewForbidden')) return 403
   if (err instanceof Error && (err.name === 'PagePathCollision' || err.name === 'PageUpdateConflict')) return 409
   return fallback
 }

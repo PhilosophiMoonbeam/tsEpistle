@@ -1,5 +1,7 @@
 import createKnex from 'knex'
 import { knowledgeSourceSha256 } from '../../knowledge/projection.ts'
+import pageErrors from '../../helpers/error.ts'
+import operationErrors from '../../operations/errors.ts'
 
 const pageTreeAccess = vi.fn()
 vi.mockModule('../../repositories/page-tree-access.ts', import.meta.url, () => ({ pageTreeAccess, treeAncestorIds: () => [] }))
@@ -270,6 +272,7 @@ describe('controllers/api pages endpoints', () => {
     express.__router.put.mockClear()
 
     global.WIKI = {
+      Error: pageErrors,
       data: {
         searchEngine: {
           config: {
@@ -438,6 +441,9 @@ describe('controllers/api pages endpoints', () => {
       publication: express.__router.patch.mock.calls.find(([path]) => path === '/:id/publication')[1],
       updatePage: express.__router.put.mock.calls.find(([path]) => path === '/:id')[1],
       getPage: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1],
+      conflictLatest: express.__router.get.mock.calls.find(([path]) => path === '/:id/conflict-latest')[1],
+      history: express.__router.get.mock.calls.find(([path]) => path === '/:id/history')[1],
+      version: express.__router.get.mock.calls.find(([path]) => path === '/:id/history/:versionId')[1],
       links: express.__router.get.mock.calls.find(([path]) => path === '/links')[1],
       listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
@@ -476,6 +482,130 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(409)
     expect(res.json).toHaveBeenCalledWith({ error: 'Destination page path already exists.' })
+  })
+
+  it.each([
+    ['anonymous', { id: 2, permissions: ['read:pages', 'read:history'] }],
+    ['authenticated non-owner', { id: 6, permissions: ['read:pages', 'read:history', 'write:pages'] }]
+  ])('returns only an opaque 404 for %s private current and revision reads', async (_identity, user) => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      visibility: 'private',
+      ownerId: 7,
+      content: '# Owner-only content',
+      changeReason: 'Owner-only revision annotation'
+    })
+    global.WIKI.models.pageHistory = {
+      getHistory: vi.fn().mockResolvedValue({ total: 19, trail: [{ changeReason: 'Owner-only historical annotation' }] }),
+      getVersion: vi.fn().mockResolvedValue({ content: '# Owner-only historical content', changeReason: 'Owner-only historical annotation' })
+    }
+    const handlers = await loadHandler()
+    for (const name of ['getPage', 'conflictLatest', 'history', 'version']) {
+      const res = notificationResponse()
+      const next = vi.fn()
+
+      await handlers[name]({ user, params: { id: '7', versionId: '3' } }, res, next)
+
+      expect(res.status).toHaveBeenCalledWith(404)
+      expect(res.json).toHaveBeenCalledTimes(1)
+      expect(res.json).toHaveBeenCalledWith({ error: 'This page does not exist.' })
+      expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+      expect(res.vary).toHaveBeenCalledWith('Cookie')
+      expect(next).not.toHaveBeenCalled()
+    }
+    expect(global.WIKI.models.pageHistory.getHistory).not.toHaveBeenCalled()
+    expect(global.WIKI.models.pageHistory.getVersion).not.toHaveBeenCalled()
+  })
+
+  it.each(['conflictLatest', 'history', 'version'])('keeps absent %s reads indistinguishable from private denials', async name => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue(undefined)
+    const handlers = await loadHandler()
+    const res = notificationResponse()
+    const next = vi.fn()
+
+    await handlers[name]({ user: { id: 6, permissions: ['read:pages'] }, params: { id: '7', versionId: '3' } }, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ error: 'This page does not exist.' })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['conflictLatest', 'You are not authorized to view this page.'],
+    ['history', 'You are not authorized to view the history of this page.'],
+    ['version', 'You are not authorized to view the history of this page.']
+  ])('returns the existing public permission denial as 403 for %s', async (name, message) => {
+    const handlers = await loadHandler()
+    const res = notificationResponse()
+    const next = vi.fn()
+
+    await handlers[name]({ user: { id: 6, permissions: ['read:pages'] }, params: { id: '7', versionId: '3' } }, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledTimes(1)
+    expect(res.json).toHaveBeenCalledWith({ error: message })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it.each(['conflictLatest', 'history', 'version'])('preserves explicit error status semantics and unexpected failures for %s', async name => {
+    const handlers = await loadHandler()
+    const req = { user: { id: 6, permissions: ['read:pages'] }, params: { id: '7', versionId: '3' } }
+    for (const status of [400, 403, 404, 409, 503, undefined]) {
+      const failure = status === undefined
+        ? new Error('Unexpected page storage failure')
+        : new operationErrors.ApplicationError('Explicit page operation failure', { code: 'PageNotFound', status })
+      global.WIKI.models.pages.getPageFromDb.mockRejectedValueOnce(failure)
+      const res = notificationResponse()
+      const next = vi.fn()
+
+      await handlers[name](req, res, next)
+
+      if (status !== undefined && status < 500) {
+        expect(res.status).toHaveBeenCalledWith(status)
+        expect(res.json).toHaveBeenCalledTimes(1)
+        expect(res.json).toHaveBeenCalledWith({ error: 'Explicit page operation failure' })
+        expect(next).not.toHaveBeenCalled()
+      } else {
+        expect(next).toHaveBeenCalledTimes(1)
+        expect(next).toHaveBeenCalledWith(failure)
+        expect(res.status).not.toHaveBeenCalled()
+        expect(res.json).not.toHaveBeenCalled()
+      }
+    }
+  })
+
+  it('retains the authorized owner revision reasons in history, version and latest-source responses', async () => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      visibility: 'private',
+      ownerId: 7,
+      content: '# Current',
+      changeReason: 'Current revision reason'
+    })
+    const version = { versionId: 3, content: '# Earlier', changeReason: 'Historical revision reason' }
+    const history = { total: 1, trail: [{ versionId: 3, changeReason: 'Historical revision reason' }] }
+    global.WIKI.models.pageHistory = {
+      getHistory: vi.fn().mockResolvedValue(history),
+      getVersion: vi.fn().mockResolvedValue(version)
+    }
+    const handlers = await loadHandler()
+    const req = { user: { id: 7, permissions: [] }, sessionID: 'owner-history', params: { id: '7', versionId: '3' } }
+    for (const [name, expected] of [
+      ['conflictLatest', { content: '# Current', changeReason: 'Current revision reason' }],
+      ['history', history],
+      ['version', version]
+    ]) {
+      const res = notificationResponse()
+      const next = vi.fn()
+
+      await handlers[name](req, res, next)
+
+      expect(res.status).not.toHaveBeenCalled()
+      expect(res.json).toHaveBeenCalledTimes(1)
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining(expected))
+      expect(next).not.toHaveBeenCalled()
+    }
   })
 
 
