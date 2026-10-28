@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from '@vue/compiler-sfc'
-import { markRaw, reactive, toRaw, watch, type Raw } from 'vue'
+import { computed, markRaw, reactive, toRaw, watch, type Raw } from 'vue'
 import _ from 'lodash'
 import * as ts from 'typescript'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
@@ -146,6 +146,7 @@ type ShellBehavior = {
     mode: (this: ShellContext) => string
     offlineDraftMutationBlocked: (this: ShellContext) => boolean
     offlineDraftSource: (this: ShellContext) => readonly string[]
+    offlineSaveNotice: (this: ShellContext) => string
   }
   methods: Record<string, (this: ShellContext, ...args: unknown[]) => unknown>
   watch: { offlineDraftSource: (this: ShellContext) => void }
@@ -605,6 +606,8 @@ const createShellContext = (
   Object.defineProperty(host, 'mode', { get: () => behavior.computed.mode.call(host) })
   Object.defineProperty(host, 'isDirty', { get: () => behavior.computed.isDirty.call(host) })
   Object.defineProperty(host, 'offlineDraftMutationBlocked', { get: () => behavior.computed.offlineDraftMutationBlocked.call(host) })
+  const offlineSaveNotice = computed(() => behavior.computed.offlineSaveNotice.call(host))
+  Object.defineProperty(host, 'offlineSaveNotice', { get: () => offlineSaveNotice.value })
   adapter.onState(safety => {
     host.editorAdapterSafety = safety
   })
@@ -668,6 +671,55 @@ afterEach(() => {
 })
 
 describe('composed editor offline submission boundary', () => {
+  test('refreshes the cached offline notice after a raw coordinator commits body and reason-only edits', async () => {
+    const storage = new ComposedDraftStorage()
+    const testWindow = createTestWindow(keyFetchImpl)
+    installWindow(testWindow)
+    const store = reactive(createStore())
+    const shell = createReactiveShellContext(store, testWindow, storage, { debounceMs: 60_000 })
+    shell.setupOfflineDraftCoordinator()
+    await shell.initializeOfflineDrafts()
+    const coordinator = shell.offlineDraftCoordinator!
+    shell.serverSaveDisabled = true
+    shell.offlineConnectionState = 'offline'
+
+    // Prime Vue's cache before any mutable draft exists. Raw coordinator fields
+    // cannot invalidate that cached pending result when the first capture lands.
+    expect(shell.offlineSaveNotice).toBe(translateEnglish('editor:offline.serverUnavailablePending'))
+    await coordinator.markReconnected()
+    store.editor.content = 'device-only body'
+    shell.changeReason = 'First device-only reason'
+    shell.editorAdapter.noteTextChange()
+    expect(shell.offlineSaveNotice).toBe(translateEnglish('editor:offline.serverUnavailablePending'))
+
+    expect(await shell.save()).toBe(true)
+    expect(coordinator.hasCommittedCurrentValues).toBe(true)
+    expect(shell.lastSaveKind).toBe('device')
+    expect(shell.offlineDraftStatus).toBe('needs-review')
+    expect(shell.offlineDraftCandidates).toHaveLength(0)
+    expect(shell.offlineDraftError).toBe('')
+    expect(shell.offlineSaveNotice).toBe(translateEnglish('editor:offline.serverUnavailableSaved'))
+
+    const textVersion = shell.editorAdapter.capture().editVersion
+    shell.changeReason = 'Corrected device-only reason'
+    expect(shell.offlineSaveNotice).toBe(translateEnglish('editor:offline.serverUnavailablePending'))
+    expect(await shell.save()).toBe(true)
+    expect(shell.editorAdapter.capture().editVersion).toBe(textVersion)
+    expect(shell.offlineSaveNotice).toBe(translateEnglish('editor:offline.serverUnavailableSaved'))
+    expect(shell.offlineDraftStatus).toBe('needs-review')
+    const handle = await requestDraftKey(keyFetchImpl, {
+      expectedAccountId: ACCOUNT_ID,
+      expectedSessionGeneration: SESSION_GENERATION
+    })
+    const saved = await Promise.all([...storage.records.values()].map(envelope => decryptOfflineDraft(handle, envelope)))
+    expect(saved).toHaveLength(1)
+    expect(saved[0]).toMatchObject({
+      content: 'device-only body',
+      changeReason: 'Corrected device-only reason',
+      state: 'needs-review'
+    })
+  })
+
   for (const outcome of ['success', 'unknown'] as const) {
     test(
       outcome === 'success'

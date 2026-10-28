@@ -896,6 +896,8 @@ export default defineComponent({
       )
     },
     offlineSaveNotice(): string {
+      // The coordinator stays raw; its callbacks advance this reactive revision.
+      void this.safetyRevision
       if (this.offlineDraftCoordinator?.hasCommittedCurrentValues === true) {
         return this.$t('editor:offline.serverUnavailableSaved')
       }
@@ -3232,6 +3234,11 @@ export default defineComponent({
 
   .v-field--focused {
     box-shadow: var(--wiki-focus-ring);
+  }
+
+  .v-counter {
+    color: rgb(var(--v-theme-on-surface));
+    opacity: 1;
   }
 }
 
