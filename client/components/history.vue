@@ -199,7 +199,7 @@
                 :title='$t(`history:comparison.noChangesTitle`)'
                 :message='$t(`history:comparison.noChangesMessage`)'
               )
-              .history-diff(v-else-if='diffHTML', dir='ltr')
+              .history-diff(v-else-if='diffHTML', ref='diffContainer', dir='ltr')
                 div(v-html='diffHTML')
     v-dialog(
       v-model='isRestoreConfirmDialogShown'
@@ -547,6 +547,20 @@ export default {
     },
     comparisonRequestKey () {
       void this.renderComparison()
+    },
+    diffHTML: {
+      flush: 'post' as const,
+      handler () {
+        if (this.viewMode !== 'side-by-side') return
+        const container = this.resolveElementRef(this.$refs.diffContainer)
+        const panes = container?.querySelectorAll('.d2h-file-side-diff .d2h-diff-tbody')
+        if (!container || panes?.length !== 2) return
+        const rows = panes[0]!.children.length
+        if (rows > 0 && rows === panes[1]!.children.length) {
+          // Shared grid tracks keep paired lines aligned when only one side wraps.
+          container.style.setProperty('--history-diff-rows', String(rows))
+        }
+      }
     },
     viewMode () {
       this.preserveTrailScroll()
@@ -1627,22 +1641,90 @@ export default {
     font-family: var(--wiki-font-mono);
   }
 
-  // Rows are tinted on their table cells. The line itself stays transparent
-  // and grows with its text, so the cell (and the whole row) spans the full
-  // scrollable width of its pane instead of stopping at the visible edge.
+  .d2h-diff-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  .d2h-file-diff,
+  .d2h-file-side-diff {
+    min-width: 0;
+    overflow: visible;
+  }
+  // diff2html emits separate tables. Share their row tracks rather than
+  // measuring/reconciling line heights on every resize or font change.
+  .d2h-files-diff {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(var(--history-diff-rows, 1), auto);
+    grid-auto-flow: column;
+
+    .d2h-file-side-diff,
+    .d2h-code-wrapper,
+    .d2h-diff-table,
+    .d2h-diff-tbody {
+      display: contents;
+    }
+
+    .d2h-diff-tbody > tr {
+      display: grid;
+      grid-template-columns: 4.5em minmax(0, 1fr);
+      min-width: 0;
+    }
+
+    .d2h-diff-tbody > tr > td {
+      min-width: 0;
+    }
+
+    .d2h-code-side-linenumber {
+      position: static;
+      width: auto;
+      height: auto;
+    }
+
+    .d2h-code-side-line {
+      padding-inline-start: .25em;
+    }
+  }
+
+
+  // Keep the existing number gutter, but let literal source wrap inside its cell.
   .d2h-code-line,
   .d2h-code-side-line {
-    width: auto;
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
     background: transparent;
     color: rgb(var(--v-theme-on-surface));
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .d2h-code-line {
-    min-width: calc(100% - 16em);
+    padding: 0 .75em 0 8em;
   }
 
   .d2h-code-side-line {
-    min-width: calc(100% - 9em);
+    padding: 0 .75em 0 4.5em;
+  }
+
+  .d2h-code-line-prefix {
+    flex: 0 0 1ch;
+  }
+
+  .d2h-code-line-ctn {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .d2h-code-line-ctn ins,
+  .d2h-code-line-ctn del {
+    max-width: 100%;
   }
 
   .d2h-code-linenumber,
