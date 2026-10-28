@@ -6603,12 +6603,11 @@ export default defineComponent({
   padding: .25rem .375rem .25rem .75rem;
   border: var(--wiki-hud-border);
   border-radius: var(--wiki-radius-pill);
-  background-color: var(--wiki-reading-dock-surface) !important;
-  background-image: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent)) !important;
+  background: var(--wiki-reading-dock-surface) !important;
   color: rgb(var(--v-theme-on-surface));
   box-shadow: var(--wiki-shadow-md);
-  backdrop-filter: var(--wiki-hud-filter) !important;
   -webkit-backdrop-filter: var(--wiki-hud-filter) !important;
+  backdrop-filter: var(--wiki-hud-filter) !important;
 
 
   .v-icon,

@@ -214,8 +214,8 @@ export default defineComponent({
   background-color: var(--wiki-chrome-surface) !important;
   background-image: var(--source-toolbar-tint) !important;
   box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
-  backdrop-filter: var(--wiki-chrome-filter) !important;
   -webkit-backdrop-filter: var(--wiki-chrome-filter) !important;
+  backdrop-filter: var(--wiki-chrome-filter) !important;
 
 }
 

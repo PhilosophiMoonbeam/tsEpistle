@@ -253,6 +253,12 @@ test('native floating controls and Focus dock retain AA over prose and saturated
         // replace whoami/preferences to manufacture a light/dark UI state.
         await expect(page.locator('.wiki-page')).toHaveClass(new RegExp(`v-theme--${mode}`, 'u'))
         expect(await page.evaluate(() => matchMedia('(prefers-reduced-transparency: reduce)').matches)).toBe(fallback)
+        if (!fallback) {
+          // Source presence and AA alone miss a minifier dropping the standard
+          // declaration when an unsupported vendor-prefixed form comes last.
+          await expect(page.locator('.nav-header')).toHaveCSS('backdrop-filter', 'blur(16px) saturate(1.4)')
+          await expect(dock).toHaveCSS('backdrop-filter', 'blur(20px) saturate(1.5)')
+        }
         if (fallback) {
           for (const material of [page.locator('.nav-header'), dock]) {
             await expect(material).toHaveCSS('backdrop-filter', 'none')

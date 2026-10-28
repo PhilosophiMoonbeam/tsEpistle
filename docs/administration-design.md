@@ -12,6 +12,8 @@ Search matches all entered terms against the domain, title, description, and ali
 
 The shared `AdminHero` provides a semantic heading, contextual description, status, and actions. Its icon family matches the navigation. Typography and colors use the wiki's existing user preferences and theme tokens. Administration uses restrained borders and surfaces, compact navigation, and consistent form and table treatments. Decorative delayed entrance animations are disabled within administration.
 
+Explicitly elevated, enabled, uncoloured Vuetify cards consume the saved palette's `--wiki-surface-gradient` and `--wiki-specular-border`. The pointer-inert specular pseudo-layer does not replace native elevation or hover feedback; keyboard focus keeps its visible outline and host shadow. Flat, tonal, zero-elevation, disabled, semantic-colour and explicitly painted cards retain their own treatment. Forced colours use system backing rather than decorative sheen.
+
 The dashboard presents workspace inventory, search and agent/integration entry points, recent content and access activity, and a searchable directory. Summary failures show unavailable values with retry instead of false zero counts. Recent activity retains its independent loading, error, empty, permission, and request-generation handling.
 
 General settings includes section anchors and a sticky save bar using the existing form validation and dirty state. Search index maintenance is separate from the Apply action. API keys can be filtered by name and revocation status, with a record layout on smaller screens; integration reference includes the MCP endpoint and its resource-bound authentication requirement.

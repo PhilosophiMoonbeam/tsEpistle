@@ -54,6 +54,15 @@ Open **My tools** from the workspace's chat actions to manage personal external 
 
 External tools are available only to the root **Agent** path with native tool support, not ordinary **Chat**, planner/subagent, or restricted flows. Remote descriptions/results remain attributed untrusted data, not Wiki citation evidence, instructions, permissions, or approvals. Binary results also require the selected provider's supported native function-result formats and bounds; an endpoint's response-size limit is not a promise that its results fit every model. See [Agent controls](agent-controls.md) for setup order, decision-provider credentials and checks, endpoint grants, routing defaults, and the distinction between hard quota reservations and estimated savings. Existing durable goals and background research remain separate from these controls.
 
+## Incoming MCP authorization checkpoints
+
+The `agentApproval` URL parameter identifies the **proposal**, not its approval-record ID. A checkpoint opens only after the signed-in identity is verified, reads its own owner-authorized record, and does not initialize or create a chat or require a configured chat model. Dismissing it removes the parameter, so reopening the page does not reopen the checkpoint.
+
+Review the command, target, base revision, proposed effect, and applicable integrity hashes before deciding. Non-text operations do not invent a text diff. Offline or unavailable transport disables decisions; reconnecting requires a fresh accepted proposal read. Existing identity, CSRF, expiry, and unknown-outcome reconciliation fences remain in force independently of chat readiness.
+
+Approval grants authority only for that reviewed proposal; the MCP client must still resume its signed continuation to apply it. Denial is a terminal no-change result and cannot be overridden by that continuation.
+
+
 ## Token usage and provider completion
 
 Agent usage keeps `inputTokens`, `outputTokens`, and provider-reported `totalTokens` independent. They are nonnegative safe integers; `totalTokens` must be at least the safely added directional sum and is never replaced by that sum. Input and output are not reconstructed from the total. Any remainder is intentionally unclassified, not reasoning, cache, tool, or another named category. Charged-token limits and settled reservation/daily/goal `consumedTokens` use the full total, while dispatch admission reserves a configured exposure bound once and never adds that hold to terminal measured usage; directional values remain truthful measured diagnostics.
