@@ -1977,6 +1977,20 @@ describe('controllers/api pages endpoints', () => {
   })
 
 
+  it.each([undefined, null, 'An actual current revision reason'])('projects only a stored optional current reason: %s', async changeReason => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      changeReason
+    })
+    const { getPage } = await loadHandler()
+    const req = { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'reason-reader', params: { id: '7' } }
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+    await getPage(req, res, vi.fn())
+    const details = res.json.mock.calls[0][0]
+    if (typeof changeReason === 'string') expect(details.changeReason).toBe(changeReason)
+    else expect(details).not.toHaveProperty('changeReason')
+  })
+
   it.each([
     {
       stored: { schemaVersion: 1, linksVisible: true, ratingsAllowed: false, lastEditorVisible: true },
@@ -2241,6 +2255,7 @@ describe('controllers/api pages endpoints', () => {
       ...await global.WIKI.models.pages.getPageFromDb(),
       visibility: 'private',
       ownerId: 7,
+      changeReason: 'Owner-only revision annotation',
       extra: { okf: { type: 'Reference', privateSecret: 'must-not-leak' } }
     })
     const { getPage } = await loadHandler()
@@ -2255,6 +2270,7 @@ describe('controllers/api pages endpoints', () => {
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.json).toHaveBeenCalledWith({ error: 'This page does not exist.' })
     expect(JSON.stringify(res.json.mock.calls)).not.toContain('must-not-leak')
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('Owner-only revision annotation')
     expect(global.WIKI.models.knex.mock.calls.some(([table]) => table === 'pageKnowledgeProjections as projections')).toBe(false)
   })
 
@@ -2262,7 +2278,8 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
       ...await global.WIKI.models.pages.getPageFromDb(),
       visibility: 'private',
-      ownerId: 7
+      ownerId: 7,
+      changeReason: 'Owner-only revision annotation'
     })
     const { getPage } = await loadHandler()
     const req = { user: { id: 7, permissions: [] }, sessionID: 'owner-detail', params: { id: '7' } }
@@ -2271,7 +2288,7 @@ describe('controllers/api pages endpoints', () => {
     await getPage(req, res, vi.fn())
 
     expect(res.status).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 7, visibility: 'private', ownerId: 7 }))
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 7, visibility: 'private', ownerId: 7, changeReason: 'Owner-only revision annotation' }))
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
