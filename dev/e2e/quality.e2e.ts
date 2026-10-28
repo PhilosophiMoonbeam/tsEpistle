@@ -238,7 +238,7 @@ test.describe('release accessibility profiles', () => {
   test('opens MCP review only after verified authority and does not reopen a dismissed link', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     await authenticateAsAdmin(page)
-    await installEnabledAgentFixture(page)
+    const fixture = await installEnabledAgentFixture(page)
     const authority = Promise.withResolvers<void>()
     const requested = Promise.withResolvers<void>()
     await page.route('**/_api/users/whoami', async route => {
@@ -262,6 +262,8 @@ test.describe('release accessibility profiles', () => {
       await page.reload({ waitUntil: 'domcontentloaded' })
       await expect(page.locator('.page-header-section')).toBeVisible()
       await expect(page.locator('.approval-surface')).toHaveCount(0)
+      expect(fixture.requests.filter(request => /^POST \/_api\/agents\/sessions(?:$|[/?])/.test(request)),
+        'Reviewing an external request must not create a conversation or submit provider work').toEqual([])
     } finally {
       authority.resolve()
     }

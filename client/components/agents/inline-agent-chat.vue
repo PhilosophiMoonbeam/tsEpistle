@@ -205,7 +205,7 @@
            notice sits above it; the conversation shows it inside the body
            glass so the page behind is never visible unblurred. -->
       <v-alert
-        v-if="connectionBlocked && approvalId"
+        v-if="approvalConnectionBlocked && approvalId"
         class="inline-agent__alert inline-agent__connection-alert"
         type="warning"
         variant="tonal"
@@ -218,7 +218,7 @@
         </div>
       </v-alert>
 
-      <AgentMcpApproval v-if="approvalId && !admissionBlocked" :csrf-token="csrfToken" :proposal-id="approvalId" :network-blocked="connectionBlocked" />
+      <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" :network-blocked="approvalConnectionBlocked" />
       <template v-else>
         <div v-if="isTemporary" class="inline-agent__retention" :aria-label="$t('common:agentWorkspace.temporaryChat')" role="status">
           <v-icon icon="mdi-timer-sand-complete" size="22" aria-hidden="true" />
@@ -842,6 +842,9 @@ const serverConnectionUnavailable = computed(() =>
   pwaState.connectionState === 'offline' ||
   pwaState.connectionState === 'server-unavailable'
 )
+// External MCP review establishes its own fresh, owner-authorized proposal read.
+// An absent chat/model workspace is not a transport failure for that operation.
+const approvalConnectionBlocked = computed(() => serverConnectionUnavailable.value || connectionRetrying.value)
 const connectionBlocked = computed(() => !admissionBlocked.value && (
   serverConnectionUnavailable.value ||
   waitingForConnection.value ||
@@ -1101,7 +1104,7 @@ const initializationAuthorityKey = (): string =>
     currentPage: currentPage.value
   })
 const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean> => {
-  if (disposed || closingForExpiry) return Promise.resolve(false)
+  if (disposed || closingForExpiry || props.approvalId) return Promise.resolve(false)
   if (admissionBlocked.value && !request.forceFresh) return Promise.resolve(false)
   const allowCreate = request.allowCreate ?? true
   const authorityKey = `${initializationAuthorityKey()}:create=${allowCreate}`
@@ -1165,7 +1168,7 @@ const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean
   return tracked
 }
 const retryAgentConnection = async (): Promise<void> => {
-  if (disposed || connectionRetrying.value || admissionBlocked.value) return
+  if (disposed || connectionRetrying.value || (admissionBlocked.value && !props.approvalId)) return
   const generation = retryGeneration + 1
   retryGeneration = generation
   const componentOwnerId = props.ownerId
@@ -1174,6 +1177,10 @@ const retryAgentConnection = async (): Promise<void> => {
   try {
     const reachable = await retryServerConnection()
     if (!reachable || !isComponentCurrent(componentGeneration, componentOwnerId) || retryGeneration !== generation) return
+    if (props.approvalId) {
+      waitingForConnection.value = false
+      return
+    }
     initializationError.value = ''
     agents.error = ''
     await ensureInitialized({ allowCreate: false, bypassConnectionGate: true, forceFresh: true })

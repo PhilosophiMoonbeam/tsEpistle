@@ -66,6 +66,7 @@
         <section
           class="agent-history__recent"
           :class="{
+            'agent-history__recent--empty': filteredRecentSessions.length === 0,
             'agent-history__drop-target--available': canDropTo(null),
             'agent-history__drop-target--active': isActiveDropTarget(null)
           }"
@@ -1532,6 +1533,10 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   padding-bottom: var(--wiki-space-3);
+}
+.agent-history__recent--empty {
+  border-bottom: 0;
+  border-radius: 0;
 }
 .agent-history__folders {
   padding-top: var(--wiki-space-4);

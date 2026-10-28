@@ -505,7 +505,7 @@
             />
             <h3>{{ draft.title || $t('admin:general.fieldLabels.title') }}</h3>
             <p>{{ draft.company || $t('admin:general.sharedKnowledgeSpace') }}</p>
-            <code>{{ draft.host || $t('admin:general.publicAddressNotSet') }}</code
+            <code :tabindex="draft.host ? 0 : undefined" :dir="draft.host ? 'ltr' : undefined">{{ draft.host || $t('admin:general.publicAddressNotSet') }}</code
             ><span class="general-preview-label">{{
               dirty
                 ? $t('admin:general.identityPreviewUnsavedDraft')
@@ -526,6 +526,7 @@
             </p>
             <p>{{ $t('admin:general.lastObserved', { observedAt: date(saved.runtime.observedAt), interpolation: { escapeValue: false } }) }}</p>
             <v-btn
+              v-if="saved.runtime.state !== 'applied'"
               variant="text"
               :disabled="locked || dirty"
               :loading="initializing"
