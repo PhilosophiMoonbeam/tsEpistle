@@ -428,12 +428,24 @@ const requestClose = (): void => {
   open.value = false
 }
 const cancelEdit = (): void => {
+  const focused = document.activeElement
+  const editorHadFocus = focused instanceof HTMLElement && Boolean(focused.closest('.agent-memory__editor'))
   editing.value = null
   draftTarget.value = 'user'
   draftContent.value = ''
   draftConflict.value = null
   refreshNotice.value = ''
   draftRevision.value += 1
+  if (editorHadFocus) void nextTick(() => {
+    if (disposed || !open.value || editing.value || removing.value || clearing.value) return
+    const current = document.activeElement
+    if (current instanceof HTMLElement && current !== document.body && current !== focused && !current.closest('.agent-memory__editor')) return
+    const panel = componentElement(memoryCard.value)?.closest('.inline-agent__side')
+    const target = panel?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      ?? panel?.querySelector<HTMLElement>('.inline-agent__panel-navigation button')
+      ?? componentElement(memoryHeading.value)?.querySelector<HTMLElement>('button')
+    target?.focus({ preventScroll: true })
+  })
 }
 const cancelEditOnEscape = (): void => {
   if (!saving.value && !draftConflict.value) cancelEdit()

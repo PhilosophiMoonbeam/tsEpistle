@@ -1899,6 +1899,8 @@ watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [pre
   if (disposed || cancelled || panelMode.value !== 'modal') return
   const root = kind === 'history' ? historyPanel.value : memoryPanel.value
   if (!root) return
+  const preserveContentFocus = !newlyOpened && previousFocus instanceof HTMLElement
+    && root.contains(previousFocus) && isVisibleTrigger(previousFocus) && document.activeElement === previousFocus
   panelFocusKind = kind
   panelFocusScope = createModalFocusScope({
     root,
@@ -1906,7 +1908,7 @@ watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [pre
     additionalRoots: () => [...(panelScrim.value ? [panelScrim.value] : []), ...activeOwnedOverlayRoots('.agent-owned-overlay')],
     onEscape: kind === 'history' ? closeHistory : closeMemory
   })
-  if (narrowPanel.value) root.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true })
+  if (narrowPanel.value && !preserveContentFocus) root.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true })
 })
 watch([historyOpen, memoryOpen], ([history, memory], [previousHistory, previousMemory]) => {
   const restoreKind = pendingPanelFocusKind
