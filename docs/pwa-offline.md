@@ -114,6 +114,8 @@ A confirmed terminal authentication, authorization, or conversation failure clos
 
 `navigator.onLine` is a hint only. A capability becomes available after its actual request succeeds. UI wording MUST distinguish **Available offline**, **Saved on this device**, **Waiting for connection**, **Needs review**, **Publishing**, **Published**, **Update ready**, and **Server unavailable**.
 
+The account Appearance control offers explicit **Light**, **Dark**, and **System** selections using the same profile preference as the profile editor. Light and Dark remain explicit choices even when they match the device; System follows later device changes. Selection is keyboard-accessible, persists through reload and sign-in, and excludes overlapping saves. Network or confirmation failure restores the prior choice; a retired account or session's response cannot replace the current account's appearance.
+
 ## 5. Server admission contracts
 
 `GET /_api/pages/:id/offline-snapshot` is the public page-download admission boundary. It is not a generic page cache endpoint.
@@ -257,6 +259,8 @@ interface OfflineDraftPayloadV1 {
 `sessionGeneration` is persisted in `meta` and copied into each envelope. `draftRevision` is a separate monotonically increasing per-draft commit number and advances on every successful local edit commit. An explicit publish creates an immutable opaque `submissionId`; the frozen encrypted submission record is written atomically before any network mutation. Subsequent edits use a newer `draftRevision` and never mutate that submission record.
 
 An optional change reason uses the existing single-line, 200-character validator, including its control-character and bidirectional-formatting exclusions. It travels with the encrypted working draft and immutable save capture; reason-only changes recapture even when the editor text version is unchanged. Existing payloads without the field remain valid without changing the envelope version, key derivation, or AAD. A confirmed save clears the reason only while the current source and reason still match that save capture. Later edits, rejected writes, and unknown outcomes keep the pending reason. Actor invalidation clears the visible reason with its owning session; encrypted retention follows the existing draft and receipt policy.
+
+The editor's **Reason** control beside Save and Save and close exposes the optional field without a permanent editor row or a mandatory save prompt. Desktop, mobile, Save, Save and close, and Ctrl+S share one pending value and immutable save capture. Escape or Done dismisses the field without discarding its value; invalid input is revealed and focused without submitting. Conflict and offline recovery retain the pending reason. Device-save notices change from pending to **Saved on this device** only after encrypted capture commits, including reason-only edits; that acknowledgement does not claim a server save.
 
 Canonical saves persist the normalized reason on the live page and archive the **previous revision's own reason** with its source. Blank or omitted input leaves the new revision unannotated; restore creates an unannotated successor rather than copying the restored revision's reason. Existing SQL `NULL` values are not backfilled, and typed readers normalize legacy null/missing values to an absent optional field.
 
