@@ -5,7 +5,7 @@
       section.notfound(aria-labelledby='notfound-title')
         .notfound-content
           .newpage-mark(aria-hidden='true')
-            img(src='/_assets/svg/icon-delete-file.svg', alt='')
+            v-icon.newpage-mark-icon(icon='mdi-file-remove-outline')
           header.newpage-copy
             h1#notfound-title.text-headline-medium.ma-0 {{$t('notfound.title')}}
             p.text-body-large.mt-3 {{$t('notfound.subtitle')}}

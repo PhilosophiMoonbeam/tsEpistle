@@ -2990,7 +2990,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   grid-template-columns: var(--inline-agent-history-track) minmax(0, 1fr) var(--inline-agent-memory-track);
 }
 
-.inline-agent[data-panel-mode="wide"]:dir(rtl) {
+/* Keep rendered direction markers: the optimizer lowers :dir() to language guesses. */
+.inline-agent[data-panel-mode="wide"][dir="rtl"],
+:is([dir="rtl"], .is-rtl, .v-locale--is-rtl) .inline-agent[data-panel-mode="wide"]:not([dir="ltr"]) {
   grid-template-columns: var(--inline-agent-memory-track) minmax(0, 1fr) var(--inline-agent-history-track);
 }
 
@@ -3054,11 +3056,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 /* Grid line numbering follows text direction; the workbench rails stay physical. */
-.inline-agent[data-panel-mode="wide"]:dir(rtl) .inline-agent__side--history {
+.inline-agent[data-panel-mode="wide"][dir="rtl"] .inline-agent__side--history,
+:is([dir="rtl"], .is-rtl, .v-locale--is-rtl) .inline-agent[data-panel-mode="wide"]:not([dir="ltr"]) .inline-agent__side--history {
   grid-column: 3;
 }
 
-.inline-agent[data-panel-mode="wide"]:dir(rtl) .inline-agent__side--memory {
+.inline-agent[data-panel-mode="wide"][dir="rtl"] .inline-agent__side--memory,
+:is([dir="rtl"], .is-rtl, .v-locale--is-rtl) .inline-agent[data-panel-mode="wide"]:not([dir="ltr"]) .inline-agent__side--memory {
   grid-column: 1;
 }
 

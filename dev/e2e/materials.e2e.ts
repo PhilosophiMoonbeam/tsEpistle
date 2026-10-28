@@ -75,17 +75,17 @@ function backingPixels(data: Buffer, width: number, height: number, channels: nu
   return [...colors.values()]
 }
 
-async function captureBacking(page: Page): Promise<Buffer> {
+async function captureBacking(page: Page, scope: string): Promise<Buffer> {
   const mask = await page.addStyleTag({ content: `
-    :is(.nav-header, .page-reading-dock),
-    :is(.nav-header, .page-reading-dock) *,
-    :is(.nav-header, .page-reading-dock) *::before,
-    :is(.nav-header, .page-reading-dock) *::after {
+    ${scope},
+    ${scope} *,
+    ${scope} *::before,
+    ${scope} *::after {
       -webkit-text-fill-color: transparent !important;
       text-decoration-color: transparent !important;
       text-shadow: none !important;
     }
-    :is(.nav-header, .page-reading-dock) svg { visibility: hidden !important; }
+    ${scope} svg { visibility: hidden !important; }
   ` })
   try {
     await settled(page)
@@ -279,7 +279,7 @@ test('native floating controls and Focus dock retain AA over prose and saturated
           // computed ink above is the foreground used for every AA assertion.
           await page.mouse.move(0, 450)
           const samples = await Promise.all(targets.map(target => readInk(target.locator, target.name, target.minimum)))
-          const capture = await captureBacking(page)
+          const capture = await captureBacking(page, ':is(.nav-header, .page-reading-dock)')
           const image = await sharp(capture).removeAlpha().raw().toBuffer({ resolveWithObject: true })
           for (const sample of samples) {
             const pixels = backingPixels(image.data, image.info.width, image.info.height, image.info.channels, sample)
@@ -304,4 +304,37 @@ test('native floating controls and Focus dock retain AA over prose and saturated
   }
   const failures = results.filter(result => result.ratio < result.minimum)
   expect(failures, 'Actual composited text needs 4.5:1; essential icons and focus need 3:1').toEqual([])
+})
+
+test('active contents labels remain readable over their native selected-row paint', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' })
+  await openAuthenticatedPage(page, '/', 'article.contents')
+  const toc = page.locator('.page-toc-card')
+  const results: Array<ContrastResult & { mode: string }> = []
+  try {
+    for (const mode of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: mode })
+      await expect(page.locator('.wiki-page')).toHaveClass(new RegExp(`v-theme--${mode}`, 'u'))
+      const active = toc.locator('[aria-current="location"] .page-toc-item-title-text')
+      await expect(active).toHaveCount(1)
+      await active.scrollIntoViewIfNeeded()
+      await page.mouse.move(0, 450)
+      await settled(page)
+      const samples = await Promise.all([
+        readInk(active, 'active contents label', 4.5),
+        readInk(toc.locator('.page-toc-heading-label'), 'contents heading', 4.5)
+      ])
+      const capture = await captureBacking(page, '.page-toc-card')
+      const image = await sharp(capture).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+      for (const sample of samples) {
+        const pixels = backingPixels(image.data, image.info.width, image.info.height, image.info.channels, sample)
+        results.push({ ...await measureContrast(page, sample, pixels), mode })
+      }
+    }
+  } finally {
+    await testInfo.attach('native-contents-contrast', { body: JSON.stringify(results, null, 2), contentType: 'application/json' })
+  }
+  expect(results.filter(result => result.ratio < result.minimum),
+    'Selected-row tint and glow must not make ordinary contents text fall below 4.5:1').toEqual([])
 })

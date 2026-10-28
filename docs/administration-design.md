@@ -14,6 +14,8 @@ The shared `AdminHero` provides a semantic heading, contextual description, stat
 
 Explicitly elevated, enabled, uncoloured Vuetify cards consume the saved palette's `--wiki-surface-gradient` and `--wiki-specular-border`. The pointer-inert specular pseudo-layer does not replace native elevation or hover feedback; keyboard focus keeps its visible outline and host shadow. Flat, tonal, zero-elevation, disabled, semantic-colour and explicitly painted cards retain their own treatment. Forced colours use system backing rather than decorative sheen.
 
+The application canvas keeps its two subtle, palette-derived radial washes without periodic coordinate-grid layers. Component-specific public-state treatments remain separately scoped; removing the global grid does not erase their live variables or replace content with opaque masking surfaces.
+
 The shared glass API lives in `client/scss/base/base.scss`; consumers select a role instead of declaring another palette or opacity system.
 
 | Role | Surface mix | Blur | Saturation |

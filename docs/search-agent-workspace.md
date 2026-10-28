@@ -73,6 +73,12 @@ The provider wizard advances one step at a time on Enter; it does not save an in
 
 A saved profile whose connection check failed retains a provider-specific warning until a successful check or another save resolves it. Credentials remain server-managed, and provider verification and access grants retain their existing enforcement.
 
+## Read-only Source views
+
+Source views wrap long lines when no wrap preference is stored. Saved `1` enables wrapping; saved `0` and malformed values retain unwrapped mode. Opening a view never rewrites that preference. If storage is unavailable, the view starts wrapped and its toggle still works without persistence. The heading retains the human page path and historical version context rather than a primary database ID.
+
+Wrapping is CSS-only: Source text and the explicit **Copy** action retain the raw stored Markdown, including CRLF and trailing lines, without CSS line numbers. Native selection and keyboard copy keep the browser's ordinary preformatted-text behavior, including its final-line-break handling. **Download** remains the canonical OKF export with its existing frontmatter, link and newline transformations; it is deliberately not the raw **Copy** payload. Private and historical routes retain their authorization and version scope.
+
 ## Search workspace states and scope
 
 Search names the current query and the effective corpus and filters. **Wiki** and **Saved offline** select the corpus; the separate **Filter from the current page** group displays the page's language and path before offering language and page-tree filters. Unfiltered online search is **All Wiki**. Selecting the already-active corpus does not clear filters. **Clear filters** keeps the query and corpus, broadens the search, and returns focus to the input; it is available in the filter group and scoped no-results recovery. Offline filter controls remain focusable with a visible explanation, but unapplied filters are never shown as active.

@@ -5595,7 +5595,7 @@ export default defineComponent({
 
   &:hover {
     background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
-    color: var(--wiki-accent-ink);
+    color: rgb(var(--v-theme-on-surface));
   }
 
   &:focus-visible {
@@ -5607,7 +5607,7 @@ export default defineComponent({
   &.page-toc-item--active {
     border-inline-start-color: rgb(var(--v-theme-primary));
     background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
-    color: var(--wiki-accent-ink);
+    color: rgb(var(--v-theme-on-surface));
     .page-toc-item-title--depth-0 {
       font-weight: 700;
     }
@@ -5657,7 +5657,7 @@ export default defineComponent({
   &:hover,
   &[aria-current='location'],
   &.page-toc-item--active {
-    color: var(--wiki-accent-ink);
+    color: rgb(var(--v-theme-on-surface));
   }
 }
 

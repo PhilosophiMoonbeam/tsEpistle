@@ -274,20 +274,6 @@
   color: rgb(var(--v-theme-on-background));
   font-family: var(--v-font-body);
 
-  &::before {
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background)) 7%, transparent) 1px, transparent 1px),
-      linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background)) 7%, transparent) 1px, transparent 1px);
-    background-position: 0 0;
-    background-repeat: repeat;
-    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
-    content: '';
-    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-background)), transparent 85%);
-    opacity: .64;
-  }
-
   &::after {
     position: absolute;
     inset: auto auto -13rem -10rem;
@@ -350,6 +336,64 @@
 
 .notfound {
   --wiki-state-accent: rgb(var(--v-theme-error));
+
+  .text-headline-medium {
+    letter-spacing: -.02em;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .newpage-copy {
+    min-inline-size: 0;
+    max-inline-size: min(100%, 36rem);
+    overflow-wrap: anywhere;
+  }
+
+  .newpage-mark {
+    flex-shrink: 0;
+  }
+
+  .newpage-mark-icon {
+    font-size: calc(var(--wiki-space-12) * 2);
+
+    &::before {
+      background: linear-gradient(135deg, var(--wiki-accent-warm), var(--wiki-accent-spectral));
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  }
+
+  .newpage-path {
+    min-inline-size: 0;
+
+    .v-icon {
+      flex-shrink: 0;
+    }
+
+    code {
+      min-inline-size: 0;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+  }
+
+  .newpage-actions {
+    max-inline-size: 100%;
+
+    .newpage-action {
+      min-inline-size: min(10rem, 100%);
+      max-inline-size: 100%;
+      height: auto;
+      padding-block: var(--wiki-space-3);
+
+      .v-btn__content {
+        min-inline-size: 0;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.4;
+      }
+    }
+  }
 }
 
 .unauthorized {
@@ -488,6 +532,10 @@
   }
 }
 
+.notfound-content::before {
+  background: linear-gradient(135deg, var(--wiki-accent-warm), var(--wiki-accent-spectral));
+}
+
 .newpage-mark {
   display: grid;
   width: calc(var(--wiki-space-12) * 3);
@@ -621,6 +669,11 @@
   .newpage-mark,
   .newpage-path {
     border-color: CanvasText;
+  }
+
+  .notfound .newpage-mark-icon::before {
+    background: none;
+    -webkit-text-fill-color: CanvasText;
   }
 }
 
