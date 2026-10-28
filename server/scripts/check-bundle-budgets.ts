@@ -80,8 +80,10 @@ const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
 // the first host build measured 13,856.5 KiB. Initial/largest/lazy caps are unchanged.
 // Visible Skills and reviewed-receipt recovery have a user-approved 4 KiB allowance;
 // the clean Docker build measured 13,935.3 KiB. Initial/largest/lazy caps are unchanged.
+// Remaining assessment UI has an additional user-approved 8 KiB allowance;
+// the optional-reason build measured 13,939.9 KiB. Initial/largest/lazy caps are unchanged.
 // Retain a fixed aggregate ceiling and every initial-load/lazy budget.
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_938 * KiB
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_946 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
