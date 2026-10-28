@@ -191,6 +191,7 @@
                   v-bind='menuProps'
                   rounded='lg'
                   :aria-label='$t(`common:header.pageActions`)'
+                  data-page-actions-activator
                 )
                   v-icon mdi-dots-horizontal
                   v-tooltip(activator='parent', location='bottom', :text='$t(`common:header.pageActions`)')
@@ -247,6 +248,7 @@
                 v-bind='props'
                 :size='dense ? `small` : `default`'
                 :aria-label='$t(`common:header.pageActions`)'
+                data-page-actions-activator
                 :data-search-modal-action='$vuetify.display.xs ? `` : undefined'
               )
                 v-icon mdi-dots-vertical

@@ -4341,10 +4341,27 @@ export default defineComponent({
       }
     },
     print () {
+      const page = this.readerPageIdentity
+      const originalFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      const fromPageActions = originalFocus?.hasAttribute('data-page-actions-activator')
       this.restorePrintView()
       this.preparePrintView()
       this.$nextTick(() => {
-        window.print()
+        try {
+          window.print()
+        } finally {
+          // Some native print implementations return without emitting afterprint.
+          this.restorePrintView()
+          this.$nextTick(() => {
+            if (this.offlineDisposed || !sameReaderPageIdentity(page, this.readerPageIdentity)) return
+            const target = originalFocus?.isConnected
+              ? originalFocus
+              : (this.$el as HTMLElement).querySelector<HTMLElement>(fromPageActions ? '[data-page-actions-activator]' : '.page-title')
+            if (target?.getClientRects().length && !target.matches(':disabled,[aria-disabled="true"]')) {
+              target.focus({ preventScroll: true })
+            }
+          })
+        }
       })
     },
     restorePrintView () {

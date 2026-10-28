@@ -4,6 +4,7 @@ import * as Vue from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../../server/test/bun-test.mts'
 import { manualReviewerId } from '../../../helpers/approval-reviewer-search.ts'
 import { brandingDuplicatesSiteLogo } from '../../../helpers/page-branding.ts'
+import { sameReaderPageIdentity } from '../../../helpers/page-action-events.ts'
 import { UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH } from '../../../helpers/utility-tooltip-placement.ts'
 import { buildOutlineTree, filterOutlineTree, getInitialExpandedAnchors } from '../../../helpers/page-outline.ts'
 import { revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
@@ -336,6 +337,7 @@ const page = new Function(
   'filterOutlineTree',
   'getInitialExpandedAnchors',
   'revealContentExtensionTarget',
+  'sameReaderPageIdentity',
   'AbortController',
   executableScript
 )(
@@ -362,6 +364,7 @@ const page = new Function(
   filterOutlineTree,
   getInitialExpandedAnchors,
   revealContentExtensionTarget,
+  sameReaderPageIdentity,
   browserWindow.AbortController
 ) as Rules
 
@@ -944,4 +947,57 @@ describe('focus reading section navigation', () => {
       expect(vm.readerSectionsOpen).toBe(false)
     }
   })
+})
+
+describe('Reader native Print completion', () => {
+  beforeEach(() => resetBody())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetBody()
+  })
+
+  for (const outcome of ['returned', 'threw', 'navigated'] as const) {
+    it(`restores disclosure state after Print ${outcome}, without focusing a different page`, () => {
+      browserDocument.body.innerHTML = '<main><button data-page-actions-activator>Page actions</button><article><details><summary>Closed section</summary>Body</details><details open><summary>Open section</summary>Body</details></article></main>'
+      const root = browserDocument.querySelector('main')!
+      const original = root.querySelector('button')!
+      const article = root.querySelector('article')!
+      const details = Array.from(article.querySelectorAll('details'))
+      const replacement = browserDocument.createElement('button')
+      replacement.setAttribute('data-page-actions-activator', '')
+      replacement.textContent = 'Page actions'
+      vi.spyOn(replacement, 'getClientRects').mockReturnValue([new browserWindow.DOMRect(0, 0, 44, 44)] as unknown as DOMRectList)
+      const ticks: Array<() => void> = []
+      const identity = { pageId: 7, locale: 'en', path: 'field-guide', visibility: 'public', sourceRevision: '2' }
+      const vm: Record<string, unknown> = {
+        $el: root,
+        $refs: { container: article },
+        $nextTick: (callback: () => void) => { ticks.push(callback) },
+        readerPageIdentity: identity,
+        offlineDisposed: false,
+        printView: false,
+        printViewBeforePrint: null,
+        printDetailsState: null
+      }
+      vm.preparePrintView = () => page.methods.preparePrintView!.call(vm)
+      vm.restorePrintView = () => page.methods.restorePrintView!.call(vm)
+      vi.spyOn(browserWindow, 'print').mockImplementation(() => {
+        expect(vm.printView).toBe(true)
+        expect(details.map(detail => detail.open)).toEqual([true, true])
+        original.remove()
+        root.prepend(replacement)
+        if (outcome === 'navigated') vm.readerPageIdentity = { ...identity, pageId: 8 }
+        if (outcome === 'threw') throw new Error('Native printing unavailable')
+        // Deliberately no afterprint event: the native implementation may omit it.
+      })
+      original.focus()
+      page.methods.print!.call(vm)
+      if (outcome === 'threw') expect(() => ticks.shift()!()).toThrow('Native printing unavailable')
+      else ticks.shift()!()
+      expect(vm.printView).toBe(false)
+      expect(details.map(detail => detail.open)).toEqual([false, true])
+      ticks.shift()!()
+      expect(browserDocument.activeElement).toBe(outcome === 'navigated' ? browserDocument.body : replacement)
+    })
+  }
 })
