@@ -1095,6 +1095,11 @@ export class OfflineEditorDraftCoordinator {
           return false
         }
         this.envelopes.delete(receiptRecordId)
+        if (this.activePrepared?.envelope.recordId === receiptRecordId) {
+          this.activePrepared = null
+          this.outcomeKind = null
+          this.outcomeStatus = null
+        }
         this.envelopes.set(fork.recordId, cloneEnvelope(fork))
         this.currentDraft = { recordId: fork.recordId, draftRevision: fork.draftRevision, payload: clonePayload(forkPayload), envelope: cloneEnvelope(fork) }
         this.reviewRequired = true

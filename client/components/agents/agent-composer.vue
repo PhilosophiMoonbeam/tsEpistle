@@ -280,6 +280,51 @@
             <p class="agent-composer__tool-menu-note">{{ $t('common:agentComposer.askNaturallyAssistantCan') }}</p>
           </v-list>
         </v-menu>
+        <v-menu
+          v-if="skillsEnabled"
+          content-class="agent-owned-overlay agent-composer__skill-menu-content"
+          v-model="skillMenuOpen"
+          location="top start"
+          :close-on-content-click="false"
+        >
+          <template #activator="{ props: activatorProps }">
+            <v-btn
+              v-bind="activatorProps"
+              class="agent-composer__skills-trigger wiki-purpose-control"
+              variant="text"
+              rounded="pill"
+              prepend-icon="mdi-puzzle-outline"
+              append-icon="mdi-chevron-down"
+              :aria-label="$t('common:agentComposer.skills')"
+              :title="$t('common:agentComposer.skills')"
+              aria-haspopup="dialog"
+              :aria-expanded="skillMenuOpen"
+              :disabled="disabled || sendInProgress"
+              @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
+            ><span class="agent-composer__skills-label">{{ $t('common:agentComposer.skills') }}</span></v-btn>
+          </template>
+          <AgentComposerSkillMenu
+            :dialog-id="composerIds.skillsDialog"
+            :heading-id="composerIds.skillsHeading"
+            :description-id="composerIds.skillsDescription"
+            :items="skillMenuItems"
+            :skills-count="skills.length"
+            :skills-loading="skillsLoading"
+            :skills-load-error="skillsLoadError"
+            :skills-partial="skillsPartial"
+            :disabled="disabled"
+            :send-in-progress="sendInProgress"
+            :network-blocked="networkBlocked"
+            :invocation-limit="invocationLimit"
+            :selected-skill-version-ids="selectedSkillIds"
+            :preferred-version-ids="preferredMenuVersionIds"
+            @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
+            @toggle="toggleSkill"
+            @toggle-preference="togglePreference"
+            @manage-skills="manageSkills"
+            @retry-skills="retrySkills"
+          />
+        </v-menu>
         <v-tooltip v-if="goalsEnabled && !goalMode && !isControlFolded('goal')" location="top" :text="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')">
           <template #activator="{ props: tooltipProps }">
             <span v-bind="tooltipProps" :tabindex="goalDisabledReason ? 0 : undefined" :aria-label="goalDisabledReason || undefined">
@@ -333,44 +378,6 @@
             >
               <template #append><v-icon :icon="item.checked ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
             </v-list-item>
-            <v-menu
-              v-if="skillsEnabled"
-              content-class="agent-owned-overlay agent-composer__skill-menu-content"
-              v-model="foldedSkillMenuOpen"
-              location="end top"
-              :close-on-content-click="false"
-            >
-              <template #activator="{ props: submenuProps }">
-                <v-list-item
-                  v-bind="submenuProps"
-                  prepend-icon="mdi-puzzle-outline"
-                  :title="$t('common:agentComposer.skills')"
-                  append-icon="mdi-chevron-right"
-                  aria-haspopup="dialog"
-                  :aria-expanded="foldedSkillMenuOpen"
-                  :disabled="disabled || sendInProgress"
-                  @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
-                />
-              </template>
-              <AgentComposerSkillMenu
-                :items="skillMenuItems"
-                :skills-count="skills.length"
-                :skills-loading="skillsLoading"
-                :skills-load-error="skillsLoadError"
-                :skills-partial="skillsPartial"
-                :disabled="disabled"
-                :send-in-progress="sendInProgress"
-                :network-blocked="networkBlocked"
-                :invocation-limit="invocationLimit"
-                :selected-skill-version-ids="selectedSkillIds"
-                :preferred-version-ids="preferredMenuVersionIds"
-                @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
-                @toggle="toggleSkill"
-                @toggle-preference="togglePreference"
-                @manage-skills="manageSkills"
-                @retry-skills="retrySkills"
-              />
-            </v-menu>
           </v-list>
         </v-menu>
       </fieldset>
@@ -681,7 +688,7 @@ watch(() => props.initialDraft, (value, previous) => {
   if (draft.value === (previous ?? '')) draft.value = value ?? ''
 })
 const goalMode = ref(props.initialMode === 'goal')
-const foldedSkillMenuOpen = ref(false)
+const skillMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 const attachmentMenuOpen = ref(false)
 const creationMenuOpen = ref(false)
@@ -707,9 +714,8 @@ const hasPendingSubmission = (): boolean => submissionPending.value
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
 const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'create' | 'more' | 'skills'): Promise<void> => {
-  const open = menu === 'attach' ? attachmentMenuOpen : menu === 'create' ? creationMenuOpen : menu === 'more' ? moreMenuOpen : foldedSkillMenuOpen
+  const open = menu === 'attach' ? attachmentMenuOpen : menu === 'create' ? creationMenuOpen : menu === 'more' ? moreMenuOpen : skillMenuOpen
   if (event.key === 'Escape' && open.value) {
-    if (menu === 'more' && foldedSkillMenuOpen.value) return
     event.preventDefault()
     event.stopImmediatePropagation()
     const origin = event.currentTarget
@@ -765,6 +771,9 @@ const composerIds = {
   commandLoading: `${composerId}-command-loading`,
   commandPartial: `${composerId}-command-partial`,
   commandEmpty: `${composerId}-command-empty`,
+  skillsDialog: `${composerId}-skills-dialog`,
+  skillsHeading: `${composerId}-skills-heading`,
+  skillsDescription: `${composerId}-skills-description`,
   status: `${composerId}-status`,
   attachmentReason: `${composerId}-attachment-reason`,
 } as const
@@ -793,11 +802,7 @@ const isPreferred = (versionId: string): boolean => {
   const skillId = skillIdForVersion(versionId)
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
 }
-/**
- * Lower-priority composer controls move into the More menu. On desktop the
- * Skills menu stays a direct control; goals, when enabled, move here while
- * unset. Items present in the context row are excluded automatically.
- */
+// Only genuinely secondary controls fold into More; Skills stays directly reachable.
 const moreMenuItems = computed(() => {
   const items: Array<{ key: string; icon: string; label: string; subtitle?: string; checked?: boolean; disabled?: boolean; run: () => void }> = []
   if (props.goalsEnabled && !goalMode.value && isControlFolded('goal')) {
@@ -830,18 +835,14 @@ const moreMenuItems = computed(() => {
 })
 
 /**
- * Fit-based folding of low-priority controls into the More menu. There is no
- * device detection: the left control group is measured, and whenever it
- * overflows its one row the lowest-priority inline control (Create, then Goal)
- * moves into the More menu; when space returns the last folded control is
- * restored. Skills always live inside the More menu, and Goal replaces their
- * former inline slot. Attach, the microphone, and Send/Stop never fold, and
- * the action bar never wraps. The fold state is UI-only.
+ * Measure the available control row, folding Create then Goal into More and
+ * restoring them when space returns. Skills, Attach, dictation and Send/Stop
+ * remain directly reachable. Very narrow composer containers can reflow the
+ * action groups rather than clip mandatory controls.
  */
 type FoldableControl = 'create' | 'goal'
 const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['create', 'goal']
 const foldedControls = ref<FoldableControl[]>([])
-const foldMeasureOverride = ref<(() => boolean) | null>(null)
 let foldResizeObserver: ResizeObserver | null = null
 watch(controlsGroup, (group, previous) => {
   if (!foldResizeObserver) return
@@ -853,15 +854,31 @@ const isControlFolded = (control: FoldableControl): boolean => foldedControls.va
 watch(() => generationDisabled.value || isControlFolded('create'), blocked => {
   if (blocked) creationMenuOpen.value = false
 }, { flush: 'sync' })
-const hasMoreMenuContent = computed(() =>
-  moreMenuItems.value.length > 0 || props.skillsEnabled
-)
+const hasMoreMenuContent = computed(() => moreMenuItems.value.length > 0)
+watch(hasMoreMenuContent, available => {
+  if (!available) moreMenuOpen.value = false
+}, { flush: 'sync' })
+watch(() => !props.skillsEnabled || props.disabled || sendInProgress.value, blocked => {
+  if (blocked) skillMenuOpen.value = false
+}, { flush: 'sync' })
 const measureControlsOverflow = (): boolean => {
-  const override = foldMeasureOverride.value
-  if (override) return override()
   const group = controlsGroup.value
   if (!group) return false
-  return group.scrollWidth > group.clientWidth
+  // Measure the unwrapped row even when the mandatory controls have reflowed.
+  // scrollWidth alone would report a fit after wrapping and unfold everything.
+  let requiredWidth = 0
+  let count = 0
+  for (const child of group.children) {
+    if (!(child instanceof HTMLElement)) continue
+    const style = window.getComputedStyle(child)
+    if (style.position === 'absolute' || style.position === 'fixed' || style.display === 'none') continue
+    const width = child.getBoundingClientRect().width
+    if (width === 0) continue
+    requiredWidth += width
+    count++
+  }
+  const gap = Number.parseFloat(window.getComputedStyle(group).columnGap) || 0
+  return requiredWidth + Math.max(0, count - 1) * gap > group.clientWidth + 1
 }
 const updateFoldState = async (): Promise<void> => {
   if (measureControlsOverflow()) {
@@ -887,6 +904,10 @@ const updateFoldState = async (): Promise<void> => {
 const handleFoldResize = (): void => {
   void updateFoldState()
 }
+watch([
+  createAvailable, () => props.skillsEnabled, () => props.goalsEnabled, goalMode,
+  () => t('common:actions.create'), () => t('common:agentComposer.skills'), () => t('common:agentComposer.goal')
+], () => { void nextTick(handleFoldResize) }, { flush: 'post' })
 
 const coarseInput = ref(false)
 let coarseInputQuery: MediaQueryList | null = null
@@ -1243,7 +1264,7 @@ watch(
 )
 const manageSkills = (): void => {
   if (props.disabled || sendInProgress.value) return
-  foldedSkillMenuOpen.value = false
+  skillMenuOpen.value = false
   emit('manageSkills')
 }
 const retrySkills = (): void => {
@@ -1251,9 +1272,11 @@ const retrySkills = (): void => {
   emit('retrySkills')
 }
 const focusSkillsTrigger = async (): Promise<void> => {
-  // The inline Skills control no longer exists (Skills live in the More menu),
-  // so focus returns to the editor after the skill manager closes.
-  await focusInput()
+  await nextTick()
+  const root = composerRoot.value instanceof HTMLElement ? composerRoot.value : composerRoot.value?.$el
+  const trigger = root?.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
+  if (trigger && !trigger.disabled) trigger.focus({ preventScroll: true })
+  else await focusInput()
 }
 const resetInput = (): void => {
   resizeInput()
@@ -1645,15 +1668,16 @@ onBeforeUnmount(() => {
   gap: var(--agent-composer-control-gap);
 }
 
-/* One action row at any width: overflow is handled by folding controls into
-   the More menu, never by wrapping. */
+/* Fold secondary controls first. If mandatory controls alone cannot fit,
+   reflow them without clipping or hiding their native focus targets. */
 .agent-composer__context-controls {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   overflow: visible;
 }
 
 .agent-composer__context-controls > * {
   flex: 0 0 auto;
+  max-width: 100%;
 }
 
 
@@ -1675,6 +1699,7 @@ onBeforeUnmount(() => {
    targets cannot overlap across the control gap. */
 .agent-composer__attach,
 .agent-composer__create,
+.agent-composer__skills-trigger,
 .agent-composer__goal-toggle,
 .agent-composer__mic,
 .agent-composer__dictation-discard,
@@ -1697,6 +1722,7 @@ onBeforeUnmount(() => {
 
 .agent-composer__attach::before,
 .agent-composer__create::before,
+.agent-composer__skills-trigger::before,
 .agent-composer__goal-toggle::before,
 .agent-composer__mic::before,
 .agent-composer__dictation-discard::before,
@@ -1718,6 +1744,7 @@ onBeforeUnmount(() => {
 
 .agent-composer__attach,
 .agent-composer__create,
+.agent-composer__skills-trigger,
 .agent-composer__goal-toggle {
   max-width: 100%;
   padding-inline: var(--agent-composer-control-padding-inline);
@@ -1820,6 +1847,12 @@ onBeforeUnmount(() => {
 .agent-composer__actions :deep(.v-btn__prepend),
 .agent-composer__actions :deep(.v-btn__append) {
   margin-inline: calc(var(--wiki-space-1) * -.9) calc(var(--wiki-space-2) * .9);
+}
+
+.agent-composer__create :deep(.v-btn__append),
+.agent-composer__skills-trigger :deep(.v-btn__append) {
+  margin-inline-start: 4px;
+  margin-inline-end: 0;
 }
 
 
@@ -1980,6 +2013,21 @@ onBeforeUnmount(() => {
   }
 
   .agent-composer__skills::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (max-width: 599.98px) {
+  .agent-composer__skills-trigger {
+    padding-inline: 0;
+  }
+
+  .agent-composer__skills-trigger :deep(.v-btn__prepend) {
+    margin: 0;
+  }
+
+  .agent-composer__skills-trigger :deep(.v-btn__append),
+  .agent-composer__skills-label {
     display: none;
   }
 }

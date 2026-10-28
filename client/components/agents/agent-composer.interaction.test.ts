@@ -157,6 +157,7 @@ const storedPdf: AgentMediaView = {
   detached: true
 }
 interface RealComposerPublic {
+  readonly focusSkillsTrigger: () => Promise<void>
   readonly reattachMedia: (media: AgentMediaView) => Promise<boolean>
   readonly hasUnsentMedia: () => boolean
   readonly isMediaBusy: () => boolean
@@ -348,11 +349,11 @@ const openRealCreationMenu = async (root: HTMLElement, keyboard = false): Promis
   expect(create.disabled).toBe(false)
   return openOwnedMenu(create, '.agent-composer__tool-menu', 'creation tools menu', keyboard)
 }
-const openRealMoreMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
-  const more = root.querySelector<HTMLButtonElement>('.agent-composer__more-button')
-  if (!more) throw new Error('Real More action did not render')
-  expect(more.disabled).toBe(false)
-  return openOwnedMenu(more, '.agent-composer__more-menu', 'More menu', keyboard)
+const openRealSkillsMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
+  const skills = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
+  if (!skills) throw new Error('The direct Skills action did not render')
+  expect(skills.disabled).toBe(false)
+  return openOwnedMenu(skills, '.agent-composer-skill-menu__card', 'Skills menu', keyboard)
 }
 
 const makeSkill = (name: string, versionId = `${name}-version`): TestSkill => ({
@@ -1132,10 +1133,8 @@ describe('Agent composer media and menu interactions', () => {
     const options = Vue.reactive({ skills: [shared, grouped] })
     const mounted = mountRealComposers([options])
     const root = mounted.roots[0]
-    const moreMenu = await openRealMoreMenu(root, true)
-    const trigger = moreMenu.querySelector<HTMLElement>('[aria-haspopup="dialog"]')
-    if (!trigger) throw new Error('The Skills trigger did not render')
-    const menu = await openOwnedMenu(trigger, '.agent-composer-skill-menu__card', 'organization Skills popup', true)
+    expect(root.querySelector('.agent-composer__more-button')).toBeNull()
+    const menu = await openRealSkillsMenu(root, true)
     const row = (name: string): HTMLElement => {
       const result = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent === name)
       if (!result) throw new Error(`Authorized skill ${name} did not render`)
@@ -1159,7 +1158,6 @@ describe('Agent composer media and menu interactions', () => {
     expect(attached()).not.toContain(grouped.name)
     expect(menu.textContent).not.toContain(grouped.name)
     await closeOwnedMenu(menu)
-    await closeOwnedMenu(moreMenu)
     const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
     const submit = root.querySelector<HTMLButtonElement>('.agent-composer__submit')
     if (!textarea || !submit) throw new Error('Composer controls did not render')
@@ -1173,19 +1171,27 @@ describe('Agent composer media and menu interactions', () => {
     ])
   })
 
-  it('focuses the native action in an empty Skills popup and restores each opener on Escape', async () => {
-    const mounted = mountRealComposers([{ skills: [] }])
-    const root = mounted.roots[0]
-    const moreMenu = await openRealMoreMenu(root, true)
-    const skillsTrigger = moreMenu.querySelector<HTMLElement>('[aria-haspopup="dialog"]')
-    if (!skillsTrigger) throw new Error('The nested Skills trigger did not render')
-    const skillsMenu = await openOwnedMenu(skillsTrigger, '.agent-composer-skill-menu__card', 'empty Skills popup', true)
-    expect(document.activeElement).toBe(skillsMenu.querySelector('button'))
-    await closeOwnedMenu(skillsMenu)
-    expect(document.activeElement).toBe(skillsTrigger)
-    expect(moreMenu.closest('.v-overlay--active')).not.toBeNull()
-    await closeOwnedMenu(moreMenu)
-    expect(document.activeElement).toBe(root.querySelector('.agent-composer__more-button'))
+  it('keeps one direct Skills trigger, stable popup IDs and exact keyboard focus restoration', async () => {
+    const mounted = mountRealComposers([{ skills: [] }, { skills: [] }])
+    await Vue.nextTick()
+    const dialogIds: string[] = []
+    for (const [index, root] of mounted.roots.entries()) {
+      expect(root.querySelectorAll('.agent-composer__skills-trigger')).toHaveLength(1)
+      expect(root.querySelector('.agent-composer__more-button')).toBeNull()
+      const skillsTrigger = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
+      const skillsMenu = await openRealSkillsMenu(root, true)
+      dialogIds.push(skillsMenu.id)
+      expect(document.activeElement).toBe(skillsMenu.querySelector('button'))
+      await closeOwnedMenu(skillsMenu)
+      expect(document.activeElement).toBe(skillsTrigger)
+      const reopened = await openRealSkillsMenu(root, true)
+      expect(reopened.id).toBe(dialogIds[index])
+      await closeOwnedMenu(reopened)
+      root.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+      await mounted.publicRefs[index].value?.focusSkillsTrigger()
+      expect(document.activeElement).toBe(skillsTrigger)
+    }
+    expect(new Set(dialogIds).size).toBe(dialogIds.length)
   })
 
   it('keeps a cancelled keyboard opening closed after deferred menu work finishes', async () => {
@@ -1310,14 +1316,7 @@ describe('Agent composer media and menu interactions', () => {
     await Vue.nextTick()
     expect(mounted.sent).toEqual([])
     expect(textarea.value).toBe('/')
-    root.querySelector<HTMLButtonElement>('.agent-composer__more-button')?.click()
-    await waitForRealSurface(() => Boolean(document.querySelector('.v-overlay--active .agent-composer__more-menu')), 'More menu')
-    const skills = Array.from(document.querySelectorAll<HTMLElement>('.agent-composer__more-menu .v-list-item')).find(item =>
-      item.textContent?.includes('Skills')
-    )
-    skills?.click()
-    await waitForRealSurface(() => Boolean(document.querySelector('.agent-composer-skill-menu__card')), 'Skills card')
-    const card = document.querySelector<HTMLElement>('.agent-composer-skill-menu__card')
+    const card = await openRealSkillsMenu(root)
     expect(card?.textContent).toContain(reason)
     expect(card?.querySelector('input[type="checkbox"]')?.hasAttribute('disabled')).toBe(true)
   })

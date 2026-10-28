@@ -788,6 +788,38 @@ describe('offline editor draft coordinator', () => {
     expect(storage.finalizations).toHaveLength(0)
     coordinator.destroy()
   })
+
+  it('allows an explicitly reviewed unknown-outcome fork to publish again in the same editor', async () => {
+    const storage = new InMemoryDraftStorage()
+    const current = { ...values('body awaiting review'), changeReason: 'Reason retained after transport loss' }
+    const { coordinator } = makeCoordinator({ storage, owner: ownerKey(7), currentValues: () => current })
+
+    try {
+      const original = await coordinator.prepareSubmission()
+      if (!original) throw new Error('Expected an immutable submission receipt')
+      await expect(coordinator.completeSubmission(original, { kind: 'unknown', reason: 'transport lost' })).resolves.toBe(true)
+      const candidate = coordinator.submissionCandidates[0]
+      if (!candidate) throw new Error('Expected the unresolved submission for explicit review')
+      expect(coordinator.hasUnresolvedSubmission).toBe(true)
+
+      await expect(coordinator.replaceDetachedCandidate(candidate.payload, candidate.submission.recordId)).resolves.toBe(true)
+
+      expect(storage.records.has(original.recordId)).toBe(false)
+      expect(coordinator.hasUnresolvedSubmission).toBe(false)
+      expect(coordinator.submissionOutcome).toBeNull()
+      expect(coordinator.submissionStatus).toBeNull()
+      expect(coordinator.view).toMatchObject({ state: 'needs-review', submissionCandidates: [], error: null })
+
+      const reviewed = await coordinator.prepareSubmission()
+      if (!reviewed) throw new Error('Expected a fresh receipt after the explicit review choice')
+      expect(reviewed.submissionId).not.toBe(original.submissionId)
+      expect(reviewed.payload).toMatchObject(current)
+      expect(storage.records.get(reviewed.recordId)).toEqual(reviewed.envelope)
+      expect(coordinator.hasUnresolvedSubmission).toBe(true)
+    } finally {
+      coordinator.destroy()
+    }
+  })
   it('locks on logout and clears all recovery metadata while retaining the opaque stored record', async () => {
     const storage = new InMemoryDraftStorage()
     const owner = ownerKey(7)

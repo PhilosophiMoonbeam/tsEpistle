@@ -2,8 +2,6 @@
   <v-card
     :id="dialogId"
     class="agent-composer-skill-menu__card"
-    min-width="300"
-    max-width="420"
     role="dialog"
     :aria-labelledby="headingId"
     :aria-describedby="descriptionId"
@@ -83,10 +81,9 @@ import { useTranslate } from '../../helpers/use-translate.ts'
 const t = useTranslate()
 
 /**
- * Presentational skill picker card shared by the composer's inline Skills
- * trigger menu and the compact Skills entry folded into the More menu. All
- * selection state stays with the parent composer; this component only renders
- * it and reports the user's intent.
+ * Presentational skill picker card for the composer's responsive Skills
+ * trigger. Selection state stays with the parent composer; this component only
+ * renders it and reports the user's intent.
  */
 interface AgentComposerSkillMenuItem {
   readonly versionId: string
@@ -164,6 +161,12 @@ const retrySkills = (): void => {
 </script>
 
 <style scoped>
+.agent-composer-skill-menu__card {
+  width: min(420px, calc(100vw - 24px));
+  min-width: 0;
+  max-width: 100%;
+}
+
 .agent-composer-skill-menu__pin {
   min-width: max(44px, var(--wiki-control-height));
   min-height: max(44px, var(--wiki-control-height));
